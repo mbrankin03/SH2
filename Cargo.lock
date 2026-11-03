@@ -1994,6 +1994,7 @@ name = "sh2-app"
 version = "0.1.0"
 dependencies = [
  "android-activity",
+ "glam",
  "log",
  "sh2-assets",
  "sh2-audio",

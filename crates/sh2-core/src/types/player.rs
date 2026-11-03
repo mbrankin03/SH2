@@ -286,7 +286,7 @@ impl Default for PlayerState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem::{size_of, offset_of};
+    use std::mem::{offset_of, size_of};
 
     #[test]
     fn test_player_state_offsets() {

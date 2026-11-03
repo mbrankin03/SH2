@@ -22,7 +22,10 @@ fn android_main(app: AndroidApp) {
 
     tracing::info!("Starting Silent Hill 2 Open Port on Android (AYN Thor)...");
     let engine = SilentHill2App::new();
-    tracing::info!("Engine lifecycle initialized. App active: {}", engine.is_running);
+    tracing::info!(
+        "Engine lifecycle initialized. App active: {}",
+        engine.is_running
+    );
 
     // Let the app know about the AndroidApp context for windowing and event loops
     let _ = app;

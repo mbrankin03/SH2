@@ -7,7 +7,9 @@ pub enum AssetError {
         expected: &'static [u8],
         found: Vec<u8>,
     },
-    #[error("Buffer too small for structure: required {required} bytes, available {available} bytes")]
+    #[error(
+        "Buffer too small for structure: required {required} bytes, available {available} bytes"
+    )]
     BufferUnderflow { required: usize, available: usize },
     #[error("Malformed header: {0}")]
     MalformedHeader(&'static str),

@@ -1,9 +1,11 @@
 //! Map format (.map) parser for geometry, materials, and textures.
 
+use crate::error::AssetError;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 
 pub const MAP_MAGIC: u32 = 0x20010510;
+pub const MAP_MAGIC_BYTES: &[u8; 4] = &MAP_MAGIC.to_le_bytes();
 
 /// Map binary header format matching original PS2/PC map files.
 #[repr(C)]
@@ -421,25 +423,48 @@ fn parse_textures(r: &Reader, mut p: usize, textures: &mut HashMap<u32, MapTextu
 }
 
 impl MapFile {
-    pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
         let r = Reader::new(bytes);
-        let magic = r.u32(0).ok_or("Buffer too short for header")?;
+        let magic = r.u32(0).ok_or(AssetError::BufferUnderflow {
+            required: 16,
+            available: bytes.len(),
+        })?;
         if magic != MAP_MAGIC {
-            return Err("Invalid MAP magic identifier");
+            return Err(AssetError::InvalidMagic {
+                expected: MAP_MAGIC_BYTES,
+                found: bytes.get(..4).unwrap_or_default().to_vec(),
+            });
         }
-        let sub_count = r.u32(8).ok_or("Invalid subfile count")? as usize;
+        let sub_count = r.u32(8).ok_or(AssetError::BufferUnderflow {
+            required: 16,
+            available: bytes.len(),
+        })? as usize;
         let mut map_file = MapFile::default();
         let mut p = 16;
 
         for _ in 0..sub_count {
-            let sub_type = r.u32(p).ok_or("Truncated subfile header")?;
-            let sub_len = r.u32(p + 4).ok_or("Truncated subfile length")? as usize;
+            let sub_type = r
+                .u32(p)
+                .ok_or(AssetError::MalformedHeader("Truncated subfile header"))?;
+            let sub_len = r
+                .u32(p + 4)
+                .ok_or(AssetError::MalformedHeader("Truncated subfile length"))?
+                as usize;
             let body = p + 16;
 
             if sub_type == 1 {
-                let geo_count = r.u32(body + 4).ok_or("Truncated geo_count")? as usize;
-                let geo_size = r.u32(body + 8).ok_or("Truncated geo_size")? as usize;
-                let mat_count = r.u32(body + 12).ok_or("Truncated mat_count")? as usize;
+                let geo_count = r
+                    .u32(body + 4)
+                    .ok_or(AssetError::MalformedHeader("Truncated geo_count"))?
+                    as usize;
+                let geo_size = r
+                    .u32(body + 8)
+                    .ok_or(AssetError::MalformedHeader("Truncated geo_size"))?
+                    as usize;
+                let mat_count = r
+                    .u32(body + 12)
+                    .ok_or(AssetError::MalformedHeader("Truncated mat_count"))?
+                    as usize;
 
                 let mut g = body + 16;
                 for _ in 0..geo_count {

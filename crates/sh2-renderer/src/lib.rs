@@ -30,6 +30,49 @@ impl Default for RendererConfig {
     }
 }
 
+/// GPU-resident static mesh buffers compiled once during map loading to avoid per-frame allocations.
+pub struct GpuMapBatch {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub num_indices: u32,
+    pub is_transparent: bool,
+}
+
+pub struct GpuMap {
+    pub batches: Vec<GpuMapBatch>,
+}
+
+impl GpuMap {
+    pub fn from_map(device: &wgpu::Device, map: &MapFile) -> Self {
+        let mut batches = Vec::with_capacity(map.batches.len());
+        for batch in &map.batches {
+            if batch.indices.is_empty() || batch.vertices.is_empty() {
+                continue;
+            }
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("GpuMap Batch Vertex Buffer"),
+                contents: bytemuck::cast_slice(&batch.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("GpuMap Batch Index Buffer"),
+                contents: bytemuck::cast_slice(&batch.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            batches.push(GpuMapBatch {
+                vertex_buffer,
+                index_buffer,
+                num_indices: batch.indices.len() as u32,
+                is_transparent: matches!(
+                    batch.group,
+                    sh2_assets::formats::map::BatchGroup::Transparent
+                ),
+            });
+        }
+        Self { batches }
+    }
+}
+
 pub struct RenderContext {
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
@@ -64,7 +107,8 @@ pub struct RenderContext {
 
     pub geometry_bind_group: wgpu::BindGroup,
     pub fog_bind_group: wgpu::BindGroup,
-    pub post_bind_group: wgpu::BindGroup,
+    pub post_bind_group_fog: wgpu::BindGroup,
+    pub post_bind_group_direct: wgpu::BindGroup,
 }
 
 impl RenderContext {
@@ -247,8 +291,9 @@ impl RenderContext {
             ],
         });
 
-        let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Post Bind Group"),
+        // Bind group 1: Samples fog_color_view when fog is enabled
+        let post_bind_group_fog = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (With Fog)"),
             layout: &post_pipeline.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -258,6 +303,26 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                },
+            ],
+        });
+
+        // Bind group 2: Directly samples hdr_color_view when fog is disabled
+        let post_bind_group_direct = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (Direct HDR)"),
+            layout: &post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -292,7 +357,8 @@ impl RenderContext {
             post_buffer,
             geometry_bind_group,
             fog_bind_group,
-            post_bind_group,
+            post_bind_group_fog,
+            post_bind_group_direct,
         })
     }
 
@@ -321,8 +387,8 @@ impl RenderContext {
             .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
-    /// Render a MapFile room into the framebuffers and run the compute passes.
-    pub fn render_map(&self, map: &MapFile) {
+    /// Render a pre-compiled GpuMap room into the framebuffers and run the compute passes.
+    pub fn render_gpu_map(&self, gpu_map: &GpuMap) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -361,28 +427,10 @@ impl RenderContext {
             rpass.set_pipeline(&self.geometry_pipeline.pipeline);
             rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
 
-            for batch in &map.batches {
-                if batch.indices.is_empty() || batch.vertices.is_empty() {
-                    continue;
-                }
-                let v_buf = self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Batch Vertex Buffer"),
-                        contents: bytemuck::cast_slice(&batch.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                let i_buf = self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Batch Index Buffer"),
-                        contents: bytemuck::cast_slice(&batch.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-
-                rpass.set_vertex_buffer(0, v_buf.slice(..));
-                rpass.set_index_buffer(i_buf.slice(..), wgpu::IndexFormat::Uint32);
-                rpass.draw_indexed(0..batch.indices.len() as u32, 0, 0..1);
+            for batch in &gpu_map.batches {
+                rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+                rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
             }
         }
 
@@ -406,12 +454,23 @@ impl RenderContext {
                 timestamp_writes: None,
             });
             cpass.set_pipeline(&self.post_pipeline.pipeline);
-            cpass.set_bind_group(0, &self.post_bind_group, &[]);
+            let post_bind_group = if self.config.enable_fog {
+                &self.post_bind_group_fog
+            } else {
+                &self.post_bind_group_direct
+            };
+            cpass.set_bind_group(0, post_bind_group, &[]);
             let workgroups_x = self.config.width.div_ceil(16);
             let workgroups_y = self.config.height.div_ceil(16);
             cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Convenience method for rendering directly from MapFile, compiling to GpuMap.
+    pub fn render_map(&self, map: &MapFile) {
+        let gpu_map = GpuMap::from_map(&self.device, map);
+        self.render_gpu_map(&gpu_map);
     }
 }

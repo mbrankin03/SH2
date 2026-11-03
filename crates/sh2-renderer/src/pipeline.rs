@@ -96,7 +96,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Inverse square distance attenuation
     let atten = 1.0 / max(1.0, 0.00001 * dist * dist);
-    let n_dot_l = max(0.0, dot(normalize(in.normal), -l_dir));
+    let n_len = length(in.normal);
+    let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, n_len > 1e-4);
+    let n_dot_l = max(0.0, dot(norm, -l_dir));
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten);
 
     let lit_color = in.color.rgb * (ambient + diffuse);

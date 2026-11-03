@@ -68,10 +68,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let original_color = textureLoad(color_in, pixel_coords, 0);
     let depth_val = textureLoad(depth_tex, pixel_coords, 0).r;
 
-    // Linearize depth or compute world distance
-    // In Vulkan clip space, Z goes from 0.0 (near) to 1.0 (far)
-    let linear_depth = 1.0 / (depth_val * (1.0 / fog.fog_far - 1.0 / fog.fog_near) + 1.0 / fog.fog_near);
-    let fog_factor = clamp((linear_depth - fog.fog_near) / (fog.fog_far - fog.fog_near), 0.0, 1.0) * fog.density;
+    // Linearize view distance using camera inverse projection matrix
+    let uv = (vec2<f32>(pixel_coords) + 0.5) / vec2<f32>(dims);
+    let clip_pos = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth_val, 1.0);
+    let view_pos_h = camera.inv_proj * clip_pos;
+    let view_dist = length(view_pos_h.xyz / max(1e-5, view_pos_h.w));
+
+    let fog_factor = clamp((view_dist - fog.fog_near) / max(1e-4, fog.fog_far - fog.fog_near), 0.0, 1.0) * fog.density;
 
     let final_color = mix(original_color, fog.fog_color, fog_factor);
     textureStore(color_out, pixel_coords, final_color);

@@ -46,12 +46,13 @@ impl GpuMap {
     pub fn from_map(device: &wgpu::Device, map: &MapFile) -> Self {
         let mut batches = Vec::with_capacity(map.batches.len());
         for batch in &map.batches {
-            if batch.indices.is_empty() || batch.vertices.is_empty() {
+            let interleaved = batch.interleaved_vertices();
+            if batch.indices.is_empty() || interleaved.is_empty() {
                 continue;
             }
             let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("GpuMap Batch Vertex Buffer"),
-                contents: bytemuck::cast_slice(&batch.vertices),
+                contents: bytemuck::cast_slice(&interleaved),
                 usage: wgpu::BufferUsages::VERTEX,
             });
             let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -1,4 +1,11 @@
 //! Volumetric compute fog parameters matching PS2 ground-truth registers (`dbg_fogparm_ctl`, `dbg_ambifog_ctl`).
+//!
+//! # Volumetric Fog Architecture
+//! In original Silent Hill 2 hardware on the PlayStation 2, fog density was calculated
+//! per-pixel using specialized VU1 microcode and GS fog registers (`FOGCOL`, `GS_FOG`).
+//!
+//! This module mirrors the uniform buffer required by modern GPU shaders (`wgpu` / WGSL)
+//! to render distance-based exponential and linear fog falloff.
 
 /// Uniform buffer for volumetric fog shader.
 ///

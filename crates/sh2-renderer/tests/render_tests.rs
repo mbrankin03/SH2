@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod renderer_tests {
-    use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial, MapVertex};
+    use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
     use sh2_renderer::*;
 
     fn create_synthetic_cube_map() -> MapFile {
@@ -14,56 +14,40 @@ mod renderer_tests {
         });
 
         // 8 vertices for a 1x1x1 test cube centered at origin
-        let vertices = vec![
-            MapVertex {
-                position: [-1.0, -1.0, 1.0],
-                normal: [0.0, 0.0, 1.0],
-                uv: [0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [1.0, -1.0, 1.0],
-                normal: [0.0, 0.0, 1.0],
-                uv: [1.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [1.0, 1.0, 1.0],
-                normal: [0.0, 0.0, 1.0],
-                uv: [1.0, 1.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [-1.0, 1.0, 1.0],
-                normal: [0.0, 0.0, 1.0],
-                uv: [0.0, 1.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [-1.0, -1.0, -1.0],
-                normal: [0.0, 0.0, -1.0],
-                uv: [1.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [-1.0, 1.0, -1.0],
-                normal: [0.0, 0.0, -1.0],
-                uv: [1.0, 1.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [1.0, 1.0, -1.0],
-                normal: [0.0, 0.0, -1.0],
-                uv: [0.0, 1.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
-            MapVertex {
-                position: [1.0, -1.0, -1.0],
-                normal: [0.0, 0.0, -1.0],
-                uv: [0.0, 0.0],
-                color: [1.0, 1.0, 1.0, 1.0],
-            },
+        let positions = vec![
+            [-1.0, -1.0, 1.0],
+            [1.0, -1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [-1.0, 1.0, 1.0],
+            [-1.0, -1.0, -1.0],
+            [-1.0, 1.0, -1.0],
+            [1.0, 1.0, -1.0],
+            [1.0, -1.0, -1.0],
         ];
+
+        let normals = vec![
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 0.0, -1.0],
+            [0.0, 0.0, -1.0],
+        ];
+
+        let uvs = vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [0.0, 0.0],
+        ];
+
+        let colors = vec![[255, 255, 255, 255]; 8];
 
         let indices = vec![
             0, 1, 2, 2, 3, 0, // Front
@@ -76,9 +60,12 @@ mod renderer_tests {
 
         map.batches.push(MapBatch {
             group: BatchGroup::Opaque,
-            material_id: 0,
+            material_index: 0,
             geo_id: 1,
-            vertices,
+            positions,
+            uvs,
+            colors,
+            normals,
             indices,
         });
 

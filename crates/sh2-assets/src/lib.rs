@@ -5,3 +5,4 @@ pub mod error;
 pub mod formats;
 
 pub use error::AssetError;
+pub use formats::*;

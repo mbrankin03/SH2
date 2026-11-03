@@ -1,41 +1,132 @@
-//! Map format (.map) parser for geometry, materials, and textures.
+//! Safe binary parser for Silent Hill 2 Map format (`.map`).
+//!
+//! # Format Architecture & Memory Layout
+//! Silent Hill 2 `.map` files store level geometry, mesh groupings, materials, and embedded textures.
+//!
+//! ### Binary File Header (16 bytes)
+//! | Offset | Type | Description |
+//! |--------|------|-------------|
+//! | `0x00` | `u32` | Magic number (`0x20010510` in little-endian) |
+//! | `0x04` | `u32` | Total file size in bytes |
+//! | `0x08` | `u32` | Number of sub-files (`sub_count`, typically 2: geometry and textures) |
+//! | `0x0C` | `u32` | Reserved / padding (always 0) |
+//!
+//! ### Sub-Files (Type 1: Geometry & Materials, Type 2: Embedded Textures)
+//! - **Sub-file 1 (Geometry & Materials)**:
+//!   - Header: `u32 magic`, `u32 geo_count`, `u32 geo_size`, `u32 material_count`.
+//!   - Geometry records: `geo_id` (variant + part group), byte size, and offsets to:
+//!     - Opaque mesh group
+//!     - Transparent mesh group
+//!     - Decals mesh group
+//!   - Materials table: array of 16-byte structs containing blend mode, texture index, color tint,
+//!     overlay factors, and specular power.
+//! - **Mesh Groups & Batches**:
+//!   - Meshes index a shared vertex buffer divided into sections (e.g. stride 0x14 for pos+uv,
+//!     0x18 for pos+color+uv, 0x20 for pos+normal+uv, 0x24 for pos+normal+color+uv).
+//!   - Part groups specify material IDs, section references, and primitive strips/fans/lists.
+//!   - `parse_map` de-duplicates and unrolls triangle strips into indexed [`MapBatch`] draw calls.
+//! - **Sub-file 2 (Textures)**:
+//!   - Sequential embedded DXT compressed texture blocks tagged by texture IDs.
 
 use crate::error::AssetError;
-use bytemuck::{Pod, Zeroable};
+use crate::formats::dxt::decode_dxt;
 use std::collections::HashMap;
 
+/// Magic identifier present at byte 0 of all valid PC .map files (`0x20010510`).
 pub const MAP_MAGIC: u32 = 0x20010510;
-pub const MAP_MAGIC_BYTES: &[u8; 4] = &MAP_MAGIC.to_le_bytes();
 
-/// Map binary header format matching original PS2/PC map files.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Pod, Zeroable)]
-pub struct MapHeader {
-    pub magic: u32,
-    pub size: u32,
-    pub chunk_count: u32,
-    pub unused: u32,
-}
+/// Byte representation of `MAP_MAGIC` in little-endian order.
+pub const MAP_MAGIC_BYTES: [u8; 4] = [0x10, 0x05, 0x01, 0x20];
 
+/// Surface material definition applied to geometry batches.
+///
+/// Corresponds to the 16-byte material records at the end of geometry subfiles.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapMaterial {
+    /// Rendering mode / shader flag (e.g., standard shading, vertex color modulation, specular).
     pub mode: u16,
+    /// Index into the map's texture table.
     pub texture_id: u16,
+    /// RGBA tint / diffuse color stored in packed 32-bit format.
     pub color: u32,
+    /// Overlay color / blend factor.
     pub overlay: u32,
+    /// Specular reflection power exponent.
     pub specularity: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An embedded texture stored inside a `.map` sub-file.
+#[derive(Debug, Clone)]
 pub struct MapTexture {
+    /// Unique texture identifier referenced by material records.
     pub id: u32,
-    pub width: u32,
-    pub height: u32,
-    pub kind: u32, // 1: DXT1, 3: DXT3, 5: DXT5
+    /// Texture width in pixels.
+    pub width: usize,
+    /// Texture height in pixels.
+    pub height: usize,
+    /// Compression kind: 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
+    pub kind: u8,
+    /// Compressed texture payload data.
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+impl MapTexture {
+    /// Decodes the compressed texture payload into an uncompressed RGBA8 byte buffer.
+    pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
+        decode_dxt(&self.data, self.width, self.height, self.kind)
+    }
+}
+
+/// Category of geometry determining render queue, depth writing, and sorting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchGroup {
+    /// Standard opaque geometry drawn with full depth testing and writing.
+    Opaque,
+    /// Alpha-blended geometry sorted back-to-front.
+    Transparent,
+    /// Coplanar decal surfaces (blood splatters, posters, floor markings).
+    Decal,
+}
+
+/// A parsed section of vertex attributes before batching and draw call assembly.
+#[derive(Debug, Clone, Default)]
+pub struct VertexSection {
+    /// Model-space vertex positions (X, Y, Z).
+    pub positions: Vec<[f32; 3]>,
+    /// Texture mapping coordinates (U, V).
+    pub uvs: Vec<[f32; 2]>,
+    /// Per-vertex RGBA colors (BGRA byte order remapped to RGBA).
+    pub colors: Vec<[u8; 4]>,
+    /// Surface normal vectors (X, Y, Z).
+    pub normals: Vec<[f32; 3]>,
+}
+
+/// A pre-assembled GPU draw call containing vertices and triangle list indices.
+///
+/// All triangle strips, fans, and vertex sections have been converted into indexed
+/// triangle lists ready for direct binding into a GPU pipeline (`wgpu::RenderPass`).
+#[derive(Debug, Clone)]
+pub struct MapBatch {
+    /// Draw queue type (Opaque, Transparent, or Decal).
+    pub group: BatchGroup,
+    /// Index into [`MapFile::materials`].
+    pub material_index: usize,
+    /// Sub-geometry identifier (part group in bits 8..15, variant in bits 0..7).
+    pub geo_id: u16,
+    /// Vertex positions (X, Y, Z).
+    pub positions: Vec<[f32; 3]>,
+    /// Texture coordinates (U, V).
+    pub uvs: Vec<[f32; 2]>,
+    /// Vertex colors in RGBA8 order.
+    pub colors: Vec<[u8; 4]>,
+    /// Vertex surface normals.
+    pub normals: Vec<[f32; 3]>,
+    /// Triangle list index buffer indexing into `positions`, `uvs`, `colors`, and `normals`.
+    pub indices: Vec<u32>,
+}
+
+/// Interleaved vertex format matching modern GPU vertex layout (`MapVertex`).
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct MapVertex {
     pub position: [f32; 3],
@@ -44,520 +135,614 @@ pub struct MapVertex {
     pub color: [f32; 4],
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BatchGroup {
-    Opaque,
-    Transparent,
-    Decal,
+impl MapBatch {
+    /// Converts parallel vertex attributes (`positions`, `normals`, `uvs`, `colors`) into interleaved [`MapVertex`] structs for direct GPU consumption.
+    pub fn interleaved_vertices(&self) -> Vec<MapVertex> {
+        let count = self.positions.len();
+        let mut out = Vec::with_capacity(count);
+        for i in 0..count {
+            let pos = self.positions[i];
+            let norm = self.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+            let uv = self.uvs.get(i).copied().unwrap_or([0.0, 0.0]);
+            let c = self.colors.get(i).copied().unwrap_or([255, 255, 255, 255]);
+            let col = [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+                c[3] as f32 / 255.0,
+            ];
+            out.push(MapVertex {
+                position: pos,
+                normal: norm,
+                uv,
+                color: col,
+            });
+        }
+        out
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct MapBatch {
-    pub group: BatchGroup,
-    pub material_id: u32,
-    pub geo_id: u16,
-    pub vertices: Vec<MapVertex>,
-    pub indices: Vec<u32>,
-}
-
+/// Ingested representation of a complete `.map` file.
 #[derive(Debug, Clone, Default)]
 pub struct MapFile {
+    /// Identifying file or stage name (e.g., "rr01" or "ap01").
+    pub name: String,
+    /// Material definitions indexed by batches.
     pub materials: Vec<MapMaterial>,
+    /// Embedded textures keyed by their unique texture ID.
     pub textures: HashMap<u32, MapTexture>,
+    /// Render batches prepared for GPU rasterization.
     pub batches: Vec<MapBatch>,
 }
 
-struct Reader<'a> {
-    data: &'a [u8],
-}
-
-impl<'a> Reader<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        Self { data }
-    }
-
-    fn u8(&self, ofs: usize) -> Option<u8> {
-        self.data.get(ofs).copied()
-    }
-
-    fn u16(&self, ofs: usize) -> Option<u16> {
-        let b = self.data.get(ofs..ofs + 2)?;
-        Some(u16::from_le_bytes([b[0], b[1]]))
-    }
-
-    fn u32(&self, ofs: usize) -> Option<u32> {
-        let b = self.data.get(ofs..ofs + 4)?;
-        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    }
-
-    fn f32(&self, ofs: usize) -> Option<f32> {
-        let b = self.data.get(ofs..ofs + 4)?;
-        Some(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+impl MapFile {
+    /// Convenience alias to parse a map file without specifying a name.
+    pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
+        parse_map(bytes, "map")
     }
 }
 
-fn strip_to_list(indices: &[u32], prim: u8) -> Vec<u32> {
-    if prim == 3 {
-        let len = (indices.len() / 3) * 3;
-        return indices[..len].to_vec();
-    }
-    let mut out = Vec::new();
-    if prim == 1 {
-        // Triangle strip
-        for i in 0..indices.len().saturating_sub(2) {
-            let a = indices[i];
-            let b = indices[i + 1];
-            let c = indices[i + 2];
-            if a == b || b == c || a == c {
-                continue;
-            }
-            if i % 2 == 0 {
-                out.extend_from_slice(&[a, b, c]);
-            } else {
-                out.extend_from_slice(&[b, a, c]);
-            }
-        }
-    } else if prim == 2 {
-        // Triangle fan
-        for i in 1..indices.len().saturating_sub(1) {
-            out.extend_from_slice(&[indices[0], indices[i], indices[i + 1]]);
-        }
-    }
-    out
-}
-
-struct VertexSection {
-    positions: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    colors: Vec<[f32; 4]>,
-    normals: Vec<[f32; 3]>,
-}
-
-fn parse_vertex_sections(r: &Reader, base: usize) -> Option<Vec<VertexSection>> {
-    let count = r.u32(base + 4)? as usize;
-    let mut info = Vec::with_capacity(count);
-    for j in 0..count {
-        let entry = base + 8 + 12 * j;
-        let ofs = r.u32(entry)? as usize;
-        let stride = r.u32(entry + 4)? as usize;
-        let length = r.u32(entry + 8)? as usize;
-        info.push((ofs, stride, length));
-    }
-    let start = base + 8 + 12 * count;
-    let mut sections = Vec::with_capacity(count);
-
-    for (ofs, stride, length) in info {
-        let vtx_data_start = start + ofs;
-        if stride == 0 || vtx_data_start + length > r.data.len() {
-            continue;
-        }
-        let num_vertices = length / stride;
-        let mut positions = Vec::with_capacity(num_vertices);
-        let mut uvs = Vec::with_capacity(num_vertices);
-        let mut colors = Vec::with_capacity(num_vertices);
-        let mut normals = Vec::with_capacity(num_vertices);
-
-        for i in 0..num_vertices {
-            let p = vtx_data_start + i * stride;
-            let px = r.f32(p).unwrap_or(0.0);
-            let py = r.f32(p + 4).unwrap_or(0.0);
-            let pz = r.f32(p + 8).unwrap_or(0.0);
-            positions.push([px, py, pz]);
-
-            let mut norm = [0.0f32, 0.0, 0.0];
-            let mut uv = [0.0f32, 0.0];
-            let mut col = [1.0f32, 1.0, 1.0, 1.0];
-
-            match stride {
-                0x14 => {
-                    uv = [r.f32(p + 12).unwrap_or(0.0), r.f32(p + 16).unwrap_or(0.0)];
-                }
-                0x18 => {
-                    // BGRA u8 at 0x0c
-                    let b = r.u8(p + 12).unwrap_or(255) as f32 / 255.0;
-                    let g = r.u8(p + 13).unwrap_or(255) as f32 / 255.0;
-                    let r_col = r.u8(p + 14).unwrap_or(255) as f32 / 255.0;
-                    let a = r.u8(p + 15).unwrap_or(255) as f32 / 255.0;
-                    col = [r_col, g, b, a];
-                    uv = [r.f32(p + 16).unwrap_or(0.0), r.f32(p + 20).unwrap_or(0.0)];
-                }
-                0x20 => {
-                    norm = [
-                        r.f32(p + 12).unwrap_or(0.0),
-                        r.f32(p + 16).unwrap_or(0.0),
-                        r.f32(p + 20).unwrap_or(0.0),
-                    ];
-                    uv = [r.f32(p + 24).unwrap_or(0.0), r.f32(p + 28).unwrap_or(0.0)];
-                }
-                s if s >= 0x24 => {
-                    norm = [
-                        r.f32(p + 12).unwrap_or(0.0),
-                        r.f32(p + 16).unwrap_or(0.0),
-                        r.f32(p + 20).unwrap_or(0.0),
-                    ];
-                    let b = r.u8(p + 24).unwrap_or(255) as f32 / 255.0;
-                    let g = r.u8(p + 25).unwrap_or(255) as f32 / 255.0;
-                    let r_col = r.u8(p + 26).unwrap_or(255) as f32 / 255.0;
-                    let a = r.u8(p + 27).unwrap_or(255) as f32 / 255.0;
-                    col = [r_col, g, b, a];
-                    uv = [r.f32(p + 28).unwrap_or(0.0), r.f32(p + 32).unwrap_or(0.0)];
-                }
-                _ => {}
-            }
-
-            uvs.push(uv);
-            colors.push(col);
-            normals.push(norm);
-        }
-
-        sections.push(VertexSection {
-            positions,
-            uvs,
-            colors,
-            normals,
+/// Parses a Silent Hill 2 level geometry map file (`.map`) from raw bytes.
+///
+/// # Errors
+/// Returns [`AssetError::InvalidMagic`] if the data does not begin with `0x20010510`,
+/// or [`AssetError::BufferUnderflow`] if byte slices exceed the buffer bounds.
+pub fn parse_map(data: &[u8], name: &str) -> Result<MapFile, AssetError> {
+    if data.len() < 16 {
+        return Err(AssetError::BufferUnderflow {
+            required: 16,
+            available: data.len(),
         });
     }
 
-    Some(sections)
-}
-
-fn collect_batch(
-    batches: &mut Vec<MapBatch>,
-    group: BatchGroup,
-    sections: &[VertexSection],
-    section_idx: usize,
-    material_id: u32,
-    geo_id: u16,
-    tris: &[u32],
-) {
-    if tris.is_empty() || section_idx >= sections.len() {
-        return;
+    let magic = read_u32(data, 0)?;
+    if magic != MAP_MAGIC {
+        return Err(AssetError::InvalidMagic {
+            expected: &MAP_MAGIC_BYTES,
+            found: data[0..4].to_vec(),
+        });
     }
-    let section = &sections[section_idx];
-    let mut remap = HashMap::new();
-    let mut out_vertices = Vec::new();
-    let mut out_indices = Vec::with_capacity(tris.len());
 
-    for &idx in tris {
-        let vert_idx = idx as usize;
-        if vert_idx >= section.positions.len() {
-            continue;
-        }
-        let mapped = *remap.entry(vert_idx).or_insert_with(|| {
-            let next = out_vertices.len() as u32;
-            out_vertices.push(MapVertex {
-                position: section.positions[vert_idx],
-                normal: section.normals[vert_idx],
-                uv: section.uvs[vert_idx],
-                color: section.colors[vert_idx],
+    let sub_count = read_u32(data, 8)? as usize;
+    let mut map = MapFile {
+        name: name.to_string(),
+        materials: Vec::new(),
+        textures: HashMap::new(),
+        batches: Vec::new(),
+    };
+
+    let mut p = 16usize;
+    for _ in 0..sub_count {
+        if p + 16 > data.len() {
+            return Err(AssetError::BufferUnderflow {
+                required: p + 16,
+                available: data.len(),
             });
-            next
-        });
-        out_indices.push(mapped);
+        }
+
+        let sub_type = read_u32(data, p)?;
+        let sub_len = read_u32(data, p + 4)? as usize;
+        let body = p + 16;
+
+        if body + sub_len > data.len() {
+            return Err(AssetError::BufferUnderflow {
+                required: body + sub_len,
+                available: data.len(),
+            });
+        }
+
+        if sub_type == 1 {
+            // Geometry and Materials sub-file
+            parse_geometry_subfile(data, body, &mut map)?;
+        } else if sub_type == 2 {
+            // Textures sub-file
+            parse_textures_subfile(data, body, &mut map)?;
+        }
+
+        p = body + sub_len;
     }
 
-    if !out_indices.is_empty() {
-        batches.push(MapBatch {
-            group,
-            material_id,
-            geo_id,
-            vertices: out_vertices,
-            indices: out_indices,
-        });
-    }
+    Ok(map)
 }
 
+/// Parses sub-file type 1: geometry headers, mesh groups, vertex sections, and material records.
+fn parse_geometry_subfile(data: &[u8], body: usize, map: &mut MapFile) -> Result<(), AssetError> {
+    if body + 16 > data.len() {
+        return Err(AssetError::BufferUnderflow {
+            required: body + 16,
+            available: data.len(),
+        });
+    }
+
+    let geo_count = read_u32(data, body + 4)? as usize;
+    let geo_size = read_u32(data, body + 8)? as usize;
+    let mat_count = read_u32(data, body + 12)? as usize;
+
+    let mut g = body + 16;
+    for _ in 0..geo_count {
+        if g + 20 > data.len() {
+            return Err(AssetError::BufferUnderflow {
+                required: g + 20,
+                available: data.len(),
+            });
+        }
+
+        let geo_id = read_u32(data, g)? as u16;
+        let size = read_u32(data, g + 4)? as usize;
+        let o_ofs = read_u32(data, g + 8)? as usize;
+        let t_ofs = read_u32(data, g + 12)? as usize;
+        let d_ofs = read_u32(data, g + 16)? as usize;
+
+        let first_batch_idx = map.batches.len();
+
+        if o_ofs != 0 {
+            parse_mesh_group(data, g + o_ofs, BatchGroup::Opaque, map)?;
+        }
+        if t_ofs != 0 {
+            parse_mesh_group(data, g + t_ofs, BatchGroup::Transparent, map)?;
+        }
+        if d_ofs != 0 {
+            parse_decals(data, g + d_ofs, map)?;
+        }
+
+        // Tag all batches generated from this geometry node with its geo_id
+        for batch in &mut map.batches[first_batch_idx..] {
+            batch.geo_id = geo_id;
+        }
+
+        g += size;
+    }
+
+    let mp = body + geo_size;
+    if mp + mat_count * 16 > data.len() {
+        return Err(AssetError::BufferUnderflow {
+            required: mp + mat_count * 16,
+            available: data.len(),
+        });
+    }
+
+    for i in 0..mat_count {
+        let ofs = mp + 16 * i;
+        let mode = read_u16(data, ofs)?;
+        let texture_id = read_u16(data, ofs + 2)?;
+        let color = read_u32(data, ofs + 4)?;
+        let overlay = read_u32(data, ofs + 8)?;
+        let specularity = read_f32(data, ofs + 12)?;
+
+        map.materials.push(MapMaterial {
+            mode,
+            texture_id,
+            color,
+            overlay,
+            specularity,
+        });
+    }
+
+    Ok(())
+}
+
+/// Parses mesh chunks (opaque or transparent) and converts triangle strip primitives to triangle lists.
 fn parse_mesh_group(
-    r: &Reader,
+    data: &[u8],
     base: usize,
     group: BatchGroup,
-    geo_id: u16,
-    batches: &mut Vec<MapBatch>,
-) -> Option<()> {
-    let count = r.u32(base)? as usize;
-    for i in 0..count {
-        let ofs = r.u32(base + 4 + i * 4)? as usize;
-        let m = base + ofs;
-        let vtx_ofs = r.u32(m + 32)? as usize;
-        let idx_ofs = r.u32(m + 36)? as usize;
-        let idx_len = r.u32(m + 40)? as usize;
-        let pg_count = r.u32(m + 48)? as usize;
+    map: &mut MapFile,
+) -> Result<(), AssetError> {
+    if base + 4 > data.len() {
+        return Err(AssetError::BufferUnderflow {
+            required: base + 4,
+            available: data.len(),
+        });
+    }
 
-        let num_indices = idx_len / 2;
-        let mut indices = Vec::with_capacity(num_indices);
-        for j in 0..num_indices {
-            indices.push(r.u16(m + idx_ofs + j * 2)? as u32);
+    let count = read_u32(data, base)? as usize;
+    for i in 0..count {
+        let ofs = read_u32(data, base + 4 + i * 4)? as usize;
+        let m = base + ofs;
+        if m + 52 > data.len() {
+            continue;
         }
 
-        let sections = parse_vertex_sections(r, m + vtx_ofs)?;
+        let vtx_ofs = read_u32(data, m + 32)? as usize;
+        let idx_ofs = read_u32(data, m + 36)? as usize;
+        let idx_len = read_u32(data, m + 40)? as usize;
+        let pg_count = read_u32(data, m + 48)? as usize;
+
+        let num_indices = idx_len / 2;
+        let idx_start = m + idx_ofs;
+        if idx_start + idx_len > data.len() {
+            continue;
+        }
+
+        let mut indices = Vec::with_capacity(num_indices);
+        for k in 0..num_indices {
+            indices.push(read_u16(data, idx_start + k * 2)? as u32);
+        }
+
+        let sections = parse_vertex_sections(data, m + vtx_ofs)?;
+
         let mut p = m + 52;
-        let mut cursor = 0;
-        let mut acc: HashMap<(u32, usize), Vec<u32>> = HashMap::new();
+        let mut cursor = 0usize;
+
+        let mut acc: HashMap<(usize, usize), Vec<u32>> = HashMap::new();
 
         for _ in 0..pg_count {
-            let material = r.u32(p)?;
-            let section = r.u32(p + 4)? as usize;
-            let part_count = r.u32(p + 8)? as usize;
+            if p + 12 > data.len() {
+                break;
+            }
+            let material = read_u32(data, p)? as usize;
+            let section = read_u32(data, p + 4)? as usize;
+            let part_count = read_u32(data, p + 8)? as usize;
             p += 12;
 
             for _ in 0..part_count {
-                let strip_len = r.u16(p)? as usize;
-                let prim = r.u8(p + 3)?;
+                if p + 8 > data.len() {
+                    break;
+                }
+                let strip_len = read_u16(data, p)? as usize;
+                let prim = data[p + 3];
                 p += 8;
 
                 let n = if prim == 3 { strip_len * 3 } else { strip_len };
+
                 if cursor + n <= indices.len() {
-                    let tris = strip_to_list(&indices[cursor..cursor + n], prim);
-                    acc.entry((material, section)).or_default().extend(tris);
+                    let sub_indices = &indices[cursor..cursor + n];
+                    let tris = strip_to_list(sub_indices, prim);
+                    acc.entry((material, section))
+                        .or_default()
+                        .extend_from_slice(&tris);
                 }
                 cursor += n;
             }
         }
 
         for ((material, section), tris) in acc {
-            collect_batch(
-                batches,
-                group.clone(),
-                &sections,
-                section,
-                material,
-                geo_id,
-                &tris,
-            );
+            if !tris.is_empty() && section < sections.len() {
+                collect_batch(map, group, &sections[section], material, &tris);
+            }
         }
     }
-    Some(())
+
+    Ok(())
 }
 
-fn parse_decals(r: &Reader, base: usize, geo_id: u16, batches: &mut Vec<MapBatch>) -> Option<()> {
-    let count = r.u32(base)? as usize;
-    for i in 0..count {
-        let ofs = r.u32(base + 4 + i * 4)? as usize;
-        let g = base + ofs;
-        let vtx_ofs = r.u32(g + 32)? as usize;
-        let idx_ofs = r.u32(g + 36)? as usize;
-        let idx_len = r.u32(g + 40)? as usize;
-        let decal_count = r.u32(g + 44)? as usize;
+/// Parses decal geometry sections (billboards, splatters, and signs).
+fn parse_decals(data: &[u8], base: usize, map: &mut MapFile) -> Result<(), AssetError> {
+    if base + 4 > data.len() {
+        return Err(AssetError::BufferUnderflow {
+            required: base + 4,
+            available: data.len(),
+        });
+    }
 
-        let num_indices = idx_len / 2;
-        let mut indices = Vec::with_capacity(num_indices);
-        for j in 0..num_indices {
-            indices.push(r.u16(g + idx_ofs + j * 2)? as u32);
+    let count = read_u32(data, base)? as usize;
+    for i in 0..count {
+        let ofs = read_u32(data, base + 4 + i * 4)? as usize;
+        let g = base + ofs;
+        if g + 48 > data.len() {
+            continue;
         }
 
-        let sections = parse_vertex_sections(r, g + vtx_ofs)?;
+        let vtx_ofs = read_u32(data, g + 32)? as usize;
+        let idx_ofs = read_u32(data, g + 36)? as usize;
+        let idx_len = read_u32(data, g + 40)? as usize;
+        let decal_count = read_u32(data, g + 44)? as usize;
+
+        let num_indices = idx_len / 2;
+        let idx_start = g + idx_ofs;
+        if idx_start + idx_len > data.len() {
+            continue;
+        }
+
+        let mut indices = Vec::with_capacity(num_indices);
+        for k in 0..num_indices {
+            indices.push(read_u16(data, idx_start + k * 2)? as u32);
+        }
+
+        let sections = parse_vertex_sections(data, g + vtx_ofs)?;
+
         let mut p = g + 48;
-        let mut cursor = 0;
+        let mut cursor = 0usize;
 
         for _ in 0..decal_count {
-            let material = r.u32(p)?;
-            let section = r.u32(p + 4)? as usize;
-            let strip_len = r.u32(p + 8)? as usize;
-            let strip_count = r.u32(p + 12)? as usize;
+            if p + 16 > data.len() {
+                break;
+            }
+            let material = read_u32(data, p)? as usize;
+            let section = read_u32(data, p + 4)? as usize;
+            let strip_len = read_u32(data, p + 8)? as usize;
+            let strip_count = read_u32(data, p + 12)? as usize;
             p += 16;
 
             let mut tris = Vec::new();
             for _ in 0..strip_count {
                 if cursor + strip_len <= indices.len() {
-                    tris.extend(strip_to_list(&indices[cursor..cursor + strip_len], 1));
+                    let sub_indices = &indices[cursor..cursor + strip_len];
+                    tris.extend_from_slice(&strip_to_list(sub_indices, 1));
+                    cursor += strip_len;
                 }
-                cursor += strip_len;
             }
 
-            collect_batch(
-                batches,
-                BatchGroup::Decal,
-                &sections,
-                section,
-                material,
-                geo_id,
-                &tris,
-            );
+            if !tris.is_empty() && section < sections.len() {
+                collect_batch(map, BatchGroup::Decal, &sections[section], material, &tris);
+            }
         }
     }
-    Some(())
+
+    Ok(())
 }
 
-fn map_tex_kind(fmt: u32) -> u32 {
-    match fmt {
-        0x100 => 1,
-        0x101 | 0x102 => 3,
-        0x103 | 0x104 => 5,
-        _ => 3,
+/// Parses vertex sections by inspecting stride indicators (0x14, 0x18, 0x20, 0x24).
+fn parse_vertex_sections(data: &[u8], base: usize) -> Result<Vec<VertexSection>, AssetError> {
+    if base + 8 > data.len() {
+        return Ok(Vec::new());
+    }
+
+    let count = read_u32(data, base + 4)? as usize;
+    let mut info = Vec::with_capacity(count);
+    for j in 0..count {
+        let entry_ofs = base + 8 + 12 * j;
+        if entry_ofs + 12 > data.len() {
+            break;
+        }
+        let ofs = read_u32(data, entry_ofs)? as usize;
+        let stride = read_u32(data, entry_ofs + 4)? as usize;
+        let length = read_u32(data, entry_ofs + 8)? as usize;
+        info.push((ofs, stride, length));
+    }
+
+    let start = base + 8 + 12 * count;
+    let mut sections = Vec::with_capacity(count);
+
+    for (ofs, stride, length) in info {
+        let sec_start = start + ofs;
+        if stride == 0 || sec_start + length > data.len() {
+            sections.push(VertexSection::default());
+            continue;
+        }
+
+        let n = length / stride;
+        let mut pos = Vec::with_capacity(n);
+        let mut uv = Vec::with_capacity(n);
+        let mut col = Vec::with_capacity(n);
+        let mut nrm = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let vo = sec_start + i * stride;
+            let p_x = read_f32(data, vo)?;
+            let p_y = read_f32(data, vo + 4)?;
+            let p_z = read_f32(data, vo + 8)?;
+            pos.push([p_x, p_y, p_z]);
+
+            let mut normal = [0.0f32; 3];
+            let mut tex_coord = [0.0f32; 2];
+            let mut color = [255u8; 4];
+
+            if stride == 0x14 {
+                // Pos (0x0..0xC), UV (0xC..0x14)
+                tex_coord = [read_f32(data, vo + 12)?, read_f32(data, vo + 16)?];
+            } else if stride == 0x18 {
+                // Pos (0x0..0xC), BGRA Color (0xC..0x10), UV (0x10..0x18)
+                color = [data[vo + 14], data[vo + 13], data[vo + 12], data[vo + 15]];
+                tex_coord = [read_f32(data, vo + 16)?, read_f32(data, vo + 20)?];
+            } else if stride == 0x20 {
+                // Pos (0x0..0xC), Normal (0xC..0x18), UV (0x18..0x20)
+                normal = [
+                    read_f32(data, vo + 12)?,
+                    read_f32(data, vo + 16)?,
+                    read_f32(data, vo + 20)?,
+                ];
+                tex_coord = [read_f32(data, vo + 24)?, read_f32(data, vo + 28)?];
+            } else if stride >= 0x24 {
+                // Pos (0x0..0xC), Normal (0xC..0x18), BGRA Color (0x18..0x1C), UV (0x1C..0x24)
+                normal = [
+                    read_f32(data, vo + 12)?,
+                    read_f32(data, vo + 16)?,
+                    read_f32(data, vo + 20)?,
+                ];
+                color = [data[vo + 26], data[vo + 25], data[vo + 24], data[vo + 27]];
+                tex_coord = [read_f32(data, vo + 28)?, read_f32(data, vo + 32)?];
+            }
+
+            nrm.push(normal);
+            uv.push(tex_coord);
+            col.push(color);
+        }
+
+        sections.push(VertexSection {
+            positions: pos,
+            uvs: uv,
+            colors: col,
+            normals: nrm,
+        });
+    }
+
+    Ok(sections)
+}
+
+/// Unrolls triangle strip, triangle fan, or raw triangle lists into standard indexed triangle lists.
+///
+/// - `prim == 1`: Triangle Strip (alternating winding order handled to avoid flipped normals).
+/// - `prim == 2`: Triangle Fan (anchored at first vertex index).
+/// - `prim == 3`: Triangle List (direct triplets).
+fn strip_to_list(idx: &[u32], prim: u8) -> Vec<u32> {
+    if prim == 3 {
+        let len = (idx.len() / 3) * 3;
+        return idx[..len].to_vec();
+    }
+
+    let mut out = Vec::new();
+    if prim == 1 {
+        // Triangle strip
+        for i in 0..idx.len().saturating_sub(2) {
+            let a = idx[i];
+            let b = idx[i + 1];
+            let c = idx[i + 2];
+            // Discard degenerate triangle separators
+            if a == b || b == c || a == c {
+                continue;
+            }
+            if i % 2 == 0 {
+                out.push(a);
+                out.push(b);
+                out.push(c);
+            } else {
+                out.push(b);
+                out.push(a);
+                out.push(c);
+            }
+        }
+    } else if prim == 2 {
+        // Triangle fan
+        for i in 1..idx.len().saturating_sub(1) {
+            out.push(idx[0]);
+            out.push(idx[i]);
+            out.push(idx[i + 1]);
+        }
+    }
+
+    out
+}
+
+/// Deduplicates vertex references and builds a [`MapBatch`] draw call for a material group.
+fn collect_batch(
+    map: &mut MapFile,
+    group: BatchGroup,
+    sec: &VertexSection,
+    material: usize,
+    tris: &[u32],
+) {
+    let mut used_map = HashMap::new();
+    let mut batch_pos = Vec::new();
+    let mut batch_uv = Vec::new();
+    let mut batch_col = Vec::new();
+    let mut batch_nrm = Vec::new();
+    let mut batch_indices = Vec::with_capacity(tris.len());
+
+    for &idx in tris {
+        let u_idx = idx as usize;
+        if u_idx >= sec.positions.len() {
+            continue;
+        }
+
+        let new_idx = *used_map.entry(u_idx).or_insert_with(|| {
+            let cur = batch_pos.len() as u32;
+            batch_pos.push(sec.positions[u_idx]);
+            batch_uv.push(sec.uvs[u_idx]);
+            batch_col.push(sec.colors[u_idx]);
+            batch_nrm.push(sec.normals[u_idx]);
+            cur
+        });
+
+        batch_indices.push(new_idx);
+    }
+
+    if !batch_indices.is_empty() {
+        map.batches.push(MapBatch {
+            group,
+            material_index: material,
+            geo_id: 0,
+            positions: batch_pos,
+            uvs: batch_uv,
+            colors: batch_col,
+            normals: batch_nrm,
+            indices: batch_indices,
+        });
     }
 }
 
-fn parse_textures(r: &Reader, mut p: usize, textures: &mut HashMap<u32, MapTexture>) -> Option<()> {
+/// Parses sub-file type 2: embedded textures, headers, sprite declarations, and DXT byte streams.
+fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Result<(), AssetError> {
     p += 16;
-    loop {
-        let tex_id = r.u32(p)?;
+    while p + 32 <= data.len() {
+        let tex_id = read_u32(data, p)?;
         if tex_id == 0 {
             break;
         }
-        let sprite_count = r.u32(p + 12)? as usize;
+
+        let sprite_count = read_u32(data, p + 12)? as usize;
         p += 32;
 
         for _ in 0..sprite_count {
-            let w = r.u16(p + 6)? as u32;
-            let h = r.u16(p + 8)? as u32;
-            let fmt = r.u32(p + 10)?;
-            let length = r.u32(p + 14)? as usize;
+            if p + 32 > data.len() {
+                return Ok(());
+            }
+
+            let w = read_u16(data, p + 8)? as usize;
+            let h = read_u16(data, p + 10)? as usize;
+            let fmt = read_u16(data, p + 12)?;
+            let length = read_u32(data, p + 16)? as usize;
             p += 32;
 
-            if length > 0 && p + length <= r.data.len() {
-                textures.insert(
+            if length != 0 && p + length <= data.len() {
+                let kind = match fmt {
+                    0x100 => 1,         // BC1 / DXT1
+                    0x101 | 0x102 => 3, // BC2 / DXT3
+                    0x103 | 0x104 => 5, // BC3 / DXT5
+                    _ => 3,
+                };
+
+                let tex_data = data[p..p + length].to_vec();
+                map.textures.insert(
                     tex_id,
                     MapTexture {
                         id: tex_id,
                         width: w,
                         height: h,
-                        kind: map_tex_kind(fmt),
-                        data: r.data[p..p + length].to_vec(),
+                        kind,
+                        data: tex_data,
                     },
                 );
-                p += length;
             }
+            p += length;
         }
     }
-    Some(())
+
+    Ok(())
 }
 
-impl MapFile {
-    pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
-        let r = Reader::new(bytes);
-        let magic = r.u32(0).ok_or(AssetError::BufferUnderflow {
-            required: 16,
-            available: bytes.len(),
-        })?;
-        if magic != MAP_MAGIC {
-            return Err(AssetError::InvalidMagic {
-                expected: MAP_MAGIC_BYTES,
-                found: bytes.get(..4).unwrap_or_default().to_vec(),
-            });
-        }
-        let sub_count = r.u32(8).ok_or(AssetError::BufferUnderflow {
-            required: 16,
-            available: bytes.len(),
-        })? as usize;
-        let mut map_file = MapFile::default();
-        let mut p = 16;
-
-        for _ in 0..sub_count {
-            let sub_type = r
-                .u32(p)
-                .ok_or(AssetError::MalformedHeader("Truncated subfile header"))?;
-            let sub_len = r
-                .u32(p + 4)
-                .ok_or(AssetError::MalformedHeader("Truncated subfile length"))?
-                as usize;
-            let body = p + 16;
-
-            if sub_type == 1 {
-                let geo_count = r
-                    .u32(body + 4)
-                    .ok_or(AssetError::MalformedHeader("Truncated geo_count"))?
-                    as usize;
-                let geo_size = r
-                    .u32(body + 8)
-                    .ok_or(AssetError::MalformedHeader("Truncated geo_size"))?
-                    as usize;
-                let mat_count = r
-                    .u32(body + 12)
-                    .ok_or(AssetError::MalformedHeader("Truncated mat_count"))?
-                    as usize;
-
-                let mut g = body + 16;
-                for _ in 0..geo_count {
-                    let geo_id = (r.u32(g).unwrap_or(0) & 0xffff) as u16;
-                    let size = r.u32(g + 4).unwrap_or(0) as usize;
-                    let o_ofs = r.u32(g + 8).unwrap_or(0) as usize;
-                    let t_ofs = r.u32(g + 12).unwrap_or(0) as usize;
-                    let d_ofs = r.u32(g + 16).unwrap_or(0) as usize;
-
-                    if o_ofs > 0 {
-                        parse_mesh_group(
-                            &r,
-                            g + o_ofs,
-                            BatchGroup::Opaque,
-                            geo_id,
-                            &mut map_file.batches,
-                        );
-                    }
-                    if t_ofs > 0 {
-                        parse_mesh_group(
-                            &r,
-                            g + t_ofs,
-                            BatchGroup::Transparent,
-                            geo_id,
-                            &mut map_file.batches,
-                        );
-                    }
-                    if d_ofs > 0 {
-                        parse_decals(&r, g + d_ofs, geo_id, &mut map_file.batches);
-                    }
-                    g += size;
-                }
-
-                let mp = body + geo_size;
-                for i in 0..mat_count {
-                    let pos = mp + 16 * i;
-                    if let (
-                        Some(mode),
-                        Some(texture_id),
-                        Some(color),
-                        Some(overlay),
-                        Some(specularity),
-                    ) = (
-                        r.u16(pos),
-                        r.u16(pos + 2),
-                        r.u32(pos + 4),
-                        r.u32(pos + 8),
-                        r.f32(pos + 12),
-                    ) {
-                        map_file.materials.push(MapMaterial {
-                            mode,
-                            texture_id,
-                            color,
-                            overlay,
-                            specularity,
-                        });
-                    }
-                }
-            } else if sub_type == 2 {
-                parse_textures(&r, body, &mut map_file.textures);
-            }
-
-            p = body + sub_len;
-        }
-
-        Ok(map_file)
+#[inline(always)]
+fn read_u16(data: &[u8], ofs: usize) -> Result<u16, AssetError> {
+    if ofs + 2 > data.len() {
+        Err(AssetError::BufferUnderflow {
+            required: ofs + 2,
+            available: data.len(),
+        })
+    } else {
+        Ok(u16::from_le_bytes([data[ofs], data[ofs + 1]]))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_map_header_pod() {
-        assert_eq!(std::mem::size_of::<MapHeader>(), 16);
+#[inline(always)]
+fn read_u32(data: &[u8], ofs: usize) -> Result<u32, AssetError> {
+    if ofs + 4 > data.len() {
+        Err(AssetError::BufferUnderflow {
+            required: ofs + 4,
+            available: data.len(),
+        })
+    } else {
+        Ok(u32::from_le_bytes([
+            data[ofs],
+            data[ofs + 1],
+            data[ofs + 2],
+            data[ofs + 3],
+        ]))
     }
+}
 
-    #[test]
-    fn test_map_vertex_layout() {
-        assert_eq!(std::mem::size_of::<MapVertex>(), 48);
-    }
-
-    #[test]
-    fn test_real_map_file() {
-        let path =
-            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
-        if let Ok(bytes) = std::fs::read(path) {
-            let map = MapFile::parse(&bytes).expect("Failed to parse rr21.map");
-            assert_eq!(map.materials.len(), 14);
-            assert_eq!(map.batches.len(), 13);
-            let total_tris: usize = map.batches.iter().map(|b| b.indices.len() / 3).sum();
-            assert_eq!(total_tris, 21299);
-        }
+#[inline(always)]
+fn read_f32(data: &[u8], ofs: usize) -> Result<f32, AssetError> {
+    if ofs + 4 > data.len() {
+        Err(AssetError::BufferUnderflow {
+            required: ofs + 4,
+            available: data.len(),
+        })
+    } else {
+        Ok(f32::from_le_bytes([
+            data[ofs],
+            data[ofs + 1],
+            data[ofs + 2],
+            data[ofs + 3],
+        ]))
     }
 }

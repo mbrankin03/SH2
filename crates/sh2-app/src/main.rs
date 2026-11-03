@@ -36,30 +36,46 @@ impl ApplicationHandler for SilentHillApp {
 
         let window_attributes = Window::default_attributes()
             .with_title("Silent Hill 2 Open Port - Interactive PS2 Simulation Test")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
+            .with_visible(true);
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         let size = window.inner_size();
 
-        let render_config = RendererConfig {
-            width: size.width.max(1),
-            height: size.height.max(1),
-            enable_hdr: true,
-            enable_fog: true,
-            enable_post: true,
-        };
+        // Use Vulkan instance explicitly for desktop Linux Wayland
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..Default::default()
+        });
 
-        let render_ctx = RenderContext::new_headless(render_config)
-            .expect("Failed to initialize wgpu render context");
-
-        // Create presentation surface
+        // Create surface safely bound to the window
         let surface = unsafe {
-            // Safety: Window is wrapped in Arc and lives as long as the surface
             let target = wgpu::SurfaceTargetUnsafe::from_window(&*window).unwrap();
-            render_ctx.instance.create_surface_unsafe(target).unwrap()
+            instance.create_surface_unsafe(target).unwrap()
         };
 
-        let surface_caps = surface.get_capabilities(&render_ctx.adapter);
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))
+        .expect("Failed to find suitable Vulkan GPU adapter compatible with window surface");
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("SH2 Render Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+            },
+            None,
+        ))
+        .expect("Failed to acquire Vulkan logical device");
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
             .iter()
@@ -77,33 +93,37 @@ impl ApplicationHandler for SilentHillApp {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&render_ctx.device, &surface_config);
+        surface.configure(&device, &surface_config);
 
-        let blitter = SurfaceBlitter::new(&render_ctx.device, surface_format);
+        let render_config = RendererConfig {
+            width: size.width.max(1),
+            height: size.height.max(1),
+            enable_hdr: true,
+            enable_fog: true,
+            enable_post: true,
+        };
+
+        let render_ctx = RenderContext::from_device(instance, adapter, device.clone(), queue.clone(), render_config);
+        let blitter = SurfaceBlitter::new(&device, surface_format);
 
         // Load an authentic Silent Hill 2 level geometry map
-        let map_path =
-            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
+        let map_path = "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
         let map_file = match std::fs::read(map_path) {
             Ok(bytes) => {
                 tracing::info!("Loaded authentic level geometry from {}", map_path);
                 MapFile::parse(&bytes).unwrap_or_default()
             }
             Err(e) => {
-                tracing::warn!(
-                    "Could not read {}: {}. Generating test arena geometry.",
-                    map_path,
-                    e
-                );
+                tracing::warn!("Could not read {}: {}. Generating test arena geometry.", map_path, e);
                 MapFile::default()
             }
         };
 
-        let gpu_map = GpuMap::from_map(&render_ctx.device, &map_file);
+        let gpu_map = GpuMap::from_map(&device, &map_file);
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.input.set_control_scheme(ControlScheme::Tank);
 
-        tracing::info!("Simulation and Renderer initialized successfully!");
+        tracing::info!("Simulation and Renderer initialized successfully on Vulkan!");
         tracing::info!("Controls: Gamepad Left Stick: Move/Turn (Tank) | Right Stick: PS2 Search Look | Y/Triangle: Toggle Flashlight");
 
         self.state = Some(AppState {
@@ -118,15 +138,8 @@ impl ApplicationHandler for SilentHillApp {
         });
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        let Some(ref mut state) = self.state else {
-            return;
-        };
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+        let Some(ref mut state) = self.state else { return };
 
         match event {
             WindowEvent::CloseRequested => {
@@ -137,9 +150,7 @@ impl ApplicationHandler for SilentHillApp {
                 if new_size.width > 0 && new_size.height > 0 {
                     state.surface_config.width = new_size.width;
                     state.surface_config.height = new_size.height;
-                    state
-                        .surface
-                        .configure(&state.render_ctx.device, &state.surface_config);
+                    state.surface.configure(&state.render_ctx.device, &state.surface_config);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -154,8 +165,7 @@ impl ApplicationHandler for SilentHillApp {
                 let alpha = state.sim_core.interpolation_alpha();
                 let view = state.sim_core.camera.interpolated_view_matrix(alpha);
                 let fov = state.sim_core.camera.interpolated_fov(alpha);
-                let aspect =
-                    state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
+                let aspect = state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
                 let proj = glam::Mat4::perspective_rh(fov, aspect, 100.0, 50000.0);
                 let view_proj = proj * view;
                 let inv_proj = proj.inverse();
@@ -189,9 +199,7 @@ impl ApplicationHandler for SilentHillApp {
                 let surface_texture = match state.surface.get_current_texture() {
                     Ok(frame) => frame,
                     Err(wgpu::SurfaceError::Outdated) => {
-                        state
-                            .surface
-                            .configure(&state.render_ctx.device, &state.surface_config);
+                        state.surface.configure(&state.render_ctx.device, &state.surface_config);
                         return;
                     }
                     Err(e) => {
@@ -200,14 +208,10 @@ impl ApplicationHandler for SilentHillApp {
                     }
                 };
 
-                let surface_view = surface_texture
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor::default());
-                let mut encoder = state.render_ctx.device.create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("Surface Present Encoder"),
-                    },
-                );
+                let surface_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let mut encoder = state.render_ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Surface Present Encoder"),
+                });
 
                 state.blitter.render(
                     &state.render_ctx.device,
@@ -216,10 +220,7 @@ impl ApplicationHandler for SilentHillApp {
                     &surface_view,
                 );
 
-                state
-                    .render_ctx
-                    .queue
-                    .submit(std::iter::once(encoder.finish()));
+                state.render_ctx.queue.submit(std::iter::once(encoder.finish()));
                 surface_texture.present();
 
                 state.window.request_redraw();

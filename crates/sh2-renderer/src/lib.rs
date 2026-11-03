@@ -606,3 +606,223 @@ impl SurfaceBlitter {
         rpass.draw(0..3, 0..1);
     }
 }
+
+impl RenderContext {
+    pub fn from_device(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        config: RendererConfig,
+    ) -> Self {
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("32-bit Float Depth Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let hdr_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("HDR Color Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let hdr_color_view = hdr_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let fog_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Fog Output Color Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::HDR_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let fog_color_view = fog_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ldr_output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("LDR Output Color Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let ldr_output_view =
+            ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let geometry_pipeline =
+            pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let fog_pipeline = fog::FogComputePipeline::new(&device);
+        let post_pipeline = post::PostProcessPipeline::new(&device);
+
+        let camera_uniforms = pipeline::CameraUniforms::default();
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Uniform Buffer"),
+            contents: bytemuck::bytes_of(&camera_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let spotlight_uniforms = light::SpotlightUniforms::default();
+        let spotlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Spotlight Uniform Buffer"),
+            contents: bytemuck::bytes_of(&spotlight_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let fog_uniforms = fog::FogUniforms::default();
+        let fog_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Fog Uniform Buffer"),
+            contents: bytemuck::bytes_of(&fog_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let post_uniforms = post::PostUniforms::default();
+        let post_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Post Uniform Buffer"),
+            contents: bytemuck::bytes_of(&post_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Geometry Bind Group"),
+            layout: &geometry_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: spotlight_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let fog_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fog Bind Group"),
+            layout: &fog_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: fog_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                },
+            ],
+        });
+
+        let post_bind_group_fog = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (With Fog)"),
+            layout: &post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                },
+            ],
+        });
+
+        let post_bind_group_direct = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (Direct HDR)"),
+            layout: &post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                },
+            ],
+        });
+
+        Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            config,
+            depth_format: Self::DEPTH_FORMAT,
+            hdr_format: Self::HDR_FORMAT,
+            output_format: Self::OUTPUT_FORMAT,
+            depth_texture,
+            depth_view,
+            hdr_color_texture,
+            hdr_color_view,
+            fog_color_texture,
+            fog_color_view,
+            ldr_output_texture,
+            ldr_output_view,
+            geometry_pipeline,
+            fog_pipeline,
+            post_pipeline,
+            camera_buffer,
+            spotlight_buffer,
+            fog_buffer,
+            post_buffer,
+            geometry_bind_group,
+            fog_bind_group,
+            post_bind_group_fog,
+            post_bind_group_direct,
+        }
+    }
+}

@@ -38,12 +38,12 @@ impl ApplicationHandler for App {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-        })).unwrap();
+        }))
+        .unwrap();
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor::default(),
-            None,
-        )).unwrap();
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+                .unwrap();
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -75,14 +75,21 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::RedrawRequested => {
-                let Some(ref surface) = self.surface else { return };
-                let Some(ref device) = self.device else { return };
+                let Some(ref surface) = self.surface else {
+                    return;
+                };
+                let Some(ref device) = self.device else {
+                    return;
+                };
                 let Some(ref queue) = self.queue else { return };
 
                 let frame = surface.get_current_texture().unwrap();
-                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
 
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                let mut encoder =
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
                 {
                     let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("Clear Pass"),
@@ -90,7 +97,12 @@ impl ApplicationHandler for App {
                             view: &view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.1, g: 0.05, b: 0.02, a: 1.0 }),
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.1,
+                                    g: 0.05,
+                                    b: 0.02,
+                                    a: 1.0,
+                                }),
                                 store: wgpu::StoreOp::Store,
                             },
                         })],

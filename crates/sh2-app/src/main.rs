@@ -103,18 +103,40 @@ impl ApplicationHandler for SilentHillApp {
             enable_post: true,
         };
 
-        let render_ctx = RenderContext::from_device(instance, adapter, device.clone(), queue.clone(), render_config);
+        let render_ctx = RenderContext::from_device(
+            instance,
+            adapter,
+            device.clone(),
+            queue.clone(),
+            render_config,
+        );
+
+        // Calibrate Fog for PS2 unit coordinates (~2 mm per unit, near=2000, far=30000)
+        let fog_uniforms = sh2_renderer::fog::FogUniforms {
+            fog_color: [0.12, 0.13, 0.16, 1.0], // Dark atmospheric mist
+            fog_near: 2000.0,
+            fog_far: 25000.0,
+            density: 0.85,
+            _padding: 0.0,
+        };
+        render_ctx.update_fog(&fog_uniforms);
+
         let blitter = SurfaceBlitter::new(&device, surface_format);
 
         // Load an authentic Silent Hill 2 level geometry map
-        let map_path = "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
+        let map_path =
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
         let map_file = match std::fs::read(map_path) {
             Ok(bytes) => {
                 tracing::info!("Loaded authentic level geometry from {}", map_path);
                 MapFile::parse(&bytes).unwrap_or_default()
             }
             Err(e) => {
-                tracing::warn!("Could not read {}: {}. Generating test arena geometry.", map_path, e);
+                tracing::warn!(
+                    "Could not read {}: {}. Generating test arena geometry.",
+                    map_path,
+                    e
+                );
                 MapFile::default()
             }
         };
@@ -122,6 +144,7 @@ impl ApplicationHandler for SilentHillApp {
         let gpu_map = GpuMap::from_map(&device, &map_file);
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.input.set_control_scheme(ControlScheme::Tank);
+        sim_core.scenario.flashlight_on = true; // Turn flashlight on by default
 
         tracing::info!("Simulation and Renderer initialized successfully on Vulkan!");
         tracing::info!("Controls: Gamepad Left Stick: Move/Turn (Tank) | Right Stick: PS2 Search Look | Y/Triangle: Toggle Flashlight");
@@ -138,8 +161,15 @@ impl ApplicationHandler for SilentHillApp {
         });
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
-        let Some(ref mut state) = self.state else { return };
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let Some(ref mut state) = self.state else {
+            return;
+        };
 
         match event {
             WindowEvent::CloseRequested => {
@@ -150,7 +180,9 @@ impl ApplicationHandler for SilentHillApp {
                 if new_size.width > 0 && new_size.height > 0 {
                     state.surface_config.width = new_size.width;
                     state.surface_config.height = new_size.height;
-                    state.surface.configure(&state.render_ctx.device, &state.surface_config);
+                    state
+                        .surface
+                        .configure(&state.render_ctx.device, &state.surface_config);
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -165,7 +197,8 @@ impl ApplicationHandler for SilentHillApp {
                 let alpha = state.sim_core.interpolation_alpha();
                 let view = state.sim_core.camera.interpolated_view_matrix(alpha);
                 let fov = state.sim_core.camera.interpolated_fov(alpha);
-                let aspect = state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
+                let aspect =
+                    state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
                 let proj = glam::Mat4::perspective_rh(fov, aspect, 100.0, 50000.0);
                 let view_proj = proj * view;
                 let inv_proj = proj.inverse();
@@ -199,7 +232,9 @@ impl ApplicationHandler for SilentHillApp {
                 let surface_texture = match state.surface.get_current_texture() {
                     Ok(frame) => frame,
                     Err(wgpu::SurfaceError::Outdated) => {
-                        state.surface.configure(&state.render_ctx.device, &state.surface_config);
+                        state
+                            .surface
+                            .configure(&state.render_ctx.device, &state.surface_config);
                         return;
                     }
                     Err(e) => {
@@ -208,10 +243,14 @@ impl ApplicationHandler for SilentHillApp {
                     }
                 };
 
-                let surface_view = surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let mut encoder = state.render_ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Surface Present Encoder"),
-                });
+                let surface_view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                let mut encoder = state.render_ctx.device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("Surface Present Encoder"),
+                    },
+                );
 
                 state.blitter.render(
                     &state.render_ctx.device,
@@ -220,7 +259,10 @@ impl ApplicationHandler for SilentHillApp {
                     &surface_view,
                 );
 
-                state.render_ctx.queue.submit(std::iter::once(encoder.finish()));
+                state
+                    .render_ctx
+                    .queue
+                    .submit(std::iter::once(encoder.finish()));
                 surface_texture.present();
 
                 state.window.request_redraw();

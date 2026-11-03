@@ -111,19 +111,7 @@ impl ApplicationHandler for SilentHillApp {
             render_config,
         );
 
-        // Calibrate Fog for PS2 unit coordinates (~2 mm per unit, near=2000, far=30000)
-        let fog_uniforms = sh2_renderer::fog::FogUniforms {
-            fog_color: [0.12, 0.13, 0.16, 1.0], // Dark atmospheric mist
-            fog_near: 2000.0,
-            fog_far: 25000.0,
-            density: 0.85,
-            _padding: 0.0,
-        };
-        render_ctx.update_fog(&fog_uniforms);
-
-        let blitter = SurfaceBlitter::new(&device, surface_format);
-
-        // Load an authentic Silent Hill 2 level geometry map
+        // Load authentic Silent Hill 2 level geometry map
         let map_path =
             "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
         let map_file = match std::fs::read(map_path) {
@@ -142,9 +130,29 @@ impl ApplicationHandler for SilentHillApp {
         };
 
         let gpu_map = GpuMap::from_map(&device, &map_file);
+        let blitter = SurfaceBlitter::new(&device, surface_format);
+
+        // Spawn player and camera directly inside rr21.map center:
+        // rr21 bounds: X: [-101550, -98482], Y: [-1915, 102], Z: [-61211, -58796]
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.input.set_control_scheme(ControlScheme::Tank);
-        sim_core.scenario.flashlight_on = true; // Turn flashlight on by default
+        sim_core.scenario.player_position = glam::Vec3::new(-100000.0, -500.0, -60000.0);
+        sim_core.scenario.player_yaw = 0.0;
+        sim_core.scenario.flashlight_on = true;
+        sim_core.camera.reset_to_player(
+            sim_core.scenario.player_position,
+            sim_core.scenario.player_yaw,
+        );
+
+        // Atmospheric Silent Hill lighting & fog calibrated for rr21 bounds
+        let fog_uniforms = sh2_renderer::fog::FogUniforms {
+            fog_color: [0.08, 0.09, 0.11, 1.0],
+            fog_near: 1500.0,
+            fog_far: 8000.0,
+            density: 0.65,
+            _padding: 0.0,
+        };
+        render_ctx.update_fog(&fog_uniforms);
 
         tracing::info!("Simulation and Renderer initialized successfully on Vulkan!");
         tracing::info!("Controls: Gamepad Left Stick: Move/Turn (Tank) | Right Stick: PS2 Search Look | Y/Triangle: Toggle Flashlight");
@@ -199,29 +207,30 @@ impl ApplicationHandler for SilentHillApp {
                 let fov = state.sim_core.camera.interpolated_fov(alpha);
                 let aspect =
                     state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
-                let proj = glam::Mat4::perspective_rh(fov, aspect, 100.0, 50000.0);
+                let proj = glam::Mat4::perspective_rh(fov, aspect, 10.0, 30000.0);
                 let view_proj = proj * view;
                 let inv_proj = proj.inverse();
 
                 let cam_pos = state.sim_core.camera.curr_snapshot.eye;
                 state.render_ctx.update_camera(view_proj, inv_proj, cam_pos);
 
-                // 3. Update flashlight spotlight tracking James
+                // 3. Dynamic Flashlight tracking James
                 let player_pos = state.sim_core.scenario.player_position;
                 let player_yaw = state.sim_core.scenario.player_yaw;
-                let light_dir = glam::Vec3::new(player_yaw.sin(), 0.1, player_yaw.cos());
-                let spot_pos = player_pos + glam::Vec3::new(0.0, -1200.0, 0.0);
+                let light_dir =
+                    glam::Vec3::new(player_yaw.sin(), 0.05, player_yaw.cos()).normalize_or_zero();
+                let spot_pos = player_pos + glam::Vec3::new(0.0, -800.0, 0.0);
 
                 let light_color = if state.sim_core.scenario.flashlight_on {
-                    [1.2, 1.15, 0.95, 1.0]
+                    [1.8, 1.7, 1.4, 1.0]
                 } else {
                     [0.0, 0.0, 0.0, 0.0]
                 };
 
                 let spot_uniforms = sh2_renderer::light::SpotlightUniforms {
                     position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
-                    direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.95],
-                    color_outer: [light_color[0], light_color[1], light_color[2], 0.85],
+                    direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.92], // ~23 deg inner
+                    color_outer: [light_color[0], light_color[1], light_color[2], 0.78], // ~38 deg outer
                 };
                 state.render_ctx.update_spotlight(&spot_uniforms);
 

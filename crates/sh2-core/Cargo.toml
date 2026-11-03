@@ -13,3 +13,4 @@ log = { workspace = true }
 tracing = { workspace = true }
 bitflags = { workspace = true }
 serde = { workspace = true }
+gilrs = { workspace = true }

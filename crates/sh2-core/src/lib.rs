@@ -1,6 +1,22 @@
 //! sh2-core: Core engine simulation, state machines, math, camera, and timing.
 
+pub mod camera;
 pub mod clock;
+pub mod input;
 pub mod math;
+pub mod scenario;
+pub mod simulation;
 pub mod state;
+pub mod timing;
 pub mod types;
+
+// Re-exports for convenience
+pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
+pub use clock::EngineClock;
+pub use input::{
+    ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,
+    InputManager,
+};
+pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
+pub use simulation::SimulationCore;
+pub use timing::TimingConstants;

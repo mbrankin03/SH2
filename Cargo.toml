@@ -1,0 +1,62 @@
+[workspace]
+members = [
+    "crates/sh2-core",
+    "crates/sh2-assets",
+    "crates/sh2-renderer",
+    "crates/sh2-audio",
+    "crates/sh2-ui",
+    "crates/sh2-debug",
+    "crates/sh2-app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Matthew Brankin <mbrankin677@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mbrankin677/SH2-Port"
+
+[workspace.dependencies]
+# Internal workspace crates
+sh2-core = { path = "crates/sh2-core" }
+sh2-assets = { path = "crates/sh2-assets" }
+sh2-renderer = { path = "crates/sh2-renderer" }
+sh2-audio = { path = "crates/sh2-audio" }
+sh2-ui = { path = "crates/sh2-ui" }
+sh2-debug = { path = "crates/sh2-debug" }
+
+# Common utilities & math
+glam = "0.29"
+bytemuck = { version = "1.19", features = ["derive"] }
+thiserror = "2.0"
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+bitflags = "2.6"
+serde = { version = "1.0", features = ["derive"] }
+
+# Rendering & Windowing
+wgpu = "23.0"
+winit = { version = "0.30", features = ["rwh_06", "x11", "wayland", "android-native-activity"] }
+
+# Audio
+kira = "0.9"
+
+# Compilation Profiles
+# Game development profile: Keep dev builds responsive without sacrificing debuggability
+[profile.dev]
+opt-level = 1
+
+# Optimize heavy math, audio, and graphics dependencies in debug builds
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# Panic = abort ensures safe boundaries across Android JNI/NDK and eliminates unwinding bloat
+panic = "abort"
+strip = true
+

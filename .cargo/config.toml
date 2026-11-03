@@ -1,0 +1,6 @@
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-landroid", "-C", "link-arg=-llog"]
+
+[alias]
+# Target Android 13+ (API level 33), specifically configured for the AYN Thor (Snapdragon 8 Gen 2)
+build-android = "ndk -t arm64-v8a -p 33 -o target/android-libs build --package sh2-app --lib"

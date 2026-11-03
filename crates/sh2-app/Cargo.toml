@@ -1,0 +1,30 @@
+[package]
+name = "sh2-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "sh2-app"
+path = "src/main.rs"
+
+[dependencies]
+sh2-core = { workspace = true }
+sh2-assets = { workspace = true }
+sh2-renderer = { workspace = true }
+sh2-audio = { workspace = true }
+sh2-ui = { workspace = true }
+sh2-debug = { workspace = true }
+winit = { workspace = true }
+wgpu = { workspace = true }
+log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }

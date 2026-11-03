@@ -1,0 +1,21 @@
+# Ignore large binary dumps, disc images, and extracted directories
+*.iso
+*.bin
+*.BIN
+*.cue
+*.CUE
+*.zip
+*.tar.*
+*.7z
+Silent Hill 2 (Jul 13, 2001 prototype)/
+Silent Hill 2 - Trial Version (E3 2001)/
+prototype_extracted/
+e3_extracted/
+
+# Target build directories
+target/
+build/
+*.so
+*.apk
+*.o
+*.a

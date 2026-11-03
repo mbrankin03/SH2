@@ -1,0 +1,78 @@
+# Engineering Team Architecture & Operating Model (SH2)
+
+## 1. Team Structure & Roles
+- **Engineering Manager (EM):**
+  - **Matthew (`mbrankin` / `mbrankin677@gmail.com`):** Primary EM & Project Lead.
+  - *Governance:* Final PR sign-off and architectural decisions must be approved by Matthew along with an AI peer review before merging code into `main`.
+- **AI Agent Software Engineers:**
+  - **Frontend / Rendering Engineer:** Handles `wgpu`/Vulkan pipelines, volumetric compute shaders, atmospheric lighting, and AYN Thor dual-screen swapchains.
+  - **Core Simulation Engineer:** Handles game loop timing (60 Hz decoupled ticks), camera systems, physics, puzzle state machines, and *Born from a Wish* stage programs.
+  - **Asset & Pipeline Engineer:** Handles binary parsing of `.map`, `.mdls`, `.anm`, `.sdm`, DDS textures, and prototype symbol extractions.
+  - **QA & Testing Engineer:** Headless verification against vanilla assets, regression checks, and automated unit tests.
+  - **DevOps / Build Engineer:** Manages cargo workspace, Android NDK (`cargo-ndk`), ADB workflows, and packaging.
+
+---
+
+## 2. Scrum Methodology & Jira Guard Rails
+- **Project Tracker:** Jira Cloud (`https://jauffre.atlassian.net`)
+- **Project Key:** `SH2` (Project: *Silent Hill 2 Open Port*)
+- **Issue Hierarchy:**
+  - **Epic:** High-level project capability (e.g., *Phase 2: Prototype Ground Truth Extraction*, *Phase 4: Modern wgpu Renderer & Volumetric Atmosphere*, *Phase 6: Dual-Screen & Touch Companion UI*).
+  - **Task / Story:** Discrete engineering deliverables with clear acceptance criteria.
+  - **Subtask / Bug:** Isolated implementation items or regressions caught during QA.
+
+---
+
+## 3. Git Branching & Workflow Rules
+
+### Branch Naming Convention
+Branches **must** use developer-namespaced prefixes matching the Jira issue key:
+```
+mb-u/<Discipline>/<JIRA-KEY>
+```
+**Examples:**
+- `mb-u/Pipeline/SH2-1`
+- `mb-u/FrontEnd/SH2-5`
+- `mb-u/Core/SH2-8`
+- `mb-u/DevOps/SH2-12`
+
+### Rules of Engagement
+1. **No Monolithic Commits:** Code changes must be modular, highly cohesive, loosely coupled, and split across specialized crates (`crates/sh2-*`).
+2. **Never Commit Directly to `main`:** All work goes through feature branches and Pull Requests.
+3. **Workspace Isolation:** Subagents operate in isolated workspaces to prevent race conditions.
+
+---
+
+## 4. Software Engineering & Code Quality Standards
+- **Naming Conventions:**
+  - Types, Structs, Enums, Traits: `PascalCase` (e.g. `VolumetricFogUniforms`, `MapMarkerState`).
+  - Functions, Variables, Fields: `snake_case`.
+  - Constants & Statics: `SCREAMING_SNAKE_CASE`.
+- **Inline Documentation & Comments:**
+  - Public items must include doc comments (`///`) explaining their purpose, invariants, and units.
+  - Math matrices, MIPS opcode decoders, and format quirks must have inline comments (`//`) explaining the non-obvious *why*.
+- **Formatting & Formatting Discipline:**
+  - Strictly adhere to `cargo fmt` standards.
+- **Linting & Safety:**
+  - Zero compiler warnings allowed (`cargo clippy --workspace -- -D warnings`).
+  - Maintain `#![forbid(unsafe_code)]` in asset format parser crates (`crates/sh2-assets`).
+
+---
+
+## 5. Pull Request (PR) Standard & Review Policy
+Every Pull Request must strictly follow the **What / Why / Testing** template:
+
+```markdown
+## What
+Detailed description of the technical changes, components modified, and new crates/modules introduced.
+
+## Why
+The engineering rationale behind the design decision, Jira ticket link (`SH2-XXX`), and architectural context.
+
+## Testing
+Comprehensive verification performed:
+- Cargo tests run (`cargo test --workspace`)
+- Linting and formatting status (`cargo clippy`, `cargo fmt`)
+- Synthetic fixtures tested or in-engine validation against vanilla data.
+- Edge cases evaluated.
+```

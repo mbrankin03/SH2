@@ -20,3 +20,9 @@ build/
 *.o
 *.a
 Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/
+
+# AI / IDE tooling & caches
+.gemini/
+.gemini*
+*.gemini
+

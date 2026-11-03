@@ -112,7 +112,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },

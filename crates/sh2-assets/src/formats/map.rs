@@ -1,69 +1,148 @@
+//! Safe binary parser for Silent Hill 2 Map format (`.map`).
+//!
+//! # Format Architecture & Memory Layout
+//! Silent Hill 2 `.map` files store level geometry, mesh groupings, materials, and embedded textures.
+//!
+//! ### Binary File Header (16 bytes)
+//! | Offset | Type | Description |
+//! |--------|------|-------------|
+//! | `0x00` | `u32` | Magic number (`0x20010510` in little-endian) |
+//! | `0x04` | `u32` | Total file size in bytes |
+//! | `0x08` | `u32` | Number of sub-files (`sub_count`, typically 2: geometry and textures) |
+//! | `0x0C` | `u32` | Reserved / padding (always 0) |
+//!
+//! ### Sub-Files (Type 1: Geometry & Materials, Type 2: Embedded Textures)
+//! - **Sub-file 1 (Geometry & Materials)**:
+//!   - Header: `u32 magic`, `u32 geo_count`, `u32 geo_size`, `u32 material_count`.
+//!   - Geometry records: `geo_id` (variant + part group), byte size, and offsets to:
+//!     - Opaque mesh group
+//!     - Transparent mesh group
+//!     - Decals mesh group
+//!   - Materials table: array of 16-byte structs containing blend mode, texture index, color tint,
+//!     overlay factors, and specular power.
+//! - **Mesh Groups & Batches**:
+//!   - Meshes index a shared vertex buffer divided into sections (e.g. stride 0x14 for pos+uv,
+//!     0x18 for pos+color+uv, 0x20 for pos+normal+uv, 0x24 for pos+normal+color+uv).
+//!   - Part groups specify material IDs, section references, and primitive strips/fans/lists.
+//!   - `parse_map` de-duplicates and unrolls triangle strips into indexed [`MapBatch`] draw calls.
+//! - **Sub-file 2 (Textures)**:
+//!   - Sequential embedded DXT compressed texture blocks tagged by texture IDs.
+
 use crate::error::AssetError;
 use crate::formats::dxt::decode_dxt;
 use std::collections::HashMap;
 
+/// Magic identifier present at byte 0 of all valid PC .map files (`0x20010510`).
 pub const MAP_MAGIC: u32 = 0x20010510;
+
+/// Byte representation of `MAP_MAGIC` in little-endian order.
 pub const MAP_MAGIC_BYTES: [u8; 4] = [0x10, 0x05, 0x01, 0x20];
 
+/// Surface material definition applied to geometry batches.
+///
+/// Corresponds to the 16-byte material records at the end of geometry subfiles.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapMaterial {
+    /// Rendering mode / shader flag (e.g., standard shading, vertex color modulation, specular).
     pub mode: u16,
+    /// Index into the map's texture table.
     pub texture_id: u16,
+    /// RGBA tint / diffuse color stored in packed 32-bit format.
     pub color: u32,
+    /// Overlay color / blend factor.
     pub overlay: u32,
+    /// Specular reflection power exponent.
     pub specularity: f32,
 }
 
+/// An embedded texture stored inside a `.map` sub-file.
 #[derive(Debug, Clone)]
 pub struct MapTexture {
+    /// Unique texture identifier referenced by material records.
     pub id: u32,
+    /// Texture width in pixels.
     pub width: usize,
+    /// Texture height in pixels.
     pub height: usize,
+    /// Compression kind: 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
     pub kind: u8,
+    /// Compressed texture payload data.
     pub data: Vec<u8>,
 }
 
 impl MapTexture {
+    /// Decodes the compressed texture payload into an uncompressed RGBA8 byte buffer.
     pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
         decode_dxt(&self.data, self.width, self.height, self.kind)
     }
 }
 
+/// Category of geometry determining render queue, depth writing, and sorting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchGroup {
+    /// Standard opaque geometry drawn with full depth testing and writing.
     Opaque,
+    /// Alpha-blended geometry sorted back-to-front.
     Transparent,
+    /// Coplanar decal surfaces (blood splatters, posters, floor markings).
     Decal,
 }
 
+/// A parsed section of vertex attributes before batching and draw call assembly.
 #[derive(Debug, Clone, Default)]
 pub struct VertexSection {
+    /// Model-space vertex positions (X, Y, Z).
     pub positions: Vec<[f32; 3]>,
+    /// Texture mapping coordinates (U, V).
     pub uvs: Vec<[f32; 2]>,
+    /// Per-vertex RGBA colors (BGRA byte order remapped to RGBA).
     pub colors: Vec<[u8; 4]>,
+    /// Surface normal vectors (X, Y, Z).
     pub normals: Vec<[f32; 3]>,
 }
 
+/// A pre-assembled GPU draw call containing vertices and triangle list indices.
+///
+/// All triangle strips, fans, and vertex sections have been converted into indexed
+/// triangle lists ready for direct binding into a GPU pipeline (`wgpu::RenderPass`).
 #[derive(Debug, Clone)]
 pub struct MapBatch {
+    /// Draw queue type (Opaque, Transparent, or Decal).
     pub group: BatchGroup,
+    /// Index into [`MapFile::materials`].
     pub material_index: usize,
+    /// Sub-geometry identifier (part group in bits 8..15, variant in bits 0..7).
     pub geo_id: u16,
+    /// Vertex positions (X, Y, Z).
     pub positions: Vec<[f32; 3]>,
+    /// Texture coordinates (U, V).
     pub uvs: Vec<[f32; 2]>,
+    /// Vertex colors in RGBA8 order.
     pub colors: Vec<[u8; 4]>,
+    /// Vertex surface normals.
     pub normals: Vec<[f32; 3]>,
+    /// Triangle list index buffer indexing into `positions`, `uvs`, `colors`, and `normals`.
     pub indices: Vec<u32>,
 }
 
+/// Ingested representation of a complete `.map` file.
 #[derive(Debug, Clone, Default)]
 pub struct MapFile {
+    /// Identifying file or stage name (e.g., "rr01" or "ap01").
     pub name: String,
+    /// Material definitions indexed by batches.
     pub materials: Vec<MapMaterial>,
+    /// Embedded textures keyed by their unique texture ID.
     pub textures: HashMap<u32, MapTexture>,
+    /// Render batches prepared for GPU rasterization.
     pub batches: Vec<MapBatch>,
 }
 
+/// Parses a Silent Hill 2 level geometry map file (`.map`) from raw bytes.
+///
+/// # Errors
+/// Returns [`AssetError::InvalidMagic`] if the data does not begin with `0x20010510`,
+/// or [`AssetError::BufferUnderflow`] if byte slices exceed the buffer bounds.
 pub fn parse_map(data: &[u8], name: &str) -> Result<MapFile, AssetError> {
     if data.len() < 16 {
         return Err(AssetError::BufferUnderflow {
@@ -122,6 +201,7 @@ pub fn parse_map(data: &[u8], name: &str) -> Result<MapFile, AssetError> {
     Ok(map)
 }
 
+/// Parses sub-file type 1: geometry headers, mesh groups, vertex sections, and material records.
 fn parse_geometry_subfile(data: &[u8], body: usize, map: &mut MapFile) -> Result<(), AssetError> {
     if body + 16 > data.len() {
         return Err(AssetError::BufferUnderflow {
@@ -161,6 +241,7 @@ fn parse_geometry_subfile(data: &[u8], body: usize, map: &mut MapFile) -> Result
             parse_decals(data, g + d_ofs, map)?;
         }
 
+        // Tag all batches generated from this geometry node with its geo_id
         for batch in &mut map.batches[first_batch_idx..] {
             batch.geo_id = geo_id;
         }
@@ -196,6 +277,7 @@ fn parse_geometry_subfile(data: &[u8], body: usize, map: &mut MapFile) -> Result
     Ok(())
 }
 
+/// Parses mesh chunks (opaque or transparent) and converts triangle strip primitives to triangle lists.
 fn parse_mesh_group(
     data: &[u8],
     base: usize,
@@ -280,6 +362,7 @@ fn parse_mesh_group(
     Ok(())
 }
 
+/// Parses decal geometry sections (billboards, splatters, and signs).
 fn parse_decals(data: &[u8], base: usize, map: &mut MapFile) -> Result<(), AssetError> {
     if base + 4 > data.len() {
         return Err(AssetError::BufferUnderflow {
@@ -345,6 +428,7 @@ fn parse_decals(data: &[u8], base: usize, map: &mut MapFile) -> Result<(), Asset
     Ok(())
 }
 
+/// Parses vertex sections by inspecting stride indicators (0x14, 0x18, 0x20, 0x24).
 fn parse_vertex_sections(data: &[u8], base: usize) -> Result<Vec<VertexSection>, AssetError> {
     if base + 8 > data.len() {
         return Ok(Vec::new());
@@ -391,13 +475,14 @@ fn parse_vertex_sections(data: &[u8], base: usize) -> Result<Vec<VertexSection>,
             let mut color = [255u8; 4];
 
             if stride == 0x14 {
+                // Pos (0x0..0xC), UV (0xC..0x14)
                 tex_coord = [read_f32(data, vo + 12)?, read_f32(data, vo + 16)?];
             } else if stride == 0x18 {
-                // Pos, Color (BGRA), UV
+                // Pos (0x0..0xC), BGRA Color (0xC..0x10), UV (0x10..0x18)
                 color = [data[vo + 14], data[vo + 13], data[vo + 12], data[vo + 15]];
                 tex_coord = [read_f32(data, vo + 16)?, read_f32(data, vo + 20)?];
             } else if stride == 0x20 {
-                // Pos, Normal, UV
+                // Pos (0x0..0xC), Normal (0xC..0x18), UV (0x18..0x20)
                 normal = [
                     read_f32(data, vo + 12)?,
                     read_f32(data, vo + 16)?,
@@ -405,7 +490,7 @@ fn parse_vertex_sections(data: &[u8], base: usize) -> Result<Vec<VertexSection>,
                 ];
                 tex_coord = [read_f32(data, vo + 24)?, read_f32(data, vo + 28)?];
             } else if stride >= 0x24 {
-                // Pos, Normal, Color, UV
+                // Pos (0x0..0xC), Normal (0xC..0x18), BGRA Color (0x18..0x1C), UV (0x1C..0x24)
                 normal = [
                     read_f32(data, vo + 12)?,
                     read_f32(data, vo + 16)?,
@@ -431,6 +516,11 @@ fn parse_vertex_sections(data: &[u8], base: usize) -> Result<Vec<VertexSection>,
     Ok(sections)
 }
 
+/// Unrolls triangle strip, triangle fan, or raw triangle lists into standard indexed triangle lists.
+///
+/// - `prim == 1`: Triangle Strip (alternating winding order handled to avoid flipped normals).
+/// - `prim == 2`: Triangle Fan (anchored at first vertex index).
+/// - `prim == 3`: Triangle List (direct triplets).
 fn strip_to_list(idx: &[u32], prim: u8) -> Vec<u32> {
     if prim == 3 {
         let len = (idx.len() / 3) * 3;
@@ -444,6 +534,7 @@ fn strip_to_list(idx: &[u32], prim: u8) -> Vec<u32> {
             let a = idx[i];
             let b = idx[i + 1];
             let c = idx[i + 2];
+            // Discard degenerate triangle separators
             if a == b || b == c || a == c {
                 continue;
             }
@@ -469,6 +560,7 @@ fn strip_to_list(idx: &[u32], prim: u8) -> Vec<u32> {
     out
 }
 
+/// Deduplicates vertex references and builds a [`MapBatch`] draw call for a material group.
 fn collect_batch(
     map: &mut MapFile,
     group: BatchGroup,
@@ -515,6 +607,7 @@ fn collect_batch(
     }
 }
 
+/// Parses sub-file type 2: embedded textures, headers, sprite declarations, and DXT byte streams.
 fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Result<(), AssetError> {
     p += 16;
     while p + 32 <= data.len() {
@@ -539,9 +632,9 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
 
             if length != 0 && p + length <= data.len() {
                 let kind = match fmt {
-                    0x100 => 1,
-                    0x101 | 0x102 => 3,
-                    0x103 | 0x104 => 5,
+                    0x100 => 1,         // BC1 / DXT1
+                    0x101 | 0x102 => 3, // BC2 / DXT3
+                    0x103 | 0x104 => 5, // BC3 / DXT5
                     _ => 3,
                 };
 

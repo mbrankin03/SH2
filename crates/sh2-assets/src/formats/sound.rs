@@ -1,24 +1,53 @@
+//! Safe binary parser for Silent Hill 2 Sound Effect Audio Banks (`sddata.bin`).
+//!
+//! # Format Architecture & Memory Layout
+//! Silent Hill 2 sound effects reside in `data/sound/sddata.bin`, containing 417 standard
+//! RIFF WAVE audio files concatenated back-to-back.
+//!
+//! ### Audio Bank Structure
+//! - **RIFF WAVE Chunks**:
+//!   - `RIFF` header with chunk size.
+//!   - `WAVE` format header (`fmt ` chunk: audio format, channels, sample rate, bit depth).
+//!   - `data` chunk: raw PCM audio samples.
+//! - **Loop Flags**:
+//!   - Each RIFF file in `sddata.bin` is followed by 2 trailing bytes.
+//!   - When `trailing[1] == 1`, the sound effect is looping (e.g., ambient hums, siren loops).
+//!   - The original executable (`sh2pc.exe`) resolves sound IDs via direct byte offset tables
+//!     (table at `0x8A45A8 + 4 * id`).
+
 use crate::error::AssetError;
 
+/// Header identifier for RIFF containers (`RIFF`).
 pub const RIFF_MAGIC: [u8; 4] = *b"RIFF";
+
+/// Wave container format tag (`WAVE`).
 pub const WAVE_MAGIC: [u8; 4] = *b"WAVE";
 
+/// Extracted sound effect waveform entry.
 #[derive(Debug, Clone)]
 pub struct WavEntry {
+    /// Number of audio channels (typically 1 for mono, 2 for stereo).
     pub channels: u16,
+    /// Sample rate in Hertz (e.g. 11025, 22050, 44100, 48000).
     pub sample_rate: u32,
+    /// Quantization bit depth (typically 16-bit PCM).
     pub bits_per_sample: u16,
+    /// Raw uncompressed PCM sample data bytes.
     pub data: Vec<u8>,
+    /// Indicates whether this sound effect loops continuously during playback.
     pub loops: bool,
 }
 
+/// Collection of sound effect waveforms parsed from `sddata.bin`.
 #[derive(Debug, Clone, Default)]
 pub struct SoundBank {
+    /// Audio sample entries in sequential file order.
     pub entries: Vec<WavEntry>,
 }
 
 /// Parses sound data from `sddata.bin`, which packs RIFF WAVE files back-to-back.
-/// Each WAV is followed by two trailing bytes where `trailing[1] == 1` indicates looping.
+///
+/// Each RIFF WAVE is followed by two trailing bytes where `trailing[1] == 1` indicates looping.
 pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
     let mut entries = Vec::new();
     let mut p = 0usize;
@@ -63,6 +92,7 @@ pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
     Ok(SoundBank { entries })
 }
 
+/// Parses a single RIFF WAVE container and extracts channel, rate, depth, and PCM data.
 fn parse_single_wav(data: &[u8]) -> Result<WavEntry, AssetError> {
     let mut p = 12usize;
     let mut channels = 1u16;

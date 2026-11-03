@@ -1,7 +1,42 @@
+//! DDS and DXT (Block Compression BC1, BC2, BC3) software decoders.
+//!
+//! # Format Architecture & Compression Algorithms
+//! DirectDraw Surface (`.dds`) and embedded `.map` / `.mdl` textures utilize fixed 4x4 pixel block compression:
+//!
+//! ### BC1 (DXT1) - 8 bytes per 4x4 block
+//! - `color0` (16-bit RGB565) and `color1` (16-bit RGB565).
+//! - 4-color palette generated:
+//!   - If $c_0 > c_1$: 4 opaque colors ($c_0$, $c_1$, $\frac{2}{3} c_0 + \frac{1}{3} c_1$, $\frac{1}{3} c_0 + \frac{2}{3} c_1$).
+//!   - If $c_0 \le c_1$: 3 opaque colors plus 1 transparent black pixel.
+//! - 32-bit index table: 2 bits per pixel choosing from the 4 palette colors.
+//!
+//! ### BC2 (DXT3) - 16 bytes per 4x4 block
+//! - 8 bytes explicit 4-bit alpha values per pixel (16 pixels $\times$ 4 bits = 64 bits).
+//! - 8 bytes color block (identical to BC1 in 4-color mode).
+//!
+//! ### BC3 (DXT5) - 16 bytes per 4x4 block
+//! - 8 bytes interpolated alpha:
+//!   - 2 reference bytes $\alpha_0$, $\alpha_1$.
+//!   - If $\alpha_0 > \alpha_1$: 6 interpolated alpha levels (8-level ramp).
+//!   - If $\alpha_0 \le \alpha_1$: 4 interpolated alpha levels + 0 and 255 extremes.
+//!   - 48-bit index table (3 bits per pixel).
+//! - 8 bytes color block (identical to BC1 in 4-color mode).
+
 use crate::error::AssetError;
 
-/// Decodes DXT1 (BC1), DXT3 (BC2), or DXT5 (BC3) blocks into 32-bit RGBA pixels.
-/// Returns an uncompressed buffer of size `width * height * 4` in RGBA8 order.
+/// Decodes raw DXT compressed pixel blocks into 32-bit RGBA8 pixels.
+///
+/// # Arguments
+/// - `data`: Compressed block byte stream.
+/// - `width`: Target width in pixels.
+/// - `height`: Target height in pixels.
+/// - `kind`: Compression kind:
+///   - `1`: DXT1 / BC1 (8 bytes per 4x4 block)
+///   - `3`: DXT3 / BC2 (16 bytes per 4x4 block, explicit 4-bit alpha)
+///   - `5`: DXT5 / BC3 (16 bytes per 4x4 block, interpolated 8-step alpha)
+///
+/// # Returns
+/// Uncompressed vector of length `width * height * 4` in RGBA byte order.
 pub fn decode_dxt(
     data: &[u8],
     width: usize,
@@ -39,7 +74,7 @@ pub fn decode_dxt(
             } else if kind == 3 {
                 // BC2 / DXT3: 8 bytes alpha, 8 bytes color
                 decode_bc1_block(&block[8..16], &mut block_pixels);
-                // 4 bits per pixel alpha
+                // 4 bits per pixel alpha (scaled by 17: 0..15 -> 0..255)
                 for i in 0..8 {
                     let a_byte = block[i];
                     let a0 = (a_byte & 0x0F) * 17;
@@ -57,7 +92,7 @@ pub fn decode_dxt(
                 )));
             }
 
-            // Copy 4x4 block into target RGBA buffer
+            // Scatter 4x4 block into target row-major RGBA buffer
             for py in 0..4 {
                 let y = by * 4 + py;
                 if y >= height {
@@ -79,6 +114,7 @@ pub fn decode_dxt(
     Ok(rgba)
 }
 
+/// Converts a 16-bit RGB565 word into 24-bit RGB8 components.
 fn rgb565_to_rgb8(c: u16) -> [u8; 3] {
     let r = (((c >> 11) & 31) * 255 + 15) / 31;
     let g = (((c >> 5) & 63) * 255 + 31) / 63;
@@ -86,6 +122,7 @@ fn rgb565_to_rgb8(c: u16) -> [u8; 3] {
     [r as u8, g as u8, b as u8]
 }
 
+/// Decodes an 8-byte BC1 color block into sixteen RGBA pixels.
 fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
     let c0 = u16::from_le_bytes([block[0], block[1]]);
     let c1 = u16::from_le_bytes([block[2], block[3]]);
@@ -97,6 +134,7 @@ fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
     pal[1] = [p1[0], p1[1], p1[2], 255];
 
     if c0 > c1 {
+        // 4-color opaque palette
         pal[2] = [
             ((2 * p0[0] as u32 + p1[0] as u32) / 3) as u8,
             ((2 * p0[1] as u32 + p1[1] as u32) / 3) as u8,
@@ -110,6 +148,7 @@ fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
             255,
         ];
     } else {
+        // 3-color palette + 1 transparent pixel
         pal[2] = [
             ((p0[0] as u32 + p1[0] as u32) / 2) as u8,
             ((p0[1] as u32 + p1[1] as u32) / 2) as u8,
@@ -126,6 +165,7 @@ fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
     }
 }
 
+/// Decodes an 8-byte BC3 interpolated alpha block into the alpha channel of sixteen pixels.
 fn decode_bc3_alpha(block: &[u8], out: &mut [[u8; 4]; 16]) {
     let a0 = block[0] as u32;
     let a1 = block[1] as u32;
@@ -135,10 +175,12 @@ fn decode_bc3_alpha(block: &[u8], out: &mut [[u8; 4]; 16]) {
     alpha_pal[1] = a1 as u8;
 
     if a0 > a1 {
+        // 8-step linear ramp
         for i in 1..7 {
             alpha_pal[i + 1] = (((7 - i as u32) * a0 + i as u32 * a1) / 7) as u8;
         }
     } else {
+        // 6-step ramp with 0 and 255 clamping
         for i in 1..5 {
             alpha_pal[i + 1] = (((5 - i as u32) * a0 + i as u32 * a1) / 5) as u8;
         }
@@ -157,7 +199,9 @@ fn decode_bc3_alpha(block: &[u8], out: &mut [[u8; 4]; 16]) {
     }
 }
 
-/// Decodes standard DDS header (DirectDraw Surface) and extracts RGBA data.
+/// Decodes standard DirectDraw Surface (`.dds`) file bytes into `(width, height, rgba)`.
+///
+/// Supports FourCC tags `DXT1`, `DXT3`, and `DXT5`.
 pub fn decode_dds_file(data: &[u8]) -> Result<(usize, usize, Vec<u8>), AssetError> {
     if data.len() < 128 {
         return Err(AssetError::BufferUnderflow {

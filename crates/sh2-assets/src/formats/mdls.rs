@@ -1,61 +1,148 @@
+//! Safe binary parser for Silent Hill 2 Character Models (`.mdls` / `.mdl`).
+//!
+//! # Format Architecture & Memory Layout
+//! Character models in Silent Hill 2 store skeletal hierarchies, bind pose matrices,
+//! bone pairs for dual-bone vertex blending, triangle primitives, and vertex buffers.
+//!
+//! ### Binary File Header (64 bytes)
+//! | Offset | Type | Description |
+//! |--------|------|-------------|
+//! | `0x00` | `u8`  | `no_tex` flag (non-zero when textures are externalized) |
+//! | `0x04` | `u32` | Number of embedded textures (`tex_count`) |
+//! | `0x08` | `u32` | Byte offset to texture table (`tex_ofs`) |
+//! | `0x10` | `u32` | Byte offset to main model header (`mdl_ofs`, typically `0x40`) |
+//!
+//! ### Model Header (Magic `0x03 0x00 0xFF 0xFF` at base offset `0x40`)
+//! Offsets inside the model header are relative to the model base offset (`0x40`).
+//! | Relative Offset | Field | Description |
+//! |-----------------|-------|-------------|
+//! | `+0x00` | Magic | `0x03, 0x00, 0xFF, 0xFF` identifier |
+//! | `+0x08` | `init_ofs` | Bind pose transformation matrices (4x4 floats per bone) |
+//! | `+0x0C` | `bone_count` | Number of bones in the skeleton hierarchy |
+//! | `+0x10` | `skel_ofs` | Skeleton parent bone array (parent index, 255 for root) |
+//! | `+0x14` | `pairs_count` | Number of bone blending pairs |
+//! | `+0x18` | `pairs_ofs` | Offset to bone pair indices `(parent, child)` |
+//! | `+0x20` | `prim_count` | Number of primitive mesh draw commands |
+//! | `+0x24` | `prim_ofs` | Offset to primitive headers |
+//! | `+0x80` | `vertex_count` | Total opaque vertices in buffer (at byte 128) |
+//! | `+0x84` | `vertex_ofs` | Byte offset to vertex array (at byte 132) |
+//! | `+0x90` | `tri_ofs` | Byte offset to shared `u16` triangle strip list (at byte 144) |
+//!
+//! ### Vertex Layout (0x30 bytes per vertex)
+//! Vertices are initially stored in the local coordinate space of their primary bone.
+//! | Offset | Type | Field | Description |
+//! |--------|------|-------|-------------|
+//! | `+0x00` | `[f32; 3]` | `positions` | Local coordinate position $(X, Y, Z)$ |
+//! | `+0x0C` | `[f32; 4]` | `weights` | Blend weights ($w_0, w_1, w_2, w_3$) |
+//! | `+0x1C` | `[i16; 3]` | `normals` | Compressed fixed-point normal vectors |
+//! | `+0x22` | `u16` | `pad` | Alignment padding |
+//! | `+0x24` | `[f32; 2]` | `uvs` | Texture mapping coordinates $(U, V)$ |
+//! | `+0x2C` | `[u8; 4]`  | `bones` | Bone indices ($b_0$ primary bone, $b_{1..3}$ pair indices) |
+
 use crate::error::AssetError;
 use crate::formats::dxt::decode_dxt;
 use std::collections::HashMap;
 
+/// Model header magic identifier (`0x03, 0x00, 0xFF, 0xFF`).
 pub const MDL_MAGIC: [u8; 4] = [0x03, 0x00, 0xFF, 0xFF];
 
+/// Mesh primitive partition within a character model.
+///
+/// Primitives define the material properties, active bones, backface culling,
+/// and the sub-range of indices in the model's shared triangle strip buffer.
 #[derive(Debug, Clone)]
 pub struct ModelPrimitive {
+    /// Bone indices from the skeleton hierarchy active for this primitive.
     pub bone_indices: Vec<u16>,
+    /// Bone pair indices into [`ModelFile::pairs`] used for multi-bone weighting.
     pub pair_indices: Vec<u16>,
+    /// Index into the model's texture list.
     pub texture_index: u16,
+    /// Starting offset into the shared strip index buffer.
     pub start: usize,
+    /// Number of strip indices spanned by this primitive.
     pub length: usize,
+    /// Target pose identifier.
     pub pose_index: u8,
+    /// Material shader configuration code.
     pub material_type: u8,
+    /// Backface culling flags (0 = double sided, 1 = cull backfaces).
     pub backface_culling: u32,
+    /// Diffuse surface color reflection $(R, G, B)$.
     pub diffuse: [f32; 3],
+    /// Ambient lighting color $(R, G, B)$.
     pub ambient: [f32; 3],
+    /// Specular reflection color $(R, G, B)$.
     pub specular: [f32; 3],
+    /// Indicates whether primitive is rendered in the alpha transparency pass.
     pub is_transparent: bool,
 }
 
+/// Embedded character model texture.
 #[derive(Debug, Clone)]
 pub struct ModelTexture {
+    /// Texture identification number.
     pub id: u32,
+    /// Width in pixels.
     pub width: usize,
+    /// Height in pixels.
     pub height: usize,
+    /// Compression kind: 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
     pub kind: u8,
+    /// Compressed texture payload data.
     pub data: Vec<u8>,
 }
 
 impl ModelTexture {
+    /// Decodes the compressed texture payload into an uncompressed RGBA8 byte buffer.
     pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
         decode_dxt(&self.data, self.width, self.height, self.kind)
     }
 }
 
+/// Vertex attributes for all vertices in the character model.
+///
+/// Follows the native 0x30-byte vertex stride layout unpacked into contiguous vectors.
 #[derive(Debug, Clone, Default)]
 pub struct ModelVertices {
+    /// Local vertex positions $(X, Y, Z)$ before bone transform skinning.
     pub positions: Vec<[f32; 3]>,
+    /// Texture coordinates $(U, V)$.
     pub uvs: Vec<[f32; 2]>,
+    /// Normalized surface normal vectors $(X, Y, Z)$.
     pub normals: Vec<[f32; 3]>,
+    /// Bone indices assigned to each vertex (up to 4 bones).
     pub bone_indices: Vec<[u16; 4]>,
+    /// Blending weights corresponding to the bone indices (sum to 1.0).
     pub weights: Vec<[f32; 4]>,
 }
 
+/// Ingested representation of a complete character model (`.mdls` / `.mdl`).
 #[derive(Debug, Clone)]
 pub struct ModelFile {
+    /// Total number of bones in the skeleton.
     pub bone_count: usize,
+    /// Parent bone index array (`parents[bone_idx] == 255` for root bones).
     pub parents: Vec<u8>,
+    /// Bind pose model-space transform matrices per bone (row-major $4 \times 4$).
     pub initial_matrices: Vec<[[f32; 4]; 4]>,
+    /// Bone pairing table `(parent, child)` referenced by primitive blend weights.
     pub pairs: Vec<(u8, u8)>,
+    /// Sub-mesh primitives defining draw ranges and material settings.
     pub primitives: Vec<ModelPrimitive>,
+    /// Shared triangle strip index list indexing into `vertices`.
     pub strip_indices: Vec<u16>,
+    /// Contiguous vertex buffers.
     pub vertices: ModelVertices,
+    /// Embedded textures keyed by texture ID.
     pub textures: HashMap<u32, ModelTexture>,
 }
 
+/// Parses a Silent Hill 2 character model file (`.mdl` / `.mdls`) from raw bytes.
+///
+/// # Errors
+/// Returns [`AssetError::InvalidMagic`] if model header magic `0x03 0x00 0xFF 0xFF` is not found,
+/// or [`AssetError::BufferUnderflow`] if byte slices exceed the buffer length.
 pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     if data.len() < 68 {
         return Err(AssetError::BufferUnderflow {
@@ -84,6 +171,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         });
     }
 
+    // Read header offsets
     let bone_count = read_u32(data, base + 12)? as usize;
     let pairs_count = read_u32(data, base + 20)? as usize;
     let pairs_ofs = read_u32(data, base + 24)? as usize;
@@ -93,7 +181,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     let vertex_ofs = read_u32(data, base + 132)? as usize;
     let tri_ofs = read_u32(data, base + 144)? as usize;
 
-    // Bone hierarchy and bind matrices
+    // 1. Bone hierarchy (parents)
     let skel_ofs = base + 64;
     let mut parents = Vec::with_capacity(bone_count);
     if skel_ofs + bone_count <= data.len() {
@@ -102,6 +190,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         parents.resize(bone_count, 255);
     }
 
+    // 2. Initial bind matrices (stored column-major on disk, transposed to row-major in memory)
     let mat_ofs = base + 64 + ((bone_count + 15) & !15);
     let mut initial_matrices = Vec::with_capacity(bone_count);
     for b in 0..bone_count {
@@ -116,7 +205,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             }
             initial_matrices.push(m);
         } else {
-            // Identity matrix fallback
+            // Identity fallback if truncated
             let mut id = [[0.0f32; 4]; 4];
             id[0][0] = 1.0;
             id[1][1] = 1.0;
@@ -126,7 +215,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // Bone pairs
+    // 3. Bone pairs for blending
     let mut pairs = Vec::with_capacity(pairs_count);
     let po = base + pairs_ofs;
     for i in 0..pairs_count {
@@ -136,7 +225,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // Primitives
+    // 4. Primitive descriptors
     let mut primitives = Vec::with_capacity(prim_count);
     let mut p = base + prim_ofs;
     for _ in 0..prim_count {
@@ -213,7 +302,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         p += size;
     }
 
-    // Strip indices
+    // 5. Shared triangle strip index list
     let end_idx = if vertex_ofs > tri_ofs {
         vertex_ofs
     } else {
@@ -229,7 +318,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // Vertices (0x30 bytes per vertex)
+    // 6. Opaque vertices (0x30 bytes per vertex)
     let mut vertices = ModelVertices::default();
     let v_start = base + vertex_ofs;
     let stride = 0x30;
@@ -270,7 +359,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // Embedded textures
+    // 7. Embedded textures
     let mut textures = HashMap::new();
     if tex_count > 0 && no_tex == 0 && tex_ofs != 0 && tex_ofs + 16 <= data.len() {
         let mut t = tex_ofs + 16;
@@ -293,9 +382,9 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             }
 
             let kind = match fmt {
-                0 => 1,
-                1 | 2 => 3,
-                3 | 4 => 5,
+                0 => 1,     // DXT1
+                1 | 2 => 3, // DXT3
+                3 | 4 => 5, // DXT5
                 _ => 3,
             };
 

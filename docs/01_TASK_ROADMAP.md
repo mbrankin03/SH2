@@ -35,19 +35,26 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 
 ## Phase 3: Rust Workspace & Asset Ingestion (`sh2-assets`)
 - [ ] Implement VROM / archive reader for PC Restless Dreams and PS2 ISO formats.
-- [ ] Build parser for `.map` level geometry and collision meshes.
+- [x] Build parser for `.map` level geometry and collision meshes.
 - [ ] Build parser for `.mdls` 3D character models and skeletal bone hierarchies.
 - [ ] Build parser for `.anm` skeletal animation tracks.
 - [ ] Build parser for `.sdm` / `.sdb` audio banks and `.mes` dialogue script tables.
 - [ ] Implement high-resolution texture loader supporting SH2:EE DDS/PNG replacement packs.
 
 ## Phase 4: Modern `wgpu` Renderer & Hardware Relief (`sh2-renderer`)
-- [ ] Setup `wgpu` Vulkan/OpenGL ES backend with 32-bit floating-point depth buffer.
-- [ ] Implement compute-shader 3D volumetric fog based on `dbg_fogparm_ctl` / `dbg_ambifog_ctl`.
-- [ ] Implement dynamic spotlight & flashlight cone calculations (`dbg_spotL_ctl`).
-- [ ] Implement film grain post-processing shader with configurable intensity.
+- [x] Setup `wgpu` Vulkan/OpenGL ES backend with 32-bit floating-point depth buffer.
+- [x] Implement compute-shader 3D volumetric fog based on `dbg_fogparm_ctl` / `dbg_ambifog_ctl`.
+- [x] Implement dynamic spotlight & flashlight cone calculations (`dbg_spotL_ctl`).
+- [x] Implement film grain post-processing shader with configurable intensity.
 - [ ] Build skeletal mesh skinning shader for James, Maria, and creatures.
 - [ ] Implement 1080p60 FMV video player with audio sync (FFmpeg / software decoder).
+- [ ] **[Bonus / Extended Graphics]** Native HDR Display Pipeline:
+  - Configure swapchain presentation for wide-gamut / high-dynamic-range surfaces (`Rgba16Float` / `Rgb10a2Unorm` with PQ / ScRGB Linear).
+  - Implement HDR-calibrated color grading and filmic tonemapping (preserving inky pitch blacks while raising high-nit peaks for flashlights, streetlamps, and emergency strobes).
+- [ ] **[Bonus / Extended Graphics]** Omnipresent Shadow Casting & Clustered Lighting:
+  - Upgrade lighting system to Clustered Forward / Forward+ shading to support every scene spotlight/point light casting real-time shadows.
+  - Implement a dynamic shadow map atlas allocator with static geometry depth caching.
+  - Integrate spotlight shadow tests directly into volumetric fog raymarching for dynamic light shafts and god rays.
 
 ## Phase 5: Gameplay Core & Scenarios (`sh2-core`)
 - [ ] Decouple simulation clock from rendering (fixed 60 Hz physics/animation tick rate).

@@ -13,3 +13,5 @@ bytemuck = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
+pollster = "1.0.1"
+glam.workspace = true

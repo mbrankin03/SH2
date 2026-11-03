@@ -125,6 +125,43 @@ pub struct MapBatch {
     pub indices: Vec<u32>,
 }
 
+/// Interleaved vertex format matching modern GPU vertex layout (`MapVertex`).
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct MapVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    pub color: [f32; 4],
+}
+
+impl MapBatch {
+    /// Converts parallel vertex attributes (`positions`, `normals`, `uvs`, `colors`) into interleaved [`MapVertex`] structs for direct GPU consumption.
+    pub fn interleaved_vertices(&self) -> Vec<MapVertex> {
+        let count = self.positions.len();
+        let mut out = Vec::with_capacity(count);
+        for i in 0..count {
+            let pos = self.positions[i];
+            let norm = self.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+            let uv = self.uvs.get(i).copied().unwrap_or([0.0, 0.0]);
+            let c = self.colors.get(i).copied().unwrap_or([255, 255, 255, 255]);
+            let col = [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+                c[3] as f32 / 255.0,
+            ];
+            out.push(MapVertex {
+                position: pos,
+                normal: norm,
+                uv,
+                color: col,
+            });
+        }
+        out
+    }
+}
+
 /// Ingested representation of a complete `.map` file.
 #[derive(Debug, Clone, Default)]
 pub struct MapFile {
@@ -136,6 +173,13 @@ pub struct MapFile {
     pub textures: HashMap<u32, MapTexture>,
     /// Render batches prepared for GPU rasterization.
     pub batches: Vec<MapBatch>,
+}
+
+impl MapFile {
+    /// Convenience alias to parse a map file without specifying a name.
+    pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
+        parse_map(bytes, "map")
+    }
 }
 
 /// Parses a Silent Hill 2 level geometry map file (`.map`) from raw bytes.

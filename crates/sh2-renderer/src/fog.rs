@@ -1,12 +1,20 @@
 //! Volumetric compute fog parameters matching PS2 ground-truth registers.
 
+/// Uniform buffer for volumetric fog shader.
+///
+/// Layout is aligned to 16 bytes for WGSL uniform buffer compliance (total size: 32 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FogUniforms {
+    /// Fog ambient color (RGBA). (Offset 0, size 16)
     pub fog_color: [f32; 4],
+    /// Near distance cutoff where fog starts taking effect. (Offset 16, size 4)
     pub fog_near: f32,
+    /// Far distance cutoff where fog density reaches maximum. (Offset 20, size 4)
     pub fog_far: f32,
+    /// Fog density multiplier. (Offset 24, size 4)
     pub density: f32,
+    /// Explicit padding to satisfy 16-byte WGSL alignment. (Offset 28, size 4)
     pub _padding: f32,
 }
 
@@ -19,5 +27,16 @@ impl Default for FogUniforms {
             density: 1.0,
             _padding: 0.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fog_uniforms_layout_and_size() {
+        assert_eq!(std::mem::size_of::<FogUniforms>(), 32);
+        assert_eq!(std::mem::align_of::<FogUniforms>(), 4);
     }
 }

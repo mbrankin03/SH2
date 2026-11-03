@@ -19,7 +19,7 @@ impl Default for SpotlightUniforms {
         Self {
             position: [0.0, 1.5, 0.0, 1.0],
             direction_inner: [0.0, 0.0, -1.0, 0.95], // ~18 deg inner
-            color_outer: [1.0, 0.95, 0.8, 0.85],    // ~31 deg outer
+            color_outer: [1.0, 0.95, 0.8, 0.85],     // ~31 deg outer
         }
     }
 }

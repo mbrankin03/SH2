@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod renderer_tests {
-    use sh2_renderer::*;
     use sh2_assets::formats::map::MapFile;
+    use sh2_renderer::*;
 
     #[test]
     fn test_render_context_initialization_and_map_execution() {
@@ -13,12 +13,21 @@ mod renderer_tests {
             enable_post: true,
         };
 
-        let ctx = RenderContext::new_headless(config);
+        let ctx = match RenderContext::new_headless(config) {
+            Some(ctx) => ctx,
+            None => {
+                println!(
+                    "Skipping headless render test: no suitable GPU adapter in CI environment"
+                );
+                return;
+            }
+        };
         assert_eq!(ctx.depth_format, wgpu::TextureFormat::Depth32Float);
         assert_eq!(ctx.hdr_format, wgpu::TextureFormat::Rgba16Float);
 
         // Test with real map file if available
-        let path = "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
+        let path =
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
         if let Ok(bytes) = std::fs::read(path) {
             let map = MapFile::parse(&bytes).expect("Failed to parse rr21.map");
 

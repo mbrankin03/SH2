@@ -5,8 +5,8 @@ pub mod light;
 pub mod pipeline;
 pub mod post;
 
-use std::sync::Arc;
 use sh2_assets::formats::map::MapFile;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 #[derive(Debug, Clone, Copy)]
@@ -72,9 +72,9 @@ impl RenderContext {
     pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
     pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-    pub fn new_headless(config: RendererConfig) -> Self {
+    pub fn new_headless(config: RendererConfig) -> Option<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
@@ -83,7 +83,13 @@ impl RenderContext {
             compatible_surface: None,
             force_fallback_adapter: false,
         }))
-        .expect("Failed to find appropriate wgpu adapter");
+        .or_else(|| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            }))
+        })?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -94,7 +100,7 @@ impl RenderContext {
             },
             None,
         ))
-        .expect("Failed to create wgpu device");
+        .ok()?;
 
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -163,9 +169,11 @@ impl RenderContext {
                 | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let ldr_output_view = ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ldr_output_view =
+            ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let geometry_pipeline = pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let geometry_pipeline =
+            pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
 
@@ -258,7 +266,7 @@ impl RenderContext {
             ],
         });
 
-        Self {
+        Some(Self {
             instance,
             adapter,
             device,
@@ -285,7 +293,7 @@ impl RenderContext {
             geometry_bind_group,
             fog_bind_group,
             post_bind_group,
-        }
+        })
     }
 
     pub fn update_camera(&self, view_proj: glam::Mat4, inv_proj: glam::Mat4, cam_pos: glam::Vec3) {
@@ -294,26 +302,32 @@ impl RenderContext {
             inv_proj: inv_proj.to_cols_array_2d(),
             cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, 1.0],
         };
-        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
     pub fn update_fog(&self, uniforms: &fog::FogUniforms) {
-        self.queue.write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(uniforms));
+        self.queue
+            .write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
     pub fn update_spotlight(&self, uniforms: &light::SpotlightUniforms) {
-        self.queue.write_buffer(&self.spotlight_buffer, 0, bytemuck::bytes_of(uniforms));
+        self.queue
+            .write_buffer(&self.spotlight_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
     pub fn update_post(&self, uniforms: &post::PostUniforms) {
-        self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
+        self.queue
+            .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
     /// Render a MapFile room into the framebuffers and run the compute passes.
     pub fn render_map(&self, map: &MapFile) {
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Frame Command Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Frame Command Encoder"),
+            });
 
         // 1. Geometry Pass: Render into HDR buffer with Depth32Float
         {
@@ -351,16 +365,20 @@ impl RenderContext {
                 if batch.indices.is_empty() || batch.vertices.is_empty() {
                     continue;
                 }
-                let v_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Batch Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&batch.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let i_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Batch Index Buffer"),
-                    contents: bytemuck::cast_slice(&batch.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+                let v_buf = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Batch Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&batch.vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                let i_buf = self
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Batch Index Buffer"),
+                        contents: bytemuck::cast_slice(&batch.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
 
                 rpass.set_vertex_buffer(0, v_buf.slice(..));
                 rpass.set_index_buffer(i_buf.slice(..), wgpu::IndexFormat::Uint32);
@@ -376,8 +394,8 @@ impl RenderContext {
             });
             cpass.set_pipeline(&self.fog_pipeline.pipeline);
             cpass.set_bind_group(0, &self.fog_bind_group, &[]);
-            let workgroups_x = (self.config.width + 15) / 16;
-            let workgroups_y = (self.config.height + 15) / 16;
+            let workgroups_x = self.config.width.div_ceil(16);
+            let workgroups_y = self.config.height.div_ceil(16);
             cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 
@@ -389,8 +407,8 @@ impl RenderContext {
             });
             cpass.set_pipeline(&self.post_pipeline.pipeline);
             cpass.set_bind_group(0, &self.post_bind_group, &[]);
-            let workgroups_x = (self.config.width + 15) / 16;
-            let workgroups_y = (self.config.height + 15) / 16;
+            let workgroups_x = self.config.width.div_ceil(16);
+            let workgroups_y = self.config.height.div_ceil(16);
             cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 

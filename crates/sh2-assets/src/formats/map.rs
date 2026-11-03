@@ -1,7 +1,7 @@
 //! Map format (.map) parser for geometry, materials, and textures.
 
-use std::collections::HashMap;
 use bytemuck::{Pod, Zeroable};
+use std::collections::HashMap;
 
 pub const MAP_MAGIC: u32 = 0x20010510;
 
@@ -313,18 +313,21 @@ fn parse_mesh_group(
         }
 
         for ((material, section), tris) in acc {
-            collect_batch(batches, group.clone(), &sections, section, material, geo_id, &tris);
+            collect_batch(
+                batches,
+                group.clone(),
+                &sections,
+                section,
+                material,
+                geo_id,
+                &tris,
+            );
         }
     }
     Some(())
 }
 
-fn parse_decals(
-    r: &Reader,
-    base: usize,
-    geo_id: u16,
-    batches: &mut Vec<MapBatch>,
-) -> Option<()> {
+fn parse_decals(r: &Reader, base: usize, geo_id: u16, batches: &mut Vec<MapBatch>) -> Option<()> {
     let count = r.u32(base)? as usize;
     for i in 0..count {
         let ofs = r.u32(base + 4 + i * 4)? as usize;
@@ -447,10 +450,22 @@ impl MapFile {
                     let d_ofs = r.u32(g + 16).unwrap_or(0) as usize;
 
                     if o_ofs > 0 {
-                        parse_mesh_group(&r, g + o_ofs, BatchGroup::Opaque, geo_id, &mut map_file.batches);
+                        parse_mesh_group(
+                            &r,
+                            g + o_ofs,
+                            BatchGroup::Opaque,
+                            geo_id,
+                            &mut map_file.batches,
+                        );
                     }
                     if t_ofs > 0 {
-                        parse_mesh_group(&r, g + t_ofs, BatchGroup::Transparent, geo_id, &mut map_file.batches);
+                        parse_mesh_group(
+                            &r,
+                            g + t_ofs,
+                            BatchGroup::Transparent,
+                            geo_id,
+                            &mut map_file.batches,
+                        );
                     }
                     if d_ofs > 0 {
                         parse_decals(&r, g + d_ofs, geo_id, &mut map_file.batches);
@@ -461,7 +476,13 @@ impl MapFile {
                 let mp = body + geo_size;
                 for i in 0..mat_count {
                     let pos = mp + 16 * i;
-                    if let (Some(mode), Some(texture_id), Some(color), Some(overlay), Some(specularity)) = (
+                    if let (
+                        Some(mode),
+                        Some(texture_id),
+                        Some(color),
+                        Some(overlay),
+                        Some(specularity),
+                    ) = (
                         r.u16(pos),
                         r.u16(pos + 2),
                         r.u32(pos + 4),
@@ -504,7 +525,8 @@ mod tests {
 
     #[test]
     fn test_real_map_file() {
-        let path = "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
+        let path =
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map";
         if let Ok(bytes) = std::fs::read(path) {
             let map = MapFile::parse(&bytes).expect("Failed to parse rr21.map");
             assert_eq!(map.materials.len(), 14);

@@ -1,6 +1,6 @@
 //! Audio engine wrapper around kira.
 
-use kira::manager::{AudioManager, AudioManagerSettings, backend::DefaultBackend};
+use kira::manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings};
 
 pub struct AudioEngine {
     _manager: Option<AudioManager<DefaultBackend>>,

@@ -1824,6 +1824,7 @@ name = "sh2-core"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
+ "bytemuck",
  "glam",
  "log",
  "serde",

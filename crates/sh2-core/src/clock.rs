@@ -86,6 +86,9 @@ mod tests {
         // Advance remainder so total accumulated >= tick
         clock.advance(tick - half_tick);
         assert!(clock.step(), "Should step when full tick duration is met");
-        assert!(!clock.step(), "Should not step again without more accumulated time");
+        assert!(
+            !clock.step(),
+            "Should not step again without more accumulated time"
+        );
     }
 }

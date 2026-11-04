@@ -304,7 +304,6 @@ struct AppState {
     blit_bind_group: wgpu::BindGroup,
     splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
     splash_title_bg: Option<Arc<wgpu::BindGroup>>,
-    splash_glow_bg: Option<Arc<wgpu::BindGroup>>,
     menu_uniform_buffer: wgpu::Buffer,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
@@ -541,21 +540,6 @@ impl ApplicationHandler for SilentHillApp {
                 )
             });
 
-        let splash_glow_bg = tex_loader
-            .load_texture("pic/etc/start01e.tex")
-            .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
-            .ok()
-            .map(|t| {
-                render_ctx.create_blitter_bind_group(
-                    &blitter,
-                    t.width as u32,
-                    t.height as u32,
-                    &t.rgba,
-                    &menu_uniform_buffer,
-                    Some("Title Glow Texture"),
-                )
-            });
-
         tracing::info!(
             "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"
         );
@@ -572,7 +556,6 @@ impl ApplicationHandler for SilentHillApp {
             blit_bind_group,
             splash_konami_bg,
             splash_title_bg,
-            splash_glow_bg,
             menu_uniform_buffer,
             sim_core,
             gpu_map,
@@ -917,21 +900,6 @@ impl ApplicationHandler for SilentHillApp {
                             &surface_view,
                             wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         );
-
-                        // If in TitleLogo or MainMenu, blend the glowing logo layer on top
-                        if matches!(
-                            phase,
-                            TitlePhase::TitleLogo | TitlePhase::MainMenu | TitlePhase::OptionsMenu
-                        ) {
-                            if let Some(glow_bg) = &state.splash_glow_bg {
-                                state.blitter.render_with_bind_group_and_load_op(
-                                    &mut encoder,
-                                    glow_bg,
-                                    &surface_view,
-                                    wgpu::LoadOp::Load,
-                                );
-                            }
-                        }
                     } else {
                         // Clear to black if no texture found
                         let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

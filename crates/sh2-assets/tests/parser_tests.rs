@@ -144,4 +144,98 @@ mod tests {
             "Expected WAV entries in sddata slice"
         );
     }
+
+    #[test]
+    fn test_mes_dialogue_parsing() {
+        let mes_path = format!("{ROOT_ASSETS}/sh2e/etc/message/stage_toilet_msg_e.mes");
+        if !Path::new(&mes_path).exists() {
+            println!("Skipping test_mes_dialogue_parsing: mes file not found at {mes_path}");
+            return;
+        }
+
+        let data = fs::read(&mes_path).expect("Failed to read stage_toilet_msg_e.mes");
+        let table = parse_mes(&data).expect("Failed to parse .mes file");
+
+        assert!(
+            !table.messages.is_empty(),
+            "Expected messages in .mes table"
+        );
+        let msg0 = table.get(0).expect("Expected message 0");
+        assert!(
+            msg0.text.contains("Mary..."),
+            "Message 0 should contain 'Mary...', found: {}",
+            msg0.text
+        );
+    }
+
+    #[test]
+    fn test_adx_audio_decoding() {
+        let adx_path = format!("{ROOT_ASSETS}/sh2e/sound/adx/apart/bgm_001.adx");
+        if !Path::new(&adx_path).exists() {
+            println!("Skipping test_adx_audio_decoding: adx file not found at {adx_path}");
+            return;
+        }
+
+        let data = fs::read(&adx_path).expect("Failed to read bgm_001.adx");
+        let header = parse_adx_header(&data).expect("Failed to parse ADX header");
+        assert_eq!(header.channels, 2);
+        assert_eq!(header.sample_rate, 48000);
+        assert!(header.has_loop);
+        assert!(header.loop_start_sample > 0);
+        assert!(header.loop_end_sample > header.loop_start_sample);
+
+        // Decode first slice (e.g. 50,000 bytes) to test decode pipeline speed
+        let test_slice_len = 50_000.min(data.len());
+        let mut truncated_data = data[..test_slice_len].to_vec();
+        // adjust total samples in header to match available packets
+        let avail_packets = (test_slice_len - header.data_offset) / (18 * header.channels as usize);
+        let avail_samples = (avail_packets * 32) as u32;
+        truncated_data[12..16].copy_from_slice(&avail_samples.to_be_bytes());
+
+        let decoded = decode_adx(&truncated_data).expect("Failed to decode ADX slice");
+        assert_eq!(decoded.frames.len(), avail_samples as usize);
+    }
+
+    #[test]
+    fn test_sdm_sdb_parsing() {
+        // Construct synthetic SDM header and SDB payload
+        let mut sdm = Vec::new();
+        sdm.extend_from_slice(b"SDM1");
+        sdm.extend_from_slice(&2u32.to_le_bytes()); // 2 entries
+
+        // Entry 0: 22050 Hz, offset 0, len 64, mono 16-bit, no loop
+        sdm.extend_from_slice(&22050u32.to_le_bytes());
+        sdm.extend_from_slice(&0u32.to_le_bytes());
+        sdm.extend_from_slice(&64u32.to_le_bytes());
+        sdm.extend_from_slice(&1u16.to_le_bytes());
+        sdm.extend_from_slice(&16u16.to_le_bytes());
+        sdm.extend_from_slice(&0u16.to_le_bytes()); // loop
+        sdm.extend_from_slice(&0u16.to_le_bytes()); // pad
+        sdm.extend_from_slice(&0u32.to_le_bytes()); // loop_start
+        sdm.extend_from_slice(&0u32.to_le_bytes()); // loop_end
+
+        // Entry 1: 44100 Hz, offset 64, len 128, stereo 16-bit, loop
+        sdm.extend_from_slice(&44100u32.to_le_bytes());
+        sdm.extend_from_slice(&64u32.to_le_bytes());
+        sdm.extend_from_slice(&128u32.to_le_bytes());
+        sdm.extend_from_slice(&2u16.to_le_bytes());
+        sdm.extend_from_slice(&16u16.to_le_bytes());
+        sdm.extend_from_slice(&1u16.to_le_bytes()); // loop
+        sdm.extend_from_slice(&0u16.to_le_bytes()); // pad
+        sdm.extend_from_slice(&100u32.to_le_bytes()); // loop_start
+        sdm.extend_from_slice(&2000u32.to_le_bytes()); // loop_end
+
+        let sdb = vec![0x42u8; 256];
+
+        let bank = parse_sdm_sdb(&sdm, &sdb).expect("Failed to parse SDM/SDB");
+        assert_eq!(bank.entries.len(), 2);
+        assert_eq!(bank.entries[0].sample_rate, 22050);
+        assert_eq!(bank.entries[0].data.len(), 64);
+        assert!(!bank.entries[0].loops);
+
+        assert_eq!(bank.entries[1].sample_rate, 44100);
+        assert_eq!(bank.entries[1].data.len(), 128);
+        assert!(bank.entries[1].loops);
+        assert_eq!(bank.entries[1].loop_start, 100);
+    }
 }

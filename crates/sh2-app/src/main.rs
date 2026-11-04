@@ -611,6 +611,7 @@ impl ApplicationHandler for SilentHillApp {
                                     state.menu_ctrl.handle_nav(MenuNavAction::Right)
                                 }
                                 winit::keyboard::KeyCode::Enter
+                                | winit::keyboard::KeyCode::NumpadEnter
                                 | winit::keyboard::KeyCode::Space => {
                                     state.menu_ctrl.handle_nav(MenuNavAction::Confirm)
                                 }
@@ -624,7 +625,15 @@ impl ApplicationHandler for SilentHillApp {
                                 winit::keyboard::KeyCode::KeyE => {
                                     state.menu_ctrl.switch_options_tab(true)
                                 }
-                                _ => MenuSoundCue::None,
+                                _ => {
+                                    // Any key advances from Splash or Title Logo
+                                    match state.menu_ctrl.title_sm.phase {
+                                        TitlePhase::SplashIntro | TitlePhase::TitleLogo => {
+                                            state.menu_ctrl.handle_nav(MenuNavAction::Confirm)
+                                        }
+                                        _ => MenuSoundCue::None,
+                                    }
+                                }
                             };
                             if sound != MenuSoundCue::None {
                                 tracing::info!("Menu sound emitted: {:?}", sound);
@@ -688,6 +697,19 @@ impl ApplicationHandler for SilentHillApp {
 
                     state.sim_core.input.state.left_stick_y = kb_y;
                     state.sim_core.input.state.left_stick_x = kb_x;
+                }
+            }
+            WindowEvent::MouseInput {
+                state: element_state,
+                ..
+            } => {
+                if element_state == winit::event::ElementState::Pressed
+                    && !state.menu_ctrl.in_game_active
+                {
+                    let sound = state.menu_ctrl.handle_nav(MenuNavAction::Confirm);
+                    if sound != MenuSoundCue::None {
+                        tracing::info!("Menu sound emitted: {:?}", sound);
+                    }
                 }
             }
             WindowEvent::CloseRequested => {

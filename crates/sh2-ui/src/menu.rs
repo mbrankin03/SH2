@@ -166,19 +166,16 @@ impl TitleStateMachine {
         match self.phase {
             TitlePhase::SplashIntro => {
                 // Any button skips splash intro immediately
-                if matches!(action, MenuNavAction::Confirm | MenuNavAction::Cancel) {
-                    self.phase = TitlePhase::TitleLogo;
-                    self.fade_alpha = 1.0;
-                    self.is_fading_out = false;
-                    self.is_fading_in = false;
-                    sound = MenuSoundCue::Confirm;
-                }
+                self.phase = TitlePhase::TitleLogo;
+                self.fade_alpha = 1.0;
+                self.is_fading_out = false;
+                self.is_fading_in = false;
+                sound = MenuSoundCue::Confirm;
             }
             TitlePhase::TitleLogo => {
-                if matches!(action, MenuNavAction::Confirm) {
-                    self.phase = TitlePhase::MainMenu;
-                    sound = MenuSoundCue::Confirm;
-                }
+                // Any button pressed on Title Screen proceeds to Main Menu
+                self.phase = TitlePhase::MainMenu;
+                sound = MenuSoundCue::Confirm;
             }
             TitlePhase::MainMenu => match action {
                 MenuNavAction::Up => {

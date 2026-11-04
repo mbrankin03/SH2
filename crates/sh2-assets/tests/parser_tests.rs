@@ -68,6 +68,16 @@ mod tests {
         assert_eq!(model.vertices.uvs.len(), 4897);
         assert_eq!(model.vertices.bone_indices.len(), 4897);
         assert_eq!(model.vertices.weights.len(), 4897);
+        assert_eq!(
+            model.textures.len(),
+            4,
+            "Expected 4 textures extracted from hhh_jms.mdl container"
+        );
+        for (&tid, tex) in &model.textures {
+            let rgba = tex.to_rgba().expect("Failed to decode model texture DXT");
+            assert_eq!(rgba.len(), tex.width * tex.height * 4);
+            println!("Decoded model texture {tid}: {}x{}", tex.width, tex.height);
+        }
     }
 
     #[test]
@@ -89,6 +99,26 @@ mod tests {
 
         assert_eq!(anm.bone_count, model.bone_count);
         assert!(!anm.frames.is_empty(), "Animation should contain frames");
+    }
+
+    #[test]
+    fn test_texture_container_parsing_and_tbn2() {
+        let tbn2_path = format!("{ROOT_ASSETS}/data/pic/effect/fog.tbn2");
+        if !Path::new(&tbn2_path).exists() {
+            println!("Skipping test_texture_container_parsing_and_tbn2: asset file not found");
+            return;
+        }
+
+        let data = fs::read(&tbn2_path).expect("Failed to read fog.tbn2");
+        let textures =
+            parse_texture_container(&data, 0).expect("Failed to parse fog.tbn2 container");
+        assert_eq!(textures.len(), 1);
+        let tex = &textures[0];
+        assert_eq!(tex.id, 11042);
+        assert_eq!(tex.width, 256);
+        assert_eq!(tex.height, 256);
+        let rgba = tex.to_rgba().expect("Failed to decode fog.tbn2 DXT5");
+        assert_eq!(rgba.len(), 256 * 256 * 4);
     }
 
     #[test]

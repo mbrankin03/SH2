@@ -155,7 +155,11 @@ mod renderer_tests {
             let skin_matrices = compute_skin_matrices(&pose0, &model.initial_matrices);
 
             // Execute scene render pass containing both static world and skinned character
-            ctx.render_scene(Some(&gpu_map), &[(&gpu_skeletal, &skin_matrices)]);
+            ctx.render_scene(
+                Some(&gpu_map),
+                None,
+                &[(&gpu_skeletal, &skin_matrices, None)],
+            );
             let _ = ctx.device.poll(wgpu::Maintain::wait());
         }
 
@@ -187,7 +191,11 @@ mod renderer_tests {
             let pose0 = evaluate_pose(&model.parents, &locals, &anm.frames[0]);
             let skin_matrices = compute_skin_matrices(&pose0, &model.initial_matrices);
 
-            ctx.render_scene(Some(&gpu_map), &[(&gpu_skeletal, &skin_matrices)]);
+            ctx.render_scene(
+                Some(&gpu_map),
+                None,
+                &[(&gpu_skeletal, &skin_matrices, None)],
+            );
             let _ = ctx.device.poll(wgpu::Maintain::wait());
         }
     }

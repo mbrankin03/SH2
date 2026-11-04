@@ -33,6 +33,7 @@ impl Default for CameraUniforms {
 pub struct GeometryPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl GeometryPipeline {
@@ -51,6 +52,9 @@ struct SpotlightUniforms {
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
+
+@group(1) @binding(0) var diffuse_texture: texture_2d<f32>;
+@group(1) @binding(1) var diffuse_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -101,8 +105,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten);
 
-    let lit_color = in.color.rgb * (ambient + diffuse);
-    return vec4<f32>(lit_color, in.color.a);
+    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    let lit_color = in.color.rgb * tex_color.rgb * (ambient + diffuse);
+    return vec4<f32>(lit_color, in.color.a * tex_color.a);
 }
 "#;
 
@@ -142,9 +147,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             ],
         });
 
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Geometry Diffuse Texture Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Geometry Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&bind_group_layout, &texture_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -220,6 +248,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         Self {
             pipeline,
             bind_group_layout,
+            texture_bind_group_layout,
         }
     }
 }

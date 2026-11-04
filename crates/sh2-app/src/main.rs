@@ -26,6 +26,7 @@ struct CharacterAsset {
     model: ModelFile,
     bind_locals: Vec<[[f32; 4]; 4]>,
     anm: AnimationFile,
+    texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
 }
 
 /// Generate an authentic 3D Silent Hill enclosed room with floor, textured walls, ceiling, and columns.
@@ -247,12 +248,37 @@ fn load_character_asset(
     let bind_locals = compute_bind_locals(&model.parents, &model.initial_matrices);
     let gpu_mesh = ctx.compile_skeletal_mesh(&model);
 
+    // Build diffuse texture bind groups indexed by primitive texture_index
+    let max_tex_idx = model
+        .primitives
+        .iter()
+        .map(|pr| pr.texture_index as usize)
+        .max()
+        .unwrap_or(0);
+    let mut texture_bind_groups = Vec::with_capacity(max_tex_idx + 1);
+    for tidx in 0..=max_tex_idx {
+        if let Some(tex) = model.textures.get(&(tidx as u32)) {
+            if let Ok(rgba) = tex.to_rgba() {
+                let bg = ctx.create_texture_bind_group(
+                    tex.width as u32,
+                    tex.height as u32,
+                    &rgba,
+                    Some(&format!("{character_name} Texture {tidx}")),
+                );
+                texture_bind_groups.push(bg);
+                continue;
+            }
+        }
+        texture_bind_groups.push(ctx.default_texture_bind_group.clone());
+    }
+
     tracing::info!(
-        "Loaded character '{}': bones={}, primitives={}, vertices={}, anm_frames={}",
+        "Loaded character '{}': bones={}, primitives={}, vertices={}, textures={}, anm_frames={}",
         character_name,
         model.bone_count,
         model.primitives.len(),
         model.vertices.positions.len(),
+        model.textures.len(),
         anm.frames.len()
     );
 
@@ -262,6 +288,7 @@ fn load_character_asset(
         model,
         bind_locals,
         anm,
+        texture_bind_groups,
     })
 }
 
@@ -274,6 +301,7 @@ struct AppState {
     blit_bind_group: wgpu::BindGroup,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
+    map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     character: Option<CharacterAsset>,
     maria: Option<CharacterAsset>,
     active_maria: bool,
@@ -389,6 +417,34 @@ impl ApplicationHandler for SilentHillApp {
         let blitter = SurfaceBlitter::new(&device, surface_format);
         let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
 
+        // Build level diffuse texture bind groups per material (cached by texture_id to avoid redundant VRAM allocations)
+        let mut map_texture_bind_groups = Vec::with_capacity(map_file.materials.len());
+        let mut tex_bg_cache: std::collections::HashMap<u32, std::sync::Arc<wgpu::BindGroup>> =
+            std::collections::HashMap::new();
+
+        for (m_idx, mat) in map_file.materials.iter().enumerate() {
+            let tex_id = mat.texture_id as u32;
+            if let Some(bg) = tex_bg_cache.get(&tex_id) {
+                map_texture_bind_groups.push(bg.clone());
+                continue;
+            }
+
+            if let Some(tex) = map_file.textures.get(&tex_id) {
+                if let Ok(rgba) = tex.to_rgba() {
+                    let bg = render_ctx.create_texture_bind_group(
+                        tex.width as u32,
+                        tex.height as u32,
+                        &rgba,
+                        Some(&format!("Map Material {m_idx} Texture {tex_id}")),
+                    );
+                    tex_bg_cache.insert(tex_id, bg.clone());
+                    map_texture_bind_groups.push(bg);
+                    continue;
+                }
+            }
+            map_texture_bind_groups.push(render_ctx.default_texture_bind_group.clone());
+        }
+
         // Load James Sunderland character model & animations
         let character = load_character_asset(
             &render_ctx,
@@ -447,6 +503,7 @@ impl ApplicationHandler for SilentHillApp {
             blit_bind_group,
             sim_core,
             gpu_map,
+            map_texture_bind_groups,
             character,
             maria,
             active_maria: false,
@@ -645,20 +702,25 @@ impl ApplicationHandler for SilentHillApp {
                 }
 
                 // 5. Render level map and skinned character model in a unified scene pass
-                let skeletal_draw: Vec<(&GpuSkeletalMesh, &[[[f32; 4]; 4]])> =
-                    if let Some(c) = active_char {
-                        if !skin_matrices.is_empty() {
-                            vec![(&c.gpu_mesh, &skin_matrices)]
-                        } else {
-                            vec![]
-                        }
+                let skeletal_draw = if let Some(c) = active_char {
+                    if !skin_matrices.is_empty() {
+                        vec![(
+                            &c.gpu_mesh,
+                            skin_matrices.as_slice(),
+                            Some(c.texture_bind_groups.as_slice()),
+                        )]
                     } else {
                         vec![]
-                    };
+                    }
+                } else {
+                    vec![]
+                };
 
-                state
-                    .render_ctx
-                    .render_scene(Some(&state.gpu_map), &skeletal_draw);
+                state.render_ctx.render_scene(
+                    Some(&state.gpu_map),
+                    Some(&state.map_texture_bind_groups),
+                    &skeletal_draw,
+                );
 
                 // 6. Present to window surface swapchain
                 let surface_texture = match state.surface.get_current_texture() {

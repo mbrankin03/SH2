@@ -504,15 +504,25 @@ impl ApplicationHandler for SilentHillApp {
             Some("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e"),
         );
 
+        use wgpu::util::DeviceExt;
+        let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
+        let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Menu Blit Uniform Buffer"),
+            contents: bytemuck::cast_slice(&initial_tint),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let splash_konami_bg = tex_loader
             .load_texture("pic/etc/konami2048x2048.tex")
             .or_else(|_| tex_loader.load_texture("pic/etc/start00.tex"))
             .ok()
             .map(|t| {
-                render_ctx.create_texture_bind_group(
+                render_ctx.create_blitter_bind_group(
+                    &blitter,
                     t.width as u32,
                     t.height as u32,
                     &t.rgba,
+                    &menu_uniform_buffer,
                     Some("Konami Splash Texture"),
                 )
             });
@@ -521,10 +531,12 @@ impl ApplicationHandler for SilentHillApp {
             .load_texture("pic/etc/start00.tex")
             .ok()
             .map(|t| {
-                render_ctx.create_texture_bind_group(
+                render_ctx.create_blitter_bind_group(
+                    &blitter,
                     t.width as u32,
                     t.height as u32,
                     &t.rgba,
+                    &menu_uniform_buffer,
                     Some("Title Background Texture"),
                 )
             });
@@ -534,21 +546,15 @@ impl ApplicationHandler for SilentHillApp {
             .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
             .ok()
             .map(|t| {
-                render_ctx.create_texture_bind_group(
+                render_ctx.create_blitter_bind_group(
+                    &blitter,
                     t.width as u32,
                     t.height as u32,
                     &t.rgba,
+                    &menu_uniform_buffer,
                     Some("Title Glow Texture"),
                 )
             });
-
-        use wgpu::util::DeviceExt;
-        let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
-        let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Menu Blit Uniform Buffer"),
-            contents: bytemuck::cast_slice(&initial_tint),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
 
         tracing::info!(
             "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"

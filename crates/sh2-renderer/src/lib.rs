@@ -837,6 +837,53 @@ impl RenderContext {
         self.create_texture_bind_group_from_view(&view, label)
     }
 
+    /// Creates a 2D UI presentation texture bind group from raw RGBA8 pixels using the SurfaceBlitter bind group layout.
+    pub fn create_blitter_bind_group(
+        &self,
+        blitter: &SurfaceBlitter,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        uniform_buffer: &wgpu::Buffer,
+        label: Option<&str>,
+    ) -> Arc<wgpu::BindGroup> {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label,
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Arc::new(blitter.create_bind_group_with_uniform_buffer(&self.device, &view, uniform_buffer))
+    }
+
     /// Update post-processing uniforms buffer.
     pub fn update_post(&self, uniforms: &post::PostUniforms) {
         self.queue

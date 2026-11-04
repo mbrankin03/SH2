@@ -1,7 +1,7 @@
 //! Interactive Desktop Playable Test Build for Silent Hill 2 Open Port.
 //! Runs the pure PS2 camera, 60 Hz simulation core, volumetric fog, and gamepad controls.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -308,7 +308,7 @@ impl ApplicationHandler for SilentHillApp {
         } else {
             // Built-in 3D room center
             sim_core.scenario.player_position = glam::Vec3::new(0.0, -800.0, 2000.0);
-            sim_core.scenario.player_yaw = 3.14159; // Face toward the room and column
+            sim_core.scenario.player_yaw = std::f32::consts::PI; // Face toward the room and column
         }
         sim_core.camera.reset_to_player(
             sim_core.scenario.player_position,
@@ -351,26 +351,31 @@ impl ApplicationHandler for SilentHillApp {
         };
 
         match event {
-            WindowEvent::KeyboardInput { event: key_event, .. } => {
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
                 if let winit::keyboard::PhysicalKey::Code(key_code) = key_event.physical_key {
                     let pressed = key_event.state == winit::event::ElementState::Pressed;
                     match key_code {
                         winit::keyboard::KeyCode::KeyW | winit::keyboard::KeyCode::ArrowUp => {
-                            state.sim_core.input.state.left_stick_y = if pressed { 1.0 } else { 0.0 };
+                            state.sim_core.input.state.left_stick_y =
+                                if pressed { 1.0 } else { 0.0 };
                         }
                         winit::keyboard::KeyCode::KeyS | winit::keyboard::KeyCode::ArrowDown => {
-                            state.sim_core.input.state.left_stick_y = if pressed { -1.0 } else { 0.0 };
+                            state.sim_core.input.state.left_stick_y =
+                                if pressed { -1.0 } else { 0.0 };
                         }
                         winit::keyboard::KeyCode::KeyA | winit::keyboard::KeyCode::ArrowLeft => {
-                            state.sim_core.input.state.left_stick_x = if pressed { -1.0 } else { 0.0 };
+                            state.sim_core.input.state.left_stick_x =
+                                if pressed { -1.0 } else { 0.0 };
                         }
                         winit::keyboard::KeyCode::KeyD | winit::keyboard::KeyCode::ArrowRight => {
-                            state.sim_core.input.state.left_stick_x = if pressed { 1.0 } else { 0.0 };
+                            state.sim_core.input.state.left_stick_x =
+                                if pressed { 1.0 } else { 0.0 };
                         }
-                        winit::keyboard::KeyCode::KeyF => {
-                            if pressed {
-                                state.sim_core.scenario.flashlight_on = !state.sim_core.scenario.flashlight_on;
-                            }
+                        winit::keyboard::KeyCode::KeyF if pressed => {
+                            state.sim_core.scenario.flashlight_on =
+                                !state.sim_core.scenario.flashlight_on;
                         }
                         _ => {}
                     }

@@ -90,6 +90,52 @@ impl JamesBasicClips {
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
 }
 
+/// Standard locomotion animation clips for Maria in `xmar_wpnone.anm` (Born From a Wish).
+pub struct MariaLocomotionClips;
+
+impl MariaLocomotionClips {
+    /// Standing idle loop (frames 0..=50).
+    pub const IDLE: AnimationClip = AnimationClip::new(0, 50, 30.0, true);
+    /// Forward walk cycle (frames 51..=91).
+    pub const WALK: AnimationClip = AnimationClip::new(51, 91, 30.0, true);
+    /// Full run cycle (frames 92..=170).
+    pub const RUN: AnimationClip = AnimationClip::new(92, 170, 30.0, true);
+}
+
+/// Locomotion clip set configuration for the active playable character.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CharacterLocomotionClips {
+    pub idle: AnimationClip,
+    pub walk: AnimationClip,
+    pub run: AnimationClip,
+}
+
+impl Default for CharacterLocomotionClips {
+    fn default() -> Self {
+        Self {
+            idle: JamesBasicClips::IDLE,
+            walk: JamesBasicClips::WALK,
+            run: JamesBasicClips::RUN,
+        }
+    }
+}
+
+impl CharacterLocomotionClips {
+    /// James Sunderland standard clips.
+    pub const JAMES: Self = Self {
+        idle: JamesBasicClips::IDLE,
+        walk: JamesBasicClips::WALK,
+        run: JamesBasicClips::RUN,
+    };
+
+    /// Maria locomotion clips.
+    pub const MARIA: Self = Self {
+        idle: MariaLocomotionClips::IDLE,
+        walk: MariaLocomotionClips::WALK,
+        run: MariaLocomotionClips::RUN,
+    };
+}
+
 /// Runtime animation state machine driving character skeletal pose evaluation.
 #[derive(Debug, Clone)]
 pub struct CharacterAnimationController {

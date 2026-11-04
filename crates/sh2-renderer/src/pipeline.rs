@@ -80,8 +80,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Generous ambient light so rooms are always clearly visible
-    let ambient = vec3<f32>(0.35, 0.35, 0.40);
+    // Ambient term
+    let ambient = vec3<f32>(0.05, 0.05, 0.06);
 
     // Dynamic Spotlight calculation matching dbg_spotL_ctl
     let light_to_frag = in.world_pos - spotlight.position.xyz;
@@ -94,16 +94,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let outer_cos = spotlight.color_outer.w;
     let spot_intensity = clamp((cos_theta - outer_cos) / (inner_cos - outer_cos), 0.0, 1.0);
 
-    // Attenuation calibrated for PS2 millimeter scale
-    let atten = 1.0 / (1.0 + 0.00000005 * dist * dist);
+    // Inverse square distance attenuation
+    let atten = 1.0 / max(1.0, 0.00001 * dist * dist);
     let n_len = length(in.normal);
     let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, n_len > 1e-4);
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten);
 
-    let base_col = select(in.color.rgb, vec3<f32>(0.8, 0.78, 0.75), in.color.r == 0.0 && in.color.g == 0.0 && in.color.b == 0.0);
-    let lit_color = base_col * (ambient + diffuse);
-    return vec4<f32>(lit_color, 1.0);
+    let lit_color = in.color.rgb * (ambient + diffuse);
+    return vec4<f32>(lit_color, in.color.a);
 }
 "#;
 
@@ -192,15 +191,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None, // No backface culling to ensure interior walls are never culled
-                ..Default::default()
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // Don't cull PS2 double-sided geometry prematurely
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,

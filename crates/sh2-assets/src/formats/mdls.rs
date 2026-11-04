@@ -222,16 +222,18 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     let tri_ofs = read_u32(data, base + 144)? as usize;
 
     // 1. Bone hierarchy (parents)
-    let skel_ofs = base + 64;
+    let skel_ofs = read_u32(data, base + 16)? as usize;
     let mut parents = Vec::with_capacity(bone_count);
-    if skel_ofs + bone_count <= data.len() {
-        parents.extend_from_slice(&data[skel_ofs..skel_ofs + bone_count]);
+    let s_start = base + skel_ofs;
+    if s_start + bone_count <= data.len() {
+        parents.extend_from_slice(&data[s_start..s_start + bone_count]);
     } else {
         parents.resize(bone_count, 255);
     }
 
     // 2. Initial bind matrices (stored column-major on disk, transposed to row-major in memory)
-    let mat_ofs = base + 64 + ((bone_count + 15) & !15);
+    let init_ofs = read_u32(data, base + 8)? as usize;
+    let mat_ofs = base + init_ofs;
     let mut initial_matrices = Vec::with_capacity(bone_count);
     for b in 0..bone_count {
         let mo = mat_ofs + b * 64;
@@ -259,7 +261,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     let mut pairs = Vec::with_capacity(pairs_count);
     let po = base + pairs_ofs;
     for i in 0..pairs_count {
-        let entry = po + i * 4;
+        let entry = po + i * 2;
         if entry + 2 <= data.len() {
             pairs.push((data[entry], data[entry + 1]));
         }
@@ -450,6 +452,25 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             }
 
             vertices.bone_indices[i] = resolved_b;
+
+            // Transform raw vertex position and normal from bone-local space into model bind space (M @ p)
+            if (b0 as usize) < initial_matrices.len() {
+                let m = &initial_matrices[b0 as usize];
+                let p = vertices.positions[i];
+                let mx = m[0][0] * p[0] + m[0][1] * p[1] + m[0][2] * p[2] + m[0][3];
+                let my = m[1][0] * p[0] + m[1][1] * p[1] + m[1][2] * p[2] + m[1][3];
+                let mz = m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2] + m[2][3];
+                vertices.positions[i] = [mx, my, mz];
+
+                let n = vertices.normals[i];
+                let nx = m[0][0] * n[0] + m[0][1] * n[1] + m[0][2] * n[2];
+                let ny = m[1][0] * n[0] + m[1][1] * n[1] + m[1][2] * n[2];
+                let nz = m[2][0] * n[0] + m[2][1] * n[1] + m[2][2] * n[2];
+                let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                if len > 0.0001 {
+                    vertices.normals[i] = [nx / len, ny / len, nz / len];
+                }
+            }
 
             // Normalize weights
             let w = vertices.weights[i];

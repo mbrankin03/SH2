@@ -92,10 +92,11 @@ impl Ps2CameraController {
 
     /// Reset camera position instantly behind the player without smoothing (e.g. on new game, door warps).
     pub fn reset_to_player(&mut self, player_pos: Vec3, player_yaw: f32) {
-        // In PS2 coordinate system: Y is down, yaw 0 looks along +Z
+        // In PS2 coordinate system: Y is down (-Y is up in world space), yaw 0 looks along +Z
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let eye = player_pos - forward * 3000.0 + Vec3::new(0.0, -400.0, 0.0);
-        let target = player_pos + Vec3::new(0.0, -800.0, 0.0);
+        // Position camera behind and elevated above player head (-1200.0 is ~head height, eye at -1400.0)
+        let eye = player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0);
+        let target = player_pos + Vec3::new(0.0, -1100.0, 0.0);
 
         let snap = CameraSnapshot {
             eye,
@@ -127,8 +128,8 @@ impl Ps2CameraController {
         self.search_pitch_offset = right_stick_y * 0.3;
 
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let base_eye = player_pos - forward * 3000.0 + Vec3::new(0.0, -400.0, 0.0);
-        let mut base_target = player_pos + Vec3::new(0.0, -800.0, 0.0);
+        let base_eye = player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0);
+        let mut base_target = player_pos + Vec3::new(0.0, -1100.0, 0.0);
 
         // Apply search-view look rotation around player head
         if self.search_yaw_offset.abs() > 0.01 || self.search_pitch_offset.abs() > 0.01 {

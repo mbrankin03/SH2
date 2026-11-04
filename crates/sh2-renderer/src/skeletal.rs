@@ -97,10 +97,21 @@ impl Default for SkeletonBoneUniforms {
 
 impl SkeletonBoneUniforms {
     /// Builds a bone uniform structure from evaluated skinning matrices.
+    ///
+    /// Transposes matrices from row-major CPU order ($M[row][col]$) to column-major WGSL order
+    /// ($M[col][row]$) so that matrix multiplications in WGSL (`skin_matrix * local_pos`)
+    /// correctly align with translation columns and rotation vectors.
     pub fn from_matrices(matrices: &[[[f32; 4]; 4]]) -> Self {
         let mut s = Self::default();
         let count = matrices.len().min(MAX_SKELETON_BONES);
-        s.bone_matrices[..count].copy_from_slice(&matrices[..count]);
+        for (i, m) in matrices.iter().take(count).enumerate() {
+            #[allow(clippy::needless_range_loop)]
+            for r in 0..4 {
+                for c in 0..4 {
+                    s.bone_matrices[i][c][r] = m[r][c]; // Transpose row-major -> column-major
+                }
+            }
+        }
         s
     }
 }

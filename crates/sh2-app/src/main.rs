@@ -17,11 +17,11 @@ use sh2_assets::formats::anm::{
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
-use sh2_audio::{play_menu_sound, AudioEngine, SoundCueKind};
+use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
 use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase};
-use sh2_ui::TextRasterizer;
+use sh2_ui::{AuthenticButtonSprite, ButtonSpriteSheet, TextRasterizer};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
 struct CharacterAsset {
@@ -310,6 +310,8 @@ struct AppState {
     menu_text_texture: wgpu::Texture,
     menu_text_bind_group: wgpu::BindGroup,
     menu_rasterizer: TextRasterizer,
+    button_sprites: Option<ButtonSpriteSheet>,
+    audio_bank: Option<MenuAudioBank>,
     audio_engine: Option<AudioEngine>,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
@@ -572,6 +574,19 @@ impl ApplicationHandler for SilentHillApp {
             &menu_uniform_buffer,
         );
 
+        // Preload authentic 1:1 button sprite atlas from start01e.tex / start01.tex
+        let button_sprites = tex_loader
+            .load_texture("pic/etc/start01e.tex")
+            .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
+            .ok()
+            .map(|t| ButtonSpriteSheet::new(t.width, t.height, t.rgba));
+
+        let data_dir =
+            PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data");
+        let ee_dir =
+            PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e");
+        let audio_bank = Some(MenuAudioBank::load_from_dirs(&data_dir, Some(&ee_dir)));
+
         let audio_engine = match AudioEngine::new() {
             Ok(engine) => {
                 tracing::info!("Audio engine successfully initialized with Kira runtime.");
@@ -603,6 +618,8 @@ impl ApplicationHandler for SilentHillApp {
             menu_text_texture,
             menu_text_bind_group,
             menu_rasterizer,
+            button_sprites,
+            audio_bank,
             audio_engine,
             sim_core,
             gpu_map,
@@ -695,7 +712,11 @@ impl ApplicationHandler for SilentHillApp {
                                         MenuSoundCue::None => None,
                                     };
                                     if let Some(kind) = cue_kind {
-                                        let _ = play_menu_sound(engine, kind);
+                                        let _ = play_menu_sound(
+                                            engine,
+                                            state.audio_bank.as_ref(),
+                                            kind,
+                                        );
                                     }
                                 }
                             }
@@ -781,7 +802,7 @@ impl ApplicationHandler for SilentHillApp {
                                 MenuSoundCue::None => None,
                             };
                             if let Some(kind) = cue_kind {
-                                let _ = play_menu_sound(engine, kind);
+                                let _ = play_menu_sound(engine, state.audio_bank.as_ref(), kind);
                             }
                         }
                     }
@@ -1036,20 +1057,87 @@ impl ApplicationHandler for SilentHillApp {
                                 );
                             }
                             TitlePhase::MainMenu => {
-                                for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
-                                    let is_selected =
-                                        idx == state.menu_ctrl.title_sm.main_menu_index;
-                                    let color = if is_selected { yellow } else { white };
-                                    let y = 370 + idx * 45;
-                                    let text = opt.label();
-                                    if is_selected {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    // 1:1 authentic Silent Hill 2 button sprites from start01e.tex
+                                    let items = [
+                                        (MainMenuOption::NewGame, AuthenticButtonSprite::NewGame),
+                                        (MainMenuOption::Continue, AuthenticButtonSprite::Continue),
+                                        (MainMenuOption::Options, AuthenticButtonSprite::Options),
+                                        (MainMenuOption::Exit, AuthenticButtonSprite::Exit),
+                                    ];
+
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    let cursor_scale = 0.50f32;
+
+                                    for (opt, sprite) in &items {
+                                        let idx = match opt {
+                                            MainMenuOption::NewGame => 0,
+                                            MainMenuOption::Continue => 1,
+                                            MainMenuOption::Options => 2,
+                                            MainMenuOption::Exit => 4,
+                                            _ => 0,
+                                        };
+                                        let is_selected =
+                                            idx == state.menu_ctrl.title_sm.main_menu_index;
+                                        let y = 370 + idx as i32 * 56;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.52f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        // Draw authentic oval glowing cursor behind selected item
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_w =
+                                                (glow_rect.width as f32 * cursor_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            let glow_y = y - 5;
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                glow_x,
+                                                glow_y,
+                                                cursor_scale,
+                                                [1.0, 1.0, 1.0, 0.85],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                                        let is_selected =
+                                            idx == state.menu_ctrl.title_sm.main_menu_index;
+                                        let color = if is_selected { yellow } else { white };
+                                        let y = 370 + idx * 45;
+                                        let text = opt.label();
+                                        if is_selected {
+                                            state
+                                                .menu_rasterizer
+                                                .draw_text(">", 550, y, 3, yellow, true);
+                                        }
                                         state
                                             .menu_rasterizer
-                                            .draw_text(">", 550, y, 3, yellow, true);
+                                            .draw_text(text, 580, y, 3, color, true);
                                     }
-                                    state
-                                        .menu_rasterizer
-                                        .draw_text(text, 580, y, 3, color, true);
                                 }
                                 state.menu_rasterizer.draw_text(
                                     "W / S or Up / Down to Navigate | Enter to Confirm",
@@ -1061,31 +1149,82 @@ impl ApplicationHandler for SilentHillApp {
                                 );
                             }
                             TitlePhase::ScenarioSelect => {
-                                state.menu_rasterizer.draw_text(
-                                    "SELECT SCENARIO",
-                                    500,
-                                    320,
-                                    3,
-                                    yellow,
-                                    true,
-                                );
-                                let scenarios = [
-                                    "LETTER FROM SILENT HEAVEN (JAMES)",
-                                    "BORN FROM A WISH (MARIA)",
-                                ];
-                                for (idx, name) in scenarios.iter().enumerate() {
-                                    let is_selected =
-                                        idx == state.menu_ctrl.title_sm.scenario_index;
-                                    let color = if is_selected { yellow } else { white };
-                                    let y = 410 + idx * 50;
-                                    if is_selected {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    let scenarios = [
+                                        (0, AuthenticButtonSprite::MainScenario),
+                                        (1, AuthenticButtonSprite::SubScenario),
+                                    ];
+                                    for (idx, sprite) in &scenarios {
+                                        let is_selected =
+                                            *idx == state.menu_ctrl.title_sm.scenario_index;
+                                        let y = 390 + *idx as i32 * 75;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.48f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_w = (glow_rect.width as f32 * 0.7) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                glow_x,
+                                                y - 6,
+                                                0.7,
+                                                [1.0, 1.0, 1.0, 0.85],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "SELECT SCENARIO",
+                                        500,
+                                        320,
+                                        3,
+                                        yellow,
+                                        true,
+                                    );
+                                    let scenarios = [
+                                        "LETTER FROM SILENT HEAVEN (JAMES)",
+                                        "BORN FROM A WISH (MARIA)",
+                                    ];
+                                    for (idx, name) in scenarios.iter().enumerate() {
+                                        let is_selected =
+                                            idx == state.menu_ctrl.title_sm.scenario_index;
+                                        let color = if is_selected { yellow } else { white };
+                                        let y = 410 + idx * 50;
+                                        if is_selected {
+                                            state
+                                                .menu_rasterizer
+                                                .draw_text(">", 360, y, 2, yellow, true);
+                                        }
                                         state
                                             .menu_rasterizer
-                                            .draw_text(">", 360, y, 2, yellow, true);
+                                            .draw_text(name, 390, y, 2, color, true);
                                     }
-                                    state
-                                        .menu_rasterizer
-                                        .draw_text(name, 390, y, 2, color, true);
                                 }
                                 state.menu_rasterizer.draw_text(
                                     "[Up/Down: Select | Enter: Confirm | Esc: Back]",
@@ -1097,20 +1236,96 @@ impl ApplicationHandler for SilentHillApp {
                                 );
                             }
                             TitlePhase::ActionDifficultySelect => {
-                                state.menu_rasterizer.draw_text(
-                                    "ACTION DIFFICULTY",
-                                    480,
-                                    320,
-                                    3,
-                                    yellow,
-                                    true,
-                                );
-                                let diff_str =
-                                    format!("{:?}", state.menu_ctrl.title_sm.action_difficulty)
-                                        .to_uppercase();
-                                state
-                                    .menu_rasterizer
-                                    .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    // Title header
+                                    let hdr_rect = AuthenticButtonSprite::ActionLevel.atlas_rect();
+                                    let hdr_scale = 0.55f32;
+                                    let hdr_w = (hdr_rect.width as f32 * hdr_scale) as i32;
+                                    atlas.blit_sprite(
+                                        AuthenticButtonSprite::ActionLevel,
+                                        &mut state.menu_rasterizer.pixels,
+                                        state.menu_rasterizer.width,
+                                        state.menu_rasterizer.height,
+                                        center_x - (hdr_w / 2),
+                                        260,
+                                        hdr_scale,
+                                        [1.0, 1.0, 1.0, 1.0],
+                                    );
+
+                                    let choices = [
+                                        (
+                                            sh2_core::config::ActionDifficulty::Hard,
+                                            AuthenticButtonSprite::Hard,
+                                        ),
+                                        (
+                                            sh2_core::config::ActionDifficulty::Normal,
+                                            AuthenticButtonSprite::Normal,
+                                        ),
+                                        (
+                                            sh2_core::config::ActionDifficulty::Easy,
+                                            AuthenticButtonSprite::Easy,
+                                        ),
+                                    ];
+
+                                    for (idx, (diff, sprite)) in choices.iter().enumerate() {
+                                        let is_selected =
+                                            *diff == state.menu_ctrl.title_sm.action_difficulty;
+                                        let y = 360 + idx as i32 * 65;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.52f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_w = (glow_rect.width as f32 * 0.5) as i32;
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                center_x - (glow_w / 2),
+                                                y - 5,
+                                                0.5,
+                                                [1.0, 1.0, 1.0, 0.85],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "ACTION DIFFICULTY",
+                                        480,
+                                        320,
+                                        3,
+                                        yellow,
+                                        true,
+                                    );
+                                    let diff_str =
+                                        format!("{:?}", state.menu_ctrl.title_sm.action_difficulty)
+                                            .to_uppercase();
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                }
                                 state.menu_rasterizer.draw_text(
                                     "[Up/Down: Change | Enter: Next | Esc: Back]",
                                     440,
@@ -1121,20 +1336,100 @@ impl ApplicationHandler for SilentHillApp {
                                 );
                             }
                             TitlePhase::RiddleDifficultySelect => {
-                                state.menu_rasterizer.draw_text(
-                                    "RIDDLE DIFFICULTY",
-                                    480,
-                                    320,
-                                    3,
-                                    yellow,
-                                    true,
-                                );
-                                let diff_str =
-                                    format!("{:?}", state.menu_ctrl.title_sm.riddle_difficulty)
-                                        .to_uppercase();
-                                state
-                                    .menu_rasterizer
-                                    .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    // Title header
+                                    let hdr_rect = AuthenticButtonSprite::RiddleLevel.atlas_rect();
+                                    let hdr_scale = 0.55f32;
+                                    let hdr_w = (hdr_rect.width as f32 * hdr_scale) as i32;
+                                    atlas.blit_sprite(
+                                        AuthenticButtonSprite::RiddleLevel,
+                                        &mut state.menu_rasterizer.pixels,
+                                        state.menu_rasterizer.width,
+                                        state.menu_rasterizer.height,
+                                        center_x - (hdr_w / 2),
+                                        260,
+                                        hdr_scale,
+                                        [1.0, 1.0, 1.0, 1.0],
+                                    );
+
+                                    let choices = [
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Hard,
+                                            AuthenticButtonSprite::Hard,
+                                        ),
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Normal,
+                                            AuthenticButtonSprite::Normal,
+                                        ),
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Easy,
+                                            AuthenticButtonSprite::Easy,
+                                        ),
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Extra,
+                                            AuthenticButtonSprite::Beginner,
+                                        ),
+                                    ];
+
+                                    for (idx, (diff, sprite)) in choices.iter().enumerate() {
+                                        let is_selected =
+                                            *diff == state.menu_ctrl.title_sm.riddle_difficulty;
+                                        let y = 350 + idx as i32 * 58;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.52f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_w = (glow_rect.width as f32 * 0.5) as i32;
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                center_x - (glow_w / 2),
+                                                y - 5,
+                                                0.5,
+                                                [1.0, 1.0, 1.0, 0.85],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "RIDDLE DIFFICULTY",
+                                        480,
+                                        320,
+                                        3,
+                                        yellow,
+                                        true,
+                                    );
+                                    let diff_str =
+                                        format!("{:?}", state.menu_ctrl.title_sm.riddle_difficulty)
+                                            .to_uppercase();
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                }
                                 state.menu_rasterizer.draw_text(
                                     "[Up/Down: Change | Enter: Start Game | Esc: Back]",
                                     420,

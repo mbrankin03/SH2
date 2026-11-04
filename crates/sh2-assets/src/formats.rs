@@ -21,4 +21,6 @@ pub use mes::{parse_mes, DialogueMessage, MessageTable};
 pub use sound::{
     parse_sddata, parse_sdm_headers, parse_sdm_sdb, SdmEntryHeader, SoundBank, WavEntry,
 };
-pub use texture::{decode_texture_bytes, DecodedTexture, TextureLoader};
+pub use texture::{
+    decode_texture_bytes, parse_texture_container, ContainerTexture, DecodedTexture, TextureLoader,
+};

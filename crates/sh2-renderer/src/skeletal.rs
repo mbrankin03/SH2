@@ -262,6 +262,8 @@ struct SkeletonBones {
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
 @group(1) @binding(0) var<uniform> skeleton: SkeletonBones;
+@group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
+@group(2) @binding(1) var diffuse_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -325,8 +327,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = vec3<f32>(0.04, 0.04, 0.045);
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation);
 
-    let final_rgb = (ambient + diffuse) * in.color.rgb;
-    return vec4<f32>(final_rgb, in.color.a);
+    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    let final_rgb = (ambient + diffuse) * in.color.rgb * tex_color.rgb;
+    return vec4<f32>(final_rgb, in.color.a * tex_color.a);
 }
 "#;
 
@@ -335,6 +338,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         hdr_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
         common_bind_group_layout: &wgpu::BindGroupLayout,
+        texture_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let bone_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -353,7 +357,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Skeletal Render Pipeline Layout"),
-            bind_group_layouts: &[common_bind_group_layout, &bone_bind_group_layout],
+            bind_group_layouts: &[
+                common_bind_group_layout,
+                &bone_bind_group_layout,
+                texture_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 

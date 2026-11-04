@@ -22,6 +22,9 @@ use std::path::{Path, PathBuf};
 /// Magic identifier for PS2/PC single/multi-sprite `.tex` texture containers (`0x19990901`).
 pub const TEX_MAGIC: u32 = 0x19990901;
 
+/// Magic identifier bytes for PS2/PC single/multi-sprite `.tex` texture containers (`0x19990901`).
+pub const TEX_MAGIC_BYTES: [u8; 4] = [0x01, 0x09, 0x99, 0x19];
+
 /// Decoded RGBA8 image surface.
 #[derive(Debug, Clone)]
 pub struct DecodedTexture {
@@ -97,6 +100,149 @@ impl TextureLoader {
     }
 }
 
+/// Entry in a `0x19990901` texture container.
+#[derive(Debug, Clone)]
+pub struct ContainerTexture {
+    /// Texture identification number.
+    pub id: u32,
+    /// Sprite identification number.
+    pub sprite_id: u32,
+    /// Width in pixels.
+    pub width: usize,
+    /// Height in pixels.
+    pub height: usize,
+    /// Format code: 0 = DXT1, 1/2 = DXT3, 3/4 = DXT5, 0x20 = BGRA8.
+    pub format: u8,
+    /// Whether the texture payload is DXT compressed.
+    pub is_compressed: bool,
+    /// Raw texture bytes (compressed DXT or uncompressed BGRA8).
+    pub data: Vec<u8>,
+}
+
+impl ContainerTexture {
+    /// Decodes the texture payload into an uncompressed RGBA8 buffer.
+    pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
+        if self.format == 0x20 || !self.is_compressed {
+            // Uncompressed 32-bit BGRA -> RGBA
+            let mut rgba = Vec::with_capacity(self.width * self.height * 4);
+            let (chunks, _) = self.data.as_chunks::<4>();
+            for chunk in chunks {
+                rgba.push(chunk[2]); // R
+                rgba.push(chunk[1]); // G
+                rgba.push(chunk[0]); // B
+                rgba.push(chunk[3]); // A
+            }
+            if rgba.len() == self.width * self.height * 4 {
+                return Ok(rgba);
+            }
+        }
+
+        let kind = match self.format {
+            0 => 1,
+            1 | 2 => 3,
+            3 | 4 => 5,
+            _ => 3,
+        };
+        decode_dxt(&self.data, self.width, self.height, kind)
+    }
+}
+
+/// Parses all textures stored in a `0x19990901` container buffer.
+pub fn parse_texture_container(
+    bytes: &[u8],
+    offset: usize,
+) -> Result<Vec<ContainerTexture>, AssetError> {
+    if bytes.len() < offset + 16 {
+        return Err(AssetError::BufferUnderflow {
+            required: offset + 16,
+            available: bytes.len(),
+        });
+    }
+
+    let magic = u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ]);
+    if magic != TEX_MAGIC {
+        return Err(AssetError::InvalidMagic {
+            expected: &TEX_MAGIC_BYTES,
+            found: bytes[offset..offset + 4].to_vec(),
+        });
+    }
+
+    let mut textures = Vec::new();
+    let mut p = offset + 16;
+    let end = bytes.len();
+
+    while end.saturating_sub(p) >= 16 {
+        let tag = u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]);
+        if tag == 0 {
+            p += 16;
+            continue;
+        }
+
+        if end.saturating_sub(p) < 32 {
+            break;
+        }
+
+        let tex_id = tag;
+        let w = u16::from_le_bytes([bytes[p + 4], bytes[p + 5]]) as usize;
+        let h = u16::from_le_bytes([bytes[p + 6], bytes[p + 7]]) as usize;
+        let nspr = u16::from_le_bytes([bytes[p + 12], bytes[p + 13]]) as usize;
+        p += 32;
+
+        for _ in 0..nspr {
+            if end.saturating_sub(p) < 32 {
+                break;
+            }
+
+            let sid = u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]);
+            let fmt = bytes[p + 12];
+            let comp = bytes[p + 13];
+            let ds =
+                u32::from_le_bytes([bytes[p + 16], bytes[p + 17], bytes[p + 18], bytes[p + 19]])
+                    as usize;
+            let marker = u16::from_le_bytes([bytes[p + 30], bytes[p + 31]]);
+            p += 32;
+
+            if marker != 0x9900 && marker != 0 {
+                // If marker doesn't match standard sprite header, stop container traversal safely
+                return Ok(textures);
+            }
+
+            if ds > 0 {
+                let exp = if comp != 0 {
+                    w.div_ceil(4).max(1) * h.div_ceil(4).max(1) * if fmt == 0 { 8 } else { 16 }
+                } else if fmt == 8 {
+                    w * h
+                } else {
+                    w * h * 4
+                };
+
+                if p + exp <= end {
+                    textures.push(ContainerTexture {
+                        id: tex_id,
+                        sprite_id: sid,
+                        width: w,
+                        height: h,
+                        format: fmt,
+                        is_compressed: comp != 0,
+                        data: bytes[p..p + exp].to_vec(),
+                    });
+                }
+                p += exp;
+                if fmt == 8 {
+                    p += 32 + 1024; // palette data
+                }
+            }
+        }
+    }
+
+    Ok(textures)
+}
+
 /// Decodes texture raw bytes depending on container magic and image signatures.
 pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture, AssetError> {
     // 1. Check for DirectDraw Surface (DDS)
@@ -125,24 +271,38 @@ pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture,
     }
 
     // 3. Check for PS2/PC .tex container (`0x19990901`)
-    if bytes.len() >= 0x40 {
+    if bytes.len() >= 16 {
         let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         if magic == TEX_MAGIC {
-            let width = u16::from_le_bytes([bytes[0x38], bytes[0x39]]) as usize;
-            let height = u16::from_le_bytes([bytes[0x3a], bytes[0x3b]]) as usize;
-            let fmt = bytes[0x3c];
-            let kind = match fmt {
-                0x00 => 1,
-                0x01 | 0x02 => 3,
-                _ => 5,
-            };
-            if bytes.len() > 0x40 {
-                let rgba = decode_dxt(&bytes[0x40..], width, height, kind)?;
-                return Ok(DecodedTexture {
-                    width,
-                    height,
-                    rgba,
-                });
+            if let Ok(container_textures) = parse_texture_container(bytes, 0) {
+                if let Some(first) = container_textures.first() {
+                    let rgba = first.to_rgba()?;
+                    return Ok(DecodedTexture {
+                        width: first.width,
+                        height: first.height,
+                        rgba,
+                    });
+                }
+            }
+
+            // Fallback for single-sprite headers at 0x30/0x38 if container traversal had no sprites
+            if bytes.len() >= 0x40 {
+                let width = u16::from_le_bytes([bytes[0x38], bytes[0x39]]) as usize;
+                let height = u16::from_le_bytes([bytes[0x3a], bytes[0x3b]]) as usize;
+                let fmt = bytes[0x3c];
+                let kind = match fmt {
+                    0x00 => 1,
+                    0x01 | 0x02 => 3,
+                    _ => 5,
+                };
+                if bytes.len() > 0x40 && width > 0 && height > 0 {
+                    let rgba = decode_dxt(&bytes[0x40..], width, height, kind)?;
+                    return Ok(DecodedTexture {
+                        width,
+                        height,
+                        rgba,
+                    });
+                }
             }
         }
     }

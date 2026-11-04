@@ -1090,8 +1090,7 @@ impl ApplicationHandler for SilentHillApp {
                                             MainMenuOption::NewGame => 0,
                                             MainMenuOption::Continue => 1,
                                             MainMenuOption::Options => 2,
-                                            MainMenuOption::Exit => 4,
-                                            _ => 0,
+                                            MainMenuOption::Exit => 3,
                                         };
                                         let is_selected =
                                             logical_idx == state.menu_ctrl.title_sm.main_menu_index;

@@ -39,16 +39,14 @@ pub enum MainMenuOption {
     NewGame = 0,
     Continue = 1,
     Options = 2,
-    Credits = 3,
-    Exit = 4,
+    Exit = 3,
 }
 
 impl MainMenuOption {
-    pub const ALL: [MainMenuOption; 5] = [
+    pub const ALL: [MainMenuOption; 4] = [
         MainMenuOption::NewGame,
         MainMenuOption::Continue,
         MainMenuOption::Options,
-        MainMenuOption::Credits,
         MainMenuOption::Exit,
     ];
 
@@ -57,7 +55,6 @@ impl MainMenuOption {
             Self::NewGame => "NEW GAME",
             Self::Continue => "CONTINUE",
             Self::Options => "OPTIONS",
-            Self::Credits => "CREDITS",
             Self::Exit => "EXIT",
         }
     }
@@ -203,10 +200,6 @@ impl TitleStateMachine {
                     }
                     MainMenuOption::Options => {
                         self.phase = TitlePhase::OptionsMenu;
-                        sound = MenuSoundCue::Confirm;
-                    }
-                    MainMenuOption::Credits => {
-                        self.phase = TitlePhase::Credits;
                         sound = MenuSoundCue::Confirm;
                     }
                     MainMenuOption::Exit => {

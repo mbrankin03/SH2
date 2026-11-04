@@ -258,6 +258,219 @@ pub fn parse_anm(
     Ok(AnimationFile { bone_count, frames })
 }
 
+/// Evaluates a 3x3 rotation matrix from ZYX Euler angles $(R_x, R_y, R_z)$ in radians:
+/// $R = R_z \cdot R_y \cdot R_x$.
+pub fn euler_to_matrix(angles: [f32; 3]) -> [[f32; 3]; 3] {
+    let [rx, ry, rz] = angles;
+    let (cx, sx) = (rx.cos(), rx.sin());
+    let (cy, sy) = (ry.cos(), ry.sin());
+    let (cz, sz) = (rz.cos(), rz.sin());
+
+    [
+        [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+        [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+        [-sy, cy * sx, cy * cx],
+    ]
+}
+
+/// Computes local parent-relative 4x4 bind transform matrices for all bones from initial bind matrices.
+///
+/// If bone `i` is a root bone (`parents[i] == 255`), `local[i] = initial[i]`.
+/// Otherwise, `local[i] = initial[parents[i]]^{-1} * initial[i]`.
+pub fn compute_bind_locals(parents: &[u8], initial: &[[[f32; 4]; 4]]) -> Vec<[[f32; 4]; 4]> {
+    let n = parents.len().min(initial.len());
+    let mut locals = Vec::with_capacity(n);
+
+    for i in 0..n {
+        let p = parents[i];
+        if p == 255 || (p as usize) >= initial.len() {
+            locals.push(initial[i]);
+        } else {
+            let inv_p = mat4_inverse(initial[p as usize]);
+            locals.push(mat4_mul(inv_p, initial[i]));
+        }
+    }
+    locals
+}
+
+/// Evaluates world/model-space transform matrices for each bone in a given animation frame.
+///
+/// Unspecified bone channels retain their local bind pose transform.
+pub fn evaluate_pose(
+    parents: &[u8],
+    bind_locals: &[[[f32; 4]; 4]],
+    frame: &AnimationFrame,
+) -> Vec<[[f32; 4]; 4]> {
+    let n = parents.len().min(bind_locals.len());
+    let mut world = vec![[[0.0; 4]; 4]; n];
+
+    for i in 0..n {
+        let mut loc = bind_locals[i];
+        if let Some(Some(ref bone)) = frame.bones.get(i) {
+            if let Some(rot) = bone.rotation {
+                let rot_m = euler_to_matrix(rot);
+                // Assign upper-left 3x3 rotation
+                #[allow(clippy::needless_range_loop)]
+                for r in 0..3 {
+                    for c in 0..3 {
+                        loc[r][c] = rot_m[r][c];
+                    }
+                }
+            }
+            if let Some(trans) = bone.translation {
+                loc[0][3] = trans[0];
+                loc[1][3] = trans[1];
+                loc[2][3] = trans[2];
+            }
+        }
+
+        let p = parents[i];
+        if p == 255 || (p as usize) >= n {
+            world[i] = loc;
+        } else {
+            world[i] = mat4_mul(world[p as usize], loc);
+        }
+    }
+
+    world
+}
+
+/// Computes final skinning matrices ($M_{skin} = M_{world} \cdot M_{initial}^{-1}$) for each bone.
+pub fn compute_skin_matrices(
+    world_matrices: &[[[f32; 4]; 4]],
+    initial_matrices: &[[[f32; 4]; 4]],
+) -> Vec<[[f32; 4]; 4]> {
+    let n = world_matrices.len().min(initial_matrices.len());
+    let mut skin = Vec::with_capacity(n);
+    for i in 0..n {
+        let inv_init = mat4_inverse(initial_matrices[i]);
+        skin.push(mat4_mul(world_matrices[i], inv_init));
+    }
+    skin
+}
+
+/// Linearly interpolates (LERP / SLERP equivalent for Euler tracks) between two animation frames.
+pub fn interpolate_frames(
+    frame_a: &AnimationFrame,
+    frame_b: &AnimationFrame,
+    alpha: f32,
+) -> AnimationFrame {
+    let bone_count = frame_a.bones.len().max(frame_b.bones.len());
+    let mut bones = Vec::with_capacity(bone_count);
+
+    let alpha = alpha.clamp(0.0, 1.0);
+    let inv_alpha = 1.0 - alpha;
+
+    for i in 0..bone_count {
+        let b_a = frame_a.bones.get(i).and_then(|x| x.as_ref());
+        let b_b = frame_b.bones.get(i).and_then(|x| x.as_ref());
+
+        match (b_a, b_b) {
+            (Some(a), Some(b)) => {
+                let rot = match (a.rotation, b.rotation) {
+                    (Some(ra), Some(rb)) => Some([
+                        ra[0] * inv_alpha + rb[0] * alpha,
+                        ra[1] * inv_alpha + rb[1] * alpha,
+                        ra[2] * inv_alpha + rb[2] * alpha,
+                    ]),
+                    (Some(ra), None) => Some(ra),
+                    (None, Some(rb)) => Some(rb),
+                    (None, None) => None,
+                };
+                let trans = match (a.translation, b.translation) {
+                    (Some(ta), Some(tb)) => Some([
+                        ta[0] * inv_alpha + tb[0] * alpha,
+                        ta[1] * inv_alpha + tb[1] * alpha,
+                        ta[2] * inv_alpha + tb[2] * alpha,
+                    ]),
+                    (Some(ta), None) => Some(ta),
+                    (None, Some(tb)) => Some(tb),
+                    (None, None) => None,
+                };
+                bones.push(Some(BoneTransform {
+                    rotation: rot,
+                    translation: trans,
+                    track_type: a.track_type,
+                }));
+            }
+            (Some(a), None) => bones.push(Some(a.clone())),
+            (None, Some(b)) => bones.push(Some(b.clone())),
+            (None, None) => bones.push(None),
+        }
+    }
+
+    AnimationFrame { bones }
+}
+
+/// Row-major 4x4 matrix multiplication: $C = A \cdot B$.
+#[inline]
+pub fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut out = [[0.0; 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            out[r][c] =
+                a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c] + a[r][3] * b[3][c];
+        }
+    }
+    out
+}
+
+/// Inverts a standard affine $4 \times 4$ transformation matrix (row-major).
+#[inline]
+pub fn mat4_inverse(m: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    // Treat upper 3x3 as rotation/scale and translation column
+    let a00 = m[0][0];
+    let a01 = m[0][1];
+    let a02 = m[0][2];
+    let a10 = m[1][0];
+    let a11 = m[1][1];
+    let a12 = m[1][2];
+    let a20 = m[2][0];
+    let a21 = m[2][1];
+    let a22 = m[2][2];
+
+    let det3 = a00 * (a11 * a22 - a12 * a21) - a01 * (a10 * a22 - a12 * a20)
+        + a02 * (a10 * a21 - a11 * a20);
+
+    if det3.abs() < 1e-8 {
+        // Fallback to identity if degenerate
+        return [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+    }
+
+    let inv_det = 1.0 / det3;
+    let r00 = (a11 * a22 - a12 * a21) * inv_det;
+    let r01 = (a02 * a21 - a01 * a22) * inv_det;
+    let r02 = (a01 * a12 - a02 * a11) * inv_det;
+
+    let r10 = (a12 * a20 - a10 * a22) * inv_det;
+    let r11 = (a00 * a22 - a02 * a20) * inv_det;
+    let r12 = (a02 * a10 - a00 * a12) * inv_det;
+
+    let r20 = (a10 * a21 - a11 * a20) * inv_det;
+    let r21 = (a01 * a20 - a00 * a21) * inv_det;
+    let r22 = (a00 * a11 - a01 * a10) * inv_det;
+
+    let tx = m[0][3];
+    let ty = m[1][3];
+    let tz = m[2][3];
+
+    let itx = -(r00 * tx + r01 * ty + r02 * tz);
+    let ity = -(r10 * tx + r11 * ty + r12 * tz);
+    let itz = -(r20 * tx + r21 * ty + r22 * tz);
+
+    [
+        [r00, r01, r02, itx],
+        [r10, r11, r12, ity],
+        [r20, r21, r22, itz],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+}
+
 /// Converts an IEEE 754 half-precision float (`u16`) to standard single-precision `f32`.
 fn f16_to_f32(h: u16) -> f32 {
     let sign = ((h >> 15) & 1) as u32;

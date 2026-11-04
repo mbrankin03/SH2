@@ -4,8 +4,14 @@ pub mod fog;
 pub mod light;
 pub mod pipeline;
 pub mod post;
+pub mod skeletal;
 
 use sh2_assets::formats::map::MapFile;
+use sh2_assets::formats::mdls::ModelFile;
+pub use skeletal::{
+    GpuSkeletalMesh, GpuSkeletalPrimitive, SkeletalPipeline, SkeletalVertex, SkeletonBoneUniforms,
+    MAX_SKELETON_BONES,
+};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -98,6 +104,7 @@ pub struct RenderContext {
     pub ldr_output_view: wgpu::TextureView,
 
     pub geometry_pipeline: pipeline::GeometryPipeline,
+    pub skeletal_pipeline: skeletal::SkeletalPipeline,
     pub fog_pipeline: fog::FogComputePipeline,
     pub post_pipeline: post::PostProcessPipeline,
 
@@ -219,6 +226,12 @@ impl RenderContext {
 
         let geometry_pipeline =
             pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let skeletal_pipeline = skeletal::SkeletalPipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
+        );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
 
@@ -350,6 +363,7 @@ impl RenderContext {
             ldr_output_texture,
             ldr_output_view,
             geometry_pipeline,
+            skeletal_pipeline,
             fog_pipeline,
             post_pipeline,
             camera_buffer,
@@ -473,5 +487,124 @@ impl RenderContext {
     pub fn render_map(&self, map: &MapFile) {
         let gpu_map = GpuMap::from_map(&self.device, map);
         self.render_gpu_map(&gpu_map);
+    }
+
+    /// Renders static world level map batches and dynamic animated skeletal meshes in a unified pass.
+    pub fn render_scene(
+        &self,
+        gpu_map: Option<&GpuMap>,
+        skeletal_meshes: &[(&GpuSkeletalMesh, &[[[f32; 4]; 4]])],
+    ) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Scene Render Encoder"),
+            });
+
+        // 1. Geometry & Skeletal Meshes Render Pass
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Scene Geometry & Skeletal Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.hdr_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.01,
+                            g: 0.01,
+                            b: 0.015,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // 1a. Render static level batches if provided
+            if let Some(map) = gpu_map {
+                rpass.set_pipeline(&self.geometry_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                for batch in &map.batches {
+                    rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+                    rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
+                }
+            }
+
+            // 1b. Render skeletal character meshes
+            if !skeletal_meshes.is_empty() {
+                rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+
+                for (mesh, matrices) in skeletal_meshes {
+                    mesh.update_bone_matrices(&self.queue, matrices);
+                    rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+                    for prim in &mesh.primitives {
+                        if prim.index_count > 0 {
+                            rpass.draw_indexed(
+                                prim.first_index..prim.first_index + prim.index_count,
+                                0,
+                                0..1,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Volumetric Fog Compute Pass
+        if self.config.enable_fog {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Volumetric Fog Compute Pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.fog_pipeline.pipeline);
+            cpass.set_bind_group(0, &self.fog_bind_group, &[]);
+            let workgroups_x = self.config.width.div_ceil(16);
+            let workgroups_y = self.config.height.div_ceil(16);
+            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+
+        // 3. Post-Processing Compute Pass (ACES tonemapping & film grain)
+        if self.config.enable_post {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Post Process Compute Pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.post_pipeline.pipeline);
+            let post_bind_group = if self.config.enable_fog {
+                &self.post_bind_group_fog
+            } else {
+                &self.post_bind_group_direct
+            };
+            cpass.set_bind_group(0, post_bind_group, &[]);
+            let workgroups_x = self.config.width.div_ceil(16);
+            let workgroups_y = self.config.height.div_ceil(16);
+            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Compiles a ModelFile into a GpuSkeletalMesh.
+    pub fn compile_skeletal_mesh(&self, model: &ModelFile) -> GpuSkeletalMesh {
+        GpuSkeletalMesh::from_model(
+            &self.device,
+            &self.skeletal_pipeline.bone_bind_group_layout,
+            model,
+        )
     }
 }

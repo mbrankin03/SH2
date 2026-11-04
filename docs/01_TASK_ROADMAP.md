@@ -21,32 +21,32 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 ---
 
 ## Phase 1: Environment & Tooling Setup
-- [ ] Install Rust toolchain on CachyOS (`rustup`, `cargo`, `cargo-ndk`).
-- [ ] Initialize Cargo workspace in `dev/SH2/Cargo.toml`.
-- [ ] Configure `ccache`, `clang`, and Android NDK toolchain targets (`aarch64-linux-android`).
-- [ ] Verify ADB connection and authorization to AYN Thor (`adb devices`).
+- [x] Install Rust toolchain on CachyOS (`rustup`, `cargo`, `cargo-ndk`).
+- [x] Initialize Cargo workspace in `dev/SH2/Cargo.toml`.
+- [x] Configure `ccache`, `clang`, and Android NDK toolchain targets (`aarch64-linux-android`).
+- [x] Verify ADB connection and authorization to AYN Thor (`adb devices`).
 
 ## Phase 2: Prototype Ground Truth Extraction
-- [ ] Build extraction script for `SLUS_202.28` (July 13, 2001 Prototype) symbol table.
-- [ ] Build extraction script for `SLPM_123.45` (E3 2001 Trial) symbols & debug routines.
-- [ ] Generate unified symbol dictionary in JSON (`docs/symbols_july13.json`, `docs/symbols_e3.json`).
-- [ ] Extract original C struct headers from DWARF debug sections (`m3_play.h`, `clani.h`, `anime.h`).
-- [ ] Map SH2:EE patch addresses (`Patches/`) to real unstripped function names.
+- [x] Build extraction script for `SLUS_202.28` (July 13, 2001 Prototype) symbol table.
+- [x] Build extraction script for `SLPM_123.45` (E3 2001 Trial) symbols & debug routines.
+- [x] Generate unified symbol dictionary in JSON (`docs/symbols_july13.json`, `docs/symbols_e3.json`).
+- [x] Extract original C struct headers from DWARF debug sections (`m3_play.h`, `clani.h`, `anime.h`).
+- [x] Map SH2:EE patch addresses (`Patches/`) to real unstripped function names.
 
 ## Phase 3: Rust Workspace & Asset Ingestion (`sh2-assets`)
-- [ ] Implement VROM / archive reader for PC Restless Dreams and PS2 ISO formats.
+- [x] Implement VROM / archive reader for PC Restless Dreams and PS2 ISO formats.
 - [x] Build parser for `.map` level geometry and collision meshes.
-- [ ] Build parser for `.mdls` 3D character models and skeletal bone hierarchies.
-- [ ] Build parser for `.anm` skeletal animation tracks.
-- [ ] Build parser for `.sdm` / `.sdb` audio banks and `.mes` dialogue script tables.
-- [ ] Implement high-resolution texture loader supporting SH2:EE DDS/PNG replacement packs.
+- [x] Build parser for `.mdls` 3D character models and skeletal bone hierarchies.
+- [x] Build parser for `.anm` skeletal animation tracks.
+- [x] Build parser for `.sdm` / `.sdb` audio banks and `.mes` dialogue script tables.
+- [x] Implement high-resolution texture loader supporting SH2:EE DDS/PNG replacement packs.
 
 ## Phase 4: Modern `wgpu` Renderer & Hardware Relief (`sh2-renderer`)
 - [x] Setup `wgpu` Vulkan/OpenGL ES backend with 32-bit floating-point depth buffer.
 - [x] Implement compute-shader 3D volumetric fog based on `dbg_fogparm_ctl` / `dbg_ambifog_ctl`.
 - [x] Implement dynamic spotlight & flashlight cone calculations (`dbg_spotL_ctl`).
 - [x] Implement film grain post-processing shader with configurable intensity.
-- [ ] Build skeletal mesh skinning shader for James, Maria, and creatures.
+- [x] Build skeletal mesh skinning shader for James, Maria, and creatures.
 - [ ] Implement 1080p60 FMV video player with audio sync (FFmpeg / software decoder).
 - [ ] **[Bonus / Extended Graphics]** Native HDR Display Pipeline:
   - Configure swapchain presentation for wide-gamut / high-dynamic-range surfaces (`Rgba16Float` / `Rgb10a2Unorm` with PQ / ScRGB Linear).
@@ -57,11 +57,11 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
   - Integrate spotlight shadow tests directly into volumetric fog raymarching for dynamic light shafts and god rays.
 
 ## Phase 5: Gameplay Core & Scenarios (`sh2-core`)
-- [ ] Decouple simulation clock from rendering (fixed 60 Hz physics/animation tick rate).
+- [x] Decouple simulation clock from rendering (fixed 60 Hz physics/animation tick rate).
 - [ ] Implement camera system (third-person exploration, fixed cinematic cameras, right-stick search).
 - [ ] Port Main Scenario (*Letter from Silent Heaven*): James's inventory, state machines, and puzzles.
 - [ ] Port Sub-Scenario (*Born from a Wish*): Maria's Baldwin Mansion stages 53–58 from `prog_wish.c`.
-- [ ] Wire in SH2:EE timing constants for 60 FPS pacing (flashlight speed, fog animation, boat rowing).
+- [x] Wire in SH2:EE timing constants for 60 FPS pacing (flashlight speed, fog animation, boat rowing).
 
 ## Phase 6: Dual-Screen & Touch Companion UI (`sh2-ui`)
 - [ ] Port `sh23ds/port/source/map.c`: Real-time town map (Maps 1–35) and Baldwin Mansion (Map 36).

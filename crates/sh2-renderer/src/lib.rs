@@ -42,7 +42,15 @@ pub struct GpuMapBatch {
     pub index_buffer: wgpu::Buffer,
     pub num_indices: u32,
     pub is_transparent: bool,
+    pub material_index: usize,
 }
+
+/// Tuple representing a skeletal mesh draw call: (mesh, bone_skin_matrices, optional_texture_bind_groups)
+pub type SkeletalDrawItem<'a> = (
+    &'a GpuSkeletalMesh,
+    &'a [[[f32; 4]; 4]],
+    Option<&'a [Arc<wgpu::BindGroup>]>,
+);
 
 pub struct GpuMap {
     pub batches: Vec<GpuMapBatch>,
@@ -74,6 +82,7 @@ impl GpuMap {
                     batch.group,
                     sh2_assets::formats::map::BatchGroup::Transparent
                 ),
+                material_index: batch.material_index,
             });
         }
         Self { batches }
@@ -117,6 +126,10 @@ pub struct RenderContext {
     pub fog_bind_group: wgpu::BindGroup,
     pub post_bind_group_fog: wgpu::BindGroup,
     pub post_bind_group_direct: wgpu::BindGroup,
+
+    pub default_sampler: wgpu::Sampler,
+    pub default_view: wgpu::TextureView,
+    pub default_texture_bind_group: Arc<wgpu::BindGroup>,
 }
 
 impl RenderContext {
@@ -231,6 +244,7 @@ impl RenderContext {
             Self::HDR_FORMAT,
             Self::DEPTH_FORMAT,
             &geometry_pipeline.bind_group_layout,
+            &geometry_pipeline.texture_bind_group_layout,
         );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
@@ -345,6 +359,69 @@ impl RenderContext {
             ],
         });
 
+        // Default 1x1 white texture for untextured geometry fallback
+        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Default 1x1 White Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &default_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255, 255, 255, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let default_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Default Bilinear Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let default_texture_bind_group =
+            Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Default Diffuse Texture Bind Group"),
+                layout: &geometry_pipeline.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&default_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&default_sampler),
+                    },
+                ],
+            }));
+
         Some(Self {
             instance,
             adapter,
@@ -374,6 +451,9 @@ impl RenderContext {
             fog_bind_group,
             post_bind_group_fog,
             post_bind_group_direct,
+            default_sampler,
+            default_view,
+            default_texture_bind_group,
         })
     }
 
@@ -458,6 +538,7 @@ impl RenderContext {
             Self::HDR_FORMAT,
             Self::DEPTH_FORMAT,
             &geometry_pipeline.bind_group_layout,
+            &geometry_pipeline.texture_bind_group_layout,
         );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
@@ -570,6 +651,69 @@ impl RenderContext {
             ],
         });
 
+        // Default 1x1 white texture for untextured geometry fallback
+        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Default 1x1 White Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &default_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &[255, 255, 255, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let default_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Default Bilinear Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let default_texture_bind_group =
+            Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Default Diffuse Texture Bind Group"),
+                layout: &geometry_pipeline.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&default_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&default_sampler),
+                    },
+                ],
+            }));
+
         Self {
             instance,
             adapter,
@@ -599,6 +743,9 @@ impl RenderContext {
             fog_bind_group,
             post_bind_group_fog,
             post_bind_group_direct,
+            default_sampler,
+            default_view,
+            default_texture_bind_group,
         }
     }
 
@@ -622,6 +769,75 @@ impl RenderContext {
             .write_buffer(&self.spotlight_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
+    /// Creates a GPU diffuse texture bind group with bilinear filtering using a specific texture view.
+    pub fn create_texture_bind_group_from_view(
+        &self,
+        view: &wgpu::TextureView,
+        label: Option<&str>,
+    ) -> Arc<wgpu::BindGroup> {
+        Arc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label,
+            layout: &self.geometry_pipeline.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.default_sampler),
+                },
+            ],
+        }))
+    }
+
+    /// Creates a GPU diffuse texture bind group with bilinear filtering from raw RGBA8 pixels.
+    pub fn create_texture_bind_group(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        label: Option<&str>,
+    ) -> Arc<wgpu::BindGroup> {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label,
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.create_texture_bind_group_from_view(&view, label)
+    }
+
+    /// Update post-processing uniforms buffer.
     pub fn update_post(&self, uniforms: &post::PostUniforms) {
         self.queue
             .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
@@ -666,6 +882,7 @@ impl RenderContext {
 
             rpass.set_pipeline(&self.geometry_pipeline.pipeline);
             rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+            rpass.set_bind_group(1, &*self.default_texture_bind_group, &[]);
 
             for batch in &gpu_map.batches {
                 rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
@@ -718,7 +935,8 @@ impl RenderContext {
     pub fn render_scene(
         &self,
         gpu_map: Option<&GpuMap>,
-        skeletal_meshes: &[(&GpuSkeletalMesh, &[[[f32; 4]; 4]])],
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
     ) {
         let mut encoder = self
             .device
@@ -759,7 +977,20 @@ impl RenderContext {
             if let Some(map) = gpu_map {
                 rpass.set_pipeline(&self.geometry_pipeline.pipeline);
                 rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                let mut current_bg: Option<usize> = None;
+
                 for batch in &map.batches {
+                    let bg_idx = batch.material_index;
+                    let bind_group = match map_texture_bind_groups {
+                        Some(groups) if bg_idx < groups.len() => &groups[bg_idx],
+                        _ => &self.default_texture_bind_group,
+                    };
+
+                    if current_bg != Some(bg_idx) {
+                        rpass.set_bind_group(1, &**bind_group, &[]);
+                        current_bg = Some(bg_idx);
+                    }
+
                     rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
                     rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
@@ -771,14 +1002,27 @@ impl RenderContext {
                 rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
                 rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
 
-                for (mesh, matrices) in skeletal_meshes {
+                for (mesh, matrices, texture_groups) in skeletal_meshes {
                     mesh.update_bone_matrices(&self.queue, matrices);
                     rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
                     rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
+                    let mut current_tex: Option<u16> = None;
                     for prim in &mesh.primitives {
                         if prim.index_count > 0 {
+                            let tex_idx = prim.texture_index;
+                            if current_tex != Some(tex_idx) {
+                                let bg = match texture_groups {
+                                    Some(groups) if (tex_idx as usize) < groups.len() => {
+                                        &groups[tex_idx as usize]
+                                    }
+                                    _ => &self.default_texture_bind_group,
+                                };
+                                rpass.set_bind_group(2, &**bg, &[]);
+                                current_tex = Some(tex_idx);
+                            }
+
                             rpass.draw_indexed(
                                 prim.first_index..prim.first_index + prim.index_count,
                                 0,

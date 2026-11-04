@@ -192,8 +192,21 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     }
 
     let no_tex = data[0];
-    let tex_count = read_u32(data, 4)? as usize;
-    let tex_ofs = read_u32(data, 8)? as usize;
+    let tex_ofs_w3 = read_u32(data, 12)? as usize;
+    let tex_ofs_w2 = read_u32(data, 8)? as usize;
+    let tex_ofs = if tex_ofs_w3 + 4 <= data.len()
+        && data[tex_ofs_w3..tex_ofs_w3 + 4] == crate::formats::texture::TEX_MAGIC_BYTES
+    {
+        tex_ofs_w3
+    } else if tex_ofs_w2 + 4 <= data.len()
+        && data[tex_ofs_w2..tex_ofs_w2 + 4] == crate::formats::texture::TEX_MAGIC_BYTES
+    {
+        tex_ofs_w2
+    } else if tex_ofs_w3 > 0 && tex_ofs_w3 < data.len() {
+        tex_ofs_w3
+    } else {
+        tex_ofs_w2
+    };
     let mdl_ofs = read_u32(data, 16)? as usize;
 
     let base = if mdl_ofs != 0 { mdl_ofs } else { 64 };
@@ -267,6 +280,32 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
+    // 3b. Texture mapping metadata (main_texture_ids and texture_pairs)
+    let pcms_ofs = read_u32(data, base + 28)? as usize;
+    let tex_blocks_count = read_u32(data, base + 48)? as usize;
+    let tex_id_count = read_u32(data, base + 56)? as usize;
+
+    let mut meta = base + pcms_ofs + 64 * pairs_count;
+    let mut main_texture_ids = Vec::with_capacity(tex_blocks_count);
+    if meta + 4 * tex_blocks_count <= data.len() {
+        for _ in 0..tex_blocks_count {
+            main_texture_ids.push(read_u32(data, meta)?);
+            meta += 4;
+        }
+    }
+    if !tex_blocks_count.is_multiple_of(4) {
+        meta += 16 - (4 * tex_blocks_count) % 16;
+    }
+    let mut texture_pairs: Vec<(u32, u32)> = Vec::with_capacity(tex_id_count);
+    if meta + 8 * tex_id_count <= data.len() {
+        for _ in 0..tex_id_count {
+            let block_idx = read_u32(data, meta)?;
+            let sprite_id = read_u32(data, meta + 4)?;
+            texture_pairs.push((block_idx, sprite_id));
+            meta += 8;
+        }
+    }
+
     // 4. Primitive descriptors
     let mut primitives = Vec::with_capacity(prim_count);
     let mut p = base + prim_ofs;
@@ -321,7 +360,17 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
 
         let tidx = if tcount > 0 && p + tofs + 2 <= data.len() {
-            read_u16(data, p + tofs)?
+            let raw_idx = read_u16(data, p + tofs)? as usize;
+            if raw_idx < texture_pairs.len() {
+                let (block_idx, _sid) = texture_pairs[raw_idx];
+                if (block_idx as usize) < main_texture_ids.len() {
+                    main_texture_ids[block_idx as usize] as u16
+                } else {
+                    raw_idx as u16
+                }
+            } else {
+                raw_idx as u16
+            }
         } else {
             0
         };
@@ -484,48 +533,28 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // 8. Embedded textures
+    // 8. Embedded textures (parse 0x19990901 container if present at tex_ofs)
     let mut textures = HashMap::new();
-    if tex_count > 0 && no_tex == 0 && tex_ofs != 0 && tex_ofs + 16 <= data.len() {
-        let mut t = tex_ofs + 16;
-        for _ in 0..tex_count {
-            if t + 32 > data.len() {
-                break;
-            }
-            let tid = read_u32(data, t)?;
-            let w = read_u16(data, t + 4)? as usize;
-            let h = read_u16(data, t + 6)? as usize;
-            let sprites = read_u16(data, t + 12)? as usize;
-            t += 4 + 8 + 2 + 18;
-
-            let mut fmt = 0u8;
-            for _ in 0..sprites {
-                if t + 32 <= data.len() {
-                    fmt = data[t + 12];
-                    t += 32;
-                }
-            }
-
-            let kind = match fmt {
-                0 => 1,     // DXT1
-                1 | 2 => 3, // DXT3
-                3 | 4 => 5, // DXT5
-                _ => 3,
-            };
-
-            let size = if kind == 1 { w * h / 2 } else { w * h };
-            if t + size <= data.len() {
+    if no_tex == 0 && tex_ofs != 0 && tex_ofs + 16 <= data.len() {
+        if let Ok(container_texs) = crate::formats::texture::parse_texture_container(data, tex_ofs)
+        {
+            for ctex in container_texs {
+                let kind = match ctex.format {
+                    0 => 1,
+                    1 | 2 => 3,
+                    3 | 4 => 5,
+                    _ => 3,
+                };
                 textures.insert(
-                    tid,
+                    ctex.id,
                     ModelTexture {
-                        id: tid,
-                        width: w,
-                        height: h,
+                        id: ctex.id,
+                        width: ctex.width,
+                        height: ctex.height,
                         kind,
-                        data: data[t..t + size].to_vec(),
+                        data: ctex.data,
                     },
                 );
-                t += size;
             }
         }
     }

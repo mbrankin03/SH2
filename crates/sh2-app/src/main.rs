@@ -1047,14 +1047,39 @@ impl ApplicationHandler for SilentHillApp {
 
                         match phase {
                             TitlePhase::TitleLogo => {
-                                state.menu_rasterizer.draw_text(
-                                    "PRESS ANY KEY OR ENTER TO START",
-                                    410,
-                                    620,
-                                    2,
-                                    yellow,
-                                    true,
-                                );
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    let rect = AuthenticButtonSprite::StartPrompt.atlas_rect();
+                                    let scale = 0.52f32;
+                                    let w = (rect.width as f32 * scale) as i32;
+                                    let x = center_x - (w / 2);
+                                    let y = 610;
+
+                                    // Subtle pulse alpha matching title breathing glow
+                                    let pulse = (state.menu_ctrl.title_sm.splash_timer * 3.5).sin()
+                                        * 0.15
+                                        + 0.85;
+
+                                    atlas.blit_sprite(
+                                        AuthenticButtonSprite::StartPrompt,
+                                        &mut state.menu_rasterizer.pixels,
+                                        state.menu_rasterizer.width,
+                                        state.menu_rasterizer.height,
+                                        x,
+                                        y,
+                                        scale,
+                                        [1.0, 1.0, 1.0, pulse],
+                                    );
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "PRESS ANY KEY OR ENTER TO START",
+                                        410,
+                                        620,
+                                        2,
+                                        yellow,
+                                        true,
+                                    );
+                                }
                             }
                             TitlePhase::MainMenu => {
                                 if let Some(ref atlas) = state.button_sprites {

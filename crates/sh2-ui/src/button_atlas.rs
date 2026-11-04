@@ -29,6 +29,7 @@ pub enum AuthenticButtonSprite {
     GlowCursor,
     MainScenario,
     SubScenario,
+    StartPrompt,
 }
 
 impl AuthenticButtonSprite {
@@ -119,6 +120,12 @@ impl AuthenticButtonSprite {
                 width: 1054,
                 height: 80,
             },
+            Self::StartPrompt => AtlasRect {
+                x: 0,
+                y: 0,
+                width: 824,
+                height: 70,
+            },
         }
     }
 }
@@ -128,15 +135,33 @@ pub struct ButtonSpriteSheet {
     pub width: usize,
     pub height: usize,
     pub rgba: Vec<u8>,
+    pub start_prompt_rgba: Option<Vec<u8>>,
+    pub start_prompt_width: usize,
+    pub start_prompt_height: usize,
 }
 
 impl ButtonSpriteSheet {
     /// Load from raw RGBA8 pixels (2048x2048).
     pub fn new(width: usize, height: usize, rgba: Vec<u8>) -> Self {
+        let (prompt_rgba, p_w, p_h) = Self::load_default_start_prompt();
         Self {
             width,
             height,
             rgba,
+            start_prompt_rgba: prompt_rgba,
+            start_prompt_width: p_w,
+            start_prompt_height: p_h,
+        }
+    }
+
+    fn load_default_start_prompt() -> (Option<Vec<u8>>, usize, usize) {
+        let bytes = include_bytes!("../assets/start_prompt.png");
+        if let Ok(img) = image::load_from_memory(bytes) {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            (Some(rgba.into_raw()), w as usize, h as usize)
+        } else {
+            (None, 0, 0)
         }
     }
 
@@ -153,7 +178,26 @@ impl ButtonSpriteSheet {
         scale: f32,
         tint: [f32; 4],
     ) {
-        let rect = sprite.atlas_rect();
+        let is_prompt = sprite == AuthenticButtonSprite::StartPrompt;
+        let (src_bytes, src_w, rect) = if is_prompt {
+            if let Some(ref p_bytes) = self.start_prompt_rgba {
+                (
+                    p_bytes.as_slice(),
+                    self.start_prompt_width,
+                    AtlasRect {
+                        x: 0,
+                        y: 0,
+                        width: self.start_prompt_width,
+                        height: self.start_prompt_height,
+                    },
+                )
+            } else {
+                return;
+            }
+        } else {
+            (self.rgba.as_slice(), self.width, sprite.atlas_rect())
+        };
+
         let scaled_w = (rect.width as f32 * scale).round() as usize;
         let scaled_h = (rect.height as f32 * scale).round() as usize;
 
@@ -172,13 +216,13 @@ impl ButtonSpriteSheet {
                 }
 
                 let src_x = rect.x + ((dx as f32 / scale) as usize).min(rect.width - 1);
-                let src_idx = (src_y * self.width + src_x) * 4;
+                let src_idx = (src_y * src_w + src_x) * 4;
                 let dst_idx = (out_y as usize * dst_width + out_x as usize) * 4;
 
-                let s_r = self.rgba[src_idx] as f32 * tint[0];
-                let s_g = self.rgba[src_idx + 1] as f32 * tint[1];
-                let s_b = self.rgba[src_idx + 2] as f32 * tint[2];
-                let s_a = (self.rgba[src_idx + 3] as f32 / 255.0) * tint[3];
+                let s_r = src_bytes[src_idx] as f32 * tint[0];
+                let s_g = src_bytes[src_idx + 1] as f32 * tint[1];
+                let s_b = src_bytes[src_idx + 2] as f32 * tint[2];
+                let s_a = (src_bytes[src_idx + 3] as f32 / 255.0) * tint[3];
 
                 if s_a <= 0.005 {
                     continue;

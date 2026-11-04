@@ -2109,6 +2109,7 @@ name = "sh2-ui"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "image",
  "log",
  "serde",
  "sh2-core",

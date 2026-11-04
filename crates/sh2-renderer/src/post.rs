@@ -107,14 +107,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Authentic Konami PS2 noise tint: 0xde99 (R: 222, G: 210, B: 206)
         let grain_tint = vec3<f32>(222.0 / 255.0, 210.0 / 255.0, 206.0 / 255.0);
 
-        // Calibrated PS2 division factor 7.4 (PS2NoiseFilter.cpp) scaled by user grain intensity
-        let ps2_factor = (1.0 / 7.4) * post.grain_intensity;
-        let grain_color = grain_tint * texel_level * ps2_factor;
+        // MODULATE2X of the grain texel and tint
+        let grain_rgb = 2.0 * grain_tint * texel_level;
 
-        // Authentic inverse alpha blend with MODULATE2X:
-        // out = ldr * (1.0 - alpha) + 2.0 * grain_color * ldr
-        let alpha = clamp(0.12 * post.grain_intensity, 0.0, 0.5);
-        ldr = clamp(ldr * (1.0 - alpha) + 2.0 * grain_color * ldr, vec3<f32>(0.0), vec3<f32>(1.0));
+        // Authentic D3DBLEND_INVSRCALPHA / D3DBLEND_SRCALPHA blend (noise.c / PS2NoiseFilter):
+        // out = grain_rgb * (1.0 - scene_alpha) + ldr * scene_alpha
+        // Using grain_weight proportional to options intensity ensures clear visibility in both
+        // shadows/dark geometry (jacket, background) and lit surfaces.
+        let grain_weight = clamp(0.18 * post.grain_intensity, 0.0, 0.40);
+        let scene_weight = 1.0 - grain_weight;
+        ldr = clamp(grain_rgb * grain_weight + ldr * scene_weight, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     textureStore(ldr_out, pixel_coords, vec4<f32>(ldr, 1.0));

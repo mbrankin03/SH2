@@ -377,6 +377,231 @@ impl RenderContext {
         })
     }
 
+    pub fn from_device(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        config: RendererConfig,
+    ) -> Self {
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("32-bit Float Depth Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let hdr_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("HDR Color Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::HDR_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let hdr_color_view = hdr_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let fog_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Fog Output Color Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::HDR_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let fog_color_view = fog_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ldr_output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("LDR Output Color Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let ldr_output_view =
+            ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let geometry_pipeline =
+            pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let skeletal_pipeline = skeletal::SkeletalPipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
+        );
+        let fog_pipeline = fog::FogComputePipeline::new(&device);
+        let post_pipeline = post::PostProcessPipeline::new(&device);
+
+        let camera_uniforms = pipeline::CameraUniforms::default();
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Uniform Buffer"),
+            contents: bytemuck::bytes_of(&camera_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let spotlight_uniforms = light::SpotlightUniforms::default();
+        let spotlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Spotlight Uniform Buffer"),
+            contents: bytemuck::bytes_of(&spotlight_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let fog_uniforms = fog::FogUniforms::default();
+        let fog_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Fog Uniform Buffer"),
+            contents: bytemuck::bytes_of(&fog_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let post_uniforms = post::PostUniforms::default();
+        let post_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Post Uniform Buffer"),
+            contents: bytemuck::bytes_of(&post_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Geometry Bind Group"),
+            layout: &geometry_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: spotlight_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let fog_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fog Bind Group"),
+            layout: &fog_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: fog_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                },
+            ],
+        });
+
+        let post_bind_group_fog = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (With Fog)"),
+            layout: &post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                },
+            ],
+        });
+
+        let post_bind_group_direct = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (Direct HDR)"),
+            layout: &post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                },
+            ],
+        });
+
+        Self {
+            instance,
+            adapter,
+            device,
+            queue,
+            config,
+            depth_format: Self::DEPTH_FORMAT,
+            hdr_format: Self::HDR_FORMAT,
+            output_format: Self::OUTPUT_FORMAT,
+            depth_texture,
+            depth_view,
+            hdr_color_texture,
+            hdr_color_view,
+            fog_color_texture,
+            fog_color_view,
+            ldr_output_texture,
+            ldr_output_view,
+            geometry_pipeline,
+            skeletal_pipeline,
+            fog_pipeline,
+            post_pipeline,
+            camera_buffer,
+            spotlight_buffer,
+            fog_buffer,
+            post_buffer,
+            geometry_bind_group,
+            fog_bind_group,
+            post_bind_group_fog,
+            post_bind_group_direct,
+        }
+    }
+
     pub fn update_camera(&self, view_proj: glam::Mat4, inv_proj: glam::Mat4, cam_pos: glam::Vec3) {
         let uniforms = pipeline::CameraUniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -606,5 +831,136 @@ impl RenderContext {
             &self.skeletal_pipeline.bone_bind_group_layout,
             model,
         )
+    }
+}
+
+/// Window surface presentation blitter
+pub struct SurfaceBlitter {
+    pub pipeline: wgpu::RenderPipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub sampler: wgpu::Sampler,
+}
+
+impl SurfaceBlitter {
+    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Surface Blit Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Surface Blit Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Surface Blit Pipeline Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Surface Blit Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Surface Blit Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+            sampler,
+        }
+    }
+
+    pub fn render(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        src_view: &wgpu::TextureView,
+        dst_view: &wgpu::TextureView,
+    ) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Surface Blit Bind Group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Surface Blit Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: dst_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &bind_group, &[]);
+        rpass.draw(0..3, 0..1);
     }
 }

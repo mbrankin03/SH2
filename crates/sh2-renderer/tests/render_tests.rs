@@ -158,5 +158,37 @@ mod renderer_tests {
             ctx.render_scene(Some(&gpu_map), &[(&gpu_skeletal, &skin_matrices)]);
             let _ = ctx.device.poll(wgpu::Maintain::wait());
         }
+
+        // Test with real Maria model and animation (SH2-12)
+        let mar_mdl_path =
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/chr/mar/lll_mar.mdl";
+        let mar_anm_path =
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/chr/mar/lll_mar.anm";
+
+        if let (Ok(mdl_bytes), Ok(anm_bytes)) =
+            (std::fs::read(mar_mdl_path), std::fs::read(mar_anm_path))
+        {
+            use sh2_assets::formats::anm::{
+                compute_bind_locals, compute_skin_matrices, evaluate_pose, parse_anm,
+            };
+            use sh2_assets::formats::mdls::parse_mdl;
+
+            let model = parse_mdl(&mdl_bytes).expect("Failed to parse lll_mar.mdl");
+            let anm = parse_anm(&anm_bytes, model.bone_count, &model.parents)
+                .expect("Failed to parse lll_mar.anm");
+
+            assert_eq!(anm.bone_count, model.bone_count);
+            assert!(!anm.frames.is_empty());
+
+            let gpu_skeletal = ctx.compile_skeletal_mesh(&model);
+            assert!(gpu_skeletal.total_indices > 0);
+
+            let locals = compute_bind_locals(&model.parents, &model.initial_matrices);
+            let pose0 = evaluate_pose(&model.parents, &locals, &anm.frames[0]);
+            let skin_matrices = compute_skin_matrices(&pose0, &model.initial_matrices);
+
+            ctx.render_scene(Some(&gpu_map), &[(&gpu_skeletal, &skin_matrices)]);
+            let _ = ctx.device.poll(wgpu::Maintain::wait());
+        }
     }
 }

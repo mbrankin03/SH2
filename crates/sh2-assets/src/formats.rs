@@ -10,7 +10,10 @@ pub mod sound;
 pub mod texture;
 
 pub use adx::{decode_adx, parse_adx_header, AdxHeader, DecodedAdx};
-pub use anm::{parse_anm, AnimationFile, AnimationFrame, BoneTransform};
+pub use anm::{
+    compute_bind_locals, compute_skin_matrices, euler_to_matrix, evaluate_pose, interpolate_frames,
+    mat4_inverse, mat4_mul, parse_anm, AnimationFile, AnimationFrame, BoneTransform,
+};
 pub use dxt::{decode_dds_file, decode_dxt};
 pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
 pub use mdls::{parse_mdl, ModelFile, ModelPrimitive, ModelTexture, ModelVertices};

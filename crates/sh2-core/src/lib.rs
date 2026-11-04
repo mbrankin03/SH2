@@ -1,5 +1,6 @@
 //! sh2-core: Core engine simulation, state machines, math, camera, and timing.
 
+pub mod animation;
 pub mod camera;
 pub mod clock;
 pub mod input;
@@ -11,6 +12,9 @@ pub mod timing;
 pub mod types;
 
 // Re-exports for convenience
+pub use animation::{
+    AnimationClip, AnimationStateKind, CharacterAnimationController, JamesBasicClips,
+};
 pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
 pub use clock::EngineClock;
 pub use input::{

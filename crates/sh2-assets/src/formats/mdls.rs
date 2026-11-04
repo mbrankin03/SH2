@@ -100,6 +100,46 @@ impl ModelTexture {
     }
 }
 
+impl ModelFile {
+    /// Converts a primitive's triangle strip index range into a list of triangle index triples `(i0, i1, i2)`.
+    ///
+    /// Strips are separated by degenerate triangles (`i0 == i1` or `i1 == i2` or `i0 == i2`).
+    /// Triangle winding alternates every triangle to maintain consistent front-facing orientation.
+    pub fn primitive_triangles(&self, prim_index: usize) -> Vec<[u16; 3]> {
+        if prim_index >= self.primitives.len() {
+            return Vec::new();
+        }
+        let pr = &self.primitives[prim_index];
+        let start = pr.start;
+        let end = (pr.start + pr.length).min(self.strip_indices.len());
+        if start + 2 >= end {
+            return Vec::new();
+        }
+
+        let slice = &self.strip_indices[start..end];
+        let mut tris = Vec::new();
+
+        for i in 0..slice.len().saturating_sub(2) {
+            let x = slice[i];
+            let y = slice[i + 1];
+            let z = slice[i + 2];
+
+            // Ignore degenerate restart triangles
+            if x == y || y == z || x == z {
+                continue;
+            }
+
+            if i % 2 == 0 {
+                tris.push([x, y, z]);
+            } else {
+                tris.push([y, x, z]);
+            }
+        }
+
+        tris
+    }
+}
+
 /// Vertex attributes for all vertices in the character model.
 ///
 /// Follows the native 0x30-byte vertex stride layout unpacked into contiguous vectors.
@@ -359,7 +399,71 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // 7. Embedded textures
+    // 7. Map vertices to owning primitives to resolve global skeleton bone indices and model-space bind positions
+    if !strip_indices.is_empty() && !primitives.is_empty() && !vertices.positions.is_empty() {
+        let mut owner = vec![usize::MAX; vertex_count];
+
+        for (k, pr) in primitives.iter().enumerate() {
+            let start = pr.start;
+            let end = (pr.start + pr.length).min(strip_indices.len());
+            if start < end {
+                for &idx in &strip_indices[start..end] {
+                    let v = idx as usize;
+                    if v < vertex_count && owner[v] == usize::MAX {
+                        owner[v] = k;
+                    }
+                }
+            }
+        }
+
+        // Resolve local bone indices to global skeleton bone indices and normalize weights
+        for (i, &k) in owner.iter().enumerate().take(vertex_count) {
+            if k == usize::MAX {
+                continue;
+            }
+            let pr = &primitives[k];
+            let raw_b = vertices.bone_indices[i];
+            let mut resolved_b = [0u16; 4];
+
+            // Primary bone
+            let b0_local = raw_b[0] as usize;
+            let b0 = if b0_local < pr.bone_indices.len() {
+                pr.bone_indices[b0_local]
+            } else {
+                0
+            };
+            resolved_b[0] = b0;
+
+            // Secondary bones from bone pairs
+            for j in 1..4 {
+                let x = raw_b[j] as usize;
+                if x != 0 && x != 255 && vertices.weights[i][j] > 0.0 && x >= pr.bone_indices.len()
+                {
+                    let pi = x - pr.bone_indices.len();
+                    if pi < pr.pair_indices.len() {
+                        let pair_idx = pr.pair_indices[pi] as usize;
+                        if pair_idx < pairs.len() {
+                            resolved_b[j] = pairs[pair_idx].1 as u16;
+                        }
+                    }
+                }
+            }
+
+            vertices.bone_indices[i] = resolved_b;
+
+            // Normalize weights
+            let w = vertices.weights[i];
+            let sum = w[0] + w[1] + w[2] + w[3];
+            if sum > 0.0 {
+                let inv = 1.0 / sum;
+                vertices.weights[i] = [w[0] * inv, w[1] * inv, w[2] * inv, w[3] * inv];
+            } else {
+                vertices.weights[i] = [1.0, 0.0, 0.0, 0.0];
+            }
+        }
+    }
+
+    // 8. Embedded textures
     let mut textures = HashMap::new();
     if tex_count > 0 && no_tex == 0 && tex_ofs != 0 && tex_ofs + 16 <= data.len() {
         let mut t = tex_ofs + 16;

@@ -95,8 +95,8 @@ impl Ps2CameraController {
         // In PS2 coordinate system: Y is down (-Y is up in world space), yaw 0 looks along +Z
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
         let eye = if player_pos.x < -50000.0 {
-            // Authentic PS2 rr21 bathroom entrance angle from rr21.cam (road 1)
-            Vec3::new(-98927.0, -2436.0, -60413.0)
+            // Authentic PS2 rr21 bathroom entrance camera position inside the room RD boundaries
+            Vec3::new(-100700.0, -1400.0, -59000.0)
         } else {
             player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
         };
@@ -138,9 +138,9 @@ impl Ps2CameraController {
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
         // Authentic fixed-angle cinematic camera placement if inside a room
         let base_eye = if player_pos.x < -50000.0 {
-            // Authentic PS2 rr21 bathroom entrance angle from rr21.cam (road 1)
-            // Pitch: -48 deg, Yaw: 108 deg, Distance: 2000 units from watch target
-            Vec3::new(-98927.0, -2436.0, -60413.0)
+            // Authentic PS2 rr21 bathroom entrance camera position inside the room RD boundaries:
+            // Centered in RD rect (-100700, -1400, -59000), framed down at James entering from the sinks
+            Vec3::new(-100700.0, -1400.0, -59000.0)
         } else {
             // General chase camera fallback for open areas
             player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)

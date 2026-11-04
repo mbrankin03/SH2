@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 sh2-core = { workspace = true }
+sh2-assets = { workspace = true }
+glam = { workspace = true }
+mint = "0.5"
 kira = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

@@ -13,7 +13,7 @@ impl Default for PostUniforms {
     fn default() -> Self {
         Self {
             time: 0.0,
-            grain_intensity: 0.05,
+            grain_intensity: 0.0, // Disabled grain for clear visibility check
             exposure: 1.0,
             _padding: 0.0,
         }
@@ -38,23 +38,6 @@ struct PostUniforms {
 @group(0) @binding(1) var hdr_in: texture_2d<f32>;
 @group(0) @binding(2) var ldr_out: texture_storage_2d<rgba8unorm, write>;
 
-// ACES filmic tonemapping approximation
-fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-// Pseudo-random noise for film grain
-fn hash(p: vec2<f32>) -> f32 {
-    let p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    let dot_prod = dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * dot_prod);
-}
-
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let dims = textureDimensions(hdr_in);
@@ -64,13 +47,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel_coords = vec2<i32>(global_id.xy);
     let hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
 
-    // Apply ACES tonemapping
-    var ldr = aces_tonemap(hdr_color);
-
-    // Apply Silent Hill authentic film grain
-    let uv = vec2<f32>(pixel_coords) + vec2<f32>(post.time * 123.45, post.time * 678.90);
-    let noise = (hash(uv) - 0.5) * post.grain_intensity;
-    ldr = clamp(ldr + vec3<f32>(noise), vec3<f32>(0.0), vec3<f32>(1.0));
+    // ACES Tonemap
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    let ldr = clamp((hdr_color * (a * hdr_color + b)) / (hdr_color * (c * hdr_color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 
     textureStore(ldr_out, pixel_coords, vec4<f32>(ldr, 1.0));
 }
@@ -125,7 +108,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         });
 
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Post Process Pipeline"),
+            label: Some("Post Process Compute Pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: Some("main"),

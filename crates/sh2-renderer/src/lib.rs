@@ -1083,6 +1083,7 @@ pub struct SurfaceBlitter {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
+    pub default_uniform_buffer: wgpu::Buffer,
 }
 
 impl SurfaceBlitter {
@@ -1111,6 +1112,16 @@ impl SurfaceBlitter {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1134,7 +1145,7 @@ impl SurfaceBlitter {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -1159,10 +1170,18 @@ impl SurfaceBlitter {
             ..Default::default()
         });
 
+        let default_tint = [1.0f32, 1.0, 1.0, 1.0];
+        let default_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Surface Blit Default Uniform Buffer"),
+            contents: bytemuck::cast_slice(&default_tint),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
             sampler,
+            default_uniform_buffer,
         }
     }
 
@@ -1171,6 +1190,16 @@ impl SurfaceBlitter {
         &self,
         device: &wgpu::Device,
         src_view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        self.create_bind_group_with_uniform_buffer(device, src_view, &self.default_uniform_buffer)
+    }
+
+    /// Creates a cached bind group for the given source texture view and a specific tint uniform buffer.
+    pub fn create_bind_group_with_uniform_buffer(
+        &self,
+        device: &wgpu::Device,
+        src_view: &wgpu::TextureView,
+        uniform_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Surface Blit Bind Group"),
@@ -1184,6 +1213,10 @@ impl SurfaceBlitter {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
             ],
         })
     }
@@ -1195,13 +1228,29 @@ impl SurfaceBlitter {
         bind_group: &wgpu::BindGroup,
         dst_view: &wgpu::TextureView,
     ) {
+        self.render_with_bind_group_and_load_op(
+            encoder,
+            bind_group,
+            dst_view,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+    }
+
+    /// Renders using a pre-cached bind group with configurable LoadOp (e.g. LoadOp::Load for overlays).
+    pub fn render_with_bind_group_and_load_op(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        dst_view: &wgpu::TextureView,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+    ) {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Surface Blit Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: dst_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: load_op,
                     store: wgpu::StoreOp::Store,
                 },
             })],

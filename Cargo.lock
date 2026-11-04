@@ -2019,6 +2019,7 @@ name = "sh2-app"
 version = "0.1.0"
 dependencies = [
  "android-activity",
+ "bytemuck",
  "glam",
  "log",
  "pollster 0.4.0",

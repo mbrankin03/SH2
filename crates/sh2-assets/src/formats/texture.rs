@@ -307,6 +307,7 @@ pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture,
     if bytes.len() >= 16 {
         let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         if magic == TEX_MAGIC {
+            // 3a. Multi-sprite container traversal
             if let Ok(container_textures) = parse_texture_container(bytes, 0) {
                 if let Some(first) = container_textures.first() {
                     let rgba = first.to_rgba()?;
@@ -318,23 +319,51 @@ pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture,
                 }
             }
 
-            // Fallback for single-sprite headers at 0x30/0x38 if container traversal had no sprites
-            if bytes.len() >= 0x40 {
-                let width = u16::from_le_bytes([bytes[0x38], bytes[0x39]]) as usize;
-                let height = u16::from_le_bytes([bytes[0x3a], bytes[0x3b]]) as usize;
-                let fmt = bytes[0x3c];
-                let kind = match fmt {
-                    0x00 => 1,
-                    0x01 | 0x02 => 3,
-                    _ => 5,
-                };
-                if bytes.len() > 0x40 && width > 0 && height > 0 {
-                    let rgba = decode_dxt(&bytes[0x40..], width, height, kind)?;
-                    return Ok(DecodedTexture {
-                        width,
-                        height,
-                        rgba,
-                    });
+            // 3b. Single-sprite container unpack (0x30 header, pixel payload at 0x50)
+            // Used by standalone splash/UI screens like start00.tex, start01.tex, konami2048x2048.tex, etc.
+            if bytes.len() >= 0x50 {
+                let w = u16::from_le_bytes([bytes[0x38], bytes[0x39]]) as usize;
+                let h = u16::from_le_bytes([bytes[0x3a], bytes[0x3b]]) as usize;
+                let fmt = u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]);
+
+                if w > 0 && h > 0 {
+                    let pixel_data = &bytes[0x50..];
+                    if fmt == 0x20 {
+                        let exp_len = w * h * 4;
+                        if pixel_data.len() >= exp_len {
+                            let mut rgba = vec![0u8; exp_len];
+                            let (src_chunks, _) = pixel_data[..exp_len].as_chunks::<4>();
+                            let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+                            for (src, dst) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
+                                dst[0] = src[2]; // R
+                                dst[1] = src[1]; // G
+                                dst[2] = src[0]; // B
+                                dst[3] = src[3]; // A
+                            }
+                            return Ok(DecodedTexture {
+                                width: w,
+                                height: h,
+                                rgba,
+                            });
+                        }
+                    } else {
+                        let kind = match fmt {
+                            0x100 => 1,         // DXT1
+                            0x101 | 0x102 => 3, // DXT2/DXT3
+                            0x103 | 0x104 => 5, // DXT4/DXT5
+                            _ => 3,
+                        };
+                        let bpp = if kind == 1 { 8 } else { 16 };
+                        let exp_len = w.div_ceil(4) * h.div_ceil(4) * bpp;
+                        if pixel_data.len() >= exp_len {
+                            let rgba = decode_dxt(&pixel_data[..exp_len], w, h, kind)?;
+                            return Ok(DecodedTexture {
+                                width: w,
+                                height: h,
+                                rgba,
+                            });
+                        }
+                    }
                 }
             }
         }

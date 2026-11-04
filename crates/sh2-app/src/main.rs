@@ -16,9 +16,10 @@ use sh2_assets::formats::anm::{
 };
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
+use sh2_assets::formats::TextureLoader;
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
-use sh2_ui::menu::{MenuNavAction, MenuSoundCue};
+use sh2_ui::menu::{MenuNavAction, MenuSoundCue, TitlePhase};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
 struct CharacterAsset {
@@ -301,6 +302,10 @@ struct AppState {
     render_ctx: RenderContext,
     blitter: SurfaceBlitter,
     blit_bind_group: wgpu::BindGroup,
+    splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
+    splash_title_bg: Option<Arc<wgpu::BindGroup>>,
+    splash_glow_bg: Option<Arc<wgpu::BindGroup>>,
+    menu_uniform_buffer: wgpu::Buffer,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
     map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -493,6 +498,58 @@ impl ApplicationHandler for SilentHillApp {
         };
         render_ctx.update_fog(&fog_uniforms);
 
+        // Preload authentic 2D UI / Title screen textures
+        let tex_loader = TextureLoader::new(
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
+            Some("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e"),
+        );
+
+        let splash_konami_bg = tex_loader
+            .load_texture("pic/etc/konami2048x2048.tex")
+            .or_else(|_| tex_loader.load_texture("pic/etc/start00.tex"))
+            .ok()
+            .map(|t| {
+                render_ctx.create_texture_bind_group(
+                    t.width as u32,
+                    t.height as u32,
+                    &t.rgba,
+                    Some("Konami Splash Texture"),
+                )
+            });
+
+        let splash_title_bg = tex_loader
+            .load_texture("pic/etc/start00.tex")
+            .ok()
+            .map(|t| {
+                render_ctx.create_texture_bind_group(
+                    t.width as u32,
+                    t.height as u32,
+                    &t.rgba,
+                    Some("Title Background Texture"),
+                )
+            });
+
+        let splash_glow_bg = tex_loader
+            .load_texture("pic/etc/start01e.tex")
+            .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
+            .ok()
+            .map(|t| {
+                render_ctx.create_texture_bind_group(
+                    t.width as u32,
+                    t.height as u32,
+                    &t.rgba,
+                    Some("Title Glow Texture"),
+                )
+            });
+
+        use wgpu::util::DeviceExt;
+        let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
+        let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Menu Blit Uniform Buffer"),
+            contents: bytemuck::cast_slice(&initial_tint),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         tracing::info!(
             "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"
         );
@@ -507,6 +564,10 @@ impl ApplicationHandler for SilentHillApp {
             render_ctx,
             blitter,
             blit_bind_group,
+            splash_konami_bg,
+            splash_title_bg,
+            splash_glow_bg,
+            menu_uniform_buffer,
             sim_core,
             gpu_map,
             map_texture_bind_groups,
@@ -780,11 +841,18 @@ impl ApplicationHandler for SilentHillApp {
                     vec![]
                 };
 
-                state.render_ctx.render_scene(
-                    Some(&state.gpu_map),
-                    Some(&state.map_texture_bind_groups),
-                    &skeletal_draw,
-                );
+                // 5. Render either 3D gameplay scene or 2D Authentic Splash / Title Screen
+                let is_in_game = state.menu_ctrl.in_game_active;
+                let fade_alpha = state.menu_ctrl.title_sm.fade_alpha;
+                let phase = state.menu_ctrl.title_sm.phase;
+
+                if is_in_game {
+                    state.render_ctx.render_scene(
+                        Some(&state.gpu_map),
+                        Some(&state.map_texture_bind_groups),
+                        &skeletal_draw,
+                    );
+                }
 
                 // 6. Present to window surface swapchain
                 let surface_texture = match state.surface.get_current_texture() {
@@ -810,11 +878,72 @@ impl ApplicationHandler for SilentHillApp {
                     },
                 );
 
-                state.blitter.render_with_bind_group(
-                    &mut encoder,
-                    &state.blit_bind_group,
-                    &surface_view,
-                );
+                if is_in_game {
+                    state.blitter.render_with_bind_group(
+                        &mut encoder,
+                        &state.blit_bind_group,
+                        &surface_view,
+                    );
+                } else {
+                    // Update menu blit tint buffer with current fade alpha
+                    let tint = [fade_alpha, fade_alpha, fade_alpha, fade_alpha];
+                    state.render_ctx.queue.write_buffer(
+                        &state.menu_uniform_buffer,
+                        0,
+                        bytemuck::cast_slice(&tint),
+                    );
+
+                    let bg_to_draw = match phase {
+                        TitlePhase::SplashIntro => state
+                            .splash_konami_bg
+                            .as_ref()
+                            .or(state.splash_title_bg.as_ref()),
+                        _ => state
+                            .splash_title_bg
+                            .as_ref()
+                            .or(state.splash_konami_bg.as_ref()),
+                    };
+
+                    if let Some(bg) = bg_to_draw {
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            bg,
+                            &surface_view,
+                            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        );
+
+                        // If in TitleLogo or MainMenu, blend the glowing logo layer on top
+                        if matches!(
+                            phase,
+                            TitlePhase::TitleLogo | TitlePhase::MainMenu | TitlePhase::OptionsMenu
+                        ) {
+                            if let Some(glow_bg) = &state.splash_glow_bg {
+                                state.blitter.render_with_bind_group_and_load_op(
+                                    &mut encoder,
+                                    glow_bg,
+                                    &surface_view,
+                                    wgpu::LoadOp::Load,
+                                );
+                            }
+                        }
+                    } else {
+                        // Clear to black if no texture found
+                        let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Menu Clear Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &surface_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                    }
+                }
 
                 state
                     .render_ctx

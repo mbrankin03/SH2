@@ -284,6 +284,7 @@ struct AppState {
     key_backward: bool,
     key_left: bool,
     key_right: bool,
+    last_menu_state_log: String,
     last_frame: Instant,
 }
 
@@ -460,6 +461,7 @@ impl ApplicationHandler for SilentHillApp {
             key_backward: false,
             key_left: false,
             key_right: false,
+            last_menu_state_log: String::new(),
             last_frame: Instant::now(),
         });
     }
@@ -601,6 +603,15 @@ impl ApplicationHandler for SilentHillApp {
 
                 // Advance menu transitions and fade state
                 state.menu_ctrl.tick(dt.as_secs_f32());
+
+                // When menu is active, log formatted state changes so console/headless/testing builds observe menu navigation
+                if !state.menu_ctrl.in_game_active {
+                    let current_text = state.menu_ctrl.overlay_text().join(" | ");
+                    if current_text != state.last_menu_state_log {
+                        tracing::info!("[SH2 MENU HUD] {}", current_text);
+                        state.last_menu_state_log = current_text;
+                    }
+                }
 
                 // 1. Advance simulation at fixed 60 Hz tick (runs animation controller update)
                 state.sim_core.update(dt);

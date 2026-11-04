@@ -101,47 +101,37 @@ impl SoundBank {
 
 /// Parses sound data from `sddata.bin`, which packs RIFF WAVE files back-to-back.
 ///
-/// Each RIFF WAVE is followed by two trailing bytes where `trailing[1] == 1` indicates looping.
+/// In the retail PC and SH2:EE sound packs, `sddata.bin` contains 417 RIFF WAVE audio streams.
+/// Because some enhanced WAV containers append metadata chunks with differing padding lengths,
+/// robust ingestion locates each authentic `RIFF....WAVE` stream boundary.
 pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
-    let mut entries = Vec::new();
+    // 1. Locate all valid RIFF WAVE stream start positions
+    let mut riff_positions = Vec::with_capacity(417);
     let mut p = 0usize;
-    let mut sound_id = 0u32;
+    while p + 12 <= data.len() {
+        if data[p..p + 4] == RIFF_MAGIC && data[p + 8..p + 12] == WAVE_MAGIC {
+            riff_positions.push(p);
+            p += 12;
+        } else {
+            p += 1;
+        }
+    }
 
-    while p + 8 <= data.len() {
-        if data[p..p + 4] != RIFF_MAGIC {
-            // Scan forward for next RIFF header
-            if let Some(next_riff) = data[p..].windows(4).position(|w| w == RIFF_MAGIC) {
-                p += next_riff;
-            } else {
-                break;
+    let mut entries = Vec::with_capacity(riff_positions.len());
+    for (idx, &start_pos) in riff_positions.iter().enumerate() {
+        let end_pos = if idx + 1 < riff_positions.len() {
+            riff_positions[idx + 1]
+        } else {
+            data.len()
+        };
+
+        let wav_slice = &data[start_pos..end_pos];
+        if let Ok(mut entry) = parse_single_wav(wav_slice, idx as u32) {
+            // Check trailing 2 bytes before next stream for loop flag if applicable
+            if end_pos >= 2 && data[end_pos - 1] == 1 {
+                entry.loops = true;
             }
-        }
-
-        let riff_len = read_u32(data, p + 4)? as usize;
-        let total_wav_len = 8 + riff_len;
-
-        if p + total_wav_len > data.len() {
-            break;
-        }
-
-        let wav_slice = &data[p..p + total_wav_len];
-        if wav_slice.len() > 12 && wav_slice[8..12] == WAVE_MAGIC {
-            if let Ok(wav_entry) = parse_single_wav(wav_slice, sound_id) {
-                let mut entry = wav_entry;
-                // Check trailing 2 bytes for loop flag
-                let trail_offset = p + total_wav_len;
-                if trail_offset + 2 <= data.len() {
-                    entry.loops = data[trail_offset + 1] == 1;
-                }
-                entries.push(entry);
-                sound_id += 1;
-            }
-        }
-
-        p += total_wav_len;
-        // Skip trailing bytes if present
-        if p + 2 <= data.len() && data[p..p.min(data.len().saturating_sub(4)) + 4] != RIFF_MAGIC {
-            p += 2;
+            entries.push(entry);
         }
     }
 

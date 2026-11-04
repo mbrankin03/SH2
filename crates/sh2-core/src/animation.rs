@@ -325,9 +325,9 @@ mod tests {
         // Advance 0.2s in idle
         controller.update(Duration::from_millis(200));
         let (f0, f1, alpha) = controller.evaluate_sample_cursor();
-        assert!(f0 >= 1 && f0 <= 10);
-        assert!(f1 >= 1 && f1 <= 10);
-        assert!(alpha >= 0.0 && alpha <= 1.0);
+        assert!((1..=10).contains(&f0));
+        assert!((1..=10).contains(&f1));
+        assert!((0.0..=1.0).contains(&alpha));
 
         // Transition to Walk
         controller.transition_to(AnimationStateKind::Walk, JamesBasicClips::WALK);

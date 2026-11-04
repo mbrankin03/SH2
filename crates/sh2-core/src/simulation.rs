@@ -4,7 +4,7 @@ use glam::Vec3;
 use std::time::Duration;
 
 use crate::animation::{
-    AnimationStateKind, CharacterAnimationController, JamesBasicClips,
+    AnimationStateKind, CharacterAnimationController, CharacterLocomotionClips,
 };
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
@@ -24,6 +24,8 @@ pub struct SimulationCore {
     pub input: InputManager,
     /// Character skeletal animation controller.
     pub animation: CharacterAnimationController,
+    /// Active character locomotion clips.
+    pub locomotion_clips: CharacterLocomotionClips,
     /// 60 FPS timing constants.
     pub timing: TimingConstants,
     /// Cumulative simulation ticks elapsed.
@@ -43,15 +45,31 @@ impl SimulationCore {
         let mut camera = Ps2CameraController::new();
         camera.reset_to_player(scenario.player_position, scenario.player_yaw);
 
+        let locomotion_clips = match scenario.character {
+            crate::scenario::PlayableCharacter::James => CharacterLocomotionClips::JAMES,
+            crate::scenario::PlayableCharacter::Maria => CharacterLocomotionClips::MARIA,
+        };
+
         Self {
             clock: EngineClock::new(60),
             camera,
             scenario,
             input: InputManager::new(Default::default()),
-            animation: CharacterAnimationController::default(),
+            animation: CharacterAnimationController::new(
+                AnimationStateKind::Idle,
+                locomotion_clips.idle,
+            ),
+            locomotion_clips,
             timing: TimingConstants::default(),
             tick_counter: 0,
         }
+    }
+
+    /// Set or update the active character's locomotion clip configuration.
+    pub fn set_locomotion_clips(&mut self, clips: CharacterLocomotionClips) {
+        self.locomotion_clips = clips;
+        self.animation
+            .transition_to(AnimationStateKind::Idle, clips.idle);
     }
 
     /// Change or restart game scenario.
@@ -134,14 +152,14 @@ impl SimulationCore {
         if is_moving {
             if self.input.state.is_running {
                 self.animation
-                    .transition_to(AnimationStateKind::Run, JamesBasicClips::RUN);
+                    .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
             } else {
                 self.animation
-                    .transition_to(AnimationStateKind::Walk, JamesBasicClips::WALK);
+                    .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
             }
         } else {
             self.animation
-                .transition_to(AnimationStateKind::Idle, JamesBasicClips::IDLE);
+                .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
         }
 
         // Fixed tick dt is 1/60s (approx 16.666 ms)

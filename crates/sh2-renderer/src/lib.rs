@@ -922,14 +922,13 @@ impl SurfaceBlitter {
         }
     }
 
-    pub fn render(
+    /// Creates a cached bind group for the given source texture view.
+    pub fn create_bind_group(
         &self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
         src_view: &wgpu::TextureView,
-        dst_view: &wgpu::TextureView,
-    ) {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Surface Blit Bind Group"),
             layout: &self.bind_group_layout,
             entries: &[
@@ -942,8 +941,16 @@ impl SurfaceBlitter {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        });
+        })
+    }
 
+    /// Renders using a pre-cached bind group to eliminate per-frame descriptor allocations.
+    pub fn render_with_bind_group(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        dst_view: &wgpu::TextureView,
+    ) {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Surface Blit Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -960,7 +967,19 @@ impl SurfaceBlitter {
         });
 
         rpass.set_pipeline(&self.pipeline);
-        rpass.set_bind_group(0, &bind_group, &[]);
+        rpass.set_bind_group(0, bind_group, &[]);
         rpass.draw(0..3, 0..1);
+    }
+
+    /// Convenience render method that generates a bind group on demand.
+    pub fn render(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        src_view: &wgpu::TextureView,
+        dst_view: &wgpu::TextureView,
+    ) {
+        let bind_group = self.create_bind_group(device, src_view);
+        self.render_with_bind_group(encoder, &bind_group, dst_view);
     }
 }

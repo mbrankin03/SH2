@@ -271,11 +271,16 @@ struct AppState {
     surface_config: wgpu::SurfaceConfiguration,
     render_ctx: RenderContext,
     blitter: SurfaceBlitter,
+    blit_bind_group: wgpu::BindGroup,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
     character: Option<CharacterAsset>,
     maria: Option<CharacterAsset>,
     active_maria: bool,
+    key_forward: bool,
+    key_backward: bool,
+    key_left: bool,
+    key_right: bool,
     last_frame: Instant,
 }
 
@@ -305,10 +310,9 @@ impl ApplicationHandler for SilentHillApp {
         });
 
         // Create surface safely bound to the window
-        let surface = unsafe {
-            let target = wgpu::SurfaceTargetUnsafe::from_window(&*window).unwrap();
-            instance.create_surface_unsafe(target).unwrap()
-        };
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("Failed to create window surface");
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -383,6 +387,7 @@ impl ApplicationHandler for SilentHillApp {
 
         let gpu_map = GpuMap::from_map(&device, &map_file);
         let blitter = SurfaceBlitter::new(&device, surface_format);
+        let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
 
         // Load James Sunderland character model & animations
         let character = load_character_asset(
@@ -397,7 +402,7 @@ impl ApplicationHandler for SilentHillApp {
             &render_ctx,
             "Maria",
             &["data/chr/mar/lll_mar.mdl", "data/chr/mar/hhh_mar.mdl"],
-            &["data/chr/mar/lll_mar.anm", "data/chr2/mar/xmar_wpnone.anm"],
+            &["data/chr2/mar/xmar_wpnone.anm", "data/chr/mar/lll_mar.anm"],
         );
 
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
@@ -428,7 +433,9 @@ impl ApplicationHandler for SilentHillApp {
         };
         render_ctx.update_fog(&fog_uniforms);
 
-        tracing::info!("Simulation, Character Models, and Renderer initialized successfully on Vulkan!");
+        tracing::info!(
+            "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"
+        );
         tracing::info!("Controls: WASD / Stick: Move & Turn (Tank) | Shift: Run | F: Flashlight | C: Switch Character (James/Maria)");
 
         self.state = Some(AppState {
@@ -437,11 +444,16 @@ impl ApplicationHandler for SilentHillApp {
             surface_config,
             render_ctx,
             blitter,
+            blit_bind_group,
             sim_core,
             gpu_map,
             character,
             maria,
             active_maria: false,
+            key_forward: false,
+            key_backward: false,
+            key_left: false,
+            key_right: false,
             last_frame: Instant::now(),
         });
     }
@@ -464,22 +476,19 @@ impl ApplicationHandler for SilentHillApp {
                     let pressed = key_event.state == winit::event::ElementState::Pressed;
                     match key_code {
                         winit::keyboard::KeyCode::KeyW | winit::keyboard::KeyCode::ArrowUp => {
-                            state.sim_core.input.state.left_stick_y =
-                                if pressed { 1.0 } else { 0.0 };
+                            state.key_forward = pressed;
                         }
                         winit::keyboard::KeyCode::KeyS | winit::keyboard::KeyCode::ArrowDown => {
-                            state.sim_core.input.state.left_stick_y =
-                                if pressed { -1.0 } else { 0.0 };
+                            state.key_backward = pressed;
                         }
                         winit::keyboard::KeyCode::KeyA | winit::keyboard::KeyCode::ArrowLeft => {
-                            state.sim_core.input.state.left_stick_x =
-                                if pressed { -1.0 } else { 0.0 };
+                            state.key_left = pressed;
                         }
                         winit::keyboard::KeyCode::KeyD | winit::keyboard::KeyCode::ArrowRight => {
-                            state.sim_core.input.state.left_stick_x =
-                                if pressed { 1.0 } else { 0.0 };
+                            state.key_right = pressed;
                         }
-                        winit::keyboard::KeyCode::ShiftLeft | winit::keyboard::KeyCode::ShiftRight => {
+                        winit::keyboard::KeyCode::ShiftLeft
+                        | winit::keyboard::KeyCode::ShiftRight => {
                             state.sim_core.input.state.is_running = pressed;
                         }
                         winit::keyboard::KeyCode::KeyF if pressed => {
@@ -488,6 +497,12 @@ impl ApplicationHandler for SilentHillApp {
                         }
                         winit::keyboard::KeyCode::KeyC if pressed => {
                             state.active_maria = !state.active_maria;
+                            let locomotion_clips = if state.active_maria {
+                                sh2_core::CharacterLocomotionClips::MARIA
+                            } else {
+                                sh2_core::CharacterLocomotionClips::JAMES
+                            };
+                            state.sim_core.set_locomotion_clips(locomotion_clips);
                             tracing::info!(
                                 "Switched active character to: {}",
                                 if state.active_maria { "Maria" } else { "James" }
@@ -495,6 +510,25 @@ impl ApplicationHandler for SilentHillApp {
                         }
                         _ => {}
                     }
+
+                    // Compute accumulated directional keyboard input
+                    let mut kb_y = 0.0f32;
+                    let mut kb_x = 0.0f32;
+                    if state.key_forward {
+                        kb_y += 1.0;
+                    }
+                    if state.key_backward {
+                        kb_y -= 1.0;
+                    }
+                    if state.key_right {
+                        kb_x += 1.0;
+                    }
+                    if state.key_left {
+                        kb_x -= 1.0;
+                    }
+
+                    state.sim_core.input.state.left_stick_y = kb_y;
+                    state.sim_core.input.state.left_stick_x = kb_x;
                 }
             }
             WindowEvent::CloseRequested => {
@@ -575,11 +609,8 @@ impl ApplicationHandler for SilentHillApp {
                         if let Some(prev) = prev_cursor {
                             let pf0 = (prev.0 as usize) % frame_count;
                             let pf1 = (prev.1 as usize) % frame_count;
-                            let prev_frame = interpolate_frames(
-                                &c.anm.frames[pf0],
-                                &c.anm.frames[pf1],
-                                prev.2,
-                            );
+                            let prev_frame =
+                                interpolate_frames(&c.anm.frames[pf0], &c.anm.frames[pf1], prev.2);
                             blended_frame = interpolate_frames(&prev_frame, &blended_frame, blend);
                         }
 
@@ -625,7 +656,9 @@ impl ApplicationHandler for SilentHillApp {
                         vec![]
                     };
 
-                state.render_ctx.render_scene(Some(&state.gpu_map), &skeletal_draw);
+                state
+                    .render_ctx
+                    .render_scene(Some(&state.gpu_map), &skeletal_draw);
 
                 // 6. Present to window surface swapchain
                 let surface_texture = match state.surface.get_current_texture() {
@@ -651,10 +684,9 @@ impl ApplicationHandler for SilentHillApp {
                     },
                 );
 
-                state.blitter.render(
-                    &state.render_ctx.device,
+                state.blitter.render_with_bind_group(
                     &mut encoder,
-                    &state.render_ctx.ldr_output_view,
+                    &state.blit_bind_group,
                     &surface_view,
                 );
 
@@ -679,7 +711,9 @@ impl ApplicationHandler for SilentHillApp {
 
 fn main() {
     tracing_subscriber::fmt::init();
-    tracing::info!("Starting Silent Hill 2 Open Port Interactive Playable Test with Skeletal Mesh Runtime...");
+    tracing::info!(
+        "Starting Silent Hill 2 Open Port Interactive Playable Test with Skeletal Mesh Runtime..."
+    );
 
     let event_loop = EventLoop::new().expect("Failed to create winit event loop");
     event_loop.set_control_flow(ControlFlow::Poll);

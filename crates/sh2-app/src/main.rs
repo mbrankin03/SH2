@@ -9,6 +9,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::{
     compute_bind_locals, compute_skin_matrices, evaluate_pose, interpolate_frames, parse_anm,
     AnimationFile,
@@ -17,6 +18,7 @@ use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
+use sh2_ui::menu::{MenuNavAction, MenuSoundCue};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
 struct CharacterAsset {
@@ -277,6 +279,7 @@ struct AppState {
     character: Option<CharacterAsset>,
     maria: Option<CharacterAsset>,
     active_maria: bool,
+    menu_ctrl: AppMenuController,
     key_forward: bool,
     key_backward: bool,
     key_left: bool,
@@ -438,6 +441,8 @@ impl ApplicationHandler for SilentHillApp {
         );
         tracing::info!("Controls: WASD / Stick: Move & Turn (Tank) | Shift: Run | F: Flashlight | C: Switch Character (James/Maria)");
 
+        let menu_ctrl = AppMenuController::new("config.json");
+
         self.state = Some(AppState {
             window,
             surface,
@@ -450,6 +455,7 @@ impl ApplicationHandler for SilentHillApp {
             character,
             maria,
             active_maria: false,
+            menu_ctrl,
             key_forward: false,
             key_backward: false,
             key_left: false,
@@ -474,6 +480,50 @@ impl ApplicationHandler for SilentHillApp {
             } => {
                 if let winit::keyboard::PhysicalKey::Code(key_code) = key_event.physical_key {
                     let pressed = key_event.state == winit::event::ElementState::Pressed;
+
+                    // If menu is active, route navigation inputs to the menu system
+                    if !state.menu_ctrl.in_game_active {
+                        if pressed {
+                            let sound = match key_code {
+                                winit::keyboard::KeyCode::KeyW
+                                | winit::keyboard::KeyCode::ArrowUp => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Up)
+                                }
+                                winit::keyboard::KeyCode::KeyS
+                                | winit::keyboard::KeyCode::ArrowDown => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Down)
+                                }
+                                winit::keyboard::KeyCode::KeyA
+                                | winit::keyboard::KeyCode::ArrowLeft => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Left)
+                                }
+                                winit::keyboard::KeyCode::KeyD
+                                | winit::keyboard::KeyCode::ArrowRight => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Right)
+                                }
+                                winit::keyboard::KeyCode::Enter
+                                | winit::keyboard::KeyCode::Space => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Confirm)
+                                }
+                                winit::keyboard::KeyCode::Escape
+                                | winit::keyboard::KeyCode::Backspace => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Cancel)
+                                }
+                                winit::keyboard::KeyCode::KeyQ => {
+                                    state.menu_ctrl.switch_options_tab(false)
+                                }
+                                winit::keyboard::KeyCode::KeyE => {
+                                    state.menu_ctrl.switch_options_tab(true)
+                                }
+                                _ => MenuSoundCue::None,
+                            };
+                            if sound != MenuSoundCue::None {
+                                tracing::info!("Menu sound emitted: {:?}", sound);
+                            }
+                        }
+                        return;
+                    }
+
                     match key_code {
                         winit::keyboard::KeyCode::KeyW | winit::keyboard::KeyCode::ArrowUp => {
                             state.key_forward = pressed;
@@ -548,6 +598,9 @@ impl ApplicationHandler for SilentHillApp {
                 let now = Instant::now();
                 let dt = now.duration_since(state.last_frame);
                 state.last_frame = now;
+
+                // Advance menu transitions and fade state
+                state.menu_ctrl.tick(dt.as_secs_f32());
 
                 // 1. Advance simulation at fixed 60 Hz tick (runs animation controller update)
                 state.sim_core.update(dt);

@@ -1050,7 +1050,7 @@ impl ApplicationHandler for SilentHillApp {
                                 if let Some(ref atlas) = state.button_sprites {
                                     let center_x = (state.menu_rasterizer.width / 2) as i32;
                                     let rect = AuthenticButtonSprite::StartPrompt.atlas_rect();
-                                    let scale = 0.52f32;
+                                    let scale = 0.44f32;
                                     let w = (rect.width as f32 * scale) as i32;
                                     let x = center_x - (w / 2);
                                     let y = 610;

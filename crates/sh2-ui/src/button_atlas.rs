@@ -123,8 +123,8 @@ impl AuthenticButtonSprite {
             Self::StartPrompt => AtlasRect {
                 x: 0,
                 y: 0,
-                width: 824,
-                height: 70,
+                width: 1102,
+                height: 84,
             },
         }
     }

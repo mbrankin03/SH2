@@ -417,17 +417,27 @@ impl ApplicationHandler for SilentHillApp {
         let blitter = SurfaceBlitter::new(&device, surface_format);
         let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
 
-        // Build level diffuse texture bind groups per material
+        // Build level diffuse texture bind groups per material (cached by texture_id to avoid redundant VRAM allocations)
         let mut map_texture_bind_groups = Vec::with_capacity(map_file.materials.len());
+        let mut tex_bg_cache: std::collections::HashMap<u32, std::sync::Arc<wgpu::BindGroup>> =
+            std::collections::HashMap::new();
+
         for (m_idx, mat) in map_file.materials.iter().enumerate() {
-            if let Some(tex) = map_file.textures.get(&(mat.texture_id as u32)) {
+            let tex_id = mat.texture_id as u32;
+            if let Some(bg) = tex_bg_cache.get(&tex_id) {
+                map_texture_bind_groups.push(bg.clone());
+                continue;
+            }
+
+            if let Some(tex) = map_file.textures.get(&tex_id) {
                 if let Ok(rgba) = tex.to_rgba() {
                     let bg = render_ctx.create_texture_bind_group(
                         tex.width as u32,
                         tex.height as u32,
                         &rgba,
-                        Some(&format!("Map Material {m_idx} Texture {}", mat.texture_id)),
+                        Some(&format!("Map Material {m_idx} Texture {tex_id}")),
                     );
+                    tex_bg_cache.insert(tex_id, bg.clone());
                     map_texture_bind_groups.push(bg);
                     continue;
                 }

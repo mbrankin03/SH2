@@ -194,7 +194,15 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     let no_tex = data[0];
     let tex_ofs_w3 = read_u32(data, 12)? as usize;
     let tex_ofs_w2 = read_u32(data, 8)? as usize;
-    let tex_ofs = if tex_ofs_w3 > 0 && tex_ofs_w3 < data.len() {
+    let tex_ofs = if tex_ofs_w3 + 4 <= data.len()
+        && data[tex_ofs_w3..tex_ofs_w3 + 4] == crate::formats::texture::TEX_MAGIC_BYTES
+    {
+        tex_ofs_w3
+    } else if tex_ofs_w2 + 4 <= data.len()
+        && data[tex_ofs_w2..tex_ofs_w2 + 4] == crate::formats::texture::TEX_MAGIC_BYTES
+    {
+        tex_ofs_w2
+    } else if tex_ofs_w3 > 0 && tex_ofs_w3 < data.len() {
         tex_ofs_w3
     } else {
         tex_ofs_w2

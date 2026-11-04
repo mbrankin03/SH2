@@ -122,18 +122,41 @@ pub struct ContainerTexture {
 impl ContainerTexture {
     /// Decodes the texture payload into an uncompressed RGBA8 buffer.
     pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
-        if self.format == 0x20 || !self.is_compressed {
-            // Uncompressed 32-bit BGRA -> RGBA
-            let mut rgba = Vec::with_capacity(self.width * self.height * 4);
-            let (chunks, _) = self.data.as_chunks::<4>();
-            for chunk in chunks {
-                rgba.push(chunk[2]); // R
-                rgba.push(chunk[1]); // G
-                rgba.push(chunk[0]); // B
-                rgba.push(chunk[3]); // A
-            }
-            if rgba.len() == self.width * self.height * 4 {
+        if self.width == 0 || self.height == 0 {
+            return Err(AssetError::InvalidData(
+                "Texture dimensions must be non-zero".to_string(),
+            ));
+        }
+
+        if !self.is_compressed {
+            if self.format == 0x20 {
+                // Uncompressed 32-bit BGRA -> RGBA
+                let expected_len = self.width * self.height * 4;
+                if self.data.len() < expected_len {
+                    return Err(AssetError::BufferUnderflow {
+                        required: expected_len,
+                        available: self.data.len(),
+                    });
+                }
+                let mut rgba = vec![0u8; expected_len];
+                let (src_chunks, _) = self.data[..expected_len].as_chunks::<4>();
+                let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+                for (src, dst) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
+                    dst[0] = src[2]; // R
+                    dst[1] = src[1]; // G
+                    dst[2] = src[0]; // B
+                    dst[3] = src[3]; // A
+                }
                 return Ok(rgba);
+            } else if self.format == 8 {
+                return Err(AssetError::UnsupportedFormat(
+                    "8-bit paletted container textures are not currently supported".to_string(),
+                ));
+            } else {
+                return Err(AssetError::UnsupportedFormat(format!(
+                    "Unsupported uncompressed texture format: {}",
+                    self.format
+                )));
             }
         }
 
@@ -141,7 +164,12 @@ impl ContainerTexture {
             0 => 1,
             1 | 2 => 3,
             3 | 4 => 5,
-            _ => 3,
+            _ => {
+                return Err(AssetError::UnsupportedFormat(format!(
+                    "Unsupported compressed DXT texture format: {}",
+                    self.format
+                )))
+            }
         };
         decode_dxt(&self.data, self.width, self.height, kind)
     }
@@ -192,6 +220,11 @@ pub fn parse_texture_container(
         let h = u16::from_le_bytes([bytes[p + 6], bytes[p + 7]]) as usize;
         let nspr = u16::from_le_bytes([bytes[p + 12], bytes[p + 13]]) as usize;
         p += 32;
+
+        if w == 0 || h == 0 {
+            // Guard against zero-dimension malformed entries to prevent GPU validation panics
+            continue;
+        }
 
         for _ in 0..nspr {
             if end.saturating_sub(p) < 32 {

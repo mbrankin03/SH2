@@ -101,7 +101,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten);
 
-    let lit_color = in.color.rgb * (ambient + diffuse);
+    let base_col = select(in.color.rgb, vec3<f32>(0.8, 0.78, 0.75), in.color.r == 0.0 && in.color.g == 0.0 && in.color.b == 0.0);
+    let lit_color = base_col * (ambient + diffuse);
     return vec4<f32>(lit_color, 1.0);
 }
 "#;

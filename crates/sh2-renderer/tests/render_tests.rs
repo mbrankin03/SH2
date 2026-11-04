@@ -107,7 +107,12 @@ mod renderer_tests {
         ctx.update_camera(view_proj, inv_proj, eye);
         ctx.update_fog(&fog::FogUniforms::default());
         ctx.update_spotlight(&light::SpotlightUniforms::default());
-        ctx.update_post(&post::PostUniforms::default());
+        ctx.update_post(&post::PostUniforms {
+            time: 1.0 / 60.0,
+            grain_intensity: 0.65,
+            exposure: 1.0,
+            frame_count: 1,
+        });
 
         // Test with synthetic cube geometry (always available in CI)
         let cube_map = create_synthetic_cube_map();
@@ -196,6 +201,18 @@ mod renderer_tests {
                 None,
                 &[(&gpu_skeletal, &skin_matrices, None)],
             );
+            let _ = ctx.device.poll(wgpu::Maintain::wait());
+        }
+
+        // Test animated post-processing update over sequential frames
+        for frame in 1..=5 {
+            ctx.update_post(&post::PostUniforms {
+                time: frame as f32 / 60.0,
+                grain_intensity: 0.8,
+                exposure: 1.0,
+                frame_count: frame,
+            });
+            ctx.render_gpu_map(&gpu_map);
             let _ = ctx.device.poll(wgpu::Maintain::wait());
         }
     }

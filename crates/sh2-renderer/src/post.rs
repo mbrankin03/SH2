@@ -1,21 +1,31 @@
-//! Post-processing compute passes: ACES tonemapping and film grain.
+//! Post-processing compute passes: ACES tonemapping and authentic PS2-style film grain / noise filter.
+//!
+//! Recreates the authentic PlayStation 2 film grain algorithm (and SH2:EE `PS2NoiseFilter` / `sh23ds` `noise.c`):
+//! - Four-level discrete luminance distribution (`[0, 5, 10, 15] / 15.0`) with PS2-calibrated 7.4x attenuation.
+//! - Authentic warm tint `0xde99` (`RGB(222, 210, 206)`).
+//! - Animated pseudo-random seed advancement per frame.
 
+/// Uniform buffer payload passed to the post-processing shader.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct PostUniforms {
+    /// Advancing simulation / frame time in seconds (used as noise seed).
     pub time: f32,
+    /// Film grain noise intensity in percentage [0.0, 1.0] (derived from options `grain_intensity`).
     pub grain_intensity: f32,
+    /// Scene exposure multiplier for tonemapping.
     pub exposure: f32,
-    pub _padding: f32,
+    /// Frame counter to guarantee animated pseudo-randomness across frames.
+    pub frame_count: u32,
 }
 
 impl Default for PostUniforms {
     fn default() -> Self {
         Self {
             time: 0.0,
-            grain_intensity: 0.05,
+            grain_intensity: 0.65,
             exposure: 1.0,
-            _padding: 0.0,
+            frame_count: 0,
         }
     }
 }
@@ -31,7 +41,7 @@ struct PostUniforms {
     time: f32,
     grain_intensity: f32,
     exposure: f32,
-    _padding: f32,
+    frame_count: u32,
 };
 
 @group(0) @binding(0) var<uniform> post: PostUniforms;
@@ -48,11 +58,18 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Pseudo-random noise for film grain
-fn hash(p: vec2<f32>) -> f32 {
-    let p3 = fract(vec3<f32>(p.xyx) * 0.1031);
-    let dot_prod = dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * dot_prod);
+// 32-bit integer hash / PCG-like pseudo-random generator for authentic per-frame grain
+fn hash_u32(x: u32) -> u32 {
+    var state = x * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// Generates pseudo-random 2D noise from pixel coordinates and advancing frame seed
+fn random_val(pixel: vec2<u32>, frame: u32) -> f32 {
+    let p = pixel.x + pixel.y * 1920u + frame * 104729u;
+    let h = hash_u32(p);
+    return f32(h) / 4294967295.0;
 }
 
 @compute @workgroup_size(16, 16)
@@ -64,13 +81,41 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel_coords = vec2<i32>(global_id.xy);
     let hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
 
-    // Apply ACES tonemapping
+    // 1. Apply ACES tonemapping
     var ldr = aces_tonemap(hdr_color);
 
-    // Apply Silent Hill authentic film grain
-    let uv = vec2<f32>(pixel_coords) + vec2<f32>(post.time * 123.45, post.time * 678.90);
-    let noise = (hash(uv) - 0.5) * post.grain_intensity;
-    ldr = clamp(ldr + vec3<f32>(noise), vec3<f32>(0.0), vec3<f32>(1.0));
+    // 2. Authentic PS2 / SH2:EE film grain filter (noise.c / PS2NoiseFilter.cpp)
+    if (post.grain_intensity > 0.001) {
+        // Frame seed incorporates both integer frame counter and advancing float time
+        let frame_seed = post.frame_count + u32(post.time * 60.0);
+        let rand_f = random_val(global_id.xy, frame_seed);
+
+        // PS2 authentic discrete 4-level quantization (levels 0, 1, 2, 3 mapped to 15, 0, 10, 5 in DXT1 / 4-bit luminance)
+        // Quantize random value into 4 discrete thresholds matching PS2 hardware noise texels
+        var texel_level: f32 = 0.0;
+        let bucket = u32(rand_f * 4.0) % 4u;
+        if (bucket == 0u) {
+            texel_level = 1.0;          // level 15 / 15
+        } else if (bucket == 1u) {
+            texel_level = 0.0;          // level 0 / 15
+        } else if (bucket == 2u) {
+            texel_level = 0.666667;     // level 10 / 15
+        } else {
+            texel_level = 0.333333;     // level 5 / 15
+        }
+
+        // Authentic Konami PS2 noise tint: 0xde99 (R: 222, G: 210, B: 206)
+        let grain_tint = vec3<f32>(222.0 / 255.0, 210.0 / 255.0, 206.0 / 255.0);
+
+        // Calibrated PS2 division factor 7.4 (PS2NoiseFilter.cpp) scaled by user grain intensity
+        let ps2_factor = (1.0 / 7.4) * post.grain_intensity;
+        let grain_color = grain_tint * texel_level * ps2_factor;
+
+        // Authentic inverse alpha blend with MODULATE2X:
+        // out = ldr * (1.0 - alpha) + 2.0 * grain_color * ldr
+        let alpha = clamp(0.12 * post.grain_intensity, 0.0, 0.5);
+        ldr = clamp(ldr * (1.0 - alpha) + 2.0 * grain_color * ldr, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
 
     textureStore(ldr_out, pixel_coords, vec4<f32>(ldr, 1.0));
 }
@@ -137,5 +182,33 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             pipeline,
             bind_group_layout,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_post_uniforms_layout_and_size() {
+        assert_eq!(std::mem::size_of::<PostUniforms>(), 16);
+        let default = PostUniforms::default();
+        assert_eq!(default.frame_count, 0);
+        assert_eq!(default.exposure, 1.0);
+        assert_eq!(default.grain_intensity, 0.65);
+    }
+
+    #[test]
+    fn test_post_uniforms_pod_roundtrip() {
+        let uniforms = PostUniforms {
+            time: 12.34,
+            grain_intensity: 0.8,
+            exposure: 1.25,
+            frame_count: 742,
+        };
+
+        let bytes = bytemuck::bytes_of(&uniforms);
+        let back: &PostUniforms = bytemuck::from_bytes(bytes);
+        assert_eq!(&uniforms, back);
     }
 }

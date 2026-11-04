@@ -126,6 +126,16 @@ mod tests {
         let data_dir = format!("{ROOT_ASSETS}/data");
         let sh2e_dir = format!("{ROOT_ASSETS}/sh2e");
 
+        if Path::new(&data_dir).exists() || Path::new(&sh2e_dir).exists() {
+            let loader = TextureLoader::new(&data_dir, Some(&sh2e_dir));
+            let tex = loader
+                .load_texture("pic/etc/start00.tex")
+                .expect("Failed to load start00.tex via TextureLoader");
+            assert!(tex.width > 0 && tex.height > 0);
+            assert_eq!(tex.rgba.len(), tex.width * tex.height * 4);
+            println!("Loaded start00.tex: {}x{}", tex.width, tex.height);
+        }
+
         if !Path::new(&data_dir).exists() && !Path::new(&sh2e_dir).exists() {
             println!("Skipping real texture loading: asset directories not present");
             // Test in-memory synthetic DDS decoding to ensure test coverage in headless CI

@@ -9,14 +9,19 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::{
     compute_bind_locals, compute_skin_matrices, evaluate_pose, interpolate_frames, parse_anm,
     AnimationFile,
 };
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
+use sh2_assets::formats::TextureLoader;
+use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
+use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase};
+use sh2_ui::{AuthenticButtonSprite, ButtonSpriteSheet, TextRasterizer};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
 struct CharacterAsset {
@@ -299,16 +304,27 @@ struct AppState {
     render_ctx: RenderContext,
     blitter: SurfaceBlitter,
     blit_bind_group: wgpu::BindGroup,
+    splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
+    splash_title_bg: Option<Arc<wgpu::BindGroup>>,
+    menu_uniform_buffer: wgpu::Buffer,
+    menu_text_texture: wgpu::Texture,
+    menu_text_bind_group: wgpu::BindGroup,
+    menu_rasterizer: TextRasterizer,
+    button_sprites: Option<ButtonSpriteSheet>,
+    audio_bank: Option<MenuAudioBank>,
+    audio_engine: Option<AudioEngine>,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
     map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     character: Option<CharacterAsset>,
     maria: Option<CharacterAsset>,
     active_maria: bool,
+    menu_ctrl: AppMenuController,
     key_forward: bool,
     key_backward: bool,
     key_left: bool,
     key_right: bool,
+    last_menu_state_log: String,
     last_frame: Instant,
 }
 
@@ -489,10 +505,105 @@ impl ApplicationHandler for SilentHillApp {
         };
         render_ctx.update_fog(&fog_uniforms);
 
+        // Preload authentic 2D UI / Title screen textures
+        let tex_loader = TextureLoader::new(
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
+            Some("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e"),
+        );
+
+        use wgpu::util::DeviceExt;
+        let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
+        let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Menu Blit Uniform Buffer"),
+            contents: bytemuck::cast_slice(&initial_tint),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let splash_konami_bg = tex_loader
+            .load_texture("pic/etc/konami2048x2048.tex")
+            .or_else(|_| tex_loader.load_texture("pic/etc/start00.tex"))
+            .ok()
+            .map(|t| {
+                render_ctx.create_blitter_bind_group(
+                    &blitter,
+                    t.width as u32,
+                    t.height as u32,
+                    &t.rgba,
+                    &menu_uniform_buffer,
+                    Some("Konami Splash Texture"),
+                )
+            });
+
+        let splash_title_bg = tex_loader
+            .load_texture("pic/etc/start00.tex")
+            .ok()
+            .map(|t| {
+                render_ctx.create_blitter_bind_group(
+                    &blitter,
+                    t.width as u32,
+                    t.height as u32,
+                    &t.rgba,
+                    &menu_uniform_buffer,
+                    Some("Title Background Texture"),
+                )
+            });
+
+        // Dynamic UI overlay texture and text rasterizer for Authentic Menus & HUD
+        let text_w = 1280u32;
+        let text_h = 720u32;
+        let menu_rasterizer = TextRasterizer::new(text_w as usize, text_h as usize);
+
+        let menu_text_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Menu Text Overlay Texture"),
+            size: wgpu::Extent3d {
+                width: text_w,
+                height: text_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let menu_text_view = menu_text_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let menu_text_bind_group = blitter.create_bind_group_with_uniform_buffer(
+            &device,
+            &menu_text_view,
+            &menu_uniform_buffer,
+        );
+
+        // Preload authentic 1:1 button sprite atlas from start01e.tex / start01.tex
+        let button_sprites = tex_loader
+            .load_texture("pic/etc/start01e.tex")
+            .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
+            .ok()
+            .map(|t| ButtonSpriteSheet::new(t.width, t.height, t.rgba));
+
+        let data_dir =
+            PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data");
+        let ee_dir =
+            PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e");
+        let audio_bank = Some(MenuAudioBank::load_from_dirs(&data_dir, Some(&ee_dir)));
+
+        let audio_engine = match AudioEngine::new() {
+            Ok(engine) => {
+                tracing::info!("Audio engine successfully initialized with Kira runtime.");
+                Some(engine)
+            }
+            Err(e) => {
+                tracing::warn!("Audio device initialization warning: {:?}", e);
+                None
+            }
+        };
+
         tracing::info!(
             "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"
         );
         tracing::info!("Controls: WASD / Stick: Move & Turn (Tank) | Shift: Run | F: Flashlight | C: Switch Character (James/Maria)");
+
+        let menu_ctrl = AppMenuController::new("config.json");
 
         self.state = Some(AppState {
             window,
@@ -501,16 +612,27 @@ impl ApplicationHandler for SilentHillApp {
             render_ctx,
             blitter,
             blit_bind_group,
+            splash_konami_bg,
+            splash_title_bg,
+            menu_uniform_buffer,
+            menu_text_texture,
+            menu_text_bind_group,
+            menu_rasterizer,
+            button_sprites,
+            audio_bank,
+            audio_engine,
             sim_core,
             gpu_map,
             map_texture_bind_groups,
             character,
             maria,
             active_maria: false,
+            menu_ctrl,
             key_forward: false,
             key_backward: false,
             key_left: false,
             key_right: false,
+            last_menu_state_log: String::new(),
             last_frame: Instant::now(),
         });
     }
@@ -531,6 +653,77 @@ impl ApplicationHandler for SilentHillApp {
             } => {
                 if let winit::keyboard::PhysicalKey::Code(key_code) = key_event.physical_key {
                     let pressed = key_event.state == winit::event::ElementState::Pressed;
+
+                    // If menu is active, route navigation inputs to the menu system
+                    if !state.menu_ctrl.in_game_active {
+                        if pressed {
+                            let sound = match key_code {
+                                winit::keyboard::KeyCode::KeyW
+                                | winit::keyboard::KeyCode::ArrowUp => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Up)
+                                }
+                                winit::keyboard::KeyCode::KeyS
+                                | winit::keyboard::KeyCode::ArrowDown => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Down)
+                                }
+                                winit::keyboard::KeyCode::KeyA
+                                | winit::keyboard::KeyCode::ArrowLeft => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Left)
+                                }
+                                winit::keyboard::KeyCode::KeyD
+                                | winit::keyboard::KeyCode::ArrowRight => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Right)
+                                }
+                                winit::keyboard::KeyCode::Enter
+                                | winit::keyboard::KeyCode::NumpadEnter
+                                | winit::keyboard::KeyCode::Space => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Confirm)
+                                }
+                                winit::keyboard::KeyCode::Escape
+                                | winit::keyboard::KeyCode::Backspace => {
+                                    state.menu_ctrl.handle_nav(MenuNavAction::Cancel)
+                                }
+                                winit::keyboard::KeyCode::KeyQ => {
+                                    state.menu_ctrl.switch_options_tab(false)
+                                }
+                                winit::keyboard::KeyCode::KeyE => {
+                                    state.menu_ctrl.switch_options_tab(true)
+                                }
+                                _ => {
+                                    // Any key advances from Splash or Title Logo
+                                    match state.menu_ctrl.title_sm.phase {
+                                        TitlePhase::SplashIntro | TitlePhase::TitleLogo => {
+                                            state.menu_ctrl.handle_nav(MenuNavAction::Confirm)
+                                        }
+                                        _ => MenuSoundCue::None,
+                                    }
+                                }
+                            };
+                            if sound != MenuSoundCue::None {
+                                tracing::info!("Menu sound emitted: {:?}", sound);
+                                if let Some(ref mut engine) = state.audio_engine {
+                                    let cue_kind = match sound {
+                                        MenuSoundCue::CursorMove => Some(SoundCueKind::CursorMove),
+                                        MenuSoundCue::Confirm => Some(SoundCueKind::Confirm),
+                                        MenuSoundCue::Cancel => Some(SoundCueKind::Cancel),
+                                        MenuSoundCue::GameStartTransition => {
+                                            Some(SoundCueKind::GameStartTransition)
+                                        }
+                                        MenuSoundCue::None => None,
+                                    };
+                                    if let Some(kind) = cue_kind {
+                                        let _ = play_menu_sound(
+                                            engine,
+                                            state.audio_bank.as_ref(),
+                                            kind,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    }
+
                     match key_code {
                         winit::keyboard::KeyCode::KeyW | winit::keyboard::KeyCode::ArrowUp => {
                             state.key_forward = pressed;
@@ -588,6 +781,33 @@ impl ApplicationHandler for SilentHillApp {
                     state.sim_core.input.state.left_stick_x = kb_x;
                 }
             }
+            WindowEvent::MouseInput {
+                state: element_state,
+                ..
+            } => {
+                if element_state == winit::event::ElementState::Pressed
+                    && !state.menu_ctrl.in_game_active
+                {
+                    let sound = state.menu_ctrl.handle_nav(MenuNavAction::Confirm);
+                    if sound != MenuSoundCue::None {
+                        tracing::info!("Menu sound emitted: {:?}", sound);
+                        if let Some(ref mut engine) = state.audio_engine {
+                            let cue_kind = match sound {
+                                MenuSoundCue::CursorMove => Some(SoundCueKind::CursorMove),
+                                MenuSoundCue::Confirm => Some(SoundCueKind::Confirm),
+                                MenuSoundCue::Cancel => Some(SoundCueKind::Cancel),
+                                MenuSoundCue::GameStartTransition => {
+                                    Some(SoundCueKind::GameStartTransition)
+                                }
+                                MenuSoundCue::None => None,
+                            };
+                            if let Some(kind) = cue_kind {
+                                let _ = play_menu_sound(engine, state.audio_bank.as_ref(), kind);
+                            }
+                        }
+                    }
+                }
+            }
             WindowEvent::CloseRequested => {
                 tracing::info!("Close requested, shutting down...");
                 event_loop.exit();
@@ -605,6 +825,18 @@ impl ApplicationHandler for SilentHillApp {
                 let now = Instant::now();
                 let dt = now.duration_since(state.last_frame);
                 state.last_frame = now;
+
+                // Advance menu transitions and fade state
+                state.menu_ctrl.tick(dt.as_secs_f32());
+
+                // When menu is active, log formatted state changes so console/headless/testing builds observe menu navigation
+                if !state.menu_ctrl.in_game_active {
+                    let current_text = state.menu_ctrl.overlay_text().join(" | ");
+                    if current_text != state.last_menu_state_log {
+                        tracing::info!("[SH2 MENU HUD] {}", current_text);
+                        state.last_menu_state_log = current_text;
+                    }
+                }
 
                 // 1. Advance simulation at fixed 60 Hz tick (runs animation controller update)
                 state.sim_core.update(dt);
@@ -716,11 +948,18 @@ impl ApplicationHandler for SilentHillApp {
                     vec![]
                 };
 
-                state.render_ctx.render_scene(
-                    Some(&state.gpu_map),
-                    Some(&state.map_texture_bind_groups),
-                    &skeletal_draw,
-                );
+                // 5. Render either 3D gameplay scene or 2D Authentic Splash / Title Screen
+                let is_in_game = state.menu_ctrl.in_game_active;
+                let fade_alpha = state.menu_ctrl.title_sm.fade_alpha;
+                let phase = state.menu_ctrl.title_sm.phase;
+
+                if is_in_game {
+                    state.render_ctx.render_scene(
+                        Some(&state.gpu_map),
+                        Some(&state.map_texture_bind_groups),
+                        &skeletal_draw,
+                    );
+                }
 
                 // 6. Present to window surface swapchain
                 let surface_texture = match state.surface.get_current_texture() {
@@ -746,11 +985,671 @@ impl ApplicationHandler for SilentHillApp {
                     },
                 );
 
-                state.blitter.render_with_bind_group(
-                    &mut encoder,
-                    &state.blit_bind_group,
-                    &surface_view,
-                );
+                if is_in_game {
+                    state.blitter.render_with_bind_group(
+                        &mut encoder,
+                        &state.blit_bind_group,
+                        &surface_view,
+                    );
+                } else {
+                    // Update menu blit tint buffer with current fade alpha
+                    let tint = [fade_alpha, fade_alpha, fade_alpha, fade_alpha];
+                    state.render_ctx.queue.write_buffer(
+                        &state.menu_uniform_buffer,
+                        0,
+                        bytemuck::cast_slice(&tint),
+                    );
+
+                    let bg_to_draw = match phase {
+                        TitlePhase::SplashIntro => state
+                            .splash_konami_bg
+                            .as_ref()
+                            .or(state.splash_title_bg.as_ref()),
+                        _ => state
+                            .splash_title_bg
+                            .as_ref()
+                            .or(state.splash_konami_bg.as_ref()),
+                    };
+
+                    if let Some(bg) = bg_to_draw {
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            bg,
+                            &surface_view,
+                            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        );
+                    } else {
+                        // Clear to black if no texture found
+                        let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("Menu Clear Pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &surface_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+                    }
+
+                    // Render dynamic 2D text overlay for interactive menus (Main Menu, Scenario Select, Options, Credits)
+                    if phase != TitlePhase::SplashIntro {
+                        state.menu_rasterizer.clear();
+
+                        let white = [220, 220, 220, 255];
+                        let yellow = [240, 205, 55, 255];
+                        let muted = [150, 150, 150, 255];
+                        let cyan = [100, 210, 230, 255];
+
+                        match phase {
+                            TitlePhase::TitleLogo => {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    let rect = AuthenticButtonSprite::StartPrompt.atlas_rect();
+                                    let scale = 0.44f32;
+                                    let w = (rect.width as f32 * scale) as i32;
+                                    let x = center_x - (w / 2);
+                                    let y = 610;
+
+                                    // Subtle pulse alpha matching title breathing glow
+                                    let pulse = (state.menu_ctrl.title_sm.splash_timer * 3.5).sin()
+                                        * 0.15
+                                        + 0.85;
+
+                                    atlas.blit_sprite(
+                                        AuthenticButtonSprite::StartPrompt,
+                                        &mut state.menu_rasterizer.pixels,
+                                        state.menu_rasterizer.width,
+                                        state.menu_rasterizer.height,
+                                        x,
+                                        y,
+                                        scale,
+                                        [1.0, 1.0, 1.0, pulse],
+                                    );
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "PRESS ANY KEY OR ENTER TO START",
+                                        410,
+                                        620,
+                                        2,
+                                        yellow,
+                                        true,
+                                    );
+                                }
+                            }
+                            TitlePhase::MainMenu => {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    // 1:1 authentic Silent Hill 2 button sprites from start01e.tex
+                                    // Matched to retail Silent Hill 2 PS2/PC vertical coordinates
+                                    let items = [
+                                        (
+                                            MainMenuOption::NewGame,
+                                            AuthenticButtonSprite::NewGame,
+                                            0,
+                                        ),
+                                        (
+                                            MainMenuOption::Continue,
+                                            AuthenticButtonSprite::Continue,
+                                            1,
+                                        ),
+                                        (
+                                            MainMenuOption::Options,
+                                            AuthenticButtonSprite::Options,
+                                            2,
+                                        ),
+                                        (MainMenuOption::Exit, AuthenticButtonSprite::Exit, 3),
+                                    ];
+
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    let button_scale = 0.44f32;
+                                    let base_y = 445;
+                                    let spacing_y = 46;
+
+                                    for (opt, sprite, visual_idx) in &items {
+                                        let logical_idx = match opt {
+                                            MainMenuOption::NewGame => 0,
+                                            MainMenuOption::Continue => 1,
+                                            MainMenuOption::Options => 2,
+                                            MainMenuOption::Exit => 3,
+                                        };
+                                        let is_selected =
+                                            logical_idx == state.menu_ctrl.title_sm.main_menu_index;
+                                        let y = base_y + visual_idx * spacing_y;
+                                        let rect = sprite.atlas_rect();
+                                        let w = (rect.width as f32 * button_scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        // Draw authentic oval glowing cursor behind selected item
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_scale = 0.46f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            // Center vertically around the button sprite
+                                            let btn_h = (rect.height as f32 * button_scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                glow_x,
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.98, 0.85, 1.0]
+                                        } else {
+                                            [0.72f32, 0.72, 0.74, 0.80]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            button_scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                                        let is_selected =
+                                            idx == state.menu_ctrl.title_sm.main_menu_index;
+                                        let color = if is_selected { yellow } else { white };
+                                        let y = 370 + idx * 45;
+                                        let text = opt.label();
+                                        if is_selected {
+                                            state
+                                                .menu_rasterizer
+                                                .draw_text(">", 550, y, 3, yellow, true);
+                                        }
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(text, 580, y, 3, color, true);
+                                    }
+                                }
+                                state.menu_rasterizer.draw_text(
+                                    "W / S or Up / Down to Navigate | Enter to Confirm",
+                                    400,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::ScenarioSelect => {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    let scenarios = [
+                                        (0, AuthenticButtonSprite::MainScenario),
+                                        (1, AuthenticButtonSprite::SubScenario),
+                                    ];
+                                    for (idx, sprite) in &scenarios {
+                                        let is_selected =
+                                            *idx == state.menu_ctrl.title_sm.scenario_index;
+                                        let y = 390 + *idx as i32 * 75;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.48f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_scale = 0.65f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            let btn_h = (rect.height as f32 * scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                glow_x,
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "SELECT SCENARIO",
+                                        500,
+                                        320,
+                                        3,
+                                        yellow,
+                                        true,
+                                    );
+                                    let scenarios = [
+                                        "LETTER FROM SILENT HEAVEN (JAMES)",
+                                        "BORN FROM A WISH (MARIA)",
+                                    ];
+                                    for (idx, name) in scenarios.iter().enumerate() {
+                                        let is_selected =
+                                            idx == state.menu_ctrl.title_sm.scenario_index;
+                                        let color = if is_selected { yellow } else { white };
+                                        let y = 410 + idx * 50;
+                                        if is_selected {
+                                            state
+                                                .menu_rasterizer
+                                                .draw_text(">", 360, y, 2, yellow, true);
+                                        }
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(name, 390, y, 2, color, true);
+                                    }
+                                }
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Select | Enter: Confirm | Esc: Back]",
+                                    430,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::ActionDifficultySelect => {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    // Title header
+                                    let hdr_rect = AuthenticButtonSprite::ActionLevel.atlas_rect();
+                                    let hdr_scale = 0.55f32;
+                                    let hdr_w = (hdr_rect.width as f32 * hdr_scale) as i32;
+                                    atlas.blit_sprite(
+                                        AuthenticButtonSprite::ActionLevel,
+                                        &mut state.menu_rasterizer.pixels,
+                                        state.menu_rasterizer.width,
+                                        state.menu_rasterizer.height,
+                                        center_x - (hdr_w / 2),
+                                        260,
+                                        hdr_scale,
+                                        [1.0, 1.0, 1.0, 1.0],
+                                    );
+
+                                    let choices = [
+                                        (
+                                            sh2_core::config::ActionDifficulty::Hard,
+                                            AuthenticButtonSprite::Hard,
+                                        ),
+                                        (
+                                            sh2_core::config::ActionDifficulty::Normal,
+                                            AuthenticButtonSprite::Normal,
+                                        ),
+                                        (
+                                            sh2_core::config::ActionDifficulty::Easy,
+                                            AuthenticButtonSprite::Easy,
+                                        ),
+                                    ];
+
+                                    for (idx, (diff, sprite)) in choices.iter().enumerate() {
+                                        let is_selected =
+                                            *diff == state.menu_ctrl.title_sm.action_difficulty;
+                                        let y = 360 + idx as i32 * 65;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.52f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_scale = 0.46f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            let btn_h = (rect.height as f32 * scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                glow_x,
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "ACTION DIFFICULTY",
+                                        480,
+                                        320,
+                                        3,
+                                        yellow,
+                                        true,
+                                    );
+                                    let diff_str =
+                                        format!("{:?}", state.menu_ctrl.title_sm.action_difficulty)
+                                            .to_uppercase();
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                }
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Change | Enter: Next | Esc: Back]",
+                                    440,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::RiddleDifficultySelect => {
+                                if let Some(ref atlas) = state.button_sprites {
+                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
+                                    // Title header
+                                    let hdr_rect = AuthenticButtonSprite::RiddleLevel.atlas_rect();
+                                    let hdr_scale = 0.55f32;
+                                    let hdr_w = (hdr_rect.width as f32 * hdr_scale) as i32;
+                                    atlas.blit_sprite(
+                                        AuthenticButtonSprite::RiddleLevel,
+                                        &mut state.menu_rasterizer.pixels,
+                                        state.menu_rasterizer.width,
+                                        state.menu_rasterizer.height,
+                                        center_x - (hdr_w / 2),
+                                        260,
+                                        hdr_scale,
+                                        [1.0, 1.0, 1.0, 1.0],
+                                    );
+
+                                    let choices = [
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Hard,
+                                            AuthenticButtonSprite::Hard,
+                                        ),
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Normal,
+                                            AuthenticButtonSprite::Normal,
+                                        ),
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Easy,
+                                            AuthenticButtonSprite::Easy,
+                                        ),
+                                        (
+                                            sh2_core::config::RiddleDifficulty::Extra,
+                                            AuthenticButtonSprite::Beginner,
+                                        ),
+                                    ];
+
+                                    for (idx, (diff, sprite)) in choices.iter().enumerate() {
+                                        let is_selected =
+                                            *diff == state.menu_ctrl.title_sm.riddle_difficulty;
+                                        let y = 350 + idx as i32 * 58;
+                                        let rect = sprite.atlas_rect();
+                                        let scale = 0.52f32;
+                                        let w = (rect.width as f32 * scale) as i32;
+                                        let x = center_x - (w / 2);
+
+                                        if is_selected {
+                                            let glow_rect =
+                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_scale = 0.46f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            let btn_h = (rect.height as f32 * scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                                            atlas.blit_sprite(
+                                                AuthenticButtonSprite::GlowCursor,
+                                                &mut state.menu_rasterizer.pixels,
+                                                state.menu_rasterizer.width,
+                                                state.menu_rasterizer.height,
+                                                glow_x,
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
+                                            );
+                                        }
+
+                                        let tint = if is_selected {
+                                            [1.0f32, 0.95, 0.75, 1.0]
+                                        } else {
+                                            [0.70f32, 0.70, 0.72, 0.75]
+                                        };
+
+                                        atlas.blit_sprite(
+                                            *sprite,
+                                            &mut state.menu_rasterizer.pixels,
+                                            state.menu_rasterizer.width,
+                                            state.menu_rasterizer.height,
+                                            x,
+                                            y,
+                                            scale,
+                                            tint,
+                                        );
+                                    }
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "RIDDLE DIFFICULTY",
+                                        480,
+                                        320,
+                                        3,
+                                        yellow,
+                                        true,
+                                    );
+                                    let diff_str =
+                                        format!("{:?}", state.menu_ctrl.title_sm.riddle_difficulty)
+                                            .to_uppercase();
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                }
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Change | Enter: Start Game | Esc: Back]",
+                                    420,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::OptionsMenu => {
+                                let tab_name = state.menu_ctrl.options_menu.active_tab.label();
+                                state.menu_rasterizer.draw_text(
+                                    &format!("OPTIONS: {}", tab_name.to_uppercase()),
+                                    440,
+                                    120,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "[Q / E : Switch Category]",
+                                    500,
+                                    160,
+                                    2,
+                                    cyan,
+                                    true,
+                                );
+
+                                for i in 0..state.menu_ctrl.options_menu.item_count() {
+                                    if let Some((label, val)) =
+                                        state.menu_ctrl.options_menu.item_display(i)
+                                    {
+                                        let is_sel =
+                                            i == state.menu_ctrl.options_menu.selected_index;
+                                        let color = if is_sel { yellow } else { white };
+                                        let y = 220 + i * 40;
+                                        if is_sel {
+                                            state
+                                                .menu_rasterizer
+                                                .draw_text(">", 280, y, 2, yellow, true);
+                                        }
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(label, 310, y, 2, color, true);
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(":", 640, y, 2, muted, true);
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(&val, 670, y, 2, color, true);
+                                    }
+                                }
+
+                                if state.menu_ctrl.options_menu.is_dirty {
+                                    state.menu_rasterizer.draw_text(
+                                        "* UNSAVED CHANGES [Enter to Save | Esc to Discard]",
+                                        380,
+                                        660,
+                                        2,
+                                        yellow,
+                                        true,
+                                    );
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "[Esc / Backspace: Return to Main Menu]",
+                                        460,
+                                        660,
+                                        2,
+                                        muted,
+                                        true,
+                                    );
+                                }
+                            }
+                            TitlePhase::Credits => {
+                                state.menu_rasterizer.draw_text(
+                                    "SILENT HILL 2 CREDITS",
+                                    420,
+                                    240,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "DIRECTOR: KEIICHIRO TOYAMA",
+                                    400,
+                                    330,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "CGI & CHARACTER DESIGN: TAKAYOSHI SATO",
+                                    310,
+                                    380,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "MUSIC & SOUND DESIGN: AKIRA YAMAOKA",
+                                    330,
+                                    430,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "[Press Esc / Cancel to Return]",
+                                    470,
+                                    620,
+                                    2,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::TransitionToGame => {
+                                state.menu_rasterizer.draw_text(
+                                    "LOADING RESTROOM STAGE RR21.MAP...",
+                                    400,
+                                    500,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                            }
+                            _ => {}
+                        }
+
+                        // Upload rasterized menu text overlay to GPU and blit over the background
+                        state.render_ctx.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture: &state.menu_text_texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &state.menu_rasterizer.pixels,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(4 * state.menu_rasterizer.width as u32),
+                                rows_per_image: Some(state.menu_rasterizer.height as u32),
+                            },
+                            wgpu::Extent3d {
+                                width: state.menu_rasterizer.width as u32,
+                                height: state.menu_rasterizer.height as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            &state.menu_text_bind_group,
+                            &surface_view,
+                            wgpu::LoadOp::Load,
+                        );
+                    }
+                }
 
                 state
                     .render_ctx

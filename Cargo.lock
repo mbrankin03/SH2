@@ -2024,8 +2024,12 @@ dependencies = [
 name = "sh2-audio"
 version = "0.1.0"
 dependencies = [
+ "cpal",
+ "glam",
  "kira",
  "log",
+ "mint",
+ "sh2-assets",
  "sh2-core",
  "thiserror 2.0.21",
  "tracing",

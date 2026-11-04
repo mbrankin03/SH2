@@ -103,10 +103,10 @@ impl AuthenticButtonSprite {
                 height: 71,
             },
             Self::GlowCursor => AtlasRect {
-                x: 843,
-                y: 1687,
-                width: 621,
-                height: 88,
+                x: 776,
+                y: 1665,
+                width: 757,
+                height: 126,
             },
             Self::MainScenario => AtlasRect {
                 x: 84,

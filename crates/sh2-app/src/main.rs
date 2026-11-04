@@ -1106,7 +1106,6 @@ impl ApplicationHandler for SilentHillApp {
 
                                     let center_x = (state.menu_rasterizer.width / 2) as i32;
                                     let button_scale = 0.44f32;
-                                    let cursor_scale = 0.46f32;
                                     let base_y = 445;
                                     let spacing_y = 46;
 
@@ -1128,10 +1127,15 @@ impl ApplicationHandler for SilentHillApp {
                                         if is_selected {
                                             let glow_rect =
                                                 AuthenticButtonSprite::GlowCursor.atlas_rect();
+                                            let glow_scale = 0.46f32;
                                             let glow_w =
-                                                (glow_rect.width as f32 * cursor_scale) as i32;
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
                                             let glow_x = center_x - (glow_w / 2);
-                                            let glow_y = y - 4;
+                                            // Center vertically around the button sprite
+                                            let btn_h = (rect.height as f32 * button_scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
                                             atlas.blit_sprite(
                                                 AuthenticButtonSprite::GlowCursor,
                                                 &mut state.menu_rasterizer.pixels,
@@ -1139,8 +1143,8 @@ impl ApplicationHandler for SilentHillApp {
                                                 state.menu_rasterizer.height,
                                                 glow_x,
                                                 glow_y,
-                                                cursor_scale,
-                                                [1.0, 1.0, 1.0, 0.85],
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
                                             );
                                         }
 
@@ -1206,17 +1210,23 @@ impl ApplicationHandler for SilentHillApp {
                                         if is_selected {
                                             let glow_rect =
                                                 AuthenticButtonSprite::GlowCursor.atlas_rect();
-                                            let glow_w = (glow_rect.width as f32 * 0.7) as i32;
+                                            let glow_scale = 0.65f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
                                             let glow_x = center_x - (glow_w / 2);
+                                            let btn_h = (rect.height as f32 * scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
                                             atlas.blit_sprite(
                                                 AuthenticButtonSprite::GlowCursor,
                                                 &mut state.menu_rasterizer.pixels,
                                                 state.menu_rasterizer.width,
                                                 state.menu_rasterizer.height,
                                                 glow_x,
-                                                y - 6,
-                                                0.7,
-                                                [1.0, 1.0, 1.0, 0.85],
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
                                             );
                                         }
 
@@ -1319,16 +1329,23 @@ impl ApplicationHandler for SilentHillApp {
                                         if is_selected {
                                             let glow_rect =
                                                 AuthenticButtonSprite::GlowCursor.atlas_rect();
-                                            let glow_w = (glow_rect.width as f32 * 0.5) as i32;
+                                            let glow_scale = 0.46f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            let btn_h = (rect.height as f32 * scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
                                             atlas.blit_sprite(
                                                 AuthenticButtonSprite::GlowCursor,
                                                 &mut state.menu_rasterizer.pixels,
                                                 state.menu_rasterizer.width,
                                                 state.menu_rasterizer.height,
-                                                center_x - (glow_w / 2),
-                                                y - 5,
-                                                0.5,
-                                                [1.0, 1.0, 1.0, 0.85],
+                                                glow_x,
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
                                             );
                                         }
 
@@ -1423,16 +1440,23 @@ impl ApplicationHandler for SilentHillApp {
                                         if is_selected {
                                             let glow_rect =
                                                 AuthenticButtonSprite::GlowCursor.atlas_rect();
-                                            let glow_w = (glow_rect.width as f32 * 0.5) as i32;
+                                            let glow_scale = 0.46f32;
+                                            let glow_w =
+                                                (glow_rect.width as f32 * glow_scale) as i32;
+                                            let glow_h =
+                                                (glow_rect.height as f32 * glow_scale) as i32;
+                                            let glow_x = center_x - (glow_w / 2);
+                                            let btn_h = (rect.height as f32 * scale) as i32;
+                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
                                             atlas.blit_sprite(
                                                 AuthenticButtonSprite::GlowCursor,
                                                 &mut state.menu_rasterizer.pixels,
                                                 state.menu_rasterizer.width,
                                                 state.menu_rasterizer.height,
-                                                center_x - (glow_w / 2),
-                                                y - 5,
-                                                0.5,
-                                                [1.0, 1.0, 1.0, 0.85],
+                                                glow_x,
+                                                glow_y,
+                                                glow_scale,
+                                                [1.0, 1.0, 1.0, 0.90],
                                             );
                                         }
 

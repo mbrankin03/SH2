@@ -17,9 +17,11 @@ use sh2_assets::formats::anm::{
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
+use sh2_audio::{play_menu_sound, AudioEngine, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
-use sh2_ui::menu::{MenuNavAction, MenuSoundCue, TitlePhase};
+use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase};
+use sh2_ui::TextRasterizer;
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
 struct CharacterAsset {
@@ -305,6 +307,10 @@ struct AppState {
     splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
     splash_title_bg: Option<Arc<wgpu::BindGroup>>,
     menu_uniform_buffer: wgpu::Buffer,
+    menu_text_texture: wgpu::Texture,
+    menu_text_bind_group: wgpu::BindGroup,
+    menu_rasterizer: TextRasterizer,
+    audio_engine: Option<AudioEngine>,
     sim_core: SimulationCore,
     gpu_map: GpuMap,
     map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -540,6 +546,43 @@ impl ApplicationHandler for SilentHillApp {
                 )
             });
 
+        // Dynamic UI overlay texture and text rasterizer for Authentic Menus & HUD
+        let text_w = 1280u32;
+        let text_h = 720u32;
+        let menu_rasterizer = TextRasterizer::new(text_w as usize, text_h as usize);
+
+        let menu_text_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Menu Text Overlay Texture"),
+            size: wgpu::Extent3d {
+                width: text_w,
+                height: text_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let menu_text_view = menu_text_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let menu_text_bind_group = blitter.create_bind_group_with_uniform_buffer(
+            &device,
+            &menu_text_view,
+            &menu_uniform_buffer,
+        );
+
+        let audio_engine = match AudioEngine::new() {
+            Ok(engine) => {
+                tracing::info!("Audio engine successfully initialized with Kira runtime.");
+                Some(engine)
+            }
+            Err(e) => {
+                tracing::warn!("Audio device initialization warning: {:?}", e);
+                None
+            }
+        };
+
         tracing::info!(
             "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"
         );
@@ -557,6 +600,10 @@ impl ApplicationHandler for SilentHillApp {
             splash_konami_bg,
             splash_title_bg,
             menu_uniform_buffer,
+            menu_text_texture,
+            menu_text_bind_group,
+            menu_rasterizer,
+            audio_engine,
             sim_core,
             gpu_map,
             map_texture_bind_groups,
@@ -637,6 +684,20 @@ impl ApplicationHandler for SilentHillApp {
                             };
                             if sound != MenuSoundCue::None {
                                 tracing::info!("Menu sound emitted: {:?}", sound);
+                                if let Some(ref mut engine) = state.audio_engine {
+                                    let cue_kind = match sound {
+                                        MenuSoundCue::CursorMove => Some(SoundCueKind::CursorMove),
+                                        MenuSoundCue::Confirm => Some(SoundCueKind::Confirm),
+                                        MenuSoundCue::Cancel => Some(SoundCueKind::Cancel),
+                                        MenuSoundCue::GameStartTransition => {
+                                            Some(SoundCueKind::GameStartTransition)
+                                        }
+                                        MenuSoundCue::None => None,
+                                    };
+                                    if let Some(kind) = cue_kind {
+                                        let _ = play_menu_sound(engine, kind);
+                                    }
+                                }
                             }
                         }
                         return;
@@ -709,6 +770,20 @@ impl ApplicationHandler for SilentHillApp {
                     let sound = state.menu_ctrl.handle_nav(MenuNavAction::Confirm);
                     if sound != MenuSoundCue::None {
                         tracing::info!("Menu sound emitted: {:?}", sound);
+                        if let Some(ref mut engine) = state.audio_engine {
+                            let cue_kind = match sound {
+                                MenuSoundCue::CursorMove => Some(SoundCueKind::CursorMove),
+                                MenuSoundCue::Confirm => Some(SoundCueKind::Confirm),
+                                MenuSoundCue::Cancel => Some(SoundCueKind::Cancel),
+                                MenuSoundCue::GameStartTransition => {
+                                    Some(SoundCueKind::GameStartTransition)
+                                }
+                                MenuSoundCue::None => None,
+                            };
+                            if let Some(kind) = cue_kind {
+                                let _ = play_menu_sound(engine, kind);
+                            }
+                        }
                     }
                 }
             }
@@ -938,6 +1013,283 @@ impl ApplicationHandler for SilentHillApp {
                             timestamp_writes: None,
                             occlusion_query_set: None,
                         });
+                    }
+
+                    // Render dynamic 2D text overlay for interactive menus (Main Menu, Scenario Select, Options, Credits)
+                    if phase != TitlePhase::SplashIntro {
+                        state.menu_rasterizer.clear();
+
+                        let white = [220, 220, 220, 255];
+                        let yellow = [240, 205, 55, 255];
+                        let muted = [150, 150, 150, 255];
+                        let cyan = [100, 210, 230, 255];
+
+                        match phase {
+                            TitlePhase::TitleLogo => {
+                                state.menu_rasterizer.draw_text(
+                                    "PRESS ANY KEY OR ENTER TO START",
+                                    410,
+                                    620,
+                                    2,
+                                    yellow,
+                                    true,
+                                );
+                            }
+                            TitlePhase::MainMenu => {
+                                for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                                    let is_selected =
+                                        idx == state.menu_ctrl.title_sm.main_menu_index;
+                                    let color = if is_selected { yellow } else { white };
+                                    let y = 370 + idx * 45;
+                                    let text = opt.label();
+                                    if is_selected {
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(">", 550, y, 3, yellow, true);
+                                    }
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(text, 580, y, 3, color, true);
+                                }
+                                state.menu_rasterizer.draw_text(
+                                    "W / S or Up / Down to Navigate | Enter to Confirm",
+                                    400,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::ScenarioSelect => {
+                                state.menu_rasterizer.draw_text(
+                                    "SELECT SCENARIO",
+                                    500,
+                                    320,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                let scenarios = [
+                                    "LETTER FROM SILENT HEAVEN (JAMES)",
+                                    "BORN FROM A WISH (MARIA)",
+                                ];
+                                for (idx, name) in scenarios.iter().enumerate() {
+                                    let is_selected =
+                                        idx == state.menu_ctrl.title_sm.scenario_index;
+                                    let color = if is_selected { yellow } else { white };
+                                    let y = 410 + idx * 50;
+                                    if is_selected {
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(">", 360, y, 2, yellow, true);
+                                    }
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(name, 390, y, 2, color, true);
+                                }
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Select | Enter: Confirm | Esc: Back]",
+                                    430,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::ActionDifficultySelect => {
+                                state.menu_rasterizer.draw_text(
+                                    "ACTION DIFFICULTY",
+                                    480,
+                                    320,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                let diff_str =
+                                    format!("{:?}", state.menu_ctrl.title_sm.action_difficulty)
+                                        .to_uppercase();
+                                state
+                                    .menu_rasterizer
+                                    .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Change | Enter: Next | Esc: Back]",
+                                    440,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::RiddleDifficultySelect => {
+                                state.menu_rasterizer.draw_text(
+                                    "RIDDLE DIFFICULTY",
+                                    480,
+                                    320,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                let diff_str =
+                                    format!("{:?}", state.menu_ctrl.title_sm.riddle_difficulty)
+                                        .to_uppercase();
+                                state
+                                    .menu_rasterizer
+                                    .draw_text(&diff_str, 570, 420, 3, yellow, true);
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Change | Enter: Start Game | Esc: Back]",
+                                    420,
+                                    660,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::OptionsMenu => {
+                                let tab_name = state.menu_ctrl.options_menu.active_tab.label();
+                                state.menu_rasterizer.draw_text(
+                                    &format!("OPTIONS: {}", tab_name.to_uppercase()),
+                                    440,
+                                    120,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "[Q / E : Switch Category]",
+                                    500,
+                                    160,
+                                    2,
+                                    cyan,
+                                    true,
+                                );
+
+                                for i in 0..state.menu_ctrl.options_menu.item_count() {
+                                    if let Some((label, val)) =
+                                        state.menu_ctrl.options_menu.item_display(i)
+                                    {
+                                        let is_sel =
+                                            i == state.menu_ctrl.options_menu.selected_index;
+                                        let color = if is_sel { yellow } else { white };
+                                        let y = 220 + i * 40;
+                                        if is_sel {
+                                            state
+                                                .menu_rasterizer
+                                                .draw_text(">", 280, y, 2, yellow, true);
+                                        }
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(label, 310, y, 2, color, true);
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(":", 640, y, 2, muted, true);
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(&val, 670, y, 2, color, true);
+                                    }
+                                }
+
+                                if state.menu_ctrl.options_menu.is_dirty {
+                                    state.menu_rasterizer.draw_text(
+                                        "* UNSAVED CHANGES [Enter to Save | Esc to Discard]",
+                                        380,
+                                        660,
+                                        2,
+                                        yellow,
+                                        true,
+                                    );
+                                } else {
+                                    state.menu_rasterizer.draw_text(
+                                        "[Esc / Backspace: Return to Main Menu]",
+                                        460,
+                                        660,
+                                        2,
+                                        muted,
+                                        true,
+                                    );
+                                }
+                            }
+                            TitlePhase::Credits => {
+                                state.menu_rasterizer.draw_text(
+                                    "SILENT HILL 2 CREDITS",
+                                    420,
+                                    240,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "DIRECTOR: KEIICHIRO TOYAMA",
+                                    400,
+                                    330,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "CGI & CHARACTER DESIGN: TAKAYOSHI SATO",
+                                    310,
+                                    380,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "MUSIC & SOUND DESIGN: AKIRA YAMAOKA",
+                                    330,
+                                    430,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "[Press Esc / Cancel to Return]",
+                                    470,
+                                    620,
+                                    2,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::TransitionToGame => {
+                                state.menu_rasterizer.draw_text(
+                                    "LOADING RESTROOM STAGE RR21.MAP...",
+                                    400,
+                                    500,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                            }
+                            _ => {}
+                        }
+
+                        // Upload rasterized menu text overlay to GPU and blit over the background
+                        state.render_ctx.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture: &state.menu_text_texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &state.menu_rasterizer.pixels,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(4 * state.menu_rasterizer.width as u32),
+                                rows_per_image: Some(state.menu_rasterizer.height as u32),
+                            },
+                            wgpu::Extent3d {
+                                width: state.menu_rasterizer.width as u32,
+                                height: state.menu_rasterizer.height as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            &state.menu_text_bind_group,
+                            &surface_view,
+                            wgpu::LoadOp::Load,
+                        );
                     }
                 }
 

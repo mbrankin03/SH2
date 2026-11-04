@@ -92,10 +92,19 @@ impl Ps2CameraController {
 
     /// Reset camera position instantly behind the player without smoothing (e.g. on new game, door warps).
     pub fn reset_to_player(&mut self, player_pos: Vec3, player_yaw: f32) {
-        // In PS2 coordinate system: Y is down, yaw 0 looks along +Z
+        // In PS2 coordinate system: Y is down (-Y is up in world space), yaw 0 looks along +Z
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let eye = player_pos - forward * 3000.0 + Vec3::new(0.0, -400.0, 0.0);
-        let target = player_pos + Vec3::new(0.0, -800.0, 0.0);
+        let eye = if player_pos.x < -50000.0 {
+            // Authentic PS2 rr21 bathroom entrance camera position inside the room RD boundaries
+            Vec3::new(-100700.0, -1400.0, -59000.0)
+        } else {
+            player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
+        };
+        let target = if player_pos.x < -50000.0 {
+            player_pos + Vec3::new(0.0, -850.0, 0.0)
+        } else {
+            player_pos + Vec3::new(0.0, -1100.0, 0.0)
+        };
 
         let snap = CameraSnapshot {
             eye,
@@ -127,8 +136,21 @@ impl Ps2CameraController {
         self.search_pitch_offset = right_stick_y * 0.3;
 
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let base_eye = player_pos - forward * 3000.0 + Vec3::new(0.0, -400.0, 0.0);
-        let mut base_target = player_pos + Vec3::new(0.0, -800.0, 0.0);
+        // Authentic fixed-angle cinematic camera placement if inside a room
+        let base_eye = if player_pos.x < -50000.0 {
+            // Authentic PS2 rr21 bathroom entrance camera position inside the room RD boundaries:
+            // Centered in RD rect (-100700, -1400, -59000), framed down at James entering from the sinks
+            Vec3::new(-100700.0, -1400.0, -59000.0)
+        } else {
+            // General chase camera fallback for open areas
+            player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
+        };
+        let mut base_target = if player_pos.x < -50000.0 {
+            // Authentic PS2 watch target on player head/torso
+            player_pos + Vec3::new(0.0, -850.0, 0.0)
+        } else {
+            player_pos + Vec3::new(0.0, -1100.0, 0.0)
+        };
 
         // Apply search-view look rotation around player head
         if self.search_yaw_offset.abs() > 0.01 || self.search_pitch_offset.abs() > 0.01 {

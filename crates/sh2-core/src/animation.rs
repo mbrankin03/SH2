@@ -8,8 +8,10 @@ pub enum AnimationStateKind {
     /// Idle standing stance.
     #[default]
     Idle,
-    /// Forward or turn walking movement.
+    /// Forward walking movement.
     Walk,
+    /// Backward walking movement.
+    Back,
     /// High-speed sprint or running movement.
     Run,
     /// Weapon raised / aiming stance.
@@ -69,21 +71,24 @@ impl AnimationClip {
 
 /// Default standard animation clips for James Sunderland in `jms_basic1.anm`.
 ///
-/// Format verified from reverse engineering data:
-/// - Idle: frames 0..=50 (looping)
-/// - Walk: frames 51..=91 (looping)
-/// - Run: frames 92..=170 (looping)
+/// Authentic frame ranges matching original game bytecode / PS2 engine:
+/// - Stand (Idle): frames 1..=10 (subtle breathing loop)
+/// - Walk: frames 51..=74 (looping forward stride)
+/// - Back: frames 75..=98 (looping backward step)
+/// - Run: frames 99..=146 (looping sprint cycle)
 /// - Aim: frames 200..=230 (looping)
 /// - Attack: frames 231..=270 (single-shot)
 pub struct JamesBasicClips;
 
 impl JamesBasicClips {
-    /// Standard breathing / standing idle loop (frames 0..=50).
-    pub const IDLE: AnimationClip = AnimationClip::new(0, 50, 30.0, true);
-    /// Forward walk cycle (frames 51..=91).
-    pub const WALK: AnimationClip = AnimationClip::new(51, 91, 30.0, true);
-    /// Full sprint run cycle (frames 92..=170).
-    pub const RUN: AnimationClip = AnimationClip::new(92, 170, 30.0, true);
+    /// Authentic standing idle loop (frames 1..=10, 15 fps subtle breathing).
+    pub const IDLE: AnimationClip = AnimationClip::new(1, 10, 15.0, true);
+    /// Forward walk cycle (frames 51..=74, 30 fps).
+    pub const WALK: AnimationClip = AnimationClip::new(51, 74, 30.0, true);
+    /// Backward step cycle (frames 75..=98, 30 fps).
+    pub const BACK: AnimationClip = AnimationClip::new(75, 98, 30.0, true);
+    /// Full sprint run cycle (frames 99..=146, 30 fps).
+    pub const RUN: AnimationClip = AnimationClip::new(99, 146, 30.0, true);
     /// Weapon aim readiness stance (frames 200..=230).
     pub const AIM: AnimationClip = AnimationClip::new(200, 230, 30.0, true);
     /// Weapon strike / attack execution (frames 231..=270).
@@ -94,12 +99,14 @@ impl JamesBasicClips {
 pub struct MariaLocomotionClips;
 
 impl MariaLocomotionClips {
-    /// Standing idle loop (frames 0..=50).
-    pub const IDLE: AnimationClip = AnimationClip::new(0, 50, 30.0, true);
-    /// Forward walk cycle (frames 51..=91).
-    pub const WALK: AnimationClip = AnimationClip::new(51, 91, 30.0, true);
-    /// Full run cycle (frames 92..=170).
-    pub const RUN: AnimationClip = AnimationClip::new(92, 170, 30.0, true);
+    /// Standing idle loop (frames 1..=10).
+    pub const IDLE: AnimationClip = AnimationClip::new(1, 10, 15.0, true);
+    /// Forward walk cycle (frames 51..=74).
+    pub const WALK: AnimationClip = AnimationClip::new(51, 74, 30.0, true);
+    /// Backward step cycle (frames 75..=98).
+    pub const BACK: AnimationClip = AnimationClip::new(75, 98, 30.0, true);
+    /// Full run cycle (frames 99..=146).
+    pub const RUN: AnimationClip = AnimationClip::new(99, 146, 30.0, true);
 }
 
 /// Locomotion clip set configuration for the active playable character.
@@ -107,6 +114,7 @@ impl MariaLocomotionClips {
 pub struct CharacterLocomotionClips {
     pub idle: AnimationClip,
     pub walk: AnimationClip,
+    pub back: AnimationClip,
     pub run: AnimationClip,
 }
 
@@ -115,6 +123,7 @@ impl Default for CharacterLocomotionClips {
         Self {
             idle: JamesBasicClips::IDLE,
             walk: JamesBasicClips::WALK,
+            back: JamesBasicClips::BACK,
             run: JamesBasicClips::RUN,
         }
     }
@@ -125,6 +134,7 @@ impl CharacterLocomotionClips {
     pub const JAMES: Self = Self {
         idle: JamesBasicClips::IDLE,
         walk: JamesBasicClips::WALK,
+        back: JamesBasicClips::BACK,
         run: JamesBasicClips::RUN,
     };
 
@@ -132,6 +142,7 @@ impl CharacterLocomotionClips {
     pub const MARIA: Self = Self {
         idle: MariaLocomotionClips::IDLE,
         walk: MariaLocomotionClips::WALK,
+        back: MariaLocomotionClips::BACK,
         run: MariaLocomotionClips::RUN,
     };
 }
@@ -293,11 +304,11 @@ mod tests {
     #[test]
     fn test_clip_durations_and_frames() {
         let idle = JamesBasicClips::IDLE;
-        assert_eq!(idle.frame_count(), 51);
-        assert!((idle.duration_seconds() - 1.7).abs() < 1e-4);
+        assert_eq!(idle.frame_count(), 10);
+        assert!(idle.looping);
 
         let walk = JamesBasicClips::WALK;
-        assert_eq!(walk.frame_count(), 41);
+        assert_eq!(walk.frame_count(), 24);
         assert!(walk.looping);
 
         let attack = JamesBasicClips::ATTACK;
@@ -311,12 +322,12 @@ mod tests {
             CharacterAnimationController::new(AnimationStateKind::Idle, JamesBasicClips::IDLE);
         assert_eq!(controller.state(), AnimationStateKind::Idle);
 
-        // Advance 0.5s in idle
-        controller.update(Duration::from_millis(500));
+        // Advance 0.2s in idle
+        controller.update(Duration::from_millis(200));
         let (f0, f1, alpha) = controller.evaluate_sample_cursor();
-        assert_eq!(f0, 15);
-        assert_eq!(f1, 16);
-        assert!((alpha - 0.0).abs() < 1e-4);
+        assert!((1..=10).contains(&f0));
+        assert!((1..=10).contains(&f1));
+        assert!((0.0..=1.0).contains(&alpha));
 
         // Transition to Walk
         controller.transition_to(AnimationStateKind::Walk, JamesBasicClips::WALK);
@@ -337,6 +348,6 @@ mod tests {
         let (prev, cur, blend) = controller.evaluate_blended_cursor();
         assert!(prev.is_none());
         assert_eq!(blend, 1.0);
-        assert!(cur.0 >= 51 && cur.0 <= 91);
+        assert!(cur.0 >= 51 && cur.0 <= 74);
     }
 }

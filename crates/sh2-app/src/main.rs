@@ -326,6 +326,8 @@ struct AppState {
     key_right: bool,
     last_menu_state_log: String,
     last_frame: Instant,
+    frame_counter: u32,
+    sim_time: f32,
 }
 
 #[derive(Default)]
@@ -634,6 +636,8 @@ impl ApplicationHandler for SilentHillApp {
             key_right: false,
             last_menu_state_log: String::new(),
             last_frame: Instant::now(),
+            frame_counter: 0,
+            sim_time: 0.0,
         });
     }
 
@@ -952,6 +956,28 @@ impl ApplicationHandler for SilentHillApp {
                 let is_in_game = state.menu_ctrl.in_game_active;
                 let fade_alpha = state.menu_ctrl.title_sm.fade_alpha;
                 let phase = state.menu_ctrl.title_sm.phase;
+
+                // Advance simulation time and frame counter for animated post-processing
+                state.frame_counter = state.frame_counter.wrapping_add(1);
+                state.sim_time += dt.as_secs_f32();
+
+                // Retrieve active grain intensity percentage from options configuration
+                let grain_pct = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .grain_intensity;
+                let grain_intensity = (grain_pct as f32) / 100.0;
+
+                state
+                    .render_ctx
+                    .update_post(&sh2_renderer::post::PostUniforms {
+                        time: state.sim_time,
+                        grain_intensity,
+                        exposure: 1.0,
+                        frame_count: state.frame_counter,
+                    });
 
                 if is_in_game {
                     state.render_ctx.render_scene(

@@ -1059,18 +1059,34 @@ impl ApplicationHandler for SilentHillApp {
                             TitlePhase::MainMenu => {
                                 if let Some(ref atlas) = state.button_sprites {
                                     // 1:1 authentic Silent Hill 2 button sprites from start01e.tex
+                                    // Matched to retail Silent Hill 2 PS2/PC vertical coordinates
                                     let items = [
-                                        (MainMenuOption::NewGame, AuthenticButtonSprite::NewGame),
-                                        (MainMenuOption::Continue, AuthenticButtonSprite::Continue),
-                                        (MainMenuOption::Options, AuthenticButtonSprite::Options),
-                                        (MainMenuOption::Exit, AuthenticButtonSprite::Exit),
+                                        (
+                                            MainMenuOption::NewGame,
+                                            AuthenticButtonSprite::NewGame,
+                                            0,
+                                        ),
+                                        (
+                                            MainMenuOption::Continue,
+                                            AuthenticButtonSprite::Continue,
+                                            1,
+                                        ),
+                                        (
+                                            MainMenuOption::Options,
+                                            AuthenticButtonSprite::Options,
+                                            2,
+                                        ),
+                                        (MainMenuOption::Exit, AuthenticButtonSprite::Exit, 3),
                                     ];
 
                                     let center_x = (state.menu_rasterizer.width / 2) as i32;
-                                    let cursor_scale = 0.50f32;
+                                    let button_scale = 0.44f32;
+                                    let cursor_scale = 0.46f32;
+                                    let base_y = 445;
+                                    let spacing_y = 46;
 
-                                    for (opt, sprite) in &items {
-                                        let idx = match opt {
+                                    for (opt, sprite, visual_idx) in &items {
+                                        let logical_idx = match opt {
                                             MainMenuOption::NewGame => 0,
                                             MainMenuOption::Continue => 1,
                                             MainMenuOption::Options => 2,
@@ -1078,11 +1094,10 @@ impl ApplicationHandler for SilentHillApp {
                                             _ => 0,
                                         };
                                         let is_selected =
-                                            idx == state.menu_ctrl.title_sm.main_menu_index;
-                                        let y = 370 + idx as i32 * 56;
+                                            logical_idx == state.menu_ctrl.title_sm.main_menu_index;
+                                        let y = base_y + visual_idx * spacing_y;
                                         let rect = sprite.atlas_rect();
-                                        let scale = 0.52f32;
-                                        let w = (rect.width as f32 * scale) as i32;
+                                        let w = (rect.width as f32 * button_scale) as i32;
                                         let x = center_x - (w / 2);
 
                                         // Draw authentic oval glowing cursor behind selected item
@@ -1092,7 +1107,7 @@ impl ApplicationHandler for SilentHillApp {
                                             let glow_w =
                                                 (glow_rect.width as f32 * cursor_scale) as i32;
                                             let glow_x = center_x - (glow_w / 2);
-                                            let glow_y = y - 5;
+                                            let glow_y = y - 4;
                                             atlas.blit_sprite(
                                                 AuthenticButtonSprite::GlowCursor,
                                                 &mut state.menu_rasterizer.pixels,
@@ -1106,9 +1121,9 @@ impl ApplicationHandler for SilentHillApp {
                                         }
 
                                         let tint = if is_selected {
-                                            [1.0f32, 0.95, 0.75, 1.0]
+                                            [1.0f32, 0.98, 0.85, 1.0]
                                         } else {
-                                            [0.70f32, 0.70, 0.72, 0.75]
+                                            [0.72f32, 0.72, 0.74, 0.80]
                                         };
 
                                         atlas.blit_sprite(
@@ -1118,7 +1133,7 @@ impl ApplicationHandler for SilentHillApp {
                                             state.menu_rasterizer.height,
                                             x,
                                             y,
-                                            scale,
+                                            button_scale,
                                             tint,
                                         );
                                     }

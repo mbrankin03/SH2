@@ -94,9 +94,17 @@ impl Ps2CameraController {
     pub fn reset_to_player(&mut self, player_pos: Vec3, player_yaw: f32) {
         // In PS2 coordinate system: Y is down (-Y is up in world space), yaw 0 looks along +Z
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        // Position camera behind and elevated above player head (-1200.0 is ~head height, eye at -1400.0)
-        let eye = player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0);
-        let target = player_pos + Vec3::new(0.0, -1100.0, 0.0);
+        let eye = if player_pos.x < -50000.0 {
+            // Authentic PS2 rr21 bathroom entrance angle from rr21.cam (road 1)
+            Vec3::new(-98927.0, -2436.0, -60413.0)
+        } else {
+            player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
+        };
+        let target = if player_pos.x < -50000.0 {
+            player_pos + Vec3::new(0.0, -850.0, 0.0)
+        } else {
+            player_pos + Vec3::new(0.0, -1100.0, 0.0)
+        };
 
         let snap = CameraSnapshot {
             eye,
@@ -128,8 +136,21 @@ impl Ps2CameraController {
         self.search_pitch_offset = right_stick_y * 0.3;
 
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let base_eye = player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0);
-        let mut base_target = player_pos + Vec3::new(0.0, -1100.0, 0.0);
+        // Authentic fixed-angle cinematic camera placement if inside a room
+        let base_eye = if player_pos.x < -50000.0 {
+            // Authentic PS2 rr21 bathroom entrance angle from rr21.cam (road 1)
+            // Pitch: -48 deg, Yaw: 108 deg, Distance: 2000 units from watch target
+            Vec3::new(-98927.0, -2436.0, -60413.0)
+        } else {
+            // General chase camera fallback for open areas
+            player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
+        };
+        let mut base_target = if player_pos.x < -50000.0 {
+            // Authentic PS2 watch target on player head/torso
+            player_pos + Vec3::new(0.0, -850.0, 0.0)
+        } else {
+            player_pos + Vec3::new(0.0, -1100.0, 0.0)
+        };
 
         // Apply search-view look rotation around player head
         if self.search_yaw_offset.abs() > 0.01 || self.search_pitch_offset.abs() > 0.01 {

@@ -150,7 +150,11 @@ impl SimulationCore {
 
         // 3b. Update animation locomotion state machine based on movement & input
         if is_moving {
-            if self.input.state.is_running {
+            if self.input.state.left_stick_y < -0.1 {
+                // Moving backward (S key or analog backward in tank mode)
+                self.animation
+                    .transition_to(AnimationStateKind::Back, self.locomotion_clips.back);
+            } else if self.input.state.is_running {
                 self.animation
                     .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
             } else {

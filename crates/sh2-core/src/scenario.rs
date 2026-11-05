@@ -103,8 +103,9 @@ impl ScenarioState {
                     },
                 ],
                 event_flags: HashSet::new(),
-                player_position: Vec3::new(12500.0, 0.0, -45000.0),
-                player_yaw: 0.0,
+                // Stage 2 (er01) Opening Restroom post-prologue mirror spawn: (-19606.6, 0.0, 20429.55) facing West (-PI/2)
+                player_position: Vec3::new(-19606.6, 0.0, 20429.55),
+                player_yaw: -std::f32::consts::FRAC_PI_2,
             },
             ScenarioKind::BornFromAWish => Self {
                 scenario,

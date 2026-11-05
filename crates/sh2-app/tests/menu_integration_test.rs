@@ -225,6 +225,35 @@ fn test_sh2_18_full_menu_and_options_flow() {
     controller.tick(0.016);
     assert!(controller.in_game_active);
 
+    // 5. Test Rooms / Debug Stage Selection flow
+    let mut debug_controller = AppMenuController::new(&config_path);
+    debug_controller.title_sm.phase = TitlePhase::MainMenu;
+    debug_controller.title_sm.main_menu_index = 3; // TEST ROOMS
+    assert_eq!(
+        MainMenuOption::ALL[debug_controller.title_sm.main_menu_index],
+        MainMenuOption::TestRooms
+    );
+
+    let cue = debug_controller.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::Confirm);
+    assert_eq!(debug_controller.title_sm.phase, TitlePhase::TestRoomsSelect);
+
+    // Select Toluca Lake Observation Deck
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::ObservationDeck
+    );
+    let cue = debug_controller.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(
+        debug_controller.title_sm.phase,
+        TitlePhase::TransitionToGame
+    );
+    assert_eq!(
+        debug_controller.title_sm.selected_test_room,
+        sh2_ui::menu::TestRoomKind::ObservationDeck
+    );
+
     // Clean up temporary test files
     let _ = fs::remove_dir_all(&test_dir);
 }

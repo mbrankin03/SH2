@@ -48,6 +48,109 @@ mod tests {
     }
 
     #[test]
+    fn test_outdoor_observation_deck_map_parsing() {
+        // Test parsing authentic outdoor Observation Deck map (ob01.map)
+        let map_path = format!("{ROOT_ASSETS}/data/bg/ob/ob01.map");
+        if !Path::new(&map_path).exists() {
+            println!("Skipping test_outdoor_observation_deck_map_parsing: ob01.map not found");
+            return;
+        }
+
+        let data = fs::read(&map_path).expect("Failed to read ob01.map");
+        let map = parse_map(&data, "ob01").expect("Failed to parse ob01.map");
+
+        println!(
+            "Parsed ob01 map: materials={}, textures={}, batches={}",
+            map.materials.len(),
+            map.textures.len(),
+            map.batches.len()
+        );
+
+        let mut min_p = [f32::MAX; 3];
+        let mut max_p = [f32::MIN; 3];
+        for b in &map.batches {
+            for p in &b.positions {
+                for i in 0..3 {
+                    if p[i] < min_p[i] {
+                        min_p[i] = p[i];
+                    }
+                    if p[i] > max_p[i] {
+                        max_p[i] = p[i];
+                    }
+                }
+            }
+        }
+        println!("ob01 min: {:?}, max: {:?}", min_p, max_p);
+
+        assert_eq!(map.name, "ob01");
+        assert!(!map.materials.is_empty(), "ob01.map must contain materials");
+        assert!(!map.batches.is_empty(), "ob01.map must contain batches");
+    }
+
+    #[test]
+    fn test_opening_restroom_and_hotel_boiler_map_parsing() {
+        // Test parsing authentic opening restroom map (er01.map: stage_toilet / R_BEGIN_BATHROOM = 0x01)
+        let er_map_path = format!("{ROOT_ASSETS}/data/bg/er/er01.map");
+        if Path::new(&er_map_path).exists() {
+            let data = fs::read(&er_map_path).expect("Failed to read er01.map");
+            let map = parse_map(&data, "er01").expect("Failed to parse er01.map");
+            println!(
+                "Parsed er01 (Opening Restroom) map: materials={}, textures={}, batches={}",
+                map.materials.len(),
+                map.textures.len(),
+                map.batches.len()
+            );
+            let mut min_p = [f32::MAX; 3];
+            let mut max_p = [f32::MIN; 3];
+            for b in &map.batches {
+                for p in &b.positions {
+                    for i in 0..3 {
+                        if p[i] < min_p[i] {
+                            min_p[i] = p[i];
+                        }
+                        if p[i] > max_p[i] {
+                            max_p[i] = p[i];
+                        }
+                    }
+                }
+            }
+            println!("er01 min: {:?}, max: {:?}", min_p, max_p);
+            assert_eq!(map.name, "er01");
+            assert!(!map.batches.is_empty(), "er01.map must contain batches");
+        }
+
+        // Test parsing authentic hotel boiler room map (rr21.map: stage_hotel_bf_f / R_HTL_BOILER_RM = 0xA7)
+        let rr_map_path = format!("{ROOT_ASSETS}/data/bg/rr/rr21.map");
+        if Path::new(&rr_map_path).exists() {
+            let data = fs::read(&rr_map_path).expect("Failed to read rr21.map");
+            let map = parse_map(&data, "rr21").expect("Failed to parse rr21.map");
+            println!(
+                "Parsed rr21 (Hotel Boiler Room) map: materials={}, textures={}, batches={}",
+                map.materials.len(),
+                map.textures.len(),
+                map.batches.len()
+            );
+            let mut min_p = [f32::MAX; 3];
+            let mut max_p = [f32::MIN; 3];
+            for b in &map.batches {
+                for p in &b.positions {
+                    for i in 0..3 {
+                        if p[i] < min_p[i] {
+                            min_p[i] = p[i];
+                        }
+                        if p[i] > max_p[i] {
+                            max_p[i] = p[i];
+                        }
+                    }
+                }
+            }
+            println!("rr21 min: {:?}, max: {:?}", min_p, max_p);
+            assert_eq!(map.name, "rr21");
+            assert!(!map.batches.is_empty(), "rr21.map must contain batches");
+        }
+    }
+
+    #[test]
     fn test_james_model_parsing() {
         // Test parsing James model (hhh_jms.mdl)
         let mdl_path = format!("{ROOT_ASSETS}/data/chr/jms/hhh_jms.mdl");

@@ -76,3 +76,8 @@ Comprehensive verification performed:
 - Synthetic fixtures tested or in-engine validation against vanilla data.
 - Edge cases evaluated.
 ```
+
+### Tech Lead Review Policy & GitHub PR Comments
+- **Mandatory PR Comment:** Tech Lead subagent reviews must **always be posted as comments directly on the GitHub Pull Request** (via GitHub MCP tool `add_issue_comment`), not merely stored in Antigravity chat or scratch artifacts.
+- **Audit Trail & Documentation:** Leaving the review directly on the PR ensures easy documentation, historical traceability, and clear visibility for the Project Lead prior to merging.
+- **Never Self-Merge:** Under no circumstances should an agent self-merge a PR into `main`. Merging is reserved exclusively for the Project Lead (Matthew).

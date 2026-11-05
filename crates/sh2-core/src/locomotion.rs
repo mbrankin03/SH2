@@ -18,8 +18,10 @@ use std::f32::consts::{FRAC_PI_6, PI};
 /// In PS2/PC SH2 engine (`0x54ef10`), $1\text{ m/s} = 500\text{ world units/s}$.
 pub const SH2_WORLD_UNIT_SCALE: f32 = 500.0;
 
-/// Maria velocity multiplier (`0x54ef10`): Maria moves at 80% of James's movement speed.
-pub const MARIA_SPEED_MULTIPLIER: f32 = 0.8;
+/// Maria companion follower speed multiplier (`0x54ef10`):
+/// When Maria acts as an NPC companion follower following James, she moves at 80% speed.
+/// When Maria is the active player (e.g. *Born From a Wish* scenario), full 1.0x player speed is used.
+pub const MARIA_COMPANION_SPEED_MULTIPLIER: f32 = 0.8;
 
 /// Quick turn 180° angular velocity in radians per second ($5.5\text{ rad/s}$, completing $180^\circ$ in $\approx 0.57\text{ s}$).
 pub const QUICK_TURN_SPEED_RAD_PER_SEC: f32 = 5.497_787_5;
@@ -232,8 +234,9 @@ pub struct LocomotionInput {
     pub enemy_near: bool,
     /// Normalized character health `(hp / max_hp)` in `[0.0, 1.0]`.
     pub health_fraction: f32,
-    /// Maria active flag: applies 0.8x speed scalar.
-    pub is_maria: bool,
+    /// Maria companion follower flag: applies 0.8x speed scalar when following James as NPC.
+    /// In playable scenario (*Born From a Wish*), Maria uses standard 1.0x player speed.
+    pub is_maria_follower: bool,
     /// Camera yaw in world space (used for Directional / 2D movement mode).
     pub camera_yaw: f32,
 }
@@ -250,7 +253,7 @@ impl Default for LocomotionInput {
             wall_ahead: false,
             enemy_near: false,
             health_fraction: 1.0,
-            is_maria: false,
+            is_maria_follower: false,
             camera_yaw: 0.0,
         }
     }
@@ -685,12 +688,12 @@ impl PlayerLocomotionController {
         *current_yaw = wrap_angle(*current_yaw);
 
         // Calculate final translation velocity vector in world space
-        let maria_mult = if input.is_maria {
-            MARIA_SPEED_MULTIPLIER
+        let speed_multiplier = if input.is_maria_follower {
+            MARIA_COMPANION_SPEED_MULTIPLIER
         } else {
             1.0
         };
-        let final_speed_units_per_sec = self.speed_mps * SH2_WORLD_UNIT_SCALE * maria_mult;
+        let final_speed_units_per_sec = self.speed_mps * SH2_WORLD_UNIT_SCALE * speed_multiplier;
         let move_angle = *current_yaw + self.direction_offset;
 
         let delta_x = move_angle.sin() * final_speed_units_per_sec * dt;
@@ -775,13 +778,21 @@ mod tests {
         assert!((out_back.linear_speed - 600.0).abs() < 1e-3);
         assert!((out_back.delta_position.z - (-10.0)).abs() < 1e-2);
 
-        // 3. Maria 0.8x multiplier test
+        // 3. Playable Maria vs Follower Maria speed test
         controller.reset();
         input.stick_y = 1.0;
-        input.is_maria = true;
-        let out_maria = controller.update(&input, &mut yaw, dt, true);
-        assert_eq!(out_maria.state, LocomotionState::Walk);
-        assert!((out_maria.linear_speed - 600.0).abs() < 1e-3); // 750 * 0.8 = 600
+        input.is_maria_follower = false;
+        let out_maria_playable = controller.update(&input, &mut yaw, dt, true);
+        assert_eq!(out_maria_playable.state, LocomotionState::Walk);
+        // Playable Maria has full 1.0x player speed (750 units/s)
+        assert!((out_maria_playable.linear_speed - 750.0).abs() < 1e-3);
+
+        // Follower Maria has 0.8x companion multiplier (600 units/s)
+        controller.reset();
+        input.is_maria_follower = true;
+        let out_maria_follower = controller.update(&input, &mut yaw, dt, true);
+        assert_eq!(out_maria_follower.state, LocomotionState::Walk);
+        assert!((out_maria_follower.linear_speed - 600.0).abs() < 1e-3);
     }
 
     #[test]

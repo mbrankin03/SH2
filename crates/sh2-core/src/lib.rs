@@ -32,7 +32,7 @@ pub use input::{
 };
 pub use locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
-    MARIA_SPEED_MULTIPLIER, QUICK_TURN_SPEED_RAD_PER_SEC, SH2_WORLD_UNIT_SCALE,
+    MARIA_COMPANION_SPEED_MULTIPLIER, QUICK_TURN_SPEED_RAD_PER_SEC, SH2_WORLD_UNIT_SCALE,
 };
 pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
 pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};

@@ -136,7 +136,7 @@ impl SimulationCore {
             wall_ahead: false, // In free roam / room boundaries
             enemy_near: false,
             health_fraction: self.scenario.health / 100.0,
-            is_maria: self.scenario.character == crate::scenario::PlayableCharacter::Maria,
+            is_maria_follower: false, // Active player 1 always has 1.0x speed, even in Born From a Wish (Maria)
             camera_yaw: self
                 .camera
                 .curr_snapshot

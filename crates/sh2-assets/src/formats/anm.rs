@@ -435,7 +435,23 @@ pub fn compute_skin_matrices(
     skin
 }
 
+/// Linearly interpolates an angular value along the shortest arc on the circle $[-\pi, \pi]$.
+#[inline]
+fn lerp_angle(a: f32, b: f32, alpha: f32) -> f32 {
+    let two_pi = std::f32::consts::TAU;
+    let mut diff = (b - a) % two_pi;
+    if diff > std::f32::consts::PI {
+        diff -= two_pi;
+    } else if diff < -std::f32::consts::PI {
+        diff += two_pi;
+    }
+    a + diff * alpha
+}
+
 /// Linearly interpolates (LERP / SLERP equivalent for Euler tracks) between two animation frames.
+///
+/// Rotation tracks interpolate along the shortest arc on $[-\pi, \pi]$ to prevent sudden
+/// 180-degree angular flips when angles wrap around boundary coordinates.
 pub fn interpolate_frames(
     frame_a: &AnimationFrame,
     frame_b: &AnimationFrame,
@@ -455,9 +471,9 @@ pub fn interpolate_frames(
             (Some(a), Some(b)) => {
                 let rot = match (a.rotation, b.rotation) {
                     (Some(ra), Some(rb)) => Some([
-                        ra[0] * inv_alpha + rb[0] * alpha,
-                        ra[1] * inv_alpha + rb[1] * alpha,
-                        ra[2] * inv_alpha + rb[2] * alpha,
+                        lerp_angle(ra[0], rb[0], alpha),
+                        lerp_angle(ra[1], rb[1], alpha),
+                        lerp_angle(ra[2], rb[2], alpha),
                     ]),
                     (Some(ra), None) => Some(ra),
                     (None, Some(rb)) => Some(rb),

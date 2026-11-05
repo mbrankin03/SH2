@@ -7,6 +7,7 @@ pub mod config;
 pub mod input;
 pub mod math;
 pub mod scenario;
+pub mod secondary_physics;
 pub mod simulation;
 pub mod state;
 pub mod timing;
@@ -29,5 +30,6 @@ pub use input::{
     InputManager,
 };
 pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
+pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};
 pub use simulation::SimulationCore;
 pub use timing::TimingConstants;

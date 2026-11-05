@@ -524,15 +524,6 @@ pub fn draw_title_screen(
                     font.draw_line_centered(rast, &full_label, (center_x, y), 26, style, true);
                 }
             }
-
-            font.draw_line_centered(
-                rast,
-                "© 1999 2001 KONAMI COMPUTER ENTERTAINMENT TOKYO. ALL RIGHTS RESERVED.",
-                (center_x, 575),
-                12,
-                Sh2TextColor::MutedFooter,
-                true,
-            );
         }
         TitlePhase::Credits => {
             font.draw_line_centered(

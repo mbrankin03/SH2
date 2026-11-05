@@ -804,11 +804,11 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     })
     .collect();
 
-    // Authentic PS2 colors:
-    // Fill: Dark solid grey matching 0x80808040 -> [55, 55, 58, 255]
-    let fill_color = [55, 55, 58, 255];
-    // Border line: Deep navy/blue matching 0x25255060 -> [37, 37, 80, 255]
-    let border_color = [37, 37, 80, 255];
+    // Authentic PS2 colors (calibrated for linear Rgba8Unorm rasterization blit to sRGB surface):
+    // Fill: Dark charcoal grey matching PS2 optmenu.c ([55, 55, 55] sRGB output -> [12, 12, 13, 255] linear)
+    let fill_color = [12, 12, 13, 255];
+    // Border line: Deep navy/blue ([32, 32, 75] sRGB output -> [4, 4, 18, 255] linear)
+    let border_color = [4, 4, 18, 255];
 
     draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));

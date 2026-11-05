@@ -122,6 +122,7 @@ pub struct RenderContext {
     pub spotlight_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
+    pub debug_line_buffer: wgpu::Buffer,
 
     pub geometry_bind_group: wgpu::BindGroup,
     pub fog_bind_group: wgpu::BindGroup,
@@ -137,6 +138,8 @@ impl RenderContext {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
     pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
     pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+    /// Capacity of the reusable GPU vertex buffer for 3D debug line overlays (65,536 vertices = ~2 MB).
+    pub const MAX_DEBUG_LINE_VERTICES: usize = 65_536;
 
     pub fn new_headless(config: RendererConfig) -> Option<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -282,6 +285,15 @@ impl RenderContext {
             label: Some("Post Uniform Buffer"),
             contents: bytemuck::bytes_of(&post_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let debug_line_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Persistent Debug Line Vertex Buffer"),
+            size: (Self::MAX_DEBUG_LINE_VERTICES
+                * std::mem::size_of::<sh2_debug::DebugLineVertex>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -455,6 +467,7 @@ impl RenderContext {
             spotlight_buffer,
             fog_buffer,
             post_buffer,
+            debug_line_buffer,
             geometry_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -583,6 +596,15 @@ impl RenderContext {
             label: Some("Post Uniform Buffer"),
             contents: bytemuck::bytes_of(&post_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let debug_line_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Persistent Debug Line Vertex Buffer"),
+            size: (Self::MAX_DEBUG_LINE_VERTICES
+                * std::mem::size_of::<sh2_debug::DebugLineVertex>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -754,6 +776,7 @@ impl RenderContext {
             spotlight_buffer,
             fog_buffer,
             post_buffer,
+            debug_line_buffer,
             geometry_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -1028,16 +1051,24 @@ impl RenderContext {
                 label: Some("Scene Render Encoder"),
             });
 
-        let debug_line_buffer = if !debug_lines.is_empty() {
+        // Upload debug lines into the persistent buffer (or allocate an overflow buffer if exceeding capacity)
+        let overflow_debug_line_buffer = if debug_lines.len() > Self::MAX_DEBUG_LINE_VERTICES {
             Some(
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Debug Line Vertex Buffer"),
+                        label: Some("Overflow Debug Line Vertex Buffer"),
                         contents: bytemuck::cast_slice(debug_lines),
                         usage: wgpu::BufferUsages::VERTEX,
                     }),
             )
         } else {
+            if !debug_lines.is_empty() {
+                self.queue.write_buffer(
+                    &self.debug_line_buffer,
+                    0,
+                    bytemuck::cast_slice(debug_lines),
+                );
+            }
             None
         };
 
@@ -1155,10 +1186,14 @@ impl RenderContext {
             }
 
             // 1c. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
-            if let Some(ref line_buf) = debug_line_buffer {
+            if !debug_lines.is_empty() {
+                let line_buf = overflow_debug_line_buffer
+                    .as_ref()
+                    .unwrap_or(&self.debug_line_buffer);
+                let byte_len = std::mem::size_of_val(debug_lines) as wgpu::BufferAddress;
                 rpass.set_pipeline(&self.debug_line_pipeline.pipeline);
                 rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                rpass.set_vertex_buffer(0, line_buf.slice(..));
+                rpass.set_vertex_buffer(0, line_buf.slice(0..byte_len));
                 rpass.draw(0..(debug_lines.len() as u32), 0..1);
             }
         }

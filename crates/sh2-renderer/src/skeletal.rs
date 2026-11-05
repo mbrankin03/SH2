@@ -372,6 +372,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_len = length(in.normal);
     let norm = select(vec3<f32>(0.0, -1.0, 0.0), in.normal / n_len, n_len > 1e-4);
 
+    // Sample diffuse texture unconditionally in uniform control flow before any early returns
+    // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
+    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
+
     // Inspect shading mode encoded in camera.cam_pos.w:
     // 0.0 = Textured (Spotlight + Ambient)
     // 1.0 = Untextured Clay (3-Point Studio Shading)
@@ -418,7 +422,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(clay_albedo * studio_light, 1.0);
     }
 
-    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     if tex_color.a < 0.01 {
         discard;
     }

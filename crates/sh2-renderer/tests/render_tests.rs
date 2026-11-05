@@ -327,5 +327,34 @@ mod renderer_tests {
             ctx.render_gpu_map(&gpu_map);
             let _ = ctx.device.poll(wgpu::Maintain::wait());
         }
+
+        // Test SH2-10: Planar YUV420p FMV Cutscene Pipeline & 16x Anisotropic Mipmapped Textures
+        let fmv_pipeline = FmvVideoPipeline::new(&ctx.device, RenderContext::OUTPUT_FORMAT);
+        let yuv_surface = fmv_pipeline.create_video_surface(&ctx.device, 320, 240);
+        let synth_frame =
+            sh2_assets::formats::bink::Yuv420Frame::generate_synthetic_test_frame(320, 240, 12);
+        fmv_pipeline.upload_frame(&ctx.queue, &yuv_surface, &synth_frame);
+
+        let mut fmv_encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Headless FMV Test Encoder"),
+            });
+        let fmv_uniforms = FmvUniforms::default();
+        fmv_pipeline.update_uniforms(&ctx.queue, &fmv_uniforms);
+        fmv_pipeline.render(&mut fmv_encoder, &yuv_surface, &ctx.ldr_output_view);
+        ctx.queue.submit(std::iter::once(fmv_encoder.finish()));
+        let _ = ctx.device.poll(wgpu::Maintain::wait());
+
+        // Test mipmapped anisotropic texture bind group creation
+        let rgba_64 = vec![180u8; 64 * 64 * 4];
+        let mip_bg = ctx.create_mipmapped_texture_bind_group(
+            64,
+            64,
+            &rgba_64,
+            Some("Test 64x64 Mipmapped Anisotropic Texture"),
+        );
+        ctx.render_scene(Some(&gpu_map), Some(&[mip_bg]), &[]);
+        let _ = ctx.device.poll(wgpu::Maintain::wait());
     }
 }

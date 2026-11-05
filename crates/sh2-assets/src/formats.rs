@@ -2,6 +2,7 @@
 
 pub mod adx;
 pub mod anm;
+pub mod bink;
 pub mod dxt;
 pub mod map;
 pub mod mdls;
@@ -14,6 +15,11 @@ pub use anm::{
     compute_bind_locals, compute_skin_matrices, euler_to_matrix, evaluate_pose, interpolate_frames,
     mat4_inverse, mat4_mul, parse_anm, AnimationFile, AnimationFrame, BoneTransform,
 };
+pub use bink::{
+    active_subtitle_for_frame, decode_bink_audio_pcm, fmv_subtitles_for_movie,
+    parse_bink_file_header, parse_bink_header, BinkAudioTrack, BinkHeader, BinkVideoStream,
+    DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, BINK_MAGICS,
+};
 pub use dxt::{decode_dds_file, decode_dxt};
 pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
 pub use mdls::{parse_mdl, ModelFile, ModelPrimitive, ModelTexture, ModelVertices};
@@ -22,5 +28,6 @@ pub use sound::{
     parse_sddata, parse_sdm_headers, parse_sdm_sdb, SdmEntryHeader, SoundBank, WavEntry,
 };
 pub use texture::{
-    decode_texture_bytes, parse_texture_container, ContainerTexture, DecodedTexture, TextureLoader,
+    decode_texture_bytes, generate_mipmap_chain_rgba, mip_level_count_for_size,
+    parse_texture_container, ContainerTexture, DecodedTexture, TextureLoader,
 };

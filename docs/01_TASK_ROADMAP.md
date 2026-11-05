@@ -47,7 +47,7 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 - [x] Implement dynamic spotlight & flashlight cone calculations (`dbg_spotL_ctl`).
 - [x] Implement film grain post-processing shader with configurable intensity.
 - [x] Build skeletal mesh skinning shader for James, Maria, and creatures.
-- [ ] Implement 1080p60 FMV video player with audio sync (FFmpeg / software decoder).
+- [x] Implement 1080p60 FMV video player with audio sync (FFmpeg / software decoder).
 - [ ] **[Bonus / Extended Graphics]** Native HDR Display Pipeline:
   - Configure swapchain presentation for wide-gamut / high-dynamic-range surfaces (`Rgba16Float` / `Rgb10a2Unorm` with PQ / ScRGB Linear).
   - Implement HDR-calibrated color grading and filmic tonemapping (preserving inky pitch blacks while raising high-nit peaks for flashlights, streetlamps, and emergency strobes).

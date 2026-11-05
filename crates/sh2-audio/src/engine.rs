@@ -525,6 +525,77 @@ impl AudioEngine {
         }
     }
 
+    /// Plays decoded 16-bit signed little-endian stereo PCM audio for an FMV cutscene on the BGM track.
+    pub fn play_fmv_pcm(
+        &mut self,
+        sample_rate: u32,
+        pcm_s16le: &[u8],
+        volume: f32,
+    ) -> Result<(), AudioError> {
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let bgm_track = self
+            .bgm_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
+
+        if let Some(mut old_handle) = self.active_bgm_handle.take() {
+            old_handle.stop(Tween {
+                duration: Duration::from_millis(50),
+                easing: Easing::Linear,
+                ..Default::default()
+            });
+        }
+
+        let wav = WavEntry {
+            id: 0,
+            sample_rate: sample_rate.max(8000),
+            channels: 2,
+            bits_per_sample: 16,
+            loops: false,
+            loop_start: 0,
+            loop_end: 0,
+            data: pcm_s16le.to_vec(),
+        };
+        let frames = wav_entry_to_frames(&wav);
+        let settings = StaticSoundSettings::new()
+            .output_destination(bgm_track)
+            .volume(Volume::Amplitude(
+                (volume * self.bgm_volume * self.master_volume) as f64,
+            ));
+
+        let sound_data = StaticSoundData {
+            sample_rate: wav.sample_rate,
+            frames: Arc::from(frames),
+            settings,
+            slice: None,
+        };
+
+        let handle = manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+        self.active_bgm_handle = Some(handle);
+        Ok(())
+    }
+
+    /// Pauses or resumes active FMV / BGM audio playback.
+    pub fn set_bgm_paused(&mut self, paused: bool) {
+        if let Some(ref mut handle) = self.active_bgm_handle {
+            let tween = Tween {
+                duration: Duration::from_millis(40),
+                easing: Easing::Linear,
+                ..Default::default()
+            };
+            if paused {
+                handle.pause(tween);
+            } else {
+                handle.resume(tween);
+            }
+        }
+    }
+
     /// Triggers a dialogue voice clip synchronized with `.mes` subtitles and volume ducking.
     ///
     /// Automatically ducks BGM volume to `ducking_attenuation` during speech.

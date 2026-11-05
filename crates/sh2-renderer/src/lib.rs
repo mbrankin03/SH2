@@ -1,13 +1,16 @@
 //! sh2-renderer: Modern wgpu/Vulkan pipeline, 32-bit float depth, volumetric compute fog.
 
+pub mod fmv;
 pub mod fog;
 pub mod light;
 pub mod pipeline;
 pub mod post;
 pub mod skeletal;
 
+pub use fmv::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
 use sh2_assets::formats::map::MapFile;
 use sh2_assets::formats::mdls::ModelFile;
+use sh2_assets::formats::texture::generate_mipmap_chain_rgba;
 pub use skeletal::{
     GpuSkeletalMesh, GpuSkeletalPrimitive, SkeletalPipeline, SkeletalVertex, SkeletonBoneUniforms,
     MAX_SKELETON_BONES,
@@ -235,7 +238,8 @@ impl RenderContext {
             format: Self::OUTPUT_FORMAT,
             usage: wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let ldr_output_view =
@@ -415,13 +419,14 @@ impl RenderContext {
         let default_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Default Bilinear Sampler"),
+            label: Some("Default Anisotropic 16x Sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -546,7 +551,8 @@ impl RenderContext {
             format: Self::OUTPUT_FORMAT,
             usage: wgpu::TextureUsages::STORAGE_BINDING
                 | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let ldr_output_view =
@@ -724,13 +730,14 @@ impl RenderContext {
         let default_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Default Bilinear Sampler"),
+            label: Some("Default Anisotropic 16x Sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -839,7 +846,7 @@ impl RenderContext {
         }))
     }
 
-    /// Creates a GPU diffuse texture bind group with bilinear filtering from raw RGBA8 pixels.
+    /// Creates a GPU diffuse texture bind group with full mipmap chain and 16x anisotropic filtering from raw RGBA8 pixels.
     pub fn create_texture_bind_group(
         &self,
         width: u32,
@@ -847,41 +854,57 @@ impl RenderContext {
         rgba: &[u8],
         label: Option<&str>,
     ) -> Arc<wgpu::BindGroup> {
+        self.create_mipmapped_texture_bind_group(width, height, rgba, label)
+    }
+
+    /// Creates a GPU diffuse texture bind group generating a full box-filtered mipmap chain and 16x anisotropic sampler.
+    pub fn create_mipmapped_texture_bind_group(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        label: Option<&str>,
+    ) -> Arc<wgpu::BindGroup> {
+        let mips = generate_mipmap_chain_rgba(rgba, width.max(1), height.max(1));
+        let mip_level_count = (mips.len() as u32).max(1);
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label,
             size: wgpu::Extent3d {
-                width,
-                height,
+                width: width.max(1),
+                height: height.max(1),
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            rgba,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        for (level, (mip_w, mip_h, mip_rgba)) in mips.iter().enumerate() {
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &texture,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                mip_rgba,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * (*mip_w)),
+                    rows_per_image: Some(*mip_h),
+                },
+                wgpu::Extent3d {
+                    width: *mip_w,
+                    height: *mip_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.create_texture_bind_group_from_view(&view, label)
     }
 

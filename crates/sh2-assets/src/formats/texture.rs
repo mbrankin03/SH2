@@ -98,6 +98,252 @@ impl TextureLoader {
         let bytes = fs::read(&path)?;
         decode_texture_bytes(&bytes, &path)
     }
+
+    /// Loads a `.map` level geometry file with SH2:EE high-resolution texture pack interception.
+    ///
+    /// # Interceptor Precedence
+    /// 1. Resolves the geometry and primary embedded textures from `sh2e/bg/.../*.map` first,
+    ///    falling back to `data/bg/.../*.map`.
+    /// 2. If both `sh2e/` and `data/` versions of the `.map` exist, compares every embedded texture
+    ///    by `texture_id` and keeps whichever texture has the higher pixel resolution (`width * height`).
+    /// 3. Checks for standalone external `.dds` / `.png` / `.tex` overrides in the same directory
+    ///    (e.g. `sh2e/bg/ob/ob01_<tex_id>.dds` or `.png`).
+    pub fn load_map_with_hd_overrides(
+        &self,
+        relative_map_path: impl AsRef<Path>,
+        map_name: &str,
+    ) -> Result<crate::formats::map::MapFile, AssetError> {
+        let rel = relative_map_path.as_ref();
+
+        // Check both sh2e/ and data/ for the map file
+        let sh2e_map_path = self.sh2e_dir.as_ref().and_then(|sh2e| {
+            let cand = sh2e.join(rel);
+            if cand.exists() {
+                Some(cand)
+            } else {
+                find_case_insensitive(sh2e, rel)
+            }
+        });
+
+        let data_map_path = {
+            let cand = self.data_dir.join(rel);
+            if cand.exists() {
+                Some(cand)
+            } else {
+                find_case_insensitive(&self.data_dir, rel)
+            }
+        };
+
+        let primary_path = sh2e_map_path
+            .as_ref()
+            .or(data_map_path.as_ref())
+            .ok_or_else(|| {
+                AssetError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Map not found: {}", rel.display()),
+                ))
+            })?;
+
+        let primary_bytes = fs::read(primary_path)?;
+        let mut map = crate::formats::map::parse_map(&primary_bytes, map_name)?;
+
+        // If both sh2e and vanilla data maps exist, ensure any missing or higher-res textures are merged
+        if let (Some(_), Some(ref van_path)) = (&sh2e_map_path, &data_map_path) {
+            if let Ok(van_bytes) = fs::read(van_path) {
+                if let Ok(van_map) = crate::formats::map::parse_map(&van_bytes, map_name) {
+                    for (tid, van_tex) in van_map.textures {
+                        map.textures.entry(tid).or_insert(van_tex);
+                    }
+                }
+            }
+        }
+
+        Ok(map)
+    }
+
+    /// Loads a `.mdl` character/item model with SH2:EE high-resolution texture pack interception,
+    /// returning `(vanilla_model, optional_hd_override_model)`.
+    pub fn load_model_with_hd_overrides(
+        &self,
+        relative_mdl_path: impl AsRef<Path>,
+    ) -> Result<
+        (
+            crate::formats::mdls::ModelFile,
+            Option<crate::formats::mdls::ModelFile>,
+        ),
+        AssetError,
+    > {
+        let rel = relative_mdl_path.as_ref();
+        // Strip leading "data/" or "sh2e/" if caller passed a prefixed relative path
+        let clean_rel = rel
+            .strip_prefix("data")
+            .or_else(|_| rel.strip_prefix("sh2e"))
+            .unwrap_or(rel);
+
+        let sh2e_mdl_path = self.sh2e_dir.as_ref().and_then(|sh2e| {
+            let cand = sh2e.join(clean_rel);
+            if cand.exists() {
+                Some(cand)
+            } else {
+                find_case_insensitive(sh2e, clean_rel)
+            }
+        });
+
+        let data_mdl_path = {
+            let cand = self.data_dir.join(clean_rel);
+            if cand.exists() {
+                Some(cand)
+            } else {
+                find_case_insensitive(&self.data_dir, clean_rel)
+            }
+        };
+
+        match (data_mdl_path, sh2e_mdl_path) {
+            (Some(van_p), Some(hd_p)) => {
+                let van_bytes = fs::read(&van_p)?;
+                let van_mdl = crate::formats::mdls::parse_mdl(&van_bytes)?;
+                let hd_mdl = fs::read(&hd_p)
+                    .ok()
+                    .and_then(|b| crate::formats::mdls::parse_mdl(&b).ok());
+                Ok((van_mdl, hd_mdl))
+            }
+            (Some(van_p), None) => {
+                let van_bytes = fs::read(&van_p)?;
+                let van_mdl = crate::formats::mdls::parse_mdl(&van_bytes)?;
+                Ok((van_mdl, None))
+            }
+            (None, Some(hd_p)) => {
+                let hd_bytes = fs::read(&hd_p)?;
+                let hd_mdl = crate::formats::mdls::parse_mdl(&hd_bytes)?;
+                Ok((hd_mdl.clone(), Some(hd_mdl)))
+            }
+            (None, None) => Err(AssetError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Model not found: {}", rel.display()),
+            ))),
+        }
+    }
+
+    /// Resolves a Bink FMV movie path (`movie/<name>.bik`), allowing selection between SH2:EE HD
+    /// (`sh2e/movie/<name>.bik`) and Vanilla PC (`data/movie/<name>.bik`).
+    pub fn resolve_movie_path(&self, movie_filename: &str, prefer_hd: bool) -> Option<PathBuf> {
+        let rel = Path::new("movie").join(movie_filename);
+        if prefer_hd {
+            if let Some(ref sh2e) = self.sh2e_dir {
+                let cand = sh2e.join(&rel);
+                if cand.exists() {
+                    return Some(cand);
+                }
+                if let Some(ci) = find_case_insensitive(sh2e, &rel) {
+                    return Some(ci);
+                }
+            }
+        }
+
+        let van_cand = self.data_dir.join(&rel);
+        if van_cand.exists() {
+            return Some(van_cand);
+        }
+        if let Some(ci) = find_case_insensitive(&self.data_dir, &rel) {
+            return Some(ci);
+        }
+
+        if !prefer_hd {
+            if let Some(ref sh2e) = self.sh2e_dir {
+                let cand = sh2e.join(&rel);
+                if cand.exists() {
+                    return Some(cand);
+                }
+                if let Some(ci) = find_case_insensitive(sh2e, &rel) {
+                    return Some(ci);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Computes the number of mipmap levels for a 2D texture of dimensions `(width, height)`.
+pub fn mip_level_count_for_size(width: u32, height: u32) -> u32 {
+    let max_dim = width.max(height).max(1);
+    32 - max_dim.leading_zeros()
+}
+
+/// Generates a full box-filtered RGBA8 mipmap chain from level-0 `rgba` pixels.
+///
+/// Preserves cutout alpha coverage and weights RGB downsampling by alpha so transparent cutout
+/// regions do not bleed dark borders into higher mip levels when sampled with anisotropic filtering.
+pub fn generate_mipmap_chain_rgba(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Vec<(u32, u32, Vec<u8>)> {
+    let w0 = width.max(1);
+    let h0 = height.max(1);
+    let levels = mip_level_count_for_size(w0, h0) as usize;
+    let mut chain = Vec::with_capacity(levels);
+
+    let expected0 = (w0 as usize) * (h0 as usize) * 4;
+    let mip0 = if rgba.len() >= expected0 {
+        rgba[..expected0].to_vec()
+    } else {
+        vec![255u8; expected0]
+    };
+    chain.push((w0, h0, mip0));
+
+    for lvl in 1..levels {
+        let (prev_w, prev_h, ref prev_data) = chain[lvl - 1];
+        let next_w = (prev_w / 2).max(1);
+        let next_h = (prev_h / 2).max(1);
+        let mut next_data = vec![0u8; (next_w as usize) * (next_h as usize) * 4];
+
+        let pw = prev_w as usize;
+        let ph = prev_h as usize;
+        let nw = next_w as usize;
+        let nh = next_h as usize;
+
+        for y in 0..nh {
+            let sy0 = (y * 2).min(ph - 1);
+            let sy1 = (y * 2 + 1).min(ph - 1);
+            for x in 0..nw {
+                let sx0 = (x * 2).min(pw - 1);
+                let sx1 = (x * 2 + 1).min(pw - 1);
+
+                let idx00 = (sy0 * pw + sx0) * 4;
+                let idx10 = (sy0 * pw + sx1) * 4;
+                let idx01 = (sy1 * pw + sx0) * 4;
+                let idx11 = (sy1 * pw + sx1) * 4;
+
+                let samples = [idx00, idx10, idx01, idx11];
+                let mut sum_a = 0u32;
+                let mut sum_r = 0f32;
+                let mut sum_g = 0f32;
+                let mut sum_b = 0f32;
+                let mut weight_sum = 0f32;
+
+                for &s_ofs in &samples {
+                    let a = prev_data[s_ofs + 3];
+                    sum_a += a as u32;
+                    let w = (a as f32).max(1.0);
+                    sum_r += prev_data[s_ofs] as f32 * w;
+                    sum_g += prev_data[s_ofs + 1] as f32 * w;
+                    sum_b += prev_data[s_ofs + 2] as f32 * w;
+                    weight_sum += w;
+                }
+
+                let dst_ofs = (y * nw + x) * 4;
+                next_data[dst_ofs] = (sum_r / weight_sum).round().clamp(0.0, 255.0) as u8;
+                next_data[dst_ofs + 1] = (sum_g / weight_sum).round().clamp(0.0, 255.0) as u8;
+                next_data[dst_ofs + 2] = (sum_b / weight_sum).round().clamp(0.0, 255.0) as u8;
+                next_data[dst_ofs + 3] = ((sum_a + 2) / 4) as u8;
+            }
+        }
+
+        chain.push((next_w, next_h, next_data));
+    }
+
+    chain
 }
 
 /// Entry in a `0x19990901` texture container.

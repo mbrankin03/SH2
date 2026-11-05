@@ -244,7 +244,19 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("MODEL & TEXTURE VIEWER", SH2-36)
+    // Navigate up to wrap to the last entry ("FMV CUTSCENE PLAYER (1080P60)", SH2-10),
+    // and up once more to "MODEL & TEXTURE VIEWER" (SH2-36)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::FmvCutsceneViewer
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "FMV CUTSCENE PLAYER (1080P60 THEATER)"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(
@@ -265,6 +277,22 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert_eq!(
         debug_controller.title_sm.selected_test_room,
         sh2_ui::menu::TestRoomKind::ModelAndTextureViewer
+    );
+
+    // 6. Verify launching the FMV Cutscene Viewer directly from Options -> Video tab (SH2-10)
+    let mut fmv_opt_controller = AppMenuController::new(&config_path);
+    fmv_opt_controller.title_sm.phase = TitlePhase::OptionsMenu;
+    // Video tab is index 0; FMV Cutscene Viewer is row index 9
+    fmv_opt_controller.options_menu.selected_index = 9;
+    let cue = fmv_opt_controller.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(
+        fmv_opt_controller.title_sm.phase,
+        TitlePhase::TransitionToGame
+    );
+    assert_eq!(
+        fmv_opt_controller.title_sm.selected_test_room,
+        sh2_ui::menu::TestRoomKind::FmvCutsceneViewer
     );
 
     // Clean up temporary test files

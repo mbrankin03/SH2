@@ -447,32 +447,115 @@ pub fn draw_title_screen(
             }
         }
         TitlePhase::MainMenu => {
-            let row_h = 36;
-            let start_y = 350;
-            for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
-                let is_selected = idx == sm.main_menu_index;
-                let y = start_y + idx * row_h;
-                let text = opt.label();
-                let style = if is_selected {
-                    Sh2TextColor::GoldSelected
-                } else {
-                    Sh2TextColor::SilverUnselected
-                };
+            if let Some(atlas) = button_sprites {
+                let center_xi = center_x as i32;
+                // Retail PC layout: menu options centered under the logo
+                // In 800x600 space: y around 420..560
+                let row_spacing = 34;
+                let start_y = 420;
 
-                let full_label = if is_selected {
-                    format!("> {}", text)
-                } else {
-                    format!("  {}", text)
-                };
+                for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                    let is_selected = idx == sm.main_menu_index;
+                    let y = start_y + idx as i32 * row_spacing;
 
-                font.draw_line_centered(rast, &full_label, (center_x, y), 26, style, true);
+                    let sprite = match opt {
+                        MainMenuOption::NewGame => Some(AuthenticButtonSprite::NewGame),
+                        MainMenuOption::Continue => Some(AuthenticButtonSprite::Continue),
+                        MainMenuOption::Options => Some(AuthenticButtonSprite::Options),
+                        MainMenuOption::TestRooms => None, // Rendered via proportional font or special styling
+                        MainMenuOption::Exit => Some(AuthenticButtonSprite::Exit),
+                    };
+
+                    if is_selected {
+                        // Render authentic GlowCursor behind the active item
+                        let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
+                        let glow_scale = 0.46f32;
+                        let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
+                        let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
+                        let glow_x = center_xi - (glow_w / 2);
+                        let glow_y = y + 12 - (glow_h / 2);
+
+                        atlas.blit_sprite(
+                            AuthenticButtonSprite::GlowCursor,
+                            &mut rast.pixels,
+                            rast.width,
+                            rast.height,
+                            glow_x,
+                            glow_y,
+                            glow_scale,
+                            [1.0, 1.0, 1.0, 0.95],
+                        );
+                    }
+
+                    if let Some(spr) = sprite {
+                        let rect = spr.atlas_rect();
+                        let scale = 0.28f32;
+                        let w = (rect.width as f32 * scale) as i32;
+                        let x = center_xi - (w / 2);
+
+                        let tint = if is_selected {
+                            // Bright white with full opacity
+                            [1.0f32, 1.0, 1.0, 1.0]
+                        } else {
+                            // Authentic unselected silver/grey
+                            [0.72f32, 0.72, 0.75, 0.75]
+                        };
+
+                        atlas.blit_sprite(
+                            spr,
+                            &mut rast.pixels,
+                            rast.width,
+                            rast.height,
+                            x,
+                            y,
+                            scale,
+                            tint,
+                        );
+                    } else {
+                        // Test Rooms: Proportional font matching button style
+                        let style = if is_selected {
+                            Sh2TextColor::White
+                        } else {
+                            Sh2TextColor::SilverUnselected
+                        };
+                        font.draw_line_centered(
+                            rast,
+                            "TEST ROOMS",
+                            (center_x, y as usize + 2),
+                            20,
+                            style,
+                            true,
+                        );
+                    }
+                }
+            } else {
+                let row_h = 36;
+                let start_y = 350;
+                for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                    let is_selected = idx == sm.main_menu_index;
+                    let y = start_y + idx * row_h;
+                    let text = opt.label();
+                    let style = if is_selected {
+                        Sh2TextColor::GoldSelected
+                    } else {
+                        Sh2TextColor::SilverUnselected
+                    };
+
+                    let full_label = if is_selected {
+                        format!("> {}", text)
+                    } else {
+                        format!("  {}", text)
+                    };
+
+                    font.draw_line_centered(rast, &full_label, (center_x, y), 26, style, true);
+                }
             }
 
             font.draw_line_centered(
                 rast,
-                "W / S or Up / Down to Navigate | Enter to Confirm",
-                (center_x, 658),
-                16,
+                "© 1999 2001 KONAMI COMPUTER ENTERTAINMENT TOKYO. ALL RIGHTS RESERVED.",
+                (center_x, 575),
+                12,
                 Sh2TextColor::MutedFooter,
                 true,
             );
@@ -978,6 +1061,29 @@ mod tests {
         main_sm.phase = TitlePhase::MainMenu;
         draw_title_screen(&main_sm, None, &font, &mut rast);
         assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+
+        // Test Main Menu rasterization with button sprite atlas if available
+        let tex_path =
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/pic/etc/start01e.tex";
+        if let Ok(mut f) = std::fs::File::open(tex_path) {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut header = [0u8; 16];
+            if f.read_exact(&mut header).is_ok() && f.seek(SeekFrom::Start(16)).is_ok() {
+                let mut data = vec![0u8; 2048 * 2048 * 4];
+                if f.read_exact(&mut data).is_ok() {
+                    let sheet = crate::button_atlas::ButtonSpriteSheet::new(2048, 2048, data);
+                    rast.clear();
+                    draw_title_screen(&main_sm, Some(&sheet), &font, &mut rast);
+                    let _ = image::save_buffer(
+                        "/tmp/rendered_main_menu_test.png",
+                        &rast.pixels,
+                        640,
+                        480,
+                        image::ExtendedColorType::Rgba8,
+                    );
+                }
+            }
+        }
 
         // Test Test Rooms rasterization
         rast.clear();

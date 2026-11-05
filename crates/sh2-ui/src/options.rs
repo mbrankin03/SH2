@@ -459,74 +459,445 @@ impl OptionsMenu {
 // Authentic Proportional Options Screen Rasterization (`AtlasFont`)
 // -----------------------------------------------------------------------------------------
 
-/// Draws the authentic options screen onto `rast` using proportional fonts,
-/// two-tone gradient shading, and authentic SH2 styling.
-pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut TextRasterizer) {
-    let center_x = rast.width / 2;
+/// Draws a convex polygon with optional fill and outline colors directly onto `rast`.
+fn draw_polygon(
+    rast: &mut TextRasterizer,
+    points: &[(i32, i32)],
+    fill: Option<[u8; 4]>,
+    outline: Option<[u8; 4]>,
+) {
+    if points.len() < 3 {
+        return;
+    }
 
-    let tab_name = menu.active_tab.label();
-    font.draw_line_centered(
-        rast,
-        &format!("OPTIONS: {}", tab_name),
-        (center_x, 90),
-        28,
-        Sh2TextColor::AmberHeader,
-        true,
-    );
+    let min_y = points.iter().map(|p| p.1).min().unwrap_or(0).max(0) as usize;
+    let max_y = points
+        .iter()
+        .map(|p| p.1)
+        .max()
+        .unwrap_or(0)
+        .min(rast.height as i32 - 1) as usize;
 
-    font.draw_line_centered(
-        rast,
-        "[Q / E : Switch Category]",
-        (center_x, 130),
-        18,
-        Sh2TextColor::Cyan,
-        true,
-    );
+    if let Some(fill_color) = fill {
+        let n = points.len();
+        for y in min_y..=max_y {
+            let py = y as f32 + 0.5;
+            let mut nodes = Vec::new();
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let (x0, y0) = (points[i].0 as f32, points[i].1 as f32);
+                let (x1, y1) = (points[j].0 as f32, points[j].1 as f32);
 
-    let start_y = 180;
-    let row_h = 38;
-    let label_x = 240;
-    let colon_x = 640;
-    let val_x = 670;
-
-    for i in 0..menu.item_count() {
-        if let Some((label, val)) = menu.item_display(i) {
-            let is_sel = i == menu.selected_index;
-            let y = start_y + i * row_h;
-            let style = if is_sel {
-                Sh2TextColor::GoldSelected
-            } else {
-                Sh2TextColor::SilverUnselected
-            };
-
-            let prefix = if is_sel { "> " } else { "  " };
-            let full_label = format!("{}{}", prefix, label);
-
-            font.draw_line_styled(rast, &full_label, (label_x, y), 22, style, true);
-            font.draw_line_styled(rast, ":", (colon_x, y), 22, Sh2TextColor::MutedFooter, true);
-            font.draw_line_styled(rast, &val, (val_x, y), 22, style, true);
+                if (y0 < py && y1 >= py) || (y1 < py && y0 >= py) {
+                    let intersect_x = x0 + (py - y0) / (y1 - y0) * (x1 - x0);
+                    nodes.push(intersect_x);
+                }
+            }
+            nodes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            for chunk in nodes.chunks(2) {
+                if chunk.len() == 2 {
+                    let start_x = chunk[0].round().max(0.0) as usize;
+                    let end_x = (chunk[1].round() as usize).min(rast.width - 1);
+                    for x in start_x..=end_x {
+                        let idx = (y * rast.width + x) * 4;
+                        // Alpha composite
+                        let s_a = fill_color[3] as f32 / 255.0;
+                        let d_a = rast.pixels[idx + 3] as f32 / 255.0;
+                        let out_a = s_a + d_a * (1.0 - s_a);
+                        if out_a > 0.0 {
+                            let r = (fill_color[0] as f32 * s_a
+                                + rast.pixels[idx] as f32 * d_a * (1.0 - s_a))
+                                / out_a;
+                            let g = (fill_color[1] as f32 * s_a
+                                + rast.pixels[idx + 1] as f32 * d_a * (1.0 - s_a))
+                                / out_a;
+                            let b = (fill_color[2] as f32 * s_a
+                                + rast.pixels[idx + 2] as f32 * d_a * (1.0 - s_a))
+                                / out_a;
+                            rast.pixels[idx] = r.clamp(0.0, 255.0) as u8;
+                            rast.pixels[idx + 1] = g.clamp(0.0, 255.0) as u8;
+                            rast.pixels[idx + 2] = b.clamp(0.0, 255.0) as u8;
+                            rast.pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
+                        }
+                    }
+                }
+            }
         }
     }
 
-    if menu.is_dirty {
-        font.draw_line_centered(
-            rast,
-            "* UNSAVED CHANGES [Enter to Save | Esc to Discard]",
-            (center_x, 658),
-            16,
-            Sh2TextColor::GoldSelected,
-            true,
-        );
-    } else {
-        font.draw_line_centered(
-            rast,
-            "[Esc / Backspace: Return to Main Menu]",
-            (center_x, 658),
-            16,
-            Sh2TextColor::MutedFooter,
-            true,
-        );
+    if let Some(outline_color) = outline {
+        let n = points.len();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            draw_thick_line(
+                rast,
+                points[i].0,
+                points[i].1,
+                points[j].0,
+                points[j].1,
+                2,
+                outline_color,
+            );
+        }
     }
+}
+
+/// Bresenham's line algorithm with thickness.
+fn draw_thick_line(
+    rast: &mut TextRasterizer,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    thickness: i32,
+    color: [u8; 4],
+) {
+    let dx = (x1 - x0).abs();
+    let dy = (y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx - dy;
+
+    let mut cx = x0;
+    let mut cy = y0;
+    let radius = thickness / 2;
+
+    loop {
+        for oy in -radius..=radius {
+            for ox in -radius..=radius {
+                let px = cx + ox;
+                let py = cy + oy;
+                if px >= 0 && px < rast.width as i32 && py >= 0 && py < rast.height as i32 {
+                    let idx = (py as usize * rast.width + px as usize) * 4;
+                    let s_a = color[3] as f32 / 255.0;
+                    let d_a = rast.pixels[idx + 3] as f32 / 255.0;
+                    let out_a = s_a + d_a * (1.0 - s_a);
+                    if out_a > 0.0 {
+                        let r = (color[0] as f32 * s_a
+                            + rast.pixels[idx] as f32 * d_a * (1.0 - s_a))
+                            / out_a;
+                        let g = (color[1] as f32 * s_a
+                            + rast.pixels[idx + 1] as f32 * d_a * (1.0 - s_a))
+                            / out_a;
+                        let b = (color[2] as f32 * s_a
+                            + rast.pixels[idx + 2] as f32 * d_a * (1.0 - s_a))
+                            / out_a;
+                        rast.pixels[idx] = r.clamp(0.0, 255.0) as u8;
+                        rast.pixels[idx + 1] = g.clamp(0.0, 255.0) as u8;
+                        rast.pixels[idx + 2] = b.clamp(0.0, 255.0) as u8;
+                        rast.pixels[idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+        }
+
+        if cx == x1 && cy == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            cx += sx;
+        }
+        if e2 < dx {
+            err += dx;
+            cy += sy;
+        }
+    }
+}
+
+/// Draws an authentic 3D beveled volume block (15 total blocks matching `0x45bf10`).
+fn draw_volume_block(rast: &mut TextRasterizer, x: i32, y: i32, lit: bool) {
+    let w = 8;
+    let h = 23;
+
+    let (top_fill, bottom_fill, border_light, border_dark) = if lit {
+        (
+            [176u8, 176, 176, 255],
+            [137u8, 137, 137, 255],
+            [220u8, 220, 220, 255],
+            [80u8, 80, 80, 255],
+        )
+    } else {
+        (
+            [80u8, 80, 80, 255],
+            [60u8, 60, 60, 255],
+            [100u8, 100, 100, 255],
+            [40u8, 40, 40, 255],
+        )
+    };
+
+    for dy in 0..h {
+        let py = y + dy;
+        if py < 0 || py >= rast.height as i32 {
+            continue;
+        }
+        for dx in 0..w {
+            let px = x + dx;
+            if px < 0 || px >= rast.width as i32 {
+                continue;
+            }
+            let idx = (py as usize * rast.width + px as usize) * 4;
+
+            let c = if dx == 0 || dy == 0 {
+                border_light
+            } else if dx == w - 1 || dy == h - 1 {
+                border_dark
+            } else if dy < h / 2 {
+                top_fill
+            } else {
+                bottom_fill
+            };
+
+            rast.pixels[idx] = c[0];
+            rast.pixels[idx + 1] = c[1];
+            rast.pixels[idx + 2] = c[2];
+            rast.pixels[idx + 3] = c[3];
+        }
+    }
+}
+
+/// Draws the authentic options screen matching retail PC / PS2 `optmenu.c` (`0x45e750`, `0x461600`).
+#[allow(clippy::excessive_precision)]
+pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut TextRasterizer) {
+    let scale_x = rast.width as f32 / 640.0;
+    let scale_y = rast.height as f32 / 480.0;
+
+    // Authentic PS2/PC octagon containers from optmenu.c 0x45e750
+    let panel_pts: Vec<(i32, i32)> = [
+        (-0.41015625f32, -0.34375f32),
+        (0.41015625, -0.34375),
+        (0.443359375, -0.3020833),
+        (0.443359375, 0.2666667),
+        (-0.443359375, 0.2666667),
+        (-0.443359375, -0.3020833),
+    ]
+    .iter()
+    .map(|(nx, ny)| {
+        (
+            ((nx + 0.5) * rast.width as f32).round() as i32,
+            ((ny + 0.5) * rast.height as f32).round() as i32,
+        )
+    })
+    .collect();
+
+    let box_pts: Vec<(i32, i32)> = [
+        (-0.443359375f32, 0.2791667f32),
+        (0.443359375, 0.2791667),
+        (0.443359375, 0.3291667),
+        (0.41015625, 0.3708333),
+        (-0.41015625, 0.3708333),
+        (-0.443359375, 0.3291667),
+    ]
+    .iter()
+    .map(|(nx, ny)| {
+        (
+            ((nx + 0.5) * rast.width as f32).round() as i32,
+            ((ny + 0.5) * rast.height as f32).round() as i32,
+        )
+    })
+    .collect();
+
+    let outline_pts: Vec<(i32, i32)> = [
+        (-0.4140625f32, -0.3541667f32),
+        (0.4140625, -0.3541667),
+        (0.453125, -0.30625),
+        (0.453125, 0.3333333),
+        (0.4140625, 0.38125),
+        (-0.4140625, 0.38125),
+        (-0.453125, 0.3333333),
+        (-0.453125, -0.30625),
+    ]
+    .iter()
+    .map(|(nx, ny)| {
+        (
+            ((nx + 0.5) * rast.width as f32).round() as i32,
+            ((ny + 0.5) * rast.height as f32).round() as i32,
+        )
+    })
+    .collect();
+
+    // Fill color: 0x808080 (grey, alpha 0x40/0x60 -> ~0x37 = 55 in opaque screenshot)
+    let fill_color = [55, 55, 55, 255];
+    // Line color: 0x252550 (deep blue/indigo)
+    let border_color = [37, 37, 80, 255];
+
+    draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
+    draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));
+    draw_polygon(rast, &outline_pts, None, Some(border_color));
+
+    // Top Title: "OPTIONS" centered at y = 52 (in 640x480 space)
+    let title_x = rast.width / 2;
+    let title_y = (38.0 * scale_y).round() as usize;
+    font.draw_line_centered(
+        rast,
+        "O P T I O N S",
+        (title_x, title_y),
+        (26.0 * scale_y).round() as usize,
+        Sh2TextColor::White,
+        true,
+    );
+
+    // Menu rows:
+    // Ground truth from retail PC / PS2:
+    // Row 0: Brightness Level (Centered)
+    // Row 1: Screen Position (Centered)
+    // Row 2: Button Config (Centered)
+    // Row 3: Control Type     2D Type (or 3D Type)
+    // Row 4: Vibration        Soft (or Off)
+    // Row 5: Auto Load        Off (or On)
+    // Row 6: Language         English
+    // Row 7: Subtitles        On (or Off)
+    // Row 8: Sound            Speaker (or Headphone)
+    // Row 9: BGM Volume       [15 Blocks]
+    // Row 10: SE Volume       [15 Blocks]
+    let base_y = 96.0 * scale_y;
+    let step_y = 27.5 * scale_y;
+
+    let center_panel_x = (320.0 * scale_x).round() as usize;
+    let label_right_x = (301.0 * scale_x).round() as usize;
+    let val_left_x = (339.0 * scale_x).round() as usize;
+    let font_size = (18.0 * scale_y).round() as usize;
+
+    let row_defs = [
+        ("Brightness Level", false, "Adjust screen brightness"),
+        ("Screen Position", false, "Adjust screen display position"),
+        ("Button Config", false, "Change controller button settings"),
+        (
+            "Control Type",
+            true,
+            "Switch between 2D and 3D character controls",
+        ),
+        ("Vibration", true, "Adjust gamepad vibration rumble"),
+        (
+            "Auto Load",
+            true,
+            "Automatically load the latest saved game",
+        ),
+        ("Language", true, "Change display text language"),
+        ("Subtitles", true, "Display dialogue subtitles"),
+        ("Sound", true, "Select sound output mode"),
+        ("BGM Volume", true, "Adjust background music volume"),
+        ("SE Volume", true, "Adjust sound effects volume"),
+    ];
+
+    let bgm_blocks = (menu.draft_config.audio.bgm_volume * 15.0).round() as usize;
+    let se_blocks = (menu.draft_config.audio.sfx_volume * 15.0).round() as usize;
+
+    for (idx, (name, has_value, _help)) in row_defs.iter().enumerate() {
+        let y = (base_y + idx as f32 * step_y).round() as usize;
+        let is_selected = idx == menu.selected_index;
+
+        let style = if is_selected {
+            Sh2TextColor::White
+        } else {
+            Sh2TextColor::SilverUnselected
+        };
+
+        if !has_value {
+            // Centered row (Brightness Level, Screen Position, Button Config)
+            if is_selected {
+                // Duplicate shadow pass at x - 2, y - 2
+                font.draw_line_centered(
+                    rast,
+                    name,
+                    (center_panel_x.saturating_sub(2), y.saturating_sub(2)),
+                    font_size,
+                    Sh2TextColor::White,
+                    false,
+                );
+            }
+            font.draw_line_centered(rast, name, (center_panel_x, y), font_size, style, true);
+        } else {
+            // Label right-aligned to label_right_x
+            let label_w = font.text_width(name, font_size);
+            let lx = label_right_x.saturating_sub(label_w);
+
+            if is_selected {
+                font.draw_line_styled(
+                    rast,
+                    name,
+                    (lx.saturating_sub(2), y.saturating_sub(2)),
+                    font_size,
+                    Sh2TextColor::White,
+                    false,
+                );
+            }
+            font.draw_line_styled(rast, name, (lx, y), font_size, style, true);
+
+            // Value or slider blocks
+            if idx == 9 || idx == 10 {
+                // Volume slider blocks: 15 blocks starting at x = 340, spaced by 13px
+                let block_x_start = (340.0 * scale_x).round() as i32;
+                let block_y = (y as f32 + 2.0 * scale_y).round() as i32;
+                let active_count = if idx == 9 { bgm_blocks } else { se_blocks };
+
+                for b in 0..15 {
+                    let bx = block_x_start + (b as f32 * 13.5 * scale_x).round() as i32;
+                    let lit = b < active_count;
+                    draw_volume_block(rast, bx, block_y, lit);
+                }
+            } else {
+                // Value string
+                let val_str = match idx {
+                    3 => {
+                        if menu.draft_config.controls.tank_controls {
+                            "3D Type"
+                        } else {
+                            "2D Type"
+                        }
+                    }
+                    4 => {
+                        if menu.draft_config.controls.vibration_intensity > 0.0 {
+                            "Soft"
+                        } else {
+                            "Off"
+                        }
+                    }
+                    5 => "Off",
+                    6 => menu.draft_config.game.language.label(),
+                    7 => {
+                        if menu.draft_config.game.subtitles {
+                            "On"
+                        } else {
+                            "Off"
+                        }
+                    }
+                    8 => menu.draft_config.audio.speaker_config.label(),
+                    _ => "",
+                };
+
+                if is_selected {
+                    font.draw_line_styled(
+                        rast,
+                        val_str,
+                        (val_left_x.saturating_sub(2), y.saturating_sub(2)),
+                        font_size,
+                        Sh2TextColor::White,
+                        false,
+                    );
+                }
+                font.draw_line_styled(rast, val_str, (val_left_x, y), font_size, style, true);
+            }
+        }
+    }
+
+    // Help description inside the lower box at (88, 436 in 640x480 space)
+    let help_x = (88.0 * scale_x).round() as usize;
+    let help_y = (436.0 * scale_y).round() as usize;
+    let help_text = row_defs
+        .get(menu.selected_index)
+        .map(|r| r.2)
+        .unwrap_or("Adjust settings");
+
+    font.draw_line_styled(
+        rast,
+        help_text,
+        (help_x, help_y),
+        font_size,
+        Sh2TextColor::White,
+        true,
+    );
 }
 
 #[cfg(test)]
@@ -573,9 +944,17 @@ mod tests {
         let original = AppConfig::default();
         let menu = OptionsMenu::new(original);
         let font = AtlasFont::load_embedded();
-        let mut rast = TextRasterizer::new(800, 600);
+        let mut rast = TextRasterizer::new(640, 480);
 
         draw_options_screen(&menu, &font, &mut rast);
         assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+
+        let _ = image::save_buffer(
+            "/tmp/rendered_options_test.png",
+            &rast.pixels,
+            640,
+            480,
+            image::ExtendedColorType::Rgba8,
+        );
     }
 }

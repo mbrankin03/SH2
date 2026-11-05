@@ -1094,37 +1094,61 @@ impl RenderContext {
                 }
             }
 
-            // 1b. Render skeletal character meshes
+            // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass)
             if !skeletal_meshes.is_empty() {
-                rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-
-                for (mesh, matrices, texture_groups) in skeletal_meshes {
+                for (mesh, matrices, _) in skeletal_meshes {
                     mesh.update_bone_matrices(&self.queue, matrices);
-                    rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                }
 
-                    let mut current_tex: Option<u16> = None;
-                    for prim in &mesh.primitives {
-                        if prim.index_count > 0 && prim.is_active {
-                            let tex_idx = prim.texture_index;
-                            if current_tex != Some(tex_idx) {
-                                let bg = match texture_groups {
-                                    Some(groups) if (tex_idx as usize) < groups.len() => {
-                                        &groups[tex_idx as usize]
-                                    }
-                                    _ => &self.default_texture_bind_group,
-                                };
-                                rpass.set_bind_group(2, &**bg, &[]);
-                                current_tex = Some(tex_idx);
+                for transparent_pass in [false, true] {
+                    let has_any = skeletal_meshes.iter().any(|(mesh, _, _)| {
+                        mesh.primitives.iter().any(|p| {
+                            p.index_count > 0 && p.is_active && p.is_transparent == transparent_pass
+                        })
+                    });
+                    if !has_any {
+                        continue;
+                    }
+
+                    if transparent_pass {
+                        rpass.set_pipeline(&self.skeletal_pipeline.transparent_pipeline);
+                    } else {
+                        rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
+                    }
+                    rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+
+                    for (mesh, _matrices, texture_groups) in skeletal_meshes {
+                        rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        rpass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+
+                        let mut current_tex: Option<u16> = None;
+                        for prim in &mesh.primitives {
+                            if prim.index_count > 0
+                                && prim.is_active
+                                && prim.is_transparent == transparent_pass
+                            {
+                                let tex_idx = prim.texture_index;
+                                if current_tex != Some(tex_idx) {
+                                    let bg = match texture_groups {
+                                        Some(groups) if (tex_idx as usize) < groups.len() => {
+                                            &groups[tex_idx as usize]
+                                        }
+                                        _ => &self.default_texture_bind_group,
+                                    };
+                                    rpass.set_bind_group(2, &**bg, &[]);
+                                    current_tex = Some(tex_idx);
+                                }
+
+                                rpass.draw_indexed(
+                                    prim.first_index..prim.first_index + prim.index_count,
+                                    0,
+                                    0..1,
+                                );
                             }
-
-                            rpass.draw_indexed(
-                                prim.first_index..prim.first_index + prim.index_count,
-                                0,
-                                0..1,
-                            );
                         }
                     }
                 }

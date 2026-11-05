@@ -165,12 +165,26 @@ mod tests {
         assert_eq!(model.bone_count, 71);
         assert_eq!(model.parents.len(), 71);
         assert_eq!(model.initial_matrices.len(), 71);
-        assert_eq!(model.primitives.len(), 15);
-        assert_eq!(model.vertices.positions.len(), 4897);
-        assert_eq!(model.vertices.normals.len(), 4897);
-        assert_eq!(model.vertices.uvs.len(), 4897);
-        assert_eq!(model.vertices.bone_indices.len(), 4897);
-        assert_eq!(model.vertices.weights.len(), 4897);
+        // 15 opaque primitives + 1 transparent primitive = 16 total
+        assert_eq!(model.primitives.len(), 16);
+        assert_eq!(
+            model
+                .primitives
+                .iter()
+                .filter(|p| !p.is_transparent)
+                .count(),
+            15
+        );
+        assert_eq!(
+            model.primitives.iter().filter(|p| p.is_transparent).count(),
+            1
+        );
+        // 4897 opaque vertices + 378 transparent vertices = 5275 total
+        assert_eq!(model.vertices.positions.len(), 5275);
+        assert_eq!(model.vertices.normals.len(), 5275);
+        assert_eq!(model.vertices.uvs.len(), 5275);
+        assert_eq!(model.vertices.bone_indices.len(), 5275);
+        assert_eq!(model.vertices.weights.len(), 5275);
         assert_eq!(
             model.textures.len(),
             4,
@@ -189,8 +203,10 @@ mod tests {
             let low_model = parse_mdl(&low_data).expect("Failed to parse hll_jms.mdl");
 
             assert_eq!(low_model.bone_count, 41);
-            assert_eq!(low_model.primitives.len(), 31);
-            assert_eq!(low_model.vertices.positions.len(), 7311);
+            // 31 opaque primitives + 1 transparent primitive = 32 total
+            assert_eq!(low_model.primitives.len(), 32);
+            // 7311 opaque vertices + 378 transparent vertices = 7689 total
+            assert_eq!(low_model.vertices.positions.len(), 7689);
 
             // Verify all vertex weights sum to 1.0 (normalized)
             for (idx, w) in low_model.vertices.weights.iter().enumerate() {
@@ -214,8 +230,26 @@ mod tests {
             let mar_model = parse_mdl(&mar_data).expect("Failed to parse hhh_mar.mdl");
 
             assert_eq!(mar_model.bone_count, 73);
-            assert_eq!(mar_model.primitives.len(), 25);
-            assert_eq!(mar_model.vertices.positions.len(), 4940);
+            // 25 opaque primitives + 5 transparent hair/eyelash primitives = 30 total
+            assert_eq!(mar_model.primitives.len(), 30);
+            assert_eq!(
+                mar_model
+                    .primitives
+                    .iter()
+                    .filter(|p| !p.is_transparent)
+                    .count(),
+                25
+            );
+            assert_eq!(
+                mar_model
+                    .primitives
+                    .iter()
+                    .filter(|p| p.is_transparent)
+                    .count(),
+                5
+            );
+            // 4940 opaque vertices + 331 transparent vertices = 5271 total
+            assert_eq!(mar_model.vertices.positions.len(), 5271);
 
             for (idx, w) in mar_model.vertices.weights.iter().enumerate() {
                 let sum = w[0] + w[1] + w[2] + w[3];

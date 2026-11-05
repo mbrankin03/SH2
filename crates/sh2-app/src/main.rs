@@ -748,20 +748,39 @@ fn upscale_hd_preview_rgba(rgba: &[u8], width: usize, height: usize) -> (u32, u3
             let p11 = (sy_next * width + sx_next) * 4;
 
             let dst = (y * out_w + x) * 4;
-            for c in 0..4 {
+            let a00 = rgba[p00 + 3] as f32;
+            let a10 = rgba[p10 + 3] as f32;
+            let a01 = rgba[p01 + 3] as f32;
+            let a11 = rgba[p11 + 3] as f32;
+
+            let w00 = (1.0 - fx) * (1.0 - fy);
+            let w10 = fx * (1.0 - fy);
+            let w01 = (1.0 - fx) * fy;
+            let w11 = fx * fy;
+
+            let out_a = a00 * w00 + a10 * w10 + a01 * w01 + a11 * w11;
+            out[dst + 3] = out_a.clamp(0.0, 255.0) as u8;
+
+            // Weight RGB interpolation by alpha when mixing cutout (a == 0) and visible texels
+            // so transparent cutout texels never darken or fringe adjacent hair/alpha edges.
+            let aw00 = w00 * a00.max(1.0);
+            let aw10 = w10 * a10.max(1.0);
+            let aw01 = w01 * a01.max(1.0);
+            let aw11 = w11 * a11.max(1.0);
+            let aw_sum = (aw00 + aw10 + aw01 + aw11).max(1e-5);
+
+            for c in 0..3 {
                 let v00 = rgba[p00 + c] as f32;
                 let v10 = rgba[p10 + c] as f32;
                 let v01 = rgba[p01 + c] as f32;
                 let v11 = rgba[p11 + c] as f32;
-                let top = v00 * (1.0 - fx) + v10 * fx;
-                let bot = v01 * (1.0 - fx) + v11 * fx;
-                let mut val = top * (1.0 - fy) + bot * fy;
-                // Subtle micro-contrast sharpening on RGB channels for HD mode inspection
-                if c < 3 {
+                let mut val = (v00 * aw00 + v10 * aw10 + v01 * aw01 + v11 * aw11) / aw_sum;
+                // Subtle micro-contrast sharpening on RGB channels only when all 4 neighbors are non-transparent
+                if a00 > 0.0 && a10 > 0.0 && a01 > 0.0 && a11 > 0.0 {
                     let lap = v00 * 4.0 - (v10 + v01 + v11 + v00);
                     val = (val + lap * 0.15).clamp(0.0, 255.0);
                 }
-                out[dst + c] = val as u8;
+                out[dst + c] = val.clamp(0.0, 255.0) as u8;
             }
         }
     }

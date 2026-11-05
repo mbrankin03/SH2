@@ -69,11 +69,11 @@ pub fn decode_dxt(
             let mut block_pixels = [[0u8; 4]; 16];
 
             if kind == 1 {
-                // BC1 / DXT1: 8 bytes
-                decode_bc1_block(block, &mut block_pixels);
+                // BC1 / DXT1: 8 bytes (uses c0 <= c1 3-color + transparent black mode)
+                decode_bc1_block(block, &mut block_pixels, true);
             } else if kind == 3 {
-                // BC2 / DXT3: 8 bytes alpha, 8 bytes color
-                decode_bc1_block(&block[8..16], &mut block_pixels);
+                // BC2 / DXT3: 8 bytes alpha, 8 bytes color (always 4-color interpolation)
+                decode_bc1_block(&block[8..16], &mut block_pixels, false);
                 // 4 bits per pixel alpha (scaled by 17: 0..15 -> 0..255)
                 for i in 0..8 {
                     let a_byte = block[i];
@@ -83,8 +83,8 @@ pub fn decode_dxt(
                     block_pixels[i * 2 + 1][3] = a1;
                 }
             } else if kind == 5 {
-                // BC3 / DXT5: 8 bytes alpha, 8 bytes color
-                decode_bc1_block(&block[8..16], &mut block_pixels);
+                // BC3 / DXT5: 8 bytes alpha, 8 bytes color (always 4-color interpolation)
+                decode_bc1_block(&block[8..16], &mut block_pixels, false);
                 decode_bc3_alpha(block, &mut block_pixels);
             } else {
                 return Err(AssetError::UnsupportedFormat(format!(
@@ -111,7 +111,106 @@ pub fn decode_dxt(
         }
     }
 
+    // Dilate RGB colors from non-transparent pixels into adjacent alpha == 0 cutout pixels
+    // so bilinear texture filtering and 2x upscaling do not bleed black (0, 0, 0, 0) fringes
+    // onto hair strand tips and cutout alpha boundaries.
+    bleed_transparent_cutout_rgb(&mut rgba, width, height);
+
     Ok(rgba)
+}
+
+/// Propagates RGB values from visible (`alpha > 0`) pixels into neighboring transparent cutout
+/// (`alpha == 0` with `RGB == (0, 0, 0)`) pixels while keeping their alpha channel at `0`.
+///
+/// Many PS2/PC Silent Hill 2 DXT textures store `(0, 0, 0, 0)` in masked cutout regions
+/// (such as Maria's dyed pink hair tips and strand cards). Without RGB dilation, hardware
+/// `FilterMode::Linear` sampling and bilinear upscaling interpolate between hair color and
+/// `(0, 0, 0)`, creating dark/black outlines around cutout hair strands.
+fn bleed_transparent_cutout_rgb(rgba: &mut [u8], width: usize, height: usize) {
+    if width == 0 || height == 0 || rgba.len() < width * height * 4 {
+        return;
+    }
+
+    // Quick check: only run if the texture actually contains both alpha == 0 and alpha > 0 pixels
+    let total_px = width * height;
+    let mut has_zero_alpha = false;
+    let mut has_nonzero_alpha = false;
+    for i in 0..total_px {
+        if rgba[i * 4 + 3] == 0 {
+            has_zero_alpha = true;
+        } else {
+            has_nonzero_alpha = true;
+        }
+        if has_zero_alpha && has_nonzero_alpha {
+            break;
+        }
+    }
+    if !has_zero_alpha || !has_nonzero_alpha {
+        return;
+    }
+
+    // Perform 4 passes of 8-connected RGB dilation into alpha == 0 pixels
+    let mut filled = vec![false; total_px];
+    for (i, slot) in filled.iter_mut().enumerate() {
+        *slot = rgba[i * 4 + 3] > 0;
+    }
+
+    let mut next_rgba = rgba.to_vec();
+    let mut next_filled = filled.clone();
+
+    for _pass in 0..4 {
+        let mut any_changed = false;
+        for y in 0..height {
+            let y_min = y.saturating_sub(1);
+            let y_max = (y + 1).min(height - 1);
+            for x in 0..width {
+                let idx = y * width + x;
+                if filled[idx] {
+                    continue;
+                }
+
+                let x_min = x.saturating_sub(1);
+                let x_max = (x + 1).min(width - 1);
+
+                let mut sum_r = 0u32;
+                let mut sum_g = 0u32;
+                let mut sum_b = 0u32;
+                let mut count = 0u32;
+
+                for ny in y_min..=y_max {
+                    for nx in x_min..=x_max {
+                        let n_idx = ny * width + nx;
+                        if filled[n_idx] {
+                            let n_ofs = n_idx * 4;
+                            sum_r += rgba[n_ofs] as u32;
+                            sum_g += rgba[n_ofs + 1] as u32;
+                            sum_b += rgba[n_ofs + 2] as u32;
+                            count += 1;
+                        }
+                    }
+                }
+
+                if let (Some(r), Some(g), Some(b)) = (
+                    sum_r.checked_div(count),
+                    sum_g.checked_div(count),
+                    sum_b.checked_div(count),
+                ) {
+                    let ofs = idx * 4;
+                    next_rgba[ofs] = r as u8;
+                    next_rgba[ofs + 1] = g as u8;
+                    next_rgba[ofs + 2] = b as u8;
+                    // Keep alpha == 0 so cutout discard still treats this texel as transparent
+                    next_filled[idx] = true;
+                    any_changed = true;
+                }
+            }
+        }
+        if !any_changed {
+            break;
+        }
+        rgba.copy_from_slice(&next_rgba);
+        filled.copy_from_slice(&next_filled);
+    }
 }
 
 /// Converts a 16-bit RGB565 word into 24-bit RGB8 components.
@@ -123,7 +222,11 @@ fn rgb565_to_rgb8(c: u16) -> [u8; 3] {
 }
 
 /// Decodes an 8-byte BC1 color block into sixteen RGBA pixels.
-fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
+///
+/// When `allow_punchthrough` is `true` (BC1 / DXT1), blocks with `c0 <= c1` use the 3-color
+/// palette with transparent black at index 3. When `false` (BC2 / DXT3 and BC3 / DXT5), all
+/// blocks use the 4-color interpolated palette because alpha is encoded in the preceding 8 bytes.
+fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16], allow_punchthrough: bool) {
     let c0 = u16::from_le_bytes([block[0], block[1]]);
     let c1 = u16::from_le_bytes([block[2], block[3]]);
     let p0 = rgb565_to_rgb8(c0);
@@ -133,7 +236,7 @@ fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
     pal[0] = [p0[0], p0[1], p0[2], 255];
     pal[1] = [p1[0], p1[1], p1[2], 255];
 
-    if c0 > c1 {
+    if c0 > c1 || !allow_punchthrough {
         // 4-color opaque palette
         pal[2] = [
             ((2 * p0[0] as u32 + p1[0] as u32) / 3) as u8,
@@ -148,7 +251,7 @@ fn decode_bc1_block(block: &[u8], out: &mut [[u8; 4]; 16]) {
             255,
         ];
     } else {
-        // 3-color palette + 1 transparent pixel
+        // 3-color palette + 1 transparent pixel (BC1/DXT1 only)
         pal[2] = [
             ((p0[0] as u32 + p1[0] as u32) / 2) as u8,
             ((p0[1] as u32 + p1[1] as u32) / 2) as u8,
@@ -235,4 +338,58 @@ pub fn decode_dds_file(data: &[u8]) -> Result<(usize, usize, Vec<u8>), AssetErro
 
     let rgba = decode_dxt(&data[128..], width, height, kind)?;
     Ok((width, height, rgba))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bc3_dxt5_c0_le_c1_uses_four_color_interpolation_and_dilates_cutout_rgb() {
+        // Construct a 4x4 DXT5 block where:
+        // - Alpha block has a0 = 0, a1 = 255 (c0 <= c1 ramp with code 6 = 0, code 7 = 255)
+        //   First 8 pixels use alpha code 1 (255), next 8 pixels use alpha code 6 (0).
+        // - Color block has c0 <= c1 (e.g. c0 = 0x7BEF mid-gray/pinkish, c1 = 0xFFFF white)
+        //   and pixel 0 uses color code 3 (`(p0 + 2*p1)/3`), while pixel 8 (alpha=0) has black RGB.
+        let mut block = [0u8; 16];
+        block[0] = 0; // a0
+        block[1] = 255; // a1
+                        // 16 pixels x 3 bits = 48 bits:
+                        // pixels 0..8 -> code 1 (alpha = 255)
+                        // pixels 8..16 -> code 6 (alpha = 0)
+        let mut abits = 0u64;
+        for i in 0..8 {
+            abits |= 1u64 << (3 * i);
+        }
+        for i in 8..16 {
+            abits |= 6u64 << (3 * i);
+        }
+        for i in 0..6 {
+            block[2 + i] = ((abits >> (8 * i)) & 0xFF) as u8;
+        }
+
+        // Color block: c0 = 0xF810 (pink/magenta-ish), c1 = 0xFFFF (white), so c0 <= c1!
+        let c0: u16 = 0xF810;
+        let c1: u16 = 0xFFFF;
+        block[8..10].copy_from_slice(&c0.to_le_bytes());
+        block[10..12].copy_from_slice(&c1.to_le_bytes());
+        // All 16 pixels select palette index 3 (0b11 per pixel = 0xFFFFFFFF)
+        block[12..16].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+        let rgba = decode_dxt(&block, 4, 4, 5).expect("DXT5 decode should succeed");
+        // In DXT5, even when c0 <= c1, palette index 3 MUST be (p0 + 2*p1)/3 (bright pink/white), NOT black (0,0,0)!
+        assert!(
+            rgba[0] > 200 && rgba[1] > 150 && rgba[2] > 180 && rgba[3] == 255,
+            "DXT5 c0<=c1 code 3 pixel should be 4-color interpolated, got {:?}",
+            &rgba[0..4]
+        );
+        // Cutout pixel 8 should preserve alpha == 0 while having dilated non-black RGB
+        let px8 = &rgba[8 * 4..9 * 4];
+        assert_eq!(px8[3], 0);
+        assert!(
+            px8[0] > 200 && px8[1] > 150 && px8[2] > 180,
+            "Cutout alpha==0 pixel should have dilated RGB from neighbor, got {:?}",
+            px8
+        );
+    }
 }

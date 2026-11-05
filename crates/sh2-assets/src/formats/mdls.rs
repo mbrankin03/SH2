@@ -567,6 +567,185 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
+    // 7b. Transparent primitives (`tprim_count`) and transparent vertices (`tvertex_count`, stride 0x48)
+    // High-LOD models (such as `hhh_mar`, `hhh_jms`, `hhh_edi`, `agl`, `lau`, `mry`, `bos`) store
+    // semi-transparent hair strands, dyed hair tips, eyelashes, and clothing fringes in a second
+    // primitive/strip/vertex stream immediately following the opaque vertices.
+    let tvertex_count = read_u32(data, base + 136)? as usize;
+    let tvertex_ofs = read_u32(data, base + 140)? as usize;
+    let ttri_ofs = read_u32(data, base + 148)? as usize;
+    if tprim_count > 0
+        && tvertex_count > 0
+        && tprim_ofs > 0
+        && ttri_ofs > 0
+        && tvertex_ofs > ttri_ofs
+        && base + tvertex_ofs + tvertex_count * 0x48 <= data.len()
+        && vertex_count + tvertex_count <= (u16::MAX as usize)
+    {
+        let base_tvertex = vertices.positions.len() as u16;
+        let base_tstrip = strip_indices.len();
+
+        // Append transparent triangle strip indices (shifted by `base_tvertex`)
+        let tstrip_bytes = tvertex_ofs.saturating_sub(ttri_ofs);
+        let num_tstrips = tstrip_bytes / 2;
+        let ts_start = base + ttri_ofs;
+        strip_indices.reserve(num_tstrips);
+        for i in 0..num_tstrips {
+            if ts_start + (i + 1) * 2 <= data.len() {
+                let raw_v = read_u16(data, ts_start + i * 2)?;
+                strip_indices.push(raw_v.saturating_add(base_tvertex));
+            }
+        }
+
+        // Parse transparent primitive headers (144 bytes each at `base + tprim_ofs`)
+        let mut tp = base + tprim_ofs;
+        for _ in 0..tprim_count {
+            if tp + 144 > data.len() {
+                break;
+            }
+            let size = read_u32(data, tp)? as usize;
+            if size < 116 || tp + size > data.len() {
+                break;
+            }
+
+            let tcount = read_u32(data, tp + 8)? as usize;
+            let tofs = read_u32(data, tp + 12)? as usize;
+            let mtype = data[tp + 20];
+            let cull = read_u32(data, tp + 24)?;
+
+            let diffuse = [
+                read_f32(data, tp + 52)?,
+                read_f32(data, tp + 56)?,
+                read_f32(data, tp + 60)?,
+            ];
+            let ambient = [
+                read_f32(data, tp + 68)?,
+                read_f32(data, tp + 72)?,
+                read_f32(data, tp + 76)?,
+            ];
+            let specular = [0.0f32, 0.0, 0.0];
+
+            let start = base_tstrip + (read_u32(data, tp + 100)? as usize);
+            let length = read_u32(data, tp + 104)? as usize;
+
+            let tidx = if tcount > 0 && tp + tofs + 2 <= data.len() {
+                let raw_idx = read_u16(data, tp + tofs)? as usize;
+                if raw_idx < texture_pairs.len() {
+                    let (block_idx, _sid) = texture_pairs[raw_idx];
+                    if (block_idx as usize) < main_texture_ids.len() {
+                        main_texture_ids[block_idx as usize] as u16
+                    } else {
+                        raw_idx as u16
+                    }
+                } else {
+                    raw_idx as u16
+                }
+            } else {
+                0
+            };
+
+            primitives.push(ModelPrimitive {
+                bone_indices: Vec::new(),
+                pair_indices: Vec::new(),
+                texture_index: tidx,
+                start,
+                length,
+                pose_index: 0,
+                material_type: mtype,
+                backface_culling: cull,
+                diffuse,
+                ambient,
+                specular,
+                is_transparent: true,
+            });
+
+            tp += size;
+        }
+
+        // Parse transparent vertices (0x48 = 72 bytes per vertex at `base + tvertex_ofs`)
+        let tv_start = base + tvertex_ofs;
+        let tstride = 0x48;
+        vertices.positions.reserve(tvertex_count);
+        vertices.uvs.reserve(tvertex_count);
+        vertices.normals.reserve(tvertex_count);
+        vertices.bone_indices.reserve(tvertex_count);
+        vertices.weights.reserve(tvertex_count);
+
+        for i in 0..tvertex_count {
+            let vo = tv_start + i * tstride;
+            let px = read_f32(data, vo)?;
+            let py = read_f32(data, vo + 4)?;
+            let pz = read_f32(data, vo + 8)?;
+
+            let mut w = [
+                read_f32(data, vo + 16)?,
+                read_f32(data, vo + 20)?,
+                read_f32(data, vo + 24)?,
+                read_f32(data, vo + 28)?,
+            ];
+
+            let nx = read_f32(data, vo + 32)?;
+            let ny = read_f32(data, vo + 36)?;
+            let nz = read_f32(data, vo + 40)?;
+
+            let u = read_f32(data, vo + 48)?;
+            let v = read_f32(data, vo + 52)?;
+
+            // Transparent vertices store 4 x u16 at offset +64..72:
+            // - slot 0 (`vo + 64`): direct global skeleton bone index `b0`
+            // - slots 1..3 (`vo + 66, 68, 70`): direct global `pairs` table indices (or 0xFFFF if unused)
+            let b0_raw = read_u16(data, vo + 64)?;
+            let b0 = if (b0_raw as usize) < bone_count {
+                b0_raw
+            } else {
+                0
+            };
+            let mut resolved_b = [b0; 4];
+
+            for j in 1..4 {
+                let pair_idx = read_u16(data, vo + 64 + j * 2)? as usize;
+                if pair_idx != 0xFFFF && w[j] > 0.0 && pair_idx < pairs.len() {
+                    resolved_b[j] = pairs[pair_idx].1 as u16;
+                } else {
+                    w[j] = 0.0;
+                    resolved_b[j] = b0;
+                }
+            }
+
+            // Transform position and normal from primary bone `b0` space into model bind space
+            let (mut pos, mut nrm) = ([px, py, pz], [nx, ny, nz]);
+            if (b0 as usize) < initial_matrices.len() {
+                let m = &initial_matrices[b0 as usize];
+                pos = [
+                    m[0][0] * px + m[0][1] * py + m[0][2] * pz + m[0][3],
+                    m[1][0] * px + m[1][1] * py + m[1][2] * pz + m[1][3],
+                    m[2][0] * px + m[2][1] * py + m[2][2] * pz + m[2][3],
+                ];
+                let tnx = m[0][0] * nx + m[0][1] * ny + m[0][2] * nz;
+                let tny = m[1][0] * nx + m[1][1] * ny + m[1][2] * nz;
+                let tnz = m[2][0] * nx + m[2][1] * ny + m[2][2] * nz;
+                let len = (tnx * tnx + tny * tny + tnz * tnz).sqrt();
+                if len > 0.0001 {
+                    nrm = [tnx / len, tny / len, tnz / len];
+                }
+            }
+
+            let sum = w[0] + w[1] + w[2] + w[3];
+            let norm_w = if sum > 0.0 {
+                let inv = 1.0 / sum;
+                [w[0] * inv, w[1] * inv, w[2] * inv, w[3] * inv]
+            } else {
+                [1.0, 0.0, 0.0, 0.0]
+            };
+
+            vertices.positions.push(pos);
+            vertices.normals.push(nrm);
+            vertices.uvs.push([u, v]);
+            vertices.bone_indices.push(resolved_b);
+            vertices.weights.push(norm_w);
+        }
+    }
+
     // 8. Embedded textures (parse 0x19990901 container if present at tex_ofs)
     let mut textures = HashMap::new();
     if no_tex == 0 && tex_ofs != 0 && tex_ofs + 16 <= data.len() {

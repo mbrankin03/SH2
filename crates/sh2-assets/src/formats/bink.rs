@@ -367,6 +367,18 @@ pub fn decode_bink_audio_pcm(
     path: impl AsRef<Path>,
     header: &BinkHeader,
 ) -> Result<DecodedFmvAudio, AssetError> {
+    decode_bink_audio_track(path, header, 0)
+}
+
+/// Decodes a specific Bink audio track (0-based). `murder.bik` in sh2e carries the uncut VHS
+/// audio (Mary) on track 1; `open.bik`/`end.bik` carry alternate music/voice tracks.
+pub fn decode_bink_audio_track(
+    path: impl AsRef<Path>,
+    header: &BinkHeader,
+    track: usize,
+) -> Result<DecodedFmvAudio, AssetError> {
+    let track = track.min(header.audio_tracks.len().saturating_sub(1));
+    let map_arg = format!("0:a:{track}?");
     let sample_rate = header
         .audio_tracks
         .first()
@@ -388,7 +400,7 @@ pub fn decode_bink_audio_pcm(
             &path.as_ref().to_string_lossy(),
             "-vn",
             "-map",
-            "0:a:0?",
+            &map_arg,
             "-f",
             "s16le",
             "-ac",

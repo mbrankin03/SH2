@@ -156,6 +156,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         rgb = clamp(rgb + vec3<f32>(noise), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
+    // Bink frames are gamma-encoded; the LDR target is blitted to an sRGB surface which encodes
+    // again, so convert to linear here to avoid double-gamma (washed-out / too-bright video).
+    let lo = rgb / 12.92;
+    let hi = pow((rgb + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    rgb = select(hi, lo, rgb <= vec3<f32>(0.04045));
+
     let faded = rgb * clamp(params.fade_alpha, 0.0, 1.0);
     return vec4<f32>(faded, 1.0);
 }

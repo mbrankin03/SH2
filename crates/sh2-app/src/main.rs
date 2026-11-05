@@ -15,7 +15,7 @@ use sh2_assets::formats::anm::{
     AnimationFile, AnimationFrame,
 };
 use sh2_assets::formats::bink::{
-    active_subtitle_for_frame, decode_bink_audio_pcm, BinkHeader, BinkVideoStream,
+    active_subtitle_for_frame, decode_bink_audio_track, BinkHeader, BinkVideoStream,
 };
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
@@ -1011,6 +1011,8 @@ struct ActiveFmvSession {
     gpu_surface: GpuYuvVideoSurface,
     is_hd_source: bool,
     frame_accumulator_sec: f32,
+    /// Cached decoded audio (sample rate, s16le PCM) so loops/restarts can replay it.
+    audio: Option<(u32, Vec<u8>)>,
 }
 
 /// Locate and open a `.bik` movie stream for the requested [`FmvCatalogEntry`] and source preference.
@@ -1065,6 +1067,7 @@ fn open_fmv_session(
         indexed_frames: 600,
     };
 
+    let mut fmv_audio: Option<(u32, Vec<u8>)> = None;
     let (mut stream, is_hd_source) = if let Some((ref path, is_hd)) = chosen_path {
         match BinkVideoStream::open(path) {
             Ok(s) => {
@@ -1079,13 +1082,21 @@ fn open_fmv_session(
                     s.path.is_none()
                 );
                 if let Some(ref mut engine) = audio_engine {
-                    match decode_bink_audio_pcm(path, &s.header) {
+                    // sh2e murder.bik: track 1 is the restored uncut VHS audio (Mary), matching
+                    // the Enhancements VHSAudio patch; open.bik track 1 is the voiced mix.
+                    let track = if matches!(entry.filename, "murder.bik" | "open.bik") {
+                        1
+                    } else {
+                        0
+                    };
+                    match decode_bink_audio_track(path, &s.header, track) {
                         Ok(decoded) if !decoded.pcm_s16le.is_empty() => {
                             if let Err(e) =
                                 engine.play_fmv_pcm(decoded.sample_rate, &decoded.pcm_s16le, 1.0)
                             {
                                 tracing::warn!("[FMV Player] Audio playback warning: {:?}", e);
                             }
+                            fmv_audio = Some((decoded.sample_rate, decoded.pcm_s16le));
                         }
                         _ => {
                             engine.stop_bgm(std::time::Duration::from_millis(50));
@@ -1138,6 +1149,7 @@ fn open_fmv_session(
         gpu_surface,
         is_hd_source,
         frame_accumulator_sec: 0.0,
+        audio: fmv_audio,
     })
 }
 
@@ -2302,6 +2314,11 @@ impl ApplicationHandler for SilentHillApp {
                                 } else {
                                     // Loop seamlessly on completion in theater mode
                                     session.stream.restart();
+                                    if let (Some(engine), Some((sr, pcm))) =
+                                        (state.audio_engine.as_mut(), session.audio.as_ref())
+                                    {
+                                        let _ = engine.play_fmv_pcm(*sr, pcm, 1.0);
+                                    }
                                     if let Some(frame) = session.stream.next_frame() {
                                         state.fmv_pipeline.upload_frame(
                                             &state.render_ctx.queue,

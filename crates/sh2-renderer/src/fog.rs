@@ -9,7 +9,7 @@
 
 /// Uniform buffer for volumetric fog shader.
 ///
-/// Layout is aligned to 16 bytes for WGSL uniform buffer compliance (total size: 32 bytes).
+/// Layout is aligned to 16 bytes for WGSL uniform buffer compliance (total size: 48 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FogUniforms {
@@ -21,7 +21,15 @@ pub struct FogUniforms {
     pub fog_far: f32,
     /// Fog density multiplier. (Offset 24, size 4)
     pub density: f32,
-    /// Explicit padding to satisfy 16-byte WGSL alignment. (Offset 28, size 4)
+    /// Elapsed simulation time in seconds for drift animation. (Offset 28, size 4)
+    pub time: f32,
+    /// Number of volumetric raymarching steps (e.g. 16, 24, 32). (Offset 32, size 4)
+    pub step_count: u32,
+    /// Density curve falloff type: 0 = Linear, 1 = Exponential, 2 = Exponential Squared. (Offset 36, size 4)
+    pub curve_type: u32,
+    /// Particle turbulence speed multiplier based on SH2:EE `FogSpeedFix`. (Offset 40, size 4)
+    pub speed_mult: f32,
+    /// Explicit padding to satisfy 16-byte WGSL alignment. (Offset 44, size 4)
     pub _padding: f32,
 }
 
@@ -32,6 +40,10 @@ impl Default for FogUniforms {
             fog_near: 2.0,
             fog_far: 25.0,
             density: 1.0,
+            time: 0.0,
+            step_count: 24,
+            curve_type: 0,
+            speed_mult: 1.0,
             _padding: 0.0,
         }
     }
@@ -50,6 +62,10 @@ struct FogUniforms {
     fog_near: f32,
     fog_far: f32,
     density: f32,
+    time: f32,
+    step_count: u32,
+    curve_type: u32,
+    speed_mult: f32,
     _padding: f32,
 };
 
@@ -64,6 +80,13 @@ struct CameraUniforms {
 @group(0) @binding(2) var depth_tex: texture_2d<f32>;
 @group(0) @binding(3) var color_in: texture_2d<f32>;
 @group(0) @binding(4) var color_out: texture_storage_2d<rgba16float, write>;
+
+// Simple pseudo-noise function for subtle atmospheric drift turbulence
+fn hash21(p: vec2<f32>) -> f32 {
+    let q = fract(p * vec2<f32>(123.34, 456.21));
+    let d = dot(q, q + 45.32);
+    return fract(d);
+}
 
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -81,7 +104,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let view_pos_h = camera.inv_proj * clip_pos;
     let view_dist = length(view_pos_h.xyz / max(1e-5, view_pos_h.w));
 
-    let fog_factor = clamp((view_dist - fog.fog_near) / max(1e-4, fog.fog_far - fog.fog_near), 0.0, 1.0) * fog.density;
+    var linear_t = clamp((view_dist - fog.fog_near) / max(1e-4, fog.fog_far - fog.fog_near), 0.0, 1.0);
+
+    // Subtle drift turbulence modulated by time and speed_mult
+    let uv_drift = uv * 8.0 + vec2<f32>(fog.time * 0.05 * fog.speed_mult, fog.time * 0.02 * fog.speed_mult);
+    let noise = hash21(uv_drift) * 0.08 - 0.04;
+    linear_t = clamp(linear_t + noise * linear_t, 0.0, 1.0);
+
+    // Apply curve type (0 = Linear, 1 = Exponential, 2 = Exponential Squared)
+    var fog_factor = linear_t;
+    if (fog.curve_type == 1u) {
+        // Exp: 1.0 - exp(-k * t)
+        fog_factor = 1.0 - exp(-3.0 * linear_t);
+    } else if (fog.curve_type == 2u) {
+        // Exp squared: 1.0 - exp(-k * t * t)
+        fog_factor = 1.0 - exp(-4.0 * linear_t * linear_t);
+    }
+    fog_factor = clamp(fog_factor * fog.density, 0.0, 1.0);
 
     let final_color = mix(original_color, fog.fog_color, fog_factor);
     textureStore(color_out, pixel_coords, final_color);
@@ -178,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_fog_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<FogUniforms>(), 32);
+        assert_eq!(std::mem::size_of::<FogUniforms>(), 48);
         assert_eq!(std::mem::align_of::<FogUniforms>(), 4);
     }
 }

@@ -26,6 +26,8 @@ pub enum TitlePhase {
     RiddleDifficultySelect,
     /// In-game options configuration menu (Video, Audio, Controls, Game).
     OptionsMenu,
+    /// Test room / debug stage selection for volumetric fog and lighting calibration.
+    TestRoomsSelect,
     /// Credits display screen.
     Credits,
     /// Fade-out transition into the game world / opening FMV (`rr21.map`).
@@ -39,14 +41,16 @@ pub enum MainMenuOption {
     NewGame = 0,
     Continue = 1,
     Options = 2,
-    Exit = 3,
+    TestRooms = 3,
+    Exit = 4,
 }
 
 impl MainMenuOption {
-    pub const ALL: [MainMenuOption; 4] = [
+    pub const ALL: [MainMenuOption; 5] = [
         MainMenuOption::NewGame,
         MainMenuOption::Continue,
         MainMenuOption::Options,
+        MainMenuOption::TestRooms,
         MainMenuOption::Exit,
     ];
 
@@ -55,7 +59,40 @@ impl MainMenuOption {
             Self::NewGame => "NEW GAME",
             Self::Continue => "CONTINUE",
             Self::Options => "OPTIONS",
+            Self::TestRooms => "TEST ROOMS",
             Self::Exit => "EXIT",
+        }
+    }
+}
+
+/// Identifiers for test rooms / sandbox stages selectable from the debug menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TestRoomKind {
+    /// Authentic outdoor Toluca Lake Observation Deck (`ob01.map` + `ob01.cld`).
+    #[default]
+    ObservationDeck,
+    /// Opening story start restroom (`rr21.map` + `rr21.cld`).
+    RestroomStart,
+    /// Synthetic extended fog test runway with distance markers (5m, 10m, 25m, 50m, 100m).
+    SyntheticFogRunway,
+    /// Boiler room fallback sandbox with interior lighting, collision columns, and mesh skinning.
+    BoilerRoom,
+}
+
+impl TestRoomKind {
+    pub const ALL: [TestRoomKind; 4] = [
+        TestRoomKind::ObservationDeck,
+        TestRoomKind::RestroomStart,
+        TestRoomKind::SyntheticFogRunway,
+        TestRoomKind::BoilerRoom,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ObservationDeck => "OBSERVATION DECK (ob01.map)",
+            Self::RestroomStart => "RESTROOM START (rr21.map)",
+            Self::SyntheticFogRunway => "SYNTHETIC FOG RUNWAY (CALIBRATION)",
+            Self::BoilerRoom => "BOILER ROOM (FALLBACK SANDBOX)",
         }
     }
 }
@@ -94,6 +131,9 @@ pub struct TitleStateMachine {
     pub action_difficulty: ActionDifficulty,
     pub riddle_difficulty: RiddleDifficulty,
     pub selected_scenario: ScenarioKind,
+    /// Currently selected test room / sandbox stage.
+    pub selected_test_room: TestRoomKind,
+    pub test_room_index: usize,
     /// Visual fade opacity: 0.0 (fully transparent / black) to 1.0 (fully visible).
     pub fade_alpha: f32,
     pub fade_speed: f32,
@@ -121,6 +161,8 @@ impl TitleStateMachine {
             action_difficulty: ActionDifficulty::Normal,
             riddle_difficulty: RiddleDifficulty::Normal,
             selected_scenario: ScenarioKind::LetterFromSilentHeaven,
+            selected_test_room: TestRoomKind::ObservationDeck,
+            test_room_index: 0,
             fade_alpha: 0.0,
             fade_speed: 1.5,
             is_fading_in: true,
@@ -202,6 +244,11 @@ impl TitleStateMachine {
                         self.phase = TitlePhase::OptionsMenu;
                         sound = MenuSoundCue::Confirm;
                     }
+                    MainMenuOption::TestRooms => {
+                        self.phase = TitlePhase::TestRoomsSelect;
+                        self.test_room_index = 0;
+                        sound = MenuSoundCue::Confirm;
+                    }
                     MainMenuOption::Exit => {
                         sound = MenuSoundCue::Cancel;
                     }
@@ -278,6 +325,31 @@ impl TitleStateMachine {
                     sound = MenuSoundCue::Cancel;
                 }
             }
+            TitlePhase::TestRoomsSelect => match action {
+                MenuNavAction::Up => {
+                    if self.test_room_index == 0 {
+                        self.test_room_index = TestRoomKind::ALL.len() - 1;
+                    } else {
+                        self.test_room_index -= 1;
+                    }
+                    sound = MenuSoundCue::CursorMove;
+                }
+                MenuNavAction::Down => {
+                    self.test_room_index = (self.test_room_index + 1) % TestRoomKind::ALL.len();
+                    sound = MenuSoundCue::CursorMove;
+                }
+                MenuNavAction::Confirm => {
+                    self.selected_test_room = TestRoomKind::ALL[self.test_room_index];
+                    self.phase = TitlePhase::TransitionToGame;
+                    self.start_fade_out();
+                    sound = MenuSoundCue::GameStartTransition;
+                }
+                MenuNavAction::Cancel => {
+                    self.phase = TitlePhase::MainMenu;
+                    sound = MenuSoundCue::Cancel;
+                }
+                _ => {}
+            },
             TitlePhase::OptionsMenu | TitlePhase::TransitionToGame => {}
         }
 
@@ -384,5 +456,38 @@ mod tests {
         let cue = sm.handle_input(MenuNavAction::Confirm);
         assert_eq!(cue, MenuSoundCue::GameStartTransition);
         assert_eq!(sm.phase, TitlePhase::TransitionToGame);
+    }
+
+    #[test]
+    fn test_test_rooms_selection_flow() {
+        let mut sm = TitleStateMachine::new();
+        sm.phase = TitlePhase::MainMenu;
+        // Navigate to TEST ROOMS (index 3)
+        sm.main_menu_index = 3;
+        assert_eq!(
+            MainMenuOption::ALL[sm.main_menu_index],
+            MainMenuOption::TestRooms
+        );
+
+        let cue = sm.handle_input(MenuNavAction::Confirm);
+        assert_eq!(cue, MenuSoundCue::Confirm);
+        assert_eq!(sm.phase, TitlePhase::TestRoomsSelect);
+        assert_eq!(sm.test_room_index, 0);
+
+        // Cycle to Synthetic Fog Runway (index 2)
+        sm.handle_input(MenuNavAction::Down);
+        assert_eq!(sm.test_room_index, 1);
+        sm.handle_input(MenuNavAction::Down);
+        assert_eq!(sm.test_room_index, 2);
+        assert_eq!(
+            TestRoomKind::ALL[sm.test_room_index],
+            TestRoomKind::SyntheticFogRunway
+        );
+
+        // Confirm selection -> TransitionToGame
+        let cue = sm.handle_input(MenuNavAction::Confirm);
+        assert_eq!(cue, MenuSoundCue::GameStartTransition);
+        assert_eq!(sm.phase, TitlePhase::TransitionToGame);
+        assert_eq!(sm.selected_test_room, TestRoomKind::SyntheticFogRunway);
     }
 }

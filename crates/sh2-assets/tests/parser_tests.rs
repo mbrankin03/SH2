@@ -48,6 +48,46 @@ mod tests {
     }
 
     #[test]
+    fn test_outdoor_observation_deck_map_parsing() {
+        // Test parsing authentic outdoor Observation Deck map (ob01.map)
+        let map_path = format!("{ROOT_ASSETS}/data/bg/ob/ob01.map");
+        if !Path::new(&map_path).exists() {
+            println!("Skipping test_outdoor_observation_deck_map_parsing: ob01.map not found");
+            return;
+        }
+
+        let data = fs::read(&map_path).expect("Failed to read ob01.map");
+        let map = parse_map(&data, "ob01").expect("Failed to parse ob01.map");
+
+        println!(
+            "Parsed ob01 map: materials={}, textures={}, batches={}",
+            map.materials.len(),
+            map.textures.len(),
+            map.batches.len()
+        );
+
+        let mut min_p = [f32::MAX; 3];
+        let mut max_p = [f32::MIN; 3];
+        for b in &map.batches {
+            for p in &b.positions {
+                for i in 0..3 {
+                    if p[i] < min_p[i] {
+                        min_p[i] = p[i];
+                    }
+                    if p[i] > max_p[i] {
+                        max_p[i] = p[i];
+                    }
+                }
+            }
+        }
+        println!("ob01 min: {:?}, max: {:?}", min_p, max_p);
+
+        assert_eq!(map.name, "ob01");
+        assert!(!map.materials.is_empty(), "ob01.map must contain materials");
+        assert!(!map.batches.is_empty(), "ob01.map must contain batches");
+    }
+
+    #[test]
     fn test_james_model_parsing() {
         // Test parsing James model (hhh_jms.mdl)
         let mdl_path = format!("{ROOT_ASSETS}/data/chr/jms/hhh_jms.mdl");

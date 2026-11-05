@@ -191,6 +191,18 @@ impl AppMenuController {
                     lines.push("[Cancel to Return to Main Menu]".into());
                 }
             }
+            TitlePhase::TestRoomsSelect => {
+                lines.push("=== TEST ROOMS / DEBUG STAGES ===".into());
+                for (idx, room) in sh2_ui::menu::TestRoomKind::ALL.iter().enumerate() {
+                    let prefix = if idx == self.title_sm.test_room_index {
+                        "> "
+                    } else {
+                        "  "
+                    };
+                    lines.push(format!("{}{}", prefix, room.label()));
+                }
+                lines.push("[Up/Down: Select Room, Confirm: Boot Stage, Cancel: Back]".into());
+            }
             TitlePhase::Credits => {
                 lines.push("=== CREDITS ===".into());
                 lines.push("Director: Keiichiro Toyama".into());
@@ -199,7 +211,10 @@ impl AppMenuController {
                 lines.push("[Press Cancel / Esc to Return]".into());
             }
             TitlePhase::TransitionToGame => {
-                lines.push("Loading Restroom Stage rr21.map...".into());
+                lines.push(format!(
+                    "Loading Stage: {}...",
+                    self.title_sm.selected_test_room.label()
+                ));
             }
         }
 

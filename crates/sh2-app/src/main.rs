@@ -20,7 +20,7 @@ use sh2_assets::formats::TextureLoader;
 use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SecondaryBonePhysics, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
-use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase};
+use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TestRoomKind, TitlePhase};
 use sh2_ui::{AuthenticButtonSprite, ButtonSpriteSheet, TextRasterizer};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
@@ -187,21 +187,259 @@ fn create_fallback_room_geometry() -> MapFile {
     map
 }
 
-/// Locate authentic Silent Hill 2 level map on disk
-fn find_map_file() -> Option<(PathBuf, Vec<u8>)> {
-    let candidate_paths = [
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map",
-        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map",
-        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/rr/rr21.map",
-    ];
+/// Generate an extended outdoor synthetic fog calibration runway with distance markers.
+/// Floor runs from Z = 0 to Z = 120,000 (120m) with crossbar markers at 5m, 10m, 25m, 50m, 75m, 100m
+/// and vertical light poles / torches at measured intervals to calibrate volumetric fog extinction.
+fn create_synthetic_fog_runway_geometry() -> MapFile {
+    let mut map = MapFile::default();
+    map.materials.push(MapMaterial {
+        mode: 1,
+        texture_id: 0,
+        color: 0xFF555555,
+        overlay: 0,
+        specularity: 0.2,
+    });
 
-    for path in &candidate_paths {
-        let p = PathBuf::from(path);
-        if let Ok(bytes) = std::fs::read(&p) {
-            return Some((p, bytes));
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
+    let mut indices = Vec::new();
+
+    let mut add_quad =
+        |p0: [f32; 3], p1: [f32; 3], p2: [f32; 3], p3: [f32; 3], normal: [f32; 3], col: [u8; 4]| {
+            let base_idx = positions.len() as u32;
+            positions.extend_from_slice(&[p0, p1, p2, p3]);
+            normals.extend_from_slice(&[normal, normal, normal, normal]);
+            uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+            colors.extend_from_slice(&[col, col, col, col]);
+            indices.extend_from_slice(&[
+                base_idx,
+                base_idx + 1,
+                base_idx + 2,
+                base_idx,
+                base_idx + 2,
+                base_idx + 3,
+            ]);
+        };
+
+    let w = 4000.0; // 4 meters wide
+    let length = 120000.0; // 120 meters long runway
+
+    // Main asphalt runway floor (Y = 0, normal points UP = -Y in PS2 coordinate space)
+    add_quad(
+        [-w, 0.0, -5000.0],
+        [w, 0.0, -5000.0],
+        [w, 0.0, length],
+        [-w, 0.0, length],
+        [0.0, -1.0, 0.0],
+        [70, 75, 80, 255],
+    );
+
+    // Distance marker crossbars every 5m, 10m, 25m, 50m, 75m, 100m
+    let distance_markers = [5000.0, 10000.0, 25000.0, 50000.0, 75000.0, 100000.0];
+    for &dist in &distance_markers {
+        let m_thick = 300.0;
+        let col = if dist == 50000.0 || dist == 100000.0 {
+            [240, 220, 50, 255] // Bright yellow major line
+        } else {
+            [220, 220, 220, 255] // White distance marker line
+        };
+
+        add_quad(
+            [-w * 0.9, -2.0, dist - m_thick],
+            [w * 0.9, -2.0, dist - m_thick],
+            [w * 0.9, -2.0, dist + m_thick],
+            [-w * 0.9, -2.0, dist + m_thick],
+            [0.0, -1.0, 0.0],
+            col,
+        );
+
+        // Measured distance marker pylons on left and right sides
+        for &side in &[-1.0f32, 1.0f32] {
+            let px = side * (w + 800.0);
+            let pz = dist;
+            let ph = -3200.0; // 3.2m tall light pole
+            let pw = 150.0;
+
+            // Light pole column
+            add_quad(
+                [px - pw, ph, pz - pw],
+                [px + pw, ph, pz - pw],
+                [px + pw, 0.0, pz - pw],
+                [px - pw, 0.0, pz - pw],
+                [0.0, 0.0, -1.0],
+                [180, 140, 60, 255],
+            );
+            add_quad(
+                [px + pw, ph, pz + pw],
+                [px - pw, ph, pz + pw],
+                [px - pw, 0.0, pz + pw],
+                [px + pw, 0.0, pz + pw],
+                [0.0, 0.0, 1.0],
+                [180, 140, 60, 255],
+            );
+            // Lamp glowing beacon at top of pole
+            let bw = 250.0;
+            add_quad(
+                [px - bw, ph - bw * 2.0, pz - bw],
+                [px + bw, ph - bw * 2.0, pz - bw],
+                [px + bw, ph, pz - bw],
+                [px - bw, ph, pz - bw],
+                [0.0, 0.0, -1.0],
+                [255, 230, 160, 255],
+            );
         }
     }
-    None
+
+    map.batches.push(MapBatch {
+        group: BatchGroup::Opaque,
+        material_index: 0,
+        geo_id: 2,
+        positions,
+        uvs,
+        colors,
+        normals,
+        indices,
+    });
+
+    map
+}
+
+/// Locate authentic Silent Hill 2 level map on disk based on requested test room or fallback
+fn find_map_file_for_room(
+    room: TestRoomKind,
+) -> (MapFile, glam::Vec3, f32, sh2_renderer::fog::FogUniforms) {
+    let base_roots = [
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+    ];
+
+    match room {
+        TestRoomKind::ObservationDeck => {
+            for base in &base_roots {
+                let p = PathBuf::from(base).join("data/bg/ob/ob01.map");
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(map) = MapFile::parse(&bytes) {
+                        tracing::info!("Loaded authentic Observation Deck level geometry: {:?}", p);
+                        // Toluca Lake vista outdoor fog parameters
+                        let fog = sh2_renderer::fog::FogUniforms {
+                            fog_color: [0.65, 0.68, 0.72, 1.0], // Daylight Toluca Lake mist
+                            fog_near: 1500.0,
+                            fog_far: 18000.0,
+                            density: 0.85,
+                            time: 0.0,
+                            step_count: 32,
+                            curve_type: 1, // Exponential curve
+                            speed_mult: 1.0,
+                            _padding: 0.0,
+                        };
+                        // Authentic parking lot overlook coordinates: X: 0.0, Y: -100.0, Z: -5000.0
+                        return (map, glam::Vec3::new(0.0, -100.0, -5000.0), 0.0, fog);
+                    }
+                }
+            }
+            tracing::warn!("Failed to load ob01.map; using synthetic fog runway fallback");
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.65, 0.68, 0.72, 1.0],
+                fog_near: 2000.0,
+                fog_far: 25000.0,
+                density: 0.80,
+                time: 0.0,
+                step_count: 32,
+                curve_type: 1,
+                speed_mult: 1.0,
+                _padding: 0.0,
+            };
+            (
+                create_synthetic_fog_runway_geometry(),
+                glam::Vec3::new(0.0, -100.0, 0.0),
+                0.0,
+                fog,
+            )
+        }
+        TestRoomKind::RestroomStart => {
+            for base in &base_roots {
+                let p = PathBuf::from(base).join("data/bg/rr/rr21.map");
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(map) = MapFile::parse(&bytes) {
+                        tracing::info!("Loaded authentic Restroom Start level geometry: {:?}", p);
+                        let fog = sh2_renderer::fog::FogUniforms {
+                            fog_color: [0.08, 0.09, 0.11, 1.0], // Dark indoor restroom tone
+                            fog_near: 800.0,
+                            fog_far: 6000.0,
+                            density: 0.35,
+                            time: 0.0,
+                            step_count: 24,
+                            curve_type: 0,
+                            speed_mult: 1.0,
+                            _padding: 0.0,
+                        };
+                        return (map, glam::Vec3::new(-100200.0, -100.0, -60000.0), 0.0, fog);
+                    }
+                }
+            }
+            tracing::warn!("Failed to load rr21.map; using fallback room geometry");
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.08, 0.09, 0.11, 1.0],
+                fog_near: 800.0,
+                fog_far: 6000.0,
+                density: 0.35,
+                time: 0.0,
+                step_count: 24,
+                curve_type: 0,
+                speed_mult: 1.0,
+                _padding: 0.0,
+            };
+            (
+                create_fallback_room_geometry(),
+                glam::Vec3::new(0.0, -800.0, 2000.0),
+                std::f32::consts::PI,
+                fog,
+            )
+        }
+        TestRoomKind::SyntheticFogRunway => {
+            tracing::info!("Generated Synthetic Fog Runway with calibrated distance markers.");
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.60, 0.64, 0.70, 1.0],
+                fog_near: 2000.0,
+                fog_far: 30000.0,
+                density: 0.85,
+                time: 0.0,
+                step_count: 32,
+                curve_type: 1, // Exponential
+                speed_mult: 1.0,
+                _padding: 0.0,
+            };
+            (
+                create_synthetic_fog_runway_geometry(),
+                glam::Vec3::new(0.0, -100.0, 0.0),
+                0.0,
+                fog,
+            )
+        }
+        TestRoomKind::BoilerRoom => {
+            tracing::info!("Generated Boiler Room fallback sandbox.");
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.08, 0.09, 0.11, 1.0],
+                fog_near: 800.0,
+                fog_far: 6000.0,
+                density: 0.35,
+                time: 0.0,
+                step_count: 24,
+                curve_type: 0,
+                speed_mult: 1.0,
+                _padding: 0.0,
+            };
+            (
+                create_fallback_room_geometry(),
+                glam::Vec3::new(0.0, -800.0, 2000.0),
+                std::f32::consts::PI,
+                fog,
+            )
+        }
+    }
 }
 
 /// Locate authentic character model and animation on disk
@@ -327,6 +565,8 @@ struct AppState {
     character: Option<CharacterAsset>,
     maria: Option<CharacterAsset>,
     active_maria: bool,
+    active_test_room: TestRoomKind,
+    fog_uniforms: sh2_renderer::fog::FogUniforms,
     menu_ctrl: AppMenuController,
     key_forward: bool,
     key_backward: bool,
@@ -341,6 +581,8 @@ struct AppState {
 #[derive(Default)]
 struct SilentHillApp {
     state: Option<AppState>,
+    initial_test_room: Option<TestRoomKind>,
+    initial_fog_debug: bool,
 }
 
 impl ApplicationHandler for SilentHillApp {
@@ -425,19 +667,10 @@ impl ApplicationHandler for SilentHillApp {
             render_config,
         );
 
-        let (map_file, is_authentic) = match find_map_file() {
-            Some((path, bytes)) => {
-                tracing::info!("Loaded authentic level geometry from {:?}", path);
-                (
-                    MapFile::parse(&bytes).unwrap_or_else(|_| create_fallback_room_geometry()),
-                    true,
-                )
-            }
-            None => {
-                tracing::info!("Built-in 3D Silent Hill room geometry generated.");
-                (create_fallback_room_geometry(), false)
-            }
-        };
+        let initial_room = self
+            .initial_test_room
+            .unwrap_or(TestRoomKind::ObservationDeck);
+        let (map_file, player_pos, player_yaw, fog_uniforms) = find_map_file_for_room(initial_room);
 
         let gpu_map = GpuMap::from_map(&device, &map_file);
         let blitter = SurfaceBlitter::new(&device, surface_format);
@@ -490,29 +723,14 @@ impl ApplicationHandler for SilentHillApp {
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.input.set_control_scheme(ControlScheme::Tank);
         sim_core.scenario.flashlight_on = true;
-
-        if is_authentic {
-            // rr21 authentic bathroom floor coordinates (X: -100200, Y: -100, Z: -60000)
-            sim_core.scenario.player_position = glam::Vec3::new(-100200.0, -100.0, -60000.0);
-            sim_core.scenario.player_yaw = 0.0; // Face forward into the bathroom (+Z)
-        } else {
-            // Built-in 3D room center
-            sim_core.scenario.player_position = glam::Vec3::new(0.0, -800.0, 2000.0);
-            sim_core.scenario.player_yaw = std::f32::consts::PI; // Face toward the room and column
-        }
+        sim_core.scenario.player_position = player_pos;
+        sim_core.scenario.player_yaw = player_yaw;
         sim_core.camera.reset_to_player(
             sim_core.scenario.player_position,
             sim_core.scenario.player_yaw,
         );
 
-        // Atmospheric Silent Hill lighting & fog (calibrated for room size)
-        let fog_uniforms = sh2_renderer::fog::FogUniforms {
-            fog_color: [0.08, 0.09, 0.11, 1.0],
-            fog_near: 800.0,
-            fog_far: 6000.0,
-            density: 0.35,
-            _padding: 0.0,
-        };
+        // Atmospheric Silent Hill lighting & fog (calibrated for current room)
         render_ctx.update_fog(&fog_uniforms);
 
         // Preload authentic 2D UI / Title screen textures
@@ -613,7 +831,13 @@ impl ApplicationHandler for SilentHillApp {
         );
         tracing::info!("Controls: WASD / Stick: Move & Turn (Tank) | Shift: Run | F: Flashlight | C: Switch Character (James/Maria)");
 
-        let menu_ctrl = AppMenuController::new("config.json");
+        let mut menu_ctrl = AppMenuController::new("config.json");
+        if self.initial_test_room.is_some() || self.initial_fog_debug {
+            // Immediate boot into the requested test room if specified via CLI
+            menu_ctrl.in_game_active = true;
+            menu_ctrl.title_sm.phase = TitlePhase::TransitionToGame;
+            menu_ctrl.title_sm.fade_alpha = 0.0;
+        }
 
         self.state = Some(AppState {
             window,
@@ -637,6 +861,8 @@ impl ApplicationHandler for SilentHillApp {
             character,
             maria,
             active_maria: false,
+            active_test_room: initial_room,
+            fog_uniforms,
             menu_ctrl,
             key_forward: false,
             key_backward: false,
@@ -770,6 +996,54 @@ impl ApplicationHandler for SilentHillApp {
                                 if state.active_maria { "Maria" } else { "James" }
                             );
                         }
+                        // Volumetric Fog calibration shortcuts (matching PS2 dbg_fogparm_ctl / dbg_ambifog_ctl)
+                        winit::keyboard::KeyCode::BracketLeft if pressed => {
+                            state.fog_uniforms.density =
+                                (state.fog_uniforms.density - 0.05).max(0.0);
+                            state.render_ctx.update_fog(&state.fog_uniforms);
+                            tracing::info!(
+                                "[Fog Tweak] Density: {:.2}",
+                                state.fog_uniforms.density
+                            );
+                        }
+                        winit::keyboard::KeyCode::BracketRight if pressed => {
+                            state.fog_uniforms.density =
+                                (state.fog_uniforms.density + 0.05).min(2.0);
+                            state.render_ctx.update_fog(&state.fog_uniforms);
+                            tracing::info!(
+                                "[Fog Tweak] Density: {:.2}",
+                                state.fog_uniforms.density
+                            );
+                        }
+                        winit::keyboard::KeyCode::Minus if pressed => {
+                            state.fog_uniforms.fog_far = (state.fog_uniforms.fog_far - 1000.0)
+                                .max(state.fog_uniforms.fog_near + 500.0);
+                            state.render_ctx.update_fog(&state.fog_uniforms);
+                            tracing::info!(
+                                "[Fog Tweak] fog_far: {:.0}",
+                                state.fog_uniforms.fog_far
+                            );
+                        }
+                        winit::keyboard::KeyCode::Equal if pressed => {
+                            state.fog_uniforms.fog_far =
+                                (state.fog_uniforms.fog_far + 1000.0).min(60000.0);
+                            state.render_ctx.update_fog(&state.fog_uniforms);
+                            tracing::info!(
+                                "[Fog Tweak] fog_far: {:.0}",
+                                state.fog_uniforms.fog_far
+                            );
+                        }
+                        winit::keyboard::KeyCode::KeyM if pressed => {
+                            // Cycle curve type (0 = Linear, 1 = Exp, 2 = Exp Squared)
+                            state.fog_uniforms.curve_type = (state.fog_uniforms.curve_type + 1) % 3;
+                            state.render_ctx.update_fog(&state.fog_uniforms);
+                            let curve_name = match state.fog_uniforms.curve_type {
+                                0 => "Linear",
+                                1 => "Exponential",
+                                _ => "Exponential Squared",
+                            };
+                            tracing::info!("[Fog Tweak] Falloff curve: {}", curve_name);
+                        }
                         _ => {}
                     }
 
@@ -840,6 +1114,22 @@ impl ApplicationHandler for SilentHillApp {
 
                 // Advance menu transitions and fade state
                 state.menu_ctrl.tick(dt.as_secs_f32());
+
+                // If user transitioned into game from Test Rooms menu, switch level map if needed
+                if state.menu_ctrl.in_game_active
+                    && state.active_test_room != state.menu_ctrl.title_sm.selected_test_room
+                {
+                    let new_room = state.menu_ctrl.title_sm.selected_test_room;
+                    tracing::info!("Switching test environment to: {:?}", new_room);
+                    let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
+                    state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
+                    state.fog_uniforms = new_fog;
+                    state.render_ctx.update_fog(&state.fog_uniforms);
+                    state.sim_core.scenario.player_position = new_pos;
+                    state.sim_core.scenario.player_yaw = new_yaw;
+                    state.sim_core.camera.reset_to_player(new_pos, new_yaw);
+                    state.active_test_room = new_room;
+                }
 
                 // When menu is active, log formatted state changes so console/headless/testing builds observe menu navigation
                 if !state.menu_ctrl.in_game_active {
@@ -980,6 +1270,10 @@ impl ApplicationHandler for SilentHillApp {
                 // Advance simulation time and frame counter for animated post-processing
                 state.frame_counter = state.frame_counter.wrapping_add(1);
                 state.sim_time += dt.as_secs_f32();
+
+                // Update fog animation time and drift
+                state.fog_uniforms.time = state.sim_time;
+                state.render_ctx.update_fog(&state.fog_uniforms);
 
                 // Retrieve active grain intensity percentage from options configuration
                 let grain_pct = state
@@ -1128,105 +1422,20 @@ impl ApplicationHandler for SilentHillApp {
                                 }
                             }
                             TitlePhase::MainMenu => {
-                                if let Some(ref atlas) = state.button_sprites {
-                                    // 1:1 authentic Silent Hill 2 button sprites from start01e.tex
-                                    // Matched to retail Silent Hill 2 PS2/PC vertical coordinates
-                                    let items = [
-                                        (
-                                            MainMenuOption::NewGame,
-                                            AuthenticButtonSprite::NewGame,
-                                            0,
-                                        ),
-                                        (
-                                            MainMenuOption::Continue,
-                                            AuthenticButtonSprite::Continue,
-                                            1,
-                                        ),
-                                        (
-                                            MainMenuOption::Options,
-                                            AuthenticButtonSprite::Options,
-                                            2,
-                                        ),
-                                        (MainMenuOption::Exit, AuthenticButtonSprite::Exit, 3),
-                                    ];
-
-                                    let center_x = (state.menu_rasterizer.width / 2) as i32;
-                                    let button_scale = 0.44f32;
-                                    let base_y = 445;
-                                    let spacing_y = 46;
-
-                                    for (opt, sprite, visual_idx) in &items {
-                                        let logical_idx = match opt {
-                                            MainMenuOption::NewGame => 0,
-                                            MainMenuOption::Continue => 1,
-                                            MainMenuOption::Options => 2,
-                                            MainMenuOption::Exit => 3,
-                                        };
-                                        let is_selected =
-                                            logical_idx == state.menu_ctrl.title_sm.main_menu_index;
-                                        let y = base_y + visual_idx * spacing_y;
-                                        let rect = sprite.atlas_rect();
-                                        let w = (rect.width as f32 * button_scale) as i32;
-                                        let x = center_x - (w / 2);
-
-                                        // Draw authentic oval glowing cursor behind selected item
-                                        if is_selected {
-                                            let glow_rect =
-                                                AuthenticButtonSprite::GlowCursor.atlas_rect();
-                                            let glow_scale = 0.46f32;
-                                            let glow_w =
-                                                (glow_rect.width as f32 * glow_scale) as i32;
-                                            let glow_h =
-                                                (glow_rect.height as f32 * glow_scale) as i32;
-                                            let glow_x = center_x - (glow_w / 2);
-                                            // Center vertically around the button sprite
-                                            let btn_h = (rect.height as f32 * button_scale) as i32;
-                                            let glow_y = y + (btn_h / 2) - (glow_h / 2);
-                                            atlas.blit_sprite(
-                                                AuthenticButtonSprite::GlowCursor,
-                                                &mut state.menu_rasterizer.pixels,
-                                                state.menu_rasterizer.width,
-                                                state.menu_rasterizer.height,
-                                                glow_x,
-                                                glow_y,
-                                                glow_scale,
-                                                [1.0, 1.0, 1.0, 0.90],
-                                            );
-                                        }
-
-                                        let tint = if is_selected {
-                                            [1.0f32, 0.98, 0.85, 1.0]
-                                        } else {
-                                            [0.72f32, 0.72, 0.74, 0.80]
-                                        };
-
-                                        atlas.blit_sprite(
-                                            *sprite,
-                                            &mut state.menu_rasterizer.pixels,
-                                            state.menu_rasterizer.width,
-                                            state.menu_rasterizer.height,
-                                            x,
-                                            y,
-                                            button_scale,
-                                            tint,
-                                        );
-                                    }
-                                } else {
-                                    for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
-                                        let is_selected =
-                                            idx == state.menu_ctrl.title_sm.main_menu_index;
-                                        let color = if is_selected { yellow } else { white };
-                                        let y = 370 + idx * 45;
-                                        let text = opt.label();
-                                        if is_selected {
-                                            state
-                                                .menu_rasterizer
-                                                .draw_text(">", 550, y, 3, yellow, true);
-                                        }
+                                for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                                    let is_selected =
+                                        idx == state.menu_ctrl.title_sm.main_menu_index;
+                                    let color = if is_selected { yellow } else { white };
+                                    let y = 350 + idx * 45;
+                                    let text = opt.label();
+                                    if is_selected {
                                         state
                                             .menu_rasterizer
-                                            .draw_text(text, 580, y, 3, color, true);
+                                            .draw_text(">", 520, y, 3, yellow, true);
                                     }
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(text, 550, y, 3, color, true);
                                 }
                                 state.menu_rasterizer.draw_text(
                                     "W / S or Up / Down to Navigate | Enter to Confirm",
@@ -1654,10 +1863,57 @@ impl ApplicationHandler for SilentHillApp {
                                     true,
                                 );
                             }
-                            TitlePhase::TransitionToGame => {
+                            TitlePhase::TestRoomsSelect => {
                                 state.menu_rasterizer.draw_text(
-                                    "LOADING RESTROOM STAGE RR21.MAP...",
-                                    400,
+                                    "TEST ROOMS & FOG CALIBRATION",
+                                    390,
+                                    150,
+                                    3,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "[Select Stage to Boot into Simulation]",
+                                    420,
+                                    195,
+                                    2,
+                                    cyan,
+                                    true,
+                                );
+
+                                for (idx, room) in TestRoomKind::ALL.iter().enumerate() {
+                                    let is_sel = idx == state.menu_ctrl.title_sm.test_room_index;
+                                    let color = if is_sel { yellow } else { white };
+                                    let y = 270 + idx * 60;
+                                    if is_sel {
+                                        state
+                                            .menu_rasterizer
+                                            .draw_text(">", 280, y, 2, yellow, true);
+                                    }
+                                    state.menu_rasterizer.draw_text(
+                                        room.label(),
+                                        320,
+                                        y,
+                                        2,
+                                        color,
+                                        true,
+                                    );
+                                }
+
+                                state.menu_rasterizer.draw_text(
+                                    "[Up/Down: Select Room | Enter: Boot Stage | Esc: Back]",
+                                    350,
+                                    660,
+                                    2,
+                                    muted,
+                                    true,
+                                );
+                            }
+                            TitlePhase::TransitionToGame => {
+                                let label = state.menu_ctrl.title_sm.selected_test_room.label();
+                                state.menu_rasterizer.draw_text(
+                                    &format!("LOADING STAGE: {}...", label),
+                                    350,
                                     500,
                                     2,
                                     white,
@@ -1722,9 +1978,45 @@ fn main() {
         "Starting Silent Hill 2 Open Port Interactive Playable Test with Skeletal Mesh Runtime..."
     );
 
+    // Parse CLI arguments for test rooms & fog testing
+    let args: Vec<String> = std::env::args().collect();
+    let mut initial_test_room = None;
+    let mut initial_fog_debug = false;
+
+    for arg in &args[1..] {
+        if arg == "--test-fog" {
+            initial_fog_debug = true;
+            if initial_test_room.is_none() {
+                initial_test_room = Some(TestRoomKind::SyntheticFogRunway);
+            }
+        } else if let Some(room_str) = arg.strip_prefix("--test-room=") {
+            initial_test_room = match room_str {
+                "ob01" | "observation" | "outdoor" => Some(TestRoomKind::ObservationDeck),
+                "rr21" | "restroom" => Some(TestRoomKind::RestroomStart),
+                "runway" | "fog" => Some(TestRoomKind::SyntheticFogRunway),
+                "boiler" | "fallback" => Some(TestRoomKind::BoilerRoom),
+                _ => {
+                    tracing::warn!(
+                        "Unknown test room: '{}', defaulting to Observation Deck",
+                        room_str
+                    );
+                    Some(TestRoomKind::ObservationDeck)
+                }
+            };
+        }
+    }
+
+    if let Some(r) = initial_test_room {
+        tracing::info!("CLI parameter selected test room: {:?}", r);
+    }
+
     let event_loop = EventLoop::new().expect("Failed to create winit event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = SilentHillApp::default();
+    let mut app = SilentHillApp {
+        state: None,
+        initial_test_room,
+        initial_fog_debug,
+    };
     event_loop.run_app(&mut app).expect("Event loop error");
 }

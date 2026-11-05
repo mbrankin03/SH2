@@ -4,6 +4,9 @@
 //!   `titleBattleSelect`, `titleRiddleSelect`, `titleFadeOutNewGame`, `titleFadeOut`, `titleExit`).
 //! - Sound triggers: `0x2710` (cursor move), `0x2712` (confirm), `0x2713` (cancel), `15002` (game start transition).
 
+use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
+use crate::font::TextRasterizer;
 use serde::{Deserialize, Serialize};
 use sh2_core::config::{ActionDifficulty, RiddleDifficulty};
 use sh2_core::scenario::ScenarioKind;
@@ -397,6 +400,457 @@ impl TitleStateMachine {
     }
 }
 
+// -----------------------------------------------------------------------------------------
+// Authentic Proportional Font Rasterization Helpers (`AtlasFont`)
+// -----------------------------------------------------------------------------------------
+
+/// Draws the authentic title screen text elements onto `rast`.
+/// Replaces legacy fixed 8x8 font rendering with authentic proportional glyphs,
+/// two-tone gradient shading, and drop shadows matching PS2 prototype `title.c` (`0x002BAF48`).
+pub fn draw_title_screen(
+    sm: &TitleStateMachine,
+    button_sprites: Option<&ButtonSpriteSheet>,
+    font: &AtlasFont,
+    rast: &mut TextRasterizer,
+) {
+    let center_x = rast.width / 2;
+
+    match sm.phase {
+        TitlePhase::TitleLogo => {
+            if let Some(atlas) = button_sprites {
+                let rect = AuthenticButtonSprite::StartPrompt.atlas_rect();
+                let scale = 0.44f32;
+                let w = (rect.width as f32 * scale) as i32;
+                let x = center_x as i32 - (w / 2);
+                let y = 610;
+
+                let pulse = (sm.splash_timer * 3.5).sin() * 0.15 + 0.85;
+                atlas.blit_sprite(
+                    AuthenticButtonSprite::StartPrompt,
+                    &mut rast.pixels,
+                    rast.width,
+                    rast.height,
+                    x,
+                    y,
+                    scale,
+                    [1.0, 1.0, 1.0, pulse],
+                );
+            } else {
+                font.draw_line_centered(
+                    rast,
+                    "PRESS ANY KEY OR ENTER TO START",
+                    (center_x, 618),
+                    22,
+                    Sh2TextColor::GoldSelected,
+                    true,
+                );
+            }
+        }
+        TitlePhase::MainMenu => {
+            let row_h = 36;
+            let start_y = 350;
+            for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
+                let is_selected = idx == sm.main_menu_index;
+                let y = start_y + idx * row_h;
+                let text = opt.label();
+                let style = if is_selected {
+                    Sh2TextColor::GoldSelected
+                } else {
+                    Sh2TextColor::SilverUnselected
+                };
+
+                let full_label = if is_selected {
+                    format!("> {}", text)
+                } else {
+                    format!("  {}", text)
+                };
+
+                font.draw_line_centered(rast, &full_label, (center_x, y), 26, style, true);
+            }
+
+            font.draw_line_centered(
+                rast,
+                "W / S or Up / Down to Navigate | Enter to Confirm",
+                (center_x, 658),
+                16,
+                Sh2TextColor::MutedFooter,
+                true,
+            );
+        }
+        TitlePhase::Credits => {
+            font.draw_line_centered(
+                rast,
+                "SILENT HILL 2 CREDITS",
+                (center_x, 240),
+                30,
+                Sh2TextColor::AmberHeader,
+                true,
+            );
+            font.draw_line_centered(
+                rast,
+                "DIRECTOR: KEIICHIRO TOYAMA",
+                (center_x, 330),
+                22,
+                Sh2TextColor::White,
+                true,
+            );
+            font.draw_line_centered(
+                rast,
+                "CGI & CHARACTER DESIGN: TAKAYOSHI SATO",
+                (center_x, 380),
+                22,
+                Sh2TextColor::White,
+                true,
+            );
+            font.draw_line_centered(
+                rast,
+                "MUSIC & SOUND DESIGN: AKIRA YAMAOKA",
+                (center_x, 430),
+                22,
+                Sh2TextColor::White,
+                true,
+            );
+            font.draw_line_centered(
+                rast,
+                "[Press Esc / Cancel to Return]",
+                (center_x, 620),
+                18,
+                Sh2TextColor::MutedFooter,
+                true,
+            );
+        }
+        _ => {}
+    }
+}
+
+/// Draws the authentic scenario selection screen onto `rast`.
+pub fn draw_scenario_selection(
+    sm: &TitleStateMachine,
+    button_sprites: Option<&ButtonSpriteSheet>,
+    font: &AtlasFont,
+    rast: &mut TextRasterizer,
+) {
+    let center_x = rast.width / 2;
+
+    if let Some(atlas) = button_sprites {
+        let center_xi = center_x as i32;
+        let scenarios = [
+            (0, AuthenticButtonSprite::MainScenario),
+            (1, AuthenticButtonSprite::SubScenario),
+        ];
+        for (idx, sprite) in &scenarios {
+            let is_selected = *idx == sm.scenario_index;
+            let y = 390 + *idx as i32 * 75;
+            let rect = sprite.atlas_rect();
+            let scale = 0.48f32;
+            let w = (rect.width as f32 * scale) as i32;
+            let x = center_xi - (w / 2);
+
+            if is_selected {
+                let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
+                let glow_scale = 0.65f32;
+                let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
+                let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
+                let glow_x = center_xi - (glow_w / 2);
+                let btn_h = (rect.height as f32 * scale) as i32;
+                let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                atlas.blit_sprite(
+                    AuthenticButtonSprite::GlowCursor,
+                    &mut rast.pixels,
+                    rast.width,
+                    rast.height,
+                    glow_x,
+                    glow_y,
+                    glow_scale,
+                    [1.0, 1.0, 1.0, 0.90],
+                );
+            }
+
+            let tint = if is_selected {
+                [1.0f32, 0.95, 0.75, 1.0]
+            } else {
+                [0.70f32, 0.70, 0.72, 0.75]
+            };
+
+            atlas.blit_sprite(
+                *sprite,
+                &mut rast.pixels,
+                rast.width,
+                rast.height,
+                x,
+                y,
+                scale,
+                tint,
+            );
+        }
+    } else {
+        font.draw_line_centered(
+            rast,
+            "SELECT SCENARIO",
+            (center_x, 320),
+            28,
+            Sh2TextColor::AmberHeader,
+            true,
+        );
+        let scenarios = [
+            "LETTER FROM SILENT HEAVEN (JAMES)",
+            "BORN FROM A WISH (MARIA)",
+        ];
+        for (idx, name) in scenarios.iter().enumerate() {
+            let is_selected = idx == sm.scenario_index;
+            let y = 410 + idx * 46;
+            let style = if is_selected {
+                Sh2TextColor::GoldSelected
+            } else {
+                Sh2TextColor::SilverUnselected
+            };
+            let line = if is_selected {
+                format!("> {}", name)
+            } else {
+                format!("  {}", name)
+            };
+            font.draw_line_centered(rast, &line, (center_x, y), 22, style, true);
+        }
+    }
+
+    font.draw_line_centered(
+        rast,
+        "[Up/Down: Select | Enter: Confirm | Esc: Back]",
+        (center_x, 658),
+        16,
+        Sh2TextColor::MutedFooter,
+        true,
+    );
+}
+
+/// Draws action / riddle difficulty selection onto `rast`.
+pub fn draw_difficulty_selection(
+    sm: &TitleStateMachine,
+    button_sprites: Option<&ButtonSpriteSheet>,
+    font: &AtlasFont,
+    rast: &mut TextRasterizer,
+) {
+    let center_x = rast.width / 2;
+    let is_action = sm.phase == TitlePhase::ActionDifficultySelect;
+
+    if let Some(atlas) = button_sprites {
+        let center_xi = center_x as i32;
+        let hdr_sprite = if is_action {
+            AuthenticButtonSprite::ActionLevel
+        } else {
+            AuthenticButtonSprite::RiddleLevel
+        };
+        let hdr_rect = hdr_sprite.atlas_rect();
+        let hdr_scale = 0.55f32;
+        let hdr_w = (hdr_rect.width as f32 * hdr_scale) as i32;
+        atlas.blit_sprite(
+            hdr_sprite,
+            &mut rast.pixels,
+            rast.width,
+            rast.height,
+            center_xi - (hdr_w / 2),
+            260,
+            hdr_scale,
+            [1.0, 1.0, 1.0, 1.0],
+        );
+
+        if is_action {
+            let choices = [
+                (ActionDifficulty::Hard, AuthenticButtonSprite::Hard),
+                (ActionDifficulty::Normal, AuthenticButtonSprite::Normal),
+                (ActionDifficulty::Easy, AuthenticButtonSprite::Easy),
+            ];
+            for (idx, (diff, sprite)) in choices.iter().enumerate() {
+                let is_selected = *diff == sm.action_difficulty;
+                let y = 360 + idx as i32 * 65;
+                let rect = sprite.atlas_rect();
+                let scale = 0.52f32;
+                let w = (rect.width as f32 * scale) as i32;
+                let x = center_xi - (w / 2);
+
+                if is_selected {
+                    let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
+                    let glow_scale = 0.46f32;
+                    let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
+                    let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
+                    let glow_x = center_xi - (glow_w / 2);
+                    let btn_h = (rect.height as f32 * scale) as i32;
+                    let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                    atlas.blit_sprite(
+                        AuthenticButtonSprite::GlowCursor,
+                        &mut rast.pixels,
+                        rast.width,
+                        rast.height,
+                        glow_x,
+                        glow_y,
+                        glow_scale,
+                        [1.0, 1.0, 1.0, 0.90],
+                    );
+                }
+
+                let tint = if is_selected {
+                    [1.0f32, 0.95, 0.75, 1.0]
+                } else {
+                    [0.70f32, 0.70, 0.72, 0.75]
+                };
+
+                atlas.blit_sprite(
+                    *sprite,
+                    &mut rast.pixels,
+                    rast.width,
+                    rast.height,
+                    x,
+                    y,
+                    scale,
+                    tint,
+                );
+            }
+        } else {
+            let choices = [
+                (RiddleDifficulty::Hard, AuthenticButtonSprite::Hard),
+                (RiddleDifficulty::Normal, AuthenticButtonSprite::Normal),
+                (RiddleDifficulty::Easy, AuthenticButtonSprite::Easy),
+                (RiddleDifficulty::Extra, AuthenticButtonSprite::Beginner),
+            ];
+            for (idx, (diff, sprite)) in choices.iter().enumerate() {
+                let is_selected = *diff == sm.riddle_difficulty;
+                let y = 350 + idx as i32 * 58;
+                let rect = sprite.atlas_rect();
+                let scale = 0.52f32;
+                let w = (rect.width as f32 * scale) as i32;
+                let x = center_xi - (w / 2);
+
+                if is_selected {
+                    let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
+                    let glow_scale = 0.46f32;
+                    let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
+                    let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
+                    let glow_x = center_xi - (glow_w / 2);
+                    let btn_h = (rect.height as f32 * scale) as i32;
+                    let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                    atlas.blit_sprite(
+                        AuthenticButtonSprite::GlowCursor,
+                        &mut rast.pixels,
+                        rast.width,
+                        rast.height,
+                        glow_x,
+                        glow_y,
+                        glow_scale,
+                        [1.0, 1.0, 1.0, 0.90],
+                    );
+                }
+
+                let tint = if is_selected {
+                    [1.0f32, 0.95, 0.75, 1.0]
+                } else {
+                    [0.70f32, 0.70, 0.72, 0.75]
+                };
+
+                atlas.blit_sprite(
+                    *sprite,
+                    &mut rast.pixels,
+                    rast.width,
+                    rast.height,
+                    x,
+                    y,
+                    scale,
+                    tint,
+                );
+            }
+        }
+    } else {
+        let title_text = if is_action {
+            "ACTION DIFFICULTY"
+        } else {
+            "RIDDLE DIFFICULTY"
+        };
+        font.draw_line_centered(
+            rast,
+            title_text,
+            (center_x, 320),
+            28,
+            Sh2TextColor::AmberHeader,
+            true,
+        );
+        let diff_str = if is_action {
+            format!("{:?}", sm.action_difficulty).to_uppercase()
+        } else {
+            format!("{:?}", sm.riddle_difficulty).to_uppercase()
+        };
+        font.draw_line_centered(
+            rast,
+            &format!("> {} <", diff_str),
+            (center_x, 410),
+            26,
+            Sh2TextColor::GoldSelected,
+            true,
+        );
+    }
+
+    let footer_text = if is_action {
+        "[Up/Down: Change | Enter: Next | Esc: Back]"
+    } else {
+        "[Up/Down: Change | Enter: Start Game | Esc: Back]"
+    };
+    font.draw_line_centered(
+        rast,
+        footer_text,
+        (center_x, 658),
+        16,
+        Sh2TextColor::MutedFooter,
+        true,
+    );
+}
+
+/// Draws the test room selection stage list onto `rast`.
+pub fn draw_test_rooms_screen(sm: &TitleStateMachine, font: &AtlasFont, rast: &mut TextRasterizer) {
+    let center_x = rast.width / 2;
+
+    font.draw_line_centered(
+        rast,
+        "TEST ROOMS & FOG CALIBRATION",
+        (center_x, 130),
+        28,
+        Sh2TextColor::AmberHeader,
+        true,
+    );
+    font.draw_line_centered(
+        rast,
+        "[Select Stage to Boot into Simulation]",
+        (center_x, 170),
+        18,
+        Sh2TextColor::Cyan,
+        true,
+    );
+
+    let start_y = 220;
+    let row_h = 36;
+    for (idx, room) in TestRoomKind::ALL.iter().enumerate() {
+        let is_sel = idx == sm.test_room_index;
+        let y = start_y + idx * row_h;
+        let style = if is_sel {
+            Sh2TextColor::GoldSelected
+        } else {
+            Sh2TextColor::SilverUnselected
+        };
+        let label = if is_sel {
+            format!("> {}", room.label())
+        } else {
+            format!("  {}", room.label())
+        };
+        font.draw_line_centered(rast, &label, (center_x, y), 22, style, true);
+    }
+
+    font.draw_line_centered(
+        rast,
+        "[Up/Down: Select Room | Enter: Boot Stage | Esc: Back]",
+        (center_x, 658),
+        16,
+        Sh2TextColor::MutedFooter,
+        true,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,5 +965,39 @@ mod tests {
         assert_eq!(cue, MenuSoundCue::GameStartTransition);
         assert_eq!(sm.phase, TitlePhase::TransitionToGame);
         assert_eq!(sm.selected_test_room, TestRoomKind::SyntheticFogRunway);
+    }
+
+    #[test]
+    fn test_menu_rendering_with_atlas_font() {
+        let sm = TitleStateMachine::new();
+        let font = AtlasFont::load_embedded();
+        let mut rast = TextRasterizer::new(640, 480);
+
+        // Test Main Menu rasterization
+        let mut main_sm = sm.clone();
+        main_sm.phase = TitlePhase::MainMenu;
+        draw_title_screen(&main_sm, None, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+
+        // Test Test Rooms rasterization
+        rast.clear();
+        let mut tr_sm = sm.clone();
+        tr_sm.phase = TitlePhase::TestRoomsSelect;
+        draw_test_rooms_screen(&tr_sm, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+
+        // Test Scenario Select without button atlas
+        rast.clear();
+        let mut scen_sm = sm.clone();
+        scen_sm.phase = TitlePhase::ScenarioSelect;
+        draw_scenario_selection(&scen_sm, None, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+
+        // Test Difficulty Select without button atlas
+        rast.clear();
+        let mut diff_sm = sm.clone();
+        diff_sm.phase = TitlePhase::ActionDifficultySelect;
+        draw_difficulty_selection(&diff_sm, None, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
     }
 }

@@ -1,6 +1,8 @@
 //! In-Game Options Menu replicating SH2:EE (Enhanced Edition) advanced options architecture.
 //! References: `Patches/CustomAdvancedOptions.cpp`, `Patches/OptionsMenuTweaks.cpp`.
 
+use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::font::TextRasterizer;
 use sh2_core::config::AppConfig;
 
 /// High-level Options category tabs.
@@ -453,6 +455,80 @@ impl OptionsMenu {
     }
 }
 
+// -----------------------------------------------------------------------------------------
+// Authentic Proportional Options Screen Rasterization (`AtlasFont`)
+// -----------------------------------------------------------------------------------------
+
+/// Draws the authentic options screen onto `rast` using proportional fonts,
+/// two-tone gradient shading, and authentic SH2 styling.
+pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut TextRasterizer) {
+    let center_x = rast.width / 2;
+
+    let tab_name = menu.active_tab.label();
+    font.draw_line_centered(
+        rast,
+        &format!("OPTIONS: {}", tab_name),
+        (center_x, 90),
+        28,
+        Sh2TextColor::AmberHeader,
+        true,
+    );
+
+    font.draw_line_centered(
+        rast,
+        "[Q / E : Switch Category]",
+        (center_x, 130),
+        18,
+        Sh2TextColor::Cyan,
+        true,
+    );
+
+    let start_y = 180;
+    let row_h = 38;
+    let label_x = 240;
+    let colon_x = 640;
+    let val_x = 670;
+
+    for i in 0..menu.item_count() {
+        if let Some((label, val)) = menu.item_display(i) {
+            let is_sel = i == menu.selected_index;
+            let y = start_y + i * row_h;
+            let style = if is_sel {
+                Sh2TextColor::GoldSelected
+            } else {
+                Sh2TextColor::SilverUnselected
+            };
+
+            let prefix = if is_sel { "> " } else { "  " };
+            let full_label = format!("{}{}", prefix, label);
+
+            font.draw_line_styled(rast, &full_label, (label_x, y), 22, style, true);
+            font.draw_line_styled(rast, ":", (colon_x, y), 22, Sh2TextColor::MutedFooter, true);
+            font.draw_line_styled(rast, &val, (val_x, y), 22, style, true);
+        }
+    }
+
+    if menu.is_dirty {
+        font.draw_line_centered(
+            rast,
+            "* UNSAVED CHANGES [Enter to Save | Esc to Discard]",
+            (center_x, 658),
+            16,
+            Sh2TextColor::GoldSelected,
+            true,
+        );
+    } else {
+        font.draw_line_centered(
+            rast,
+            "[Esc / Backspace: Return to Main Menu]",
+            (center_x, 658),
+            16,
+            Sh2TextColor::MutedFooter,
+            true,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +566,16 @@ mod tests {
             menu.draft_config.video.resolution,
             InternalResolution::Native
         );
+    }
+
+    #[test]
+    fn test_options_rendering_with_atlas_font() {
+        let original = AppConfig::default();
+        let menu = OptionsMenu::new(original);
+        let font = AtlasFont::load_embedded();
+        let mut rast = TextRasterizer::new(800, 600);
+
+        draw_options_screen(&menu, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
     }
 }

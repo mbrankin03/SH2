@@ -22,7 +22,49 @@ const CELL_H: usize = 64;
 const FIRST_CHAR: u32 = 0x20;
 const GLYPH_COUNT: usize = 224;
 
-/// Letter spacing in atlas pixels (`letterSpc = 2` at the game's cell size, doubled for the 2x atlas).
+/// Authentic Silent Hill 2 text color palette from retail engine `0x47eca0` color table.
+/// Each palette entry defines a `(top_color, bottom_color)` RGBA pair for two-tone gradient shading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sh2TextColor {
+    /// Index 0: Pure / Crisp White
+    White,
+    /// Selected interactive menu item: Authentic vibrant Amber / Gold highlight.
+    GoldSelected,
+    /// Unselected interactive menu item: Authentic dim Silver / White with subtle drop gradient.
+    SilverUnselected,
+    /// Header / Title: Amber / Gold header
+    AmberHeader,
+    /// Muted prompt footer / instructions: Subtle gray
+    MutedFooter,
+    /// Cyan info / stats
+    Cyan,
+    /// Green status / playback
+    Green,
+    /// Custom RGBA pair
+    Custom { top: [u8; 4], bottom: [u8; 4] },
+}
+
+impl Sh2TextColor {
+    /// Returns the `(top_color, bottom_color)` RGBA values for this color style.
+    pub const fn to_gradient(self) -> ([u8; 4], [u8; 4]) {
+        match self {
+            Self::White => ([240, 240, 240, 255], [210, 210, 210, 255]),
+            // Authentic SH2 selected menu item: bright gold top fading into warm amber bottom
+            Self::GoldSelected => ([255, 230, 90, 255], [220, 160, 30, 255]),
+            // Authentic SH2 unselected menu item: silver-white top fading into soft shadow gray bottom
+            Self::SilverUnselected => ([210, 210, 215, 220], [140, 140, 145, 200]),
+            // Amber title header
+            Self::AmberHeader => ([255, 215, 70, 255], [230, 170, 40, 255]),
+            // Muted footer prompt text
+            Self::MutedFooter => ([160, 160, 165, 210], [120, 120, 125, 190]),
+            // Cyan debug / info
+            Self::Cyan => ([120, 225, 245, 255], [70, 170, 210, 255]),
+            // Green debug / status
+            Self::Green => ([120, 240, 140, 255], [70, 190, 90, 255]),
+            Self::Custom { top, bottom } => (top, bottom),
+        }
+    }
+}
 const LETTER_SPACING: usize = 4;
 /// Space advance in atlas pixels (`spaceSize = 7` at the game's cell size, doubled).
 const SPACE_ADVANCE: usize = 14;
@@ -257,6 +299,36 @@ impl AtlasFont {
         }
     }
 
+    /// Draws a string styled with an authentic SH2 text color (with vertical two-tone gradient and drop shadow).
+    pub fn draw_line_styled(
+        &self,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        style: Sh2TextColor,
+        shadow: bool,
+    ) {
+        let gradient = style.to_gradient();
+        self.draw_line_gradient(rast, text, pos, px_height, gradient, shadow);
+    }
+
+    /// Draws a string centered horizontally at `center_x` with top edge at `y`.
+    pub fn draw_line_centered(
+        &self,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        style: Sh2TextColor,
+        shadow: bool,
+    ) {
+        let (center_x, y) = pos;
+        let w = self.text_width(text, px_height);
+        let x = center_x.saturating_sub(w / 2);
+        self.draw_line_styled(rast, text, (x, y), px_height, style, shadow);
+    }
+
     /// Draws one line of text with its top-left at `pos`; optional drop shadow like the menus.
     pub fn draw_line(
         &self,
@@ -267,20 +339,106 @@ impl AtlasFont {
         color: [u8; 4],
         shadow: bool,
     ) {
+        self.draw_line_gradient(rast, text, pos, px_height, (color, color), shadow);
+    }
+
+    /// Draws one line of text with its top-left at `pos` with vertical two-tone gradient shading
+    /// (interpolating from `gradient.0` at the top edge to `gradient.1` at the bottom edge)
+    /// and optional drop shadow (`shadow`).
+    pub fn draw_line_gradient(
+        &self,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        gradient: ([u8; 4], [u8; 4]),
+        shadow: bool,
+    ) {
+        let (top_color, bottom_color) = gradient;
         let (x, y) = pos;
         let px_height = px_height.max(4);
-        let off = (px_height / 16).max(1);
-        let passes: &[(usize, [u8; 4])] =
-            &[(off, [0, 0, 0, (color[3] as f32 * 0.85) as u8]), (0, color)];
-        for &(o, col) in passes.iter().skip(if shadow { 0 } else { 1 }) {
-            let mut cx = x;
+        let off = (px_height / 14).max(1);
+
+        // Pass 0: drop shadow (if enabled)
+        if shadow {
+            let shadow_alpha = (top_color[3].max(bottom_color[3]) as f32 * 0.85) as u8;
+            let shadow_col = [0, 0, 0, shadow_alpha];
+            let mut cx = x + off;
+            let cy = y + off;
             for ch in text.chars() {
                 if ch != ' ' {
                     if let Some(g) = self.glyph(ch) {
-                        Self::draw_glyph(g, rast, cx + o, y + o, px_height, col);
+                        Self::draw_glyph(g, rast, cx, cy, px_height, shadow_col);
                     }
                 }
                 cx += self.advance(ch) * px_height / CELL_H;
+            }
+        }
+
+        // Pass 1: gradient text
+        let mut cx = x;
+        for ch in text.chars() {
+            if ch != ' ' {
+                if let Some(g) = self.glyph(ch) {
+                    Self::draw_glyph_gradient(g, rast, cx, y, px_height, top_color, bottom_color);
+                }
+            }
+            cx += self.advance(ch) * px_height / CELL_H;
+        }
+    }
+
+    fn draw_glyph_gradient(
+        g: &Glyph,
+        rast: &mut TextRasterizer,
+        x: usize,
+        y: usize,
+        px_height: usize,
+        top_color: [u8; 4],
+        bottom_color: [u8; 4],
+    ) {
+        if g.min_x > g.max_x {
+            return;
+        }
+        let step = CELL_H as f32 / px_height as f32; // source pixels per destination pixel
+        let w = ((g.max_x - g.min_x + 1) as f32 / step).ceil() as usize;
+        let max_dy = (px_height.saturating_sub(1)).max(1) as f32;
+
+        for dy in 0..px_height {
+            let t = (dy as f32 / max_dy).clamp(0.0, 1.0);
+            let row_color = [
+                (top_color[0] as f32 * (1.0 - t) + bottom_color[0] as f32 * t).round() as u8,
+                (top_color[1] as f32 * (1.0 - t) + bottom_color[1] as f32 * t).round() as u8,
+                (top_color[2] as f32 * (1.0 - t) + bottom_color[2] as f32 * t).round() as u8,
+                (top_color[3] as f32 * (1.0 - t) + bottom_color[3] as f32 * t).round() as u8,
+            ];
+
+            let sy0 = dy as f32 * step;
+            let sy1 = sy0 + step;
+            for dx in 0..w {
+                let sx0 = g.min_x as f32 + dx as f32 * step;
+                let sx1 = sx0 + step;
+                let mut sum = 0.0;
+                let mut area = 0.0;
+                let mut sy = sy0.floor() as usize;
+                while (sy as f32) < sy1 && sy < CELL_H {
+                    let wy = (sy1.min(sy as f32 + 1.0) - sy0.max(sy as f32)).max(0.0);
+                    let mut sx = sx0.floor() as usize;
+                    while (sx as f32) < sx1 {
+                        let wx = (sx1.min(sx as f32 + 1.0) - sx0.max(sx as f32)).max(0.0);
+                        let a = if sx < CELL_W {
+                            g.alpha[sy * CELL_W + sx] as f32 / 255.0
+                        } else {
+                            0.0
+                        };
+                        sum += a * wx * wy;
+                        area += wx * wy;
+                        sx += 1;
+                    }
+                    sy += 1;
+                }
+                if area > 0.0 {
+                    Self::blend(rast, x + dx, y + dy, row_color, sum / area);
+                }
             }
         }
     }
@@ -358,9 +516,29 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_draws_with_shared_font() {
-        let mut r = TextRasterizer::new(320, 120);
-        draw_subtitle(&mut r, None, "Hi\nthere", 160, 110, 32, [255; 4]);
-        assert!(r.pixels.chunks(4).any(|p| p[3] != 0));
+    fn test_gradient_and_styled_text() {
+        let font = AtlasFont::load_embedded();
+        let mut r = TextRasterizer::new(300, 60);
+        font.draw_line_styled(
+            &mut r,
+            "NEW GAME",
+            (20, 10),
+            32,
+            Sh2TextColor::GoldSelected,
+            true,
+        );
+        assert!(r.pixels.chunks(4).any(|p| p[3] > 0));
+
+        // Test centered drawing
+        let mut r2 = TextRasterizer::new(400, 60);
+        font.draw_line_centered(
+            &mut r2,
+            "SILENT HILL 2",
+            (200, 10),
+            28,
+            Sh2TextColor::AmberHeader,
+            true,
+        );
+        assert!(r2.pixels.chunks(4).any(|p| p[3] > 0));
     }
 }

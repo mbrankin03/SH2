@@ -83,6 +83,70 @@ pub struct AnimationFile {
     pub frames: Vec<AnimationFrame>,
 }
 
+/// Tests if the animation byte stream can be validly and completely decoded with the given bone count stride.
+fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
+    if bone_count == 0 {
+        return false;
+    }
+    let per_frame = (bone_count + 7) & !7;
+    let mut p = 0usize;
+    let mut block = 0usize;
+
+    while p + 4 <= data.len() {
+        let header = match read_u32(data, p) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        p += 4;
+
+        for j in 0..8 {
+            let t = ((header >> (4 * j)) & 7) as u8;
+            let bone_idx = ((block * 8) % per_frame) + j;
+            let is_root = if bone_idx < parents.len() {
+                parents[bone_idx] == 255
+            } else {
+                false
+            };
+
+            let need = match t {
+                0 => 0,
+                1 => 6,
+                2 => {
+                    if is_root {
+                        18
+                    } else {
+                        12
+                    }
+                }
+                3 => 16,
+                4 | 5 => {
+                    if is_root {
+                        28
+                    } else {
+                        22
+                    }
+                }
+                6 => {
+                    if is_root {
+                        40
+                    } else {
+                        28
+                    }
+                }
+                _ => return false,
+            };
+
+            if p + need > data.len() {
+                return false;
+            }
+            p += need;
+        }
+        block += 1;
+    }
+
+    p == data.len() && (block * 8).is_multiple_of(per_frame)
+}
+
 /// Parses raw `.anm` bytes into an [`AnimationFile`] given the target model's bone hierarchy.
 ///
 /// # Arguments
@@ -107,12 +171,12 @@ pub fn parse_anm(
     }
 
     if bone_count == 71 {
-        if let Ok(anm) = parse_anm_with_stride(data, 71, parents) {
-            if !anm.frames.is_empty() {
-                return Ok(anm);
-            }
+        if is_valid_anm_stride(data, 71, parents) {
+            return parse_anm_with_stride(data, 71, parents);
         }
-        return parse_anm_with_stride(data, 41, parents);
+        if is_valid_anm_stride(data, 41, parents) {
+            return parse_anm_with_stride(data, 41, parents);
+        }
     }
 
     parse_anm_with_stride(data, bone_count, parents)

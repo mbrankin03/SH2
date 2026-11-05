@@ -225,14 +225,11 @@ fn test_sh2_18_full_menu_and_options_flow() {
     controller.tick(0.016);
     assert!(controller.in_game_active);
 
-    // 5. Test Rooms / Debug Stage Selection flow
+    // 5. Test Rooms / Debug Stage Selection flow via Options Menu
     let mut debug_controller = AppMenuController::new(&config_path);
-    debug_controller.title_sm.phase = TitlePhase::MainMenu;
-    debug_controller.title_sm.main_menu_index = 3; // TEST ROOMS
-    assert_eq!(
-        MainMenuOption::ALL[debug_controller.title_sm.main_menu_index],
-        MainMenuOption::TestRooms
-    );
+    debug_controller.title_sm.phase = TitlePhase::OptionsMenu;
+    debug_controller.options_menu.active_tab = sh2_ui::OptionsTab::Game;
+    debug_controller.options_menu.selected_index = 5; // Test Rooms
 
     let cue = debug_controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(cue, MenuSoundCue::Confirm);
@@ -254,7 +251,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     );
     assert_eq!(
         sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
-        "FMV CUTSCENE PLAYER (1080P60 THEATER)"
+        "FMV Cutscene Player"
     );
 
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
@@ -265,7 +262,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     );
     assert_eq!(
         sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
-        "MODEL & TEXTURE VIEWER"
+        "Model & Texture Viewer"
     );
 
     let cue = debug_controller.handle_nav(MenuNavAction::Confirm);

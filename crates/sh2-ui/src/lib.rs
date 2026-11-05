@@ -8,11 +8,14 @@ pub mod menu;
 pub mod options;
 pub mod quickslots;
 
-pub use atlas_font::{draw_subtitle, AtlasFont};
+pub use atlas_font::{draw_subtitle, AtlasFont, Sh2TextColor};
 pub use button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
 pub use font::TextRasterizer;
-pub use menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine};
-pub use options::{OptionsMenu, OptionsSoundCue, OptionsTab};
+pub use menu::{
+    draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
+    MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,
+};
+pub use options::{draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsTab};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActivePanel {

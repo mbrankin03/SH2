@@ -19,6 +19,7 @@ pub enum AuthenticButtonSprite {
     Continue,
     NewGame,
     Options,
+    Movies,
     Exit,
     ActionLevel,
     RiddleLevel,
@@ -30,6 +31,7 @@ pub enum AuthenticButtonSprite {
     MainScenario,
     SubScenario,
     StartPrompt,
+    TestRooms,
 }
 
 impl AuthenticButtonSprite {
@@ -37,94 +39,106 @@ impl AuthenticButtonSprite {
     pub fn atlas_rect(&self) -> AtlasRect {
         match self {
             Self::Load => AtlasRect {
-                x: 264,
-                y: 411,
-                width: 246,
-                height: 73,
+                x: 273,
+                y: 399,
+                width: 263,
+                height: 98,
             },
             Self::Continue => AtlasRect {
-                x: 165,
-                y: 539,
-                width: 447,
-                height: 78,
+                x: 170,
+                y: 531,
+                width: 466,
+                height: 98,
             },
             Self::NewGame => AtlasRect {
-                x: 152,
-                y: 666,
-                width: 472,
-                height: 78,
+                x: 161,
+                y: 655,
+                width: 487,
+                height: 98,
             },
             Self::Options => AtlasRect {
-                x: 185,
-                y: 799,
-                width: 404,
-                height: 68,
+                x: 191,
+                y: 783,
+                width: 422,
+                height: 98,
+            },
+            Self::Movies => AtlasRect {
+                x: 268,
+                y: 909,
+                width: 265,
+                height: 98,
             },
             Self::Exit => AtlasRect {
-                x: 290,
-                y: 1692,
-                width: 200,
-                height: 83,
+                x: 299,
+                y: 1685,
+                width: 226,
+                height: 97,
             },
             Self::ActionLevel => AtlasRect {
-                x: 890,
-                y: 411,
-                width: 510,
-                height: 73,
+                x: 887,
+                y: 401,
+                width: 556,
+                height: 92,
             },
             Self::RiddleLevel => AtlasRect {
-                x: 888,
-                y: 1053,
-                width: 507,
-                height: 76,
+                x: 897,
+                y: 1045,
+                width: 540,
+                height: 91,
             },
             Self::Hard => AtlasRect {
-                x: 1051,
-                y: 539,
-                width: 209,
-                height: 74,
+                x: 1060,
+                y: 530,
+                width: 225,
+                height: 90,
             },
             Self::Normal => AtlasRect {
-                x: 1000,
-                y: 666,
-                width: 300,
-                height: 75,
+                x: 1009,
+                y: 657,
+                width: 329,
+                height: 92,
             },
             Self::Easy => AtlasRect {
-                x: 1060,
-                y: 799,
-                width: 185,
-                height: 68,
+                x: 1068,
+                y: 789,
+                width: 211,
+                height: 92,
             },
             Self::Beginner => AtlasRect {
-                x: 968,
-                y: 926,
-                width: 360,
-                height: 71,
+                x: 977,
+                y: 917,
+                width: 375,
+                height: 91,
             },
             Self::GlowCursor => AtlasRect {
-                x: 776,
+                x: 792,
                 y: 1665,
                 width: 757,
                 height: 126,
             },
             Self::MainScenario => AtlasRect {
-                x: 84,
-                y: 1813,
-                width: 1378,
-                height: 81,
+                x: 86,
+                y: 1804,
+                width: 1400,
+                height: 99,
             },
             Self::SubScenario => AtlasRect {
-                x: 241,
-                y: 1942,
-                width: 1054,
-                height: 80,
+                x: 246,
+                y: 1932,
+                width: 1073,
+                height: 99,
             },
             Self::StartPrompt => AtlasRect {
                 x: 0,
                 y: 0,
                 width: 1102,
                 height: 84,
+            },
+            Self::TestRooms => AtlasRect {
+                x: 0,
+                y: 0,
+                width: 390,
+                height: 98,
             },
         }
     }
@@ -138,12 +152,16 @@ pub struct ButtonSpriteSheet {
     pub start_prompt_rgba: Option<Vec<u8>>,
     pub start_prompt_width: usize,
     pub start_prompt_height: usize,
+    pub test_rooms_rgba: Option<Vec<u8>>,
+    pub test_rooms_width: usize,
+    pub test_rooms_height: usize,
 }
 
 impl ButtonSpriteSheet {
     /// Load from raw RGBA8 pixels (2048x2048).
     pub fn new(width: usize, height: usize, rgba: Vec<u8>) -> Self {
         let (prompt_rgba, p_w, p_h) = Self::load_default_start_prompt();
+        let (test_rooms_rgba, tr_w, tr_h) = Self::load_default_test_rooms();
         Self {
             width,
             height,
@@ -151,11 +169,25 @@ impl ButtonSpriteSheet {
             start_prompt_rgba: prompt_rgba,
             start_prompt_width: p_w,
             start_prompt_height: p_h,
+            test_rooms_rgba,
+            test_rooms_width: tr_w,
+            test_rooms_height: tr_h,
         }
     }
 
     fn load_default_start_prompt() -> (Option<Vec<u8>>, usize, usize) {
         let bytes = include_bytes!("../assets/start_prompt.png");
+        if let Ok(img) = image::load_from_memory(bytes) {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            (Some(rgba.into_raw()), w as usize, h as usize)
+        } else {
+            (None, 0, 0)
+        }
+    }
+
+    fn load_default_test_rooms() -> (Option<Vec<u8>>, usize, usize) {
+        let bytes = include_bytes!("../assets/test_rooms_btn.png");
         if let Ok(img) = image::load_from_memory(bytes) {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
@@ -179,6 +211,7 @@ impl ButtonSpriteSheet {
         tint: [f32; 4],
     ) {
         let is_prompt = sprite == AuthenticButtonSprite::StartPrompt;
+        let is_test_rooms = sprite == AuthenticButtonSprite::TestRooms;
         let (src_bytes, src_w, rect) = if is_prompt {
             if let Some(ref p_bytes) = self.start_prompt_rgba {
                 (
@@ -189,6 +222,21 @@ impl ButtonSpriteSheet {
                         y: 0,
                         width: self.start_prompt_width,
                         height: self.start_prompt_height,
+                    },
+                )
+            } else {
+                return;
+            }
+        } else if is_test_rooms {
+            if let Some(ref tr_bytes) = self.test_rooms_rgba {
+                (
+                    tr_bytes.as_slice(),
+                    self.test_rooms_width,
+                    AtlasRect {
+                        x: 0,
+                        y: 0,
+                        width: self.test_rooms_width,
+                        height: self.test_rooms_height,
                     },
                 )
             } else {
@@ -207,7 +255,10 @@ impl ButtonSpriteSheet {
                 continue;
             }
 
-            let src_y = rect.y + ((dy as f32 / scale) as usize).min(rect.height - 1);
+            let continuous_y = rect.y as f32 + (dy as f32 / scale);
+            let y0 = (continuous_y.floor() as usize).min(rect.y + rect.height - 1);
+            let y1 = (y0 + 1).min(rect.y + rect.height - 1);
+            let fy = continuous_y - y0 as f32;
 
             for dx in 0..scaled_w {
                 let out_x = dst_x + dx as i32;
@@ -215,19 +266,36 @@ impl ButtonSpriteSheet {
                     continue;
                 }
 
-                let src_x = rect.x + ((dx as f32 / scale) as usize).min(rect.width - 1);
-                let src_idx = (src_y * src_w + src_x) * 4;
-                let dst_idx = (out_y as usize * dst_width + out_x as usize) * 4;
+                let continuous_x = rect.x as f32 + (dx as f32 / scale);
+                let x0 = (continuous_x.floor() as usize).min(rect.x + rect.width - 1);
+                let x1 = (x0 + 1).min(rect.x + rect.width - 1);
+                let fx = continuous_x - x0 as f32;
 
-                let s_r = src_bytes[src_idx] as f32 * tint[0];
-                let s_g = src_bytes[src_idx + 1] as f32 * tint[1];
-                let s_b = src_bytes[src_idx + 2] as f32 * tint[2];
-                let s_a = (src_bytes[src_idx + 3] as f32 / 255.0) * tint[3];
+                let idx00 = (y0 * src_w + x0) * 4;
+                let idx10 = (y0 * src_w + x1) * 4;
+                let idx01 = (y1 * src_w + x0) * 4;
+                let idx11 = (y1 * src_w + x1) * 4;
+
+                let sample = |c: usize| -> f32 {
+                    let v00 = src_bytes[idx00 + c] as f32;
+                    let v10 = src_bytes[idx10 + c] as f32;
+                    let v01 = src_bytes[idx01 + c] as f32;
+                    let v11 = src_bytes[idx11 + c] as f32;
+                    let top = v00 * (1.0 - fx) + v10 * fx;
+                    let bot = v01 * (1.0 - fx) + v11 * fx;
+                    top * (1.0 - fy) + bot * fy
+                };
+
+                let s_r = sample(0) * tint[0];
+                let s_g = sample(1) * tint[1];
+                let s_b = sample(2) * tint[2];
+                let s_a = (sample(3) / 255.0) * tint[3];
 
                 if s_a <= 0.005 {
                     continue;
                 }
 
+                let dst_idx = (out_y as usize * dst_width + out_x as usize) * 4;
                 let d_r = dst[dst_idx] as f32;
                 let d_g = dst[dst_idx + 1] as f32;
                 let d_b = dst[dst_idx + 2] as f32;

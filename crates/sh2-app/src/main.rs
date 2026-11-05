@@ -14,16 +14,23 @@ use sh2_assets::formats::anm::{
     compute_bind_locals, compute_skin_matrices, evaluate_pose, interpolate_frames, parse_anm,
     AnimationFile, AnimationFrame,
 };
+use sh2_assets::formats::bink::{
+    active_subtitle_for_frame, decode_bink_audio_pcm, BinkHeader, BinkVideoStream,
+};
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
 use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SecondaryBonePhysics, SimulationCore};
 use sh2_debug::{
-    build_skeleton_debug_lines, build_wireframe_lines, ModelViewerEntry, ModelViewerState,
-    StageLightingRig, TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,
+    build_skeleton_debug_lines, build_wireframe_lines, FmvCatalogEntry, FmvViewerState,
+    ModelViewerEntry, ModelViewerState, StageLightingRig, TextureSourceMode, ViewerRenderMode,
+    BESTIARY_CATALOG, FMV_CATALOG,
 };
-use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
+use sh2_renderer::{
+    FmvUniforms, FmvVideoPipeline, GpuMap, GpuSkeletalMesh, GpuYuvVideoSurface, RenderContext,
+    RendererConfig, SurfaceBlitter,
+};
 use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TestRoomKind, TitlePhase};
 use sh2_ui::{AuthenticButtonSprite, ButtonSpriteSheet, TextRasterizer};
 
@@ -527,25 +534,29 @@ fn find_map_file_for_room(
     match room {
         TestRoomKind::ObservationDeck => {
             for base in &base_roots {
-                let p = PathBuf::from(base).join("data/bg/ob/ob01.map");
-                if let Ok(bytes) = std::fs::read(&p) {
-                    if let Ok(map) = MapFile::parse(&bytes) {
-                        tracing::info!("Loaded authentic Observation Deck level geometry: {:?}", p);
-                        // Toluca Lake vista outdoor fog parameters
-                        let fog = sh2_renderer::fog::FogUniforms {
-                            fog_color: [0.65, 0.68, 0.72, 1.0], // Daylight Toluca Lake mist
-                            fog_near: 1500.0,
-                            fog_far: 18000.0,
-                            density: 0.85,
-                            time: 0.0,
-                            step_count: 32,
-                            curve_type: 1, // Exponential curve
-                            speed_mult: 1.0,
-                            _padding: 0.0,
-                        };
-                        // Authentic parking lot overlook coordinates: X: 0.0, Y: -100.0, Z: -5000.0
-                        return (map, glam::Vec3::new(0.0, -100.0, -5000.0), 0.0, fog);
-                    }
+                let loader = TextureLoader::new(
+                    PathBuf::from(base).join("data"),
+                    Some(PathBuf::from(base).join("sh2e")),
+                );
+                if let Ok(map) = loader.load_map_with_hd_overrides("bg/ob/ob01.map", "ob01") {
+                    tracing::info!(
+                        "Loaded authentic Observation Deck level geometry (ob01.map with SH2:EE HD overrides): base={}",
+                        base
+                    );
+                    // Toluca Lake vista outdoor fog parameters
+                    let fog = sh2_renderer::fog::FogUniforms {
+                        fog_color: [0.65, 0.68, 0.72, 1.0], // Daylight Toluca Lake mist
+                        fog_near: 1500.0,
+                        fog_far: 18000.0,
+                        density: 0.85,
+                        time: 0.0,
+                        step_count: 32,
+                        curve_type: 1, // Exponential curve
+                        speed_mult: 1.0,
+                        _padding: 0.0,
+                    };
+                    // Authentic parking lot overlook coordinates: X: 0.0, Y: -100.0, Z: -5000.0
+                    return (map, glam::Vec3::new(0.0, -100.0, -5000.0), 0.0, fog);
                 }
             }
             tracing::warn!("Failed to load ob01.map; using synthetic fog runway fallback");
@@ -569,33 +580,34 @@ fn find_map_file_for_room(
         }
         TestRoomKind::RestroomStart => {
             for base in &base_roots {
-                let p = PathBuf::from(base).join("data/bg/er/er01.map");
-                if let Ok(bytes) = std::fs::read(&p) {
-                    if let Ok(map) = MapFile::parse(&bytes) {
-                        tracing::info!(
-                            "Loaded authentic Opening Restroom level geometry (er01): {:?}",
-                            p
-                        );
-                        let fog = sh2_renderer::fog::FogUniforms {
-                            fog_color: [0.12, 0.13, 0.14, 1.0], // Dim authentic restroom lighting
-                            fog_near: 800.0,
-                            fog_far: 5000.0,
-                            density: 0.30,
-                            time: 0.0,
-                            step_count: 24,
-                            curve_type: 0,
-                            speed_mult: 1.0,
-                            _padding: 0.0,
-                        };
-                        // Authentic PS2 stage 2 (er01) post-prologue mirror spawn coordinates:
-                        // James stands at the sink: X: -19606.6, Y: 0.0 (floor), Z: 20429.55, Facing: -PI/2 (-1.5707964 rad, West towards mirror)
-                        return (
-                            map,
-                            glam::Vec3::new(-19606.6, 0.0, 20429.55),
-                            -std::f32::consts::FRAC_PI_2,
-                            fog,
-                        );
-                    }
+                let loader = TextureLoader::new(
+                    PathBuf::from(base).join("data"),
+                    Some(PathBuf::from(base).join("sh2e")),
+                );
+                if let Ok(map) = loader.load_map_with_hd_overrides("bg/er/er01.map", "er01") {
+                    tracing::info!(
+                        "Loaded authentic Opening Restroom level geometry (er01.map with SH2:EE HD overrides): base={}",
+                        base
+                    );
+                    let fog = sh2_renderer::fog::FogUniforms {
+                        fog_color: [0.12, 0.13, 0.14, 1.0], // Dim authentic restroom lighting
+                        fog_near: 800.0,
+                        fog_far: 5000.0,
+                        density: 0.30,
+                        time: 0.0,
+                        step_count: 24,
+                        curve_type: 0,
+                        speed_mult: 1.0,
+                        _padding: 0.0,
+                    };
+                    // Authentic PS2 stage 2 (er01) post-prologue mirror spawn coordinates:
+                    // James stands at the sink: X: -19606.6, Y: 0.0 (floor), Z: 20429.55, Facing: -PI/2 (-1.5707964 rad, West towards mirror)
+                    return (
+                        map,
+                        glam::Vec3::new(-19606.6, 0.0, 20429.55),
+                        -std::f32::consts::FRAC_PI_2,
+                        fog,
+                    );
                 }
             }
             tracing::warn!("Failed to load er01.map; using fallback room geometry");
@@ -619,24 +631,28 @@ fn find_map_file_for_room(
         }
         TestRoomKind::HotelBoilerRoom => {
             for base in &base_roots {
-                let p = PathBuf::from(base).join("data/bg/rr/rr21.map");
-                if let Ok(bytes) = std::fs::read(&p) {
-                    if let Ok(map) = MapFile::parse(&bytes) {
-                        tracing::info!("Loaded authentic Lakeview Hotel Boiler Room level geometry (rr21): {:?}", p);
-                        let fog = sh2_renderer::fog::FogUniforms {
-                            fog_color: [0.08, 0.09, 0.11, 1.0], // Dark basement boiler tone
-                            fog_near: 800.0,
-                            fog_far: 6000.0,
-                            density: 0.35,
-                            time: 0.0,
-                            step_count: 24,
-                            curve_type: 0,
-                            speed_mult: 1.0,
-                            _padding: 0.0,
-                        };
-                        // Authentic rr21 hotel boiler room coordinates: X: -100000.0, Y: -500.0, Z: -60000.0
-                        return (map, glam::Vec3::new(-100000.0, -500.0, -60000.0), 0.0, fog);
-                    }
+                let loader = TextureLoader::new(
+                    PathBuf::from(base).join("data"),
+                    Some(PathBuf::from(base).join("sh2e")),
+                );
+                if let Ok(map) = loader.load_map_with_hd_overrides("bg/rr/rr21.map", "rr21") {
+                    tracing::info!(
+                        "Loaded authentic Lakeview Hotel Boiler Room level geometry (rr21.map with SH2:EE HD overrides): base={}",
+                        base
+                    );
+                    let fog = sh2_renderer::fog::FogUniforms {
+                        fog_color: [0.08, 0.09, 0.11, 1.0], // Dark basement boiler tone
+                        fog_near: 800.0,
+                        fog_far: 6000.0,
+                        density: 0.35,
+                        time: 0.0,
+                        step_count: 24,
+                        curve_type: 0,
+                        speed_mult: 1.0,
+                        _padding: 0.0,
+                    };
+                    // Authentic rr21 hotel boiler room coordinates: X: -100000.0, Y: -500.0, Z: -60000.0
+                    return (map, glam::Vec3::new(-100000.0, -500.0, -60000.0), 0.0, fog);
                 }
             }
             tracing::warn!("Failed to load rr21.map; using fallback room geometry");
@@ -698,8 +714,8 @@ fn find_map_file_for_room(
                 fog,
             )
         }
-        TestRoomKind::ModelAndTextureViewer => {
-            tracing::info!("Generated 3D Model & Texture Viewer Pedestal Stage (SH2-36).");
+        TestRoomKind::ModelAndTextureViewer | TestRoomKind::FmvCutsceneViewer => {
+            tracing::info!("Generated 3D Model & Texture Viewer Pedestal Stage (SH2-36 / SH2-10).");
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.06, 0.07, 0.08, 1.0],
                 fog_near: 5000.0,
@@ -987,6 +1003,144 @@ fn load_viewer_entry_asset(
     load_character_asset(ctx, entry.display_name, entry.mdl_paths, &anm_slice)
 }
 
+/// Active decoded FMV movie stream, GPU planar YUV surface, and metadata.
+struct ActiveFmvSession {
+    entry: &'static FmvCatalogEntry,
+    header: BinkHeader,
+    stream: BinkVideoStream,
+    gpu_surface: GpuYuvVideoSurface,
+    is_hd_source: bool,
+    frame_accumulator_sec: f32,
+}
+
+/// Locate and open a `.bik` movie stream for the requested [`FmvCatalogEntry`] and source preference.
+fn open_fmv_session(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    fmv_pipeline: &FmvVideoPipeline,
+    audio_engine: &mut Option<AudioEngine>,
+    fmv_viewer: &mut FmvViewerState,
+    entry: &'static FmvCatalogEntry,
+    prefer_hd: bool,
+) -> Option<ActiveFmvSession> {
+    let base_roots = [
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+    ];
+
+    let mut chosen_path: Option<(PathBuf, bool)> = None;
+    for base in &base_roots {
+        let sh2e_cand = PathBuf::from(base).join("sh2e/movie").join(entry.filename);
+        let data_cand = PathBuf::from(base).join("data/movie").join(entry.filename);
+
+        if prefer_hd {
+            if sh2e_cand.exists() {
+                chosen_path = Some((sh2e_cand, true));
+                break;
+            } else if data_cand.exists() {
+                chosen_path = Some((data_cand, false));
+                break;
+            }
+        } else if data_cand.exists() {
+            chosen_path = Some((data_cand, false));
+            break;
+        } else if sh2e_cand.exists() {
+            chosen_path = Some((sh2e_cand, true));
+            break;
+        }
+    }
+
+    let synth_header = BinkHeader {
+        magic: *b"BIKi",
+        file_size: 1920 * 1080 * 300,
+        frame_count: 600,
+        largest_frame_size: 65536,
+        width: 1920,
+        height: 1080,
+        fps_num: 2997,
+        fps_den: 50,
+        video_flags: 0,
+        audio_tracks: Vec::new(),
+        indexed_frames: 600,
+    };
+
+    let (mut stream, is_hd_source) = if let Some((ref path, is_hd)) = chosen_path {
+        match BinkVideoStream::open(path) {
+            Ok(s) => {
+                tracing::info!(
+                    "[FMV Player] Opened Bink movie '{}' ({}) -> {}x{} @ {:.2} fps ({} frames, synthetic={})",
+                    entry.display_name,
+                    path.display(),
+                    s.header.width,
+                    s.header.height,
+                    s.header.fps(),
+                    s.header.frame_count,
+                    s.path.is_none()
+                );
+                if let Some(ref mut engine) = audio_engine {
+                    match decode_bink_audio_pcm(path, &s.header) {
+                        Ok(decoded) if !decoded.pcm_s16le.is_empty() => {
+                            if let Err(e) =
+                                engine.play_fmv_pcm(decoded.sample_rate, &decoded.pcm_s16le, 1.0)
+                            {
+                                tracing::warn!("[FMV Player] Audio playback warning: {:?}", e);
+                            }
+                        }
+                        _ => {
+                            engine.stop_bgm(std::time::Duration::from_millis(50));
+                        }
+                    }
+                }
+                (s, is_hd)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[FMV Player] Failed to parse Bink header at {:?}: {:?}; using synthetic 1080p60 stream",
+                    path,
+                    e
+                );
+                (
+                    BinkVideoStream::new_synthetic(synth_header.clone()),
+                    prefer_hd,
+                )
+            }
+        }
+    } else {
+        tracing::info!(
+            "[FMV Player] Movie '{}' not found on disk; launching synthetic 1080p60 test stream",
+            entry.filename
+        );
+        if let Some(ref mut engine) = audio_engine {
+            engine.stop_bgm(std::time::Duration::from_millis(50));
+        }
+        (BinkVideoStream::new_synthetic(synth_header), prefer_hd)
+    };
+
+    let header = stream.header.clone();
+    fmv_viewer.configure_stream_meta(
+        header.width,
+        header.height,
+        header.frame_count,
+        header.fps(),
+    );
+    let gpu_surface = fmv_pipeline.create_video_surface(device, header.width, header.height);
+
+    // Decode and upload initial frame 0 immediately so the first render pass shows video
+    if let Some(first_frame) = stream.next_frame() {
+        fmv_pipeline.upload_frame(queue, &gpu_surface, &first_frame);
+    }
+
+    Some(ActiveFmvSession {
+        entry,
+        header,
+        stream,
+        gpu_surface,
+        is_hd_source,
+        frame_accumulator_sec: 0.0,
+    })
+}
+
 struct AppState {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
@@ -1016,6 +1170,11 @@ struct AppState {
     viewer_asset: Option<CharacterAsset>,
     loaded_viewer_model_idx: usize,
     loaded_viewer_anm_idx: usize,
+    fmv_pipeline: FmvVideoPipeline,
+    fmv_viewer: FmvViewerState,
+    fmv_session: Option<ActiveFmvSession>,
+    loaded_fmv_movie_idx: usize,
+    loaded_fmv_prefer_hd: bool,
     mouse_left_pressed: bool,
     mouse_right_pressed: bool,
     last_cursor_pos: Option<(f64, f64)>,
@@ -1039,6 +1198,7 @@ struct SilentHillApp {
     initial_test_room: Option<TestRoomKind>,
     initial_fog_debug: bool,
     initial_viewer_model: Option<String>,
+    initial_fmv_movie: Option<String>,
 }
 
 impl ApplicationHandler for SilentHillApp {
@@ -1334,6 +1494,42 @@ impl ApplicationHandler for SilentHillApp {
         let loaded_viewer_model_idx = model_viewer.selected_model_index;
         let loaded_viewer_anm_idx = model_viewer.selected_anm_index;
 
+        let fmv_pipeline = FmvVideoPipeline::new(&device, RenderContext::OUTPUT_FORMAT);
+        let mut fmv_viewer = FmvViewerState::new();
+        if let Some(ref movie_query) = self.initial_fmv_movie {
+            if fmv_viewer.select_by_name(movie_query) {
+                tracing::info!(
+                    "FMV Viewer selected initial movie from CLI: '{}' -> {}",
+                    movie_query,
+                    fmv_viewer.current_entry().display_name
+                );
+            } else {
+                tracing::warn!(
+                    "FMV Viewer could not match '{}' in FMV catalog; defaulting to '{}'",
+                    movie_query,
+                    fmv_viewer.current_entry().display_name
+                );
+            }
+        }
+        let mut audio_engine = audio_engine;
+        let current_fmv_entry = fmv_viewer.current_entry();
+        let prefer_hd_source = fmv_viewer.prefer_hd_source;
+        let fmv_session = if initial_room == TestRoomKind::FmvCutsceneViewer {
+            open_fmv_session(
+                &device,
+                &queue,
+                &fmv_pipeline,
+                &mut audio_engine,
+                &mut fmv_viewer,
+                current_fmv_entry,
+                prefer_hd_source,
+            )
+        } else {
+            None
+        };
+        let loaded_fmv_movie_idx = fmv_viewer.selected_movie_index;
+        let loaded_fmv_prefer_hd = fmv_viewer.prefer_hd_source;
+
         self.state = Some(AppState {
             window,
             surface,
@@ -1363,6 +1559,11 @@ impl ApplicationHandler for SilentHillApp {
             viewer_asset,
             loaded_viewer_model_idx,
             loaded_viewer_anm_idx,
+            fmv_pipeline,
+            fmv_viewer,
+            fmv_session,
+            loaded_fmv_movie_idx,
+            loaded_fmv_prefer_hd,
             mouse_left_pressed: false,
             mouse_right_pressed: false,
             last_cursor_pos: None,
@@ -1463,6 +1664,122 @@ impl ApplicationHandler for SilentHillApp {
                                         );
                                     }
                                 }
+                            }
+                        }
+                        return;
+                    }
+
+                    // If in the 1080p60 FMV Cutscene Viewer / Theater, route hotkeys to FmvViewerState
+                    if state.active_test_room == TestRoomKind::FmvCutsceneViewer {
+                        if pressed {
+                            match key_code {
+                                winit::keyboard::KeyCode::Escape
+                                | winit::keyboard::KeyCode::Backspace => {
+                                    if let Some(ref mut engine) = state.audio_engine {
+                                        engine.stop_bgm(std::time::Duration::from_millis(120));
+                                    }
+                                    state.menu_ctrl.in_game_active = false;
+                                    state.menu_ctrl.title_sm.phase = TitlePhase::OptionsMenu;
+                                    state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                                    tracing::info!(
+                                        "Returned from FMV Cutscene Player to Options menu."
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyN
+                                | winit::keyboard::KeyCode::PageDown
+                                | winit::keyboard::KeyCode::ArrowRight
+                                | winit::keyboard::KeyCode::KeyD => {
+                                    state.fmv_viewer.next_movie();
+                                    tracing::info!(
+                                        "[FMV Player] Selected cutscene [{}/{}]: {}",
+                                        state.fmv_viewer.selected_movie_index + 1,
+                                        FMV_CATALOG.len(),
+                                        state.fmv_viewer.current_entry().display_name
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyP
+                                | winit::keyboard::KeyCode::PageUp
+                                | winit::keyboard::KeyCode::ArrowLeft
+                                | winit::keyboard::KeyCode::KeyA => {
+                                    state.fmv_viewer.prev_movie();
+                                    tracing::info!(
+                                        "[FMV Player] Selected cutscene [{}/{}]: {}",
+                                        state.fmv_viewer.selected_movie_index + 1,
+                                        FMV_CATALOG.len(),
+                                        state.fmv_viewer.current_entry().display_name
+                                    );
+                                }
+                                winit::keyboard::KeyCode::Space => {
+                                    state.fmv_viewer.toggle_pause();
+                                    if let Some(ref mut engine) = state.audio_engine {
+                                        engine.set_bgm_paused(state.fmv_viewer.is_paused);
+                                    }
+                                    tracing::info!(
+                                        "[FMV Player] Playback {}",
+                                        if state.fmv_viewer.is_paused {
+                                            "PAUSED"
+                                        } else {
+                                            "PLAYING"
+                                        }
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyR => {
+                                    state.fmv_viewer.is_paused = false;
+                                    let entry = state.fmv_viewer.current_entry();
+                                    let prefer_hd = state.fmv_viewer.prefer_hd_source;
+                                    state.fmv_session = open_fmv_session(
+                                        &state.render_ctx.device,
+                                        &state.render_ctx.queue,
+                                        &state.fmv_pipeline,
+                                        &mut state.audio_engine,
+                                        &mut state.fmv_viewer,
+                                        entry,
+                                        prefer_hd,
+                                    );
+                                    tracing::info!(
+                                        "[FMV Player] Restarted cutscene: {}",
+                                        state.fmv_viewer.current_entry().display_name
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyH => {
+                                    state.fmv_viewer.toggle_hd_source();
+                                    tracing::info!(
+                                        "[FMV Player] Switched video source preference: {}",
+                                        if state.fmv_viewer.prefer_hd_source {
+                                            "SH2:EE 1080p60 (sh2e/movie/)"
+                                        } else {
+                                            "Vanilla PC 30fps (data/movie/)"
+                                        }
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyV => {
+                                    state.fmv_viewer.aspect_mode =
+                                        state.fmv_viewer.aspect_mode.next();
+                                    tracing::info!(
+                                        "[FMV Player] Aspect ratio mode: {}",
+                                        state.fmv_viewer.aspect_mode.label()
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyG => {
+                                    state.fmv_viewer.film_grain_enabled =
+                                        !state.fmv_viewer.film_grain_enabled;
+                                    tracing::info!(
+                                        "[FMV Player] Film grain over cutscene: {}",
+                                        state.fmv_viewer.film_grain_enabled
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyS => {
+                                    state.fmv_viewer.subtitles_enabled =
+                                        !state.fmv_viewer.subtitles_enabled;
+                                    tracing::info!(
+                                        "[FMV Player] Cutscene subtitles: {}",
+                                        state.fmv_viewer.subtitles_enabled
+                                    );
+                                }
+                                winit::keyboard::KeyCode::Tab => {
+                                    state.fmv_viewer.show_hud = !state.fmv_viewer.show_hud;
+                                }
+                                _ => {}
                             }
                         }
                         return;
@@ -1891,6 +2208,29 @@ impl ApplicationHandler for SilentHillApp {
                     state.loaded_viewer_anm_idx = state.model_viewer.selected_anm_index;
                 }
 
+                // Hot-swap or initialize FMV cutscene stream when entering FMV Cutscene Viewer or changing movie / HD preference
+                if state.menu_ctrl.in_game_active
+                    && state.active_test_room == TestRoomKind::FmvCutsceneViewer
+                    && (state.fmv_session.is_none()
+                        || state.loaded_fmv_movie_idx != state.fmv_viewer.selected_movie_index
+                        || state.loaded_fmv_prefer_hd != state.fmv_viewer.prefer_hd_source)
+                {
+                    let entry = state.fmv_viewer.current_entry();
+                    let prefer_hd = state.fmv_viewer.prefer_hd_source;
+                    state.fmv_session = open_fmv_session(
+                        &state.render_ctx.device,
+                        &state.render_ctx.queue,
+                        &state.fmv_pipeline,
+                        &mut state.audio_engine,
+                        &mut state.fmv_viewer,
+                        entry,
+                        prefer_hd,
+                    );
+                    state.loaded_fmv_movie_idx = state.fmv_viewer.selected_movie_index;
+                    state.loaded_fmv_prefer_hd = state.fmv_viewer.prefer_hd_source;
+                    state.fmv_viewer.is_paused = false;
+                }
+
                 // When menu is active, log formatted state changes so console/headless/testing builds observe menu navigation
                 if !state.menu_ctrl.in_game_active {
                     let current_text = state.menu_ctrl.overlay_text().join(" | ");
@@ -1905,6 +2245,8 @@ impl ApplicationHandler for SilentHillApp {
                 let phase = state.menu_ctrl.title_sm.phase;
                 let is_viewer =
                     is_in_game && state.active_test_room == TestRoomKind::ModelAndTextureViewer;
+                let is_fmv_viewer =
+                    is_in_game && state.active_test_room == TestRoomKind::FmvCutsceneViewer;
 
                 // Advance simulation time and frame counter for animated post-processing
                 let dt_sec = dt.as_secs_f32();
@@ -1940,7 +2282,75 @@ impl ApplicationHandler for SilentHillApp {
                 let aspect =
                     state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
 
-                if is_viewer {
+                if is_fmv_viewer {
+                    // --- 1080P60 FMV CUTSCENE PLAYER PASS (SH2-10) ---
+                    if let Some(ref mut session) = state.fmv_session {
+                        let fps = (session.header.fps() as f32).max(1.0);
+                        let frame_duration = 1.0 / fps;
+                        if !state.fmv_viewer.is_paused {
+                            session.frame_accumulator_sec += dt_sec.min(0.1);
+                            let mut advanced = 0;
+                            while session.frame_accumulator_sec >= frame_duration && advanced < 4 {
+                                session.frame_accumulator_sec -= frame_duration;
+                                advanced += 1;
+                                if let Some(frame) = session.stream.next_frame() {
+                                    state.fmv_pipeline.upload_frame(
+                                        &state.render_ctx.queue,
+                                        &session.gpu_surface,
+                                        &frame,
+                                    );
+                                } else {
+                                    // Loop seamlessly on completion in theater mode
+                                    session.stream.restart();
+                                    if let Some(frame) = session.stream.next_frame() {
+                                        state.fmv_pipeline.upload_frame(
+                                            &state.render_ctx.queue,
+                                            &session.gpu_surface,
+                                            &frame,
+                                        );
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
+                        let (uv_y_offset, uv_y_scale, video_aspect) =
+                            state.fmv_viewer.compute_uv_crop_and_aspect();
+                        let fmv_grain = if state.fmv_viewer.film_grain_enabled {
+                            ((grain_pct as f32) / 100.0) * 0.45
+                        } else {
+                            0.0
+                        };
+                        let fmv_uniforms = FmvUniforms {
+                            viewport_aspect: aspect,
+                            video_aspect,
+                            uv_y_offset,
+                            uv_y_scale,
+                            grain_intensity: fmv_grain,
+                            time: state.sim_time,
+                            fade_alpha: 1.0,
+                            _pad: 0.0,
+                        };
+                        state
+                            .fmv_pipeline
+                            .update_uniforms(&state.render_ctx.queue, &fmv_uniforms);
+
+                        let mut fmv_encoder = state.render_ctx.device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("FMV Render Encoder"),
+                            },
+                        );
+                        state.fmv_pipeline.render(
+                            &mut fmv_encoder,
+                            &session.gpu_surface,
+                            &state.render_ctx.ldr_output_view,
+                        );
+                        state
+                            .render_ctx
+                            .queue
+                            .submit(std::iter::once(fmv_encoder.finish()));
+                    }
+                } else if is_viewer {
                     // --- 3D MODEL, ANIMATION & TEXTURE VIEWER PASS (SH2-36) ---
                     let mut orbit_yaw_delta = 0.0f32;
                     let mut orbit_pitch_delta = 0.0f32;
@@ -2456,6 +2866,161 @@ impl ApplicationHandler for SilentHillApp {
                             muted,
                             true,
                         );
+
+                        state.render_ctx.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture: &state.menu_text_texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &state.menu_rasterizer.pixels,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(4 * state.menu_rasterizer.width as u32),
+                                rows_per_image: Some(state.menu_rasterizer.height as u32),
+                            },
+                            wgpu::Extent3d {
+                                width: state.menu_rasterizer.width as u32,
+                                height: state.menu_rasterizer.height as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            &state.menu_text_bind_group,
+                            &surface_view,
+                            wgpu::LoadOp::Load,
+                        );
+                    } else if is_fmv_viewer {
+                        let tint = [1.0f32, 1.0, 1.0, 1.0];
+                        state.render_ctx.queue.write_buffer(
+                            &state.menu_uniform_buffer,
+                            0,
+                            bytemuck::cast_slice(&tint),
+                        );
+                        state.menu_rasterizer.clear();
+
+                        let white = [235, 235, 235, 255];
+                        let yellow = [245, 210, 65, 255];
+                        let cyan = [105, 215, 235, 255];
+                        let green = [120, 230, 150, 255];
+                        let muted = [165, 165, 170, 255];
+
+                        if let Some(ref session) = state.fmv_session {
+                            let cur_frame = session.stream.current_frame_index.saturating_sub(1);
+                            let total_frames = session.header.frame_count.max(1);
+                            let fps = session.header.fps();
+                            let cur_sec = (cur_frame as f64) / fps.max(1.0);
+                            let tot_sec = session.header.duration_secs();
+
+                            // Render synchronized subtitle cue near bottom of frame
+                            if state.fmv_viewer.subtitles_enabled {
+                                if let Some(sub_line) = active_subtitle_for_frame(
+                                    session.entry.id,
+                                    &session.header,
+                                    cur_frame,
+                                ) {
+                                    let text_w = (sub_line.len() as i32) * 16;
+                                    let sub_x = ((state.menu_rasterizer.width as i32 - text_w) / 2)
+                                        .max(24)
+                                        as usize;
+                                    state
+                                        .menu_rasterizer
+                                        .draw_text(sub_line, sub_x, 615, 2, white, true);
+                                }
+                            }
+
+                            if state.fmv_viewer.show_hud {
+                                let total_movies = FMV_CATALOG.len();
+                                let cur_idx = state.fmv_viewer.selected_movie_index + 1;
+                                let src_label = if session.stream.path.is_none() {
+                                    "SYNTHETIC 1080P60 STREAM"
+                                } else if session.is_hd_source {
+                                    "SH2:EE 1080P60 (sh2e/movie/)"
+                                } else {
+                                    "VANILLA PC 30FPS (data/movie/)"
+                                };
+                                let play_str = if state.fmv_viewer.is_paused {
+                                    "PAUSED"
+                                } else {
+                                    "PLAYING"
+                                };
+
+                                state.menu_rasterizer.draw_text(
+                                    "SILENT HILL 2 - 1080P60 FMV CUTSCENE THEATER [SH2-10]",
+                                    24,
+                                    18,
+                                    2,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    &format!(
+                                        "CUTSCENE [{}/{}] : {} ({}) - {}",
+                                        cur_idx,
+                                        total_movies,
+                                        session.entry.display_name,
+                                        session.entry.filename,
+                                        session.entry.description
+                                    ),
+                                    24,
+                                    46,
+                                    2,
+                                    white,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    &format!(
+                                        "STREAM : {} | {}x{} @ {:.2} FPS | {} | {:05.1}s / {:05.1}s (FRAME {}/{})",
+                                        src_label,
+                                        session.header.width,
+                                        session.header.height,
+                                        fps,
+                                        play_str,
+                                        cur_sec,
+                                        tot_sec,
+                                        cur_frame,
+                                        total_frames
+                                    ),
+                                    24,
+                                    74,
+                                    1,
+                                    green,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    &format!(
+                                        "ASPECT : {} | FILM GRAIN : {} | SUBTITLES : {}",
+                                        state.fmv_viewer.aspect_mode.label(),
+                                        if state.fmv_viewer.film_grain_enabled {
+                                            "ON"
+                                        } else {
+                                            "OFF"
+                                        },
+                                        if state.fmv_viewer.subtitles_enabled {
+                                            "ON"
+                                        } else {
+                                            "OFF"
+                                        }
+                                    ),
+                                    24,
+                                    94,
+                                    1,
+                                    cyan,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
+                                    "[N/P or Left/Right] Prev/Next Movie  [Space] Play/Pause  [R] Restart  [H] Toggle 1080p60/Vanilla  [V] Aspect Ratio  [G] Film Grain  [S] Subtitles  [Tab] Hide HUD  [Esc] Options",
+                                    24,
+                                    688,
+                                    1,
+                                    muted,
+                                    true,
+                                );
+                            }
+                        }
 
                         state.render_ctx.queue.write_texture(
                             wgpu::ImageCopyTexture {
@@ -3131,11 +3696,12 @@ fn main() {
         "Starting Silent Hill 2 Open Port Interactive Playable Test with Skeletal Mesh Runtime..."
     );
 
-    // Parse CLI arguments for test rooms, model viewer, & fog testing
+    // Parse CLI arguments for test rooms, model viewer, FMV player, & fog testing
     let args: Vec<String> = std::env::args().collect();
     let mut initial_test_room = None;
     let mut initial_fog_debug = false;
     let mut initial_viewer_model = None;
+    let mut initial_fmv_movie = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -3156,6 +3722,17 @@ fn main() {
             if !model_str.is_empty() {
                 initial_viewer_model = Some(model_str.to_string());
             }
+        } else if arg == "--fmv-viewer" || arg == "--fmv" {
+            initial_test_room = Some(TestRoomKind::FmvCutsceneViewer);
+            if i + 1 < args.len() && !args[i + 1].starts_with("--") {
+                initial_fmv_movie = Some(args[i + 1].clone());
+                i += 1;
+            }
+        } else if let Some(movie_str) = arg.strip_prefix("--fmv-viewer=") {
+            initial_test_room = Some(TestRoomKind::FmvCutsceneViewer);
+            if !movie_str.is_empty() {
+                initial_fmv_movie = Some(movie_str.to_string());
+            }
         } else if let Some(room_str) = arg.strip_prefix("--test-room=") {
             initial_test_room = match room_str {
                 "ob01" | "observation" | "outdoor" => Some(TestRoomKind::ObservationDeck),
@@ -3165,6 +3742,9 @@ fn main() {
                 "fallback" | "sandbox" => Some(TestRoomKind::FallbackSandbox),
                 "viewer" | "model-viewer" | "models" | "bestiary" => {
                     Some(TestRoomKind::ModelAndTextureViewer)
+                }
+                "fmv" | "fmv-viewer" | "cutscenes" | "movies" => {
+                    Some(TestRoomKind::FmvCutsceneViewer)
                 }
                 _ => {
                     tracing::warn!(
@@ -3184,6 +3764,9 @@ fn main() {
     if let Some(ref m) = initial_viewer_model {
         tracing::info!("CLI parameter selected initial model viewer entry: '{}'", m);
     }
+    if let Some(ref f) = initial_fmv_movie {
+        tracing::info!("CLI parameter selected initial FMV cutscene: '{}'", f);
+    }
 
     let event_loop = EventLoop::new().expect("Failed to create winit event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -3193,6 +3776,7 @@ fn main() {
         initial_test_room,
         initial_fog_debug,
         initial_viewer_model,
+        initial_fmv_movie,
     };
     event_loop.run_app(&mut app).expect("Event loop error");
 }

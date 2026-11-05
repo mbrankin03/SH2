@@ -1,9 +1,11 @@
-//! sh2-debug: Developer tools, free-cam noclip, room warper, hitbox visualizer, and 3D Model Viewer.
+//! sh2-debug: Developer tools, free-cam noclip, room warper, hitbox visualizer, 3D Model Viewer, and FMV Cutscene Player.
 
 pub mod camera;
+pub mod fmv_viewer;
 pub mod model_viewer;
 pub mod visualizer;
 
+pub use fmv_viewer::{FmvAspectMode, FmvCatalogEntry, FmvCategory, FmvViewerState, FMV_CATALOG};
 pub use model_viewer::{
     ModelCategory, ModelViewerEntry, ModelViewerState, OrbitCamera, StageLightingRig,
     TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,

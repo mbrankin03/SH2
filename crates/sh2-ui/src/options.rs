@@ -57,6 +57,8 @@ pub enum OptionsSoundCue {
     ValueChange,
     ConfirmSave,
     CancelDiscard,
+    /// Triggered when the user selects the interactive FMV Cutscene Viewer from the Options menu.
+    LaunchFmvViewer,
 }
 
 /// Interactive Options Menu controller.
@@ -86,11 +88,16 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 9,
+            OptionsTab::Video => 10,
             OptionsTab::Audio => 6,
             OptionsTab::Controls => 5,
             OptionsTab::Game => 5,
         }
+    }
+
+    /// Returns true if the currently selected row is the interactive FMV Cutscene Viewer launcher.
+    pub fn is_fmv_viewer_selected(&self) -> bool {
+        self.active_tab == OptionsTab::Video && self.selected_index == 9
     }
 
     /// Retrieve the title and string value of an item in the active tab.
@@ -148,6 +155,10 @@ impl OptionsMenu {
                     } else {
                         "OFF".into()
                     },
+                )),
+                9 => Some((
+                    "FMV Cutscene Viewer",
+                    "[Press Enter / Right to Launch]".into(),
                 )),
                 _ => None,
             },
@@ -321,6 +332,7 @@ impl OptionsMenu {
                     self.draft_config.video.depth_of_field =
                         !self.draft_config.video.depth_of_field;
                 }
+                9 => return OptionsSoundCue::LaunchFmvViewer,
                 _ => return OptionsSoundCue::None,
             },
             OptionsTab::Audio => match self.selected_index {
@@ -452,7 +464,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 9);
+        assert_eq!(menu.item_count(), 10);
 
         // Adjust Resolution
         menu.adjust_value(1);

@@ -64,14 +64,37 @@ impl AppMenuController {
                     MenuSoundCue::CursorMove
                 }
                 MenuNavAction::Left => {
-                    self.options_menu.adjust_value(-1);
-                    MenuSoundCue::CursorMove
+                    let cue = self.options_menu.adjust_value(-1);
+                    if cue == OptionsSoundCue::LaunchFmvViewer {
+                        self.title_sm.selected_test_room =
+                            sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
+                        self.title_sm.phase = TitlePhase::TransitionToGame;
+                        self.title_sm.start_fade_out();
+                        MenuSoundCue::GameStartTransition
+                    } else {
+                        MenuSoundCue::CursorMove
+                    }
                 }
                 MenuNavAction::Right => {
-                    self.options_menu.adjust_value(1);
-                    MenuSoundCue::CursorMove
+                    let cue = self.options_menu.adjust_value(1);
+                    if cue == OptionsSoundCue::LaunchFmvViewer {
+                        self.title_sm.selected_test_room =
+                            sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
+                        self.title_sm.phase = TitlePhase::TransitionToGame;
+                        self.title_sm.start_fade_out();
+                        MenuSoundCue::GameStartTransition
+                    } else {
+                        MenuSoundCue::CursorMove
+                    }
                 }
                 MenuNavAction::Confirm => {
+                    if self.options_menu.is_fmv_viewer_selected() {
+                        self.title_sm.selected_test_room =
+                            sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
+                        self.title_sm.phase = TitlePhase::TransitionToGame;
+                        self.title_sm.start_fade_out();
+                        return MenuSoundCue::GameStartTransition;
+                    }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);

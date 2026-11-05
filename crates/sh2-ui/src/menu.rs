@@ -81,16 +81,19 @@ pub enum TestRoomKind {
     FallbackSandbox,
     /// Interactive 3D Model, Animation, and Texture Viewer / Bestiary inspection stage (`SH2-36`).
     ModelAndTextureViewer,
+    /// Interactive 1080p60 FMV Cutscene Player / Theater (`SH2-10`).
+    FmvCutsceneViewer,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 6] = [
+    pub const ALL: [TestRoomKind; 7] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
         TestRoomKind::SyntheticFogRunway,
         TestRoomKind::FallbackSandbox,
         TestRoomKind::ModelAndTextureViewer,
+        TestRoomKind::FmvCutsceneViewer,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -101,6 +104,7 @@ impl TestRoomKind {
             Self::SyntheticFogRunway => "SYNTHETIC FOG RUNWAY (CALIBRATION)",
             Self::FallbackSandbox => "FALLBACK ROOM (INTERNAL SANDBOX)",
             Self::ModelAndTextureViewer => "MODEL & TEXTURE VIEWER",
+            Self::FmvCutsceneViewer => "FMV CUTSCENE PLAYER (1080P60 THEATER)",
         }
     }
 }

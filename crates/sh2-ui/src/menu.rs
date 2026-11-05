@@ -68,31 +68,35 @@ impl MainMenuOption {
 /// Identifiers for test rooms / sandbox stages selectable from the debug menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TestRoomKind {
-    /// Authentic outdoor Toluca Lake Observation Deck (`ob01.map` + `ob01.cld`).
+    /// Authentic outdoor Toluca Lake Observation Deck (`ob01.map` + `ob01.cld`, R_OBSV_DECK = 0x02).
     #[default]
     ObservationDeck,
-    /// Opening story start restroom (`rr21.map` + `rr21.cld`).
+    /// Authentic opening story start restroom overlook (`er01.map` + `er01.cld`, R_BEGIN_BATHROOM = 0x01).
     RestroomStart,
-    /// Synthetic extended fog test runway with distance markers (5m, 10m, 25m, 50m, 100m).
+    /// Authentic Lakeview Hotel Basement Boiler Room (`rr21.map` + `rr21.cld`, R_HTL_BOILER_RM = 0xA7).
+    HotelBoilerRoom,
+    /// Synthetic extended fog test runway with calibrated distance crossbars (5m, 10m, 25m, 50m, 75m, 100m).
     SyntheticFogRunway,
-    /// Boiler room fallback sandbox with interior lighting, collision columns, and mesh skinning.
-    BoilerRoom,
+    /// Built-in enclosed room fallback sandbox with interior lighting, collision columns, and mesh skinning.
+    FallbackSandbox,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 4] = [
+    pub const ALL: [TestRoomKind; 5] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
+        TestRoomKind::HotelBoilerRoom,
         TestRoomKind::SyntheticFogRunway,
-        TestRoomKind::BoilerRoom,
+        TestRoomKind::FallbackSandbox,
     ];
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::ObservationDeck => "OBSERVATION DECK (ob01.map)",
-            Self::RestroomStart => "RESTROOM START (rr21.map)",
+            Self::ObservationDeck => "OBSERVATION DECK (ob01.map - OUTDOOR FOG)",
+            Self::RestroomStart => "RESTROOM START (er01.map - PROLOGUE)",
+            Self::HotelBoilerRoom => "HOTEL BOILER ROOM (rr21.map - BASEMENT)",
             Self::SyntheticFogRunway => "SYNTHETIC FOG RUNWAY (CALIBRATION)",
-            Self::BoilerRoom => "BOILER ROOM (FALLBACK SANDBOX)",
+            Self::FallbackSandbox => "FALLBACK ROOM (INTERNAL SANDBOX)",
         }
     }
 }
@@ -474,11 +478,21 @@ mod tests {
         assert_eq!(sm.phase, TitlePhase::TestRoomsSelect);
         assert_eq!(sm.test_room_index, 0);
 
-        // Cycle to Synthetic Fog Runway (index 2)
+        // Cycle to Hotel Boiler Room (index 2) and Synthetic Fog Runway (index 3)
         sm.handle_input(MenuNavAction::Down);
         assert_eq!(sm.test_room_index, 1);
+        assert_eq!(
+            TestRoomKind::ALL[sm.test_room_index],
+            TestRoomKind::RestroomStart
+        );
         sm.handle_input(MenuNavAction::Down);
         assert_eq!(sm.test_room_index, 2);
+        assert_eq!(
+            TestRoomKind::ALL[sm.test_room_index],
+            TestRoomKind::HotelBoilerRoom
+        );
+        sm.handle_input(MenuNavAction::Down);
+        assert_eq!(sm.test_room_index, 3);
         assert_eq!(
             TestRoomKind::ALL[sm.test_room_index],
             TestRoomKind::SyntheticFogRunway

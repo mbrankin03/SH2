@@ -361,12 +361,56 @@ fn find_map_file_for_room(
         }
         TestRoomKind::RestroomStart => {
             for base in &base_roots {
+                let p = PathBuf::from(base).join("data/bg/er/er01.map");
+                if let Ok(bytes) = std::fs::read(&p) {
+                    if let Ok(map) = MapFile::parse(&bytes) {
+                        tracing::info!(
+                            "Loaded authentic Opening Restroom level geometry (er01): {:?}",
+                            p
+                        );
+                        let fog = sh2_renderer::fog::FogUniforms {
+                            fog_color: [0.12, 0.13, 0.14, 1.0], // Dim authentic restroom lighting
+                            fog_near: 800.0,
+                            fog_far: 5000.0,
+                            density: 0.30,
+                            time: 0.0,
+                            step_count: 24,
+                            curve_type: 0,
+                            speed_mult: 1.0,
+                            _padding: 0.0,
+                        };
+                        // Authentic er01 restroom camera/spawn coordinates: X: -18968.0, Y: -1168.0, Z: 21025.0
+                        return (map, glam::Vec3::new(-18968.0, -1168.0, 21025.0), 0.0, fog);
+                    }
+                }
+            }
+            tracing::warn!("Failed to load er01.map; using fallback room geometry");
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.12, 0.13, 0.14, 1.0],
+                fog_near: 800.0,
+                fog_far: 5000.0,
+                density: 0.30,
+                time: 0.0,
+                step_count: 24,
+                curve_type: 0,
+                speed_mult: 1.0,
+                _padding: 0.0,
+            };
+            (
+                create_fallback_room_geometry(),
+                glam::Vec3::new(0.0, -800.0, 2000.0),
+                std::f32::consts::PI,
+                fog,
+            )
+        }
+        TestRoomKind::HotelBoilerRoom => {
+            for base in &base_roots {
                 let p = PathBuf::from(base).join("data/bg/rr/rr21.map");
                 if let Ok(bytes) = std::fs::read(&p) {
                     if let Ok(map) = MapFile::parse(&bytes) {
-                        tracing::info!("Loaded authentic Restroom Start level geometry: {:?}", p);
+                        tracing::info!("Loaded authentic Lakeview Hotel Boiler Room level geometry (rr21): {:?}", p);
                         let fog = sh2_renderer::fog::FogUniforms {
-                            fog_color: [0.08, 0.09, 0.11, 1.0], // Dark indoor restroom tone
+                            fog_color: [0.08, 0.09, 0.11, 1.0], // Dark basement boiler tone
                             fog_near: 800.0,
                             fog_far: 6000.0,
                             density: 0.35,
@@ -376,7 +420,8 @@ fn find_map_file_for_room(
                             speed_mult: 1.0,
                             _padding: 0.0,
                         };
-                        return (map, glam::Vec3::new(-100200.0, -100.0, -60000.0), 0.0, fog);
+                        // Authentic rr21 hotel boiler room coordinates: X: -100000.0, Y: -500.0, Z: -60000.0
+                        return (map, glam::Vec3::new(-100000.0, -500.0, -60000.0), 0.0, fog);
                     }
                 }
             }
@@ -419,8 +464,8 @@ fn find_map_file_for_room(
                 fog,
             )
         }
-        TestRoomKind::BoilerRoom => {
-            tracing::info!("Generated Boiler Room fallback sandbox.");
+        TestRoomKind::FallbackSandbox => {
+            tracing::info!("Generated built-in Fallback Sandbox room.");
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.08, 0.09, 0.11, 1.0],
                 fog_near: 800.0,
@@ -1992,9 +2037,10 @@ fn main() {
         } else if let Some(room_str) = arg.strip_prefix("--test-room=") {
             initial_test_room = match room_str {
                 "ob01" | "observation" | "outdoor" => Some(TestRoomKind::ObservationDeck),
-                "rr21" | "restroom" => Some(TestRoomKind::RestroomStart),
+                "er01" | "restroom" | "toilet" => Some(TestRoomKind::RestroomStart),
+                "rr21" | "boiler" => Some(TestRoomKind::HotelBoilerRoom),
                 "runway" | "fog" => Some(TestRoomKind::SyntheticFogRunway),
-                "boiler" | "fallback" => Some(TestRoomKind::BoilerRoom),
+                "fallback" | "sandbox" => Some(TestRoomKind::FallbackSandbox),
                 _ => {
                     tracing::warn!(
                         "Unknown test room: '{}', defaulting to Observation Deck",

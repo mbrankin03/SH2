@@ -156,10 +156,26 @@ mod renderer_tests {
             assert!(gpu_skeletal.total_indices > 0);
 
             // Verify pose variant initialization (James hll_jms has 31 prims, but inactive hand variants are omitted)
-            let active_prims: Vec<_> = gpu_skeletal.primitives.iter().filter(|p| p.is_active).collect();
-            assert_eq!(active_prims.len(), 13, "Expected 13 active primitives (base mesh + default open hands)");
-            let inactive_prims: Vec<_> = gpu_skeletal.primitives.iter().filter(|p| !p.is_active).collect();
-            assert_eq!(inactive_prims.len(), 18, "Expected 18 inactive hand pose variants");
+            let active_prims: Vec<_> = gpu_skeletal
+                .primitives
+                .iter()
+                .filter(|p| p.is_active)
+                .collect();
+            assert_eq!(
+                active_prims.len(),
+                13,
+                "Expected 13 active primitives (base mesh + default open hands)"
+            );
+            let inactive_prims: Vec<_> = gpu_skeletal
+                .primitives
+                .iter()
+                .filter(|p| !p.is_active)
+                .collect();
+            assert_eq!(
+                inactive_prims.len(),
+                18,
+                "Expected 18 inactive hand pose variants"
+            );
 
             let locals = compute_bind_locals(&model.parents, &model.initial_matrices);
             let pose0 = evaluate_pose(&model.parents, &locals, &anm.frames[0]);
@@ -199,10 +215,26 @@ mod renderer_tests {
             assert!(gpu_skeletal.total_indices > 0);
 
             // Verify pose variant initialization (James hll_jms has 31 prims, but inactive hand variants are omitted)
-            let active_prims: Vec<_> = gpu_skeletal.primitives.iter().filter(|p| p.is_active).collect();
-            assert_eq!(active_prims.len(), 13, "Expected 13 active primitives (base mesh + default open hands)");
-            let inactive_prims: Vec<_> = gpu_skeletal.primitives.iter().filter(|p| !p.is_active).collect();
-            assert_eq!(inactive_prims.len(), 18, "Expected 18 inactive hand pose variants");
+            let active_prims: Vec<_> = gpu_skeletal
+                .primitives
+                .iter()
+                .filter(|p| p.is_active)
+                .collect();
+            assert_eq!(
+                active_prims.len(),
+                13,
+                "Expected 13 active primitives (base mesh + default open hands)"
+            );
+            let inactive_prims: Vec<_> = gpu_skeletal
+                .primitives
+                .iter()
+                .filter(|p| !p.is_active)
+                .collect();
+            assert_eq!(
+                inactive_prims.len(),
+                18,
+                "Expected 18 inactive hand pose variants"
+            );
 
             let locals = compute_bind_locals(&model.parents, &model.initial_matrices);
             let pose0 = evaluate_pose(&model.parents, &locals, &anm.frames[0]);

@@ -1,0 +1,23 @@
+# Set default behavior to automatically normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Explicitly ensure Rust and text source files use LF
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.sh text eol=lf
+
+# Binary files
+*.adx binary
+*.anm binary
+*.dxt binary
+*.map binary
+*.mdls binary
+*.mes binary
+*.snd binary
+*.tga binary
+*.png binary

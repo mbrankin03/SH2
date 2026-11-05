@@ -181,8 +181,10 @@ impl GpuSkeletalMesh {
         let mut indices: Vec<u32> = Vec::new();
         let mut prim_batches = Vec::with_capacity(model.primitives.len());
 
-        // Check if this model contains multiple pose variations (e.g. low-LOD James hll_jms)
+        // Check if this model contains multiple pose variations (e.g. low-LOD James hll_jms, Maria lxx_mar)
         let has_variant_poses = model.primitives.iter().any(|pr| pr.pose_index > 0);
+        let has_pose_14 = model.primitives.iter().any(|pr| pr.pose_index == 14);
+        let has_pose_6 = model.primitives.iter().any(|pr| pr.pose_index == 6);
 
         for (k, pr) in model.primitives.iter().enumerate() {
             let tris = model.primitive_triangles(k);
@@ -195,9 +197,15 @@ impl GpuSkeletalMesh {
             let index_count = (indices.len() as u32) - first_index;
 
             // Default active state: if model uses pose variants, activate base mesh (0)
-            // and default relaxed open hands (pose 3 for right hand, pose 14 for left hand).
+            // and default relaxed open hands:
+            // - James (`hll_jms` / `lll_jms`): pose 3 (right hand) + pose 14 (left hand)
+            // - Maria (`lxx_mar` / `rlxx_mar`): pose 3 (right hand) + pose 6 (left hand)
+            // - Pyramid Head (`red`): pose 0 + pose 3
             let is_active = if has_variant_poses {
-                pr.pose_index == 0 || pr.pose_index == 3 || pr.pose_index == 14
+                pr.pose_index == 0
+                    || pr.pose_index == 3
+                    || (has_pose_14 && pr.pose_index == 14)
+                    || (!has_pose_14 && has_pose_6 && pr.pose_index == 6)
             } else {
                 true
             };

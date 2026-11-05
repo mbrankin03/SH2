@@ -13,3 +13,6 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+sh2-assets = { workspace = true }

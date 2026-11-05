@@ -394,11 +394,16 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
     }
 
     // 5. Shared triangle strip index list
-    let end_idx = if vertex_ofs > tri_ofs {
+    let tprim_count = read_u32(data, base + 40)? as usize;
+    let tprim_ofs = read_u32(data, base + 44)? as usize;
+    let mut end_idx = if vertex_ofs > tri_ofs {
         vertex_ofs
     } else {
         data.len() - base
     };
+    if tprim_count > 0 && tprim_ofs > tri_ofs && tprim_ofs < end_idx {
+        end_idx = tprim_ofs;
+    }
     let strip_len_bytes = end_idx.saturating_sub(tri_ofs);
     let num_strips = strip_len_bytes / 2;
     let mut strip_indices = Vec::with_capacity(num_strips);
@@ -450,10 +455,33 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // 7. Map vertices to owning primitives to resolve global skeleton bone indices and model-space bind positions
+    // 7. Map vertices to owning primitives using non-degenerate triangle indices
+    // to resolve global skeleton bone indices and model-space bind positions
     if !strip_indices.is_empty() && !primitives.is_empty() && !vertices.positions.is_empty() {
         let mut owner = vec![usize::MAX; vertex_count];
 
+        for (k, pr) in primitives.iter().enumerate() {
+            let start = pr.start;
+            let end = (pr.start + pr.length).min(strip_indices.len());
+            if start + 2 < end {
+                let slice = &strip_indices[start..end];
+                for i in 0..slice.len().saturating_sub(2) {
+                    let x = slice[i] as usize;
+                    let y = slice[i + 1] as usize;
+                    let z = slice[i + 2] as usize;
+                    if x == y || y == z || x == z {
+                        continue;
+                    }
+                    for v in [x, y, z] {
+                        if v < vertex_count {
+                            owner[v] = k;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback for any vertex referenced only by degenerate strip connectors
         for (k, pr) in primitives.iter().enumerate() {
             let start = pr.start;
             let end = (pr.start + pr.length).min(strip_indices.len());
@@ -488,6 +516,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             // Secondary bones from bone pairs
             for j in 1..4 {
                 let x = raw_b[j] as usize;
+                let mut valid_pair = false;
                 if x != 0 && x != 255 && vertices.weights[i][j] > 0.0 && x >= pr.bone_indices.len()
                 {
                     let pi = x - pr.bone_indices.len();
@@ -495,8 +524,13 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
                         let pair_idx = pr.pair_indices[pi] as usize;
                         if pair_idx < pairs.len() {
                             resolved_b[j] = pairs[pair_idx].1 as u16;
+                            valid_pair = true;
                         }
                     }
+                }
+                if !valid_pair {
+                    vertices.weights[i][j] = 0.0;
+                    resolved_b[j] = b0;
                 }
             }
 

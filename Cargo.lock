@@ -2086,6 +2086,7 @@ dependencies = [
  "glam",
  "log",
  "serde",
+ "sh2-assets",
  "sh2-core",
  "thiserror 2.0.21",
  "tracing",

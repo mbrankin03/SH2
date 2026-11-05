@@ -66,8 +66,8 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         mdl_paths: &["data/chr/jms/hhh_jms.mdl"],
         anm_paths: &[
             "data/chr/jms/jms_basic1.anm",
-            "data/chr/jms/jms_basic2_1.anm",
-            "data/chr/jms/jms_basic3.anm",
+            "data/demo/tenbou/hhh_jms.anm",
+            "data/demo/vtr/hhh_jms.anm",
             "data/chr/jms/jms_wphand.anm",
             "data/chr/jms/jms_wppipe.anm",
             "data/chr/jms/jms_wpkaku.anm",
@@ -102,12 +102,12 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
     },
     ModelViewerEntry {
         id: "xmar",
-        display_name: "Maria (Born from a Wish - hhh_mar / xmar)",
+        display_name: "Maria (Born from a Wish - lxx_mar / xmar)",
         category: ModelCategory::Protagonist,
         mdl_paths: &[
-            "data/chr2/mar/hhh_mar.mdl",
-            "data/chr/mar/hhh_mar.mdl",
             "sh2e/chr2/mar/lxx_mar.mdl",
+            "data/chr2/mar/lxx_mar.mdl",
+            "sh2e/chr/mar/lll_mar.mdl",
         ],
         anm_paths: &[
             "data/chr2/mar/xmar_wpnone.anm",
@@ -115,6 +115,21 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
             "data/chr2/mar/xmar_wpknif.anm",
         ],
         hd_override_dir: Some("sh2e/chr2/mar"),
+        default_distance: 2400.0,
+        default_target_y: -820.0,
+    },
+    ModelViewerEntry {
+        id: "hhh_mar",
+        display_name: "Maria (High-LOD Cutscene - hhh_mar)",
+        category: ModelCategory::Protagonist,
+        mdl_paths: &["data/chr/mar/hhh_mar.mdl", "data/chr2/mar/hhh_mar.mdl"],
+        anm_paths: &[
+            "data/chr/mar/p_hhh_mar.anm",
+            "data/demo/mar_saikai/hhh_mar.anm",
+            "data/demo/gekijou_b/hhh_mar.anm",
+            "data/demo/teddy_b/hhh_mar.anm",
+        ],
+        hd_override_dir: Some("sh2e/chr/mar"),
         default_distance: 2400.0,
         default_target_y: -820.0,
     },
@@ -138,7 +153,12 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         display_name: "Eddie Dombrowski (High-LOD - hhh_edi)",
         category: ModelCategory::StoryNpc,
         mdl_paths: &["data/chr/edi/hhh_edi.mdl"],
-        anm_paths: &["data/chr/edi/lll_edi.anm", "data/chr/edi/p_edi.anm"],
+        anm_paths: &[
+            "data/chr/edi/p_edi.anm",
+            "data/demo/gero_edi/hhh_edi.anm",
+            "data/demo/edi_korosu/hhh_edi.anm",
+            "data/demo/bp_edi_1/hhh_edi.anm",
+        ],
         hd_override_dir: Some("sh2e/chr/edi"),
         default_distance: 2500.0,
         default_target_y: -850.0,
@@ -148,7 +168,7 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         display_name: "Eddie Dombrowski (Gameplay LOD - lll_edi)",
         category: ModelCategory::StoryNpc,
         mdl_paths: &["data/chr/edi/lll_edi.mdl"],
-        anm_paths: &["data/chr/edi/lll_edi.anm", "data/chr/edi/p_edi.anm"],
+        anm_paths: &["data/chr/edi/lll_edi.anm"],
         hd_override_dir: Some("sh2e/chr/edi"),
         default_distance: 2500.0,
         default_target_y: -850.0,
@@ -877,5 +897,155 @@ mod tests {
         viewer.render_mode = viewer.render_mode.next();
         assert_eq!(viewer.render_mode, ViewerRenderMode::UntexturedClay);
         assert_eq!(viewer.render_mode.shader_mode_code(), 1);
+    }
+
+    #[test]
+    fn test_all_bestiary_catalog_models_and_animations_skin_cleanly() {
+        use sh2_assets::formats::anm::{
+            compute_bind_locals, compute_skin_matrices, evaluate_pose, parse_anm,
+        };
+        use sh2_assets::formats::mdls::parse_mdl;
+        use std::path::Path;
+
+        let root = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+        if !Path::new(root).exists() {
+            return;
+        }
+
+        for entry in BESTIARY_CATALOG {
+            let mut mdl_bytes = None;
+            for &mp in entry.mdl_paths {
+                let p = format!("{root}/{mp}");
+                if let Ok(b) = std::fs::read(&p) {
+                    mdl_bytes = Some((mp, b));
+                    break;
+                }
+            }
+            let (mdl_path, mdl_bytes) = mdl_bytes
+                .unwrap_or_else(|| panic!("Catalog entry '{}' missing all .mdl files", entry.id));
+            let model = parse_mdl(&mdl_bytes)
+                .unwrap_or_else(|e| panic!("Failed to parse '{}': {:?}", mdl_path, e));
+            let bind_locals = compute_bind_locals(&model.parents, &model.initial_matrices);
+
+            // Check bind-pose vertex weights are normalized and bone indices are in range
+            for (vi, (bones, weights)) in model
+                .vertices
+                .bone_indices
+                .iter()
+                .zip(model.vertices.weights.iter())
+                .enumerate()
+            {
+                let sum: f32 = weights.iter().sum();
+                assert!(
+                    (sum - 1.0).abs() < 1e-3,
+                    "Entry '{}' ({}) vertex {} weights sum to {}",
+                    entry.id,
+                    mdl_path,
+                    vi,
+                    sum
+                );
+                for j in 0..4 {
+                    if weights[j] > 0.0 {
+                        assert!(
+                            (bones[j] as usize) < model.bone_count,
+                            "Entry '{}' ({}) vertex {} weight[{}]={} has out-of-range bone_idx={}",
+                            entry.id,
+                            mdl_path,
+                            vi,
+                            j,
+                            weights[j],
+                            bones[j]
+                        );
+                    }
+                }
+            }
+
+            // Verify every listed .anm clip parses cleanly and skins without exploding/skewed vertices
+            for &ap in entry.anm_paths {
+                let p = format!("{root}/{ap}");
+                let anm_bytes = std::fs::read(&p)
+                    .unwrap_or_else(|_| panic!("Catalog entry '{}' missing '{}'", entry.id, ap));
+                let anm =
+                    parse_anm(&anm_bytes, model.bone_count, &model.parents).unwrap_or_else(|e| {
+                        panic!(
+                            "Entry '{}' ({}, {} bones) failed to parse '{}': {:?}",
+                            entry.id, mdl_path, model.bone_count, ap, e
+                        )
+                    });
+                assert!(
+                    !anm.frames.is_empty(),
+                    "Entry '{}' animation '{}' produced 0 frames",
+                    entry.id,
+                    ap
+                );
+
+                // Check frame 0, mid-frame, and last frame for finite, bounded vertex skinning
+                let check_frames = [0, anm.frames.len() / 2, anm.frames.len() - 1];
+                for &fi in &check_frames {
+                    let pose = evaluate_pose(&model.parents, &bind_locals, &anm.frames[fi]);
+                    let skin = compute_skin_matrices(&pose, &model.initial_matrices);
+
+                    let mut min_pt = [f32::INFINITY; 3];
+                    let mut max_pt = [f32::NEG_INFINITY; 3];
+
+                    for (pos, (bones, weights)) in model.vertices.positions.iter().zip(
+                        model
+                            .vertices
+                            .bone_indices
+                            .iter()
+                            .zip(model.vertices.weights.iter()),
+                    ) {
+                        let mut skinned = [0.0f32; 3];
+                        for j in 0..4 {
+                            let w = weights[j];
+                            if w > 0.0 {
+                                let m = &skin[bones[j] as usize];
+                                skinned[0] += w
+                                    * (m[0][0] * pos[0]
+                                        + m[0][1] * pos[1]
+                                        + m[0][2] * pos[2]
+                                        + m[0][3]);
+                                skinned[1] += w
+                                    * (m[1][0] * pos[0]
+                                        + m[1][1] * pos[1]
+                                        + m[1][2] * pos[2]
+                                        + m[1][3]);
+                                skinned[2] += w
+                                    * (m[2][0] * pos[0]
+                                        + m[2][1] * pos[1]
+                                        + m[2][2] * pos[2]
+                                        + m[2][3]);
+                            }
+                        }
+                        for c in 0..3 {
+                            assert!(
+                                skinned[c].is_finite(),
+                                "Non-finite skinned coord in '{}' / '{}' frame {}",
+                                entry.id,
+                                ap,
+                                fi
+                            );
+                            min_pt[c] = min_pt[c].min(skinned[c]);
+                            max_pt[c] = max_pt[c].max(skinned[c]);
+                        }
+                    }
+
+                    // Ensure bounding box span of the character/item in any single frame does not explode
+                    let span_x = max_pt[0] - min_pt[0];
+                    let span_y = max_pt[1] - min_pt[1];
+                    let span_z = max_pt[2] - min_pt[2];
+                    assert!(
+                        span_x < 5000.0 && span_y < 5000.0 && span_z < 5000.0,
+                        "Exploding/skewed vertices detected in '{}' ('{}' frame {}): span=({:.1}, {:.1}, {:.1})",
+                        entry.id,
+                        ap,
+                        fi,
+                        span_x,
+                        span_y,
+                        span_z
+                    );
+                }
+            }
+        }
     }
 }

@@ -446,12 +446,16 @@ mod tests {
                 Some("data/chr/jms/jms_basic1.anm"),
             ),
             (
-                "data/chr2/mar/hhh_mar.mdl",
+                "data/chr2/mar/lxx_mar.mdl",
                 Some("data/chr2/mar/xmar_wpnone.anm"),
+            ),
+            (
+                "data/chr/mar/hhh_mar.mdl",
+                Some("data/chr/mar/p_hhh_mar.anm"),
             ),
             ("data/chr/mar/lll_mar.mdl", Some("data/chr/mar/lll_mar.anm")),
             // 2. Story NPCs
-            ("data/chr/edi/hhh_edi.mdl", Some("data/chr/edi/lll_edi.anm")),
+            ("data/chr/edi/hhh_edi.mdl", Some("data/chr/edi/p_edi.anm")),
             ("data/chr/edi/lll_edi.mdl", Some("data/chr/edi/lll_edi.anm")),
             ("data/chr/lau/lau.mdl", Some("data/chr/lau/p_lau.anm")),
             ("data/chr/mry/mry.mdl", Some("data/chr/mry/p_mry.anm")),

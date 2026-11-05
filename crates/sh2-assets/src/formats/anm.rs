@@ -144,7 +144,8 @@ fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
         block += 1;
     }
 
-    p == data.len() && (block * 8).is_multiple_of(per_frame)
+    let valid_end = p == data.len() || (p + 2 == data.len() && data[p] == 0 && data[p + 1] == 0);
+    valid_end && (block * 8).is_multiple_of(per_frame)
 }
 
 /// Parses raw `.anm` bytes into an [`AnimationFile`] given the target model's bone hierarchy.
@@ -154,10 +155,11 @@ fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
 /// - `bone_count`: Skeleton bone count from the matching [`.mdl` / `.mdls`](crate::formats::mdls::ModelFile).
 /// - `parents`: Skeleton parent array used to identify root bones (`parents[i] == 255`).
 ///
-/// If `bone_count` is 71 (cutscene model `hhh_jms.mdl`) but the animation data represents a
-/// 41-bone standard gameplay track (e.g. `jms_basic1.anm` with stride 48), the parser automatically
+/// If `bone_count` is 71 (cutscene model `hhh_jms.mdl`) whose first 41 bones `0..41` are identical
+/// to the 41-bone gameplay skeleton (`hll_jms.mdl`), and the animation data represents a 41-bone
+/// standard gameplay track (e.g. `jms_basic1.anm` with stride 48), the parser automatically
 /// detects the 41-bone track stride and parses the animation frames accordingly. Unspecified finger
-/// bones (41..71) automatically follow their wrist parents via forward kinematics in [`evaluate_pose`].
+/// bones (`41..71`) automatically follow their wrist parents via forward kinematics in [`evaluate_pose`].
 pub fn parse_anm(
     data: &[u8],
     bone_count: usize,
@@ -174,11 +176,39 @@ pub fn parse_anm(
         return parse_anm_with_stride(data, bone_count, parents);
     }
 
-    // Check common SH2 gameplay/cutscene skeleton strides (e.g. 41-bone gameplay track on 71/73-bone high-LOD models)
-    for &candidate in &[41usize, 32, 40, 48, 56, 64, 71, 73, 24, 16, 8] {
-        if candidate != bone_count && is_valid_anm_stride(data, candidate, parents) {
-            return parse_anm_with_stride(data, candidate, parents);
+    // Special case: 71-bone high-LOD James (`hhh_jms.mdl`) shares the exact same first 41 bones
+    // (`0..41`) as 41-bone gameplay James (`hll_jms.mdl`), with finger bones appended at `41..71`.
+    if bone_count == 71 && is_valid_anm_stride(data, 41, parents) {
+        return parse_anm_with_stride(data, 41, parents);
+    }
+
+    // For synthetic unit test buffers or custom tracks, check if any candidate stride cleanly decodes
+    // ONLY when the buffer is small or exact stride failed, EXCEPT never map a 35/36-bone gameplay
+    // track onto a 64/73-bone high-LOD cutscene skeleton whose facial/hair bones are interleaved!
+    if bone_count <= 48 {
+        for &candidate in &[41usize, 36, 35, 32, 40, 48, 24, 16, 8] {
+            if candidate != bone_count && is_valid_anm_stride(data, candidate, parents) {
+                return parse_anm_with_stride(data, candidate, parents);
+            }
         }
+    }
+
+    if data.is_empty() {
+        return Ok(AnimationFile {
+            bone_count,
+            frames: Vec::new(),
+        });
+    }
+
+    // If this is a real multi-KB retail `.anm` stream that failed stride validation for `bone_count`,
+    // return an error rather than force-decoding with a misaligned stride (which would interpret
+    // rotation nibbles as root translations and skew vertices wildly).
+    if data.len() > 256 {
+        return Err(AssetError::InvalidData(format!(
+            "Animation byte stream ({} bytes) is incompatible with skeleton bone_count={}",
+            data.len(),
+            bone_count
+        )));
     }
 
     parse_anm_with_stride(data, bone_count, parents)

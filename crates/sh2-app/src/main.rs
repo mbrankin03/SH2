@@ -2064,12 +2064,17 @@ impl ApplicationHandler for SilentHillApp {
                             {
                                 let has_variant_poses =
                                     c.model.primitives.iter().any(|pr| pr.pose_index > 0);
+                                let has_pose_14 =
+                                    c.model.primitives.iter().any(|pr| pr.pose_index == 14);
+                                let has_pose_6 =
+                                    c.model.primitives.iter().any(|pr| pr.pose_index == 6);
                                 let mut all_tris = Vec::new();
                                 for (k, pr) in c.model.primitives.iter().enumerate() {
                                     let is_active = if has_variant_poses {
                                         pr.pose_index == 0
                                             || pr.pose_index == 3
-                                            || pr.pose_index == 14
+                                            || (has_pose_14 && pr.pose_index == 14)
+                                            || (!has_pose_14 && has_pose_6 && pr.pose_index == 6)
                                     } else {
                                         true
                                     };

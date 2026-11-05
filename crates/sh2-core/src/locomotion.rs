@@ -826,7 +826,7 @@ mod tests {
             controller.update(&LocomotionInput::default(), &mut yaw, dt, true);
             ticks += 1;
         }
-        assert!(ticks >= 34 && ticks <= 36);
+        assert!((34..=36).contains(&ticks));
         assert!((yaw.abs() - PI).abs() < 1e-2);
     }
 

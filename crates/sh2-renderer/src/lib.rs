@@ -114,6 +114,7 @@ pub struct RenderContext {
 
     pub geometry_pipeline: pipeline::GeometryPipeline,
     pub skeletal_pipeline: skeletal::SkeletalPipeline,
+    pub debug_line_pipeline: pipeline::DebugLinePipeline,
     pub fog_pipeline: fog::FogComputePipeline,
     pub post_pipeline: post::PostProcessPipeline,
 
@@ -121,6 +122,7 @@ pub struct RenderContext {
     pub spotlight_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
+    pub debug_line_buffer: wgpu::Buffer,
 
     pub geometry_bind_group: wgpu::BindGroup,
     pub fog_bind_group: wgpu::BindGroup,
@@ -136,6 +138,8 @@ impl RenderContext {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
     pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
     pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+    /// Capacity of the reusable GPU vertex buffer for 3D debug line overlays (65,536 vertices = ~2 MB).
+    pub const MAX_DEBUG_LINE_VERTICES: usize = 65_536;
 
     pub fn new_headless(config: RendererConfig) -> Option<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -246,6 +250,12 @@ impl RenderContext {
             &geometry_pipeline.bind_group_layout,
             &geometry_pipeline.texture_bind_group_layout,
         );
+        let debug_line_pipeline = pipeline::DebugLinePipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
+        );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
 
@@ -275,6 +285,15 @@ impl RenderContext {
             label: Some("Post Uniform Buffer"),
             contents: bytemuck::bytes_of(&post_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let debug_line_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Persistent Debug Line Vertex Buffer"),
+            size: (Self::MAX_DEBUG_LINE_VERTICES
+                * std::mem::size_of::<sh2_debug::DebugLineVertex>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -441,12 +460,14 @@ impl RenderContext {
             ldr_output_view,
             geometry_pipeline,
             skeletal_pipeline,
+            debug_line_pipeline,
             fog_pipeline,
             post_pipeline,
             camera_buffer,
             spotlight_buffer,
             fog_buffer,
             post_buffer,
+            debug_line_buffer,
             geometry_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -540,6 +561,12 @@ impl RenderContext {
             &geometry_pipeline.bind_group_layout,
             &geometry_pipeline.texture_bind_group_layout,
         );
+        let debug_line_pipeline = pipeline::DebugLinePipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
+        );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
 
@@ -569,6 +596,15 @@ impl RenderContext {
             label: Some("Post Uniform Buffer"),
             contents: bytemuck::bytes_of(&post_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let debug_line_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Persistent Debug Line Vertex Buffer"),
+            size: (Self::MAX_DEBUG_LINE_VERTICES
+                * std::mem::size_of::<sh2_debug::DebugLineVertex>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -733,12 +769,14 @@ impl RenderContext {
             ldr_output_view,
             geometry_pipeline,
             skeletal_pipeline,
+            debug_line_pipeline,
             fog_pipeline,
             post_pipeline,
             camera_buffer,
             spotlight_buffer,
             fog_buffer,
             post_buffer,
+            debug_line_buffer,
             geometry_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -750,10 +788,20 @@ impl RenderContext {
     }
 
     pub fn update_camera(&self, view_proj: glam::Mat4, inv_proj: glam::Mat4, cam_pos: glam::Vec3) {
+        self.update_camera_with_mode(view_proj, inv_proj, cam_pos, 0.0);
+    }
+
+    pub fn update_camera_with_mode(
+        &self,
+        view_proj: glam::Mat4,
+        inv_proj: glam::Mat4,
+        cam_pos: glam::Vec3,
+        shade_mode: f32,
+    ) {
         let uniforms = pipeline::CameraUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             inv_proj: inv_proj.to_cols_array_2d(),
-            cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, 1.0],
+            cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, shade_mode],
         };
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -985,11 +1033,44 @@ impl RenderContext {
         map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
         skeletal_meshes: &[SkeletalDrawItem],
     ) {
+        self.render_scene_with_debug_lines(gpu_map, map_texture_bind_groups, skeletal_meshes, &[]);
+    }
+
+    /// Renders static world level map batches, dynamic animated skeletal meshes, and 3D debug lines
+    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass.
+    pub fn render_scene_with_debug_lines(
+        &self,
+        gpu_map: Option<&GpuMap>,
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
+        debug_lines: &[sh2_debug::DebugLineVertex],
+    ) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene Render Encoder"),
             });
+
+        // Upload debug lines into the persistent buffer (or allocate an overflow buffer if exceeding capacity)
+        let overflow_debug_line_buffer = if debug_lines.len() > Self::MAX_DEBUG_LINE_VERTICES {
+            Some(
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Overflow Debug Line Vertex Buffer"),
+                        contents: bytemuck::cast_slice(debug_lines),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+            )
+        } else {
+            if !debug_lines.is_empty() {
+                self.queue.write_buffer(
+                    &self.debug_line_buffer,
+                    0,
+                    bytemuck::cast_slice(debug_lines),
+                );
+            }
+            None
+        };
 
         // 1. Geometry & Skeletal Meshes Render Pass
         {
@@ -1044,40 +1125,76 @@ impl RenderContext {
                 }
             }
 
-            // 1b. Render skeletal character meshes
+            // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass)
             if !skeletal_meshes.is_empty() {
-                rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-
-                for (mesh, matrices, texture_groups) in skeletal_meshes {
+                for (mesh, matrices, _) in skeletal_meshes {
                     mesh.update_bone_matrices(&self.queue, matrices);
-                    rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                }
 
-                    let mut current_tex: Option<u16> = None;
-                    for prim in &mesh.primitives {
-                        if prim.index_count > 0 && prim.is_active {
-                            let tex_idx = prim.texture_index;
-                            if current_tex != Some(tex_idx) {
-                                let bg = match texture_groups {
-                                    Some(groups) if (tex_idx as usize) < groups.len() => {
-                                        &groups[tex_idx as usize]
-                                    }
-                                    _ => &self.default_texture_bind_group,
-                                };
-                                rpass.set_bind_group(2, &**bg, &[]);
-                                current_tex = Some(tex_idx);
+                for transparent_pass in [false, true] {
+                    let has_any = skeletal_meshes.iter().any(|(mesh, _, _)| {
+                        mesh.primitives.iter().any(|p| {
+                            p.index_count > 0 && p.is_active && p.is_transparent == transparent_pass
+                        })
+                    });
+                    if !has_any {
+                        continue;
+                    }
+
+                    if transparent_pass {
+                        rpass.set_pipeline(&self.skeletal_pipeline.transparent_pipeline);
+                    } else {
+                        rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
+                    }
+                    rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+
+                    for (mesh, _matrices, texture_groups) in skeletal_meshes {
+                        rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        rpass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
+
+                        let mut current_tex: Option<u16> = None;
+                        for prim in &mesh.primitives {
+                            if prim.index_count > 0
+                                && prim.is_active
+                                && prim.is_transparent == transparent_pass
+                            {
+                                let tex_idx = prim.texture_index;
+                                if current_tex != Some(tex_idx) {
+                                    let bg = match texture_groups {
+                                        Some(groups) if (tex_idx as usize) < groups.len() => {
+                                            &groups[tex_idx as usize]
+                                        }
+                                        _ => &self.default_texture_bind_group,
+                                    };
+                                    rpass.set_bind_group(2, &**bg, &[]);
+                                    current_tex = Some(tex_idx);
+                                }
+
+                                rpass.draw_indexed(
+                                    prim.first_index..prim.first_index + prim.index_count,
+                                    0,
+                                    0..1,
+                                );
                             }
-
-                            rpass.draw_indexed(
-                                prim.first_index..prim.first_index + prim.index_count,
-                                0,
-                                0..1,
-                            );
                         }
                     }
                 }
+            }
+
+            // 1c. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
+            if !debug_lines.is_empty() {
+                let line_buf = overflow_debug_line_buffer
+                    .as_ref()
+                    .unwrap_or(&self.debug_line_buffer);
+                let byte_len = std::mem::size_of_val(debug_lines) as wgpu::BufferAddress;
+                rpass.set_pipeline(&self.debug_line_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                rpass.set_vertex_buffer(0, line_buf.slice(0..byte_len));
+                rpass.draw(0..(debug_lines.len() as u32), 0..1);
             }
         }
 

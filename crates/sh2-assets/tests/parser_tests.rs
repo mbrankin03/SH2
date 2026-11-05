@@ -165,12 +165,26 @@ mod tests {
         assert_eq!(model.bone_count, 71);
         assert_eq!(model.parents.len(), 71);
         assert_eq!(model.initial_matrices.len(), 71);
-        assert_eq!(model.primitives.len(), 15);
-        assert_eq!(model.vertices.positions.len(), 4897);
-        assert_eq!(model.vertices.normals.len(), 4897);
-        assert_eq!(model.vertices.uvs.len(), 4897);
-        assert_eq!(model.vertices.bone_indices.len(), 4897);
-        assert_eq!(model.vertices.weights.len(), 4897);
+        // 15 opaque primitives + 1 transparent primitive = 16 total
+        assert_eq!(model.primitives.len(), 16);
+        assert_eq!(
+            model
+                .primitives
+                .iter()
+                .filter(|p| !p.is_transparent)
+                .count(),
+            15
+        );
+        assert_eq!(
+            model.primitives.iter().filter(|p| p.is_transparent).count(),
+            1
+        );
+        // 4897 opaque vertices + 378 transparent vertices = 5275 total
+        assert_eq!(model.vertices.positions.len(), 5275);
+        assert_eq!(model.vertices.normals.len(), 5275);
+        assert_eq!(model.vertices.uvs.len(), 5275);
+        assert_eq!(model.vertices.bone_indices.len(), 5275);
+        assert_eq!(model.vertices.weights.len(), 5275);
         assert_eq!(
             model.textures.len(),
             4,
@@ -189,8 +203,10 @@ mod tests {
             let low_model = parse_mdl(&low_data).expect("Failed to parse hll_jms.mdl");
 
             assert_eq!(low_model.bone_count, 41);
-            assert_eq!(low_model.primitives.len(), 31);
-            assert_eq!(low_model.vertices.positions.len(), 7311);
+            // 31 opaque primitives + 1 transparent primitive = 32 total
+            assert_eq!(low_model.primitives.len(), 32);
+            // 7311 opaque vertices + 378 transparent vertices = 7689 total
+            assert_eq!(low_model.vertices.positions.len(), 7689);
 
             // Verify all vertex weights sum to 1.0 (normalized)
             for (idx, w) in low_model.vertices.weights.iter().enumerate() {
@@ -214,8 +230,26 @@ mod tests {
             let mar_model = parse_mdl(&mar_data).expect("Failed to parse hhh_mar.mdl");
 
             assert_eq!(mar_model.bone_count, 73);
-            assert_eq!(mar_model.primitives.len(), 25);
-            assert_eq!(mar_model.vertices.positions.len(), 4940);
+            // 25 opaque primitives + 5 transparent hair/eyelash primitives = 30 total
+            assert_eq!(mar_model.primitives.len(), 30);
+            assert_eq!(
+                mar_model
+                    .primitives
+                    .iter()
+                    .filter(|p| !p.is_transparent)
+                    .count(),
+                25
+            );
+            assert_eq!(
+                mar_model
+                    .primitives
+                    .iter()
+                    .filter(|p| p.is_transparent)
+                    .count(),
+                5
+            );
+            // 4940 opaque vertices + 331 transparent vertices = 5271 total
+            assert_eq!(mar_model.vertices.positions.len(), 5271);
 
             for (idx, w) in mar_model.vertices.weights.iter().enumerate() {
                 let sum = w[0] + w[1] + w[2] + w[3];
@@ -424,5 +458,127 @@ mod tests {
         assert_eq!(bank.entries[1].data.len(), 128);
         assert!(bank.entries[1].loops);
         assert_eq!(bank.entries[1].loop_start, 100);
+    }
+
+    #[test]
+    fn test_sh2_36_bestiary_catalog_models_and_animations_parsing() {
+        if !Path::new(&format!("{ROOT_ASSETS}/data")).exists() {
+            println!("Skipping test_sh2_36_bestiary_catalog_models_and_animations_parsing: retail assets not present");
+            return;
+        }
+
+        // Verify every single entry in `sh2_debug::BESTIARY_CATALOG` (29 models across
+        // Protagonists, Story NPCs, Enemies, Bosses, Weapons & Key Items):
+        let catalog_samples: &[(&str, Option<&str>)] = &[
+            // 1. Playable Protagonists
+            (
+                "data/chr/jms/hhh_jms.mdl",
+                Some("data/chr/jms/jms_basic1.anm"),
+            ),
+            (
+                "data/chr/jms/hll_jms.mdl",
+                Some("data/chr/jms/jms_basic1.anm"),
+            ),
+            (
+                "data/chr2/mar/lxx_mar.mdl",
+                Some("data/chr2/mar/xmar_wpnone.anm"),
+            ),
+            (
+                "data/chr/mar/hhh_mar.mdl",
+                Some("data/chr/mar/p_hhh_mar.anm"),
+            ),
+            ("data/chr/mar/lll_mar.mdl", Some("data/chr/mar/lll_mar.anm")),
+            // 2. Story NPCs
+            ("data/chr/edi/hhh_edi.mdl", Some("data/chr/edi/p_edi.anm")),
+            ("data/chr/edi/lll_edi.mdl", Some("data/chr/edi/lll_edi.anm")),
+            ("data/chr/lau/lau.mdl", Some("data/chr/lau/p_lau.anm")),
+            ("data/chr/mry/mry.mdl", Some("data/chr/mry/p_mry.anm")),
+            ("data/chr/agl/agl.mdl", Some("data/chr/agl/p_agl.anm")),
+            // 3. Enemies
+            ("data/chr/scu/scu.mdl", Some("data/chr/scu/scu.anm")),
+            ("data/chr/mkn/mkn.mdl", Some("data/chr/mkn/mkn.anm")),
+            ("data/chr/nse/nse.mdl", Some("data/chr/nse/nse.anm")),
+            ("data/chr/xoo/xoo.mdl", Some("data/chr/xoo/xoo.anm")),
+            ("data/chr/arm/arm.mdl", Some("data/chr/arm/arm.anm")),
+            ("data/chr/tyu/tyu.mdl", Some("data/chr/tyu/tyu.anm")),
+            // 4. Bosses
+            ("data/chr/red/red.mdl", Some("data/chr/red/red.anm")),
+            ("data/chr/oni/oni.mdl", Some("data/chr/oni/oni.anm")),
+            ("data/chr/ike/ike.mdl", Some("data/chr/ike/ike.anm")),
+            ("data/chr/pap/pap.mdl", Some("data/chr/pap/pap.anm")),
+            ("data/chr/bos/bos.mdl", Some("data/chr/bos/bos.anm")),
+            // 5. Weapons & Key Items
+            ("data/chr/wp/wp_pipe.mdl", None),
+            ("data/chr/wp/wp_kakuzai.mdl", None),
+            ("data/chr/wp/wp_handgun.mdl", None),
+            ("data/chr/wp/wp_shotgun.mdl", None),
+            ("data/chr/wp/wp_riflgun.mdl", None),
+            ("data/chr/wp/wp_nata.mdl", None),
+            ("data/chr/wp/wp_sp.mdl", None),
+            ("data/chr/wp/wp_csaw.mdl", None),
+            ("data/chr/item/i_letter.mdl", None),
+        ];
+
+        for &(mdl_rel, anm_opt) in catalog_samples {
+            let mdl_full = format!("{ROOT_ASSETS}/{mdl_rel}");
+            assert!(
+                Path::new(&mdl_full).exists(),
+                "Expected Bestiary model at {mdl_full}"
+            );
+            let mdl_bytes = fs::read(&mdl_full).expect("Failed to read model file");
+            let model = parse_mdl(&mdl_bytes)
+                .unwrap_or_else(|e| panic!("Failed to parse {mdl_rel}: {e:?}"));
+
+            assert!(model.bone_count > 0, "{mdl_rel} must have at least 1 bone");
+            assert!(
+                !model.primitives.is_empty(),
+                "{mdl_rel} must have primitives"
+            );
+            assert!(
+                !model.vertices.positions.is_empty(),
+                "{mdl_rel} must have vertices"
+            );
+
+            let tex_ids: Vec<u32> = model.textures.keys().copied().collect();
+            let prim_tex_ids: Vec<u16> = model.primitives.iter().map(|p| p.texture_index).collect();
+            println!(
+                "Model {mdl_rel}: bones={}, prims={}, verts={}, tex_ids={tex_ids:?}, prim_tex_ids={prim_tex_ids:?}",
+                model.bone_count,
+                model.primitives.len(),
+                model.vertices.positions.len()
+            );
+
+            if let Some(anm_rel) = anm_opt {
+                let anm_full = format!("{ROOT_ASSETS}/{anm_rel}");
+                assert!(
+                    Path::new(&anm_full).exists(),
+                    "Expected Bestiary animation at {anm_full}"
+                );
+                let anm_bytes = fs::read(&anm_full).expect("Failed to read animation file");
+                let anm = parse_anm(&anm_bytes, model.bone_count, &model.parents)
+                    .unwrap_or_else(|e| panic!("Failed to parse {anm_rel}: {e:?}"));
+                assert!(
+                    !anm.frames.is_empty(),
+                    "{anm_rel} must have animation frames"
+                );
+            }
+
+            // Verify embedded texture mapping and DXT decoding
+            for pr in &model.primitives {
+                let tid = pr.texture_index as u32;
+                if !model.textures.is_empty() {
+                    let tex = model.textures.get(&tid).unwrap_or_else(|| {
+                        panic!(
+                            "{mdl_rel}: primitive texture_index={tid} not found in model.textures (keys={:?})",
+                            model.textures.keys().collect::<Vec<_>>()
+                        )
+                    });
+                    let rgba = tex.to_rgba().unwrap_or_else(|e| {
+                        panic!("{mdl_rel}: failed to decode texture {tid}: {e:?}")
+                    });
+                    assert_eq!(rgba.len(), tex.width * tex.height * 4);
+                }
+            }
+        }
     }
 }

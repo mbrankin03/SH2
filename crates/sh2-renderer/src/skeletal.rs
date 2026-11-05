@@ -181,8 +181,10 @@ impl GpuSkeletalMesh {
         let mut indices: Vec<u32> = Vec::new();
         let mut prim_batches = Vec::with_capacity(model.primitives.len());
 
-        // Check if this model contains multiple pose variations (e.g. low-LOD James hll_jms)
+        // Check if this model contains multiple pose variations (e.g. low-LOD James hll_jms, Maria lxx_mar)
         let has_variant_poses = model.primitives.iter().any(|pr| pr.pose_index > 0);
+        let has_pose_14 = model.primitives.iter().any(|pr| pr.pose_index == 14);
+        let has_pose_6 = model.primitives.iter().any(|pr| pr.pose_index == 6);
 
         for (k, pr) in model.primitives.iter().enumerate() {
             let tris = model.primitive_triangles(k);
@@ -195,9 +197,15 @@ impl GpuSkeletalMesh {
             let index_count = (indices.len() as u32) - first_index;
 
             // Default active state: if model uses pose variants, activate base mesh (0)
-            // and default relaxed open hands (pose 3 for right hand, pose 14 for left hand).
+            // and default relaxed open hands:
+            // - James (`hll_jms` / `lll_jms`): pose 3 (right hand) + pose 14 (left hand)
+            // - Maria (`lxx_mar` / `rlxx_mar`): pose 3 (right hand) + pose 6 (left hand)
+            // - Pyramid Head (`red`): pose 0 + pose 3
             let is_active = if has_variant_poses {
-                pr.pose_index == 0 || pr.pose_index == 3 || pr.pose_index == 14
+                pr.pose_index == 0
+                    || pr.pose_index == 3
+                    || (has_pose_14 && pr.pose_index == 14)
+                    || (!has_pose_14 && has_pose_6 && pr.pose_index == 6)
             } else {
                 true
             };
@@ -289,6 +297,7 @@ impl GpuSkeletalMesh {
 /// Rendering pipeline for skeletal character meshes with GPU Linear Blend Skinning (LBS).
 pub struct SkeletalPipeline {
     pub pipeline: wgpu::RenderPipeline,
+    pub transparent_pipeline: wgpu::RenderPipeline,
     pub bone_bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -360,6 +369,24 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let n_len = length(in.normal);
+    let norm = select(vec3<f32>(0.0, -1.0, 0.0), in.normal / n_len, n_len > 1e-4);
+
+    // Sample diffuse texture unconditionally in uniform control flow before any early returns
+    // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
+    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
+
+    // Inspect shading mode encoded in camera.cam_pos.w:
+    // 0.0 = Textured (Spotlight + Ambient)
+    // 1.0 = Untextured Clay (3-Point Studio Shading)
+    // 2.0 = Surface Normals (RGB Vector Map)
+    // 3.0 = Textured with 3-Point Studio Lighting (Key + Fill + Rim + Spotlight)
+    let shade_mode = i32(round(camera.cam_pos.w));
+    if shade_mode == 2 {
+        let n_rgb = norm * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
+        return vec4<f32>(n_rgb, 1.0);
+    }
+
     // Spotlight lighting evaluation
     let light_to_frag = in.world_pos - spotlight.position.xyz;
     let dist = length(light_to_frag);
@@ -375,13 +402,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let spot_cone = clamp((current_cos - outer_cos) / max(inner_cos - outer_cos, 0.0001), 0.0, 1.0) * forward_gate;
 
     let attenuation = 1.0 / max(dist * dist * 0.00005 + dist * 0.001 + 1.0, 1.0);
-    let n_dot_l = max(dot(in.normal, -l_dir), 0.0);
+    let n_dot_l = max(dot(norm, -l_dir), 0.0);
 
     let ambient = vec3<f32>(0.04, 0.04, 0.045);
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation);
 
-    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
-    let final_rgb = (ambient + diffuse) * in.color.rgb * tex_color.rgb;
+    // 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used in Model Viewer modes (1 and 3)
+    let key_dir = normalize(vec3<f32>(0.45, -0.65, 0.60));
+    let fill_dir = normalize(vec3<f32>(-0.65, -0.25, 0.70));
+    let rim_dir = normalize(vec3<f32>(0.0, -0.40, -0.90));
+
+    let k_diff = max(dot(norm, key_dir), 0.0) * vec3<f32>(0.78, 0.76, 0.72);
+    let f_diff = max(dot(norm, fill_dir), 0.0) * vec3<f32>(0.28, 0.32, 0.38);
+    let r_diff = pow(max(dot(norm, rim_dir), 0.0), 2.0) * vec3<f32>(0.45, 0.50, 0.60);
+    let studio_light = vec3<f32>(0.16, 0.16, 0.18) + k_diff + f_diff + r_diff + diffuse * 0.65;
+
+    if shade_mode == 1 {
+        let clay_albedo = vec3<f32>(0.76, 0.74, 0.72);
+        return vec4<f32>(clay_albedo * studio_light, 1.0);
+    }
+
+    if tex_color.a < 0.01 {
+        discard;
+    }
+    let total_light = select(ambient + diffuse, studio_light, shade_mode == 3);
+    let final_rgb = total_light * in.color.rgb * tex_color.rgb;
     return vec4<f32>(final_rgb, in.color.a * tex_color.a);
 }
 "#;
@@ -463,8 +508,49 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             cache: None,
         });
 
+        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Skeletal Mesh Transparent Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[SkeletalVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: hdr_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             pipeline,
+            transparent_pipeline,
             bone_bind_group_layout,
         }
     }

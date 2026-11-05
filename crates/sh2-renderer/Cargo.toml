@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 sh2-core = { workspace = true }
 sh2-assets = { workspace = true }
+sh2-debug = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 thiserror = { workspace = true }

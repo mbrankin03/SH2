@@ -188,6 +188,40 @@ mod renderer_tests {
                 &[(&gpu_skeletal, &skin_matrices, None)],
             );
             let _ = ctx.device.poll(wgpu::Maintain::wait());
+
+            // Test SH2-36 Model & Texture Viewer modes: Bone Skeleton + Wireframe + Clay/Normals shaders
+            let world_id = [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
+            let skel_lines =
+                sh2_debug::build_skeleton_debug_lines(&model.parents, &pose0, &world_id, 45.0);
+            assert!(!skel_lines.is_empty());
+
+            let tris = model.primitive_triangles(0);
+            let wire_lines = sh2_debug::build_wireframe_lines(
+                &model.vertices.positions,
+                &model.vertices.bone_indices,
+                &model.vertices.weights,
+                &skin_matrices,
+                &tris,
+                [0.15, 0.92, 0.65, 1.0],
+            );
+            assert!(!wire_lines.is_empty());
+
+            // Render Untextured Clay (mode 1.0) and Surface Normals (mode 2.0) with debug lines
+            for mode in [1.0f32, 2.0f32, 3.0f32] {
+                ctx.update_camera_with_mode(view_proj, inv_proj, eye, mode);
+                ctx.render_scene_with_debug_lines(
+                    Some(&gpu_map),
+                    None,
+                    &[(&gpu_skeletal, &skin_matrices, None)],
+                    &skel_lines,
+                );
+                let _ = ctx.device.poll(wgpu::Maintain::wait());
+            }
         }
 
         // Test with real Maria model and animation (SH2-12)
@@ -246,6 +280,40 @@ mod renderer_tests {
                 &[(&gpu_skeletal, &skin_matrices, None)],
             );
             let _ = ctx.device.poll(wgpu::Maintain::wait());
+
+            // Test SH2-36 Model & Texture Viewer modes: Bone Skeleton + Wireframe + Clay/Normals shaders
+            let world_id = [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
+            let skel_lines =
+                sh2_debug::build_skeleton_debug_lines(&model.parents, &pose0, &world_id, 45.0);
+            assert!(!skel_lines.is_empty());
+
+            let tris = model.primitive_triangles(0);
+            let wire_lines = sh2_debug::build_wireframe_lines(
+                &model.vertices.positions,
+                &model.vertices.bone_indices,
+                &model.vertices.weights,
+                &skin_matrices,
+                &tris,
+                [0.15, 0.92, 0.65, 1.0],
+            );
+            assert!(!wire_lines.is_empty());
+
+            // Render Untextured Clay (mode 1.0) and Surface Normals (mode 2.0) with debug lines
+            for mode in [1.0f32, 2.0f32, 3.0f32] {
+                ctx.update_camera_with_mode(view_proj, inv_proj, eye, mode);
+                ctx.render_scene_with_debug_lines(
+                    Some(&gpu_map),
+                    None,
+                    &[(&gpu_skeletal, &skin_matrices, None)],
+                    &skel_lines,
+                );
+                let _ = ctx.device.poll(wgpu::Maintain::wait());
+            }
         }
 
         // Test animated post-processing update over sequential frames

@@ -65,10 +65,11 @@ fn hash_u32(x: u32) -> u32 {
     return (word >> 22u) ^ word;
 }
 
-// Generates pseudo-random 2D noise from pixel coordinates and advancing frame seed
+// Generates pseudo-random 2D noise from pixel coordinates and advancing frame seed.
+// Uses a 2D integer hash (PCG-style) to guarantee true resolution-independence without 1D row wraparound.
 fn random_val(pixel: vec2<u32>, frame: u32) -> f32 {
-    let p = pixel.x + pixel.y * 1920u + frame * 104729u;
-    let h = hash_u32(p);
+    let seed = (pixel.x * 1597334677u) ^ (pixel.y * 3812015801u) ^ (frame * 104729u);
+    let h = hash_u32(seed);
     return f32(h) / 4294967295.0;
 }
 
@@ -86,8 +87,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // 2. Authentic PS2 / SH2:EE film grain filter (noise.c / PS2NoiseFilter.cpp)
     if (post.grain_intensity > 0.001) {
-        // Frame seed incorporates both integer frame counter and advancing float time
-        let frame_seed = post.frame_count + u32(post.time * 60.0);
+        // Frame seed clocked at 30 Hz film-rate: avoids persistence-of-vision temporal wash out on high refresh rate (120/240Hz) OLEDs
+        let frame_seed = u32(post.time * 30.0);
         let rand_f = random_val(global_id.xy, frame_seed);
 
         // PS2 authentic discrete 4-level quantization (levels 0, 1, 2, 3 mapped to 15, 0, 10, 5 in DXT1 / 4-bit luminance)
@@ -107,14 +108,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Authentic Konami PS2 noise tint: 0xde99 (R: 222, G: 210, B: 206)
         let grain_tint = vec3<f32>(222.0 / 255.0, 210.0 / 255.0, 206.0 / 255.0);
 
-        // MODULATE2X of the grain texel and tint
-        let grain_rgb = 2.0 * grain_tint * texel_level;
+        // Authentic Emotion Engine division factor 7.4 (noise.c / PS2NoiseFilter.cpp BrightnessControl)
+        // Calibrates texel amplitude from harsh digital snow down to natural, subtle analog film grit
+        let ps2_attenuation = 1.0 / 7.4;
+
+        // MODULATE2X of the grain texel, tint, and PS2 hardware attenuation
+        let grain_rgb = 2.0 * grain_tint * texel_level * ps2_attenuation;
 
         // Authentic D3DBLEND_INVSRCALPHA / D3DBLEND_SRCALPHA blend (noise.c / PS2NoiseFilter):
         // out = grain_rgb * (1.0 - scene_alpha) + ldr * scene_alpha
-        // Using grain_weight proportional to options intensity ensures clear visibility in both
-        // shadows/dark geometry (jacket, background) and lit surfaces.
-        let grain_weight = clamp(0.18 * post.grain_intensity, 0.0, 0.40);
+        // Scaled so that the 25% natural film-grain sweetspot maps to 100% on the slider,
+        // ensuring the entire options range provides fine, delicate adjustment without ever becoming harsh.
+        let grain_weight = clamp(0.05 * post.grain_intensity, 0.0, 0.05);
         let scene_weight = 1.0 - grain_weight;
         ldr = clamp(grain_rgb * grain_weight + ldr * scene_weight, vec3<f32>(0.0), vec3<f32>(1.0));
     }

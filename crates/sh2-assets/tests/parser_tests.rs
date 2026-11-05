@@ -425,4 +425,75 @@ mod tests {
         assert!(bank.entries[1].loops);
         assert_eq!(bank.entries[1].loop_start, 100);
     }
+
+    #[test]
+    fn test_sh2_36_bestiary_catalog_models_and_animations_parsing() {
+        if !Path::new(&format!("{ROOT_ASSETS}/data")).exists() {
+            println!("Skipping test_sh2_36_bestiary_catalog_models_and_animations_parsing: retail assets not present");
+            return;
+        }
+
+        // Verify representative models across all 5 Bestiary categories:
+        // Protagonists (hhh_jms, lll_mar), Story NPCs (hhh_edi, lau, mry, agl),
+        // Enemies (scu, mkn, nse, xoo, arm, tyu), Bosses (red, oni, ike, pap, bos),
+        // Weapons & Items (wp_pipe, wp_handgun, wp_shotgun, wp_nata, i_letter)
+        let catalog_samples: &[(&str, Option<&str>)] = &[
+            ("data/chr/edi/hhh_edi.mdl", Some("data/chr/edi/lll_edi.anm")),
+            ("data/chr/lau/lau.mdl", Some("data/chr/lau/p_lau.anm")),
+            ("data/chr/mry/mry.mdl", Some("data/chr/mry/p_mry.anm")),
+            ("data/chr/agl/agl.mdl", Some("data/chr/agl/p_agl.anm")),
+            ("data/chr/scu/scu.mdl", Some("data/chr/scu/scu.anm")),
+            ("data/chr/mkn/mkn.mdl", Some("data/chr/mkn/mkn.anm")),
+            ("data/chr/nse/nse.mdl", Some("data/chr/nse/nse.anm")),
+            ("data/chr/xoo/xoo.mdl", Some("data/chr/xoo/xoo.anm")),
+            ("data/chr/arm/arm.mdl", Some("data/chr/arm/arm.anm")),
+            ("data/chr/tyu/tyu.mdl", Some("data/chr/tyu/tyu.anm")),
+            ("data/chr/red/red.mdl", Some("data/chr/red/red.anm")),
+            ("data/chr/oni/oni.mdl", Some("data/chr/oni/oni.anm")),
+            ("data/chr/ike/ike.mdl", Some("data/chr/ike/ike.anm")),
+            ("data/chr/pap/pap.mdl", Some("data/chr/pap/pap.anm")),
+            ("data/chr/bos/bos.mdl", Some("data/chr/bos/bos.anm")),
+            ("data/chr/wp/wp_pipe.mdl", None),
+            ("data/chr/wp/wp_handgun.mdl", None),
+            ("data/chr/wp/wp_shotgun.mdl", None),
+            ("data/chr/wp/wp_nata.mdl", None),
+            ("data/chr/item/i_letter.mdl", None),
+        ];
+
+        for &(mdl_rel, anm_opt) in catalog_samples {
+            let mdl_full = format!("{ROOT_ASSETS}/{mdl_rel}");
+            assert!(
+                Path::new(&mdl_full).exists(),
+                "Expected Bestiary model at {mdl_full}"
+            );
+            let mdl_bytes = fs::read(&mdl_full).expect("Failed to read model file");
+            let model = parse_mdl(&mdl_bytes)
+                .unwrap_or_else(|e| panic!("Failed to parse {mdl_rel}: {e:?}"));
+
+            assert!(model.bone_count > 0, "{mdl_rel} must have at least 1 bone");
+            assert!(
+                !model.primitives.is_empty(),
+                "{mdl_rel} must have primitives"
+            );
+            assert!(
+                !model.vertices.positions.is_empty(),
+                "{mdl_rel} must have vertices"
+            );
+
+            if let Some(anm_rel) = anm_opt {
+                let anm_full = format!("{ROOT_ASSETS}/{anm_rel}");
+                assert!(
+                    Path::new(&anm_full).exists(),
+                    "Expected Bestiary animation at {anm_full}"
+                );
+                let anm_bytes = fs::read(&anm_full).expect("Failed to read animation file");
+                let anm = parse_anm(&anm_bytes, model.bone_count, &model.parents)
+                    .unwrap_or_else(|e| panic!("Failed to parse {anm_rel}: {e:?}"));
+                assert!(
+                    !anm.frames.is_empty(),
+                    "{anm_rel} must have animation frames"
+                );
+            }
+        }
+    }
 }

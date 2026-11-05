@@ -114,6 +114,7 @@ pub struct RenderContext {
 
     pub geometry_pipeline: pipeline::GeometryPipeline,
     pub skeletal_pipeline: skeletal::SkeletalPipeline,
+    pub debug_line_pipeline: pipeline::DebugLinePipeline,
     pub fog_pipeline: fog::FogComputePipeline,
     pub post_pipeline: post::PostProcessPipeline,
 
@@ -245,6 +246,12 @@ impl RenderContext {
             Self::DEPTH_FORMAT,
             &geometry_pipeline.bind_group_layout,
             &geometry_pipeline.texture_bind_group_layout,
+        );
+        let debug_line_pipeline = pipeline::DebugLinePipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
         );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
@@ -441,6 +448,7 @@ impl RenderContext {
             ldr_output_view,
             geometry_pipeline,
             skeletal_pipeline,
+            debug_line_pipeline,
             fog_pipeline,
             post_pipeline,
             camera_buffer,
@@ -539,6 +547,12 @@ impl RenderContext {
             Self::DEPTH_FORMAT,
             &geometry_pipeline.bind_group_layout,
             &geometry_pipeline.texture_bind_group_layout,
+        );
+        let debug_line_pipeline = pipeline::DebugLinePipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
         );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
         let post_pipeline = post::PostProcessPipeline::new(&device);
@@ -733,6 +747,7 @@ impl RenderContext {
             ldr_output_view,
             geometry_pipeline,
             skeletal_pipeline,
+            debug_line_pipeline,
             fog_pipeline,
             post_pipeline,
             camera_buffer,
@@ -750,10 +765,20 @@ impl RenderContext {
     }
 
     pub fn update_camera(&self, view_proj: glam::Mat4, inv_proj: glam::Mat4, cam_pos: glam::Vec3) {
+        self.update_camera_with_mode(view_proj, inv_proj, cam_pos, 0.0);
+    }
+
+    pub fn update_camera_with_mode(
+        &self,
+        view_proj: glam::Mat4,
+        inv_proj: glam::Mat4,
+        cam_pos: glam::Vec3,
+        shade_mode: f32,
+    ) {
         let uniforms = pipeline::CameraUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             inv_proj: inv_proj.to_cols_array_2d(),
-            cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, 1.0],
+            cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, shade_mode],
         };
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -985,11 +1010,36 @@ impl RenderContext {
         map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
         skeletal_meshes: &[SkeletalDrawItem],
     ) {
+        self.render_scene_with_debug_lines(gpu_map, map_texture_bind_groups, skeletal_meshes, &[]);
+    }
+
+    /// Renders static world level map batches, dynamic animated skeletal meshes, and 3D debug lines
+    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass.
+    pub fn render_scene_with_debug_lines(
+        &self,
+        gpu_map: Option<&GpuMap>,
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
+        debug_lines: &[sh2_debug::DebugLineVertex],
+    ) {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene Render Encoder"),
             });
+
+        let debug_line_buffer = if !debug_lines.is_empty() {
+            Some(
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Debug Line Vertex Buffer"),
+                        contents: bytemuck::cast_slice(debug_lines),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+            )
+        } else {
+            None
+        };
 
         // 1. Geometry & Skeletal Meshes Render Pass
         {
@@ -1078,6 +1128,14 @@ impl RenderContext {
                         }
                     }
                 }
+            }
+
+            // 1c. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
+            if let Some(ref line_buf) = debug_line_buffer {
+                rpass.set_pipeline(&self.debug_line_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                rpass.set_vertex_buffer(0, line_buf.slice(..));
+                rpass.draw(0..(debug_lines.len() as u32), 0..1);
             }
         }
 

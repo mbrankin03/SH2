@@ -360,6 +360,20 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let n_len = length(in.normal);
+    let norm = select(vec3<f32>(0.0, -1.0, 0.0), in.normal / n_len, n_len > 1e-4);
+
+    // Inspect shading mode encoded in camera.cam_pos.w:
+    // 0.0 = Textured (Spotlight + Ambient)
+    // 1.0 = Untextured Clay (3-Point Studio Shading)
+    // 2.0 = Surface Normals (RGB Vector Map)
+    // 3.0 = Textured with 3-Point Studio Lighting (Key + Fill + Rim + Spotlight)
+    let shade_mode = i32(round(camera.cam_pos.w));
+    if shade_mode == 2 {
+        let n_rgb = norm * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
+        return vec4<f32>(n_rgb, 1.0);
+    }
+
     // Spotlight lighting evaluation
     let light_to_frag = in.world_pos - spotlight.position.xyz;
     let dist = length(light_to_frag);
@@ -375,13 +389,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let spot_cone = clamp((current_cos - outer_cos) / max(inner_cos - outer_cos, 0.0001), 0.0, 1.0) * forward_gate;
 
     let attenuation = 1.0 / max(dist * dist * 0.00005 + dist * 0.001 + 1.0, 1.0);
-    let n_dot_l = max(dot(in.normal, -l_dir), 0.0);
+    let n_dot_l = max(dot(norm, -l_dir), 0.0);
 
     let ambient = vec3<f32>(0.04, 0.04, 0.045);
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation);
 
+    // 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used in Model Viewer modes (1 and 3)
+    let key_dir = normalize(vec3<f32>(0.45, -0.65, 0.60));
+    let fill_dir = normalize(vec3<f32>(-0.65, -0.25, 0.70));
+    let rim_dir = normalize(vec3<f32>(0.0, -0.40, -0.90));
+
+    let k_diff = max(dot(norm, key_dir), 0.0) * vec3<f32>(0.78, 0.76, 0.72);
+    let f_diff = max(dot(norm, fill_dir), 0.0) * vec3<f32>(0.28, 0.32, 0.38);
+    let r_diff = pow(max(dot(norm, rim_dir), 0.0), 2.0) * vec3<f32>(0.45, 0.50, 0.60);
+    let studio_light = vec3<f32>(0.16, 0.16, 0.18) + k_diff + f_diff + r_diff + diffuse * 0.65;
+
+    if shade_mode == 1 {
+        let clay_albedo = vec3<f32>(0.76, 0.74, 0.72);
+        return vec4<f32>(clay_albedo * studio_light, 1.0);
+    }
+
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
-    let final_rgb = (ambient + diffuse) * in.color.rgb * tex_color.rgb;
+    let total_light = select(ambient + diffuse, studio_light, shade_mode == 3);
+    let final_rgb = total_light * in.color.rgb * tex_color.rgb;
     return vec4<f32>(final_rgb, in.color.a * tex_color.a);
 }
 "#;

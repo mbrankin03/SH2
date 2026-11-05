@@ -170,12 +170,14 @@ pub fn parse_anm(
         });
     }
 
-    if bone_count == 71 {
-        if is_valid_anm_stride(data, 71, parents) {
-            return parse_anm_with_stride(data, 71, parents);
-        }
-        if is_valid_anm_stride(data, 41, parents) {
-            return parse_anm_with_stride(data, 41, parents);
+    if is_valid_anm_stride(data, bone_count, parents) {
+        return parse_anm_with_stride(data, bone_count, parents);
+    }
+
+    // Check common SH2 gameplay/cutscene skeleton strides (e.g. 41-bone gameplay track on 71/73-bone high-LOD models)
+    for &candidate in &[41usize, 32, 40, 48, 56, 64, 71, 73, 24, 16, 8] {
+        if candidate != bone_count && is_valid_anm_stride(data, candidate, parents) {
+            return parse_anm_with_stride(data, candidate, parents);
         }
     }
 

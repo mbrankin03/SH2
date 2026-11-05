@@ -243,6 +243,19 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
+
+    // Navigate up to wrap to the last entry ("MODEL & TEXTURE VIEWER", SH2-36)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::ModelAndTextureViewer
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "MODEL & TEXTURE VIEWER"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(cue, MenuSoundCue::GameStartTransition);
     assert_eq!(
@@ -251,7 +264,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     );
     assert_eq!(
         debug_controller.title_sm.selected_test_room,
-        sh2_ui::menu::TestRoomKind::ObservationDeck
+        sh2_ui::menu::TestRoomKind::ModelAndTextureViewer
     );
 
     // Clean up temporary test files

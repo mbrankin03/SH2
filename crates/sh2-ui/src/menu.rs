@@ -79,15 +79,18 @@ pub enum TestRoomKind {
     SyntheticFogRunway,
     /// Built-in enclosed room fallback sandbox with interior lighting, collision columns, and mesh skinning.
     FallbackSandbox,
+    /// Interactive 3D Model, Animation, and Texture Viewer / Bestiary inspection stage (`SH2-36`).
+    ModelAndTextureViewer,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 5] = [
+    pub const ALL: [TestRoomKind; 6] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
         TestRoomKind::SyntheticFogRunway,
         TestRoomKind::FallbackSandbox,
+        TestRoomKind::ModelAndTextureViewer,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -97,6 +100,7 @@ impl TestRoomKind {
             Self::HotelBoilerRoom => "HOTEL BOILER ROOM (rr21.map - BASEMENT)",
             Self::SyntheticFogRunway => "SYNTHETIC FOG RUNWAY (CALIBRATION)",
             Self::FallbackSandbox => "FALLBACK ROOM (INTERNAL SANDBOX)",
+            Self::ModelAndTextureViewer => "MODEL & TEXTURE VIEWER",
         }
     }
 }

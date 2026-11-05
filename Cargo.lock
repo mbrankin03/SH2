@@ -2082,8 +2082,10 @@ dependencies = [
 name = "sh2-debug"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "glam",
  "log",
+ "serde",
  "sh2-core",
  "thiserror 2.0.21",
  "tracing",
@@ -2099,6 +2101,7 @@ dependencies = [
  "pollster 1.0.1",
  "sh2-assets",
  "sh2-core",
+ "sh2-debug",
  "thiserror 2.0.21",
  "tracing",
  "wgpu",

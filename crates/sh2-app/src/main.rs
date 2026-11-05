@@ -851,18 +851,20 @@ fn load_character_asset(
     let bind_locals = compute_bind_locals(&model.parents, &model.initial_matrices);
     let gpu_mesh = ctx.compile_skeletal_mesh(&model);
 
-    // Build both Vanilla PS2 and SH2:EE HD diffuse texture bind groups
-    let max_tex_idx = model
-        .primitives
-        .iter()
-        .map(|pr| pr.texture_index as usize)
-        .max()
-        .unwrap_or(0);
-    let mut vanilla_texture_bind_groups = Vec::with_capacity(max_tex_idx + 1);
-    let mut hd_texture_bind_groups = Vec::with_capacity(max_tex_idx + 1);
+    // Build both Vanilla PS2 and SH2:EE HD diffuse texture bind groups.
+    // Compact unique sprite IDs (`model.primitives[*].texture_index`, e.g. 1239..1772)
+    // into a dense 0..N slot array so we only allocate GPU bind groups for textures actually
+    // used by this model instead of 1,700+ dummy bind groups.
+    let mut unique_tex_ids: Vec<u16> = model.primitives.iter().map(|pr| pr.texture_index).collect();
+    unique_tex_ids.sort_unstable();
+    unique_tex_ids.dedup();
 
-    for tidx in 0..=max_tex_idx {
-        if let Some(tex) = model.textures.get(&(tidx as u32)) {
+    let mut vanilla_texture_bind_groups = Vec::with_capacity(unique_tex_ids.len());
+    let mut hd_texture_bind_groups = Vec::with_capacity(unique_tex_ids.len());
+
+    for &raw_tid in &unique_tex_ids {
+        let tidx = raw_tid as u32;
+        if let Some(tex) = model.textures.get(&tidx) {
             if let Ok(rgba) = tex.to_rgba() {
                 let van_bg = ctx.create_texture_bind_group(
                     tex.width as u32,
@@ -873,7 +875,7 @@ fn load_character_asset(
 
                 // Check if `hd_model` provides an override texture, else generate sharpened 2x HD surface
                 let hd_bg = if let Some(ref hdm) = hd_model {
-                    if let Some(hd_tex) = hdm.textures.get(&(tidx as u32)) {
+                    if let Some(hd_tex) = hdm.textures.get(&tidx) {
                         if let Ok(hd_rgba) = hd_tex.to_rgba() {
                             ctx.create_texture_bind_group(
                                 hd_tex.width as u32,
@@ -904,6 +906,14 @@ fn load_character_asset(
         }
         vanilla_texture_bind_groups.push(ctx.default_texture_bind_group.clone());
         hd_texture_bind_groups.push(ctx.default_texture_bind_group.clone());
+    }
+
+    // Remap each GPU primitive's `texture_index` to its dense 0..N slot in `*_texture_bind_groups`
+    let mut gpu_mesh = gpu_mesh;
+    for prim in &mut gpu_mesh.primitives {
+        if let Ok(dense_slot) = unique_tex_ids.binary_search(&prim.texture_index) {
+            prim.texture_index = dense_slot as u16;
+        }
     }
 
     let texture_bind_groups = hd_texture_bind_groups.clone();

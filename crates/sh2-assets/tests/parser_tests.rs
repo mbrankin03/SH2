@@ -433,30 +433,51 @@ mod tests {
             return;
         }
 
-        // Verify representative models across all 5 Bestiary categories:
-        // Protagonists (hhh_jms, lll_mar), Story NPCs (hhh_edi, lau, mry, agl),
-        // Enemies (scu, mkn, nse, xoo, arm, tyu), Bosses (red, oni, ike, pap, bos),
-        // Weapons & Items (wp_pipe, wp_handgun, wp_shotgun, wp_nata, i_letter)
+        // Verify every single entry in `sh2_debug::BESTIARY_CATALOG` (29 models across
+        // Protagonists, Story NPCs, Enemies, Bosses, Weapons & Key Items):
         let catalog_samples: &[(&str, Option<&str>)] = &[
+            // 1. Playable Protagonists
+            (
+                "data/chr/jms/hhh_jms.mdl",
+                Some("data/chr/jms/jms_basic1.anm"),
+            ),
+            (
+                "data/chr/jms/hll_jms.mdl",
+                Some("data/chr/jms/jms_basic1.anm"),
+            ),
+            (
+                "data/chr2/mar/hhh_mar.mdl",
+                Some("data/chr2/mar/xmar_wpnone.anm"),
+            ),
+            ("data/chr/mar/lll_mar.mdl", Some("data/chr/mar/lll_mar.anm")),
+            // 2. Story NPCs
             ("data/chr/edi/hhh_edi.mdl", Some("data/chr/edi/lll_edi.anm")),
+            ("data/chr/edi/lll_edi.mdl", Some("data/chr/edi/lll_edi.anm")),
             ("data/chr/lau/lau.mdl", Some("data/chr/lau/p_lau.anm")),
             ("data/chr/mry/mry.mdl", Some("data/chr/mry/p_mry.anm")),
             ("data/chr/agl/agl.mdl", Some("data/chr/agl/p_agl.anm")),
+            // 3. Enemies
             ("data/chr/scu/scu.mdl", Some("data/chr/scu/scu.anm")),
             ("data/chr/mkn/mkn.mdl", Some("data/chr/mkn/mkn.anm")),
             ("data/chr/nse/nse.mdl", Some("data/chr/nse/nse.anm")),
             ("data/chr/xoo/xoo.mdl", Some("data/chr/xoo/xoo.anm")),
             ("data/chr/arm/arm.mdl", Some("data/chr/arm/arm.anm")),
             ("data/chr/tyu/tyu.mdl", Some("data/chr/tyu/tyu.anm")),
+            // 4. Bosses
             ("data/chr/red/red.mdl", Some("data/chr/red/red.anm")),
             ("data/chr/oni/oni.mdl", Some("data/chr/oni/oni.anm")),
             ("data/chr/ike/ike.mdl", Some("data/chr/ike/ike.anm")),
             ("data/chr/pap/pap.mdl", Some("data/chr/pap/pap.anm")),
             ("data/chr/bos/bos.mdl", Some("data/chr/bos/bos.anm")),
+            // 5. Weapons & Key Items
             ("data/chr/wp/wp_pipe.mdl", None),
+            ("data/chr/wp/wp_kakuzai.mdl", None),
             ("data/chr/wp/wp_handgun.mdl", None),
             ("data/chr/wp/wp_shotgun.mdl", None),
+            ("data/chr/wp/wp_riflgun.mdl", None),
             ("data/chr/wp/wp_nata.mdl", None),
+            ("data/chr/wp/wp_sp.mdl", None),
+            ("data/chr/wp/wp_csaw.mdl", None),
             ("data/chr/item/i_letter.mdl", None),
         ];
 
@@ -480,6 +501,15 @@ mod tests {
                 "{mdl_rel} must have vertices"
             );
 
+            let tex_ids: Vec<u32> = model.textures.keys().copied().collect();
+            let prim_tex_ids: Vec<u16> = model.primitives.iter().map(|p| p.texture_index).collect();
+            println!(
+                "Model {mdl_rel}: bones={}, prims={}, verts={}, tex_ids={tex_ids:?}, prim_tex_ids={prim_tex_ids:?}",
+                model.bone_count,
+                model.primitives.len(),
+                model.vertices.positions.len()
+            );
+
             if let Some(anm_rel) = anm_opt {
                 let anm_full = format!("{ROOT_ASSETS}/{anm_rel}");
                 assert!(
@@ -493,6 +523,23 @@ mod tests {
                     !anm.frames.is_empty(),
                     "{anm_rel} must have animation frames"
                 );
+            }
+
+            // Verify embedded texture mapping and DXT decoding
+            for pr in &model.primitives {
+                let tid = pr.texture_index as u32;
+                if !model.textures.is_empty() {
+                    let tex = model.textures.get(&tid).unwrap_or_else(|| {
+                        panic!(
+                            "{mdl_rel}: primitive texture_index={tid} not found in model.textures (keys={:?})",
+                            model.textures.keys().collect::<Vec<_>>()
+                        )
+                    });
+                    let rgba = tex.to_rgba().unwrap_or_else(|e| {
+                        panic!("{mdl_rel}: failed to decode texture {tid}: {e:?}")
+                    });
+                    assert_eq!(rgba.len(), tex.width * tex.height * 4);
+                }
             }
         }
     }

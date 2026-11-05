@@ -78,6 +78,50 @@ mod tests {
             assert_eq!(rgba.len(), tex.width * tex.height * 4);
             println!("Decoded model texture {tid}: {}x{}", tex.width, tex.height);
         }
+
+        // Verify low-LOD James Sunderland model (hll_jms.mdl) with hand pose variants
+        let low_mdl_path = format!("{ROOT_ASSETS}/data/chr/jms/hll_jms.mdl");
+        if Path::new(&low_mdl_path).exists() {
+            let low_data = fs::read(&low_mdl_path).expect("Failed to read hll_jms.mdl");
+            let low_model = parse_mdl(&low_data).expect("Failed to parse hll_jms.mdl");
+
+            assert_eq!(low_model.bone_count, 41);
+            assert_eq!(low_model.primitives.len(), 31);
+            assert_eq!(low_model.vertices.positions.len(), 7311);
+
+            // Verify all vertex weights sum to 1.0 (normalized)
+            for (idx, w) in low_model.vertices.weights.iter().enumerate() {
+                let sum = w[0] + w[1] + w[2] + w[3];
+                assert!(
+                    (sum - 1.0).abs() < 1e-4,
+                    "Vertex {idx} weights not normalized: sum = {sum}"
+                );
+            }
+
+            // Verify hand poses 3..20 exist in primitives
+            let pose_indices: Vec<u8> = low_model.primitives.iter().map(|p| p.pose_index).collect();
+            assert!(pose_indices.contains(&3), "Right hand pose 3 must exist");
+            assert!(pose_indices.contains(&14), "Left hand pose 14 must exist");
+        }
+
+        // Verify Maria character models (hhh_mar.mdl and lll_mar.mdl)
+        let mar_high_path = format!("{ROOT_ASSETS}/data/chr/mar/hhh_mar.mdl");
+        if Path::new(&mar_high_path).exists() {
+            let mar_data = fs::read(&mar_high_path).expect("Failed to read hhh_mar.mdl");
+            let mar_model = parse_mdl(&mar_data).expect("Failed to parse hhh_mar.mdl");
+
+            assert_eq!(mar_model.bone_count, 73);
+            assert_eq!(mar_model.primitives.len(), 25);
+            assert_eq!(mar_model.vertices.positions.len(), 4940);
+
+            for (idx, w) in mar_model.vertices.weights.iter().enumerate() {
+                let sum = w[0] + w[1] + w[2] + w[3];
+                assert!(
+                    (sum - 1.0).abs() < 1e-4,
+                    "Maria hhh vertex {idx} weights not normalized: sum = {sum}"
+                );
+            }
+        }
     }
 
     #[test]

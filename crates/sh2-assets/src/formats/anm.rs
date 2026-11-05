@@ -83,12 +83,81 @@ pub struct AnimationFile {
     pub frames: Vec<AnimationFrame>,
 }
 
+/// Tests if the animation byte stream can be validly and completely decoded with the given bone count stride.
+fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
+    if bone_count == 0 {
+        return false;
+    }
+    let per_frame = (bone_count + 7) & !7;
+    let mut p = 0usize;
+    let mut block = 0usize;
+
+    while p + 4 <= data.len() {
+        let header = match read_u32(data, p) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        p += 4;
+
+        for j in 0..8 {
+            let t = ((header >> (4 * j)) & 7) as u8;
+            let bone_idx = ((block * 8) % per_frame) + j;
+            let is_root = if bone_idx < parents.len() {
+                parents[bone_idx] == 255
+            } else {
+                false
+            };
+
+            let need = match t {
+                0 => 0,
+                1 => 6,
+                2 => {
+                    if is_root {
+                        18
+                    } else {
+                        12
+                    }
+                }
+                3 => 16,
+                4 | 5 => {
+                    if is_root {
+                        28
+                    } else {
+                        22
+                    }
+                }
+                6 => {
+                    if is_root {
+                        40
+                    } else {
+                        28
+                    }
+                }
+                _ => return false,
+            };
+
+            if p + need > data.len() {
+                return false;
+            }
+            p += need;
+        }
+        block += 1;
+    }
+
+    p == data.len() && (block * 8).is_multiple_of(per_frame)
+}
+
 /// Parses raw `.anm` bytes into an [`AnimationFile`] given the target model's bone hierarchy.
 ///
 /// # Arguments
 /// - `data`: Raw byte slice of the `.anm` file.
 /// - `bone_count`: Skeleton bone count from the matching [`.mdl` / `.mdls`](crate::formats::mdls::ModelFile).
 /// - `parents`: Skeleton parent array used to identify root bones (`parents[i] == 255`).
+///
+/// If `bone_count` is 71 (cutscene model `hhh_jms.mdl`) but the animation data represents a
+/// 41-bone standard gameplay track (e.g. `jms_basic1.anm` with stride 48), the parser automatically
+/// detects the 41-bone track stride and parses the animation frames accordingly. Unspecified finger
+/// bones (41..71) automatically follow their wrist parents via forward kinematics in [`evaluate_pose`].
 pub fn parse_anm(
     data: &[u8],
     bone_count: usize,
@@ -101,6 +170,23 @@ pub fn parse_anm(
         });
     }
 
+    if bone_count == 71 {
+        if is_valid_anm_stride(data, 71, parents) {
+            return parse_anm_with_stride(data, 71, parents);
+        }
+        if is_valid_anm_stride(data, 41, parents) {
+            return parse_anm_with_stride(data, 41, parents);
+        }
+    }
+
+    parse_anm_with_stride(data, bone_count, parents)
+}
+
+fn parse_anm_with_stride(
+    data: &[u8],
+    bone_count: usize,
+    parents: &[u8],
+) -> Result<AnimationFile, AssetError> {
     let per_frame = (bone_count + 7) & !7;
     let mut frames = Vec::new();
     let mut cur_frame: Vec<Option<BoneTransform>> = vec![None; bone_count];
@@ -349,7 +435,23 @@ pub fn compute_skin_matrices(
     skin
 }
 
+/// Linearly interpolates an angular value along the shortest arc on the circle $[-\pi, \pi]$.
+#[inline]
+fn lerp_angle(a: f32, b: f32, alpha: f32) -> f32 {
+    let two_pi = std::f32::consts::TAU;
+    let mut diff = (b - a) % two_pi;
+    if diff > std::f32::consts::PI {
+        diff -= two_pi;
+    } else if diff < -std::f32::consts::PI {
+        diff += two_pi;
+    }
+    a + diff * alpha
+}
+
 /// Linearly interpolates (LERP / SLERP equivalent for Euler tracks) between two animation frames.
+///
+/// Rotation tracks interpolate along the shortest arc on $[-\pi, \pi]$ to prevent sudden
+/// 180-degree angular flips when angles wrap around boundary coordinates.
 pub fn interpolate_frames(
     frame_a: &AnimationFrame,
     frame_b: &AnimationFrame,
@@ -369,9 +471,9 @@ pub fn interpolate_frames(
             (Some(a), Some(b)) => {
                 let rot = match (a.rotation, b.rotation) {
                     (Some(ra), Some(rb)) => Some([
-                        ra[0] * inv_alpha + rb[0] * alpha,
-                        ra[1] * inv_alpha + rb[1] * alpha,
-                        ra[2] * inv_alpha + rb[2] * alpha,
+                        lerp_angle(ra[0], rb[0], alpha),
+                        lerp_angle(ra[1], rb[1], alpha),
+                        lerp_angle(ra[2], rb[2], alpha),
                     ]),
                     (Some(ra), None) => Some(ra),
                     (None, Some(rb)) => Some(rb),

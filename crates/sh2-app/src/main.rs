@@ -18,7 +18,7 @@ use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
 use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
-use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
+use sh2_core::{ControlScheme, ScenarioKind, SecondaryBonePhysics, SimulationCore};
 use sh2_renderer::{GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig, SurfaceBlitter};
 use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase};
 use sh2_ui::{AuthenticButtonSprite, ButtonSpriteSheet, TextRasterizer};
@@ -32,6 +32,7 @@ struct CharacterAsset {
     bind_locals: Vec<[[f32; 4]; 4]>,
     anm: AnimationFile,
     texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    secondary_physics: SecondaryBonePhysics,
 }
 
 /// Generate an authentic 3D Silent Hill enclosed room with floor, textured walls, ceiling, and columns.
@@ -287,6 +288,12 @@ fn load_character_asset(
         anm.frames.len()
     );
 
+    let secondary_physics = if character_name.contains("Maria") {
+        SecondaryBonePhysics::for_maria()
+    } else {
+        SecondaryBonePhysics::for_james()
+    };
+
     Some(CharacterAsset {
         name: character_name,
         gpu_mesh,
@@ -294,6 +301,7 @@ fn load_character_asset(
         bind_locals,
         anm,
         texture_bind_groups,
+        secondary_physics,
     })
 }
 
@@ -463,11 +471,11 @@ impl ApplicationHandler for SilentHillApp {
             map_texture_bind_groups.push(render_ctx.default_texture_bind_group.clone());
         }
 
-        // Load James Sunderland character model & animations
+        // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
         let character = load_character_asset(
             &render_ctx,
             "James Sunderland",
-            &["data/chr/jms/hll_jms.mdl", "data/chr/jms/hhh_jms.mdl"],
+            &["data/chr/jms/hhh_jms.mdl", "data/chr/jms/hll_jms.mdl"],
             &["data/chr/jms/jms_basic1.anm"],
         );
 
@@ -859,11 +867,17 @@ impl ApplicationHandler for SilentHillApp {
                 state.render_ctx.update_camera(view_proj, inv_proj, cam_pos);
 
                 // 3. Dynamic Flashlight tracking character position & facing angle
+                // Authentic chest pocket mount: clipped to James' front breast pocket (Bone 3, Y ≈ -640, shifted forward and slightly left)
                 let player_pos = state.sim_core.scenario.player_position;
                 let player_yaw = state.sim_core.scenario.player_yaw;
+                let forward = glam::Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
+                let right = glam::Vec3::new(player_yaw.cos(), 0.0, -player_yaw.sin());
                 let light_dir =
                     glam::Vec3::new(player_yaw.sin(), 0.05, player_yaw.cos()).normalize_or_zero();
-                let spot_pos = player_pos + glam::Vec3::new(0.0, -800.0, 0.0);
+                let spot_pos = player_pos
+                    + glam::Vec3::new(0.0, -640.0, 0.0)
+                    + forward * 45.0
+                    + right * (-12.0);
 
                 let light_color = if state.sim_core.scenario.flashlight_on {
                     [2.5, 2.3, 1.8, 1.0]
@@ -879,14 +893,14 @@ impl ApplicationHandler for SilentHillApp {
                 state.render_ctx.update_spotlight(&spot_uniforms);
 
                 // 4. Sample skeletal animation and compute character skinning matrices
-                let active_char = if state.active_maria {
-                    state.maria.as_ref().or(state.character.as_ref())
+                let mut active_char = if state.active_maria {
+                    state.maria.as_mut().or(state.character.as_mut())
                 } else {
-                    state.character.as_ref().or(state.maria.as_ref())
+                    state.character.as_mut().or(state.maria.as_mut())
                 };
 
                 let mut skin_matrices = Vec::new();
-                if let Some(c) = active_char {
+                if let Some(ref mut c) = active_char {
                     let (prev_cursor, cur_cursor, blend) =
                         state.sim_core.animation.evaluate_blended_cursor();
 
@@ -907,7 +921,13 @@ impl ApplicationHandler for SilentHillApp {
                             blended_frame = interpolate_frames(&prev_frame, &blended_frame, blend);
                         }
 
-                        let pose = evaluate_pose(&c.model.parents, &c.bind_locals, &blended_frame);
+                        // Apply procedural secondary spring-damper inertia physics (coat tails, flaps, skirt, chest)
+                        let dt_physics = 1.0 / 60.0;
+                        c.secondary_physics.step(dt_physics, player_pos, player_yaw);
+                        let mut dynamic_locals = c.bind_locals.clone();
+                        c.secondary_physics.apply_to_locals(&mut dynamic_locals);
+
+                        let pose = evaluate_pose(&c.model.parents, &dynamic_locals, &blended_frame);
                         let local_skin = compute_skin_matrices(&pose, &c.model.initial_matrices);
 
                         // Transform character mesh from model space to player world space:

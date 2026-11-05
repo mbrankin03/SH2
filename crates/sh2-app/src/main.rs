@@ -21,9 +21,9 @@ use sh2_assets::formats::TextureLoader;
 use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SecondaryBonePhysics, SimulationCore};
 use sh2_debug::{
-    build_skeleton_debug_lines, build_wireframe_lines, FmvCatalogEntry, FmvViewerState,
-    ModelViewerEntry, ModelViewerState, StageLightingRig, TextureSourceMode, ViewerRenderMode,
-    BESTIARY_CATALOG, FMV_CATALOG,
+    build_skeleton_debug_lines, build_wireframe_lines, FmvCatalogEntry, FmvVideoSource,
+    FmvViewerState, ModelViewerEntry, ModelViewerState, StageLightingRig, TextureSourceMode,
+    ViewerRenderMode, BESTIARY_CATALOG, FMV_CATALOG,
 };
 use sh2_renderer::{
     FmvUniforms, FmvVideoPipeline, GpuMap, GpuSkeletalMesh, GpuYuvVideoSurface, RenderContext,
@@ -1021,7 +1021,7 @@ fn open_fmv_session(
     audio_engine: &mut Option<AudioEngine>,
     fmv_viewer: &mut FmvViewerState,
     entry: &'static FmvCatalogEntry,
-    prefer_hd: bool,
+    source_pref: FmvVideoSource,
 ) -> Option<ActiveFmvSession> {
     let base_roots = [
         "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
@@ -1029,25 +1029,68 @@ fn open_fmv_session(
         "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
     ];
 
-    let mut chosen_path: Option<(PathBuf, bool)> = None;
-    for base in &base_roots {
-        let sh2e_cand = PathBuf::from(base).join("sh2e/movie").join(entry.filename);
-        let data_cand = PathBuf::from(base).join("data/movie").join(entry.filename);
+    let og_hq_roots = [
+        "sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie",
+        "/home/matthewb/Documents/SH2-Port/sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie",
+    ];
 
-        if prefer_hd {
+    let mut chosen_path: Option<(PathBuf, bool)> = None;
+    match source_pref {
+        FmvVideoSource::OgHqPs2Masters => {
+            for dir in &og_hq_roots {
+                let cand = PathBuf::from(dir).join(entry.filename);
+                if cand.exists() {
+                    chosen_path = Some((cand, true));
+                    break;
+                }
+            }
+        }
+        FmvVideoSource::Enhanced1080p60 => {
+            for base in &base_roots {
+                let sh2e_cand = PathBuf::from(base).join("sh2e/movie").join(entry.filename);
+                if sh2e_cand.exists() {
+                    chosen_path = Some((sh2e_cand, true));
+                    break;
+                }
+            }
+        }
+        FmvVideoSource::VanillaPc => {
+            for base in &base_roots {
+                let data_cand = PathBuf::from(base).join("data/movie").join(entry.filename);
+                if data_cand.exists() {
+                    chosen_path = Some((data_cand, false));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Graceful fallback chain if user preference is missing for this cutscene
+    if chosen_path.is_none() {
+        for dir in &og_hq_roots {
+            let cand = PathBuf::from(dir).join(entry.filename);
+            if cand.exists() {
+                chosen_path = Some((cand, true));
+                break;
+            }
+        }
+    }
+    if chosen_path.is_none() {
+        for base in &base_roots {
+            let sh2e_cand = PathBuf::from(base).join("sh2e/movie").join(entry.filename);
             if sh2e_cand.exists() {
                 chosen_path = Some((sh2e_cand, true));
                 break;
-            } else if data_cand.exists() {
+            }
+        }
+    }
+    if chosen_path.is_none() {
+        for base in &base_roots {
+            let data_cand = PathBuf::from(base).join("data/movie").join(entry.filename);
+            if data_cand.exists() {
                 chosen_path = Some((data_cand, false));
                 break;
             }
-        } else if data_cand.exists() {
-            chosen_path = Some((data_cand, false));
-            break;
-        } else if sh2e_cand.exists() {
-            chosen_path = Some((sh2e_cand, true));
-            break;
         }
     }
 
@@ -1117,7 +1160,7 @@ fn open_fmv_session(
                 );
                 (
                     BinkVideoStream::new_synthetic(synth_header.clone()),
-                    prefer_hd,
+                    source_pref != FmvVideoSource::VanillaPc,
                 )
             }
         }
@@ -1129,7 +1172,10 @@ fn open_fmv_session(
         if let Some(ref mut engine) = audio_engine {
             engine.stop_bgm(std::time::Duration::from_millis(50));
         }
-        (BinkVideoStream::new_synthetic(synth_header), prefer_hd)
+        (
+            BinkVideoStream::new_synthetic(synth_header),
+            source_pref != FmvVideoSource::VanillaPc,
+        )
     };
 
     let header = stream.header.clone();
@@ -1190,7 +1236,7 @@ struct AppState {
     fmv_viewer: FmvViewerState,
     fmv_session: Option<ActiveFmvSession>,
     loaded_fmv_movie_idx: usize,
-    loaded_fmv_prefer_hd: bool,
+    loaded_fmv_source: FmvVideoSource,
     mouse_left_pressed: bool,
     mouse_right_pressed: bool,
     last_cursor_pos: Option<(f64, f64)>,
@@ -1529,7 +1575,7 @@ impl ApplicationHandler for SilentHillApp {
         }
         let mut audio_engine = audio_engine;
         let current_fmv_entry = fmv_viewer.current_entry();
-        let prefer_hd_source = fmv_viewer.prefer_hd_source;
+        let source_pref = fmv_viewer.video_source;
         let fmv_session = if initial_room == TestRoomKind::FmvCutsceneViewer {
             open_fmv_session(
                 &device,
@@ -1538,13 +1584,13 @@ impl ApplicationHandler for SilentHillApp {
                 &mut audio_engine,
                 &mut fmv_viewer,
                 current_fmv_entry,
-                prefer_hd_source,
+                source_pref,
             )
         } else {
             None
         };
         let loaded_fmv_movie_idx = fmv_viewer.selected_movie_index;
-        let loaded_fmv_prefer_hd = fmv_viewer.prefer_hd_source;
+        let loaded_fmv_source = fmv_viewer.video_source;
 
         self.state = Some(AppState {
             window,
@@ -1579,7 +1625,7 @@ impl ApplicationHandler for SilentHillApp {
             fmv_viewer,
             fmv_session,
             loaded_fmv_movie_idx,
-            loaded_fmv_prefer_hd,
+            loaded_fmv_source,
             mouse_left_pressed: false,
             mouse_right_pressed: false,
             last_cursor_pos: None,
@@ -1759,7 +1805,7 @@ impl ApplicationHandler for SilentHillApp {
                                     state.fmv_viewer.audio_track = Some((cur + 1) % n);
                                     state.fmv_viewer.is_paused = false;
                                     let entry = state.fmv_viewer.current_entry();
-                                    let prefer_hd = state.fmv_viewer.prefer_hd_source;
+                                    let source_pref = state.fmv_viewer.video_source;
                                     state.fmv_session = open_fmv_session(
                                         &state.render_ctx.device,
                                         &state.render_ctx.queue,
@@ -1767,7 +1813,7 @@ impl ApplicationHandler for SilentHillApp {
                                         &mut state.audio_engine,
                                         &mut state.fmv_viewer,
                                         entry,
-                                        prefer_hd,
+                                        source_pref,
                                     );
                                 }
                                 winit::keyboard::KeyCode::KeyU => {
@@ -1781,7 +1827,7 @@ impl ApplicationHandler for SilentHillApp {
                                 winit::keyboard::KeyCode::KeyR => {
                                     state.fmv_viewer.is_paused = false;
                                     let entry = state.fmv_viewer.current_entry();
-                                    let prefer_hd = state.fmv_viewer.prefer_hd_source;
+                                    let source_pref = state.fmv_viewer.video_source;
                                     state.fmv_session = open_fmv_session(
                                         &state.render_ctx.device,
                                         &state.render_ctx.queue,
@@ -1789,7 +1835,7 @@ impl ApplicationHandler for SilentHillApp {
                                         &mut state.audio_engine,
                                         &mut state.fmv_viewer,
                                         entry,
-                                        prefer_hd,
+                                        source_pref,
                                     );
                                     tracing::info!(
                                         "[FMV Player] Restarted cutscene: {}",
@@ -2268,10 +2314,10 @@ impl ApplicationHandler for SilentHillApp {
                     && state.active_test_room == TestRoomKind::FmvCutsceneViewer
                     && (state.fmv_session.is_none()
                         || state.loaded_fmv_movie_idx != state.fmv_viewer.selected_movie_index
-                        || state.loaded_fmv_prefer_hd != state.fmv_viewer.prefer_hd_source)
+                        || state.loaded_fmv_source != state.fmv_viewer.video_source)
                 {
                     let entry = state.fmv_viewer.current_entry();
-                    let prefer_hd = state.fmv_viewer.prefer_hd_source;
+                    let source_pref = state.fmv_viewer.video_source;
                     state.fmv_session = open_fmv_session(
                         &state.render_ctx.device,
                         &state.render_ctx.queue,
@@ -2279,10 +2325,10 @@ impl ApplicationHandler for SilentHillApp {
                         &mut state.audio_engine,
                         &mut state.fmv_viewer,
                         entry,
-                        prefer_hd,
+                        source_pref,
                     );
                     state.loaded_fmv_movie_idx = state.fmv_viewer.selected_movie_index;
-                    state.loaded_fmv_prefer_hd = state.fmv_viewer.prefer_hd_source;
+                    state.loaded_fmv_source = state.fmv_viewer.video_source;
                     state.fmv_viewer.is_paused = false;
                 }
 
@@ -3087,7 +3133,7 @@ impl ApplicationHandler for SilentHillApp {
                                     true,
                                 );
                                 state.menu_rasterizer.draw_text(
-                                    "[N/P or Left/Right] Prev/Next Movie  [Space] Play/Pause  [R] Restart  [H] Toggle 1080p60/Vanilla  [V] Aspect Ratio  [G] Film Grain  [S] Subtitles  [Tab] Hide HUD  [Esc] Options",
+                                    "[N/P or Left/Right] Movie  [Space] Pause  [R] Restart  [H] Source (1080p60/OG-HQ/PC)  [T] Audio Track  [U] Sharpen  [V] Aspect  [G] Grain  [S] Subs  [Tab] HUD  [Esc] Options",
                                     24,
                                     688,
                                     1,

@@ -235,8 +235,36 @@ impl FmvAspectMode {
     }
 }
 
-/// Interactive state machine for the FMV Cutscene Player & Theater (`SH2-10`).
-#[derive(Debug, Clone)]
+/// Cutscene video source flavor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FmvVideoSource {
+    /// SH2:EE 1080p60 AI-upscaled & motion-interpolated videos (`sh2e/movie/`).
+    #[default]
+    Enhanced1080p60,
+    /// Authentic PS2 DVD / Ratiocinator & Angular Graphics OG HQ deinterlaced 30fps masters (`sh2_enhanced_edition_og_hq_fmvs...`).
+    OgHqPs2Masters,
+    /// Original 2001 PC retail Bink cutscenes (`data/movie/`).
+    VanillaPc,
+}
+
+impl FmvVideoSource {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Enhanced1080p60 => Self::OgHqPs2Masters,
+            Self::OgHqPs2Masters => Self::VanillaPc,
+            Self::VanillaPc => Self::Enhanced1080p60,
+        }
+    }
+
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Enhanced1080p60 => "SH2:EE 1080P60 (AI-UPSCALED)",
+            Self::OgHqPs2Masters => "OG HQ PS2 MASTERS (NATURAL 30FPS)",
+            Self::VanillaPc => "VANILLA PC (640x384 / 4:3 30FPS)",
+        }
+    }
+}
+
 pub struct FmvViewerState {
     /// Index into [`FMV_CATALOG`].
     pub selected_movie_index: usize,
@@ -244,7 +272,9 @@ pub struct FmvViewerState {
     pub is_paused: bool,
     /// Whether to loop the active cutscene when it reaches the end.
     pub loop_playback: bool,
-    /// Whether to prefer SH2:EE 1080p60 (`sh2e/movie/`) over Vanilla PC (`data/movie/`).
+    /// Active video source tier preference.
+    pub video_source: FmvVideoSource,
+    /// Legacy compatibility flag (true for non-vanilla sources).
     pub prefer_hd_source: bool,
     /// Active aspect ratio and cropping mode.
     pub aspect_mode: FmvAspectMode,
@@ -287,6 +317,7 @@ impl FmvViewerState {
             selected_movie_index: 0,
             is_paused: false,
             loop_playback: true,
+            video_source: FmvVideoSource::Enhanced1080p60,
             prefer_hd_source: true,
             aspect_mode: FmvAspectMode::Widescreen16x9,
             film_grain_enabled: true,
@@ -376,11 +407,17 @@ impl FmvViewerState {
         self.is_paused = !self.is_paused;
     }
 
-    /// Toggles SH2:EE 1080p60 (`sh2e/movie/`) vs Vanilla PC (`data/movie/`) video source.
-    pub fn toggle_hd_source(&mut self) {
-        self.prefer_hd_source = !self.prefer_hd_source;
+    /// Cycles cutscene video source: SH2:EE 1080p60 -> OG HQ PS2 Masters (30fps) -> Vanilla PC.
+    pub fn cycle_video_source(&mut self) {
+        self.video_source = self.video_source.next();
+        self.prefer_hd_source = !matches!(self.video_source, FmvVideoSource::VanillaPc);
         self.elapsed_secs = 0.0;
         self.current_frame_index = 0;
+    }
+
+    /// Legacy toggle for backwards compatibility.
+    pub fn toggle_hd_source(&mut self) {
+        self.cycle_video_source();
     }
 
     /// Computes normalized UV crop `(uv_y_offset, uv_y_scale)` and target display aspect ratio

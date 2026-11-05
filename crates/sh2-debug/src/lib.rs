@@ -5,7 +5,9 @@ pub mod fmv_viewer;
 pub mod model_viewer;
 pub mod visualizer;
 
-pub use fmv_viewer::{FmvAspectMode, FmvCatalogEntry, FmvCategory, FmvViewerState, FMV_CATALOG};
+pub use fmv_viewer::{
+    FmvAspectMode, FmvCatalogEntry, FmvCategory, FmvVideoSource, FmvViewerState, FMV_CATALOG,
+};
 pub use model_viewer::{
     ModelCategory, ModelViewerEntry, ModelViewerState, OrbitCamera, StageLightingRig,
     TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,

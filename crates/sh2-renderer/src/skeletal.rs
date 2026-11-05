@@ -117,11 +117,16 @@ impl SkeletonBoneUniforms {
 }
 
 /// GPU-resident sub-primitive draw batch for a skeletal character model.
+#[derive(Debug, Clone)]
 pub struct GpuSkeletalPrimitive {
     pub first_index: u32,
     pub index_count: u32,
     pub texture_index: u16,
     pub is_transparent: bool,
+    /// Target pose identifier matching [`ModelPrimitive::pose_index`].
+    pub pose_index: u8,
+    /// Whether this primitive is currently active and should be drawn.
+    pub is_active: bool,
 }
 
 /// GPU-resident skeletal character mesh containing vertex, index, and bone uniform buffers.
@@ -136,6 +141,11 @@ pub struct GpuSkeletalMesh {
 
 impl GpuSkeletalMesh {
     /// Compiles an ingested [`ModelFile`] into a GPU-resident skeletal mesh.
+    ///
+    /// Primitives with variant poses (e.g. hand poses 3..20 in `hll_jms.mdl`) are configured
+    /// with default visibility: base mesh (`pose_index == 0`), default right hand (`pose_index == 3`),
+    /// and default left hand (`pose_index == 14`) are enabled by default; alternate pose variations
+    /// are initialized inactive to prevent overlapping/distorted mesh deformations.
     pub fn from_model(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
@@ -171,6 +181,9 @@ impl GpuSkeletalMesh {
         let mut indices: Vec<u32> = Vec::new();
         let mut prim_batches = Vec::with_capacity(model.primitives.len());
 
+        // Check if this model contains multiple pose variations (e.g. low-LOD James hll_jms)
+        let has_variant_poses = model.primitives.iter().any(|pr| pr.pose_index > 0);
+
         for (k, pr) in model.primitives.iter().enumerate() {
             let tris = model.primitive_triangles(k);
             let first_index = indices.len() as u32;
@@ -180,11 +193,22 @@ impl GpuSkeletalMesh {
                 indices.push(tri[2] as u32);
             }
             let index_count = (indices.len() as u32) - first_index;
+
+            // Default active state: if model uses pose variants, activate base mesh (0)
+            // and default relaxed open hands (pose 3 for right hand, pose 14 for left hand).
+            let is_active = if has_variant_poses {
+                pr.pose_index == 0 || pr.pose_index == 3 || pr.pose_index == 14
+            } else {
+                true
+            };
+
             prim_batches.push(GpuSkeletalPrimitive {
                 first_index,
                 index_count,
                 texture_index: pr.texture_index,
                 is_transparent: pr.is_transparent,
+                pose_index: pr.pose_index,
+                is_active,
             });
         }
 
@@ -232,6 +256,33 @@ impl GpuSkeletalMesh {
     pub fn update_bone_matrices(&self, queue: &wgpu::Queue, matrices: &[[[f32; 4]; 4]]) {
         let uniforms = SkeletonBoneUniforms::from_matrices(matrices);
         queue.write_buffer(&self.bone_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Sets the active state for a given pose variation index.
+    pub fn set_pose_active(&mut self, pose_index: u8, active: bool) {
+        for prim in &mut self.primitives {
+            if prim.pose_index == pose_index {
+                prim.is_active = active;
+            }
+        }
+    }
+
+    /// Sets active right hand pose (3..13 in `hll_jms.mdl`) and deactivates other right hand variants.
+    pub fn set_right_hand_pose(&mut self, pose_index: u8) {
+        for prim in &mut self.primitives {
+            if (3..=13).contains(&prim.pose_index) {
+                prim.is_active = prim.pose_index == pose_index;
+            }
+        }
+    }
+
+    /// Sets active left hand pose (14..20 in `hll_jms.mdl`) and deactivates other left hand variants.
+    pub fn set_left_hand_pose(&mut self, pose_index: u8) {
+        for prim in &mut self.primitives {
+            if (14..=20).contains(&prim.pose_index) {
+                prim.is_active = prim.pose_index == pose_index;
+            }
+        }
     }
 }
 

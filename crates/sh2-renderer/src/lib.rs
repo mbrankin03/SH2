@@ -1057,7 +1057,7 @@ impl RenderContext {
 
                     let mut current_tex: Option<u16> = None;
                     for prim in &mesh.primitives {
-                        if prim.index_count > 0 {
+                        if prim.index_count > 0 && prim.is_active {
                             let tex_idx = prim.texture_index;
                             if current_tex != Some(tex_idx) {
                                 let bg = match texture_groups {

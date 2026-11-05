@@ -379,8 +379,14 @@ fn find_map_file_for_room(
                             speed_mult: 1.0,
                             _padding: 0.0,
                         };
-                        // Authentic er01 restroom camera/spawn coordinates: X: -18968.0, Y: -1168.0, Z: 21025.0
-                        return (map, glam::Vec3::new(-18968.0, -1168.0, 21025.0), 0.0, fog);
+                        // Authentic PS2 stage 2 (er01) post-prologue mirror spawn coordinates:
+                        // James stands at the sink: X: -19606.6, Y: 0.0 (floor), Z: 20429.55, Facing: -PI/2 (-1.5707964 rad, West towards mirror)
+                        return (
+                            map,
+                            glam::Vec3::new(-19606.6, 0.0, 20429.55),
+                            -std::f32::consts::FRAC_PI_2,
+                            fog,
+                        );
                     }
                 }
             }

@@ -94,13 +94,28 @@ impl Ps2CameraController {
     pub fn reset_to_player(&mut self, player_pos: Vec3, player_yaw: f32) {
         // In PS2 coordinate system: Y is down (-Y is up in world space), yaw 0 looks along +Z
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let eye = if player_pos.x < -50000.0 {
-            // Authentic PS2 rr21 bathroom entrance camera position inside the room RD boundaries
+        let eye = if player_pos.x > -23000.0
+            && player_pos.x < -17000.0
+            && player_pos.z > 18000.0
+            && player_pos.z < 23000.0
+        {
+            // Authentic PS2 stage 2 er01 opening restroom camera placement (vcSetCameraUseWarp / er01.cam Record 2):
+            // Camera eye is positioned East (+X) behind James framing towards the mirror: (-18811.6, -900.0, 20429.55)
+            player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0)
+        } else if player_pos.x < -50000.0 {
+            // Authentic PS2 rr21 hotel boiler room entrance camera position inside the room RD boundaries
             Vec3::new(-100700.0, -1400.0, -59000.0)
         } else {
             player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
         };
-        let target = if player_pos.x < -50000.0 {
+        let target = if player_pos.x > -23000.0
+            && player_pos.x < -17000.0
+            && player_pos.z > 18000.0
+            && player_pos.z < 23000.0
+        {
+            // Target James torso/head looking West toward mirror
+            player_pos + Vec3::new(0.0, -1100.0, 0.0)
+        } else if player_pos.x < -50000.0 {
             player_pos + Vec3::new(0.0, -850.0, 0.0)
         } else {
             player_pos + Vec3::new(0.0, -1100.0, 0.0)
@@ -137,15 +152,30 @@ impl Ps2CameraController {
 
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
         // Authentic fixed-angle cinematic camera placement if inside a room
-        let base_eye = if player_pos.x < -50000.0 {
-            // Authentic PS2 rr21 bathroom entrance camera position inside the room RD boundaries:
+        let base_eye = if player_pos.x > -23000.0
+            && player_pos.x < -17000.0
+            && player_pos.z > 18000.0
+            && player_pos.z < 23000.0
+        {
+            // Authentic PS2 stage 2 er01 opening restroom camera placement (vcSetCameraUseWarp / er01.cam Record 2):
+            // Camera eye is positioned East (+X) behind James framing towards the mirror: (-18811.6, -900.0, 20429.55)
+            player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0)
+        } else if player_pos.x < -50000.0 {
+            // Authentic PS2 rr21 hotel boiler room entrance camera position inside the room RD boundaries:
             // Centered in RD rect (-100700, -1400, -59000), framed down at James entering from the sinks
             Vec3::new(-100700.0, -1400.0, -59000.0)
         } else {
             // General chase camera fallback for open areas
             player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
         };
-        let mut base_target = if player_pos.x < -50000.0 {
+        let mut base_target = if player_pos.x > -23000.0
+            && player_pos.x < -17000.0
+            && player_pos.z > 18000.0
+            && player_pos.z < 23000.0
+        {
+            // Target James torso/head looking West toward mirror
+            player_pos + Vec3::new(0.0, -1100.0, 0.0)
+        } else if player_pos.x < -50000.0 {
             // Authentic PS2 watch target on player head/torso
             player_pos + Vec3::new(0.0, -850.0, 0.0)
         } else {

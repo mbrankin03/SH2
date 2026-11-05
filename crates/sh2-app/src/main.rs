@@ -1084,11 +1084,17 @@ fn open_fmv_session(
                 if let Some(ref mut engine) = audio_engine {
                     // sh2e murder.bik: track 1 is the restored uncut VHS audio (Mary), matching
                     // the Enhancements VHSAudio patch; open.bik track 1 is the voiced mix.
-                    let track = if matches!(entry.filename, "murder.bik" | "open.bik") {
+                    let default_track = if matches!(entry.filename, "murder.bik" | "open.bik") {
                         1
                     } else {
                         0
                     };
+                    let track = fmv_viewer.audio_track.unwrap_or(default_track);
+                    tracing::info!(
+                        "[FMV Player] Audio track {} of {}",
+                        track,
+                        s.header.audio_tracks.len()
+                    );
                     match decode_bink_audio_track(path, &s.header, track) {
                         Ok(decoded) if !decoded.pcm_s16le.is_empty() => {
                             if let Err(e) =
@@ -1735,6 +1741,45 @@ impl ApplicationHandler for SilentHillApp {
                                         }
                                     );
                                 }
+                                winit::keyboard::KeyCode::KeyT => {
+                                    let n = state
+                                        .fmv_session
+                                        .as_ref()
+                                        .map(|x| x.header.audio_tracks.len())
+                                        .unwrap_or(1)
+                                        .max(1);
+                                    let cur = state.fmv_viewer.audio_track.unwrap_or(
+                                        if matches!(
+                                            state.fmv_viewer.current_entry().filename,
+                                            "murder.bik" | "open.bik"
+                                        ) {
+                                            1
+                                        } else {
+                                            0
+                                        },
+                                    );
+                                    state.fmv_viewer.audio_track = Some((cur + 1) % n);
+                                    state.fmv_viewer.is_paused = false;
+                                    let entry = state.fmv_viewer.current_entry();
+                                    let prefer_hd = state.fmv_viewer.prefer_hd_source;
+                                    state.fmv_session = open_fmv_session(
+                                        &state.render_ctx.device,
+                                        &state.render_ctx.queue,
+                                        &state.fmv_pipeline,
+                                        &mut state.audio_engine,
+                                        &mut state.fmv_viewer,
+                                        entry,
+                                        prefer_hd,
+                                    );
+                                }
+                                winit::keyboard::KeyCode::KeyU => {
+                                    state.fmv_viewer.sharpen_level =
+                                        (state.fmv_viewer.sharpen_level + 1) % 4;
+                                    tracing::info!(
+                                        "[FMV Player] Upscale sharpening level: {}",
+                                        state.fmv_viewer.sharpen_level
+                                    );
+                                }
                                 winit::keyboard::KeyCode::KeyR => {
                                     state.fmv_viewer.is_paused = false;
                                     let entry = state.fmv_viewer.current_entry();
@@ -2346,7 +2391,12 @@ impl ApplicationHandler for SilentHillApp {
                             grain_intensity: fmv_grain,
                             time: state.sim_time,
                             fade_alpha: 1.0,
-                            _pad: 0.0,
+                            sharpen: match state.fmv_viewer.sharpen_level {
+                                0 => 0.0,
+                                1 => 0.35,
+                                2 => 0.7,
+                                _ => 1.0,
+                            },
                         };
                         state
                             .fmv_pipeline

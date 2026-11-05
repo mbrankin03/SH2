@@ -254,6 +254,10 @@ pub struct FmvViewerState {
     pub subtitles_enabled: bool,
     /// Whether the diagnostic HUD overlay is visible (`Tab` or `H` toggles clean theater view).
     pub show_hud: bool,
+    /// Selected Bink audio track override (`None` = per-movie default, e.g. uncut murder.bik).
+    pub audio_track: Option<usize>,
+    /// Real-time sharpening level (0 = off, 1 = soft, 2 = medium, 3 = strong).
+    pub sharpen_level: u8,
     /// Elapsed playback clock in seconds for audio-video master synchronization.
     pub elapsed_secs: f64,
     /// Total duration of the currently loaded movie in seconds.
@@ -288,6 +292,8 @@ impl FmvViewerState {
             film_grain_enabled: true,
             subtitles_enabled: true,
             show_hud: true,
+            audio_track: None,
+            sharpen_level: 1,
             elapsed_secs: 0.0,
             duration_secs: 1.0,
             current_frame_index: 0,
@@ -332,6 +338,7 @@ impl FmvViewerState {
     /// Sets the active movie index and resets playback timer to 0.0.
     pub fn set_movie_index(&mut self, index: usize) {
         self.selected_movie_index = index % FMV_CATALOG.len();
+        self.audio_track = None;
         self.elapsed_secs = 0.0;
         self.current_frame_index = 0;
         self.is_paused = false;

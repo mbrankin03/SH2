@@ -28,8 +28,8 @@ pub struct FmvUniforms {
     pub time: f32,
     /// Overall brightness / fade multiplier (`0.0` = black fade, `1.0` = full brightness).
     pub fade_alpha: f32,
-    /// Padding to 32-byte alignment.
-    pub _pad: f32,
+    /// Contrast-adaptive sharpening strength (`0.0` = off, up to `1.0`).
+    pub sharpen: f32,
 }
 
 impl Default for FmvUniforms {
@@ -42,7 +42,7 @@ impl Default for FmvUniforms {
             grain_intensity: 0.18,
             time: 0.0,
             fade_alpha: 1.0,
-            _pad: 0.0,
+            sharpen: 0.0,
         }
     }
 }
@@ -75,7 +75,7 @@ struct FmvUniforms {
     grain_intensity: f32,
     time: f32,
     fade_alpha: f32,
-    _pad: f32,
+    sharpen: f32,
 };
 
 @group(0) @binding(0) var y_tex: texture_2d<f32>;
@@ -103,6 +103,23 @@ fn hash12(p: vec2<f32>) -> f32 {
     var p3 = fract(vec3<f32>(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.x + p3.y) * p3.z);
+}
+
+fn yuv_to_rgb(uv: vec2<f32>) -> vec3<f32> {
+    // Planar YUV420p, studio swing; BT.709 for HD sources, BT.601 for SD.
+    let y_raw = textureSample(y_tex, yuv_sampler, uv).r;
+    let u_raw = textureSample(u_tex, yuv_sampler, uv).r;
+    let v_raw = textureSample(v_tex, yuv_sampler, uv).r;
+    let y_lin = max(y_raw - (16.0 / 255.0), 0.0) * (255.0 / 219.0);
+    let u_off = (u_raw - (128.0 / 255.0)) * (255.0 / 224.0);
+    let v_off = (v_raw - (128.0 / 255.0)) * (255.0 / 224.0);
+    var rgb: vec3<f32>;
+    if (vec2<f32>(textureDimensions(y_tex)).x >= 1280.0) {
+        rgb = vec3<f32>(y_lin + 1.5748 * v_off, y_lin - 0.187324 * u_off - 0.468124 * v_off, y_lin + 1.8556 * u_off);
+    } else {
+        rgb = vec3<f32>(y_lin + 1.402 * v_off, y_lin - 0.344136 * u_off - 0.714136 * v_off, y_lin + 1.772 * u_off);
+    }
+    return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @fragment
@@ -133,21 +150,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         clamp(params.uv_y_offset + mapped_uv.y * params.uv_y_scale, 0.0, 1.0)
     );
 
-    // Sample planar YUV420p (BT.601 studio-swing tv range)
-    let y_raw = textureSample(y_tex, yuv_sampler, sample_uv).r;
-    let u_raw = textureSample(u_tex, yuv_sampler, sample_uv).r;
-    let v_raw = textureSample(v_tex, yuv_sampler, sample_uv).r;
-
-    let y_lin = max(y_raw - (16.0 / 255.0), 0.0) * (255.0 / 219.0);
-    let u_off = u_raw - (128.0 / 255.0);
-    let v_off = v_raw - (128.0 / 255.0);
-
-    var rgb = vec3<f32>(
-        y_lin + 1.402 * v_off,
-        y_lin - 0.344136 * u_off - 0.714136 * v_off,
-        y_lin + 1.772 * u_off
-    );
-    rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Contrast-adaptive sharpening (CAS-style) over bilinear-upscaled video: sample the center and
+    // four neighbours, then push the center away from the local min/max-limited average.
+    let dims = vec2<f32>(textureDimensions(y_tex));
+    let px = 1.0 / dims;
+    let c = yuv_to_rgb(sample_uv);
+    var rgb = c;
+    if (params.sharpen > 0.001) {
+        let n = yuv_to_rgb(sample_uv + vec2<f32>(0.0, -px.y));
+        let s = yuv_to_rgb(sample_uv + vec2<f32>(0.0, px.y));
+        let w = yuv_to_rgb(sample_uv + vec2<f32>(-px.x, 0.0));
+        let e = yuv_to_rgb(sample_uv + vec2<f32>(px.x, 0.0));
+        let mn = min(min(min(n, s), min(w, e)), c);
+        let mx = max(max(max(n, s), max(w, e)), c);
+        let amp = sqrt(clamp(min(mn, vec3<f32>(1.0) - mx) / max(mx, vec3<f32>(0.0001)), vec3<f32>(0.0), vec3<f32>(1.0)));
+        let k = -amp * mix(0.125, 0.2, params.sharpen);
+        rgb = clamp((c + (n + s + w + e) * k) / (1.0 + 4.0 * k), vec3<f32>(0.0), vec3<f32>(1.0));
+    }
 
     // Apply subtle film grain noise over the active video area (below subtitle pass)
     if (params.grain_intensity > 0.001) {

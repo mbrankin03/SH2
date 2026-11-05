@@ -112,6 +112,12 @@ pub struct GamepadInputState {
     pub map_pressed: bool,
     /// Inventory button pressed this tick.
     pub inventory_pressed: bool,
+    /// Quick turn (180 degrees) button pressed this tick.
+    pub quick_turn_pressed: bool,
+    /// Strafe left button held.
+    pub strafe_left: bool,
+    /// Strafe right button held.
+    pub strafe_right: bool,
     /// Active controller speaker cue.
     pub pending_speaker_cue: Option<ControllerSpeakerCue>,
     /// Active haptic feedback command.
@@ -168,6 +174,7 @@ impl InputManager {
         self.state.light_toggle_pressed = false;
         self.state.map_pressed = false;
         self.state.inventory_pressed = false;
+        self.state.quick_turn_pressed = false;
         self.state.pending_speaker_cue = None;
 
         // Decrement haptic timer
@@ -191,12 +198,10 @@ impl InputManager {
                 EventType::ButtonPressed(Button::East, _) => self.state.cancel_pressed = true,
                 EventType::ButtonReleased(Button::East, _) => self.state.cancel_pressed = false,
 
-                EventType::ButtonPressed(Button::RightTrigger2, _)
-                | EventType::ButtonPressed(Button::RightTrigger, _) => {
+                EventType::ButtonPressed(Button::RightTrigger2, _) => {
                     self.state.ready_weapon_pressed = true;
                 }
-                EventType::ButtonReleased(Button::RightTrigger2, _)
-                | EventType::ButtonReleased(Button::RightTrigger, _) => {
+                EventType::ButtonReleased(Button::RightTrigger2, _) => {
                     self.state.ready_weapon_pressed = false;
                 }
 
@@ -214,6 +219,24 @@ impl InputManager {
 
                 EventType::ButtonPressed(Button::Start, _) => {
                     self.state.inventory_pressed = true;
+                }
+
+                EventType::ButtonPressed(Button::DPadDown, _) => {
+                    self.state.quick_turn_pressed = true;
+                }
+
+                EventType::ButtonPressed(Button::LeftTrigger, _) => {
+                    self.state.strafe_left = true;
+                }
+                EventType::ButtonReleased(Button::LeftTrigger, _) => {
+                    self.state.strafe_left = false;
+                }
+
+                EventType::ButtonPressed(Button::RightTrigger, _) => {
+                    self.state.strafe_right = true;
+                }
+                EventType::ButtonReleased(Button::RightTrigger, _) => {
+                    self.state.strafe_right = false;
                 }
 
                 _ => {}

@@ -469,7 +469,7 @@ impl OptionsMenu {
 // -----------------------------------------------------------------------------------------
 
 /// Draws a convex polygon with optional fill and outline colors directly onto `rast`.
-fn draw_polygon(
+pub fn draw_polygon(
     rast: &mut TextRasterizer,
     points: &[(i32, i32)],
     fill: Option<[u8; 4]>,

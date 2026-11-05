@@ -3203,7 +3203,7 @@ impl ApplicationHandler for SilentHillApp {
                             .splash_konami_bg
                             .as_ref()
                             .or(state.splash_title_bg.as_ref()),
-                        TitlePhase::OptionsMenu => None, // Authentic PS2 optmenu.c draws over a pure black screen
+                        TitlePhase::OptionsMenu | TitlePhase::TestRoomsSelect => None, // Authentic PS2 optmenu.c style draws over pure black backdrop
                         _ => state
                             .splash_title_bg
                             .as_ref()

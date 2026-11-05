@@ -98,13 +98,29 @@ impl TestRoomKind {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::ObservationDeck => "OBSERVATION DECK (ob01.map - OUTDOOR FOG)",
-            Self::RestroomStart => "RESTROOM START (er01.map - PROLOGUE)",
-            Self::HotelBoilerRoom => "HOTEL BOILER ROOM (rr21.map - BASEMENT)",
-            Self::SyntheticFogRunway => "SYNTHETIC FOG RUNWAY (CALIBRATION)",
-            Self::FallbackSandbox => "FALLBACK ROOM (INTERNAL SANDBOX)",
-            Self::ModelAndTextureViewer => "MODEL & TEXTURE VIEWER",
-            Self::FmvCutsceneViewer => "FMV CUTSCENE PLAYER (1080P60 THEATER)",
+            Self::ObservationDeck => "Observation Deck (ob01.map)",
+            Self::RestroomStart => "Restroom Start (er01.map)",
+            Self::HotelBoilerRoom => "Hotel Boiler Room (rr21.map)",
+            Self::SyntheticFogRunway => "Synthetic Fog Runway",
+            Self::FallbackSandbox => "Fallback Sandbox Room",
+            Self::ModelAndTextureViewer => "Model & Texture Viewer",
+            Self::FmvCutsceneViewer => "FMV Cutscene Player",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::ObservationDeck => "Toluca Lake Observation Deck with outdoor volumetric fog",
+            Self::RestroomStart => {
+                "Prologue restroom overlook with mirror reflections & ambient audio"
+            }
+            Self::HotelBoilerRoom => "Lakeview Hotel basement boiler room with complex geometry",
+            Self::SyntheticFogRunway => {
+                "Calibrated distance crossbars (5m, 10m, 25m, 50m, 75m, 100m)"
+            }
+            Self::FallbackSandbox => "Internal test chamber with lighting columns & mesh skinning",
+            Self::ModelAndTextureViewer => "Inspect 3D character models, animations, and textures",
+            Self::FmvCutsceneViewer => "Launch the 1080p60 cutscene theater player",
         }
     }
 }
@@ -850,51 +866,143 @@ pub fn draw_difficulty_selection(
     );
 }
 
-/// Draws the test room selection stage list onto `rast`.
+/// Draws the test room selection stage list onto `rast` styled identically to the authentic PS2 Options Menu.
 pub fn draw_test_rooms_screen(sm: &TitleStateMachine, font: &AtlasFont, rast: &mut TextRasterizer) {
-    let center_x = rast.width / 2;
+    // Keep 4:3 authentic aspect ratio inside widescreen rasterizer
+    let target_4_3_w = rast.height as f32 * (4.0 / 3.0);
+    let (x_offset, base_w) = if target_4_3_w <= rast.width as f32 {
+        ((rast.width as f32 - target_4_3_w) * 0.5, target_4_3_w)
+    } else {
+        (0.0, rast.width as f32)
+    };
+
+    let scale_x = base_w / 640.0;
+    let scale_y = rast.height as f32 / 480.0;
+
+    // Authentic PS2 octagon containers calibrated from retail PS2 SLUS-20228 / optmenu.c
+    // Upper options panel: x in [36, 604], y in [64, 407] with 45-degree chamfers
+    let panel_pts: Vec<(i32, i32)> = [
+        (48.0, 64.0),
+        (593.0, 64.0),
+        (604.0, 76.0),
+        (604.0, 407.0),
+        (36.0, 407.0),
+        (36.0, 76.0),
+    ]
+    .iter()
+    .map(|(x, y)| {
+        (
+            (x_offset + x * scale_x).round() as i32,
+            (y * scale_y).round() as i32,
+        )
+    })
+    .collect();
+
+    // Lower contextual help box: x in [36, 604], y in [414, 461] with bottom chamfers
+    let box_pts: Vec<(i32, i32)> = [
+        (36.0, 414.0),
+        (604.0, 414.0),
+        (604.0, 436.0),
+        (580.0, 461.0),
+        (60.0, 461.0),
+        (36.0, 436.0),
+    ]
+    .iter()
+    .map(|(x, y)| {
+        (
+            (x_offset + x * scale_x).round() as i32,
+            (y * scale_y).round() as i32,
+        )
+    })
+    .collect();
+
+    // Outer double-border outline enclosing both panels: x in [30, 612], y in [58, 467]
+    let outline_pts: Vec<(i32, i32)> = [
+        (55.0, 58.0),
+        (586.0, 58.0),
+        (612.0, 83.0),
+        (612.0, 440.0),
+        (586.0, 467.0),
+        (55.0, 467.0),
+        (30.0, 440.0),
+        (30.0, 83.0),
+    ]
+    .iter()
+    .map(|(x, y)| {
+        (
+            (x_offset + x * scale_x).round() as i32,
+            (y * scale_y).round() as i32,
+        )
+    })
+    .collect();
+
+    // Calibrated PS2 colors (linear values for sRGB surface target)
+    let fill_color = [12, 12, 13, 255];
+    let border_color = [4, 4, 18, 255];
+
+    crate::options::draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
+    crate::options::draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));
+    crate::options::draw_polygon(rast, &outline_pts, None, Some(border_color));
+
+    let title_x = rast.width / 2;
+    let title_y = (28.0 * scale_y).round() as usize;
 
     font.draw_line_centered(
         rast,
-        "TEST ROOMS & FOG CALIBRATION",
-        (center_x, 130),
-        28,
-        Sh2TextColor::AmberHeader,
-        true,
-    );
-    font.draw_line_centered(
-        rast,
-        "[Select Stage to Boot into Simulation]",
-        (center_x, 170),
-        18,
-        Sh2TextColor::Cyan,
+        "<   T E S T   R O O M S   >",
+        (title_x, title_y),
+        (22.0 * scale_y).round() as usize,
+        Sh2TextColor::White,
         true,
     );
 
-    let start_y = 220;
-    let row_h = 36;
+    let base_y = 100.0 * scale_y;
+    let step_y = 38.0 * scale_y;
+    let center_panel_x = (x_offset + 320.0 * scale_x).round() as usize;
+    let font_size = (18.0 * scale_y).round() as usize;
+
     for (idx, room) in TestRoomKind::ALL.iter().enumerate() {
-        let is_sel = idx == sm.test_room_index;
-        let y = start_y + idx * row_h;
-        let style = if is_sel {
-            Sh2TextColor::GoldSelected
+        let y = (base_y + idx as f32 * step_y).round() as usize;
+        let is_selected = idx == sm.test_room_index;
+
+        let style = if is_selected {
+            Sh2TextColor::White
         } else {
             Sh2TextColor::SilverUnselected
         };
-        let label = if is_sel {
-            format!("> {}", room.label())
-        } else {
-            format!("  {}", room.label())
-        };
-        font.draw_line_centered(rast, &label, (center_x, y), 22, style, true);
+
+        let label = room.label();
+
+        if is_selected {
+            // Authentic PS2 double-draw pop highlight at (-2, -2)
+            font.draw_line_centered(
+                rast,
+                label,
+                (center_panel_x.saturating_sub(2), y.saturating_sub(2)),
+                font_size,
+                Sh2TextColor::White,
+                false,
+            );
+        }
+        font.draw_line_centered(rast, label, (center_panel_x, y), font_size, style, true);
     }
 
-    font.draw_line_centered(
+    // Help description inside the lower box at x=90, y=438 in 640x480 space
+    let help_x = (x_offset + 90.0 * scale_x).round() as usize;
+    let help_y = (436.0 * scale_y).round() as usize;
+
+    let selected_room = TestRoomKind::ALL
+        .get(sm.test_room_index)
+        .copied()
+        .unwrap_or_default();
+    let desc = selected_room.description();
+
+    font.draw_line_styled(
         rast,
-        "[Up/Down: Select Room | Enter: Boot Stage | Esc: Back]",
-        (center_x, 658),
-        16,
-        Sh2TextColor::MutedFooter,
+        desc,
+        (help_x, help_y),
+        font_size,
+        Sh2TextColor::White,
         true,
     );
 }

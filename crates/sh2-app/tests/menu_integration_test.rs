@@ -251,7 +251,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     );
     assert_eq!(
         sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
-        "FMV CUTSCENE PLAYER (1080P60 THEATER)"
+        "FMV Cutscene Player"
     );
 
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
@@ -262,7 +262,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     );
     assert_eq!(
         sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
-        "MODEL & TEXTURE VIEWER"
+        "Model & Texture Viewer"
     );
 
     let cue = debug_controller.handle_nav(MenuNavAction::Confirm);

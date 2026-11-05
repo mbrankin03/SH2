@@ -71,6 +71,10 @@ impl AppMenuController {
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         MenuSoundCue::GameStartTransition
+                    } else if cue == OptionsSoundCue::LaunchTestRooms {
+                        self.title_sm.phase = TitlePhase::TestRoomsSelect;
+                        self.title_sm.test_room_index = 0;
+                        MenuSoundCue::Confirm
                     } else {
                         MenuSoundCue::CursorMove
                     }
@@ -83,6 +87,10 @@ impl AppMenuController {
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         MenuSoundCue::GameStartTransition
+                    } else if cue == OptionsSoundCue::LaunchTestRooms {
+                        self.title_sm.phase = TitlePhase::TestRoomsSelect;
+                        self.title_sm.test_room_index = 0;
+                        MenuSoundCue::Confirm
                     } else {
                         MenuSoundCue::CursorMove
                     }
@@ -94,6 +102,11 @@ impl AppMenuController {
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         return MenuSoundCue::GameStartTransition;
+                    }
+                    if self.options_menu.is_test_rooms_selected() {
+                        self.title_sm.phase = TitlePhase::TestRoomsSelect;
+                        self.title_sm.test_room_index = 0;
+                        return MenuSoundCue::Confirm;
                     }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {

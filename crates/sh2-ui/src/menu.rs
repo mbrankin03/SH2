@@ -37,23 +37,21 @@ pub enum TitlePhase {
     TransitionToGame,
 }
 
-/// Primary options on the main title menu.
+/// Primary options on the main title menu (authentic 4-item retail list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MainMenuOption {
     #[default]
     NewGame = 0,
     Continue = 1,
     Options = 2,
-    TestRooms = 3,
-    Exit = 4,
+    Exit = 3,
 }
 
 impl MainMenuOption {
-    pub const ALL: [MainMenuOption; 5] = [
+    pub const ALL: [MainMenuOption; 4] = [
         MainMenuOption::NewGame,
         MainMenuOption::Continue,
         MainMenuOption::Options,
-        MainMenuOption::TestRooms,
         MainMenuOption::Exit,
     ];
 
@@ -62,7 +60,6 @@ impl MainMenuOption {
             Self::NewGame => "NEW GAME",
             Self::Continue => "CONTINUE",
             Self::Options => "OPTIONS",
-            Self::TestRooms => "TEST ROOMS",
             Self::Exit => "EXIT",
         }
     }
@@ -257,11 +254,6 @@ impl TitleStateMachine {
                     }
                     MainMenuOption::Options => {
                         self.phase = TitlePhase::OptionsMenu;
-                        sound = MenuSoundCue::Confirm;
-                    }
-                    MainMenuOption::TestRooms => {
-                        self.phase = TitlePhase::TestRoomsSelect;
-                        self.test_room_index = 0;
                         sound = MenuSoundCue::Confirm;
                     }
                     MainMenuOption::Exit => {
@@ -462,7 +454,6 @@ pub fn draw_title_screen(
                         MainMenuOption::NewGame => AuthenticButtonSprite::NewGame,
                         MainMenuOption::Continue => AuthenticButtonSprite::Continue,
                         MainMenuOption::Options => AuthenticButtonSprite::Options,
-                        MainMenuOption::TestRooms => AuthenticButtonSprite::TestRooms,
                         MainMenuOption::Exit => AuthenticButtonSprite::Exit,
                     };
 
@@ -993,18 +984,12 @@ mod tests {
     #[test]
     fn test_test_rooms_selection_flow() {
         let mut sm = TitleStateMachine::new();
-        sm.phase = TitlePhase::MainMenu;
-        // Navigate to TEST ROOMS (index 3)
-        sm.main_menu_index = 3;
+        sm.phase = TitlePhase::TestRoomsSelect;
+        sm.test_room_index = 0;
         assert_eq!(
-            MainMenuOption::ALL[sm.main_menu_index],
-            MainMenuOption::TestRooms
+            TestRoomKind::ALL[sm.test_room_index],
+            TestRoomKind::ObservationDeck
         );
-
-        let cue = sm.handle_input(MenuNavAction::Confirm);
-        assert_eq!(cue, MenuSoundCue::Confirm);
-        assert_eq!(sm.phase, TitlePhase::TestRoomsSelect);
-        assert_eq!(sm.test_room_index, 0);
 
         // Cycle to Hotel Boiler Room (index 2) and Synthetic Fog Runway (index 3)
         sm.handle_input(MenuNavAction::Down);

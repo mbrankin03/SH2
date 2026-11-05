@@ -255,7 +255,10 @@ impl ButtonSpriteSheet {
                 continue;
             }
 
-            let src_y = rect.y + ((dy as f32 / scale) as usize).min(rect.height - 1);
+            let continuous_y = rect.y as f32 + (dy as f32 / scale);
+            let y0 = (continuous_y.floor() as usize).min(rect.y + rect.height - 1);
+            let y1 = (y0 + 1).min(rect.y + rect.height - 1);
+            let fy = continuous_y - y0 as f32;
 
             for dx in 0..scaled_w {
                 let out_x = dst_x + dx as i32;
@@ -263,19 +266,36 @@ impl ButtonSpriteSheet {
                     continue;
                 }
 
-                let src_x = rect.x + ((dx as f32 / scale) as usize).min(rect.width - 1);
-                let src_idx = (src_y * src_w + src_x) * 4;
-                let dst_idx = (out_y as usize * dst_width + out_x as usize) * 4;
+                let continuous_x = rect.x as f32 + (dx as f32 / scale);
+                let x0 = (continuous_x.floor() as usize).min(rect.x + rect.width - 1);
+                let x1 = (x0 + 1).min(rect.x + rect.width - 1);
+                let fx = continuous_x - x0 as f32;
 
-                let s_r = src_bytes[src_idx] as f32 * tint[0];
-                let s_g = src_bytes[src_idx + 1] as f32 * tint[1];
-                let s_b = src_bytes[src_idx + 2] as f32 * tint[2];
-                let s_a = (src_bytes[src_idx + 3] as f32 / 255.0) * tint[3];
+                let idx00 = (y0 * src_w + x0) * 4;
+                let idx10 = (y0 * src_w + x1) * 4;
+                let idx01 = (y1 * src_w + x0) * 4;
+                let idx11 = (y1 * src_w + x1) * 4;
+
+                let sample = |c: usize| -> f32 {
+                    let v00 = src_bytes[idx00 + c] as f32;
+                    let v10 = src_bytes[idx10 + c] as f32;
+                    let v01 = src_bytes[idx01 + c] as f32;
+                    let v11 = src_bytes[idx11 + c] as f32;
+                    let top = v00 * (1.0 - fx) + v10 * fx;
+                    let bot = v01 * (1.0 - fx) + v11 * fx;
+                    top * (1.0 - fy) + bot * fy
+                };
+
+                let s_r = sample(0) * tint[0];
+                let s_g = sample(1) * tint[1];
+                let s_b = sample(2) * tint[2];
+                let s_a = (sample(3) / 255.0) * tint[3];
 
                 if s_a <= 0.005 {
                     continue;
                 }
 
+                let dst_idx = (out_y as usize * dst_width + out_x as usize) * 4;
                 let d_r = dst[dst_idx] as f32;
                 let d_g = dst[dst_idx + 1] as f32;
                 let d_b = dst[dst_idx + 2] as f32;

@@ -457,14 +457,15 @@ pub fn draw_title_screen(
         TitlePhase::MainMenu => {
             if let Some(atlas) = button_sprites {
                 let center_xi = center_x as i32;
-                // Retail PC layout: menu options centered under the logo
-                // In 800x600 space: y around 420..560
-                let row_spacing = 34;
-                let start_y = 420;
+                // Calibrated PS2 prototype dimensions (SLUS_202.28 0x001c38c0 / titleDrawMainMenu)
+                let start_y = 440;
+                let step_y = 38;
+                let btn_scale = 0.44f32;
+                let glow_scale = 0.58f32;
 
                 for (idx, opt) in MainMenuOption::ALL.iter().enumerate() {
                     let is_selected = idx == sm.main_menu_index;
-                    let y = start_y + idx as i32 * row_spacing;
+                    let y = start_y + idx as i32 * step_y;
 
                     let sprite = match opt {
                         MainMenuOption::NewGame => AuthenticButtonSprite::NewGame,
@@ -473,14 +474,18 @@ pub fn draw_title_screen(
                         MainMenuOption::Exit => AuthenticButtonSprite::Exit,
                     };
 
+                    let rect = sprite.atlas_rect();
+                    let scaled_w = (rect.width as f32 * btn_scale) as i32;
+                    let btn_x = center_xi - (scaled_w / 2);
+
                     if is_selected {
                         // Render authentic GlowCursor behind the active item
                         let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
-                        let glow_scale = 0.46f32;
                         let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
                         let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
                         let glow_x = center_xi - (glow_w / 2);
-                        let glow_y = y + 12 - (glow_h / 2);
+                        let btn_h = (rect.height as f32 * btn_scale) as i32;
+                        let glow_y = y + (btn_h / 2) - (glow_h / 2);
 
                         atlas.blit_sprite(
                             AuthenticButtonSprite::GlowCursor,
@@ -493,11 +498,6 @@ pub fn draw_title_screen(
                             [1.0, 1.0, 1.0, 0.95],
                         );
                     }
-
-                    let rect = sprite.atlas_rect();
-                    let scale = 0.28f32;
-                    let w = (rect.width as f32 * scale) as i32;
-                    let x = center_xi - (w / 2);
 
                     let tint = if is_selected {
                         // Bright white with full opacity
@@ -512,9 +512,9 @@ pub fn draw_title_screen(
                         &mut rast.pixels,
                         rast.width,
                         rast.height,
-                        x,
+                        btn_x,
                         y,
-                        scale,
+                        btn_scale,
                         tint,
                     );
                 }
@@ -598,26 +598,50 @@ pub fn draw_scenario_selection(
 
     if let Some(atlas) = button_sprites {
         let center_xi = center_x as i32;
+
+        // Position NEW GAME context header at y = 410 (clear below title card drips)
+        let hdr_rect = AuthenticButtonSprite::NewGame.atlas_rect();
+        let hdr_scale = 0.44f32;
+        let hdr_w = (hdr_rect.width as f32 * hdr_scale) as i32;
+        let hdr_x = center_xi - (hdr_w / 2);
+        let hdr_y = 410;
+
+        atlas.blit_sprite(
+            AuthenticButtonSprite::NewGame,
+            &mut rast.pixels,
+            rast.width,
+            rast.height,
+            hdr_x,
+            hdr_y,
+            hdr_scale,
+            [0.72, 0.72, 0.75, 0.75],
+        );
+
         let scenarios = [
             (0, AuthenticButtonSprite::MainScenario),
             (1, AuthenticButtonSprite::SubScenario),
         ];
+
+        let scale = 0.44f32;
+        let glow_scale = 0.62f32;
+        let start_y = 480;
+        let step_y = 55;
+
         for (idx, sprite) in &scenarios {
             let is_selected = *idx == sm.scenario_index;
-            let y = 390 + *idx as i32 * 75;
+            let y = start_y + *idx as i32 * step_y;
             let rect = sprite.atlas_rect();
-            let scale = 0.48f32;
             let w = (rect.width as f32 * scale) as i32;
             let x = center_xi - (w / 2);
 
             if is_selected {
                 let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
-                let glow_scale = 0.65f32;
                 let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
                 let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
                 let glow_x = center_xi - (glow_w / 2);
                 let btn_h = (rect.height as f32 * scale) as i32;
                 let glow_y = y + (btn_h / 2) - (glow_h / 2);
+
                 atlas.blit_sprite(
                     AuthenticButtonSprite::GlowCursor,
                     &mut rast.pixels,
@@ -626,14 +650,14 @@ pub fn draw_scenario_selection(
                     glow_x,
                     glow_y,
                     glow_scale,
-                    [1.0, 1.0, 1.0, 0.90],
+                    [1.0, 1.0, 1.0, 0.95],
                 );
             }
 
             let tint = if is_selected {
-                [1.0f32, 0.95, 0.75, 1.0]
+                [1.0f32, 1.0, 1.0, 1.0]
             } else {
-                [0.70f32, 0.70, 0.72, 0.75]
+                [0.72f32, 0.72, 0.75, 0.75]
             };
 
             atlas.blit_sprite(

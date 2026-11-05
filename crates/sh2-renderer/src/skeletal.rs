@@ -370,7 +370,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let outer_cos = spotlight.color_outer.w;
 
     let current_cos = dot(l_dir, spot_dir);
-    let spot_cone = clamp((current_cos - outer_cos) / max(inner_cos - outer_cos, 0.0001), 0.0, 1.0);
+    // Ignore any fragments behind the emitter plane (prevents self-illumination of wearer's head/face/eyes)
+    let forward_gate = select(0.0, 1.0, current_cos > 0.0);
+    let spot_cone = clamp((current_cos - outer_cos) / max(inner_cos - outer_cos, 0.0001), 0.0, 1.0) * forward_gate;
 
     let attenuation = 1.0 / max(dist * dist * 0.00005 + dist * 0.001 + 1.0, 1.0);
     let n_dot_l = max(dot(in.normal, -l_dir), 0.0);

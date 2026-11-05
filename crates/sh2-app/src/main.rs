@@ -867,11 +867,17 @@ impl ApplicationHandler for SilentHillApp {
                 state.render_ctx.update_camera(view_proj, inv_proj, cam_pos);
 
                 // 3. Dynamic Flashlight tracking character position & facing angle
+                // Authentic chest pocket mount: clipped to James' front breast pocket (Bone 3, Y ≈ -640, shifted forward and slightly left)
                 let player_pos = state.sim_core.scenario.player_position;
                 let player_yaw = state.sim_core.scenario.player_yaw;
+                let forward = glam::Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
+                let right = glam::Vec3::new(player_yaw.cos(), 0.0, -player_yaw.sin());
                 let light_dir =
                     glam::Vec3::new(player_yaw.sin(), 0.05, player_yaw.cos()).normalize_or_zero();
-                let spot_pos = player_pos + glam::Vec3::new(0.0, -800.0, 0.0);
+                let spot_pos = player_pos
+                    + glam::Vec3::new(0.0, -640.0, 0.0)
+                    + forward * 45.0
+                    + right * (-12.0);
 
                 let light_color = if state.sim_core.scenario.flashlight_on {
                     [2.5, 2.3, 1.8, 1.0]

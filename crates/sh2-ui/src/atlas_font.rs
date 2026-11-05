@@ -1,16 +1,17 @@
-//! Proportional renderer for the retail Silent Hill 2 text font (`sh2e/font/font000.png`).
+//! Proportional renderer for the authentic Silent Hill 2 text font (`font000.png` / embedded fallback).
 //!
-//! The Enhanced Edition atlas (`Patches/Fonts.cpp`, `loadExternalFontData`) is a grid of
-//! `44 x 64` cells (`width / 44` columns, `height / 64` rows) holding two fonts back to back: the
-//! first half is the normal font (`type 0`), the second half the small font (`type 1`). A
-//! glyph's cell index is the message byte code, i.e. `chr - 0x20` for ASCII, row-major
-//! (`col = id % columns`, `row = id / columns`). Glyph widths come from the pixel bounds of each
-//! cell (the game keeps a per-character width table in the exe; the atlas bounds reproduce the
-//! proportional spacing) plus the game's 2 px letter spacing (scaled to the 2x atlas).
+//! The font atlas is a grid of `44 x 64` cells holding the retail normal font (`type 0`). A glyph's
+//! cell index is the message byte code, i.e. `chr - 0x20` for ASCII.
 //!
-//! Only the 95 printable ASCII glyphs of the normal font are kept (alpha plane), so the 4400x9600
-//! atlas is dropped right after loading. When the retail file is missing (CI), callers fall back
-//! to the embedded 8x8 font through [`draw_subtitle`].
+//! # Authentic Character Proportions & Spacing
+//! Silent Hill 2's engine (`sh2pc.exe` @ `0x803920` and PS2 prototype `SLUS_202.28` @ `0x002BAF48`)
+//! stores a 224-byte proportional width table for the 20x30 Normal font (`FONT_DATA`). In the
+//! PC / PS2 engine:
+//! - Character advance is `width + 2` (or `spaceSize = 7` for space).
+//! - For the 2x resolution font atlas (`44 x 64` cell), widths and letter spacing scale 2x:
+//!   `advance_atlas = (RETAIL_FONT0_WIDTHS[id] * 2) + LETTER_SPACING` (with `LETTER_SPACING = 4`, `SPACE = 14`).
+//! - The authentic 224-glyph font image is embedded directly in `sh2-ui` so high-fidelity proportional
+//!   text renders out-of-the-box regardless of external file layouts or mod configurations.
 
 use crate::font::TextRasterizer;
 use std::path::{Path, PathBuf};
@@ -19,11 +20,29 @@ use std::sync::OnceLock;
 const CELL_W: usize = 44;
 const CELL_H: usize = 64;
 const FIRST_CHAR: u32 = 0x20;
-const GLYPH_COUNT: usize = 95;
-/// Letter spacing in atlas pixels (`letterSpc = 2` at the game's 22 px cell, doubled for the atlas).
+const GLYPH_COUNT: usize = 224;
+
+/// Letter spacing in atlas pixels (`letterSpc = 2` at the game's cell size, doubled for the 2x atlas).
 const LETTER_SPACING: usize = 4;
 /// Space advance in atlas pixels (`spaceSize = 7` at the game's cell size, doubled).
 const SPACE_ADVANCE: usize = 14;
+
+/// The authentic 224-byte proportional character width table extracted from `sh2pc.exe` at `0x803920`
+/// and verified against PS2 prototype `SLUS_202.28` `FontDataTable[0]` at `0x002BAF48`.
+pub const RETAIL_FONT0_WIDTHS: [u8; 224] = [
+    0, 5, 7, 10, 9, 14, 13, 4, 6, 6, 7, 10, 5, 6, 5, 10, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 5, 5, 10,
+    10, 10, 8, 13, 13, 11, 12, 13, 11, 10, 13, 14, 6, 6, 12, 11, 16, 14, 13, 10, 13, 11, 9, 11, 13,
+    13, 17, 11, 11, 11, 6, 10, 6, 10, 9, 6, 9, 10, 8, 11, 8, 6, 10, 10, 5, 5, 10, 5, 15, 10, 9, 10,
+    10, 7, 7, 6, 10, 10, 14, 9, 10, 9, 6, 10, 6, 10, 0, 9, 0, 5, 9, 9, 17, 9, 9, 6, 19, 9, 6, 17,
+    0, 0, 0, 0, 5, 5, 9, 9, 10, 9, 17, 6, 17, 7, 6, 14, 0, 0, 11, 0, 5, 9, 9, 10, 9, 10, 9, 6, 13,
+    6, 9, 10, 6, 11, 9, 7, 9, 6, 6, 6, 10, 11, 5, 6, 6, 6, 9, 13, 13, 13, 8, 13, 13, 13, 13, 13,
+    13, 16, 12, 11, 11, 11, 11, 6, 6, 6, 6, 13, 14, 13, 13, 13, 13, 13, 10, 14, 13, 13, 13, 13, 11,
+    10, 10, 9, 9, 9, 9, 9, 9, 13, 8, 8, 8, 8, 8, 5, 5, 5, 6, 9, 10, 9, 9, 9, 9, 9, 9, 10, 10, 10,
+    10, 10, 10, 10, 0,
+];
+
+/// Embedded grayscale atlas PNG for the 224 glyphs of the normal font (32 KB).
+const EMBEDDED_FONT_PNG: &[u8] = include_bytes!("../assets/font_normal.png");
 
 #[derive(Clone)]
 struct Glyph {
@@ -32,33 +51,43 @@ struct Glyph {
     /// First and last opaque column (`min > max` for an empty glyph).
     min_x: usize,
     max_x: usize,
+    /// Proportional advance in atlas pixels.
+    advance: usize,
 }
 
-/// Retail atlas font (normal type 0 glyphs, printable ASCII).
+/// Retail atlas font (normal type 0 glyphs).
 pub struct AtlasFont {
     glyphs: Vec<Glyph>,
 }
 
 impl AtlasFont {
-    /// Builds the font from an RGBA8 atlas of `width x height` pixels.
-    pub fn from_rgba(width: usize, height: usize, rgba: &[u8]) -> Option<Self> {
+    /// Builds the font from an RGBA8 or Grayscale atlas of `width x height` pixels.
+    pub fn from_image_bytes(
+        width: usize,
+        height: usize,
+        channels: usize,
+        data: &[u8],
+    ) -> Option<Self> {
         let cols = width / CELL_W;
         let rows = height / CELL_H;
-        if cols == 0 || rows == 0 || rgba.len() < width * height * 4 {
+        if cols == 0 || rows == 0 || data.len() < width * height * channels {
             return None;
         }
-        let mut glyphs = Vec::with_capacity(GLYPH_COUNT);
-        for id in 0..GLYPH_COUNT {
+        let total = (cols * rows).min(GLYPH_COUNT);
+        let mut glyphs = Vec::with_capacity(total);
+        #[allow(clippy::needless_range_loop)]
+        for id in 0..total {
             let (col, row) = (id % cols, id / cols);
-            if row >= rows {
-                return None;
-            }
             let mut alpha = vec![0u8; CELL_W * CELL_H];
             let (mut min_x, mut max_x) = (usize::MAX, 0usize);
             for y in 0..CELL_H {
                 for x in 0..CELL_W {
-                    let src = ((row * CELL_H + y) * width + col * CELL_W + x) * 4 + 3;
-                    let a = rgba[src];
+                    let src = ((row * CELL_H + y) * width + col * CELL_W + x) * channels;
+                    let a = if channels >= 4 {
+                        data[src + 3]
+                    } else {
+                        data[src]
+                    };
                     alpha[y * CELL_W + x] = a;
                     if a > 24 {
                         min_x = min_x.min(x);
@@ -66,19 +95,39 @@ impl AtlasFont {
                     }
                 }
             }
+            let advance = if id == 0 {
+                SPACE_ADVANCE
+            } else if id < RETAIL_FONT0_WIDTHS.len() && RETAIL_FONT0_WIDTHS[id] > 0 {
+                (RETAIL_FONT0_WIDTHS[id] as usize * 2) + LETTER_SPACING
+            } else if min_x <= max_x {
+                (max_x - min_x + 1) + LETTER_SPACING
+            } else {
+                SPACE_ADVANCE
+            };
+
             glyphs.push(Glyph {
                 alpha,
                 min_x,
                 max_x,
+                advance,
             });
         }
         Some(Self { glyphs })
     }
 
-    /// Loads and decodes a PNG atlas such as `font000.png`.
+    /// Loads and decodes an external PNG atlas such as `font000.png`.
     pub fn load_png(path: &Path) -> Option<Self> {
         let img = image::open(path).ok()?.to_rgba8();
-        Self::from_rgba(img.width() as usize, img.height() as usize, img.as_raw())
+        Self::from_image_bytes(img.width() as usize, img.height() as usize, 4, img.as_raw())
+    }
+
+    /// Loads the built-in embedded font atlas.
+    pub fn load_embedded() -> Self {
+        let img = image::load_from_memory(EMBEDDED_FONT_PNG)
+            .expect("embedded font_normal.png must be valid")
+            .to_luma8();
+        Self::from_image_bytes(img.width() as usize, img.height() as usize, 1, img.as_raw())
+            .expect("embedded font atlas should parse")
     }
 
     /// `<root>/sh2e/font/font000.png` inside the retail rip.
@@ -86,31 +135,55 @@ impl AtlasFont {
         root.join("sh2e/font/font000.png")
     }
 
-    /// Process-wide font loaded once from the retail rip at `root` (None when absent/undecodable).
-    pub fn shared(root: &Path) -> Option<&'static AtlasFont> {
-        static FONT: OnceLock<Option<AtlasFont>> = OnceLock::new();
-        FONT.get_or_init(|| Self::load_png(&Self::retail_font_path(root)))
-            .as_ref()
+    /// Process-wide font loaded from candidate game roots or falling back to the embedded authentic atlas.
+    pub fn shared(game_root: Option<&Path>) -> &'static AtlasFont {
+        static FONT: OnceLock<AtlasFont> = OnceLock::new();
+        FONT.get_or_init(|| {
+            // 1. Try provided game_root
+            if let Some(root) = game_root {
+                let p = Self::retail_font_path(root);
+                if p.is_file() {
+                    if let Some(f) = Self::load_png(&p) {
+                        return f;
+                    }
+                }
+            }
+            // 2. Try known workspace candidate paths
+            let candidates = [
+                PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
+                PathBuf::from("/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
+            ];
+            for c in &candidates {
+                let p = Self::retail_font_path(c);
+                if p.is_file() {
+                    if let Some(f) = Self::load_png(&p) {
+                        return f;
+                    }
+                }
+            }
+            // 3. Fallback to authentic embedded font atlas
+            Self::load_embedded()
+        })
     }
 
     fn glyph(&self, ch: char) -> Option<&Glyph> {
         let c = ch as u32;
-        let id = if (FIRST_CHAR..FIRST_CHAR + GLYPH_COUNT as u32).contains(&c) {
+        let id = if (FIRST_CHAR..FIRST_CHAR + self.glyphs.len() as u32).contains(&c) {
             (c - FIRST_CHAR) as usize
         } else {
-            ('?' as u32 - FIRST_CHAR) as usize
+            ('?' as u32).saturating_sub(FIRST_CHAR) as usize
         };
         self.glyphs.get(id)
     }
 
     /// Advance of one character in atlas pixels.
-    fn advance(&self, ch: char) -> usize {
+    pub fn advance(&self, ch: char) -> usize {
         if ch == ' ' {
             return SPACE_ADVANCE;
         }
         match self.glyph(ch) {
-            Some(g) if g.min_x <= g.max_x => g.max_x - g.min_x + 1 + LETTER_SPACING,
-            _ => SPACE_ADVANCE,
+            Some(g) => g.advance,
+            None => SPACE_ADVANCE,
         }
     }
 
@@ -214,8 +287,8 @@ impl AtlasFont {
 }
 
 /// Draws a (possibly multi-line) subtitle centred on `center_x` with its last line ending at
-/// `bottom_y`. Uses the retail atlas font from the rip at `game_root` when available and falls back
-/// to the embedded 8x8 font otherwise. `px_height` is the line height in pixels.
+/// `bottom_y`. Uses the authentic proportional Silent Hill 2 font (via `AtlasFont::shared`).
+/// `px_height` is the line height in pixels.
 pub fn draw_subtitle(
     rast: &mut TextRasterizer,
     game_root: Option<&Path>,
@@ -231,27 +304,18 @@ pub fn draw_subtitle(
     }
     let line_h = px_height + px_height / 4;
     let top = bottom_y.saturating_sub(line_h * lines.len());
-    let font = game_root.and_then(AtlasFont::shared);
+    let font = AtlasFont::shared(game_root);
     for (i, line) in lines.iter().enumerate() {
         let y = top + i * line_h;
-        match font {
-            Some(f) => {
-                let w = f.text_width(line, px_height);
-                f.draw_line(
-                    rast,
-                    line,
-                    (center_x.saturating_sub(w / 2), y),
-                    px_height,
-                    color,
-                    true,
-                );
-            }
-            None => {
-                let scale = (px_height / 16).max(1);
-                let w = line.chars().count() * 8 * scale;
-                rast.draw_text(line, center_x.saturating_sub(w / 2), y, scale, color, true);
-            }
-        }
+        let w = font.text_width(line, px_height);
+        font.draw_line(
+            rast,
+            line,
+            (center_x.saturating_sub(w / 2), y),
+            px_height,
+            color,
+            true,
+        );
     }
 }
 
@@ -275,8 +339,9 @@ mod tests {
     #[test]
     fn proportional_widths_and_draw() {
         let (w, h, px) = synthetic_atlas();
-        let f = AtlasFont::from_rgba(w, h, &px).unwrap();
-        assert_eq!(f.advance('A'), 10 + LETTER_SPACING);
+        let f = AtlasFont::from_image_bytes(w, h, 4, &px).unwrap();
+        // 'A' has retail width 13, scaled 2x = 26, plus LETTER_SPACING = 30
+        assert_eq!(f.advance('A'), 13 * 2 + LETTER_SPACING);
         assert_eq!(f.advance(' '), SPACE_ADVANCE);
         let mut r = TextRasterizer::new(64, 64);
         f.draw_line(&mut r, "A", (4, 4), 32, [255, 255, 255, 255], false);
@@ -284,30 +349,18 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_falls_back_without_font() {
-        let mut r = TextRasterizer::new(320, 120);
-        draw_subtitle(
-            &mut r,
-            Some(Path::new("/nonexistent/sh2")),
-            "Hi\nthere",
-            160,
-            110,
-            32,
-            [255; 4],
-        );
+    fn test_embedded_font_renders() {
+        let font = AtlasFont::load_embedded();
+        assert!(font.advance('i') < font.advance('W'));
+        let mut r = TextRasterizer::new(400, 60);
+        font.draw_line(&mut r, "Mary...", (4, 4), 32, [255; 4], true);
         assert!(r.pixels.chunks(4).any(|p| p[3] != 0));
     }
 
     #[test]
-    fn retail_font_renders_when_present() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2");
-        let Some(f) = AtlasFont::load_png(&AtlasFont::retail_font_path(&root)) else {
-            return; // retail assets absent (CI)
-        };
-        assert!(f.advance('i') < f.advance('W'));
-        let mut r = TextRasterizer::new(400, 60);
-        f.draw_line(&mut r, "Mary...", (4, 4), 32, [255; 4], true);
-        assert!(r.pixels.chunks(4).filter(|p| p[3] > 128).count() > 100);
+    fn subtitle_draws_with_shared_font() {
+        let mut r = TextRasterizer::new(320, 120);
+        draw_subtitle(&mut r, None, "Hi\nthere", 160, 110, 32, [255; 4]);
+        assert!(r.pixels.chunks(4).any(|p| p[3] != 0));
     }
 }

@@ -584,21 +584,11 @@ pub struct FmvSubtitleCue {
     pub text: &'static str,
 }
 
-/// Returns authentic English subtitle cues for the given Bink movie stem (e.g. `"toilet"`, `"open"`, `"deai"`, `"water"`).
+/// Subtitle cues for cutscenes that lack retail `.mes` subtitles or when testing without retail assets.
+/// Dialogue FMVs use exact frame timings matching the retail PS2/PC engine. Cutscenes without spoken
+/// dialogue (e.g. `toilet` mirror scene, `water` car scene) have no subtitles in retail Silent Hill 2.
 pub fn fmv_subtitles_for_movie(movie_id: &str) -> &'static [FmvSubtitleCue] {
     match movie_id {
-        "toilet" => &[
-            FmvSubtitleCue {
-                start_ntsc_frame: 95,
-                end_ntsc_frame: 215,
-                text: "Mary... Could you really be in this town?",
-            },
-            FmvSubtitleCue {
-                start_ntsc_frame: 260,
-                end_ntsc_frame: 440,
-                text: "In my 'restless dreams', I see that town... Silent Hill.",
-            },
-        ],
         "open" => &[
             FmvSubtitleCue {
                 start_ntsc_frame: 120,
@@ -615,124 +605,426 @@ pub fn fmv_subtitles_for_movie(movie_id: &str) -> &'static [FmvSubtitleCue] {
                 end_ntsc_frame: 680,
                 text: "Well, I'm alone there now... In our 'special place'... Waiting for you...",
             },
-            FmvSubtitleCue {
-                start_ntsc_frame: 1450,
-                end_ntsc_frame: 1650,
-                text: "I'm not your Mary.",
-            },
-            FmvSubtitleCue {
-                start_ntsc_frame: 2250,
-                end_ntsc_frame: 2460,
-                text: "This town is full of monsters! How can you sit there and eat pizza?!",
-            },
-            FmvSubtitleCue {
-                start_ntsc_frame: 3150,
-                end_ntsc_frame: 3380,
-                text: "See? It's warm...",
-            },
         ],
         "hakaba" => &[
             FmvSubtitleCue {
-                start_ntsc_frame: 60,
-                end_ntsc_frame: 220,
-                text: "Excuse me... I'm looking for Silent Hill. Is this the right way?",
+                start_ntsc_frame: 564,
+                end_ntsc_frame: 624,
+                text: "Excuse me, I...",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 250,
-                end_ntsc_frame: 480,
-                text: "Yeah, it's hard to see with this fog, but there's only the one road.",
+                start_ntsc_frame: 630,
+                end_ntsc_frame: 720,
+                text: "I, I'm sorry...I, I....\nI was just....",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 620,
-                end_ntsc_frame: 890,
-                text: "It's dangerous out there... Something's wrong with this town.",
-            },
-        ],
-        "gero" => &[
-            FmvSubtitleCue {
-                start_ntsc_frame: 45,
-                end_ntsc_frame: 210,
-                text: "It wasn't me! I didn't do it!",
+                start_ntsc_frame: 720,
+                end_ntsc_frame: 831,
+                text: "No, it's okay.\nI didn't mean to scare you.",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 240,
-                end_ntsc_frame: 430,
-                text: "He was already like that when I got here...",
+                start_ntsc_frame: 831,
+                end_ntsc_frame: 921,
+                text: "I'm kind of lost.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 987,
+                end_ntsc_frame: 1026,
+                text: "Lost?",
             },
         ],
         "deai" => &[
             FmvSubtitleCue {
-                start_ntsc_frame: 80,
-                end_ntsc_frame: 240,
-                text: "Mary? ... No, you're not.",
+                start_ntsc_frame: 12,
+                end_ntsc_frame: 54,
+                text: "Mary?",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 270,
-                end_ntsc_frame: 490,
+                start_ntsc_frame: 246,
+                end_ntsc_frame: 327,
+                text: "No... you're not.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 327,
+                end_ntsc_frame: 405,
                 text: "Do I look like your girlfriend?",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 520,
-                end_ntsc_frame: 780,
+                start_ntsc_frame: 405,
+                end_ntsc_frame: 522,
+                text: "No... my late wife.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 522,
+                end_ntsc_frame: 582,
+                text: "I can't believe it...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 582,
+                end_ntsc_frame: 708,
+                text: "You could be her twin.\nYour face, your voice...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 708,
+                end_ntsc_frame: 798,
+                text: "Just your hair and clothes are\ndifferent.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 798,
+                end_ntsc_frame: 873,
                 text: "My name... is Maria.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 873,
+                end_ntsc_frame: 966,
+                text: "I don't look like a ghost. \nDo I?",
+            },
+        ],
+        "hei" => &[
+            FmvSubtitleCue {
+                start_ntsc_frame: 36,
+                end_ntsc_frame: 174,
+                text: "It was you, wasn't it? \nYou're the one who stepped\non my hand.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 174,
+                end_ntsc_frame: 210,
+                text: "I don't know...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 210,
+                end_ntsc_frame: 306,
+                text: "Maybe I did...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 306,
+                end_ntsc_frame: 429,
+                text: "What's a little girl like you doing\nhere anyway?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 429,
+                end_ntsc_frame: 522,
+                text: "Huh?\nAre you blind or something?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 522,
+                end_ntsc_frame: 606,
+                text: "What's that letter?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 606,
+                end_ntsc_frame: 708,
+                text: "None of your business.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 708,
+                end_ntsc_frame: 774,
+                text: "You didn't love Mary anyway!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 774,
+                end_ntsc_frame: 804,
+                text: "Wait!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 804,
+                end_ntsc_frame: 873,
+                text: "How do you know Mary's name!",
             },
         ],
         "knife" => &[FmvSubtitleCue {
-            start_ntsc_frame: 50,
-            end_ntsc_frame: 290,
-            text: "Angela... Give me that knife.",
+            start_ntsc_frame: 201,
+            end_ntsc_frame: 279,
+            text: "Oh... it's you.",
         }],
         "saikai" => &[
             FmvSubtitleCue {
-                start_ntsc_frame: 90,
-                end_ntsc_frame: 310,
-                text: "Anyway?! What do you mean 'anyway'?!",
+                start_ntsc_frame: 0,
+                end_ntsc_frame: 45,
+                text: "James!",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 340,
-                end_ntsc_frame: 590,
-                text: "I was almost killed back there! Why didn't you try to save me?!",
+                start_ntsc_frame: 45,
+                end_ntsc_frame: 90,
+                text: "Mary!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 90,
+                end_ntsc_frame: 255,
+                text: "Oh Maria it's you...\nI thought you were....",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 255,
+                end_ntsc_frame: 300,
+                text: "Sorry...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 348,
+                end_ntsc_frame: 477,
+                text: "Anyway, I'm glad you're alive...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 501,
+                end_ntsc_frame: 528,
+                text: "\"Anyway\"!?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 528,
+                end_ntsc_frame: 585,
+                text: "What do you mean \"Anyway\"!?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 585,
+                end_ntsc_frame: 678,
+                text: "You don't sound very happy\nto see me.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 678,
+                end_ntsc_frame: 744,
+                text: "I was almost killed back there!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 744,
+                end_ntsc_frame: 819,
+                text: "Why didn't you try to save me?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 819,
+                end_ntsc_frame: 918,
+                text: "All you care about is that dead\nwife of yours!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 918,
+                end_ntsc_frame: 1035,
+                text: "I've never been so scared in my\nwhole life!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1035,
+                end_ntsc_frame: 1188,
+                text: "You couldn't care less about me,\ncould you?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1230,
+                end_ntsc_frame: 1284,
+                text: "No, I just...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1284,
+                end_ntsc_frame: 1344,
+                text: "Then stay with me!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1344,
+                end_ntsc_frame: 1413,
+                text: "Don't ever leave me alone!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1413,
+                end_ntsc_frame: 1572,
+                text: "You're supposed to take care\nof me!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1572,
+                end_ntsc_frame: 1692,
+                text: "So what about Laura?\nDid you find her?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1692,
+                end_ntsc_frame: 1800,
+                text: "Yeah, but she ran away.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1800,
+                end_ntsc_frame: 1896,
+                text: "We've got to find her!",
             },
         ],
         "rouya" => &[
             FmvSubtitleCue {
-                start_ntsc_frame: 100,
-                end_ntsc_frame: 320,
-                text: "James, honey... Did something happen to you?",
+                start_ntsc_frame: 63,
+                end_ntsc_frame: 174,
+                text: "Killin' a person ain't no big deal.",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 360,
-                end_ntsc_frame: 650,
-                text: "After we got separated in that long hallway? Are you confusing me with someone else?",
+                start_ntsc_frame: 174,
+                end_ntsc_frame: 285,
+                text: "Just put the gun to their head... pow!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 348,
+                end_ntsc_frame: 495,
+                text: "You... you killed him?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 570,
+                end_ntsc_frame: 657,
+                text: "B, but... it wasn't my fault.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 657,
+                end_ntsc_frame: 759,
+                text: "He, he made me do it!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 795,
+                end_ntsc_frame: 891,
+                text: "Calm down, Eddie.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 891,
+                end_ntsc_frame: 960,
+                text: "Tell me what happened.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 960,
+                end_ntsc_frame: 1104,
+                text: "That guy... he, he had it coming!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1104,
+                end_ntsc_frame: 1203,
+                text: "I didn't do anything.\nHe just came after me!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1203,
+                end_ntsc_frame: 1296,
+                text: "Besides he was making fun of\nme with his eyes!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1296,
+                end_ntsc_frame: 1386,
+                text: "Like that other one...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1386,
+                end_ntsc_frame: 1500,
+                text: "Just for that you killed him?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1500,
+                end_ntsc_frame: 1614,
+                text: "Whadda ya mean \"Just for that\"!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1647,
+                end_ntsc_frame: 1770,
+                text: "Eddie, you can't just kill someone\ncause of the way they looked\nat you...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1770,
+                end_ntsc_frame: 1896,
+                text: "Oh yeah! Why not?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 1941,
+                end_ntsc_frame: 2049,
+                text: "'Til now, I always let people walk\nall over me.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 2049,
+                end_ntsc_frame: 2130,
+                text: "Just like that stupid dog.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 2130,
+                end_ntsc_frame: 2265,
+                text: "He had it coming too!!",
+            },
+        ],
+        "korosu_a" => &[
+            FmvSubtitleCue {
+                start_ntsc_frame: 249,
+                end_ntsc_frame: 375,
+                text: "Killin' a person ain't no big deal.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 375,
+                end_ntsc_frame: 480,
+                text: "Just put the gun to their head... pow!",
+            },
+        ],
+        "korosu_b" => &[
+            FmvSubtitleCue {
+                start_ntsc_frame: 24,
+                end_ntsc_frame: 78,
+                text: "Whadda ya mean \"Just for that\"!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 78,
+                end_ntsc_frame: 237,
+                text: "Eddie, you can't just kill someone\ncause of the way they looked\nat you...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 237,
+                end_ntsc_frame: 300,
+                text: "Oh yeah! Why not?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 300,
+                end_ntsc_frame: 420,
+                text: "'Til now, I always let people walk\nall over me.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 420,
+                end_ntsc_frame: 519,
+                text: "Just like that stupid dog.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 519,
+                end_ntsc_frame: 570,
+                text: "He had it coming too!!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 570,
+                end_ntsc_frame: 612,
+                text: "Eddie!!",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 660,
+                end_ntsc_frame: 744,
+                text: "He he. I was just jokin', James.",
             },
         ],
         "murder" => &[
             FmvSubtitleCue {
-                start_ntsc_frame: 300,
-                end_ntsc_frame: 620,
-                text: "I'm SoRRy, James... I know I've been a burden...",
+                start_ntsc_frame: 45,
+                end_ntsc_frame: 195,
+                text: "Are you taping again?\nC'mon...",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 1850,
-                end_ntsc_frame: 2250,
-                text: "Mary... died of that damn disease three years ago? No... I killed her.",
-            },
-        ],
-        "water" => &[
-            FmvSubtitleCue {
-                start_ntsc_frame: 150,
-                end_ntsc_frame: 450,
-                text: "In my 'restless dreams', I see that town. Silent Hill.",
+                start_ntsc_frame: 258,
+                end_ntsc_frame: 375,
+                text: "I don't know why, but I just\nlove it here.",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 650,
-                end_ntsc_frame: 1050,
-                text: "James... If that were true, then why do you look so sad?",
+                start_ntsc_frame: 375,
+                end_ntsc_frame: 459,
+                text: "It's so peaceful.",
             },
             FmvSubtitleCue {
-                start_ntsc_frame: 7500,
-                end_ntsc_frame: 8400,
-                text: "James... You made me happy.",
+                start_ntsc_frame: 459,
+                end_ntsc_frame: 501,
+                text: "You know what I heard?",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 501,
+                end_ntsc_frame: 636,
+                text: "This whole area used to be a\nsacred place.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 636,
+                end_ntsc_frame: 723,
+                text: "I think I can see why.",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 723,
+                end_ntsc_frame: 807,
+                text: "It's too bad we have to leave...",
+            },
+            FmvSubtitleCue {
+                start_ntsc_frame: 807,
+                end_ntsc_frame: 948,
+                text: "Please promise you'll take me\nagain, James.",
             },
         ],
         _ => &[],
@@ -989,13 +1281,28 @@ pub struct RetailSubtitleCue {
 }
 
 /// Locates the game root (the folder holding `data/` and `sh2e/`) from a movie path such as
-/// `<root>/data/movie/x.bik` or `<root>/sh2e/movie/x.bik`.
+/// `<root>/data/movie/x.bik` or `<root>/sh2e/movie/x.bik`, or searches candidate roots in the workspace.
 pub fn game_root_from_movie_path(movie_path: &Path) -> Option<PathBuf> {
-    movie_path
-        .parent()?
-        .parent()?
+    if let Some(parent_root) = movie_path
         .parent()
-        .map(Path::to_path_buf)
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+    {
+        if retail_messages_available(parent_root) {
+            return Some(parent_root.to_path_buf());
+        }
+    }
+    // Check known candidate paths relative to cwd or repository
+    let candidates = [
+        PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
+        PathBuf::from("/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
+    ];
+    for c in &candidates {
+        if retail_messages_available(c) {
+            return Some(c.clone());
+        }
+    }
+    None
 }
 
 fn read_retail_message_file(root: &Path, stem: &str) -> Option<Vec<u8>> {
@@ -1098,8 +1405,8 @@ mod tests {
         // At 59.94 FPS, frame 200 corresponds to frame 100 in NTSC 29.97 FPS subtitle timing
         assert_eq!(hdr.subtitle_ntsc_frame(200), 100);
         assert_eq!(
-            active_subtitle_for_frame("toilet", &hdr, 200),
-            Some("Mary... Could you really be in this town?")
+            active_subtitle_for_frame("murder", &hdr, 200),
+            Some("Are you taping again?\nC'mon...")
         );
     }
 

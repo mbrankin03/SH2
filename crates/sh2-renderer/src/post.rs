@@ -117,8 +117,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Authentic D3DBLEND_INVSRCALPHA / D3DBLEND_SRCALPHA blend (noise.c / PS2NoiseFilter):
         // out = grain_rgb * (1.0 - scene_alpha) + ldr * scene_alpha
-        // Calibrated blend weight ensures subtle, filmic grading across the entire 0% - 100% options slider.
-        let grain_weight = clamp(0.20 * post.grain_intensity, 0.0, 0.35);
+        // Scaled so that 30% of previous raw ceiling maps to 100% on the slider, placing the ideal
+        // natural film-grain sweetspot comfortably inside the user options range without harsh digital snow.
+        let grain_weight = clamp(0.06 * post.grain_intensity, 0.0, 0.08);
         let scene_weight = 1.0 - grain_weight;
         ldr = clamp(grain_rgb * grain_weight + ldr * scene_weight, vec3<f32>(0.0), vec3<f32>(1.0));
     }

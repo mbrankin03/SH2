@@ -9,6 +9,9 @@ use crate::animation::{
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
 use crate::input::{ControlScheme, HapticFeedback, InputManager};
+use crate::locomotion::{
+    LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
+};
 use crate::scenario::{ScenarioKind, ScenarioState};
 use crate::timing::TimingConstants;
 
@@ -22,6 +25,8 @@ pub struct SimulationCore {
     pub scenario: ScenarioState,
     /// Controller and gamepad manager.
     pub input: InputManager,
+    /// Authentic 1:1 PS2/PC player locomotion and turning controller.
+    pub locomotion: PlayerLocomotionController,
     /// Character skeletal animation controller.
     pub animation: CharacterAnimationController,
     /// Active character locomotion clips.
@@ -30,6 +35,8 @@ pub struct SimulationCore {
     pub timing: TimingConstants,
     /// Cumulative simulation ticks elapsed.
     pub tick_counter: u64,
+    /// Last tick's locomotion output.
+    pub last_locomotion: LocomotionOutput,
 }
 
 impl Default for SimulationCore {
@@ -55,6 +62,7 @@ impl SimulationCore {
             camera,
             scenario,
             input: InputManager::new(Default::default()),
+            locomotion: PlayerLocomotionController::new(),
             animation: CharacterAnimationController::new(
                 AnimationStateKind::Idle,
                 locomotion_clips.idle,
@@ -62,6 +70,14 @@ impl SimulationCore {
             locomotion_clips,
             timing: TimingConstants::default(),
             tick_counter: 0,
+            last_locomotion: LocomotionOutput {
+                delta_position: Vec3::ZERO,
+                turn_speed_rad_per_sec: 0.0,
+                state: LocomotionState::Stand,
+                linear_speed: 0.0,
+                footstep_triggered: false,
+                footstep_volume: 0.5,
+            },
         }
     }
 
@@ -106,64 +122,71 @@ impl SimulationCore {
             self.scenario.flashlight_on = !self.scenario.flashlight_on;
         }
 
-        // 3. Update character position based on control scheme
-        let is_moving;
-        let forward_speed = if self.input.state.is_running {
-            65.0
-        } else {
-            25.0
+        // 3. Update character position and turning via authentic PS2 locomotion controller
+        let dt = 1.0 / 60.0;
+        let is_tank = self.input.config.scheme == ControlScheme::Tank;
+
+        let locomotion_in = LocomotionInput {
+            stick_x: self.input.state.left_stick_x,
+            stick_y: self.input.state.left_stick_y,
+            run_held: self.input.state.is_running,
+            strafe_left: self.input.state.strafe_left,
+            strafe_right: self.input.state.strafe_right,
+            quick_turn_pressed: self.input.state.quick_turn_pressed,
+            wall_ahead: false, // In free roam / room boundaries
+            enemy_near: false,
+            health_fraction: self.scenario.health / 100.0,
+            is_maria: self.scenario.character == crate::scenario::PlayableCharacter::Maria,
+            camera_yaw: self
+                .camera
+                .curr_snapshot
+                .eye
+                .x
+                .atan2(self.camera.curr_snapshot.eye.z),
         };
-        let turn_speed = 0.05; // radians per tick
 
-        match self.input.config.scheme {
-            ControlScheme::Tank => {
-                // Classic Tank controls: Left stick Y = forward/backward, Left stick X = rotate yaw
-                self.scenario.player_yaw += self.input.state.left_stick_x * turn_speed;
-                let forward = Vec3::new(
-                    self.scenario.player_yaw.sin(),
-                    0.0,
-                    self.scenario.player_yaw.cos(),
-                );
-                self.scenario.player_position +=
-                    forward * (self.input.state.left_stick_y * forward_speed);
-                is_moving = self.input.state.left_stick_y.abs() > 0.1;
-            }
-            ControlScheme::AnalogDirectional => {
-                // 2D/3D camera-relative directional movement
-                if self.input.state.left_stick_x.abs() > 0.01
-                    || self.input.state.left_stick_y.abs() > 0.01
-                {
-                    let move_dir = Vec3::new(
-                        self.input.state.left_stick_x,
-                        0.0,
-                        self.input.state.left_stick_y,
-                    )
-                    .normalize_or_zero();
-                    self.scenario.player_yaw = move_dir.x.atan2(move_dir.z);
-                    self.scenario.player_position += move_dir * forward_speed;
-                    is_moving = true;
-                } else {
-                    is_moving = false;
-                }
-            }
-        }
+        let out =
+            self.locomotion
+                .update(&locomotion_in, &mut self.scenario.player_yaw, dt, is_tank);
+        self.scenario.player_position += out.delta_position;
+        self.last_locomotion = out;
 
-        // 3b. Update animation locomotion state machine based on movement & input
-        if is_moving {
-            if self.input.state.left_stick_y < -0.1 {
-                // Moving backward (S key or analog backward in tank mode)
+        // 3b. Update animation locomotion state machine based on calibrated locomotion state
+        match out.state {
+            LocomotionState::Stand | LocomotionState::Relax | LocomotionState::Alert => {
                 self.animation
-                    .transition_to(AnimationStateKind::Back, self.locomotion_clips.back);
-            } else if self.input.state.is_running {
-                self.animation
-                    .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
-            } else {
+                    .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
+            }
+            LocomotionState::Walk
+            | LocomotionState::StrafeLeftWalk
+            | LocomotionState::StrafeRightWalk => {
                 self.animation
                     .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
             }
-        } else {
-            self.animation
-                .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
+            LocomotionState::Back => {
+                self.animation
+                    .transition_to(AnimationStateKind::Back, self.locomotion_clips.back);
+            }
+            LocomotionState::Run1
+            | LocomotionState::Run2
+            | LocomotionState::Run3
+            | LocomotionState::StrafeLeftRun
+            | LocomotionState::StrafeRightRun => {
+                self.animation
+                    .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
+            }
+            LocomotionState::TurnLeft | LocomotionState::TurnRight => {
+                self.animation
+                    .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
+            }
+            LocomotionState::QuickTurnLeft | LocomotionState::QuickTurnRight => {
+                self.animation
+                    .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
+            }
+            LocomotionState::Tired => {
+                self.animation
+                    .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
+            }
         }
 
         // Fixed tick dt is 1/60s (approx 16.666 ms)

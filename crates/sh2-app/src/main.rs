@@ -463,11 +463,11 @@ impl ApplicationHandler for SilentHillApp {
             map_texture_bind_groups.push(render_ctx.default_texture_bind_group.clone());
         }
 
-        // Load James Sunderland character model & animations
+        // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
         let character = load_character_asset(
             &render_ctx,
             "James Sunderland",
-            &["data/chr/jms/hll_jms.mdl", "data/chr/jms/hhh_jms.mdl"],
+            &["data/chr/jms/hhh_jms.mdl", "data/chr/jms/hll_jms.mdl"],
             &["data/chr/jms/jms_basic1.anm"],
         );
 

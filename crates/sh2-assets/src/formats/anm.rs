@@ -89,6 +89,11 @@ pub struct AnimationFile {
 /// - `data`: Raw byte slice of the `.anm` file.
 /// - `bone_count`: Skeleton bone count from the matching [`.mdl` / `.mdls`](crate::formats::mdls::ModelFile).
 /// - `parents`: Skeleton parent array used to identify root bones (`parents[i] == 255`).
+///
+/// If `bone_count` is 71 (cutscene model `hhh_jms.mdl`) but the animation data represents a
+/// 41-bone standard gameplay track (e.g. `jms_basic1.anm` with stride 48), the parser automatically
+/// detects the 41-bone track stride and parses the animation frames accordingly. Unspecified finger
+/// bones (41..71) automatically follow their wrist parents via forward kinematics in [`evaluate_pose`].
 pub fn parse_anm(
     data: &[u8],
     bone_count: usize,
@@ -101,6 +106,23 @@ pub fn parse_anm(
         });
     }
 
+    if bone_count == 71 {
+        if let Ok(anm) = parse_anm_with_stride(data, 71, parents) {
+            if !anm.frames.is_empty() {
+                return Ok(anm);
+            }
+        }
+        return parse_anm_with_stride(data, 41, parents);
+    }
+
+    parse_anm_with_stride(data, bone_count, parents)
+}
+
+fn parse_anm_with_stride(
+    data: &[u8],
+    bone_count: usize,
+    parents: &[u8],
+) -> Result<AnimationFile, AssetError> {
     let per_frame = (bone_count + 7) & !7;
     let mut frames = Vec::new();
     let mut cur_frame: Vec<Option<BoneTransform>> = vec![None; bone_count];

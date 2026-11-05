@@ -31,6 +31,7 @@ pub enum AuthenticButtonSprite {
     MainScenario,
     SubScenario,
     StartPrompt,
+    TestRooms,
 }
 
 impl AuthenticButtonSprite {
@@ -133,6 +134,12 @@ impl AuthenticButtonSprite {
                 width: 1102,
                 height: 84,
             },
+            Self::TestRooms => AtlasRect {
+                x: 0,
+                y: 0,
+                width: 390,
+                height: 98,
+            },
         }
     }
 }
@@ -145,12 +152,16 @@ pub struct ButtonSpriteSheet {
     pub start_prompt_rgba: Option<Vec<u8>>,
     pub start_prompt_width: usize,
     pub start_prompt_height: usize,
+    pub test_rooms_rgba: Option<Vec<u8>>,
+    pub test_rooms_width: usize,
+    pub test_rooms_height: usize,
 }
 
 impl ButtonSpriteSheet {
     /// Load from raw RGBA8 pixels (2048x2048).
     pub fn new(width: usize, height: usize, rgba: Vec<u8>) -> Self {
         let (prompt_rgba, p_w, p_h) = Self::load_default_start_prompt();
+        let (test_rooms_rgba, tr_w, tr_h) = Self::load_default_test_rooms();
         Self {
             width,
             height,
@@ -158,11 +169,25 @@ impl ButtonSpriteSheet {
             start_prompt_rgba: prompt_rgba,
             start_prompt_width: p_w,
             start_prompt_height: p_h,
+            test_rooms_rgba,
+            test_rooms_width: tr_w,
+            test_rooms_height: tr_h,
         }
     }
 
     fn load_default_start_prompt() -> (Option<Vec<u8>>, usize, usize) {
         let bytes = include_bytes!("../assets/start_prompt.png");
+        if let Ok(img) = image::load_from_memory(bytes) {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            (Some(rgba.into_raw()), w as usize, h as usize)
+        } else {
+            (None, 0, 0)
+        }
+    }
+
+    fn load_default_test_rooms() -> (Option<Vec<u8>>, usize, usize) {
+        let bytes = include_bytes!("../assets/test_rooms_btn.png");
         if let Ok(img) = image::load_from_memory(bytes) {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
@@ -186,6 +211,7 @@ impl ButtonSpriteSheet {
         tint: [f32; 4],
     ) {
         let is_prompt = sprite == AuthenticButtonSprite::StartPrompt;
+        let is_test_rooms = sprite == AuthenticButtonSprite::TestRooms;
         let (src_bytes, src_w, rect) = if is_prompt {
             if let Some(ref p_bytes) = self.start_prompt_rgba {
                 (
@@ -196,6 +222,21 @@ impl ButtonSpriteSheet {
                         y: 0,
                         width: self.start_prompt_width,
                         height: self.start_prompt_height,
+                    },
+                )
+            } else {
+                return;
+            }
+        } else if is_test_rooms {
+            if let Some(ref tr_bytes) = self.test_rooms_rgba {
+                (
+                    tr_bytes.as_slice(),
+                    self.test_rooms_width,
+                    AtlasRect {
+                        x: 0,
+                        y: 0,
+                        width: self.test_rooms_width,
+                        height: self.test_rooms_height,
                     },
                 )
             } else {

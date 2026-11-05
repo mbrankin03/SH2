@@ -459,11 +459,11 @@ pub fn draw_title_screen(
                     let y = start_y + idx as i32 * row_spacing;
 
                     let sprite = match opt {
-                        MainMenuOption::NewGame => Some(AuthenticButtonSprite::NewGame),
-                        MainMenuOption::Continue => Some(AuthenticButtonSprite::Continue),
-                        MainMenuOption::Options => Some(AuthenticButtonSprite::Options),
-                        MainMenuOption::TestRooms => None, // Rendered via proportional font or special styling
-                        MainMenuOption::Exit => Some(AuthenticButtonSprite::Exit),
+                        MainMenuOption::NewGame => AuthenticButtonSprite::NewGame,
+                        MainMenuOption::Continue => AuthenticButtonSprite::Continue,
+                        MainMenuOption::Options => AuthenticButtonSprite::Options,
+                        MainMenuOption::TestRooms => AuthenticButtonSprite::TestRooms,
+                        MainMenuOption::Exit => AuthenticButtonSprite::Exit,
                     };
 
                     if is_selected {
@@ -487,46 +487,29 @@ pub fn draw_title_screen(
                         );
                     }
 
-                    if let Some(spr) = sprite {
-                        let rect = spr.atlas_rect();
-                        let scale = 0.28f32;
-                        let w = (rect.width as f32 * scale) as i32;
-                        let x = center_xi - (w / 2);
+                    let rect = sprite.atlas_rect();
+                    let scale = 0.28f32;
+                    let w = (rect.width as f32 * scale) as i32;
+                    let x = center_xi - (w / 2);
 
-                        let tint = if is_selected {
-                            // Bright white with full opacity
-                            [1.0f32, 1.0, 1.0, 1.0]
-                        } else {
-                            // Authentic unselected silver/grey
-                            [0.72f32, 0.72, 0.75, 0.75]
-                        };
-
-                        atlas.blit_sprite(
-                            spr,
-                            &mut rast.pixels,
-                            rast.width,
-                            rast.height,
-                            x,
-                            y,
-                            scale,
-                            tint,
-                        );
+                    let tint = if is_selected {
+                        // Bright white with full opacity
+                        [1.0f32, 1.0, 1.0, 1.0]
                     } else {
-                        // Test Rooms: Proportional font matching button style
-                        let style = if is_selected {
-                            Sh2TextColor::White
-                        } else {
-                            Sh2TextColor::SilverUnselected
-                        };
-                        font.draw_line_centered(
-                            rast,
-                            "TEST ROOMS",
-                            (center_x, y as usize + 2),
-                            20,
-                            style,
-                            true,
-                        );
-                    }
+                        // Authentic unselected silver/grey
+                        [0.72f32, 0.72, 0.75, 0.75]
+                    };
+
+                    atlas.blit_sprite(
+                        sprite,
+                        &mut rast.pixels,
+                        rast.width,
+                        rast.height,
+                        x,
+                        y,
+                        scale,
+                        tint,
+                    );
                 }
             } else {
                 let row_h = 36;

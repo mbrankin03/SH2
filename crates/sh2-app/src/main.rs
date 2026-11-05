@@ -14,9 +14,7 @@ use sh2_assets::formats::anm::{
     compute_bind_locals, compute_skin_matrices, evaluate_pose, interpolate_frames, parse_anm,
     AnimationFile, AnimationFrame,
 };
-use sh2_assets::formats::bink::{
-    active_subtitle_for_frame, decode_bink_audio_track, BinkHeader, BinkVideoStream,
-};
+use sh2_assets::formats::bink::{decode_bink_audio_track, BinkHeader, BinkVideoStream};
 use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
@@ -2984,18 +2982,28 @@ impl ApplicationHandler for SilentHillApp {
 
                             // Render synchronized subtitle cue near bottom of frame
                             if state.fmv_viewer.subtitles_enabled {
-                                if let Some(sub_line) = active_subtitle_for_frame(
-                                    session.entry.id,
-                                    &session.header,
-                                    cur_frame,
-                                ) {
-                                    let text_w = (sub_line.len() as i32) * 16;
-                                    let sub_x = ((state.menu_rasterizer.width as i32 - text_w) / 2)
-                                        .max(24)
-                                        as usize;
-                                    state
-                                        .menu_rasterizer
-                                        .draw_text(sub_line, sub_x, 615, 2, white, true);
+                                let movie_path = session.stream.path.as_deref();
+                                if let Some(sub_line) =
+                                    sh2_assets::formats::bink::active_subtitle_text(
+                                        session.entry.id,
+                                        &session.header,
+                                        cur_frame,
+                                        movie_path,
+                                    )
+                                {
+                                    let game_root = movie_path.and_then(
+                                        sh2_assets::formats::bink::game_root_from_movie_path,
+                                    );
+                                    let w = state.menu_rasterizer.width;
+                                    sh2_ui::draw_subtitle(
+                                        &mut state.menu_rasterizer,
+                                        game_root.as_deref(),
+                                        &sub_line,
+                                        w / 2,
+                                        645,
+                                        32,
+                                        white,
+                                    );
                                 }
                             }
 

@@ -22,10 +22,12 @@
 //! `4 * N` bytes `(u16 sample_rate, u16 flags)`, and `4 * N` bytes track IDs) and the frame offset index table.
 
 use crate::error::AssetError;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Supported Bink Video 4-byte magic signatures (`BIKf`, `BIKg`, `BIKh`, `BIKi`).
 pub const BINK_MAGICS: [&[u8; 4]; 4] = [b"BIKf", b"BIKg", b"BIKh", b"BIKi"];
@@ -754,6 +756,309 @@ pub fn active_subtitle_for_frame(
     None
 }
 
+/// Retail subtitle table of one movie (see [`RETAIL_FMV_SUBTITLES`]).
+#[derive(Debug, Clone, Copy)]
+pub struct RetailSubtitleTable {
+    /// Movie stem.
+    pub movie: &'static str,
+    /// Stage message file stem (`stage_<stem>_msg_e.mes`) that the owning stage program has loaded.
+    pub message_file: &'static str,
+    /// First message number (the third argument of `0x4a2fc0`).
+    pub first_message: usize,
+    /// `{start, end}` NTSC frames per message (the table the stage passes to `0x43dc20`).
+    pub frames: &'static [(u16, u16)],
+}
+
+/// Subtitle tables extracted from `sh2pc.exe` (callers of `0x4a2fc0` in the stage programs; the exe
+/// addresses are noted per entry). Movies not listed (`toilet`, `water`, `gero`, `flash`, endings,
+/// credits, ...) have no retail subtitles.
+pub const RETAIL_FMV_SUBTITLES: &[RetailSubtitleTable] = &[
+    // table at 0x8d1570
+    RetailSubtitleTable {
+        movie: "rouya",
+        message_file: "prison_n",
+        first_message: 13,
+        frames: &[
+            (63, 174),
+            (174, 285),
+            (348, 495),
+            (570, 657),
+            (657, 759),
+            (795, 891),
+            (891, 960),
+            (960, 1104),
+            (1104, 1203),
+            (1203, 1296),
+            (1296, 1386),
+            (1386, 1500),
+            (1500, 1614),
+            (1647, 1770),
+            (1770, 1896),
+            (1941, 2049),
+            (2049, 2130),
+            (2130, 2265),
+        ],
+    },
+    // table at 0x8d3580
+    RetailSubtitleTable {
+        movie: "korosu_a",
+        message_file: "prison_n",
+        first_message: 13,
+        frames: &[(249, 375), (375, 480)],
+    },
+    // table at 0x8d35b8
+    RetailSubtitleTable {
+        movie: "korosu_b",
+        message_file: "prison_n",
+        first_message: 25,
+        frames: &[
+            (24, 78),
+            (78, 237),
+            (237, 300),
+            (300, 420),
+            (420, 519),
+            (519, 570),
+            (570, 612),
+            (660, 744),
+        ],
+    },
+    // table at 0x8d54e8
+    RetailSubtitleTable {
+        movie: "saikai",
+        message_file: "hospital_bf_b",
+        first_message: 7,
+        frames: &[
+            (0, 45),
+            (45, 90),
+            (90, 255),
+            (255, 300),
+            (348, 477),
+            (501, 528),
+            (528, 585),
+            (585, 678),
+            (678, 744),
+            (744, 819),
+            (819, 918),
+            (918, 1035),
+            (1035, 1188),
+            (1230, 1284),
+            (1284, 1344),
+            (1344, 1413),
+            (1413, 1572),
+            (1572, 1692),
+            (1692, 1800),
+            (1800, 1896),
+        ],
+    },
+    // table at 0x8ddea4
+    RetailSubtitleTable {
+        movie: "deai",
+        message_file: "town_west",
+        first_message: 23,
+        frames: &[
+            (12, 54),
+            (246, 327),
+            (327, 405),
+            (405, 522),
+            (522, 582),
+            (582, 708),
+            (708, 798),
+            (798, 873),
+            (873, 966),
+        ],
+    },
+    // table at 0x8dddf4
+    RetailSubtitleTable {
+        movie: "hei",
+        message_file: "town_west",
+        first_message: 13,
+        frames: &[
+            (36, 174),
+            (174, 210),
+            (210, 306),
+            (306, 429),
+            (429, 522),
+            (522, 606),
+            (606, 708),
+            (708, 774),
+            (774, 804),
+            (804, 873),
+        ],
+    },
+    // table at 0x8e06c4
+    RetailSubtitleTable {
+        movie: "knife",
+        message_file: "apart_w1f",
+        first_message: 12,
+        frames: &[(201, 279)],
+    },
+    // table at 0x8e75f0
+    RetailSubtitleTable {
+        movie: "hakaba",
+        message_file: "forest",
+        first_message: 5,
+        frames: &[(564, 624), (630, 720), (720, 831), (831, 921), (987, 1026)],
+    },
+    // table at 0x8c9288
+    RetailSubtitleTable {
+        movie: "murder",
+        message_file: "hotel_3f_f",
+        first_message: 5,
+        frames: &[
+            (45, 195),
+            (258, 375),
+            (375, 459),
+            (459, 501),
+            (501, 636),
+            (636, 723),
+            (723, 807),
+            (807, 948),
+        ],
+    },
+];
+
+/// Parses a retail `data/etc/message/*.mes` file into one string per message (pages joined with
+/// `'\n'`, lines separated by `'\n'`). Layout (`sh23ds/tools/sh2conv/sh2mes.py`): `u16 count`,
+/// `u16 offset[count]` in 16-bit words; text bytes `b < 0xff` are `chr(b + 0x20)`, `ff fd` is a
+/// newline, `ff ff` ends a page and other `ff xx` escapes are display codes (dropped).
+pub fn parse_mes_messages(d: &[u8]) -> Vec<String> {
+    let rd16 = |p: usize| -> Option<usize> {
+        d.get(p..p + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)
+    };
+    let Some(n) = rd16(0) else {
+        return Vec::new();
+    };
+    let offs: Vec<usize> = (0..n).map_while(|i| rd16(2 + 2 * i)).collect();
+    let is_control =
+        |p: usize| p + 1 < d.len() && d[p] == 0 && d[p + 1] != 0 && (d[p + 1] & 0x0f) == 0;
+    let mut out = Vec::with_capacity(offs.len());
+    for (i, &o) in offs.iter().enumerate() {
+        let mut p = o * 2;
+        let end = offs.get(i + 1).map_or(d.len(), |e| e * 2).min(d.len());
+        let mut pages: Vec<String> = Vec::new();
+        let mut s = String::new();
+        let mut fresh = true;
+        while p < end {
+            if fresh {
+                p += p & 1;
+                while is_control(p) {
+                    p += 2;
+                }
+                if p >= end {
+                    break;
+                }
+                fresh = false;
+            }
+            let b = d[p];
+            if b == 0xff && p + 1 < end {
+                let c = d[p + 1];
+                p += 2;
+                match c {
+                    0xff => {
+                        pages.push(s.trim().to_string());
+                        s.clear();
+                        fresh = true;
+                    }
+                    0xfd => s.push('\n'),
+                    _ => {}
+                }
+                continue;
+            }
+            s.push(if b < 0x60 { (b + 0x20) as char } else { '?' });
+            p += 1;
+        }
+        if !s.is_empty() {
+            pages.push(s.trim().to_string());
+        }
+        pages.retain(|x| !x.is_empty());
+        out.push(pages.join("\n"));
+    }
+    out
+}
+
+/// One retail subtitle cue: NTSC frame window plus the message text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetailSubtitleCue {
+    /// Exclusive start frame (retail shows the cue once the frame index is greater than this).
+    pub start_ntsc_frame: u32,
+    /// Inclusive end frame.
+    pub end_ntsc_frame: u32,
+    /// Subtitle text (lines separated by `'\n'`).
+    pub text: String,
+}
+
+/// Locates the game root (the folder holding `data/` and `sh2e/`) from a movie path such as
+/// `<root>/data/movie/x.bik` or `<root>/sh2e/movie/x.bik`.
+pub fn game_root_from_movie_path(movie_path: &Path) -> Option<PathBuf> {
+    movie_path
+        .parent()?
+        .parent()?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
+fn read_retail_message_file(root: &Path, stem: &str) -> Option<Vec<u8>> {
+    let name = format!("stage_{stem}_msg_e.mes");
+    // The Enhanced Edition's copy wins when installed (`sh2e/etc/message`), like the game does.
+    ["sh2e/etc/message", "data/etc/message"]
+        .iter()
+        .find_map(|dir| std::fs::read(root.join(dir).join(&name)).ok())
+}
+
+/// True when the retail message folder exists under `root`.
+pub fn retail_messages_available(root: &Path) -> bool {
+    root.join("data/etc/message").is_dir() || root.join("sh2e/etc/message").is_dir()
+}
+
+/// Builds the retail cues of `movie_id` from the `.mes` file in the retail rip at `root`.
+pub fn load_retail_subtitles(root: &Path, movie_id: &str) -> Option<Vec<RetailSubtitleCue>> {
+    let table = RETAIL_FMV_SUBTITLES.iter().find(|t| t.movie == movie_id)?;
+    let msgs = parse_mes_messages(&read_retail_message_file(root, table.message_file)?);
+    let mut cues = Vec::with_capacity(table.frames.len());
+    for (i, &(s, e)) in table.frames.iter().enumerate() {
+        let text = msgs.get(table.first_message + i)?;
+        cues.push(RetailSubtitleCue {
+            start_ntsc_frame: s as u32,
+            end_ntsc_frame: e as u32,
+            text: text.clone(),
+        });
+    }
+    Some(cues)
+}
+
+type RetailCueCache = Mutex<HashMap<(PathBuf, String), Option<Arc<Vec<RetailSubtitleCue>>>>>;
+
+fn retail_cues_cached(root: &Path, movie_id: &str) -> Option<Arc<Vec<RetailSubtitleCue>>> {
+    static CACHE: OnceLock<RetailCueCache> = OnceLock::new();
+    let mut map = CACHE.get_or_init(Default::default).lock().ok()?;
+    map.entry((root.to_path_buf(), movie_id.to_string()))
+        .or_insert_with(|| load_retail_subtitles(root, movie_id).map(Arc::new))
+        .clone()
+}
+
+/// Subtitle text for a movie frame: the retail table and `.mes` text when the retail rip is found
+/// next to `movie_path` (movies without a retail table then show nothing, as in the game),
+/// otherwise the built-in [`fmv_subtitles_for_movie`] fallback cues.
+pub fn active_subtitle_text(
+    movie_id: &str,
+    header: &BinkHeader,
+    video_frame: u32,
+    movie_path: Option<&Path>,
+) -> Option<String> {
+    let ntsc = header.subtitle_ntsc_frame(video_frame);
+    if let Some(root) = movie_path.and_then(game_root_from_movie_path) {
+        if retail_messages_available(&root) {
+            let cues = retail_cues_cached(&root, movie_id)?;
+            return cues
+                .iter()
+                .find(|c| ntsc > c.start_ntsc_frame && ntsc <= c.end_ntsc_frame)
+                .map(|c| c.text.clone());
+        }
+    }
+    active_subtitle_for_frame(movie_id, header, video_frame).map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -812,5 +1117,36 @@ mod tests {
         // Bar 7 (rightmost, x=620, y=50) is Black (0, 0, 0)
         let black_px = frame.sample_rgba_bt601(620, 50);
         assert!(black_px[0] < 10 && black_px[1] < 10 && black_px[2] < 10);
+    }
+
+    #[test]
+    fn test_parse_mes_synthetic() {
+        // 1 message at word offset 2: control word, "Hi" (0x28 0x49 -> 'H','i'), ff fd, "A", ff ff
+        let mut d = vec![1, 0, 2, 0, 0x00, 0x80];
+        d.extend_from_slice(&[0x28, 0x49, 0xff, 0xfd, 0x21, 0xff, 0xff, 0x00]);
+        assert_eq!(parse_mes_messages(&d), vec!["Hi\nA".to_string()]);
+    }
+
+    #[test]
+    fn test_retail_tables_are_sorted_and_nonempty() {
+        for t in RETAIL_FMV_SUBTITLES {
+            assert!(!t.frames.is_empty());
+            assert!(t.frames.iter().all(|&(s, e)| s < e));
+            assert!(t.frames.windows(2).all(|w| w[0].1 <= w[1].0));
+        }
+    }
+
+    #[test]
+    fn test_retail_subtitles_when_rip_present() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2");
+        if !retail_messages_available(&root) {
+            return; // retail assets absent (CI)
+        }
+        let cues = load_retail_subtitles(&root, "deai").expect("deai cues");
+        assert_eq!(cues.len(), 9);
+        assert_eq!(cues[0].text, "Mary?");
+        assert_eq!(cues[7].text, "My name... is Maria.");
+        assert!(load_retail_subtitles(&root, "toilet").is_none());
     }
 }

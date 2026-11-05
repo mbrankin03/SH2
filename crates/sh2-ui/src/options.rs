@@ -735,63 +735,67 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     let scale_x = base_w / 640.0;
     let scale_y = rast.height as f32 / 480.0;
 
-    // Authentic PS2/PC octagon containers from optmenu.c 0x45e750
+    // Authentic PS2 octagon containers calibrated from retail PS2 SLUS-20228 / optmenu.c 0x45e750
+    // Upper options panel: x in [36, 604], y in [64, 407] with 45-degree chamfers
     let panel_pts: Vec<(i32, i32)> = [
-        (-0.41015625f32, -0.34375f32),
-        (0.41015625, -0.34375),
-        (0.443359375, -0.3020833),
-        (0.443359375, 0.2666667),
-        (-0.443359375, 0.2666667),
-        (-0.443359375, -0.3020833),
+        (48.0, 64.0),
+        (593.0, 64.0),
+        (604.0, 76.0),
+        (604.0, 407.0),
+        (36.0, 407.0),
+        (36.0, 76.0),
     ]
     .iter()
-    .map(|(nx, ny)| {
+    .map(|(x, y)| {
         (
-            (x_offset + (nx + 0.5) * base_w).round() as i32,
-            ((ny + 0.5) * rast.height as f32).round() as i32,
+            (x_offset + x * scale_x).round() as i32,
+            (y * scale_y).round() as i32,
         )
     })
     .collect();
 
+    // Lower contextual help box: x in [36, 604], y in [414, 461] with bottom chamfers
     let box_pts: Vec<(i32, i32)> = [
-        (-0.443359375f32, 0.2791667f32),
-        (0.443359375, 0.2791667),
-        (0.443359375, 0.3291667),
-        (0.41015625, 0.3708333),
-        (-0.41015625, 0.3708333),
-        (-0.443359375, 0.3291667),
+        (36.0, 414.0),
+        (604.0, 414.0),
+        (604.0, 436.0),
+        (580.0, 461.0),
+        (60.0, 461.0),
+        (36.0, 436.0),
     ]
     .iter()
-    .map(|(nx, ny)| {
+    .map(|(x, y)| {
         (
-            (x_offset + (nx + 0.5) * base_w).round() as i32,
-            ((ny + 0.5) * rast.height as f32).round() as i32,
+            (x_offset + x * scale_x).round() as i32,
+            (y * scale_y).round() as i32,
         )
     })
     .collect();
 
+    // Outer double-border outline enclosing both panels: x in [30, 612], y in [58, 467]
     let outline_pts: Vec<(i32, i32)> = [
-        (-0.4140625f32, -0.3541667f32),
-        (0.4140625, -0.3541667),
-        (0.453125, -0.30625),
-        (0.453125, 0.3333333),
-        (0.4140625, 0.38125),
-        (-0.4140625, 0.38125),
-        (-0.453125, 0.3333333),
-        (-0.453125, -0.30625),
+        (55.0, 58.0),
+        (586.0, 58.0),
+        (612.0, 83.0),
+        (612.0, 440.0),
+        (586.0, 467.0),
+        (55.0, 467.0),
+        (30.0, 440.0),
+        (30.0, 83.0),
     ]
     .iter()
-    .map(|(nx, ny)| {
+    .map(|(x, y)| {
         (
-            (x_offset + (nx + 0.5) * base_w).round() as i32,
-            ((ny + 0.5) * rast.height as f32).round() as i32,
+            (x_offset + x * scale_x).round() as i32,
+            (y * scale_y).round() as i32,
         )
     })
     .collect();
 
-    // Solid dark fill to conceal background start00 text:
-    let fill_color = [45, 45, 48, 255];
-    // Deep blue/indigo border lines matching 0x252550
+    // Authentic PS2 colors:
+    // Fill: Dark solid grey matching 0x80808040 -> [55, 55, 58, 255]
+    let fill_color = [55, 55, 58, 255];
+    // Border line: Deep navy/blue matching 0x25255060 -> [37, 37, 80, 255]
     let border_color = [37, 37, 80, 255];
 
     draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
@@ -799,44 +803,35 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     draw_polygon(rast, &outline_pts, None, Some(border_color));
 
     let title_x = rast.width / 2;
-    let title_y = (34.0 * scale_y).round() as usize;
+    let title_y = (28.0 * scale_y).round() as usize;
 
-    // Header displaying Category: e.g. "O P T I O N S :   V I D E O"
+    // Authentic PS2 Title Header with category indicator (matching optmenu.c line 547):
+    // e.g. "<   V I D E O   O P T I O N S   >"
     let category_header = match menu.active_tab {
-        OptionsTab::Video => "O P T I O N S :   V I D E O",
-        OptionsTab::Audio => "O P T I O N S :   A U D I O",
-        OptionsTab::Controls => "O P T I O N S :   C O N T R O L S",
-        OptionsTab::Game => "O P T I O N S :   G A M E",
+        OptionsTab::Video => "<   V I D E O   O P T I O N S   >",
+        OptionsTab::Audio => "<   A U D I O   O P T I O N S   >",
+        OptionsTab::Controls => "<   C O N T R O L   O P T I O N S   >",
+        OptionsTab::Game => "<   G A M E   O P T I O N S   >",
     };
 
     font.draw_line_centered(
         rast,
         category_header,
         (title_x, title_y),
-        (24.0 * scale_y).round() as usize,
+        (22.0 * scale_y).round() as usize,
         Sh2TextColor::White,
         true,
     );
 
-    // Tab switcher hint
-    let tab_hint_y = (58.0 * scale_y).round() as usize;
-    font.draw_line_centered(
-        rast,
-        "< Q / E : Switch Category >",
-        (title_x, tab_hint_y),
-        (13.0 * scale_y).round() as usize,
-        Sh2TextColor::Cyan,
-        true,
-    );
-
-    // Option rows positioning
-    let base_y = 96.0 * scale_y;
-    let step_y = 26.5 * scale_y;
+    // Option rows positioning matching PS2 optmenu.c:
+    // Base y = 84px in 480p, step y = 30px
+    let base_y = 84.0 * scale_y;
+    let step_y = 29.5 * scale_y;
 
     let center_panel_x = (x_offset + 320.0 * scale_x).round() as usize;
-    let label_right_x = (x_offset + 288.0 * scale_x).round() as usize;
-    let val_left_x = (x_offset + 328.0 * scale_x).round() as usize;
-    let font_size = (17.0 * scale_y).round() as usize;
+    let label_right_x = (x_offset + 300.0 * scale_x).round() as usize;
+    let val_left_x = (x_offset + 336.0 * scale_x).round() as usize;
+    let font_size = (18.0 * scale_y).round() as usize;
 
     let item_count = menu.item_count();
 
@@ -872,11 +867,12 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                 }
                 font.draw_line_centered(rast, label, (center_panel_x, y), font_size, style, true);
             } else {
-                // Label right-aligned
+                // Label right-aligned to center divider line
                 let label_w = font.text_width(label, font_size);
                 let lx = label_right_x.saturating_sub(label_w);
 
                 if is_selected {
+                    // Double-draw at (-2, -2) for authentic PS2 selected pop highlight (0x461600)
                     font.draw_line_styled(
                         rast,
                         label,
@@ -899,10 +895,10 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                     };
                     let active_blocks = (vol_pct * 15.0).round() as usize;
                     let block_x_start = val_left_x as i32;
-                    let block_y = (y as f32 + 2.0 * scale_y).round() as i32;
+                    let block_y = (y as f32 + 1.0 * scale_y).round() as i32;
 
                     for b in 0..15 {
-                        let bx = block_x_start + (b as f32 * 12.0 * scale_x).round() as i32;
+                        let bx = block_x_start + (b as f32 * 14.0 * scale_x).round() as i32;
                         let lit = b < active_blocks;
                         draw_volume_block(rast, bx, block_y, lit);
                     }
@@ -924,8 +920,8 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         }
     }
 
-    // Help description inside the lower box at (88, 436 in 640x480 space)
-    let help_x = (x_offset + 55.0 * scale_x).round() as usize;
+    // Help description inside the lower box at x=90, y=438 in 640x480 space
+    let help_x = (x_offset + 90.0 * scale_x).round() as usize;
     let help_y = (436.0 * scale_y).round() as usize;
 
     let selected_label = menu

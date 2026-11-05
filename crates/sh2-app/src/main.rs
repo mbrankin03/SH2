@@ -1007,6 +1007,7 @@ struct ActiveFmvSession {
     header: BinkHeader,
     stream: BinkVideoStream,
     gpu_surface: GpuYuvVideoSurface,
+    #[allow(dead_code)]
     is_hd_source: bool,
     frame_accumulator_sec: f32,
     /// Cached decoded audio (sample rate, s16le PCM) so loops/restarts can replay it.
@@ -3058,10 +3059,8 @@ impl ApplicationHandler for SilentHillApp {
                                 let cur_idx = state.fmv_viewer.selected_movie_index + 1;
                                 let src_label = if session.stream.path.is_none() {
                                     "SYNTHETIC 1080P60 STREAM"
-                                } else if session.is_hd_source {
-                                    "SH2:EE 1080P60 (sh2e/movie/)"
                                 } else {
-                                    "VANILLA PC 30FPS (data/movie/)"
+                                    state.fmv_viewer.video_source.label()
                                 };
                                 let play_str = if state.fmv_viewer.is_paused {
                                     "PAUSED"
@@ -3092,6 +3091,17 @@ impl ApplicationHandler for SilentHillApp {
                                     white,
                                     true,
                                 );
+                                let audio_label = state.fmv_viewer.audio_track_label(
+                                    session.entry.filename,
+                                    session.header.audio_tracks.len().max(1),
+                                );
+                                let sharpen_label = match state.fmv_viewer.sharpen_level {
+                                    0 => "OFF",
+                                    1 => "SOFT (0.35)",
+                                    2 => "MEDIUM (0.70)",
+                                    _ => "STRONG (1.00)",
+                                };
+
                                 state.menu_rasterizer.draw_text(
                                     &format!(
                                         "STREAM : {} | {}x{} @ {:.2} FPS | {} | {:05.1}s / {:05.1}s (FRAME {}/{})",
@@ -3112,9 +3122,18 @@ impl ApplicationHandler for SilentHillApp {
                                     true,
                                 );
                                 state.menu_rasterizer.draw_text(
+                                    &format!("AUDIO  : {}", audio_label),
+                                    24,
+                                    92,
+                                    1,
+                                    yellow,
+                                    true,
+                                );
+                                state.menu_rasterizer.draw_text(
                                     &format!(
-                                        "ASPECT : {} | FILM GRAIN : {} | SUBTITLES : {}",
+                                        "ASPECT : {} | CAS SHARPEN : {} | GRAIN : {} | SUBS : {}",
                                         state.fmv_viewer.aspect_mode.label(),
+                                        sharpen_label,
                                         if state.fmv_viewer.film_grain_enabled {
                                             "ON"
                                         } else {
@@ -3127,7 +3146,7 @@ impl ApplicationHandler for SilentHillApp {
                                         }
                                     ),
                                     24,
-                                    94,
+                                    110,
                                     1,
                                     cyan,
                                     true,

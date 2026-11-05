@@ -408,6 +408,62 @@ impl FmvViewerState {
     }
 
     /// Cycles cutscene video source: SH2:EE 1080p60 -> OG HQ PS2 Masters (30fps) -> Vanilla PC.
+    /// Human-readable label for the currently active audio track.
+    pub fn audio_track_label(&self, filename: &str, total_tracks: usize) -> String {
+        if total_tracks <= 1 {
+            return "TRACK 1/1 : STEREO 48KHZ (DEFAULT)".to_string();
+        }
+
+        let default_track = if matches!(filename, "murder.bik" | "open.bik") {
+            1
+        } else {
+            0
+        };
+        let current = self.audio_track.unwrap_or(default_track);
+
+        match filename {
+            "murder.bik" => {
+                if current == 1 {
+                    format!(
+                        "TRACK 2/{} : UNCUT PS2 VHS (MARY SCREAMING RESTORED)",
+                        total_tracks
+                    )
+                } else {
+                    format!(
+                        "TRACK 1/{} : CENSORED PC VHS (MUTED / STATIC)",
+                        total_tracks
+                    )
+                }
+            }
+            "open.bik" => {
+                if current == 1 {
+                    format!(
+                        "TRACK 2/{} : VOCAL MIX (THEME OF LAURA + MARY/MARIA)",
+                        total_tracks
+                    )
+                } else {
+                    format!(
+                        "TRACK 1/{} : INSTRUMENTAL (THEME OF LAURA BGM ONLY)",
+                        total_tracks
+                    )
+                }
+            }
+            "end.bik" | "ending.bik" => {
+                let name = match current {
+                    0 => "MARIA ENDING ('PROMISE')",
+                    1 => "REBIRTH ENDING ('THE REVERSE WILL')",
+                    2 => "IN WATER ENDING ('ANGEL\'S THANATOS')",
+                    3 => "LEAVE ENDING ('OVERDOSE DELUSION')",
+                    _ => "UNKNOWN ENDING THEME",
+                };
+                format!("TRACK {}/{} : {}", current + 1, total_tracks, name)
+            }
+            _ => {
+                format!("TRACK {}/{} (STEREO 48KHZ)", current + 1, total_tracks)
+            }
+        }
+    }
+
     pub fn cycle_video_source(&mut self) {
         self.video_source = self.video_source.next();
         self.prefer_hd_source = !matches!(self.video_source, FmvVideoSource::VanillaPc);

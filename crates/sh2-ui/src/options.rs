@@ -657,10 +657,82 @@ fn draw_volume_block(rast: &mut TextRasterizer, x: i32, y: i32, lit: bool) {
     }
 }
 
-/// Draws the authentic options screen matching retail PC / PS2 `optmenu.c` (`0x45e750`, `0x461600`).
+/// Contextual description for an option row based on active tab and item name.
+fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
+    match (tab, name) {
+        (OptionsTab::Video, "Resolution") => "Internal rendering resolution for 3D world",
+        (OptionsTab::Video, "Display Mode") => {
+            "Display window mode (Windowed, Borderless, Fullscreen)"
+        }
+        (OptionsTab::Video, "V-Sync") => "Synchronize frame rate with display refresh rate",
+        (OptionsTab::Video, "Frame Rate Cap") => "Maximum frame rate limit for game simulation",
+        (OptionsTab::Video, "Fog Quality") => "Volumetric 3D fog raymarching and density quality",
+        (OptionsTab::Video, "Film Grain / Noise") => "Authentic film grain noise filter intensity",
+        (OptionsTab::Video, "Volumetric Lighting") => {
+            "Dynamic volumetric light scattering from streetlamps and flashlight"
+        }
+        (OptionsTab::Video, "Lens Flare") => "Camera lens flare effects on bright light sources",
+        (OptionsTab::Video, "Depth of Field") => {
+            "Cinematic camera focal blur and distance depth of field"
+        }
+        (OptionsTab::Video, "FMV Cutscene Viewer") => {
+            "Launch the interactive 1080p60 cutscene theater"
+        }
+
+        (OptionsTab::Audio, "Master Volume") => "Overall master sound and music volume level",
+        (OptionsTab::Audio, "BGM Volume") => "Background music volume level",
+        (OptionsTab::Audio, "SFX Volume") => "Sound effects and monster audio volume level",
+        (OptionsTab::Audio, "Dialogue Volume") => {
+            "Spoken character dialogue and voice volume level"
+        }
+        (OptionsTab::Audio, "Speaker Config") => {
+            "Audio channel configuration (Stereo, Surround, Headphones)"
+        }
+        (OptionsTab::Audio, "Mute in Background") => "Silence audio when game window loses focus",
+
+        (OptionsTab::Controls, "Movement Style") => {
+            "Character control scheme (3D Tank or 2D Directional)"
+        }
+        (OptionsTab::Controls, "Button Prompt Glyphs") => {
+            "Gamepad button prompt style (PlayStation, Xbox, Keyboard)"
+        }
+        (OptionsTab::Controls, "Stick Deadzone") => "Analog stick center deadzone threshold",
+        (OptionsTab::Controls, "Stick Sensitivity") => {
+            "Analog stick camera and rotation sensitivity"
+        }
+        (OptionsTab::Controls, "Vibration Intensity") => {
+            "Gamepad haptic vibration and rumble intensity"
+        }
+
+        (OptionsTab::Game, "Action Difficulty") => {
+            "Combat challenge and monster durability difficulty"
+        }
+        (OptionsTab::Game, "Riddle Difficulty") => {
+            "Puzzle complexity and riddle challenge difficulty"
+        }
+        (OptionsTab::Game, "Subtitles") => "Display spoken dialogue subtitles on screen",
+        (OptionsTab::Game, "Language") => "Select in-game text and subtitle language",
+        (OptionsTab::Game, "Bullet Multiplier") => {
+            "Multiplier for ammunition acquired from pickups"
+        }
+
+        _ => "Adjust option settings",
+    }
+}
+
+/// Draws the authentic options screen matching retail PC / PS2 `optmenu.c` (`0x45e750`, `0x461600`)
+/// hosting our modern options (Resolution, Fog, Noise, Display Mode, Audio, Controls, Game).
 #[allow(clippy::excessive_precision)]
 pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut TextRasterizer) {
-    let scale_x = rast.width as f32 / 640.0;
+    // Keep 4:3 authentic aspect ratio inside widescreen rasterizer
+    let target_4_3_w = rast.height as f32 * (4.0 / 3.0);
+    let (x_offset, base_w) = if target_4_3_w <= rast.width as f32 {
+        ((rast.width as f32 - target_4_3_w) * 0.5, target_4_3_w)
+    } else {
+        (0.0, rast.width as f32)
+    };
+
+    let scale_x = base_w / 640.0;
     let scale_y = rast.height as f32 / 480.0;
 
     // Authentic PS2/PC octagon containers from optmenu.c 0x45e750
@@ -675,7 +747,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     .iter()
     .map(|(nx, ny)| {
         (
-            ((nx + 0.5) * rast.width as f32).round() as i32,
+            (x_offset + (nx + 0.5) * base_w).round() as i32,
             ((ny + 0.5) * rast.height as f32).round() as i32,
         )
     })
@@ -692,7 +764,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     .iter()
     .map(|(nx, ny)| {
         (
-            ((nx + 0.5) * rast.width as f32).round() as i32,
+            (x_offset + (nx + 0.5) * base_w).round() as i32,
             ((ny + 0.5) * rast.height as f32).round() as i32,
         )
     })
@@ -711,184 +783,157 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     .iter()
     .map(|(nx, ny)| {
         (
-            ((nx + 0.5) * rast.width as f32).round() as i32,
+            (x_offset + (nx + 0.5) * base_w).round() as i32,
             ((ny + 0.5) * rast.height as f32).round() as i32,
         )
     })
     .collect();
 
-    // Fill color: 0x808080 (grey, alpha 0x40/0x60 -> ~0x37 = 55 in opaque screenshot)
-    let fill_color = [55, 55, 55, 255];
-    // Line color: 0x252550 (deep blue/indigo)
+    // Solid dark fill to conceal background start00 text:
+    let fill_color = [45, 45, 48, 255];
+    // Deep blue/indigo border lines matching 0x252550
     let border_color = [37, 37, 80, 255];
 
     draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &outline_pts, None, Some(border_color));
 
-    // Top Title: "OPTIONS" centered at y = 52 (in 640x480 space)
     let title_x = rast.width / 2;
-    let title_y = (38.0 * scale_y).round() as usize;
+    let title_y = (34.0 * scale_y).round() as usize;
+
+    // Header displaying Category: e.g. "O P T I O N S :   V I D E O"
+    let category_header = match menu.active_tab {
+        OptionsTab::Video => "O P T I O N S :   V I D E O",
+        OptionsTab::Audio => "O P T I O N S :   A U D I O",
+        OptionsTab::Controls => "O P T I O N S :   C O N T R O L S",
+        OptionsTab::Game => "O P T I O N S :   G A M E",
+    };
+
     font.draw_line_centered(
         rast,
-        "O P T I O N S",
+        category_header,
         (title_x, title_y),
-        (26.0 * scale_y).round() as usize,
+        (24.0 * scale_y).round() as usize,
         Sh2TextColor::White,
         true,
     );
 
-    // Menu rows:
-    // Ground truth from retail PC / PS2:
-    // Row 0: Brightness Level (Centered)
-    // Row 1: Screen Position (Centered)
-    // Row 2: Button Config (Centered)
-    // Row 3: Control Type     2D Type (or 3D Type)
-    // Row 4: Vibration        Soft (or Off)
-    // Row 5: Auto Load        Off (or On)
-    // Row 6: Language         English
-    // Row 7: Subtitles        On (or Off)
-    // Row 8: Sound            Speaker (or Headphone)
-    // Row 9: BGM Volume       [15 Blocks]
-    // Row 10: SE Volume       [15 Blocks]
+    // Tab switcher hint
+    let tab_hint_y = (58.0 * scale_y).round() as usize;
+    font.draw_line_centered(
+        rast,
+        "< Q / E : Switch Category >",
+        (title_x, tab_hint_y),
+        (13.0 * scale_y).round() as usize,
+        Sh2TextColor::Cyan,
+        true,
+    );
+
+    // Option rows positioning
     let base_y = 96.0 * scale_y;
-    let step_y = 27.5 * scale_y;
+    let step_y = 26.5 * scale_y;
 
-    let center_panel_x = (320.0 * scale_x).round() as usize;
-    let label_right_x = (301.0 * scale_x).round() as usize;
-    let val_left_x = (339.0 * scale_x).round() as usize;
-    let font_size = (18.0 * scale_y).round() as usize;
+    let center_panel_x = (x_offset + 320.0 * scale_x).round() as usize;
+    let label_right_x = (x_offset + 288.0 * scale_x).round() as usize;
+    let val_left_x = (x_offset + 328.0 * scale_x).round() as usize;
+    let font_size = (17.0 * scale_y).round() as usize;
 
-    let row_defs = [
-        ("Brightness Level", false, "Adjust screen brightness"),
-        ("Screen Position", false, "Adjust screen display position"),
-        ("Button Config", false, "Change controller button settings"),
-        (
-            "Control Type",
-            true,
-            "Switch between 2D and 3D character controls",
-        ),
-        ("Vibration", true, "Adjust gamepad vibration rumble"),
-        (
-            "Auto Load",
-            true,
-            "Automatically load the latest saved game",
-        ),
-        ("Language", true, "Change display text language"),
-        ("Subtitles", true, "Display dialogue subtitles"),
-        ("Sound", true, "Select sound output mode"),
-        ("BGM Volume", true, "Adjust background music volume"),
-        ("SE Volume", true, "Adjust sound effects volume"),
-    ];
+    let item_count = menu.item_count();
 
-    let bgm_blocks = (menu.draft_config.audio.bgm_volume * 15.0).round() as usize;
-    let se_blocks = (menu.draft_config.audio.sfx_volume * 15.0).round() as usize;
+    for idx in 0..item_count {
+        if let Some((label, val)) = menu.item_display(idx) {
+            let y = (base_y + idx as f32 * step_y).round() as usize;
+            let is_selected = idx == menu.selected_index;
 
-    for (idx, (name, has_value, _help)) in row_defs.iter().enumerate() {
-        let y = (base_y + idx as f32 * step_y).round() as usize;
-        let is_selected = idx == menu.selected_index;
-
-        let style = if is_selected {
-            Sh2TextColor::White
-        } else {
-            Sh2TextColor::SilverUnselected
-        };
-
-        if !has_value {
-            // Centered row (Brightness Level, Screen Position, Button Config)
-            if is_selected {
-                // Duplicate shadow pass at x - 2, y - 2
-                font.draw_line_centered(
-                    rast,
-                    name,
-                    (center_panel_x.saturating_sub(2), y.saturating_sub(2)),
-                    font_size,
-                    Sh2TextColor::White,
-                    false,
-                );
-            }
-            font.draw_line_centered(rast, name, (center_panel_x, y), font_size, style, true);
-        } else {
-            // Label right-aligned to label_right_x
-            let label_w = font.text_width(name, font_size);
-            let lx = label_right_x.saturating_sub(label_w);
-
-            if is_selected {
-                font.draw_line_styled(
-                    rast,
-                    name,
-                    (lx.saturating_sub(2), y.saturating_sub(2)),
-                    font_size,
-                    Sh2TextColor::White,
-                    false,
-                );
-            }
-            font.draw_line_styled(rast, name, (lx, y), font_size, style, true);
-
-            // Value or slider blocks
-            if idx == 9 || idx == 10 {
-                // Volume slider blocks: 15 blocks starting at x = 340, spaced by 13px
-                let block_x_start = (340.0 * scale_x).round() as i32;
-                let block_y = (y as f32 + 2.0 * scale_y).round() as i32;
-                let active_count = if idx == 9 { bgm_blocks } else { se_blocks };
-
-                for b in 0..15 {
-                    let bx = block_x_start + (b as f32 * 13.5 * scale_x).round() as i32;
-                    let lit = b < active_count;
-                    draw_volume_block(rast, bx, block_y, lit);
-                }
+            let style = if is_selected {
+                Sh2TextColor::White
             } else {
-                // Value string
-                let val_str = match idx {
-                    3 => {
-                        if menu.draft_config.controls.tank_controls {
-                            "3D Type"
-                        } else {
-                            "2D Type"
-                        }
-                    }
-                    4 => {
-                        if menu.draft_config.controls.vibration_intensity > 0.0 {
-                            "Soft"
-                        } else {
-                            "Off"
-                        }
-                    }
-                    5 => "Off",
-                    6 => menu.draft_config.game.language.label(),
-                    7 => {
-                        if menu.draft_config.game.subtitles {
-                            "On"
-                        } else {
-                            "Off"
-                        }
-                    }
-                    8 => menu.draft_config.audio.speaker_config.label(),
-                    _ => "",
-                };
+                Sh2TextColor::SilverUnselected
+            };
 
+            // Check if this item is a volume slider
+            let is_slider = menu.active_tab == OptionsTab::Audio
+                && (label == "BGM Volume"
+                    || label == "SFX Volume"
+                    || label == "Master Volume"
+                    || label == "Dialogue Volume");
+
+            if label == "FMV Cutscene Viewer" {
+                // Centered special action item
                 if is_selected {
-                    font.draw_line_styled(
+                    font.draw_line_centered(
                         rast,
-                        val_str,
-                        (val_left_x.saturating_sub(2), y.saturating_sub(2)),
+                        label,
+                        (center_panel_x.saturating_sub(2), y.saturating_sub(2)),
                         font_size,
                         Sh2TextColor::White,
                         false,
                     );
                 }
-                font.draw_line_styled(rast, val_str, (val_left_x, y), font_size, style, true);
+                font.draw_line_centered(rast, label, (center_panel_x, y), font_size, style, true);
+            } else {
+                // Label right-aligned
+                let label_w = font.text_width(label, font_size);
+                let lx = label_right_x.saturating_sub(label_w);
+
+                if is_selected {
+                    font.draw_line_styled(
+                        rast,
+                        label,
+                        (lx.saturating_sub(2), y.saturating_sub(2)),
+                        font_size,
+                        Sh2TextColor::White,
+                        false,
+                    );
+                }
+                font.draw_line_styled(rast, label, (lx, y), font_size, style, true);
+
+                if is_slider {
+                    // Render 15-segment volume blocks
+                    let vol_pct = match label {
+                        "Master Volume" => menu.draft_config.audio.master_volume,
+                        "BGM Volume" => menu.draft_config.audio.bgm_volume,
+                        "SFX Volume" => menu.draft_config.audio.sfx_volume,
+                        "Dialogue Volume" => menu.draft_config.audio.dialogue_volume,
+                        _ => 1.0,
+                    };
+                    let active_blocks = (vol_pct * 15.0).round() as usize;
+                    let block_x_start = val_left_x as i32;
+                    let block_y = (y as f32 + 2.0 * scale_y).round() as i32;
+
+                    for b in 0..15 {
+                        let bx = block_x_start + (b as f32 * 12.0 * scale_x).round() as i32;
+                        let lit = b < active_blocks;
+                        draw_volume_block(rast, bx, block_y, lit);
+                    }
+                } else {
+                    // Render string value with selection highlight
+                    if is_selected {
+                        font.draw_line_styled(
+                            rast,
+                            &val,
+                            (val_left_x.saturating_sub(2), y.saturating_sub(2)),
+                            font_size,
+                            Sh2TextColor::White,
+                            false,
+                        );
+                    }
+                    font.draw_line_styled(rast, &val, (val_left_x, y), font_size, style, true);
+                }
             }
         }
     }
 
     // Help description inside the lower box at (88, 436 in 640x480 space)
-    let help_x = (88.0 * scale_x).round() as usize;
+    let help_x = (x_offset + 55.0 * scale_x).round() as usize;
     let help_y = (436.0 * scale_y).round() as usize;
-    let help_text = row_defs
-        .get(menu.selected_index)
-        .map(|r| r.2)
-        .unwrap_or("Adjust settings");
+
+    let selected_label = menu
+        .item_display(menu.selected_index)
+        .map(|(l, _)| l)
+        .unwrap_or("");
+
+    let help_text = option_help_text(menu.active_tab, selected_label);
 
     font.draw_line_styled(
         rast,

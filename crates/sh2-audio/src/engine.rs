@@ -274,84 +274,6 @@ impl AudioEngine {
             None => None,
         };
 
-        #[cfg(target_os = "linux")]
-        if let Some(target) = clean_device_name {
-            if let Ok(output) = std::process::Command::new("pactl")
-                .args(["-f", "json", "list", "sinks"])
-                .output()
-            {
-                if output.status.success() {
-                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        if let Some(sinks) = val.as_array() {
-                            let mut matched_sink_name: Option<String> = None;
-                            let target_clean = target.trim();
-
-                            // 1. Exact match on sink description or name
-                            for sink in sinks {
-                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                let desc = sink
-                                    .get("description")
-                                    .and_then(|d| d.as_str())
-                                    .unwrap_or(name);
-                                if desc.trim().eq_ignore_ascii_case(target_clean)
-                                    || name.trim().eq_ignore_ascii_case(target_clean)
-                                {
-                                    matched_sink_name = Some(name.to_string());
-                                    break;
-                                }
-                            }
-
-                            // 2. Fuzzy / token-based match (e.g. DualSense, MiniFuse 2)
-                            if matched_sink_name.is_none() {
-                                let target_lower = target_clean.to_lowercase();
-                                for sink in sinks {
-                                    let name =
-                                        sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let desc = sink
-                                        .get("description")
-                                        .and_then(|d| d.as_str())
-                                        .unwrap_or(name);
-                                    let props = sink.get("properties");
-                                    let dev_desc = props
-                                        .and_then(|p| p.get("device.description"))
-                                        .and_then(|d| d.as_str())
-                                        .unwrap_or("");
-                                    let nick = props
-                                        .and_then(|p| p.get("node.nick"))
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("");
-                                    let card_name = props
-                                        .and_then(|p| p.get("alsa.card_name"))
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("");
-
-                                    let haystack =
-                                        format!("{name} {desc} {dev_desc} {nick} {card_name}")
-                                            .to_lowercase();
-                                    if target_lower
-                                        .split_whitespace()
-                                        .any(|tok| tok.len() > 3 && haystack.contains(tok))
-                                    {
-                                        matched_sink_name = Some(name.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if let Some(ref sink_name) = matched_sink_name {
-                                let _ = std::process::Command::new("pactl")
-                                    .args(["set-default-sink", sink_name])
-                                    .status();
-                                tracing::info!(
-                                    "Set active PipeWire/PulseAudio default sink to '{sink_name}' for target '{target}'"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         let host = cpal::default_host();
         let device = if let Some(target_name) = clean_device_name {
             let mut found = None;
@@ -450,7 +372,7 @@ impl AudioEngine {
             )
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        Ok(Self {
+        let mut engine = Self {
             manager: Some(manager),
             bgm_track: Some(bgm_track),
             fmv_track: Some(fmv_track),
@@ -469,7 +391,13 @@ impl AudioEngine {
             sfx_volume: 0.9,
             voice_volume: 1.0,
             ducking_attenuation: 0.35,
-        })
+        };
+
+        if let Some(target) = clean_device_name {
+            engine.migrate_stream_to_device(Some(target));
+        }
+
+        Ok(engine)
     }
 
     /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects using the default output device.
@@ -1035,13 +963,25 @@ impl AudioEngine {
                 if let Some(out) = output {
                     if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                         if let Some(sinks) = val.as_array() {
-                            // 1. Exact match on description or name
+                            // Helper to test if a sink is a virtual/loopback node we should exclude
+                            let is_ignored = |name: &str, desc: &str| -> bool {
+                                name.contains("Loopback")
+                                    || desc.contains("Loopback")
+                                    || name.contains("spotifast")
+                                    || desc.contains("Soloist")
+                                    || desc.contains("monitor")
+                            };
+
+                            // 1. Exact match on description or name (ignoring loopback/virtual)
                             for sink in sinks {
                                 let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
                                 let desc = sink
                                     .get("description")
                                     .and_then(|d| d.as_str())
                                     .unwrap_or(name);
+                                if is_ignored(name, desc) && !target_clean.contains("Loopback") {
+                                    continue;
+                                }
                                 if desc.trim().eq_ignore_ascii_case(target_clean)
                                     || name.trim().eq_ignore_ascii_case(target_clean)
                                 {
@@ -1060,6 +1000,10 @@ impl AudioEngine {
                                         .get("description")
                                         .and_then(|d| d.as_str())
                                         .unwrap_or(name);
+                                    if is_ignored(name, desc) && !target_clean.contains("Loopback")
+                                    {
+                                        continue;
+                                    }
                                     let props = sink.get("properties");
                                     let dev_desc = props
                                         .and_then(|p| p.get("device.description"))
@@ -1091,7 +1035,7 @@ impl AudioEngine {
                 }
                 found
             } else {
-                // If default requested, find default sink name
+                // If default requested, find default sink name from pactl
                 std::process::Command::new("pactl")
                     .arg("get-default-sink")
                     .output()
@@ -1101,6 +1045,33 @@ impl AudioEngine {
             };
 
             if let Some(sink) = target_sink_name {
+                let my_pid = std::process::id();
+                let my_pid_str = my_pid.to_string();
+
+                // Map client index -> client PID from `pactl list clients`
+                let mut client_pids = std::collections::HashMap::new();
+                if let Ok(clients_out) = std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", "clients"])
+                    .output()
+                {
+                    if let Ok(clients_val) =
+                        serde_json::from_slice::<serde_json::Value>(&clients_out.stdout)
+                    {
+                        if let Some(clients) = clients_val.as_array() {
+                            for client in clients {
+                                let c_idx = client.get("index").and_then(|i| i.as_u64());
+                                let c_pid = client
+                                    .get("properties")
+                                    .and_then(|p| p.get("application.process.id"))
+                                    .and_then(|pid| pid.as_str());
+                                if let (Some(idx), Some(pid)) = (c_idx, c_pid) {
+                                    client_pids.insert(idx.to_string(), pid.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if let Ok(input_output) = std::process::Command::new("pactl")
                     .args(["-f", "json", "list", "sink-inputs"])
                     .output()
@@ -1111,20 +1082,40 @@ impl AudioEngine {
                         if let Some(inputs) = input_val.as_array() {
                             for input in inputs {
                                 let idx = input.get("index").and_then(|i| i.as_u64());
-                                let app = input
-                                    .get("properties")
+                                let props = input.get("properties");
+
+                                let input_pid = props
+                                    .and_then(|p| p.get("application.process.id"))
+                                    .and_then(|pid| pid.as_str());
+                                let client_id =
+                                    input.get("client").and_then(|c| c.as_str()).or_else(|| {
+                                        input.get("client").and_then(|c| c.as_u64()).map(|u| {
+                                            // Some pactl versions serialize client index as number
+                                            Box::leak(u.to_string().into_boxed_str()) as &str
+                                        })
+                                    });
+                                let client_pid = client_id.and_then(|cid| client_pids.get(cid));
+
+                                let app = props
                                     .and_then(|p| p.get("application.name"))
                                     .and_then(|a| a.as_str())
                                     .unwrap_or("");
-                                if app.to_lowercase().contains("sh2") {
+
+                                let is_our_process = input_pid == Some(&my_pid_str)
+                                    || client_pid.map(|p| p.as_str()) == Some(&my_pid_str)
+                                    || app.to_lowercase().contains("sh2");
+
+                                if is_our_process {
                                     if let Some(i) = idx {
-                                        let _ = std::process::Command::new("pactl")
+                                        let res = std::process::Command::new("pactl")
                                             .args(["move-sink-input", &i.to_string(), &sink])
                                             .status();
                                         tracing::info!(
-                                            "[Audio] Live migrated stream #{} to sink '{}'",
+                                            "[Audio] Live migrated stream #{} (PID {}) to sink '{}' (success: {:?})",
                                             i,
-                                            sink
+                                            my_pid,
+                                            sink,
+                                            res.map(|s| s.success()).unwrap_or(false)
                                         );
                                     }
                                 }

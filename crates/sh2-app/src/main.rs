@@ -1408,6 +1408,7 @@ struct AppState {
     key_pan_up: bool,
     key_pan_down: bool,
     last_menu_state_log: String,
+    active_audio_device: Option<String>,
     debug_collision_overlay: bool,
     last_frame: Instant,
     frame_counter: u32,
@@ -1674,13 +1675,13 @@ impl ApplicationHandler for SilentHillApp {
             .original_config
             .audio
             .selected_output_device
-            .as_deref();
+            .clone();
 
-        let audio_engine = match AudioEngine::new_with_device(target_audio_device) {
+        let audio_engine = match AudioEngine::new_with_device(target_audio_device.as_deref()) {
             Ok(engine) => {
                 tracing::info!(
                     "Audio engine successfully initialized with Kira runtime (Device: {:?}).",
-                    target_audio_device.unwrap_or("Default")
+                    target_audio_device.as_deref().unwrap_or("Default")
                 );
                 Some(engine)
             }
@@ -1823,6 +1824,7 @@ impl ApplicationHandler for SilentHillApp {
             key_pan_up: false,
             key_pan_down: false,
             last_menu_state_log: String::new(),
+            active_audio_device: target_audio_device,
             debug_collision_overlay: false,
             last_frame: Instant::now(),
             frame_counter: 0,
@@ -2609,15 +2611,8 @@ impl ApplicationHandler for SilentHillApp {
                         audio.set_voice_volume(cfg.audio.dialogue_volume);
                     }
 
-                    // Check if audio device changed and reinitialize or live-migrate audio manager
-                    let current_device = state
-                        .menu_ctrl
-                        .options_menu
-                        .original_config
-                        .audio
-                        .selected_output_device
-                        .as_deref();
-                    if cfg.audio.selected_output_device.as_deref() != current_device {
+                    // Check if audio device changed and live-migrate audio manager stream
+                    if cfg.audio.selected_output_device != state.active_audio_device {
                         if let Some(ref mut audio) = state.audio_engine {
                             audio.migrate_stream_to_device(
                                 cfg.audio.selected_output_device.as_deref(),
@@ -2648,6 +2643,7 @@ impl ApplicationHandler for SilentHillApp {
                                 }
                             }
                         }
+                        state.active_audio_device = cfg.audio.selected_output_device.clone();
                     }
 
                     // 2. Video & Display Mode re-configuration

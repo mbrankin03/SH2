@@ -133,13 +133,21 @@ impl Ps2CameraController {
         player_pos: Vec3,
         player_yaw: f32,
     ) -> (Vec3, Vec3, f32, CameraMovementType) {
-        // PS2 projection focal conversion: 448.0 -> ~45 deg (0.785398 rad), 757.0 -> ~28 deg
-        // Authentic PS2 horizontal/vertical FOV formula: fov = 2.0 * atan(0.5 * 384.0 / proj)
+        // PS2 projection focal conversion: 448.0 -> ~53 deg (~0.927 rad), 757.0 -> ~33 deg (~0.575 rad)
         let fov_y = if rec.projection > 0.0 {
-            2.0 * ((0.5 * 384.0) / rec.projection).atan()
+            (2.0 * ((0.5 * 448.0) / rec.projection).atan()).clamp(0.50, 1.15)
         } else {
             FRAC_PI_4
         };
+
+        // Standard authentic look target on player torso/head
+        let target_y = if rec.ofs_watch_hy.abs() > 1000.0 {
+            // Absolute height offset relative to ground (e.g. mirror framing)
+            rec.ofs_watch_hy.clamp(-1400.0, -900.0)
+        } else {
+            player_pos.y - 1100.0
+        };
+        let target = Vec3::new(player_pos.x, target_y, player_pos.z);
 
         match rec.cam_mv_type {
             CameraMovementType::FixedAngle => {
@@ -149,15 +157,15 @@ impl Ps2CameraController {
                 let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
                 let eye = Vec3::new((rail_min_x + rail_max_x) * 0.5, eye_y, (rail_min_z + rail_max_z) * 0.5);
 
-                let target = if let sh2_assets::formats::cam::CamMovementParams::FixedAngle(ref fix) = rec.params {
+                let look_target = if let sh2_assets::formats::cam::CamMovementParams::FixedAngle(ref fix) = rec.params {
                     let rot = Quat::from_euler(glam::EulerRot::YXZ, fix.ang_y, fix.ang_x, 0.0);
                     let forward = rot * Vec3::new(0.0, 0.0, 1.0);
                     eye + forward * fix.cam2wth_dist.max(500.0)
                 } else {
-                    player_pos + Vec3::new(0.0, rec.ofs_watch_hy, 0.0)
+                    target
                 };
 
-                (eye, target, fov_y, CameraMovementType::FixedAngle)
+                (eye, look_target, fov_y, CameraMovementType::FixedAngle)
             }
             CameraMovementType::Settle => {
                 // Settle camera: camera eye anchored at center of lim_rd, tracks player
@@ -165,27 +173,24 @@ impl Ps2CameraController {
                 let (rail_min_z, rail_max_z) = rec.lim_rd.z_bounds();
                 let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
                 let eye = Vec3::new((rail_min_x + rail_max_x) * 0.5, eye_y, (rail_min_z + rail_max_z) * 0.5);
-                let target = player_pos + Vec3::new(0.0, rec.ofs_watch_hy, 0.0);
 
                 (eye, target, fov_y, CameraMovementType::Settle)
             }
             _ => {
                 // Chase camera / default:
-                // If lim_rd is non-zero, constrain camera within lim_rd rail
+                // Constrain camera within lim_rd rail
                 let (min_x, max_x) = rec.lim_rd.x_bounds();
                 let (min_z, max_z) = rec.lim_rd.z_bounds();
                 let is_rail_constrained = (max_x - min_x).abs() > 0.01 || (max_z - min_z).abs() > 0.01;
 
                 if is_rail_constrained {
-                    let rail_center = rec.lim_rd.center();
-                    let unconstrained_eye = Vec3::new(rail_center[0], rail_center[1], rail_center[2]);
+                    let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
+                    let unconstrained_eye = player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0);
                     let eye = Self::clamp_to_road_rail(&rec.lim_rd, unconstrained_eye, false);
-                    let target = player_pos + Vec3::new(0.0, rec.ofs_watch_hy, 0.0);
                     (eye, target, fov_y, CameraMovementType::Chase)
                 } else {
                     let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-                    let eye = player_pos - forward * 2000.0 + Vec3::new(0.0, rec.ofs_watch_hy - 700.0, 0.0);
-                    let target = player_pos + Vec3::new(0.0, rec.ofs_watch_hy, 0.0);
+                    let eye = player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0);
                     (eye, target, fov_y, CameraMovementType::Chase)
                 }
             }

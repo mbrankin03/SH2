@@ -1449,6 +1449,7 @@ struct AppState {
     last_menu_state_log: String,
     active_audio_device: Option<String>,
     debug_collision_overlay: bool,
+    debug_camera_hud: bool,
     last_frame: Instant,
     frame_counter: u32,
     sim_time: f32,
@@ -1866,6 +1867,7 @@ impl ApplicationHandler for SilentHillApp {
             last_menu_state_log: String::new(),
             active_audio_device: target_audio_device,
             debug_collision_overlay: false,
+            debug_camera_hud: true,
             last_frame: Instant::now(),
             frame_counter: 0,
             sim_time: 0.0,
@@ -2500,6 +2502,13 @@ impl ApplicationHandler for SilentHillApp {
                             tracing::info!(
                                 "[Debug] Collision wireframe overlay (clDbgDrawBGColiPoly): {}",
                                 state.debug_collision_overlay
+                            );
+                        }
+                        winit::keyboard::KeyCode::F1 | winit::keyboard::KeyCode::F3 if pressed => {
+                            state.debug_camera_hud = !state.debug_camera_hud;
+                            tracing::info!(
+                                "[Debug] Camera & Player telemetry HUD: {}",
+                                state.debug_camera_hud
                             );
                         }
                         _ => {}
@@ -3790,6 +3799,114 @@ impl ApplicationHandler for SilentHillApp {
                         }
 
                         // Upload rasterized menu text overlay to GPU and blit over the frame
+                        state.render_ctx.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture: &state.menu_text_texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &state.menu_rasterizer.pixels,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(4 * state.menu_rasterizer.width as u32),
+                                rows_per_image: Some(state.menu_rasterizer.height as u32),
+                            },
+                            wgpu::Extent3d {
+                                width: state.menu_rasterizer.width as u32,
+                                height: state.menu_rasterizer.height as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            &state.menu_text_bind_group,
+                            &surface_view,
+                            wgpu::LoadOp::Load,
+                        );
+                    } else if is_in_game && state.debug_camera_hud {
+                        // Render in-game player coordinates and camera telemetry debug HUD
+                        let tint = [1.0f32, 1.0, 1.0, 1.0];
+                        state.render_ctx.queue.write_buffer(
+                            &state.menu_uniform_buffer,
+                            0,
+                            bytemuck::cast_slice(&tint),
+                        );
+                        state.menu_rasterizer.clear();
+
+                        let yellow = [245, 210, 65, 255];
+                        let cyan = [105, 215, 235, 255];
+                        let green = [120, 230, 150, 255];
+                        let white = [225, 225, 225, 255];
+                        let muted = [165, 165, 170, 255];
+
+                        let p_pos = state.sim_core.scenario.player_position;
+                        let p_yaw = state.sim_core.scenario.player_yaw;
+                        let cam_eye = state.sim_core.camera.curr_snapshot.eye;
+                        let cam_tgt = state.sim_core.camera.curr_snapshot.target;
+                        let cam_fov = state.sim_core.camera.curr_snapshot.fov_y.to_degrees();
+                        let active_rec = state.sim_core.camera.active_road_index;
+                        let mv_type = state.sim_core.camera.mv_type;
+                        let room_label = state.active_test_room.label();
+
+                        state.menu_rasterizer.draw_text(
+                            &format!("[ROOM: {}] CAMERA & PLAYER TELEMETRY (F1/F3 Toggle)", room_label),
+                            20,
+                            18,
+                            1,
+                            yellow,
+                            true,
+                        );
+                        state.menu_rasterizer.draw_text(
+                            &format!(
+                                "PLAYER POS: X: {:.1}  Y: {:.1}  Z: {:.1} | YAW: {:.2} rad ({:.1}°)",
+                                p_pos.x, p_pos.y, p_pos.z, p_yaw, p_yaw.to_degrees()
+                            ),
+                            20,
+                            38,
+                            1,
+                            green,
+                            true,
+                        );
+                        state.menu_rasterizer.draw_text(
+                            &format!(
+                                "CAMERA EYE: X: {:.1}  Y: {:.1}  Z: {:.1}",
+                                cam_eye.x, cam_eye.y, cam_eye.z
+                            ),
+                            20,
+                            58,
+                            1,
+                            cyan,
+                            true,
+                        );
+                        state.menu_rasterizer.draw_text(
+                            &format!(
+                                "CAMERA TGT: X: {:.1}  Y: {:.1}  Z: {:.1}",
+                                cam_tgt.x, cam_tgt.y, cam_tgt.z
+                            ),
+                            20,
+                            78,
+                            1,
+                            white,
+                            true,
+                        );
+                        let rec_str = match active_rec {
+                            Some(idx) => format!("Record #{}", idx),
+                            None => "Fallback (None)".to_string(),
+                        };
+                        state.menu_rasterizer.draw_text(
+                            &format!(
+                                "CAM MODE: {:?} | ACTIVE ROAD: {} | FOV: {:.1}°",
+                                mv_type, rec_str, cam_fov
+                            ),
+                            20,
+                            98,
+                            1,
+                            muted,
+                            true,
+                        );
+
                         state.render_ctx.queue.write_texture(
                             wgpu::ImageCopyTexture {
                                 texture: &state.menu_text_texture,

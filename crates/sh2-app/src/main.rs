@@ -2356,15 +2356,6 @@ impl ApplicationHandler for SilentHillApp {
 
                         if let Some(ref mut ls) = state.loading_screen {
                             ls.tick(dt.as_secs_f32());
-                            if ls.footstep_sound_trigger {
-                                if let Some(ref mut engine) = state.audio_engine {
-                                    let _ = play_menu_sound(
-                                        engine,
-                                        state.audio_bank.as_ref(),
-                                        SoundCueKind::Footstep,
-                                    );
-                                }
-                            }
                             if ls.transition_ready {
                                 state.loading_screen = None;
                                 state.menu_ctrl.tick(dt.as_secs_f32());

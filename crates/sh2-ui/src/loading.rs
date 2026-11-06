@@ -227,8 +227,6 @@ pub struct LoadingScreen {
     pub fade_alpha: f32,
     /// Stage or room name being loaded.
     pub target_room_label: String,
-    /// Flag indicating if a footstep sound effect should be triggered this frame (true = sound cue).
-    pub footstep_sound_trigger: bool,
 }
 
 impl LoadingScreen {
@@ -253,7 +251,6 @@ impl LoadingScreen {
             require_press_to_continue: require_press,
             fade_alpha: 1.0,
             target_room_label: label_str,
-            footstep_sound_trigger: false,
         }
     }
 
@@ -271,14 +268,12 @@ impl LoadingScreen {
     /// Advance loading screen animation, step spawning, and alpha decay.
     pub fn tick(&mut self, dt: f32) {
         self.elapsed_seconds += dt;
-        self.footstep_sound_trigger = false;
 
         // Step timer & spawn
         self.next_step_timer -= dt;
         if self.next_step_timer <= 0.0 {
             self.next_step_timer = self.step_cadence;
             self.spawn_next_footstep();
-            self.footstep_sound_trigger = true;
         }
 
         // Decay existing footprints

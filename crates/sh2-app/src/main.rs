@@ -3289,8 +3289,8 @@ impl ApplicationHandler for SilentHillApp {
                                         // + Upper reaching choke (776..=803 @ aid 363-367, 10.0 fps)
                                         6 => (Some(739), Some((776, 803, 10.0f32))),
                                         // Abstract Daddy (#5): Lower bed grapple (756 @ table 0x6cebbc)
-                                        // + Upper torso push/thrash (612..=629 @ aid 128, 12.0 fps)
-                                        5 => (Some(756), Some((612, 629, 12.0f32))),
+                                        // + Upper torso push/thrash struggle loop (742..=767 @ table 0x6cebf8 aid 508, 1536 speed = 22.5 fps)
+                                        5 => (Some(756), Some((742, 767, 22.5f32))),
                                         _ => (None, None),
                                     };
 

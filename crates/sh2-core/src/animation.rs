@@ -113,8 +113,8 @@ impl JamesBasicClips {
     /// Authentic PS2/PC James breakout release push when breaking free from grab (frames 652..=670, anim_id 131, PS2 speed 2048 = 30.0 fps).
     pub const STRUGGLE_RELEASE: AnimationClip = AnimationClip::new(652, 670, 30.0, false);
     /// Authentic PS2/PC James struggle clip against torso pinning / bed grapples / Abstract Daddy
-    /// (frames 612..=629, anim_id 128, PS2 speed 1024 = 15.0 fps).
-    pub const STRUGGLE_DADDY: AnimationClip = AnimationClip::new(612, 629, 15.0, true);
+    /// (lower_hold table 0x6cebbc aid 303 frames 741..=771, speed 1280 = 18.75 fps).
+    pub const STRUGGLE_DADDY: AnimationClip = AnimationClip::new(741, 771, 18.75, true);
     /// Authentic PS2/PC James struggle clip against standing throat / tentacle choke holds / Mary Boss
     /// (frames 798..=809, upper_hold table 0x6cf260 index 17 aid 21217, speed 1024 = 15.0 fps).
     /// James desperately reaches up with both hands clutching at his throat and fighting against the tentacles strangling him.

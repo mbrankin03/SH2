@@ -292,6 +292,50 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::FmvCutsceneViewer
     );
 
+    // 7. Verify In-Game Pause Menu Integration (SH2-45)
+    let mut in_game_controller = AppMenuController::new(&config_path);
+    in_game_controller.in_game_active = true;
+    assert!(!in_game_controller.pause_menu.is_open);
+
+    // ESC / Pause opens the pause menu with location and play time
+    in_game_controller.pause_menu.open(false, "Outdoor Observation Deck", 450.0);
+    assert!(in_game_controller.pause_menu.is_open);
+    assert_eq!(in_game_controller.pause_menu.selected_index, 0); // CONTINUE
+
+    // Vertical navigation: Down skips disabled SAVE option
+    let (cue, action) = in_game_controller.handle_pause_nav(MenuNavAction::Down);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(action, sh2_ui::pause::PauseAction::None);
+    assert_eq!(in_game_controller.pause_menu.selected_index, 2); // LOAD
+
+    // Navigate to OPTIONS and confirm
+    in_game_controller.handle_pause_nav(MenuNavAction::Down);
+    assert_eq!(in_game_controller.pause_menu.selected_index, 3); // OPTIONS
+    let (cue, action) = in_game_controller.handle_pause_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::Confirm);
+    assert_eq!(action, sh2_ui::pause::PauseAction::OpenOptions);
+    assert_eq!(
+        in_game_controller.pause_menu.sub_phase,
+        sh2_ui::pause::PauseSubPhase::InOptionsMenu
+    );
+
+    // Cancel from Options returns directly to Pause Menu Main sub-phase
+    let (cue, action) = in_game_controller.handle_pause_nav(MenuNavAction::Cancel);
+    assert_eq!(cue, MenuSoundCue::Cancel);
+    assert_eq!(action, sh2_ui::pause::PauseAction::None);
+    assert_eq!(
+        in_game_controller.pause_menu.sub_phase,
+        sh2_ui::pause::PauseSubPhase::Main
+    );
+
+    // Confirm CONTINUE resumes gameplay
+    in_game_controller.pause_menu.selected_index = 0;
+    let (cue, action) = in_game_controller.handle_pause_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::Confirm);
+    assert_eq!(action, sh2_ui::pause::PauseAction::Resume);
+    assert!(!in_game_controller.pause_menu.is_open);
+    assert!(in_game_controller.in_game_active);
+
     // Clean up temporary test files
     let _ = fs::remove_dir_all(&test_dir);
 }

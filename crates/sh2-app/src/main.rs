@@ -3126,7 +3126,9 @@ impl ApplicationHandler for SilentHillApp {
                                     } else {
                                         sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
                                     };
-                                    if state.sim_core.animation.current_clip().start_frame != struggle_clip.start_frame {
+                                    if state.sim_core.animation.current_clip().start_frame
+                                        != struggle_clip.start_frame
+                                    {
                                         tracing::info!(
                                             "[Combat Grapple] James held by Enemy #{}: transitioning to clip frames {}..={} @ {:.0}fps",
                                             state.combat_arena.grappling_enemy_idx.map(|idx| state.combat_arena.enemies.get(idx).map(|e| e.id).unwrap_or(0)).unwrap_or(0),

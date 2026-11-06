@@ -112,13 +112,18 @@ impl JamesBasicClips {
     pub const STRUGGLE_SIDE: AnimationClip = AnimationClip::new(632, 649, 15.0, true);
     /// Authentic PS2/PC James breakout release push when breaking free from grab (frames 652..=670, anim_id 131, PS2 speed 2048 = 30.0 fps).
     pub const STRUGGLE_RELEASE: AnimationClip = AnimationClip::new(652, 670, 30.0, false);
-    /// Authentic PS2/PC James struggle clip against Abstract Daddy bed grapple (frames 741..=771, table 0x6cebbc aid 303, speed 1280 = 18.75 fps).
-    pub const STRUGGLE_DADDY: AnimationClip = AnimationClip::new(741, 771, 18.75, true);
-    /// Authentic PS2/PC James struggle clip against Mary Boss tentacle choke hold (frames 757..=786, table 0x6cf1d8 aid 21108, speed 1792 = 26.25 fps).
-    /// James is upright with both hands gripping his neck and collar, frantically gasping and fighting against the tentacles strangling his throat.
-    pub const STRUGGLE_CHOKE_MARY: AnimationClip = AnimationClip::new(757, 786, 26.25, true);
-    /// Authentic PS2/PC James struggle clip against Flesh Lips overhead ceiling choke (frames 800..=809, table 0x6cecc8 aid 367, speed 1024 = 15.0 fps).
-    pub const STRUGGLE_FLESH_LIPS: AnimationClip = AnimationClip::new(800, 809, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against torso pinning / bed grapples / Abstract Daddy
+    /// (frames 612..=629, anim_id 128, PS2 speed 1024 = 15.0 fps).
+    /// Both arms violently thrash and push against the creature's body pinning his torso from the front,
+    /// with full natural upper and lower skeletal movement (preventing frozen unblended pointing arms).
+    pub const STRUGGLE_DADDY: AnimationClip = AnimationClip::new(612, 629, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against standing throat / tentacle choke holds / Mary Boss
+    /// (frames 457..=468, anim_id 121, PS2 PlayerCheckAnimeUpper lines 0x10ab04-0x10ab58, speed 1024 = 15.0 fps).
+    /// James struggles upright with both arms raised grasping and fighting at his throat and collar,
+    /// gasping for air against the strangling hold without frozen or sideways-pointing limbs.
+    pub const STRUGGLE_CHOKE_MARY: AnimationClip = AnimationClip::new(457, 468, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against Flesh Lips overhead ceiling choke (frames 457..=468, speed 1024 = 15.0 fps).
+    pub const STRUGGLE_FLESH_LIPS: AnimationClip = AnimationClip::new(457, 468, 15.0, true);
     /// Authentic PS2/PC James struggle clip against Pyramid Head one-handed overhead choke lift (frames 1084..=1113, table 0x8ba424 aid 21304, speed 512 = 7.5 fps).
     pub const STRUGGLE_CHOKE_LIFT: AnimationClip = AnimationClip::new(1084, 1113, 7.5, true);
     /// Authentic PS2/PC James breakout release push from Mary / Lying Figure choke (frames 787..=831, table 0x6cf1d8 aid 21110, speed 1792 = 26.25 fps).

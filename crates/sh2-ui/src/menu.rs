@@ -83,10 +83,12 @@ pub enum TestRoomKind {
     ModelAndTextureViewer,
     /// Interactive 1080p60 FMV Cutscene Player / Theater (`SH2-10`).
     FmvCutsceneViewer,
+    /// Interactive Animated Footstep Loading Screen Test Chamber (`SH2-44`).
+    LoadingScreenTest,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 7] = [
+    pub const ALL: [TestRoomKind; 8] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -94,6 +96,7 @@ impl TestRoomKind {
         TestRoomKind::FallbackSandbox,
         TestRoomKind::ModelAndTextureViewer,
         TestRoomKind::FmvCutsceneViewer,
+        TestRoomKind::LoadingScreenTest,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -105,6 +108,7 @@ impl TestRoomKind {
             Self::FallbackSandbox => "Fallback Sandbox Room",
             Self::ModelAndTextureViewer => "Model & Texture Viewer",
             Self::FmvCutsceneViewer => "FMV Cutscene Player",
+            Self::LoadingScreenTest => "Loading Screen Preview",
         }
     }
 
@@ -121,6 +125,9 @@ impl TestRoomKind {
             Self::FallbackSandbox => "Internal test chamber with lighting columns & mesh skinning",
             Self::ModelAndTextureViewer => "Inspect 3D character models, animations, and textures",
             Self::FmvCutsceneViewer => "Launch the 1080p60 cutscene theater player",
+            Self::LoadingScreenTest => {
+                "Test authentic animated PS2 footstep loading screen & transition"
+            }
         }
     }
 }

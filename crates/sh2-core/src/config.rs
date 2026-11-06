@@ -540,6 +540,33 @@ pub struct GameOptions {
     pub save_anywhere: bool,
 }
 
+/// Debug and development options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DebugOptions {
+    /// Instant room transitions (skip footstep loading screen).
+    pub instant_room_transitions: bool,
+    /// Minimum time in seconds to display loading screen footsteps (default: 2s).
+    pub min_loading_screen_seconds: u32,
+    /// Require user button press (Press to Continue) when room loading finishes.
+    pub require_press_to_continue: bool,
+    /// Render collision wireframes in 3D world.
+    pub show_collision_wireframe: bool,
+    /// Render camera raycast and occlusion debug overlay.
+    pub show_camera_debug: bool,
+}
+
+impl Default for DebugOptions {
+    fn default() -> Self {
+        Self {
+            instant_room_transitions: false,
+            min_loading_screen_seconds: 2,
+            require_press_to_continue: true,
+            show_collision_wireframe: false,
+            show_camera_debug: false,
+        }
+    }
+}
+
 impl Default for GameOptions {
     fn default() -> Self {
         Self {
@@ -560,6 +587,8 @@ pub struct AppConfig {
     pub audio: AudioOptions,
     pub controls: ControlOptions,
     pub game: GameOptions,
+    #[serde(default)]
+    pub debug: DebugOptions,
 }
 
 impl AppConfig {

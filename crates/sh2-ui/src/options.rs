@@ -13,14 +13,16 @@ pub enum OptionsTab {
     Audio = 1,
     Controls = 2,
     Game = 3,
+    Debug = 4,
 }
 
 impl OptionsTab {
-    pub const ALL: [OptionsTab; 4] = [
+    pub const ALL: [OptionsTab; 5] = [
         OptionsTab::Video,
         OptionsTab::Audio,
         OptionsTab::Controls,
         OptionsTab::Game,
+        OptionsTab::Debug,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -29,6 +31,7 @@ impl OptionsTab {
             Self::Audio => "AUDIO & SOUND",
             Self::Controls => "CONTROLS & INPUT",
             Self::Game => "GAMEPLAY & PUZZLES",
+            Self::Debug => "DEBUG & TESTING",
         }
     }
 
@@ -37,16 +40,18 @@ impl OptionsTab {
             Self::Video => Self::Audio,
             Self::Audio => Self::Controls,
             Self::Controls => Self::Game,
-            Self::Game => Self::Video,
+            Self::Game => Self::Debug,
+            Self::Debug => Self::Video,
         }
     }
 
     pub fn prev(&self) -> Self {
         match self {
-            Self::Video => Self::Game,
+            Self::Video => Self::Debug,
             Self::Audio => Self::Video,
             Self::Controls => Self::Audio,
             Self::Game => Self::Controls,
+            Self::Debug => Self::Game,
         }
     }
 }
@@ -63,6 +68,8 @@ pub enum OptionsSoundCue {
     LaunchFmvViewer,
     /// Triggered when the user selects the Test Rooms launcher from the Options menu.
     LaunchTestRooms,
+    /// Triggered when the user selects the Loading Screen Preview from the Options menu.
+    LaunchLoadingTest,
 }
 
 /// Interactive Options Menu controller.
@@ -107,6 +114,7 @@ impl OptionsMenu {
             OptionsTab::Audio => 7,
             OptionsTab::Controls => 5,
             OptionsTab::Game => 7,
+            OptionsTab::Debug => 6,
         }
     }
 
@@ -117,7 +125,13 @@ impl OptionsMenu {
 
     /// Returns true if the currently selected row is the Test Rooms launcher.
     pub fn is_test_rooms_selected(&self) -> bool {
-        self.active_tab == OptionsTab::Game && self.selected_index == 6
+        (self.active_tab == OptionsTab::Game && self.selected_index == 6)
+            || (self.active_tab == OptionsTab::Debug && self.selected_index == 4)
+    }
+
+    /// Returns true if the currently selected row is the Loading Screen Preview launcher.
+    pub fn is_loading_test_selected(&self) -> bool {
+        self.active_tab == OptionsTab::Debug && self.selected_index == 3
     }
 
     /// Retrieve the title and string value of an item in the active tab.
@@ -285,6 +299,42 @@ impl OptionsMenu {
                     },
                 )),
                 6 => Some(("Test Rooms", "[Press Enter to Select]".into())),
+                _ => None,
+            },
+            OptionsTab::Debug => match index {
+                0 => Some((
+                    "Instant Room Cuts",
+                    if self.draft_config.debug.instant_room_transitions {
+                        "ON (Fast / Skip)".into()
+                    } else {
+                        "OFF (Authentic)".into()
+                    },
+                )),
+                1 => Some((
+                    "Min Loading Display",
+                    format!(
+                        "{} seconds",
+                        self.draft_config.debug.min_loading_screen_seconds
+                    ),
+                )),
+                2 => Some((
+                    "Prompt To Continue",
+                    if self.draft_config.debug.require_press_to_continue {
+                        "ENABLED (Press Key)".into()
+                    } else {
+                        "AUTO (Fade In)".into()
+                    },
+                )),
+                3 => Some(("Loading Screen Preview", "[Press Enter to Test]".into())),
+                4 => Some(("Test Rooms Launcher", "[Press Enter to Open]".into())),
+                5 => Some((
+                    "Collision Wireframe",
+                    if self.draft_config.debug.show_collision_wireframe {
+                        "VISIBLE".into()
+                    } else {
+                        "HIDDEN".into()
+                    },
+                )),
                 _ => None,
             },
         }
@@ -500,6 +550,29 @@ impl OptionsMenu {
                     self.draft_config.game.save_anywhere = !self.draft_config.game.save_anywhere;
                 }
                 6 => return OptionsSoundCue::LaunchTestRooms,
+                _ => return OptionsSoundCue::None,
+            },
+            OptionsTab::Debug => match self.selected_index {
+                0 => {
+                    self.draft_config.debug.instant_room_transitions =
+                        !self.draft_config.debug.instant_room_transitions;
+                }
+                1 => {
+                    let cur = self.draft_config.debug.min_loading_screen_seconds as i32;
+                    let step = if forward { 1 } else { -1 };
+                    self.draft_config.debug.min_loading_screen_seconds =
+                        (cur + step).clamp(0, 10) as u32;
+                }
+                2 => {
+                    self.draft_config.debug.require_press_to_continue =
+                        !self.draft_config.debug.require_press_to_continue;
+                }
+                3 => return OptionsSoundCue::LaunchLoadingTest,
+                4 => return OptionsSoundCue::LaunchTestRooms,
+                5 => {
+                    self.draft_config.debug.show_collision_wireframe =
+                        !self.draft_config.debug.show_collision_wireframe;
+                }
                 _ => return OptionsSoundCue::None,
             },
         }
@@ -800,6 +873,25 @@ fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
             "Select debug sandbox stage, fog calibration, or model viewer"
         }
 
+        (OptionsTab::Debug, "Instant Room Cuts") => {
+            "Speedrunner mode: cut instantly between rooms without loading screen"
+        }
+        (OptionsTab::Debug, "Min Loading Display") => {
+            "Minimum duration to hold animated footstep loading screen (seconds)"
+        }
+        (OptionsTab::Debug, "Prompt To Continue") => {
+            "Require pressing Enter / A to continue once loading completes"
+        }
+        (OptionsTab::Debug, "Loading Screen Preview") => {
+            "Preview and test authentic PS2 animated footstep loading screen"
+        }
+        (OptionsTab::Debug, "Test Rooms Launcher") => {
+            "Select debug sandbox stage, fog calibration, or model viewer"
+        }
+        (OptionsTab::Debug, "Collision Wireframe") => {
+            "Render authentic CLD collision polygons and wall segments in world"
+        }
+
         _ => "Adjust option settings",
     }
 }
@@ -896,6 +988,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         OptionsTab::Audio => "<   A U D I O   O P T I O N S   >",
         OptionsTab::Controls => "<   C O N T R O L   O P T I O N S   >",
         OptionsTab::Game => "<   G A M E   O P T I O N S   >",
+        OptionsTab::Debug => "<   D E B U G   T O O L S   >",
     };
 
     font.draw_line_centered(
@@ -937,7 +1030,11 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                     || label == "Master Volume"
                     || label == "Dialogue Volume");
 
-            if label == "FMV Cutscene Viewer" || label == "Test Rooms" {
+            if label == "FMV Cutscene Viewer"
+                || label == "Test Rooms"
+                || label == "Loading Screen Preview"
+                || label == "Test Rooms Launcher"
+            {
                 // Centered special action item
                 if is_selected {
                     font.draw_line_centered(

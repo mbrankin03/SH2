@@ -16,6 +16,8 @@ pub enum SoundCueKind {
     Cancel,
     /// Authentic Game Start audio transition (game SE ID 15002 / g_start.wav).
     GameStartTransition,
+    /// Authentic footstep loading sound (sddata280 / footstep_a).
+    Footstep,
 }
 
 /// Preloaded authentic menu sound effects loaded directly from retail Silent Hill 2 / SH2:EE assets.
@@ -24,6 +26,7 @@ pub struct MenuAudioBank {
     pub confirm: Option<WavEntry>,
     pub cancel: Option<WavEntry>,
     pub game_start: Option<WavEntry>,
+    pub footstep: Option<WavEntry>,
 }
 
 impl MenuAudioBank {
@@ -35,6 +38,7 @@ impl MenuAudioBank {
             confirm: None,
             cancel: None,
             game_start: None,
+            footstep: None,
         };
 
         // 1. Try loading sddata.bin (prefer SH2:EE high-definition 48kHz audio pack, fallback to data/sound/sddata.bin)
@@ -48,15 +52,17 @@ impl MenuAudioBank {
                 if let Ok(bytes) = std::fs::read(&candidate) {
                     if let Ok(bank) = sh2_assets::formats::sound::parse_sddata(&bytes) {
                         // In sddata.bin:
+                        // sddata280 = Footstep
                         // sddata291 = Menu Back (Cancel, 10003)
                         // sddata293 = Menu Move (Cursor, 10000)
                         // sddata297 = Menu Select (Confirm, 10002)
                         if bank.entries.len() > 297 {
+                            sfx_bank.footstep = Some(bank.entries[280].clone());
                             sfx_bank.cancel = Some(bank.entries[291].clone());
                             sfx_bank.cursor_move = Some(bank.entries[293].clone());
                             sfx_bank.confirm = Some(bank.entries[297].clone());
                             tracing::info!(
-                                "Loaded authentic 1:1 menu navigation SFX from {:?}",
+                                "Loaded authentic 1:1 menu navigation and footstep SFX from {:?}",
                                 candidate
                             );
                             break;
@@ -103,6 +109,7 @@ impl MenuAudioBank {
             SoundCueKind::Confirm => self.confirm.as_ref(),
             SoundCueKind::Cancel => self.cancel.as_ref(),
             SoundCueKind::GameStartTransition => self.game_start.as_ref(),
+            SoundCueKind::Footstep => self.footstep.as_ref(),
         };
 
         if let Some(wav) = entry {
@@ -125,6 +132,7 @@ fn synthesize_fallback_cue(
         SoundCueKind::Confirm => (600.0, 900.0, 85, false),
         SoundCueKind::Cancel => (420.0, 310.0, 80, true),
         SoundCueKind::GameStartTransition => (240.0, 120.0, 400, false),
+        SoundCueKind::Footstep => (160.0, 80.0, 120, true),
     };
 
     let sample_rate = 22050u32;

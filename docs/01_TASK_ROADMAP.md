@@ -66,6 +66,12 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 - [ ] Implement camera system (third-person exploration, fixed cinematic cameras, right-stick search).
 - [ ] Port Main Scenario (*Letter from Silent Heaven*): James's inventory, state machines, and puzzles.
 - [ ] Port Sub-Scenario (*Born from a Wish*): Maria's Baldwin Mansion stages 53–58 from `prog_wish.c`.
+- [ ] **SH2-47: Scripted Sequence System & Environmental Horror Triggers**
+  - Implement spatial event trigger bounds (aabb / action walls `clActWallList_*`).
+  - Create Stage Event State Machine (`EvRoomInit`, `EvAllTimeFunc`, `ev_s_step`, `ev_p_step`).
+  - Toluca Prison bathroom stall jumpscare and stall knocking sequence.
+  - Blue Creek Apartments (Room 209 "See?") and Prison courtyard invisible execution whispers.
+  - Link directional 3D audio cues to stage event state progression.
 - [x] Wire in SH2:EE timing constants for 60 FPS pacing (flashlight speed, fog animation, boat rowing).
 
 ## Phase 6: Dual-Screen & Touch Companion UI (`sh2-ui`)

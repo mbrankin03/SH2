@@ -2538,6 +2538,34 @@ impl ApplicationHandler for SilentHillApp {
                 tracing::info!("Close requested, shutting down...");
                 event_loop.exit();
             }
+            WindowEvent::Focused(focused) => {
+                let mute_in_bg = state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .audio
+                    .mute_in_background;
+                if mute_in_bg {
+                    if let Some(ref mut audio) = state.audio_engine {
+                        if !focused {
+                            audio.set_master_volume(0.0);
+                            tracing::info!("[Options] Focus lost; muted audio in background.");
+                        } else {
+                            let master_vol = state
+                                .menu_ctrl
+                                .options_menu
+                                .original_config
+                                .audio
+                                .master_volume;
+                            audio.set_master_volume(master_vol);
+                            tracing::info!(
+                                "[Options] Focus restored; restored audio volume to {:.0}%.",
+                                master_vol * 100.0
+                            );
+                        }
+                    }
+                }
+            }
             WindowEvent::Resized(new_size) => {
                 if new_size.width > 0 && new_size.height > 0 {
                     state.surface_config.width = new_size.width;
@@ -2551,6 +2579,129 @@ impl ApplicationHandler for SilentHillApp {
                 let now = Instant::now();
                 let dt = now.duration_since(state.last_frame);
                 state.last_frame = now;
+
+                // Check and apply committed options configuration
+                if let Some(cfg) = state.menu_ctrl.config_applied_pending.take() {
+                    tracing::info!(
+                        "[Options] Applying engine configuration: Resolution: {:?}, DisplayMode: {:?}, VSync: {}, AudioDevice: {:?}, MasterVol: {:.0}%, BGMVol: {:.0}%",
+                        cfg.video.resolution,
+                        cfg.video.display_mode,
+                        cfg.video.vsync,
+                        cfg.audio.selected_output_device.as_deref().unwrap_or("Default"),
+                        cfg.audio.master_volume * 100.0,
+                        cfg.audio.bgm_volume * 100.0,
+                    );
+
+                    // 1. Audio Engine volume updates and device re-binding
+                    if let Some(ref mut audio) = state.audio_engine {
+                        audio.set_master_volume(cfg.audio.master_volume);
+                        audio.set_bgm_volume(cfg.audio.bgm_volume);
+                        audio.set_sfx_volume(cfg.audio.sfx_volume);
+                        audio.set_voice_volume(cfg.audio.dialogue_volume);
+                    }
+
+                    // Check if audio device changed and reinitialize audio manager if needed
+                    let current_device = state
+                        .menu_ctrl
+                        .options_menu
+                        .original_config
+                        .audio
+                        .selected_output_device
+                        .as_deref();
+                    if cfg.audio.selected_output_device.as_deref() != current_device {
+                        match AudioEngine::new_with_device(
+                            cfg.audio.selected_output_device.as_deref(),
+                        ) {
+                            Ok(mut new_engine) => {
+                                new_engine.set_master_volume(cfg.audio.master_volume);
+                                new_engine.set_bgm_volume(cfg.audio.bgm_volume);
+                                new_engine.set_sfx_volume(cfg.audio.sfx_volume);
+                                new_engine.set_voice_volume(cfg.audio.dialogue_volume);
+                                state.audio_engine = Some(new_engine);
+                                tracing::info!(
+                                    "[Options] Switched audio output device to {:?}",
+                                    cfg.audio
+                                        .selected_output_device
+                                        .as_deref()
+                                        .unwrap_or("Default")
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!("[Options] Failed to switch audio device: {:?}", e);
+                            }
+                        }
+                    }
+
+                    // 2. Video & Display Mode re-configuration
+                    let new_present_mode = if cfg.video.vsync {
+                        wgpu::PresentMode::AutoVsync
+                    } else {
+                        wgpu::PresentMode::AutoNoVsync
+                    };
+
+                    let (target_w, target_h) = match cfg.video.resolution {
+                        sh2_core::config::InternalResolution::Res1080p => (1920, 1080),
+                        sh2_core::config::InternalResolution::Res1440p => (2560, 1440),
+                        sh2_core::config::InternalResolution::Res4k => (3840, 2160),
+                        sh2_core::config::InternalResolution::Native => {
+                            let s = state.window.inner_size();
+                            (s.width.max(640), s.height.max(480))
+                        }
+                    };
+
+                    match cfg.video.display_mode {
+                        sh2_core::config::WindowDisplayMode::BorderlessFullscreen => {
+                            state
+                                .window
+                                .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                        }
+                        sh2_core::config::WindowDisplayMode::ExclusiveFullscreen => {
+                            let monitor = state.window.current_monitor();
+                            let video_mode = monitor.and_then(|m| {
+                                m.video_modes().find(|vm| {
+                                    vm.size().width == target_w && vm.size().height == target_h
+                                })
+                            });
+                            if let Some(vm) = video_mode {
+                                state
+                                    .window
+                                    .set_fullscreen(Some(winit::window::Fullscreen::Exclusive(vm)));
+                            } else {
+                                state.window.set_fullscreen(Some(
+                                    winit::window::Fullscreen::Borderless(None),
+                                ));
+                            }
+                        }
+                        sh2_core::config::WindowDisplayMode::Windowed => {
+                            state.window.set_fullscreen(None);
+                            let _ = state
+                                .window
+                                .request_inner_size(winit::dpi::PhysicalSize::new(
+                                    target_w, target_h,
+                                ));
+                        }
+                    }
+
+                    if state.surface_config.present_mode != new_present_mode {
+                        state.surface_config.present_mode = new_present_mode;
+                        state
+                            .surface
+                            .configure(&state.render_ctx.device, &state.surface_config);
+                    }
+
+                    // 3. Control settings dispatch
+                    state.sim_core.input.config.stick_deadzone = cfg.controls.stick_deadzone;
+                    state.sim_core.input.config.vibration_intensity =
+                        cfg.controls.vibration_intensity;
+                    state
+                        .sim_core
+                        .input
+                        .set_control_scheme(if cfg.controls.tank_controls {
+                            sh2_core::input::ControlScheme::Tank
+                        } else {
+                            sh2_core::input::ControlScheme::AnalogDirectional
+                        });
+                }
 
                 // Advance menu transitions and fade state
                 state.menu_ctrl.tick(dt.as_secs_f32());

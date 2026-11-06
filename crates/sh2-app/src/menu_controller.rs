@@ -16,6 +16,8 @@ pub struct AppMenuController {
     pub config_path: PathBuf,
     /// Has the user completed title sequence and transitioned to in-game world?
     pub in_game_active: bool,
+    /// Flag indicating that configuration was committed and needs to be applied by the engine loop.
+    pub config_applied_pending: Option<AppConfig>,
 }
 
 impl AppMenuController {
@@ -33,6 +35,7 @@ impl AppMenuController {
             pause_menu,
             config_path: path,
             in_game_active: false,
+            config_applied_pending: None,
         }
     }
 
@@ -112,6 +115,7 @@ impl AppMenuController {
                         return MenuSoundCue::Confirm;
                     }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);
                     } else {
@@ -181,6 +185,7 @@ impl AppMenuController {
                 }
                 MenuNavAction::Confirm => {
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);
                     } else {

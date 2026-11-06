@@ -1978,6 +1978,99 @@ impl CombatArena {
                 self.player.pending_sfx = Some(11050); // Death scream
             }
         }
+
+        // Mutual character & enemy cylinder collision separation (authentic PS2 clCheckColumn2ColumnHit)
+        self.resolve_character_separations();
+    }
+
+    /// Resolve mutual character-to-enemy and enemy-to-enemy cylinder collision separations.
+    ///
+    /// Upright enemies cannot be walked through by James, and upright enemies push apart from one another.
+    pub fn resolve_character_separations(&mut self) {
+        let player_radius = 260.0;
+        let is_held = self.player.mode == CombatMode::Held;
+
+        // 1. Player vs Upright Enemies (only when not actively held in grab lock)
+        if !is_held {
+            for enemy in &mut self.enemies {
+                // Downed enemies and creepers (id 8) can be stepped over / stomped at feet
+                if enemy.is_dead || (enemy.is_downed && enemy.id != 8) {
+                    continue;
+                }
+                // Air/ceiling monsters (Flesh Lips 6, Mandarin 7, Mary 9) do not block floor walking
+                if enemy.id == 6 || enemy.id == 7 || enemy.id == 9 {
+                    continue;
+                }
+
+                let dx = self.player_position.x - enemy.position.x;
+                let dz = self.player_position.z - enemy.position.z;
+                let dist_sq = dx * dx + dz * dz;
+                let min_dist = player_radius + enemy.hitbox_radius * 0.75;
+
+                if dist_sq < min_dist * min_dist {
+                    let dist = dist_sq.sqrt();
+                    let (nx, nz) = if dist > 1e-4 {
+                        (dx / dist, dz / dist)
+                    } else {
+                        (1.0, 0.0)
+                    };
+                    let penetration = min_dist - dist;
+
+                    // Push player out from enemy (heavy bosses push player 100%, lighter enemies 60/40)
+                    let (push_player, push_enemy) = match enemy.id {
+                        4 | 5 => (penetration, 0.0), // Pyramid Head & Abstract Daddy are immovable
+                        _ => (penetration * 0.6, penetration * 0.4),
+                    };
+
+                    self.player_position.x += nx * push_player;
+                    self.player_position.z += nz * push_player;
+                    enemy.position.x -= nx * push_enemy;
+                    enemy.position.z -= nz * push_enemy;
+                }
+            }
+        }
+
+        // 2. Enemy vs Enemy cylinder separation
+        let enemy_count = self.enemies.len();
+        for i in 0..enemy_count {
+            if self.enemies[i].is_dead || self.enemies[i].is_downed {
+                continue;
+            }
+            if self.enemies[i].id == 6 || self.enemies[i].id == 7 || self.enemies[i].id == 9 {
+                continue;
+            }
+
+            for j in (i + 1)..enemy_count {
+                if self.enemies[j].is_dead || self.enemies[j].is_downed {
+                    continue;
+                }
+                if self.enemies[j].id == 6 || self.enemies[j].id == 7 || self.enemies[j].id == 9 {
+                    continue;
+                }
+
+                let dx = self.enemies[i].position.x - self.enemies[j].position.x;
+                let dz = self.enemies[i].position.z - self.enemies[j].position.z;
+                let dist_sq = dx * dx + dz * dz;
+                let min_dist =
+                    (self.enemies[i].hitbox_radius + self.enemies[j].hitbox_radius) * 0.75;
+
+                if dist_sq < min_dist * min_dist {
+                    let dist = dist_sq.sqrt();
+                    let (nx, nz) = if dist > 1e-4 {
+                        (dx / dist, dz / dist)
+                    } else {
+                        (1.0, 0.0)
+                    };
+                    let penetration = min_dist - dist;
+                    let half_pen = penetration * 0.5;
+
+                    self.enemies[i].position.x += nx * half_pen;
+                    self.enemies[i].position.z += nz * half_pen;
+                    self.enemies[j].position.x -= nx * half_pen;
+                    self.enemies[j].position.z -= nz * half_pen;
+                }
+            }
+        }
     }
 
     /// Test active attack collision against all enemies in arena.
@@ -2234,5 +2327,41 @@ mod tests {
 
         // 9999 AP stomp finishes downed enemy immediately
         assert!(arena.enemies[0].is_dead);
+    }
+
+    #[test]
+    fn test_enemy_player_and_enemy_enemy_collision_separation() {
+        let mut arena = CombatArena::new();
+        // Place James at origin
+        arena.player_position = Vec3::ZERO;
+        // Place Lying Figure (radius 350) overlapping James at (100, 0, 0)
+        arena.enemies[0].position = Vec3::new(100.0, 0.0, 0.0);
+        let initial_player_x = arena.player_position.x;
+        let initial_enemy_x = arena.enemies[0].position.x;
+
+        arena.resolve_character_separations();
+
+        // James (radius 260) and Lying Figure (radius 350 * 0.75 = 262.5) min dist ~ 522.5.
+        // Initial dist was 100 -> they must push apart!
+        let separation = (arena.player_position.x - arena.enemies[0].position.x).abs();
+        assert!(
+            separation > 500.0,
+            "Player and enemy must separate; got {}",
+            separation
+        );
+        assert!(arena.player_position.x < initial_player_x);
+        assert!(arena.enemies[0].position.x > initial_enemy_x);
+
+        // Test two enemies overlapping: place enemy 1 at (1000, 0, 0) and enemy 2 at (1100, 0, 0)
+        arena.enemies[1].position = Vec3::new(1000.0, 0.0, 0.0);
+        arena.enemies[2].position = Vec3::new(1100.0, 0.0, 0.0);
+        arena.resolve_character_separations();
+
+        let enemy_sep = (arena.enemies[1].position.x - arena.enemies[2].position.x).abs();
+        assert!(
+            enemy_sep > 300.0,
+            "Enemies must push each other apart; got {}",
+            enemy_sep
+        );
     }
 }

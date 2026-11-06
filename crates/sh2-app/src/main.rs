@@ -3029,7 +3029,9 @@ impl ApplicationHandler for SilentHillApp {
                                 dt_sec,
                             );
 
-                            // Sync James player position and yaw back from arena (e.g. grapple turn/facing)
+                            // Sync James player position and yaw back from arena (e.g. grapple turn/facing & enemy pushback)
+                            state.sim_core.scenario.player_position =
+                                state.combat_arena.player_position;
                             if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
                             {
                                 state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;

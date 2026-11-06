@@ -63,7 +63,20 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 
 ## Phase 5: Gameplay Core & Scenarios (`sh2-core`)
 - [x] Decouple simulation clock from rendering (fixed 60 Hz physics/animation tick rate).
-- [ ] Implement camera system (third-person exploration, fixed cinematic cameras, right-stick search).
+- [ ] Implement camera system (third-person exploration, fixed cinematic cameras, right-stick search):
+  - [x] **SH2-31: Authentic PS2 `.cam` Binary Parser & Volume Switching**
+    - 128-byte `_VC_ROAD_DATA` record parser with sentinel values (`ofs_watch_hy`, `projection`, `tmp.chs.ofs_hy`).
+    - Lookahead watch targeting (`vcSetWatchTgtXzPos`), screen framing (`vcAdjCamOfsAngByCharaInScreen`), and yaw limits (`vcCorrectCamMatAngForcibly`).
+  - [ ] **SH2-50: Automated Room Loader Hook & SH2:EE Override Resolution for `.cam` Files**
+    - Connect room lifecycle in `sh2-app` / `sh2-core` to auto-ingest `data/bg/<area>/<room>.cam` on door warps.
+    - Check and prioritize SH2:EE widescreen/high-framerate override `.cam` files in `sh2e/bg/<area>/<room>.cam`.
+  - [ ] **SH2-51: Authentic PS2 `LOCUS_CIRCLE` and `THROUGH_DOOR` Camera Algorithms**
+    - Port `vcMakeIdealCamPosForLocusCircleCam` for circular tracking rails (spiral staircases, gazebos).
+    - Port `THROUGH_DOOR` camera transition lerp when James transitions through doors.
+  - [ ] **SH2-52: Scripted Event Camera Triggers, Enemy Encounter Framing & Cutscene Handoffs**
+    - Support `VC_RD_USE_NEAR_ENEMY_F` (0x0040) combat volume switches.
+    - Connect `.mes` dialogue events and cutscene script triggers (`vcSetCameraScript`).
+    - Seamless handoff between gameplay `.cam` volumes and FMV playback.
 - [ ] Port Main Scenario (*Letter from Silent Heaven*): James's inventory, state machines, and puzzles.
 - [ ] Port Sub-Scenario (*Born from a Wish*): Maria's Baldwin Mansion stages 53–58 from `prog_wish.c`.
 - [ ] **SH2-47: Scripted Sequence System & Environmental Horror Triggers**

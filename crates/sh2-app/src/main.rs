@@ -1179,9 +1179,9 @@ impl ApplicationHandler for SilentHillApp {
                 )
             });
 
-        // Dynamic UI overlay texture and text rasterizer sized dynamically to window resolution
-        let text_w = size.width.max(640);
-        let text_h = size.height.max(480);
+        // Dynamic UI overlay texture and text rasterizer for Authentic Menus & HUD
+        let text_w = 1280u32;
+        let text_h = 720u32;
         let menu_rasterizer = TextRasterizer::new(text_w as usize, text_h as usize);
 
         let menu_text_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -2189,39 +2189,6 @@ impl ApplicationHandler for SilentHillApp {
                         &state.render_ctx.device,
                         &state.render_ctx.ldr_output_view,
                     );
-
-                    // Reallocate UI overlay rasterizer and texture for crisp native resolution
-                    let text_w = new_size.width.max(640);
-                    let text_h = new_size.height.max(480);
-                    state.menu_rasterizer = TextRasterizer::new(text_w as usize, text_h as usize);
-                    state.menu_text_texture =
-                        state
-                            .render_ctx
-                            .device
-                            .create_texture(&wgpu::TextureDescriptor {
-                                label: Some("Menu Text Overlay Texture"),
-                                size: wgpu::Extent3d {
-                                    width: text_w,
-                                    height: text_h,
-                                    depth_or_array_layers: 1,
-                                },
-                                mip_level_count: 1,
-                                sample_count: 1,
-                                dimension: wgpu::TextureDimension::D2,
-                                format: wgpu::TextureFormat::Rgba8Unorm,
-                                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                                    | wgpu::TextureUsages::COPY_DST,
-                                view_formats: &[],
-                            });
-                    let menu_text_view = state
-                        .menu_text_texture
-                        .create_view(&wgpu::TextureViewDescriptor::default());
-                    state.menu_text_bind_group =
-                        state.blitter.create_bind_group_with_uniform_buffer(
-                            &state.render_ctx.device,
-                            &menu_text_view,
-                            &state.menu_uniform_buffer,
-                        );
                 }
             }
             WindowEvent::RedrawRequested => {

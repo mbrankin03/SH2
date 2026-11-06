@@ -41,8 +41,7 @@ impl AppMenuController {
         if !self.in_game_active {
             self.title_sm.tick(dt);
             if self.title_sm.phase == TitlePhase::TransitionToGame
-                && self.title_sm.fade_alpha <= 0.01
-                && !self.title_sm.is_fading_out
+                && (self.title_sm.fade_alpha <= 0.05 || !self.title_sm.is_fading_out)
             {
                 self.in_game_active = true;
                 tracing::info!(

@@ -266,6 +266,7 @@ impl TitleStateMachine {
                     MainMenuOption::Continue => {
                         // In prototype / vanilla SH2, launches into last saved state
                         self.phase = TitlePhase::TransitionToGame;
+                        self.start_fade_out();
                         sound = MenuSoundCue::GameStartTransition;
                     }
                     MainMenuOption::Options => {

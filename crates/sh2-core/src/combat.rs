@@ -2079,6 +2079,215 @@ impl CombatArena {
         self.resolve_character_separations();
     }
 
+    /// Execute simulation tick isolating updates to only one active enemy index.
+    /// Inactive enemies are kept dormant off-screen so only the targeted enemy is active.
+    pub fn tick_isolated(
+        &mut self,
+        ready_held: bool,
+        action_pressed: bool,
+        action_held: bool,
+        dt: f32,
+        active_enemy_idx: usize,
+    ) {
+        if self.enemies.is_empty() {
+            return;
+        }
+        let isolated_idx = active_enemy_idx % self.enemies.len();
+
+        let has_downed = {
+            let e = &self.enemies[isolated_idx];
+            if e.is_downed && !e.is_dead {
+                let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+                let feet_check = self.player_position + forward * 250.0;
+                let dist = (Vec3::new(e.position.x, 0.0, e.position.z) - feet_check).length();
+                dist <= (e.hitbox_radius + 350.0)
+            } else {
+                false
+            }
+        };
+
+        self.player
+            .handle_combat_inputs(ready_held, action_pressed, action_held, has_downed, dt);
+
+        if let Some(atk) = self.player.active_attack {
+            let hit_frame = self.player.anim_frame as u8;
+            if !self.attack_hit_registered
+                && hit_frame >= atk.first_hit_frame
+                && hit_frame <= atk.last_hit_frame
+            {
+                self.attack_hit_registered = true;
+                let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+                let target_enemy = &mut self.enemies[isolated_idx];
+                if !target_enemy.is_dead {
+                    if atk.kind == 0 {
+                        let muzzle =
+                            self.player_position + Vec3::new(0.0, -1100.0, 0.0) + forward * 200.0;
+                        if target_enemy
+                            .hitbox()
+                            .intersects_ray(muzzle, forward, 0.0, atk.max_range)
+                            .is_some()
+                        {
+                            target_enemy.receive_hit(&atk);
+                        }
+                    } else if atk.kind == 1 {
+                        let feet_check = self.player_position + forward * 250.0;
+                        if target_enemy.is_downed {
+                            let dist =
+                                (Vec3::new(target_enemy.position.x, 0.0, target_enemy.position.z)
+                                    - feet_check)
+                                    .length();
+                            if dist <= (target_enemy.hitbox_radius * 1.5 + atk.max_range) {
+                                target_enemy.receive_hit(&atk);
+                            }
+                        }
+                    } else {
+                        let root = self.player_position + Vec3::new(0.0, -1000.0, 0.0);
+                        let tip = root + forward * 1600.0;
+                        if target_enemy.hitbox().intersects_segment(root, tip) {
+                            target_enemy.receive_hit(&atk);
+                        }
+                    }
+                }
+            }
+        } else {
+            self.attack_hit_registered = false;
+        }
+
+        let player_p = self.player_position;
+        let is_god_mode = self.player.god_mode;
+        let is_dying_or_dead =
+            self.player.mode == CombatMode::Dead || self.player.mode == CombatMode::Dying;
+
+        let enemy = &mut self.enemies[isolated_idx];
+        enemy.update(player_p, dt);
+
+        if !is_god_mode && !is_dying_or_dead && enemy.is_attacking {
+            let dx = enemy.position.x - player_p.x;
+            let dz = enemy.position.z - player_p.z;
+            let dist = (dx * dx + dz * dz).sqrt();
+
+            let (grab_range, meter) = match enemy.id {
+                4 => (400.0, 0.70),
+                5 => (530.0, 0.70),
+                6 => (450.0, 0.70),
+                8 => (220.0, 0.50),
+                9 => (550.0, 0.70),
+                _ => (0.0, 0.0),
+            };
+
+            if grab_range > 0.0
+                && dist <= grab_range
+                && self.player.mode != CombatMode::Held
+                && self.player.invulnerability_timer <= 0.0
+            {
+                self.player.apply_grab(meter);
+                enemy.is_grappling_player = true;
+                self.grappling_enemy_idx = Some(isolated_idx);
+                self.player_yaw = dx.atan2(dz);
+            }
+        }
+
+        if self.player.mode == CombatMode::Held {
+            let mut should_release = false;
+            if let Some(g_idx) = self.grappling_enemy_idx {
+                if g_idx == isolated_idx {
+                    let g = &mut self.enemies[isolated_idx];
+                    if g.is_dead || g.is_downed || g.flinch_timer > 0.0 {
+                        should_release = true;
+                    } else {
+                        let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+                        g.position = self.player_position + forward * 150.0;
+                        g.yaw = self.player_yaw + std::f32::consts::PI;
+                        g.is_grappling_player = true;
+                    }
+                } else {
+                    should_release = true;
+                }
+            } else {
+                should_release = true;
+            }
+
+            if should_release {
+                if let Some(g_idx) = self.grappling_enemy_idx.take() {
+                    if g_idx < self.enemies.len() {
+                        self.enemies[g_idx].is_grappling_player = false;
+                        self.enemies[g_idx].is_attacking = false;
+                    }
+                }
+                self.player.mode = CombatMode::Free;
+                self.player.struggle_meter = 0.0;
+                self.player.invulnerability_timer = 0.5;
+            } else {
+                let hold_dps = 0.2 * 30.0;
+                self.player.health = (self.player.health - hold_dps * dt).max(0.0);
+                if self.player.health <= 0.0 {
+                    self.player.mode = CombatMode::Dying;
+                    self.player.anim_frame = 0.0;
+                    self.player.clip_length = 24.0;
+                    self.player.pending_sfx = Some(11050);
+                    if let Some(g_idx) = self.grappling_enemy_idx.take() {
+                        if g_idx < self.enemies.len() {
+                            self.enemies[g_idx].is_grappling_player = false;
+                            self.enemies[g_idx].is_attacking = false;
+                        }
+                    }
+                }
+            }
+        } else if let Some(g_idx) = self.grappling_enemy_idx.take() {
+            if g_idx < self.enemies.len() {
+                let g = &mut self.enemies[g_idx];
+                g.is_grappling_player = false;
+                g.is_attacking = false;
+                g.attack_cooldown = 2.0;
+                let backward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+                g.position += backward * 250.0;
+                g.flinch_timer = 0.5;
+            }
+        }
+
+        // Mutual collision separation with the active enemy
+        if self.player.mode != CombatMode::Held {
+            let enemy = &mut self.enemies[isolated_idx];
+            if !enemy.is_dead
+                && !enemy.is_downed
+                && enemy.id != 8
+                && enemy.id != 6
+                && enemy.id != 7
+                && enemy.id != 9
+            {
+                let dx = self.player_position.x - enemy.position.x;
+                let dz = self.player_position.z - enemy.position.z;
+                let dist_sq = dx * dx + dz * dz;
+
+                let enemy_col_radius = match enemy.id {
+                    4 => 200.0,
+                    5 => 220.0,
+                    _ => 130.0,
+                };
+                let min_dist = 130.0 + enemy_col_radius;
+
+                if dist_sq < min_dist * min_dist {
+                    let dist = dist_sq.sqrt();
+                    let (nx, nz) = if dist > 1e-4 {
+                        (dx / dist, dz / dist)
+                    } else {
+                        (1.0, 0.0)
+                    };
+                    let penetration = min_dist - dist;
+                    let (push_player, push_enemy) = match enemy.id {
+                        4 | 5 => (penetration, 0.0),
+                        _ => (penetration * 0.6, penetration * 0.4),
+                    };
+
+                    self.player_position.x += nx * push_player;
+                    self.player_position.z += nz * push_player;
+                    enemy.position.x -= nx * push_enemy;
+                    enemy.position.z -= nz * push_enemy;
+                }
+            }
+        }
+    }
+
     /// Resolve mutual character-to-enemy and enemy-to-enemy cylinder collision separations.
     ///
     /// Upright enemies cannot be walked through by James, and upright enemies push apart from one another.

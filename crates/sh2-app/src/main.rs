@@ -3058,11 +3058,12 @@ impl ApplicationHandler for SilentHillApp {
                                 );
                             }
 
-                            state.combat_arena.tick(
+                            state.combat_arena.tick_isolated(
                                 state.key_ready_held,
                                 atk_pressed,
                                 state.key_attack_held,
                                 dt_sec,
+                                state.combat_enemy_idx,
                             );
 
                             // Sync James player position and yaw back from arena (e.g. grapple turn/facing & enemy pushback)
@@ -3260,131 +3261,117 @@ impl ApplicationHandler for SilentHillApp {
                         }
                     }
 
-                    // Render enemy skeletal models when in Combat Arena
+                    // Render enemy skeletal models when in Combat Arena (only the actively selected enemy is rendered and active)
                     let mut enemy_skin_matrices: Vec<Vec<[[f32; 4]; 4]>> = Vec::new();
-                    if state.active_test_room == TestRoomKind::CombatArena {
-                        for enemy in &state.combat_arena.enemies {
-                            let asset = match enemy.id {
-                                1 => state.enemy_scu_asset.as_ref(),
-                                2 => state.enemy_mkn_asset.as_ref(),
-                                3 => state.enemy_nse_asset.as_ref(),
-                                4 => state.enemy_red_asset.as_ref(),
-                                5 => state.enemy_pap_asset.as_ref(),
-                                6 => state.enemy_ike_asset.as_ref(),
-                                7 => state.enemy_arm_asset.as_ref(),
-                                8 => state.enemy_tyu_asset.as_ref(),
-                                9 => state.enemy_bos_asset.as_ref(),
-                                _ => None,
-                            };
+                    if state.active_test_room == TestRoomKind::CombatArena
+                        && !state.combat_arena.enemies.is_empty()
+                    {
+                        let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
+                        let enemy = &state.combat_arena.enemies[active_idx];
+                        let asset = match enemy.id {
+                            1 => state.enemy_scu_asset.as_ref(),
+                            2 => state.enemy_mkn_asset.as_ref(),
+                            3 => state.enemy_nse_asset.as_ref(),
+                            4 => state.enemy_red_asset.as_ref(),
+                            5 => state.enemy_pap_asset.as_ref(),
+                            6 => state.enemy_ike_asset.as_ref(),
+                            7 => state.enemy_arm_asset.as_ref(),
+                            8 => state.enemy_tyu_asset.as_ref(),
+                            9 => state.enemy_bos_asset.as_ref(),
+                            _ => None,
+                        };
 
-                            if let Some(ea) = asset {
-                                let frame_count = ea.anm.frames.len();
-                                if frame_count > 0 {
-                                    // Evaluate synchronized skeletal animation frame from creature FSM
-                                    let (prev_cursor, cur_cursor, blend) =
-                                        enemy.anim.evaluate_blended_cursor();
-                                    let f0 = (cur_cursor.0 as usize) % frame_count;
-                                    let f1 = (cur_cursor.1 as usize) % frame_count;
-                                    let alpha = cur_cursor.2;
+                        if let Some(ea) = asset {
+                            let frame_count = ea.anm.frames.len();
+                            if frame_count > 0 {
+                                // Evaluate synchronized skeletal animation frame from creature FSM
+                                let (prev_cursor, cur_cursor, blend) =
+                                    enemy.anim.evaluate_blended_cursor();
+                                let f0 = (cur_cursor.0 as usize) % frame_count;
+                                let f1 = (cur_cursor.1 as usize) % frame_count;
+                                let alpha = cur_cursor.2;
 
-                                    let cur_frame = interpolate_frames(
-                                        &ea.anm.frames[f0],
-                                        &ea.anm.frames[f1],
-                                        alpha,
-                                    );
+                                let cur_frame = interpolate_frames(
+                                    &ea.anm.frames[f0],
+                                    &ea.anm.frames[f1],
+                                    alpha,
+                                );
 
-                                    let frame = if let Some(prev) = prev_cursor {
-                                        if blend < 1.0 {
-                                            let pf0 = (prev.0 as usize) % frame_count;
-                                            let pf1 = (prev.1 as usize) % frame_count;
-                                            let prev_frame = interpolate_frames(
-                                                &ea.anm.frames[pf0],
-                                                &ea.anm.frames[pf1],
-                                                prev.2,
-                                            );
-                                            interpolate_frames(&prev_frame, &cur_frame, blend)
-                                        } else {
-                                            cur_frame
-                                        }
+                                let frame = if let Some(prev) = prev_cursor {
+                                    if blend < 1.0 {
+                                        let pf0 = (prev.0 as usize) % frame_count;
+                                        let pf1 = (prev.1 as usize) % frame_count;
+                                        let prev_frame = interpolate_frames(
+                                            &ea.anm.frames[pf0],
+                                            &ea.anm.frames[pf1],
+                                            prev.2,
+                                        );
+                                        interpolate_frames(&prev_frame, &cur_frame, blend)
                                     } else {
                                         cur_frame
-                                    };
-
-                                    let mut pose = Vec::with_capacity(ea.model.bone_count);
-                                    evaluate_pose_into(
-                                        &ea.model.parents,
-                                        &ea.bind_locals,
-                                        &frame,
-                                        &mut pose,
-                                    );
-
-                                    let mut skin = Vec::with_capacity(ea.model.bone_count);
-                                    compute_skin_matrices_with_inv_into(
-                                        &pose,
-                                        &ea.model.inv_initial_matrices,
-                                        &mut skin,
-                                    );
-
-                                    let (es, ec_yaw) = enemy.yaw.sin_cos();
-                                    // Height adjustments for specific monsters:
-                                    // - Flesh Lips (6): hung from ceiling frame (elevate Y by -1200 so it hangs down into room)
-                                    // - Mandarin (7): in retail hangs below floor grates (root Y +880); elevate by -1000 so it crawls visibly above ground
-                                    // - Mary Boss (9): hovering cage boss (elevate Y by -1000)
-                                    let y_offset = match enemy.id {
-                                        6 => -1200.0,
-                                        7 => -1000.0,
-                                        9 => -1000.0,
-                                        _ => 0.0,
-                                    };
-                                    let ey = enemy.position.y + y_offset;
-                                    let world_mat = [
-                                        [ec_yaw, 0.0, es, enemy.position.x],
-                                        [0.0, 1.0, 0.0, ey],
-                                        [-es, 0.0, ec_yaw, enemy.position.z],
-                                        [0.0, 0.0, 0.0, 1.0],
-                                    ];
-
-                                    let mut enemy_mats = Vec::with_capacity(skin.len());
-                                    for m_skin in &skin {
-                                        let mut combined = [[0.0; 4]; 4];
-                                        for r in 0..4 {
-                                            for col in 0..4 {
-                                                combined[r][col] = world_mat[r][0] * m_skin[0][col]
-                                                    + world_mat[r][1] * m_skin[1][col]
-                                                    + world_mat[r][2] * m_skin[2][col]
-                                                    + world_mat[r][3] * m_skin[3][col];
-                                            }
-                                        }
-                                        enemy_mats.push(combined);
                                     }
-                                    enemy_skin_matrices.push(enemy_mats);
+                                } else {
+                                    cur_frame
+                                };
+
+                                let mut pose = Vec::with_capacity(ea.model.bone_count);
+                                evaluate_pose_into(
+                                    &ea.model.parents,
+                                    &ea.bind_locals,
+                                    &frame,
+                                    &mut pose,
+                                );
+
+                                let mut skin = Vec::with_capacity(ea.model.bone_count);
+                                compute_skin_matrices_with_inv_into(
+                                    &pose,
+                                    &ea.model.inv_initial_matrices,
+                                    &mut skin,
+                                );
+
+                                let (es, ec_yaw) = enemy.yaw.sin_cos();
+                                // Height adjustments for specific monsters:
+                                // - Flesh Lips (6): hung from ceiling frame (elevate Y by -1200 so it hangs down into room)
+                                // - Mandarin (7): in retail hangs below floor grates (root Y +880); elevate by -1000 so it crawls visibly above ground
+                                // - Mary Boss (9): hovering cage boss (elevate Y by -1000)
+                                let y_offset = match enemy.id {
+                                    6 => -1200.0,
+                                    7 => -1000.0,
+                                    9 => -1000.0,
+                                    _ => 0.0,
+                                };
+                                let ey = enemy.position.y + y_offset;
+                                let world_mat = [
+                                    [ec_yaw, 0.0, es, enemy.position.x],
+                                    [0.0, 1.0, 0.0, ey],
+                                    [-es, 0.0, ec_yaw, enemy.position.z],
+                                    [0.0, 0.0, 0.0, 1.0],
+                                ];
+
+                                let mut enemy_mats = Vec::with_capacity(skin.len());
+                                for m_skin in &skin {
+                                    let mut combined = [[0.0; 4]; 4];
+                                    for r in 0..4 {
+                                        for col in 0..4 {
+                                            combined[r][col] = world_mat[r][0] * m_skin[0][col]
+                                                + world_mat[r][1] * m_skin[1][col]
+                                                + world_mat[r][2] * m_skin[2][col]
+                                                + world_mat[r][3] * m_skin[3][col];
+                                        }
+                                    }
+                                    enemy_mats.push(combined);
                                 }
+                                enemy_skin_matrices.push(enemy_mats);
                             }
                         }
 
-                        let mut mat_idx = 0;
-                        for enemy in &state.combat_arena.enemies {
-                            let asset = match enemy.id {
-                                1 => state.enemy_scu_asset.as_ref(),
-                                2 => state.enemy_mkn_asset.as_ref(),
-                                3 => state.enemy_nse_asset.as_ref(),
-                                4 => state.enemy_red_asset.as_ref(),
-                                5 => state.enemy_pap_asset.as_ref(),
-                                6 => state.enemy_ike_asset.as_ref(),
-                                7 => state.enemy_arm_asset.as_ref(),
-                                8 => state.enemy_tyu_asset.as_ref(),
-                                9 => state.enemy_bos_asset.as_ref(),
-                                _ => None,
-                            };
-                            if let Some(ea) = asset {
-                                if mat_idx < enemy_skin_matrices.len() {
-                                    skeletal_draw.push((
-                                        &ea.gpu_mesh,
-                                        &enemy_skin_matrices[mat_idx],
-                                        Some(ea.texture_bind_groups.as_slice()),
-                                    ));
-                                    mat_idx += 1;
-                                }
+                        if let Some(ea) = asset {
+                            if !enemy_skin_matrices.is_empty() {
+                                skeletal_draw.push((
+                                    &ea.gpu_mesh,
+                                    &enemy_skin_matrices[0],
+                                    Some(ea.texture_bind_groups.as_slice()),
+                                ));
                             }
                         }
                     }
@@ -3421,6 +3408,28 @@ impl ApplicationHandler for SilentHillApp {
                                 [1.0, 0.9, 0.1, 1.0], // Yellow player collision cylinder
                             );
                             debug_lines.extend(chara_lines);
+
+                            // In Combat Arena, draw active enemy cylinder
+                            if state.active_test_room == TestRoomKind::CombatArena
+                                && !state.combat_arena.enemies.is_empty()
+                            {
+                                let active_idx =
+                                    state.combat_enemy_idx % state.combat_arena.enemies.len();
+                                let e = &state.combat_arena.enemies[active_idx];
+                                let enemy_radius = match e.id {
+                                    4 => 200.0,
+                                    5 => 220.0,
+                                    _ => 130.0,
+                                };
+                                let enemy_lines = sh2_debug::build_chara_collision_debug_lines(
+                                    [e.position.x, e.position.y, e.position.z],
+                                    enemy_radius,
+                                    1800.0,
+                                    16,
+                                    [1.0, 0.2, 0.8, 1.0], // Magenta enemy cylinder
+                                );
+                                debug_lines.extend(enemy_lines);
+                            }
 
                             state.render_ctx.render_scene_with_debug_lines(
                                 Some(&state.gpu_map),
@@ -4012,51 +4021,63 @@ impl ApplicationHandler for SilentHillApp {
                                 true,
                             );
 
-                            // Render enemy status lines
-                            let mut ey_offset = 142;
-                            for enemy in &state.combat_arena.enemies {
-                                let status_str = if enemy.is_dead {
-                                    "DEAD (Dispatched)".to_string()
-                                } else if enemy.is_downed {
-                                    format!(
-                                        "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
-                                        enemy.down_timer.max(0.0)
-                                    )
-                                } else if enemy.flinch_timer > 0.0 {
-                                    "STAGGERED / FLINCHING".to_string()
-                                } else if enemy.is_aggroed {
-                                    "ENGAGED (Approaching)".to_string()
-                                } else {
-                                    "STANDBY (In Section)".to_string()
-                                };
+                            // Render active enemy status line
+                            let active_idx =
+                                state.combat_enemy_idx % state.combat_arena.enemies.len();
+                            let enemy = &state.combat_arena.enemies[active_idx];
+                            let status_str = if enemy.is_dead {
+                                "DEAD (Dispatched)".to_string()
+                            } else if enemy.is_downed {
+                                format!(
+                                    "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
+                                    enemy.down_timer.max(0.0)
+                                )
+                            } else if enemy.flinch_timer > 0.0 {
+                                "STAGGERED / FLINCHING".to_string()
+                            } else if enemy.is_attacking {
+                                "ATTACKING / GRAPPLING".to_string()
+                            } else if enemy.is_aggroed {
+                                "ENGAGED (Approaching)".to_string()
+                            } else {
+                                "STANDBY (In Section)".to_string()
+                            };
 
-                                let color = if enemy.is_dead {
-                                    muted
-                                } else if enemy.is_downed {
-                                    cyan
-                                } else if enemy.is_aggroed {
-                                    green
-                                } else {
-                                    muted
-                                };
+                            let color = if enemy.is_dead {
+                                muted
+                            } else if enemy.is_downed {
+                                cyan
+                            } else if enemy.is_attacking || enemy.is_aggroed {
+                                green
+                            } else {
+                                muted
+                            };
 
-                                state.menu_rasterizer.draw_text(
-                                    &format!(
-                                        "ENEMY #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
-                                        enemy.id,
-                                        enemy.name,
-                                        enemy.health,
-                                        enemy.max_health,
-                                        status_str
-                                    ),
-                                    20,
-                                    ey_offset,
-                                    1,
-                                    color,
-                                    true,
-                                );
-                                ey_offset += 20;
-                            }
+                            state.menu_rasterizer.draw_text(
+                                &format!(
+                                    "ACTIVE TARGET [{}/{}]: Enemy #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
+                                    active_idx + 1,
+                                    state.combat_arena.enemies.len(),
+                                    enemy.id,
+                                    enemy.name,
+                                    enemy.health,
+                                    enemy.max_health,
+                                    status_str
+                                ),
+                                20,
+                                142,
+                                1,
+                                color,
+                                true,
+                            );
+
+                            state.menu_rasterizer.draw_text(
+                                "[Press TAB to Cycle Active Test Creature]",
+                                20,
+                                162,
+                                1,
+                                yellow,
+                                true,
+                            );
 
                             let cur_anim_clip = state.sim_core.animation.current_clip();
                             let anim_state_name = format!("{:?}", state.sim_core.animation.state());

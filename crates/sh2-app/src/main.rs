@@ -3035,15 +3035,17 @@ impl ApplicationHandler for SilentHillApp {
                                 state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;
                             }
 
-                            // Drive James's skeletal animation when in combat states (Held struggle loop 457..=461, Hurt flinch, Fall)
+                            // Drive James's skeletal animation when in combat states (Aim, Attack, Held struggle loop 457..=461, Hurt flinch, Fall)
                             match state.combat_arena.player.mode {
                                 sh2_core::combat::CombatMode::Held => {
+                                    state.sim_core.animation_locked = true;
                                     state.sim_core.animation.transition_to(
                                         sh2_core::animation::AnimationStateKind::Held,
                                         sh2_core::animation::JamesBasicClips::STRUGGLE_HELD,
                                     );
                                 }
                                 sh2_core::combat::CombatMode::Hurt => {
+                                    state.sim_core.animation_locked = true;
                                     state.sim_core.animation.transition_to(
                                         sh2_core::animation::AnimationStateKind::Damage,
                                         sh2_core::animation::JamesBasicClips::HURT,
@@ -3051,10 +3053,39 @@ impl ApplicationHandler for SilentHillApp {
                                 }
                                 sh2_core::combat::CombatMode::Dying
                                 | sh2_core::combat::CombatMode::Dead => {
+                                    state.sim_core.animation_locked = true;
                                     state.sim_core.animation.transition_to(
                                         sh2_core::animation::AnimationStateKind::Fall,
                                         sh2_core::animation::JamesBasicClips::FALL,
                                     );
+                                }
+                                sh2_core::combat::CombatMode::Ready
+                                | sh2_core::combat::CombatMode::Raise => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Aim,
+                                        sh2_core::animation::JamesBasicClips::AIM,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Swing
+                                | sh2_core::combat::CombatMode::Shot
+                                | sh2_core::combat::CombatMode::Recover => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Attack,
+                                        sh2_core::animation::JamesBasicClips::ATTACK,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Stomp => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Attack,
+                                        sh2_core::animation::JamesBasicClips::ATTACK,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Free
+                                | sh2_core::combat::CombatMode::Lower => {
+                                    state.sim_core.animation_locked = false;
                                 }
                                 _ => {}
                             }

@@ -1536,7 +1536,7 @@ impl CombatTargetEnemy {
                         // Trigger creature attack
                         self.is_attacking = true;
                         self.attack_timer = 0.0;
-                    } else if dist > 450.0 || (self.id == 8 && dist > 150.0) {
+                    } else if dist > 150.0 {
                         // Move towards player using authentic walk root motion
                         let walk_speed = match self.id {
                             1 => 402.0,  // scu

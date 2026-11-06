@@ -44,6 +44,20 @@ mb-u/<Discipline>/<JIRA-KEY>
 ---
 
 ## 4. Software Engineering & Code Quality Standards
+
+### Reverse-Engineering & Reference Ground-Truth Priority (CRITICAL)
+When implementing game mechanics, animations, physics, FSM logic, enemy AI, damage tables, or collision systems:
+1. **Primary Ground Truth: PS2 Debug Prototype ISO (`SLUS_202.28`)**:
+   - Located at `Silent Hill 2 (Jul 13, 2001 prototype)/SILENT_HILL_2__VW047_U1__V0_10/SILENT_HILL_2__VW047_U1__V0_10.iso`.
+   - Contains 26,211 unstripped symbols from Team Silent (`PlayerDamageMotionNo`, `lower_hold`, `upper_hold`, `lower_damage`, `shBattleAttackByEnemyHug`, `en*Function`).
+   - **MANDATORY**: Always treat this Emotion Engine ELF as the definitive source of truth for original Konami logic, animation layouts, bone hierarchies, collision formulas, and physics parameters.
+2. **Secondary Ground Truth: Retail PC Binary (`sh2pc.exe`) & Data Assets (`.anm`, `.mdl`, `.cld`)**:
+   - Located at `Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2pc.exe`.
+   - Contains final retail x86 assembly, damage lookup tables (`damage_no[2][2][30]` at `0x48a4e0`), exact keyframe intervals, and bug fixes applied in the final PC release.
+3. **Tertiary Reference ONLY (Never Ground Truth): Downstream Community Ports (`sh23ds`)**:
+   - Community ports such as `sh23ds` contain heavy approximations, clamped loops, and missing enemy-specific animations (e.g. replacing James's dedicated struggle clips with a generic `J_HURT` clamp).
+   - **RULE**: Never prioritize or trust `sh23ds` shortcuts over the authentic PS2 ISO or retail PC binary. Only consult `sh23ds` as a secondary helper for how C structs were previously arranged, and verify every behavior against the PS2 ISO or `sh2pc.exe`.
+
 - **Naming Conventions:**
   - Types, Structs, Enums, Traits: `PascalCase` (e.g. `VolumetricFogUniforms`, `MapMarkerState`).
   - Functions, Variables, Fields: `snake_case`.

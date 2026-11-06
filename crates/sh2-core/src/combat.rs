@@ -2047,12 +2047,13 @@ impl CombatArena {
                     if g.is_dead || g.is_downed || g.flinch_timer > 0.0 {
                         should_release = true;
                     } else {
-                        // Authentic PS2 grapple coupling (enemy.c:3309):
+                        // Authentic PS2 grapple coupling (enemy.c:3309, 4342):
                         // Monster slides onto James and stays anchored in front of him
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
                         let anchor_dist = match g.id {
-                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
-                            8 => 80.0, // Creeper bites at feet
+                            6 => 40.0,  // Flesh Lips hangs directly overhead / straddles James's neck
+                            8 => 80.0,  // Creeper bites at feet
+                            9 => 220.0, // Mary Final Boss hovers close-range with tentacles wrapped around James
                             _ => 150.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;

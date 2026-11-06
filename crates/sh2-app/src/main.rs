@@ -2253,6 +2253,14 @@ impl ApplicationHandler for SilentHillApp {
                             target_enemy.flinch_timer = 0.0;
                             target_enemy.attack_cooldown = 0.2;
 
+                            // Revive / reset James on creature cycling so arena testing is always fresh
+                            state.combat_arena.player.health = state.combat_arena.player.max_health;
+                            state.combat_arena.player.mode = sh2_core::combat::CombatMode::Free;
+                            state.combat_arena.player.invulnerability_timer = 0.0;
+                            state.combat_arena.player.struggle_meter = 0.0;
+                            state.combat_arena.grappling_enemy_idx = None;
+                            state.sim_core.animation_locked = false;
+
                             tracing::info!(
                                 "[Combat] Cycled to Enemy #{}: {} (teleported to X:{:.1} Z:{:.1})",
                                 target_enemy.id,

@@ -237,20 +237,22 @@ pub struct MaryBossAnimClips;
 impl MaryBossAnimClips {
     /// Authentic hovering idle in cage (frames 0..=58, 15 fps).
     pub const HOVER_IDLE: AnimationClip = AnimationClip::new(0, 58, 15.0, true);
-    /// Forward lunge to catch James (frames 59..=73, 30 fps).
+    /// Forward lunge to catch James (frames 59..=73, 30 fps, PS2 aid 5802).
     pub const LUNGE_CATCH: AnimationClip = AnimationClip::new(59, 73, 30.0, false);
-    /// Authentic looping choke hold while strangling James (frames 89..=112, 30 fps, looping).
+    /// Lift / carry James upward (frames 74..=88, 15 fps, speed 1024, PS2 aid 5803).
+    pub const LIFT_CARRY: AnimationClip = AnimationClip::new(74, 88, 15.0, false);
+    /// Authentic looping choke hold while strangling James (frames 89..=112, 30 fps, looping, PS2 aid 5804).
     pub const CHOKE_HOLD: AnimationClip = AnimationClip::new(89, 112, 30.0, true);
-    /// Release after struggle breakout (frames 113..=136, 30 fps).
+    /// Release after struggle breakout (frames 113..=136, 30 fps, PS2 aid 5805).
     pub const RELEASE: AnimationClip = AnimationClip::new(113, 136, 30.0, false);
-    /// Wing swipe attack (frames 173..=196, 30 fps).
-    pub const WING_SWIPE: AnimationClip = AnimationClip::new(173, 196, 30.0, false);
-    /// Flinch reaction (frames 146..=172, 30 fps).
-    pub const FLINCH: AnimationClip = AnimationClip::new(146, 172, 30.0, false);
-    /// Death fall (frames 146..=172, 30 fps).
-    pub const DEATH_FALL: AnimationClip = AnimationClip::new(146, 172, 30.0, false);
-    /// Defeated body on floor (frames 197..=227, 15 fps).
-    pub const FLOOR_BODY: AnimationClip = AnimationClip::new(197, 227, 15.0, true);
+    /// Flinch reaction (frames 137..=145, 30 fps, PS2 aid 5806).
+    pub const FLINCH: AnimationClip = AnimationClip::new(137, 145, 30.0, false);
+    /// Stagger reaction (frames 146..=172, 30 fps, PS2 aid 5807).
+    pub const STAGGER: AnimationClip = AnimationClip::new(146, 172, 30.0, false);
+    /// Death fall (frames 173..=196, 30 fps, PS2 aid 5808).
+    pub const DEATH_FALL: AnimationClip = AnimationClip::new(173, 196, 30.0, false);
+    /// Defeated body on floor (frames 197..=227, 30 fps, PS2 aid 5809).
+    pub const FLOOR_BODY: AnimationClip = AnimationClip::new(197, 227, 30.0, true);
 
     pub const HOVER_ROOT_MOTION_PER_FRAME: f32 = 14.0; // 420 units/s
     pub const ATTACK_HIT_START: u32 = 64;

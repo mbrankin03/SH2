@@ -3092,7 +3092,8 @@ impl ApplicationHandler for SilentHillApp {
                                 let frame_count = ea.anm.frames.len();
                                 if frame_count > 0 {
                                     // Evaluate synchronized skeletal animation frame from creature FSM
-                                    let (prev_cursor, cur_cursor, blend) = enemy.anim.evaluate_blended_cursor();
+                                    let (prev_cursor, cur_cursor, blend) =
+                                        enemy.anim.evaluate_blended_cursor();
                                     let f0 = (cur_cursor.0 as usize) % frame_count;
                                     let f1 = (cur_cursor.1 as usize) % frame_count;
                                     let alpha = cur_cursor.2;

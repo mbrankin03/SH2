@@ -190,29 +190,17 @@ impl CreatureAnimationController {
 
     /// Factory for Mannequin controller.
     pub fn new_mannequin() -> Self {
-        Self::new(
-            CreatureAnimStateKind::Idle,
-            MannequinAnimClips::STAY,
-            0.0,
-        )
+        Self::new(CreatureAnimStateKind::Idle, MannequinAnimClips::STAY, 0.0)
     }
 
     /// Factory for Bubble Head Nurse controller.
     pub fn new_nurse() -> Self {
-        Self::new(
-            CreatureAnimStateKind::Idle,
-            NurseAnimClips::STAND,
-            0.0,
-        )
+        Self::new(CreatureAnimStateKind::Idle, NurseAnimClips::STAND, 0.0)
     }
 
     /// Factory for Maria companion controller.
     pub fn new_maria() -> Self {
-        Self::new(
-            CreatureAnimStateKind::Idle,
-            MariaAnimClips::STAND,
-            0.0,
-        )
+        Self::new(CreatureAnimStateKind::Idle, MariaAnimClips::STAND, 0.0)
     }
 
     pub fn state(&self) -> CreatureAnimStateKind {
@@ -685,7 +673,7 @@ mod tests {
         // Advance to particle/damage window (frame 85: approx 8/30s = 0.27s)
         anim.update(0.28, 0.0);
         let frame = anim.current_frame_index();
-        assert!(frame >= 84 && frame <= 95);
+        assert!((84..=95).contains(&frame));
         assert!(anim.is_in_hit_window() || anim.is_in_particle_window());
     }
 

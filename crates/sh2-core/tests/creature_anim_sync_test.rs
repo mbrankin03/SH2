@@ -4,8 +4,7 @@
 use sh2_assets::formats::anm::parse_anm;
 use sh2_assets::formats::mdls::parse_mdl;
 use sh2_core::ai::creatures::anim::{
-    CreatureAnimStateKind, LyingFigureAnimClips, MannequinAnimClips,
-    MariaAnimClips, NurseAnimClips,
+    CreatureAnimStateKind, LyingFigureAnimClips, MannequinAnimClips, MariaAnimClips, NurseAnimClips,
 };
 use sh2_core::ai::creatures::lying_figure::{LyingFigureController, ScuState};
 use sh2_core::ai::creatures::mannequin::{MannequinController, MknState};
@@ -29,7 +28,8 @@ fn test_retail_anm_clip_ranges_conformance() {
     let scu_mdl = fs::read(format!("{RETAIL_CHR_ROOT}/scu/scu.mdl")).expect("scu.mdl");
     let scu_anm = fs::read(format!("{RETAIL_CHR_ROOT}/scu/scu.anm")).expect("scu.anm");
     let scu_model = parse_mdl(&scu_mdl).expect("scu mdl parse");
-    let scu_anim = parse_anm(&scu_anm, scu_model.bone_count, &scu_model.parents).expect("scu anm parse");
+    let scu_anim =
+        parse_anm(&scu_anm, scu_model.bone_count, &scu_model.parents).expect("scu anm parse");
     assert_eq!(scu_model.bone_count, 30);
     assert!(scu_anim.frames.len() >= 779, "Lying Figure anm frame count");
 
@@ -46,7 +46,8 @@ fn test_retail_anm_clip_ranges_conformance() {
     let mkn_mdl = fs::read(format!("{RETAIL_CHR_ROOT}/mkn/mkn.mdl")).expect("mkn.mdl");
     let mkn_anm = fs::read(format!("{RETAIL_CHR_ROOT}/mkn/mkn.anm")).expect("mkn.anm");
     let mkn_model = parse_mdl(&mkn_mdl).expect("mkn mdl parse");
-    let mkn_anim = parse_anm(&mkn_anm, mkn_model.bone_count, &mkn_model.parents).expect("mkn anm parse");
+    let mkn_anim =
+        parse_anm(&mkn_anm, mkn_model.bone_count, &mkn_model.parents).expect("mkn anm parse");
     assert_eq!(mkn_model.bone_count, 17);
     assert!(mkn_anim.frames.len() >= 720, "Mannequin anm frame count");
 
@@ -62,7 +63,8 @@ fn test_retail_anm_clip_ranges_conformance() {
     let nse_mdl = fs::read(format!("{RETAIL_CHR_ROOT}/nse/nse.mdl")).expect("nse.mdl");
     let nse_anm = fs::read(format!("{RETAIL_CHR_ROOT}/nse/nse.anm")).expect("nse.anm");
     let nse_model = parse_mdl(&nse_mdl).expect("nse mdl parse");
-    let nse_anim = parse_anm(&nse_anm, nse_model.bone_count, &nse_model.parents).expect("nse anm parse");
+    let nse_anim =
+        parse_anm(&nse_anm, nse_model.bone_count, &nse_model.parents).expect("nse anm parse");
     assert_eq!(nse_model.bone_count, 30);
     assert!(nse_anim.frames.len() >= 658, "Nurse anm frame count");
 
@@ -76,7 +78,8 @@ fn test_retail_anm_clip_ranges_conformance() {
     let mar_mdl = fs::read(format!("{RETAIL_CHR_ROOT}/mar/lll_mar.mdl")).expect("lll_mar.mdl");
     let mar_anm = fs::read(format!("{RETAIL_CHR_ROOT}/mar/lll_mar.anm")).expect("lll_mar.anm");
     let mar_model = parse_mdl(&mar_mdl).expect("mar mdl parse");
-    let mar_anim = parse_anm(&mar_anm, mar_model.bone_count, &mar_model.parents).expect("mar anm parse");
+    let mar_anim =
+        parse_anm(&mar_anm, mar_model.bone_count, &mar_model.parents).expect("mar anm parse");
     assert_eq!(mar_model.bone_count, 36);
     assert!(mar_anim.frames.len() >= 851, "Maria anm frame count");
 
@@ -99,7 +102,12 @@ fn test_lying_figure_fsm_to_skeletal_sync() {
     // Initial state: Wander -> Locomotion
     // Place target out of sensory range (5000 units away) to remain in Wander
     let target = PerceivableTarget::new(glam::Vec3::new(0.0, 0.0, 5000.0), 0.0, false, false);
-    scu.update(&target, RoomLighting::DarkLightOff, DifficultyLevel::Normal, 0.016);
+    scu.update(
+        &target,
+        RoomLighting::DarkLightOff,
+        DifficultyLevel::Normal,
+        0.016,
+    );
     assert_eq!(scu.state, ScuState::Wander);
     assert_eq!(scu.anim.state(), CreatureAnimStateKind::Locomotion);
     assert_eq!(scu.anim.current_clip(), LyingFigureAnimClips::WALK);
@@ -139,7 +147,12 @@ fn test_mannequin_fsm_to_skeletal_sync() {
 
     // Dormant stay in darkness
     let target = PerceivableTarget::new(glam::Vec3::new(0.0, 0.0, 3000.0), 0.0, false, false);
-    mkn.update(&target, RoomLighting::DarkLightOff, DifficultyLevel::Normal, 0.016);
+    mkn.update(
+        &target,
+        RoomLighting::DarkLightOff,
+        DifficultyLevel::Normal,
+        0.016,
+    );
     assert_eq!(mkn.state, MknState::Stay);
     assert_eq!(mkn.anim.state(), CreatureAnimStateKind::Idle);
     assert_eq!(mkn.anim.current_clip(), MannequinAnimClips::STAY);
@@ -147,13 +160,23 @@ fn test_mannequin_fsm_to_skeletal_sync() {
     // Attack strike alternation
     mkn.state = MknState::Attack;
     mkn.is_kick_next = false;
-    mkn.update(&target, RoomLighting::DarkLightOff, DifficultyLevel::Normal, 0.016);
+    mkn.update(
+        &target,
+        RoomLighting::DarkLightOff,
+        DifficultyLevel::Normal,
+        0.016,
+    );
     assert_eq!(mkn.anim.state(), CreatureAnimStateKind::AttackPrimary);
     assert_eq!(mkn.anim.current_clip(), MannequinAnimClips::ARM_SWING);
 
     mkn.state = MknState::Attack;
     mkn.is_kick_next = true;
-    mkn.update(&target, RoomLighting::DarkLightOff, DifficultyLevel::Normal, 0.016);
+    mkn.update(
+        &target,
+        RoomLighting::DarkLightOff,
+        DifficultyLevel::Normal,
+        0.016,
+    );
     assert_eq!(mkn.anim.state(), CreatureAnimStateKind::AttackSecondary);
     assert_eq!(mkn.anim.current_clip(), MannequinAnimClips::KICK);
 }

@@ -1655,7 +1655,16 @@ impl ApplicationHandler for SilentHillApp {
         let audio_bank = Some(MenuAudioBank::load_from_dirs(&data_dir, Some(&ee_dir)));
 
         let host_devices = AudioEngine::enumerate_output_devices();
-        let mut menu_ctrl = AppMenuController::new("config.json");
+        let config_candidates = [
+            "config.json",
+            "/home/matthewb/dev/SH2/config.json",
+            "/home/matthewb/Documents/SH2-Port/config.json",
+        ];
+        let chosen_config_path = config_candidates
+            .iter()
+            .find(|p| std::path::Path::new(p).exists())
+            .unwrap_or(&"config.json");
+        let mut menu_ctrl = AppMenuController::new(chosen_config_path);
         menu_ctrl
             .options_menu
             .set_audio_devices(host_devices.clone());

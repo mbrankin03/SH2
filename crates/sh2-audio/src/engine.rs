@@ -283,23 +283,68 @@ impl AudioEngine {
                 if output.status.success() {
                     if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
                         if let Some(sinks) = val.as_array() {
+                            let mut matched_sink_name: Option<String> = None;
+                            let target_clean = target.trim();
+
+                            // 1. Exact match on sink description or name
                             for sink in sinks {
                                 let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
                                 let desc = sink
                                     .get("description")
                                     .and_then(|d| d.as_str())
                                     .unwrap_or(name);
-                                if desc.trim().eq_ignore_ascii_case(target.trim())
-                                    || name.trim().eq_ignore_ascii_case(target.trim())
+                                if desc.trim().eq_ignore_ascii_case(target_clean)
+                                    || name.trim().eq_ignore_ascii_case(target_clean)
                                 {
-                                    let _ = std::process::Command::new("pactl")
-                                        .args(["set-default-sink", name])
-                                        .status();
-                                    tracing::info!(
-                                        "Set active PipeWire/PulseAudio sink to '{desc}' ({name})"
-                                    );
+                                    matched_sink_name = Some(name.to_string());
                                     break;
                                 }
+                            }
+
+                            // 2. Fuzzy / token-based match (e.g. DualSense, MiniFuse 2)
+                            if matched_sink_name.is_none() {
+                                let target_lower = target_clean.to_lowercase();
+                                for sink in sinks {
+                                    let name =
+                                        sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                    let desc = sink
+                                        .get("description")
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or(name);
+                                    let props = sink.get("properties");
+                                    let dev_desc = props
+                                        .and_then(|p| p.get("device.description"))
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or("");
+                                    let nick = props
+                                        .and_then(|p| p.get("node.nick"))
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("");
+                                    let card_name = props
+                                        .and_then(|p| p.get("alsa.card_name"))
+                                        .and_then(|c| c.as_str())
+                                        .unwrap_or("");
+
+                                    let haystack =
+                                        format!("{name} {desc} {dev_desc} {nick} {card_name}")
+                                            .to_lowercase();
+                                    if target_lower
+                                        .split_whitespace()
+                                        .any(|tok| tok.len() > 3 && haystack.contains(tok))
+                                    {
+                                        matched_sink_name = Some(name.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if let Some(ref sink_name) = matched_sink_name {
+                                let _ = std::process::Command::new("pactl")
+                                    .args(["set-default-sink", sink_name])
+                                    .status();
+                                tracing::info!(
+                                    "Set active PipeWire/PulseAudio default sink to '{sink_name}' for target '{target}'"
+                                );
                             }
                         }
                     }
@@ -986,20 +1031,59 @@ impl AudioEngine {
                     .output()
                     .ok();
                 let mut found = None;
+                let target_clean = target.trim();
                 if let Some(out) = output {
                     if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                         if let Some(sinks) = val.as_array() {
+                            // 1. Exact match on description or name
                             for sink in sinks {
                                 let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
                                 let desc = sink
                                     .get("description")
                                     .and_then(|d| d.as_str())
                                     .unwrap_or(name);
-                                if desc.trim().eq_ignore_ascii_case(target.trim())
-                                    || name.trim().eq_ignore_ascii_case(target.trim())
+                                if desc.trim().eq_ignore_ascii_case(target_clean)
+                                    || name.trim().eq_ignore_ascii_case(target_clean)
                                 {
                                     found = Some(name.to_string());
                                     break;
+                                }
+                            }
+
+                            // 2. Fuzzy / token-based match (e.g. DualSense, MiniFuse 2)
+                            if found.is_none() {
+                                let target_lower = target_clean.to_lowercase();
+                                for sink in sinks {
+                                    let name =
+                                        sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                    let desc = sink
+                                        .get("description")
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or(name);
+                                    let props = sink.get("properties");
+                                    let dev_desc = props
+                                        .and_then(|p| p.get("device.description"))
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or("");
+                                    let nick = props
+                                        .and_then(|p| p.get("node.nick"))
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("");
+                                    let card_name = props
+                                        .and_then(|p| p.get("alsa.card_name"))
+                                        .and_then(|c| c.as_str())
+                                        .unwrap_or("");
+
+                                    let haystack =
+                                        format!("{name} {desc} {dev_desc} {nick} {card_name}")
+                                            .to_lowercase();
+                                    if target_lower
+                                        .split_whitespace()
+                                        .any(|tok| tok.len() > 3 && haystack.contains(tok))
+                                    {
+                                        found = Some(name.to_string());
+                                        break;
+                                    }
                                 }
                             }
                         }

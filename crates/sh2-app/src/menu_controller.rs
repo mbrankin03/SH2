@@ -133,8 +133,10 @@ impl AppMenuController {
         } else {
             let cue = self.title_sm.handle_input(action);
             if self.title_sm.phase == TitlePhase::OptionsMenu {
-                // Initialize fresh draft in options menu
+                // Initialize fresh draft in options menu and preserve detected audio devices
+                let prev_devices = self.options_menu.audio_devices.clone();
                 self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+                self.options_menu.set_audio_devices(prev_devices);
             }
             cue
         }
@@ -200,8 +202,10 @@ impl AppMenuController {
         } else {
             let (cue, action) = self.pause_menu.handle_nav(action);
             if action == PauseAction::OpenOptions {
-                // Initialize fresh draft in options menu
+                // Initialize fresh draft in options menu and preserve detected audio devices
+                let prev_devices = self.options_menu.audio_devices.clone();
                 self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+                self.options_menu.set_audio_devices(prev_devices);
             } else if action == PauseAction::QuitToTitle {
                 // Reset in_game_active flag and return to Main Menu
                 self.in_game_active = false;

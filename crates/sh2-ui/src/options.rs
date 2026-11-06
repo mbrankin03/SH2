@@ -76,6 +76,8 @@ pub struct OptionsMenu {
     pub original_config: AppConfig,
     /// Has any setting been modified compared to original?
     pub is_dirty: bool,
+    /// Discovered host audio output devices (e.g. "Default", "Speakers", "Headphones").
+    pub audio_devices: Vec<String>,
 }
 
 impl OptionsMenu {
@@ -86,14 +88,23 @@ impl OptionsMenu {
             draft_config: config.clone(),
             original_config: config,
             is_dirty: false,
+            audio_devices: vec!["Default (System)".into()],
         }
+    }
+
+    /// Sets the list of available host audio devices.
+    pub fn set_audio_devices(&mut self, mut devices: Vec<String>) {
+        if !devices.iter().any(|d| d == "Default (System)") {
+            devices.insert(0, "Default (System)".into());
+        }
+        self.audio_devices = devices;
     }
 
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
             OptionsTab::Video => 10,
-            OptionsTab::Audio => 6,
+            OptionsTab::Audio => 7,
             OptionsTab::Controls => 5,
             OptionsTab::Game => 7,
         }
@@ -189,10 +200,18 @@ impl OptionsMenu {
                     format!("{:.0}%", self.draft_config.audio.dialogue_volume * 100.0),
                 )),
                 4 => Some((
+                    "Output Device",
+                    self.draft_config
+                        .audio
+                        .selected_output_device
+                        .clone()
+                        .unwrap_or_else(|| "Default (System)".into()),
+                )),
+                5 => Some((
                     "Speaker Config",
                     self.draft_config.audio.speaker_config.label().to_string(),
                 )),
-                5 => Some((
+                6 => Some((
                     "Mute in Background",
                     if self.draft_config.audio.mute_in_background {
                         "YES".into()
@@ -375,13 +394,42 @@ impl OptionsMenu {
                         (self.draft_config.audio.dialogue_volume + step).clamp(0.0, 1.0);
                 }
                 4 => {
+                    // Output device selection
+                    if !self.audio_devices.is_empty() {
+                        let cur_name = self
+                            .draft_config
+                            .audio
+                            .selected_output_device
+                            .as_deref()
+                            .unwrap_or("Default (System)");
+                        let cur_idx = self
+                            .audio_devices
+                            .iter()
+                            .position(|d| d == cur_name)
+                            .unwrap_or(0);
+                        let next_idx = if forward {
+                            (cur_idx + 1) % self.audio_devices.len()
+                        } else if cur_idx == 0 {
+                            self.audio_devices.len() - 1
+                        } else {
+                            cur_idx - 1
+                        };
+                        let chosen = &self.audio_devices[next_idx];
+                        if chosen == "Default (System)" {
+                            self.draft_config.audio.selected_output_device = None;
+                        } else {
+                            self.draft_config.audio.selected_output_device = Some(chosen.clone());
+                        }
+                    }
+                }
+                5 => {
                     self.draft_config.audio.speaker_config = if forward {
                         self.draft_config.audio.speaker_config.next()
                     } else {
                         self.draft_config.audio.speaker_config.prev()
                     };
                 }
-                5 => {
+                6 => {
                     self.draft_config.audio.mute_in_background =
                         !self.draft_config.audio.mute_in_background;
                 }
@@ -465,6 +513,13 @@ impl OptionsMenu {
         self.original_config = self.draft_config.clone();
         self.is_dirty = false;
         (self.original_config.clone(), OptionsSoundCue::ConfirmSave)
+    }
+
+    /// Reset draft configuration to default factory settings.
+    pub fn reset_to_defaults(&mut self) -> OptionsSoundCue {
+        self.draft_config = AppConfig::default();
+        self.is_dirty = true;
+        OptionsSoundCue::ValueChange
     }
 
     /// Discard modifications and revert to baseline.

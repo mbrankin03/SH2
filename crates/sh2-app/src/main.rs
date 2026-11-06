@@ -1654,9 +1654,25 @@ impl ApplicationHandler for SilentHillApp {
             PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e");
         let audio_bank = Some(MenuAudioBank::load_from_dirs(&data_dir, Some(&ee_dir)));
 
-        let audio_engine = match AudioEngine::new() {
+        let host_devices = AudioEngine::enumerate_output_devices();
+        let mut menu_ctrl = AppMenuController::new("config.json");
+        menu_ctrl
+            .options_menu
+            .set_audio_devices(host_devices.clone());
+
+        let target_audio_device = menu_ctrl
+            .options_menu
+            .original_config
+            .audio
+            .selected_output_device
+            .as_deref();
+
+        let audio_engine = match AudioEngine::new_with_device(target_audio_device) {
             Ok(engine) => {
-                tracing::info!("Audio engine successfully initialized with Kira runtime.");
+                tracing::info!(
+                    "Audio engine successfully initialized with Kira runtime (Device: {:?}).",
+                    target_audio_device.unwrap_or("Default")
+                );
                 Some(engine)
             }
             Err(e) => {
@@ -1670,7 +1686,6 @@ impl ApplicationHandler for SilentHillApp {
         );
         tracing::info!("Controls: WASD / Stick: Move & Turn (Tank) | Shift: Run | F: Flashlight | C: Switch Character (James/Maria)");
 
-        let mut menu_ctrl = AppMenuController::new("config.json");
         if let Some(room) = self.initial_test_room {
             menu_ctrl.title_sm.selected_test_room = room;
             if let Some(idx) = TestRoomKind::ALL.iter().position(|r| *r == room) {

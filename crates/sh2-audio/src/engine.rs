@@ -8,7 +8,7 @@
 //!   - Environmental DSP / Reverb matching PS2/PC presets (interiors, foggy streets, outdoor open areas).
 //!   - Subtitle synchronization with `.mes` event cues and automatic BGM/SFX volume ducking during dialogue.
 
-use cpal::traits::HostTrait;
+use cpal::traits::{DeviceTrait, HostTrait};
 use glam::Vec3;
 use kira::{
     effect::reverb::{ReverbBuilder, ReverbHandle},
@@ -174,15 +174,52 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects.
-    pub fn new() -> Result<Self, AudioError> {
-        // Query the default output device explicitly. Passing an explicit device to Kira prevents
-        // background thread reconnection loops (check_stream) on platforms like Windows where querying
-        // default devices from an uninitialized COM thread causes access violations.
+    /// Enumerate all currently available audio output device names on the host system.
+    ///
+    /// The first entry or special designation can be treated as the system default.
+    pub fn enumerate_output_devices() -> Vec<String> {
         let host = cpal::default_host();
-        let device = host.default_output_device().ok_or_else(|| {
-            AudioError::InitError("No default audio output device available".into())
-        })?;
+        let mut devices = Vec::new();
+        if let Ok(iter) = host.output_devices() {
+            for device in iter {
+                if let Ok(name) = device.name() {
+                    if !devices.contains(&name) {
+                        devices.push(name);
+                    }
+                }
+            }
+        }
+        devices
+    }
+
+    /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects.
+    ///
+    /// If `device_name` is provided, attempts to open that specific audio output device;
+    /// otherwise falls back to the system default device.
+    pub fn new_with_device(device_name: Option<&str>) -> Result<Self, AudioError> {
+        let host = cpal::default_host();
+        let device = if let Some(target_name) = device_name {
+            let mut found = None;
+            if let Ok(iter) = host.output_devices() {
+                for dev in iter {
+                    if let Ok(name) = dev.name() {
+                        if name == target_name {
+                            found = Some(dev);
+                            break;
+                        }
+                    }
+                }
+            }
+            if found.is_none() {
+                tracing::warn!(
+                    "Requested audio output device '{target_name}' not found; falling back to default."
+                );
+            }
+            found.or_else(|| host.default_output_device())
+        } else {
+            host.default_output_device()
+        }
+        .ok_or_else(|| AudioError::InitError("No audio output device available".into()))?;
 
         let settings = AudioManagerSettings {
             backend_settings: CpalBackendSettings {
@@ -260,11 +297,16 @@ impl AudioEngine {
             active_voice_handle: None,
             active_dialogue: None,
             master_volume: 1.0,
-            bgm_volume: 1.0,
-            sfx_volume: 1.0,
+            bgm_volume: 0.85,
+            sfx_volume: 0.9,
             voice_volume: 1.0,
             ducking_attenuation: 0.35,
         })
+    }
+
+    /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects using the default output device.
+    pub fn new() -> Result<Self, AudioError> {
+        Self::new_with_device(None)
     }
 
     /// Checks if the audio backend was successfully initialized and active.
@@ -805,6 +847,65 @@ impl AudioEngine {
     /// Sets the master volume level [0.0..1.0].
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume.clamp(0.0, 1.0);
+    }
+
+    /// Sets the background music volume level [0.0..1.0].
+    pub fn set_bgm_volume(&mut self, volume: f32) {
+        self.bgm_volume = volume.clamp(0.0, 1.0);
+        if let Some(ref mut track) = self.bgm_track {
+            track.set_volume(
+                Volume::Amplitude((self.bgm_volume * self.master_volume) as f64),
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Sets the sound effects volume level [0.0..1.0].
+    pub fn set_sfx_volume(&mut self, volume: f32) {
+        self.sfx_volume = volume.clamp(0.0, 1.0);
+        if let Some(ref mut track) = self.sfx_track {
+            track.set_volume(
+                Volume::Amplitude((self.sfx_volume * self.master_volume) as f64),
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Sets the dialogue voice volume level [0.0..1.0].
+    pub fn set_voice_volume(&mut self, volume: f32) {
+        self.voice_volume = volume.clamp(0.0, 1.0);
+        if let Some(ref mut track) = self.voice_track {
+            track.set_volume(
+                Volume::Amplitude((self.voice_volume * self.master_volume) as f64),
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Sets the environmental DSP reverb mix ratio [0.0..1.0].
+    pub fn set_reverb_mix(&mut self, mix: f32) {
+        if let Some(ref mut reverb) = self.reverb_handle {
+            reverb.set_mix(
+                mix.clamp(0.0, 1.0) as f64,
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
     }
 }
 

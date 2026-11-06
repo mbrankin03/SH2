@@ -481,6 +481,8 @@ pub struct AudioOptions {
     pub dialogue_volume: f32,
     /// Output speaker configuration.
     pub speaker_config: SpeakerConfiguration,
+    /// Selected audio output device name (None = System Default).
+    pub selected_output_device: Option<String>,
     /// Mute game audio when the window loses focus.
     pub mute_in_background: bool,
 }
@@ -493,6 +495,7 @@ impl Default for AudioOptions {
             sfx_volume: 0.9,
             dialogue_volume: 1.0,
             speaker_config: SpeakerConfiguration::default(),
+            selected_output_device: None,
             mute_in_background: true,
         }
     }
@@ -560,14 +563,28 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    /// Serialize and write configuration to disk.
+    /// Serialize and write configuration to disk atomically.
+    ///
+    /// Writes to a temporary `.tmp` sibling file, flushes to disk, and renames over the target path.
+    /// This prevents configuration corruption or zero-byte file writes if the application terminates
+    /// or crashes during saving.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
         let serialized = serde_json::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        if let Some(parent) = path.as_ref().parent() {
+        let target = path.as_ref();
+        if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, serialized)
+        let tmp_path = target.with_extension(format!(
+            "tmp.{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::write(&tmp_path, serialized)?;
+        fs::rename(&tmp_path, target)?;
+        Ok(())
     }
 
     /// Load configuration from disk, falling back to default if file is missing or invalid.

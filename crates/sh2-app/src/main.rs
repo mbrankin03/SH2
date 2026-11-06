@@ -3074,13 +3074,41 @@ impl ApplicationHandler for SilentHillApp {
                                 state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;
                             }
 
-                            // Drive James's skeletal animation when in combat states (Aim, Attack, Held struggle loop 457..=461, Hurt flinch, Fall)
+                            // Drive James's skeletal animation when in combat states (Aim, Attack, Held struggle loops, Hurt flinch, Fall)
                             match state.combat_arena.player.mode {
                                 sh2_core::combat::CombatMode::Held => {
                                     state.sim_core.animation_locked = true;
+                                    // Select authentic struggle animation based on the grabbing monster:
+                                    // - Creeper (#8): leg shake / struggle (frames 588..=611, anim_id 128)
+                                    // - Abstract Daddy (#5) / Lying Figure (#1): torso push struggle (frames 612..=629, anim_id 129)
+                                    // - Flesh Lips (#6) / Pyramid Head (#4) / Mary Boss (#9): neck choke struggle (frames 632..=649, anim_id 130)
+                                    let struggle_clip = if let Some(g_idx) =
+                                        state.combat_arena.grappling_enemy_idx
+                                    {
+                                        let enemy_id = state
+                                            .combat_arena
+                                            .enemies
+                                            .get(g_idx)
+                                            .map(|e| e.id)
+                                            .unwrap_or(0);
+                                        match enemy_id {
+                                            8 => sh2_core::animation::JamesBasicClips::STRUGGLE_LEG,
+                                            1 | 5 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
+                                            }
+                                            4 | 6 | 9 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_CHOKE
+                                            }
+                                            _ => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
+                                            }
+                                        }
+                                    } else {
+                                        sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
+                                    };
                                     state.sim_core.animation.transition_to(
                                         sh2_core::animation::AnimationStateKind::Held,
-                                        sh2_core::animation::JamesBasicClips::STRUGGLE_HELD,
+                                        struggle_clip,
                                     );
                                 }
                                 sh2_core::combat::CombatMode::Hurt => {

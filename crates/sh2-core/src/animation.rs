@@ -97,11 +97,18 @@ impl JamesBasicClips {
     pub const AIM: AnimationClip = AnimationClip::new(200, 230, 30.0, true);
     /// Weapon strike / attack execution (frames 231..=270).
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
-    /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 121, 15 fps).
+    /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 122, 15 fps).
     pub const HURT: AnimationClip = AnimationClip::new(453, 470, 15.0, false);
-    /// Struggle held animation during creature grab (authentic PS2 M_HELD loop in combat.c:1631:
-    /// frames 457..=461 inside J_HURT, 15 fps, where James writhes and pushes against attacker's grip).
+    /// Generic struggle held animation (used as fallback or in 3DS port: frames 457..=461 inside J_HURT).
     pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(457, 461, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against leg attacks / Creepers (frames 588..=611, anim_id 128, 30 fps).
+    pub const STRUGGLE_LEG: AnimationClip = AnimationClip::new(588, 611, 30.0, true);
+    /// Authentic PS2/PC James struggle clip against torso grabs / Abstract Daddy / Lying Figure (frames 612..=629, anim_id 129, 30 fps).
+    pub const STRUGGLE_TORSO: AnimationClip = AnimationClip::new(612, 629, 30.0, true);
+    /// Authentic PS2/PC James struggle clip against neck chokes / Flesh Lips / Pyramid Head (frames 632..=649, anim_id 130, 30 fps).
+    pub const STRUGGLE_CHOKE: AnimationClip = AnimationClip::new(632, 649, 30.0, true);
+    /// Authentic PS2/PC James breakout release push when breaking free from grab (frames 652..=670, anim_id 131, 30 fps).
+    pub const STRUGGLE_RELEASE: AnimationClip = AnimationClip::new(652, 670, 30.0, false);
     /// Collapse / death fall animation (frames 256..=280, PS2 index 112).
     pub const FALL: AnimationClip = AnimationClip::new(256, 280, 15.0, false);
 }

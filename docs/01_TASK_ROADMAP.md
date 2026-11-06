@@ -81,6 +81,10 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
   - Quit confirmation dialog ("Exit to Main Menu? [YES / NO]") with default focus on NO.
   - Full seamless roundtrip integration with `OptionsMenu` for live audio/video/controls adjustment from inside active gameplay.
   - Authentic 50% alpha dark scrim backdrop and proportional PS2 bitmap atlas typography.
+- [ ] **SH2-48: Smooth Selection Gradient & Anti-Banding for Main Menu & Scenario Selection**
+  - Replace quantized / banded sprite gradient with smooth procedural analytic elliptical glow (Gaussian / cosine falloff).
+  - Add spatial alpha dithering (Bayer / blue noise) to eliminate 8-bit stepped banding on dark backgrounds.
+  - Dynamically size and feather glow pill across varying item widths (Main Menu options vs long Scenario title lines).
 - [ ] Port `sh23ds/port/source/map.c`: Real-time town map (Maps 1–35) and Baldwin Mansion (Map 36).
 - [ ] Implement real-time marker pen drawing system for discovered keys, memos, and locked doors.
 - [ ] Port `touchui_quick.c`: One-tap bottom-screen healing item quick-slots and weapon hot-swap.

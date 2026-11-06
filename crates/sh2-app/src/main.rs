@@ -3081,7 +3081,8 @@ impl ApplicationHandler for SilentHillApp {
                                     // Select authentic struggle animation based on the grabbing monster:
                                     // - Creeper (#8): leg shake / struggle (frames 588..=611, anim_id 128)
                                     // - Abstract Daddy (#5) / Lying Figure (#1): torso push struggle (frames 612..=629, anim_id 129)
-                                    // - Flesh Lips (#6) / Pyramid Head (#4) / Mary Boss (#9): neck choke struggle (frames 632..=649, anim_id 130)
+                                    // - Flesh Lips (#6): overhead neck choke struggle (frames 457..=468, PS2 lower_hold 0x21dc80-0x21dca4)
+                                    // - Pyramid Head (#4) / Mary Boss (#9): neck/side strangle struggle
                                     let struggle_clip = if let Some(g_idx) =
                                         state.combat_arena.grappling_enemy_idx
                                     {
@@ -3096,8 +3097,11 @@ impl ApplicationHandler for SilentHillApp {
                                             1 | 5 => {
                                                 sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
                                             }
-                                            4 | 6 | 9 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_CHOKE
+                                            6 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_OVERHEAD
+                                            }
+                                            4 | 9 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_SIDE
                                             }
                                             _ => {
                                                 sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO

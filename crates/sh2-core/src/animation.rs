@@ -99,14 +99,17 @@ impl JamesBasicClips {
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
     /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 122, speed 1024 = 15.0 fps).
     pub const HURT: AnimationClip = AnimationClip::new(453, 470, 15.0, false);
+    /// Authentic PS2/PC James struggle clip against overhead neck chokes / Flesh Lips (frames 457..=468, PS2 lower_hold lines 0x21dc80-0x21dca4, speed 1024 = 15.0 fps).
+    /// James tilts his head upward with mouth gasping and raises both hands up reaching for the creature's legs strangling his throat.
+    pub const STRUGGLE_OVERHEAD: AnimationClip = AnimationClip::new(457, 468, 15.0, true);
     /// Generic struggle held animation (used as fallback: frames 457..=461 inside J_HURT, 15.0 fps).
     pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(457, 461, 15.0, true);
     /// Authentic PS2/PC James struggle clip against leg attacks / Creepers (frames 588..=611, anim_id 128, PS2 speed 1024 = 15.0 fps).
     pub const STRUGGLE_LEG: AnimationClip = AnimationClip::new(588, 611, 15.0, true);
     /// Authentic PS2/PC James struggle clip against torso grabs / Abstract Daddy / Lying Figure (frames 612..=629, anim_id 129, PS2 speed 1024 = 15.0 fps).
     pub const STRUGGLE_TORSO: AnimationClip = AnimationClip::new(612, 629, 15.0, true);
-    /// Authentic PS2/PC James struggle clip against neck chokes / Flesh Lips / Pyramid Head (frames 632..=649, anim_id 130, PS2 speed 1024 = 15.0 fps).
-    pub const STRUGGLE_CHOKE: AnimationClip = AnimationClip::new(632, 649, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against side/right strangle holds (frames 632..=649, anim_id 130, PS2 speed 1024 = 15.0 fps).
+    pub const STRUGGLE_SIDE: AnimationClip = AnimationClip::new(632, 649, 15.0, true);
     /// Authentic PS2/PC James breakout release push when breaking free from grab (frames 652..=670, anim_id 131, PS2 speed 2048 = 30.0 fps).
     pub const STRUGGLE_RELEASE: AnimationClip = AnimationClip::new(652, 670, 30.0, false);
     /// Collapse / death fall animation (frames 256..=280, PS2 index 112, speed 1024 = 15.0 fps).

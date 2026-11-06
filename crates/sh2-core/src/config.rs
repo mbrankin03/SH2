@@ -560,7 +560,7 @@ impl Default for DebugOptions {
         Self {
             instant_room_transitions: false,
             min_loading_screen_seconds: 2,
-            require_press_to_continue: true,
+            require_press_to_continue: false,
             show_collision_wireframe: false,
             show_camera_debug: false,
         }

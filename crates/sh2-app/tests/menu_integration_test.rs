@@ -413,7 +413,7 @@ fn test_options_debug_tab_and_loading_screen_selection() {
     assert_eq!(controller.options_menu.selected_index, 2);
     controller.handle_nav(MenuNavAction::Right);
     assert!(
-        !controller
+        controller
             .options_menu
             .draft_config
             .debug

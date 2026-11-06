@@ -1601,7 +1601,9 @@ impl ApplicationHandler for SilentHillApp {
 
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.collision = find_cld_file_for_room(initial_room);
-        sim_core.camera.set_cam_file(find_cam_file_for_room(initial_room));
+        sim_core
+            .camera
+            .set_cam_file(find_cam_file_for_room(initial_room));
         sim_core.input.set_control_scheme(ControlScheme::Tank);
         sim_core.scenario.flashlight_on = true;
         sim_core.scenario.player_position = player_pos;
@@ -2780,7 +2782,10 @@ impl ApplicationHandler for SilentHillApp {
                     state.fog_uniforms = new_fog;
                     state.render_ctx.update_fog(&state.fog_uniforms);
                     state.sim_core.collision = find_cld_file_for_room(new_room);
-                    state.sim_core.camera.set_cam_file(find_cam_file_for_room(new_room));
+                    state
+                        .sim_core
+                        .camera
+                        .set_cam_file(find_cam_file_for_room(new_room));
                     state.sim_core.scenario.player_position = new_pos;
                     state.sim_core.scenario.player_yaw = new_yaw;
                     state.sim_core.camera.reset_to_player(new_pos, new_yaw);
@@ -3851,7 +3856,10 @@ impl ApplicationHandler for SilentHillApp {
                         let room_label = state.active_test_room.label();
 
                         state.menu_rasterizer.draw_text(
-                            &format!("[ROOM: {}] CAMERA & PLAYER TELEMETRY (F1/F3 Toggle)", room_label),
+                            &format!(
+                                "[ROOM: {}] CAMERA & PLAYER TELEMETRY (F1/F3 Toggle)",
+                                room_label
+                            ),
                             20,
                             18,
                             1,

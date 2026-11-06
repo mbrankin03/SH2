@@ -96,7 +96,11 @@ impl Ps2CameraController {
     /// Clamps position `pos` within a `_VC_ROAD_AREA` rail using PS2 `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST`.
     ///
     /// For indoor rooms, `min_in_road_dist` = 400.0 mm.
-    fn clamp_to_road_rail(rail: &sh2_assets::formats::cam::RoadArea, mut pos: Vec3, is_outdoor: bool) -> Vec3 {
+    fn clamp_to_road_rail(
+        rail: &sh2_assets::formats::cam::RoadArea,
+        mut pos: Vec3,
+        is_outdoor: bool,
+    ) -> Vec3 {
         let min_dist = if is_outdoor { 500.0 } else { 400.0 };
         let (min_x, max_x) = rail.x_bounds();
         let (min_z, max_z) = rail.z_bounds();
@@ -155,15 +159,22 @@ impl Ps2CameraController {
                 let (rail_min_x, rail_max_x) = rec.lim_rd.x_bounds();
                 let (rail_min_z, rail_max_z) = rec.lim_rd.z_bounds();
                 let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
-                let eye = Vec3::new((rail_min_x + rail_max_x) * 0.5, eye_y, (rail_min_z + rail_max_z) * 0.5);
+                let eye = Vec3::new(
+                    (rail_min_x + rail_max_x) * 0.5,
+                    eye_y,
+                    (rail_min_z + rail_max_z) * 0.5,
+                );
 
-                let look_target = if let sh2_assets::formats::cam::CamMovementParams::FixedAngle(ref fix) = rec.params {
-                    let rot = Quat::from_euler(glam::EulerRot::YXZ, fix.ang_y, fix.ang_x, 0.0);
-                    let forward = rot * Vec3::new(0.0, 0.0, 1.0);
-                    eye + forward * fix.cam2wth_dist.max(500.0)
-                } else {
-                    target
-                };
+                let look_target =
+                    if let sh2_assets::formats::cam::CamMovementParams::FixedAngle(ref fix) =
+                        rec.params
+                    {
+                        let rot = Quat::from_euler(glam::EulerRot::YXZ, fix.ang_y, fix.ang_x, 0.0);
+                        let forward = rot * Vec3::new(0.0, 0.0, 1.0);
+                        eye + forward * fix.cam2wth_dist.max(500.0)
+                    } else {
+                        target
+                    };
 
                 (eye, look_target, fov_y, CameraMovementType::FixedAngle)
             }
@@ -172,7 +183,11 @@ impl Ps2CameraController {
                 let (rail_min_x, rail_max_x) = rec.lim_rd.x_bounds();
                 let (rail_min_z, rail_max_z) = rec.lim_rd.z_bounds();
                 let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
-                let eye = Vec3::new((rail_min_x + rail_max_x) * 0.5, eye_y, (rail_min_z + rail_max_z) * 0.5);
+                let eye = Vec3::new(
+                    (rail_min_x + rail_max_x) * 0.5,
+                    eye_y,
+                    (rail_min_z + rail_max_z) * 0.5,
+                );
 
                 (eye, target, fov_y, CameraMovementType::Settle)
             }
@@ -181,11 +196,13 @@ impl Ps2CameraController {
                 // Constrain camera within lim_rd rail
                 let (min_x, max_x) = rec.lim_rd.x_bounds();
                 let (min_z, max_z) = rec.lim_rd.z_bounds();
-                let is_rail_constrained = (max_x - min_x).abs() > 0.01 || (max_z - min_z).abs() > 0.01;
+                let is_rail_constrained =
+                    (max_x - min_x).abs() > 0.01 || (max_z - min_z).abs() > 0.01;
 
                 if is_rail_constrained {
                     let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-                    let unconstrained_eye = player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0);
+                    let unconstrained_eye =
+                        player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0);
                     let eye = Self::clamp_to_road_rail(&rec.lim_rd, unconstrained_eye, false);
                     (eye, target, fov_y, CameraMovementType::Chase)
                 } else {
@@ -230,7 +247,10 @@ impl Ps2CameraController {
     }
 
     /// Fallback camera placement when no `.cam` record covers the coordinates.
-    fn fallback_placement(player_pos: Vec3, player_yaw: f32) -> (Vec3, Vec3, f32, CameraMovementType) {
+    fn fallback_placement(
+        player_pos: Vec3,
+        player_yaw: f32,
+    ) -> (Vec3, Vec3, f32, CameraMovementType) {
         let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
         let eye = if player_pos.x > -23000.0
             && player_pos.x < -17000.0
@@ -293,7 +313,9 @@ impl Ps2CameraController {
                 if self.active_road_index != rec_idx {
                     if let Some(old_idx) = self.active_road_index {
                         let old_rec = &cam_file.records[old_idx];
-                        if (old_rec.flags & VC_RD_WARP_OUT_F) != 0 || (rec.flags & VC_RD_WARP_IN_F) != 0 {
+                        if (old_rec.flags & VC_RD_WARP_OUT_F) != 0
+                            || (rec.flags & VC_RD_WARP_IN_F) != 0
+                        {
                             warp_cut = true;
                         }
                     }
@@ -307,7 +329,8 @@ impl Ps2CameraController {
                 target_fov = eval_fov;
                 target_mv_type = eval_mv;
             } else {
-                let (fb_eye, fb_look, fb_fov, fb_mv) = Self::fallback_placement(player_pos, player_yaw);
+                let (fb_eye, fb_look, fb_fov, fb_mv) =
+                    Self::fallback_placement(player_pos, player_yaw);
                 target_eye = fb_eye;
                 target_look = fb_look;
                 target_fov = fb_fov;
@@ -395,7 +418,8 @@ mod tests {
         use std::fs;
         use std::path::Path;
 
-        let er01_path = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/er/er01.cam";
+        let er01_path =
+            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/er/er01.cam";
         if !Path::new(er01_path).exists() {
             return;
         }

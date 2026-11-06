@@ -45,8 +45,8 @@ static TRACKER: TrackingAllocator = TrackingAllocator::new();
 fn test_zero_allocation_simulation_tick() {
     let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
 
-    // Warm-up tick to settle any initial lazy initialization
-    for _ in 0..10 {
+    // Warm-up ticks to settle any initial lazy initialization
+    for _ in 0..30 {
         sim.update(Duration::from_millis(16));
     }
 
@@ -55,7 +55,7 @@ fn test_zero_allocation_simulation_tick() {
     sim.input.state.left_stick_x = 0.5;
     sim.input.state.is_running = true;
 
-    for _ in 0..10 {
+    for _ in 0..30 {
         sim.update(Duration::from_millis(16));
     }
 

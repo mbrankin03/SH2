@@ -118,6 +118,10 @@ pub struct CldFile {
     pub floors: Vec<FloorTriangle>,
     /// Obstacle wall segments.
     pub walls: Vec<WallSegment>,
+    /// Authentic 4x4 spatial grid polygon indices for floors (group 0 / fld).
+    pub b0_cells: [Vec<usize>; 16],
+    /// Authentic 4x4 spatial grid polygon indices for walls (group 1 / wld).
+    pub b1_cells: [Vec<usize>; 16],
 }
 
 impl CldFile {
@@ -230,10 +234,21 @@ impl CldFile {
             ));
         }
 
+        let mut b0_cells: [Vec<usize>; 16] = Default::default();
+        let mut b1_cells: [Vec<usize>; 16] = Default::default();
+        for i in 0..floors.len() {
+            b0_cells[0].push(i);
+        }
+        for i in 0..walls.len() {
+            b1_cells[0].push(i);
+        }
+
         Self {
             origin: [0.0, 0.0],
             floors,
             walls,
+            b0_cells,
+            b1_cells,
         }
     }
 }
@@ -383,10 +398,52 @@ pub fn parse_cld(data: &[u8]) -> Result<CldFile, AssetError> {
         }
     }
 
+    // Parse authentic 4x4 spatial grid cell index tables (-1 terminated)
+    let mut b0_cells: [Vec<usize>; 16] = Default::default();
+    let mut b1_cells: [Vec<usize>; 16] = Default::default();
+
+    for cell in 0..16 {
+        let b0_ofs_pos = 32 + cell * 4;
+        let b0_table_ofs =
+            i32::from_le_bytes(data[b0_ofs_pos..b0_ofs_pos + 4].try_into().unwrap()) as usize;
+        if b0_table_ofs > 0 && b0_table_ofs + 4 <= data.len() {
+            let mut cur = b0_table_ofs;
+            while cur + 4 <= data.len() {
+                let poly_idx = i32::from_le_bytes(data[cur..cur + 4].try_into().unwrap());
+                cur += 4;
+                if poly_idx == -1 {
+                    break;
+                }
+                if poly_idx >= 0 {
+                    b0_cells[cell].push(poly_idx as usize);
+                }
+            }
+        }
+
+        let b1_ofs_pos = 96 + cell * 4;
+        let b1_table_ofs =
+            i32::from_le_bytes(data[b1_ofs_pos..b1_ofs_pos + 4].try_into().unwrap()) as usize;
+        if b1_table_ofs > 0 && b1_table_ofs + 4 <= data.len() {
+            let mut cur = b1_table_ofs;
+            while cur + 4 <= data.len() {
+                let poly_idx = i32::from_le_bytes(data[cur..cur + 4].try_into().unwrap());
+                cur += 4;
+                if poly_idx == -1 {
+                    break;
+                }
+                if poly_idx >= 0 {
+                    b1_cells[cell].push(poly_idx as usize);
+                }
+            }
+        }
+    }
+
     Ok(CldFile {
         origin: [sx, sz],
         floors,
         walls,
+        b0_cells,
+        b1_cells,
     })
 }
 

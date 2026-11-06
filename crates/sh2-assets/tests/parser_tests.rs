@@ -163,7 +163,16 @@ mod tests {
             assert_eq!(cld.origin, [-120000.0, -80000.0]);
             assert!(
                 !cld.floors.is_empty(),
-                "rr21.cld must contain floor triangles"
+                "rr21.cld must contain valid floor triangles"
+            );
+            // Verify spatial grid index tables
+            assert!(
+                cld.b0_cells.iter().any(|c| !c.is_empty()),
+                "rr21.cld b0_cells must index floor triangles"
+            );
+            assert!(
+                cld.b1_cells.iter().any(|c| !c.is_empty()),
+                "rr21.cld b1_cells must index wall segments"
             );
             assert!(!cld.walls.is_empty(), "rr21.cld must contain wall segments");
         }

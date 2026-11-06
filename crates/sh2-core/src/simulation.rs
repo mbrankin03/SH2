@@ -206,13 +206,19 @@ impl SimulationCore {
         // Fixed tick dt is 1/60s (approx 16.666 ms)
         self.animation.update(Duration::from_nanos(16_666_667));
 
-        // 4. Update authentic PS2 camera
+        // 4. Update authentic PS2 camera with raycast wall clamping (clCheckHitEyes)
         self.camera.tick(
             self.scenario.player_position,
             self.scenario.player_yaw,
             self.input.state.right_stick_x,
             self.input.state.right_stick_y,
         );
+
+        let eye_target = self.scenario.player_position + Vec3::new(0.0, -1200.0, 0.0);
+        let filter = crate::collision::RaycastFilter::default();
+        self.camera.curr_snapshot.eye =
+            self.collision
+                .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
 
         // 5. DualSense health heartbeat haptics
         if self.scenario.health <= 25.0 {

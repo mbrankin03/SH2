@@ -3091,16 +3091,40 @@ impl ApplicationHandler for SilentHillApp {
                             if let Some(ea) = asset {
                                 let frame_count = ea.anm.frames.len();
                                 if frame_count > 0 {
-                                    // Flinch / Downed / Crawl anim frames
-                                    let anim_time = state.sim_time * 30.0;
-                                    let frame_idx = (anim_time as usize) % frame_count;
-                                    let frame = &ea.anm.frames[frame_idx];
+                                    // Evaluate synchronized skeletal animation frame from creature FSM
+                                    let (prev_cursor, cur_cursor, blend) = enemy.anim.evaluate_blended_cursor();
+                                    let f0 = (cur_cursor.0 as usize) % frame_count;
+                                    let f1 = (cur_cursor.1 as usize) % frame_count;
+                                    let alpha = cur_cursor.2;
+
+                                    let cur_frame = interpolate_frames(
+                                        &ea.anm.frames[f0],
+                                        &ea.anm.frames[f1],
+                                        alpha,
+                                    );
+
+                                    let frame = if let Some(prev) = prev_cursor {
+                                        if blend < 1.0 {
+                                            let pf0 = (prev.0 as usize) % frame_count;
+                                            let pf1 = (prev.1 as usize) % frame_count;
+                                            let prev_frame = interpolate_frames(
+                                                &ea.anm.frames[pf0],
+                                                &ea.anm.frames[pf1],
+                                                prev.2,
+                                            );
+                                            interpolate_frames(&prev_frame, &cur_frame, blend)
+                                        } else {
+                                            cur_frame
+                                        }
+                                    } else {
+                                        cur_frame
+                                    };
 
                                     let mut pose = Vec::with_capacity(ea.model.bone_count);
                                     evaluate_pose_into(
                                         &ea.model.parents,
                                         &ea.bind_locals,
-                                        frame,
+                                        &frame,
                                         &mut pose,
                                     );
 

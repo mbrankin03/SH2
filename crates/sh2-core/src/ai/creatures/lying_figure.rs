@@ -17,6 +17,7 @@
 //! - Crawl gliding speed: 1,500 units/s.
 //! - Acid spray reach: 1,200 units (Normal difficulty).
 
+use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::CreatureStats;
 use crate::ai::sensory::{
     evaluate_sensory, normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting,
@@ -57,6 +58,7 @@ pub struct LyingFigureController {
     pub attack_cooldown: f32,
     pub is_crawling: bool,
     pub sensory: SensoryProfile,
+    pub anim: CreatureAnimationController,
 }
 
 impl LyingFigureController {
@@ -81,6 +83,7 @@ impl LyingFigureController {
             attack_cooldown: 0.0,
             is_crawling: false,
             sensory: SensoryProfile::lying_figure(),
+            anim: CreatureAnimationController::new_lying_figure(),
         }
     }
 
@@ -258,6 +261,10 @@ impl LyingFigureController {
             | ScuState::WaitCar
             | ScuState::Confuse => {}
         }
+
+        // Synchronize and update skeletal animation controller with root motion displacement
+        self.anim.sync_lying_figure(self.state);
+        self.anim.update(dt, self.yaw);
     }
 
     /// Turn smoothly towards desired direction.
@@ -278,6 +285,7 @@ impl LyingFigureController {
         } else {
             self.state = ScuState::Damage;
         }
+        self.anim.sync_lying_figure(self.state);
     }
 }
 

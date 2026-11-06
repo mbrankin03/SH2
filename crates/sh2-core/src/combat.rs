@@ -16,6 +16,7 @@
 //!   - `Patches/HoldToStomp.cpp`: Digital button timing (0.2s hold for stomp vs tap for kick).
 //!   - `Patches/SwapLightHeavyAttack.cpp`: 0.2s hold for heavy downswing vs tap for light swing.
 
+use crate::ai::creatures::anim::CreatureAnimationController;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
@@ -1126,6 +1127,7 @@ pub struct CombatTargetEnemy {
     pub down_timer: f32,
     pub hitbox_radius: f32,
     pub hitbox_height: f32,
+    pub anim: CreatureAnimationController,
 }
 
 impl CombatTargetEnemy {
@@ -1147,6 +1149,7 @@ impl CombatTargetEnemy {
             down_timer: 0.0,
             hitbox_radius: 350.0,
             hitbox_height: 1500.0,
+            anim: CreatureAnimationController::new_lying_figure(),
         }
     }
 
@@ -1168,6 +1171,7 @@ impl CombatTargetEnemy {
             down_timer: 0.0,
             hitbox_radius: 300.0,
             hitbox_height: 1600.0,
+            anim: CreatureAnimationController::new_mannequin(),
         }
     }
 
@@ -1203,11 +1207,33 @@ impl CombatTargetEnemy {
         } else {
             self.flinch_timer = 0.5; // Flinch stagger for 0.5s
         }
+
+        // Sync creature animation state
+        if self.id == 1 {
+            let scu_state = if self.is_dead || self.is_downed {
+                crate::ai::creatures::lying_figure::ScuState::Down
+            } else if self.flinch_timer > 0.0 {
+                crate::ai::creatures::lying_figure::ScuState::Damage
+            } else {
+                crate::ai::creatures::lying_figure::ScuState::Chase
+            };
+            self.anim.sync_lying_figure(scu_state);
+        } else {
+            let mkn_state = if self.is_dead || self.is_downed {
+                crate::ai::creatures::mannequin::MknState::Down
+            } else if self.flinch_timer > 0.0 {
+                crate::ai::creatures::mannequin::MknState::Damage
+            } else {
+                crate::ai::creatures::mannequin::MknState::Chase
+            };
+            self.anim.sync_mannequin(mkn_state, false);
+        }
     }
 
     /// Update enemy timers.
     pub fn update(&mut self, dt: f32) {
         if self.is_dead {
+            self.anim.update(dt, self.yaw);
             return;
         }
         if self.flinch_timer > 0.0 {
@@ -1221,6 +1247,28 @@ impl CombatTargetEnemy {
                 self.endurance = self.max_endurance * 0.5;
             }
         }
+
+        // Sync and advance creature animation
+        if self.id == 1 {
+            let scu_state = if self.is_dead || self.is_downed {
+                crate::ai::creatures::lying_figure::ScuState::Down
+            } else if self.flinch_timer > 0.0 {
+                crate::ai::creatures::lying_figure::ScuState::Damage
+            } else {
+                crate::ai::creatures::lying_figure::ScuState::Chase
+            };
+            self.anim.sync_lying_figure(scu_state);
+        } else {
+            let mkn_state = if self.is_dead || self.is_downed {
+                crate::ai::creatures::mannequin::MknState::Down
+            } else if self.flinch_timer > 0.0 {
+                crate::ai::creatures::mannequin::MknState::Damage
+            } else {
+                crate::ai::creatures::mannequin::MknState::Chase
+            };
+            self.anim.sync_mannequin(mkn_state, false);
+        }
+        self.anim.update(dt, self.yaw);
     }
 }
 

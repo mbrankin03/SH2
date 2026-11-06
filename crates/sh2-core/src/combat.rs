@@ -2525,4 +2525,82 @@ mod tests {
         assert!(arena.enemies[pap_idx].position.z > 150.0 + 200.0);
         assert!(arena.enemies[pap_idx].flinch_timer > 0.0);
     }
+
+    #[test]
+    fn test_all_grappling_enemies_grab_and_release() {
+        let dt = 1.0 / 60.0;
+        // Grappling enemies in SH2 bestiary:
+        // id 4: Pyramid Head (idx 7, reach 400.0)
+        // id 5: Abstract Daddy (idx 6, reach 530.0)
+        // id 6: Flesh Lips (idx 5, reach 450.0)
+        // id 8: Creeper (idx 2, reach 220.0)
+        // id 9: Mary Boss (idx 8, reach 550.0)
+        let test_cases = [
+            (7, 4, 300.0), // Pyramid Head
+            (6, 5, 450.0), // Abstract Daddy
+            (5, 6, 350.0), // Flesh Lips
+            (2, 8, 180.0), // Creeper
+            (8, 9, 450.0), // Mary Boss
+        ];
+
+        for (enemy_idx, expected_id, spawn_dist) in test_cases {
+            let mut arena = CombatArena::new();
+            assert_eq!(
+                arena.enemies[enemy_idx].id, expected_id,
+                "Mismatch for enemy index {}",
+                enemy_idx
+            );
+
+            arena.player_position = Vec3::ZERO;
+            arena.player_yaw = 0.0;
+            arena.player.mode = CombatMode::Free;
+
+            // Spawn enemy in front of James within its grab reach
+            arena.enemies[enemy_idx].position = Vec3::new(0.0, 0.0, spawn_dist);
+            arena.enemies[enemy_idx].yaw = std::f32::consts::PI;
+            arena.enemies[enemy_idx].is_attacking = true;
+
+            arena.tick(false, false, false, dt);
+
+            assert_eq!(
+                arena.player.mode,
+                CombatMode::Held,
+                "Enemy id {} failed to trigger grab hold at distance {}",
+                expected_id,
+                spawn_dist
+            );
+            assert_eq!(
+                arena.grappling_enemy_idx,
+                Some(enemy_idx),
+                "Enemy id {} failed to bind grappling_enemy_idx",
+                expected_id
+            );
+            assert!(
+                arena.enemies[enemy_idx].is_grappling_player,
+                "Enemy id {} did not enter is_grappling_player state",
+                expected_id
+            );
+
+            // Break free with struggle
+            arena.player.process_struggle_inputs(40, dt, false);
+            arena.tick(false, false, false, dt);
+
+            assert_eq!(
+                arena.player.mode,
+                CombatMode::Hurt,
+                "James did not enter Hurt mode upon struggle escape from enemy id {}",
+                expected_id
+            );
+            assert!(
+                arena.grappling_enemy_idx.is_none(),
+                "grappling_enemy_idx not cleared after escape from enemy id {}",
+                expected_id
+            );
+            assert!(
+                !arena.enemies[enemy_idx].is_grappling_player,
+                "Enemy id {} remained grappling after escape",
+                expected_id
+            );
+        }
+    }
 }

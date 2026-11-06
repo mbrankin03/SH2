@@ -561,6 +561,45 @@ fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision::CollisionW
         8000.0, 12000.0, 3000.0, 600.0, 600.0,
     )
 }
+
+/// Locate and load authentic `.cam` camera volume file for the given test room, checking SH2:EE overrides first.
+fn find_cam_file_for_room(room: TestRoomKind) -> Option<sh2_assets::formats::cam::CamFile> {
+    let base_roots = [
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+    ];
+
+    let cam_rel = match room {
+        TestRoomKind::RestroomStart => Some(("sh2e/bg/er/er01.cam", "data/bg/er/er01.cam")),
+        TestRoomKind::HotelBoilerRoom => Some(("sh2e/bg/rr/rr21.cam", "data/bg/rr/rr21.cam")),
+        _ => None,
+    };
+
+    if let Some((sh2e_rel, data_rel)) = cam_rel {
+        for base in &base_roots {
+            let base_path = std::path::PathBuf::from(base);
+            // Check SH2:EE override first, then vanilla data
+            let candidates = [base_path.join(sh2e_rel), base_path.join(data_rel)];
+            for p in candidates {
+                if p.exists() {
+                    if let Ok(bytes) = std::fs::read(&p) {
+                        if let Ok(cam) = sh2_assets::formats::cam::parse_cam(&bytes) {
+                            tracing::info!(
+                                "Loaded authentic .cam camera file ({}) with {} road records",
+                                p.display(),
+                                cam.records.len()
+                            );
+                            return Some(cam);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
 fn find_map_file_for_room(
     room: TestRoomKind,
 ) -> (MapFile, glam::Vec3, f32, sh2_renderer::fog::FogUniforms) {
@@ -1561,6 +1600,7 @@ impl ApplicationHandler for SilentHillApp {
 
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.collision = find_cld_file_for_room(initial_room);
+        sim_core.camera.set_cam_file(find_cam_file_for_room(initial_room));
         sim_core.input.set_control_scheme(ControlScheme::Tank);
         sim_core.scenario.flashlight_on = true;
         sim_core.scenario.player_position = player_pos;
@@ -2731,6 +2771,7 @@ impl ApplicationHandler for SilentHillApp {
                     state.fog_uniforms = new_fog;
                     state.render_ctx.update_fog(&state.fog_uniforms);
                     state.sim_core.collision = find_cld_file_for_room(new_room);
+                    state.sim_core.camera.set_cam_file(find_cam_file_for_room(new_room));
                     state.sim_core.scenario.player_position = new_pos;
                     state.sim_core.scenario.player_yaw = new_yaw;
                     state.sim_core.camera.reset_to_player(new_pos, new_yaw);

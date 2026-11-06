@@ -38,6 +38,14 @@ jobs:
       - name: Code Formatting Check
         run: cargo fmt --all -- --check
 
+      - name: AST & Static Guardrails (Anti-Leak & Path Boundaries)
+        if: runner.os == 'Linux'
+        run: |
+          echo "Scanning for forbidden Box::leak usage..."
+          ! grep -rn "Box::leak" crates/
+          echo "Scanning for hardcoded developer /home/ paths..."
+          ! grep -rn "/home/" crates/
+
       - name: Clippy Linter
         run: cargo clippy --workspace --all-targets -- -D warnings
 

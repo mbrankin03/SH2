@@ -3,6 +3,7 @@
 pub mod adx;
 pub mod aix;
 pub mod anm;
+pub mod binary;
 pub mod bink;
 pub mod cam;
 pub mod cld;
@@ -15,8 +16,10 @@ pub mod texture;
 
 pub use adx::{decode_adx, parse_adx_header, AdxHeader, DecodedAdx};
 pub use anm::{
-    compute_bind_locals, compute_skin_matrices, euler_to_matrix, evaluate_pose, interpolate_frames,
-    mat4_inverse, mat4_mul, parse_anm, AnimationFile, AnimationFrame, BoneTransform,
+    compute_bind_locals, compute_skin_matrices, compute_skin_matrices_with_inv,
+    compute_skin_matrices_with_inv_into, euler_to_matrix, evaluate_pose, evaluate_pose_into,
+    interpolate_frames, mat4_inverse, mat4_mul, parse_anm, AnimationFile, AnimationFrame,
+    BoneTransform,
 };
 pub use bink::{
     active_subtitle_for_frame, decode_bink_audio_pcm, fmv_subtitles_for_movie,

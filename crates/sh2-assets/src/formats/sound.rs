@@ -22,6 +22,7 @@
 //! - `.sdb` (Sound Data Bank / waveforms): Holds raw PCM/ADPCM audio sample data addressed by `.sdm`.
 //!   Also parsed when provided as packed container files.
 
+use super::binary::{read_u16, read_u32};
 use crate::error::AssetError;
 
 /// Header identifier for RIFF containers (`RIFF`).
@@ -280,33 +281,4 @@ fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
         loop_start: 0,
         loop_end: 0,
     })
-}
-
-#[inline(always)]
-fn read_u16(data: &[u8], ofs: usize) -> Result<u16, AssetError> {
-    if ofs + 2 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 2,
-            available: data.len(),
-        })
-    } else {
-        Ok(u16::from_le_bytes([data[ofs], data[ofs + 1]]))
-    }
-}
-
-#[inline(always)]
-fn read_u32(data: &[u8], ofs: usize) -> Result<u32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(u32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
-    }
 }

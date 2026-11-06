@@ -3,6 +3,8 @@
 
 pub mod error;
 pub mod formats;
+pub mod resolver;
 
 pub use error::AssetError;
 pub use formats::*;
+pub use resolver::AssetPathResolver;

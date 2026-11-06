@@ -701,27 +701,12 @@ mod tests {
 
     #[test]
     fn test_aix_container_demux_and_decoding() {
-        let base_roots = [
-            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-            "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        ];
-
-        let mut sound_dir = None;
-        for base in &base_roots {
-            let p = Path::new(base).join("data/sound/adx");
-            if p.exists() {
-                sound_dir = Some(p);
-                break;
-            }
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let sound_dir = resolver.data_dir.join("sound/adx");
+        if !sound_dir.exists() {
+            println!("Skipping test_aix_container_demux_and_decoding: sound/adx not found");
+            return;
         }
-
-        let sound_dir = match sound_dir {
-            Some(d) => d,
-            None => {
-                println!("Skipping test_aix_container_demux_and_decoding: sound/adx not found");
-                return;
-            }
-        };
 
         // 1. Test bgm_118.aix (apart/bgm_118.aix) - multi-stream 5-channel ambient
         let bgm_118_path = sound_dir.join("apart/bgm_118.aix");

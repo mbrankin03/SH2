@@ -1087,14 +1087,18 @@ impl AudioEngine {
                                 let input_pid = props
                                     .and_then(|p| p.get("application.process.id"))
                                     .and_then(|pid| pid.as_str());
-                                let client_id =
-                                    input.get("client").and_then(|c| c.as_str()).or_else(|| {
-                                        input.get("client").and_then(|c| c.as_u64()).map(|u| {
-                                            // Some pactl versions serialize client index as number
-                                            Box::leak(u.to_string().into_boxed_str()) as &str
-                                        })
+                                let client_id_owned = input
+                                    .get("client")
+                                    .and_then(|c| c.as_str().map(|s| s.to_string()))
+                                    .or_else(|| {
+                                        input
+                                            .get("client")
+                                            .and_then(|c| c.as_u64())
+                                            .map(|u| u.to_string())
                                     });
-                                let client_pid = client_id.and_then(|cid| client_pids.get(cid));
+                                let client_pid = client_id_owned
+                                    .as_deref()
+                                    .and_then(|cid| client_pids.get(cid));
 
                                 let app = props
                                     .and_then(|p| p.get("application.name"))

@@ -202,7 +202,27 @@ pub fn build_collision_debug_lines(
     wall_color: [f32; 4],
 ) -> Vec<DebugLineVertex> {
     let mut lines = Vec::with_capacity(floors.len() * 6 + walls.len() * 8);
+    build_collision_debug_lines_iter(
+        floors.iter().copied(),
+        walls.iter().copied(),
+        floor_color,
+        wall_color,
+        &mut lines,
+    );
+    lines
+}
 
+/// Zero-allocation line vertex builder receiving iterators directly into a pre-allocated vector.
+pub fn build_collision_debug_lines_iter<F, W>(
+    floors: F,
+    walls: W,
+    floor_color: [f32; 4],
+    wall_color: [f32; 4],
+    lines: &mut Vec<DebugLineVertex>,
+) where
+    F: IntoIterator<Item = [[f32; 3]; 3]>,
+    W: IntoIterator<Item = ([f32; 2], [f32; 2], f32, f32)>,
+{
     // 1. Floor triangles
     for tri in floors {
         let p0 = tri[0];
@@ -220,7 +240,7 @@ pub fn build_collision_debug_lines(
     }
 
     // 2. Wall segment vertical quads: (start, end, y_top, y_bottom)
-    for &(start, end, y_top, y_bottom) in walls {
+    for (start, end, y_top, y_bottom) in walls {
         let top_0 = [start[0], y_top, start[1]];
         let top_1 = [end[0], y_top, end[1]];
         let bot_0 = [start[0], y_bottom, start[1]];
@@ -242,8 +262,6 @@ pub fn build_collision_debug_lines(
         lines.push(DebugLineVertex::new(top_1, wall_color));
         lines.push(DebugLineVertex::new(bot_1, wall_color));
     }
-
-    lines
 }
 
 /// Generates debug wireframe lines for character collision cylinders (`clDbgDrawCharaColi`).

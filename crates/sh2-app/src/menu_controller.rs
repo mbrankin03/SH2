@@ -18,6 +18,8 @@ pub struct AppMenuController {
     pub in_game_active: bool,
     /// Flag indicating that configuration was committed and needs to be applied by the engine loop.
     pub config_applied_pending: Option<AppConfig>,
+    /// Revision counter bumped whenever interactive menu selections or phases change.
+    pub revision: u64,
 }
 
 impl AppMenuController {
@@ -36,17 +38,23 @@ impl AppMenuController {
             config_path: path,
             in_game_active: false,
             config_applied_pending: None,
+            revision: 0,
         }
     }
 
     /// Process per-frame animations and fade transitions.
     pub fn tick(&mut self, dt: f32) {
         if !self.in_game_active {
+            let prev_phase = self.title_sm.phase;
             self.title_sm.tick(dt);
+            if self.title_sm.phase != prev_phase {
+                self.revision = self.revision.wrapping_add(1);
+            }
             if self.title_sm.phase == TitlePhase::TransitionToGame
                 && (self.title_sm.fade_alpha <= 0.05 || !self.title_sm.is_fading_out)
             {
                 self.in_game_active = true;
+                self.revision = self.revision.wrapping_add(1);
                 tracing::info!(
                     "Title sequence complete. Launching scenario: {:?}, Action: {:?}, Riddle: {:?}",
                     self.title_sm.selected_scenario,
@@ -59,6 +67,7 @@ impl AppMenuController {
 
     /// Handle unified navigation input across Title and Options screens.
     pub fn handle_nav(&mut self, action: MenuNavAction) -> MenuSoundCue {
+        self.revision = self.revision.wrapping_add(1);
         if self.title_sm.phase == TitlePhase::OptionsMenu {
             match action {
                 MenuNavAction::Up => {
@@ -148,6 +157,7 @@ impl AppMenuController {
 
     /// Cycle tabs in Options Menu using shoulder triggers / Q & E keys.
     pub fn switch_options_tab(&mut self, forward: bool) -> MenuSoundCue {
+        self.revision = self.revision.wrapping_add(1);
         if self.title_sm.phase == TitlePhase::OptionsMenu
             || (self.pause_menu.is_open
                 && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu)
@@ -172,6 +182,7 @@ impl AppMenuController {
 
     /// Handle pause menu navigation inputs.
     pub fn handle_pause_nav(&mut self, action: MenuNavAction) -> (MenuSoundCue, PauseAction) {
+        self.revision = self.revision.wrapping_add(1);
         if !self.pause_menu.is_open {
             return (MenuSoundCue::None, PauseAction::None);
         }

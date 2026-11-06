@@ -28,6 +28,7 @@
 //! - **Sub-file 2 (Textures)**:
 //!   - Sequential embedded DXT compressed texture blocks tagged by texture IDs.
 
+use super::binary::{read_f32, read_u16, read_u32};
 use crate::error::AssetError;
 use crate::formats::dxt::decode_dxt;
 use std::collections::HashMap;
@@ -699,50 +700,4 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
     }
 
     Ok(())
-}
-
-#[inline(always)]
-fn read_u16(data: &[u8], ofs: usize) -> Result<u16, AssetError> {
-    if ofs + 2 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 2,
-            available: data.len(),
-        })
-    } else {
-        Ok(u16::from_le_bytes([data[ofs], data[ofs + 1]]))
-    }
-}
-
-#[inline(always)]
-fn read_u32(data: &[u8], ofs: usize) -> Result<u32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(u32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
-    }
-}
-
-#[inline(always)]
-fn read_f32(data: &[u8], ofs: usize) -> Result<f32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(f32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
-    }
 }

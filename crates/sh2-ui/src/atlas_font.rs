@@ -193,7 +193,8 @@ impl AtlasFont {
             // 2. Try known workspace candidate paths
             let candidates = [
                 PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
-                PathBuf::from("/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
+                PathBuf::from("../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
+                PathBuf::from("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
             ];
             for c in &candidates {
                 let p = Self::retail_font_path(c);

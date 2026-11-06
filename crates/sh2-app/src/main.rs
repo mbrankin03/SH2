@@ -692,12 +692,7 @@ fn find_map_file_for_room(
                     };
                     // Authentic rr21 hotel boiler room entrance coordinates (open doorway corridor, outside boiler collision hulls):
                     // Floor Y = 0.0, X = -100850.0, Z = -59400.0, facing North-East into the room (yaw = 2.0 rad)
-                    return (
-                        map,
-                        glam::Vec3::new(-100850.0, 0.0, -59400.0),
-                        2.0,
-                        fog,
-                    );
+                    return (map, glam::Vec3::new(-100850.0, 0.0, -59400.0), 2.0, fog);
                 }
             }
             tracing::warn!("Failed to load rr21.map; using fallback room geometry");

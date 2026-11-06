@@ -1022,10 +1022,10 @@ impl AudioEngine {
     /// On Linux with PipeWire/PulseAudio, this uses `pactl move-sink-input` to immediately
     /// move the existing ALSA/PipeWire stream to the requested hardware sink without destroying
     /// the audio manager or interrupting audio playback.
-    pub fn migrate_stream_to_device(&mut self, device_name: Option<&str>) {
+    pub fn migrate_stream_to_device(&mut self, _device_name: Option<&str>) {
         #[cfg(target_os = "linux")]
         {
-            let target_sink_name = if let Some(target) = device_name {
+            let target_sink_name = if let Some(target) = _device_name {
                 let output = std::process::Command::new("pactl")
                     .args(["-f", "json", "list", "sinks"])
                     .output()

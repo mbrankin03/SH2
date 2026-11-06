@@ -977,6 +977,11 @@ struct AppState {
     enemy_mkn_asset: Option<CharacterAsset>,
     enemy_nse_asset: Option<CharacterAsset>,
     enemy_red_asset: Option<CharacterAsset>,
+    enemy_pap_asset: Option<CharacterAsset>,
+    enemy_ike_asset: Option<CharacterAsset>,
+    enemy_arm_asset: Option<CharacterAsset>,
+    enemy_tyu_asset: Option<CharacterAsset>,
+    enemy_bos_asset: Option<CharacterAsset>,
     key_ready_held: bool,
     key_attack_pressed: bool,
     key_attack_held: bool,
@@ -1180,6 +1185,36 @@ impl ApplicationHandler for SilentHillApp {
             "Pyramid Head (red)",
             &["data/chr/red/red.mdl"],
             &["data/chr/red/red.anm"],
+        );
+        let enemy_pap_asset = load_character_asset(
+            &render_ctx,
+            "Abstract Daddy (pap)",
+            &["data/chr/pap/pap.mdl"],
+            &["data/chr/pap/pap.anm"],
+        );
+        let enemy_ike_asset = load_character_asset(
+            &render_ctx,
+            "Flesh Lips (ike)",
+            &["data/chr/ike/ike.mdl"],
+            &["data/chr/ike/ike.anm"],
+        );
+        let enemy_arm_asset = load_character_asset(
+            &render_ctx,
+            "Mandarin (arm)",
+            &["data/chr/arm/arm.mdl"],
+            &["data/chr/arm/arm.anm"],
+        );
+        let enemy_tyu_asset = load_character_asset(
+            &render_ctx,
+            "Creeper (tyu)",
+            &["data/chr/tyu/tyu.mdl"],
+            &["data/chr/tyu/tyu.anm"],
+        );
+        let enemy_bos_asset = load_character_asset(
+            &render_ctx,
+            "Mary Final Boss (bos)",
+            &["data/chr/bos/bos.mdl"],
+            &["data/chr/bos/bos.anm"],
         );
 
         let mut combat_arena = sh2_core::combat::CombatArena::new();
@@ -1434,6 +1469,11 @@ impl ApplicationHandler for SilentHillApp {
             enemy_mkn_asset,
             enemy_nse_asset,
             enemy_red_asset,
+            enemy_pap_asset,
+            enemy_ike_asset,
+            enemy_arm_asset,
+            enemy_tyu_asset,
+            enemy_bos_asset,
             key_ready_held: false,
             key_attack_pressed: false,
             key_attack_held: false,
@@ -3103,6 +3143,11 @@ impl ApplicationHandler for SilentHillApp {
                                 2 => state.enemy_mkn_asset.as_ref(),
                                 3 => state.enemy_nse_asset.as_ref(),
                                 4 => state.enemy_red_asset.as_ref(),
+                                5 => state.enemy_pap_asset.as_ref(),
+                                6 => state.enemy_ike_asset.as_ref(),
+                                7 => state.enemy_arm_asset.as_ref(),
+                                8 => state.enemy_tyu_asset.as_ref(),
+                                9 => state.enemy_bos_asset.as_ref(),
                                 _ => None,
                             };
 
@@ -3155,7 +3200,17 @@ impl ApplicationHandler for SilentHillApp {
                                     );
 
                                     let (es, ec_yaw) = enemy.yaw.sin_cos();
-                                    let ey = enemy.position.y;
+                                    // Height adjustments for specific monsters:
+                                    // - Flesh Lips (6): hung from ceiling frame (elevate Y by -1200 so it hangs down into room)
+                                    // - Mandarin (7): in retail hangs below floor grates (root Y +880); elevate by -1000 so it crawls visibly above ground
+                                    // - Mary Boss (9): hovering cage boss (elevate Y by -1000)
+                                    let y_offset = match enemy.id {
+                                        6 => -1200.0,
+                                        7 => -1000.0,
+                                        9 => -1000.0,
+                                        _ => 0.0,
+                                    };
+                                    let ey = enemy.position.y + y_offset;
                                     let world_mat = [
                                         [ec_yaw, 0.0, es, enemy.position.x],
                                         [0.0, 1.0, 0.0, ey],
@@ -3188,6 +3243,11 @@ impl ApplicationHandler for SilentHillApp {
                                 2 => state.enemy_mkn_asset.as_ref(),
                                 3 => state.enemy_nse_asset.as_ref(),
                                 4 => state.enemy_red_asset.as_ref(),
+                                5 => state.enemy_pap_asset.as_ref(),
+                                6 => state.enemy_ike_asset.as_ref(),
+                                7 => state.enemy_arm_asset.as_ref(),
+                                8 => state.enemy_tyu_asset.as_ref(),
+                                9 => state.enemy_bos_asset.as_ref(),
                                 _ => None,
                             };
                             if let Some(ea) = asset {

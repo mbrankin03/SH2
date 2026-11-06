@@ -1239,6 +1239,136 @@ impl CombatTargetEnemy {
         }
     }
 
+    /// Create an Abstract Daddy (pap) boss target.
+    /// Health: 1800, Endurance: 800.
+    pub fn new_abstract_daddy(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Abstract Daddy (pap)",
+            position,
+            yaw: 0.0,
+            health: 1800.0,
+            max_health: 1800.0,
+            endurance: 800.0,
+            max_endurance: 800.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 0.8,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 500.0,
+            hitbox_height: 1800.0,
+            anim: CreatureAnimationController::new_abstract_daddy(),
+        }
+    }
+
+    /// Create a Flesh Lips (ike) boss target.
+    /// Health: 1200, Endurance: 600.
+    pub fn new_flesh_lips(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Flesh Lips (ike)",
+            position,
+            yaw: 0.0,
+            health: 1200.0,
+            max_health: 1200.0,
+            endurance: 600.0,
+            max_endurance: 600.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 1.0,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 400.0,
+            hitbox_height: 1800.0,
+            anim: CreatureAnimationController::new_flesh_lips(),
+        }
+    }
+
+    /// Create a Mandarin (arm) target placed above ground for animation visibility.
+    /// Health: 500, Endurance: 250.
+    pub fn new_mandarin(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Mandarin (arm)",
+            position,
+            yaw: 0.0,
+            health: 500.0,
+            max_health: 500.0,
+            endurance: 250.0,
+            max_endurance: 250.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 0.7,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 350.0,
+            hitbox_height: 1400.0,
+            anim: CreatureAnimationController::new_mandarin(),
+        }
+    }
+
+    /// Create a Creeper (tyu) insect swarm target.
+    /// Health: 50, Endurance: 20 (dies in 1 stomp or plank hit).
+    pub fn new_creeper(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Creeper (tyu)",
+            position,
+            yaw: 0.0,
+            health: 50.0,
+            max_health: 50.0,
+            endurance: 20.0,
+            max_endurance: 20.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 0.4,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 150.0,
+            hitbox_height: 200.0,
+            anim: CreatureAnimationController::new_creeper(),
+        }
+    }
+
+    /// Create a Mary / Maria Final Boss (bos) target.
+    /// Health: 2500, Endurance: 1200.
+    pub fn new_mary_boss(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Mary Final Boss (bos)",
+            position,
+            yaw: 0.0,
+            health: 2500.0,
+            max_health: 2500.0,
+            endurance: 1200.0,
+            max_endurance: 1200.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 1.2,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 500.0,
+            hitbox_height: 2400.0,
+            anim: CreatureAnimationController::new_mary_boss(),
+        }
+    }
+
     /// Get current active collision hitbox.
     pub fn hitbox(&self) -> CombatHitbox {
         if self.is_downed {
@@ -1350,29 +1480,35 @@ impl CombatTargetEnemy {
                     }
                 }
             } else {
-                let attack_range = if self.id == 1 {
-                    1200.0
-                } else if self.id == 3 {
-                    800.0 // Nurse pipe swing
-                } else if self.id == 4 {
-                    1100.0 // Pyramid Head great knife
-                } else {
-                    650.0 // Mannequin
+                let attack_range = match self.id {
+                    1 => 1200.0, // Lying figure acid spray
+                    2 => 650.0,  // Mannequin
+                    3 => 800.0,  // Nurse pipe swing
+                    4 => 1100.0, // Pyramid Head great knife
+                    5 => 800.0,  // Abstract Daddy strangle
+                    6 => 700.0,  // Flesh Lips kick/choke
+                    7 => 600.0,  // Mandarin tentacle strike
+                    8 => 200.0,  // Creeper bite
+                    9 => 1400.0, // Mary final boss moth swarm
+                    _ => 700.0,
                 };
                 if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < 0.6 {
                     // Trigger creature attack
                     self.is_attacking = true;
                     self.attack_timer = 0.0;
-                } else if dist > 450.0 {
+                } else if dist > 450.0 || (self.id == 8 && dist > 150.0) {
                     // Move towards player using authentic walk root motion
-                    let walk_speed = if self.id == 1 {
-                        402.0
-                    } else if self.id == 3 {
-                        480.0
-                    } else if self.id == 4 {
-                        330.0
-                    } else {
-                        576.0
+                    let walk_speed = match self.id {
+                        1 => 402.0,  // scu
+                        2 => 576.0,  // mkn
+                        3 => 480.0,  // nse
+                        4 => 330.0,  // red
+                        5 => 540.0,  // pap
+                        6 => 360.0,  // ike
+                        7 => 450.0,  // arm
+                        8 => 1200.0, // tyu
+                        9 => 420.0,  // bos
+                        _ => 400.0,
                     };
                     self.position.x += self.yaw.sin() * walk_speed * dt;
                     self.position.z += self.yaw.cos() * walk_speed * dt;
@@ -1381,46 +1517,233 @@ impl CombatTargetEnemy {
         }
 
         // Sync and advance creature animation
-        if self.id == 1 {
-            let scu_state = if self.is_dead || self.is_downed {
-                crate::ai::creatures::lying_figure::ScuState::Down
-            } else if self.flinch_timer > 0.0 {
-                crate::ai::creatures::lying_figure::ScuState::Damage
-            } else if self.is_attacking {
-                crate::ai::creatures::lying_figure::ScuState::Attack
-            } else {
-                crate::ai::creatures::lying_figure::ScuState::Chase
-            };
-            self.anim.sync_lying_figure(scu_state);
-        } else if self.id == 2 {
-            let mkn_state = if self.is_dead || self.is_downed {
-                crate::ai::creatures::mannequin::MknState::Down
-            } else if self.flinch_timer > 0.0 {
-                crate::ai::creatures::mannequin::MknState::Damage
-            } else if self.is_attacking {
-                crate::ai::creatures::mannequin::MknState::Attack
-            } else {
-                crate::ai::creatures::mannequin::MknState::Chase
-            };
-            self.anim.sync_mannequin(mkn_state, self.is_kick_next);
-        } else if self.id == 3 {
-            let nse_state = if self.is_dead || self.is_downed {
-                crate::ai::creatures::nurse::NseState::Down
-            } else if self.flinch_timer > 0.0 {
-                crate::ai::creatures::nurse::NseState::Damage
-            } else if self.is_attacking {
-                crate::ai::creatures::nurse::NseState::Attack
-            } else {
-                crate::ai::creatures::nurse::NseState::Chase
-            };
-            self.anim.sync_nurse(nse_state);
-        } else if self.id == 4 {
-            let red_state = if self.is_attacking {
-                crate::ai::creatures::pyramid_head::RedState::Attack
-            } else {
-                crate::ai::creatures::pyramid_head::RedState::Chase
-            };
-            self.anim.sync_pyramid_head(red_state);
+        match self.id {
+            1 => {
+                let scu_state = if self.is_dead || self.is_downed {
+                    crate::ai::creatures::lying_figure::ScuState::Down
+                } else if self.flinch_timer > 0.0 {
+                    crate::ai::creatures::lying_figure::ScuState::Damage
+                } else if self.is_attacking {
+                    crate::ai::creatures::lying_figure::ScuState::Attack
+                } else {
+                    crate::ai::creatures::lying_figure::ScuState::Chase
+                };
+                self.anim.sync_lying_figure(scu_state);
+            }
+            2 => {
+                let mkn_state = if self.is_dead || self.is_downed {
+                    crate::ai::creatures::mannequin::MknState::Down
+                } else if self.flinch_timer > 0.0 {
+                    crate::ai::creatures::mannequin::MknState::Damage
+                } else if self.is_attacking {
+                    crate::ai::creatures::mannequin::MknState::Attack
+                } else {
+                    crate::ai::creatures::mannequin::MknState::Chase
+                };
+                self.anim.sync_mannequin(mkn_state, self.is_kick_next);
+            }
+            3 => {
+                let nse_state = if self.is_dead || self.is_downed {
+                    crate::ai::creatures::nurse::NseState::Down
+                } else if self.flinch_timer > 0.0 {
+                    crate::ai::creatures::nurse::NseState::Damage
+                } else if self.is_attacking {
+                    crate::ai::creatures::nurse::NseState::Attack
+                } else {
+                    crate::ai::creatures::nurse::NseState::Chase
+                };
+                self.anim.sync_nurse(nse_state);
+            }
+            4 => {
+                let red_state = if self.is_attacking {
+                    crate::ai::creatures::pyramid_head::RedState::Attack
+                } else {
+                    crate::ai::creatures::pyramid_head::RedState::Chase
+                };
+                self.anim.sync_pyramid_head(red_state);
+            }
+            5 => {
+                // Abstract Daddy (pap)
+                use crate::ai::creatures::anim::{AbstractDaddyAnimClips, CreatureAnimStateKind};
+                if self.is_dead || self.is_downed {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Knockdown,
+                        AbstractDaddyAnimClips::KNOCKDOWN,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.flinch_timer > 0.0 {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Flinch,
+                        AbstractDaddyAnimClips::FLINCH,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.is_attacking {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackPrimary,
+                        AbstractDaddyAnimClips::STRANGLE_GRAB,
+                        0.0,
+                        Some((
+                            AbstractDaddyAnimClips::ATTACK_HIT_START,
+                            AbstractDaddyAnimClips::ATTACK_HIT_END,
+                        )),
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Locomotion,
+                        AbstractDaddyAnimClips::WALK,
+                        AbstractDaddyAnimClips::WALK_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                }
+            }
+            6 => {
+                // Flesh Lips (ike)
+                use crate::ai::creatures::anim::{CreatureAnimStateKind, FleshLipsAnimClips};
+                if self.is_dead {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Knockdown,
+                        FleshLipsAnimClips::FALL_DEATH,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.flinch_timer > 0.0 {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Flinch,
+                        FleshLipsAnimClips::FLINCH,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.is_attacking {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackPrimary,
+                        FleshLipsAnimClips::CHOKE_DESCEND,
+                        0.0,
+                        Some((
+                            FleshLipsAnimClips::ATTACK_HIT_START,
+                            FleshLipsAnimClips::ATTACK_HIT_END,
+                        )),
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Locomotion,
+                        FleshLipsAnimClips::SWING_ADVANCE,
+                        FleshLipsAnimClips::SWING_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                }
+            }
+            7 => {
+                // Mandarin (arm)
+                use crate::ai::creatures::anim::{CreatureAnimStateKind, MandarinAnimClips};
+                if self.is_dead || self.is_downed {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Knockdown,
+                        MandarinAnimClips::KNOCKDOWN,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.flinch_timer > 0.0 {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Flinch,
+                        MandarinAnimClips::FLINCH,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.is_attacking {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackPrimary,
+                        MandarinAnimClips::TENTACLE_STRIKE,
+                        0.0,
+                        Some((
+                            MandarinAnimClips::ATTACK_HIT_START,
+                            MandarinAnimClips::ATTACK_HIT_END,
+                        )),
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Locomotion,
+                        MandarinAnimClips::CRAWL,
+                        MandarinAnimClips::CRAWL_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                }
+            }
+            8 => {
+                // Creeper (tyu)
+                use crate::ai::creatures::anim::{CreatureAnimStateKind, CreeperAnimClips};
+                if self.is_attacking {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackPrimary,
+                        CreeperAnimClips::BITE,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Locomotion,
+                        CreeperAnimClips::SCUTTLE,
+                        CreeperAnimClips::SCUTTLE_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                }
+            }
+            9 => {
+                // Mary Final Boss (bos)
+                use crate::ai::creatures::anim::{CreatureAnimStateKind, MaryBossAnimClips};
+                if self.is_dead {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Knockdown,
+                        MaryBossAnimClips::DEATH_FALL,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.flinch_timer > 0.0 {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Flinch,
+                        MaryBossAnimClips::FLINCH,
+                        0.0,
+                        None,
+                        None,
+                    );
+                } else if self.is_attacking {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackPrimary,
+                        MaryBossAnimClips::MOTH_SWARM_ATTACK,
+                        0.0,
+                        Some((
+                            MaryBossAnimClips::ATTACK_HIT_START,
+                            MaryBossAnimClips::ATTACK_HIT_END,
+                        )),
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Locomotion,
+                        MaryBossAnimClips::HOVER_IDLE,
+                        MaryBossAnimClips::HOVER_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                }
+            }
+            _ => {}
         }
         self.anim.update(dt, self.yaw);
     }
@@ -1443,7 +1766,9 @@ impl Default for CombatArena {
 }
 
 impl CombatArena {
-    /// Initialize a combat test arena with Lying Figure, Mannequin, Bubble Head Nurse, and Pyramid Head.
+    /// Initialize a combat test arena with all monsters and bosses:
+    /// Lying Figure, Mannequin, Bubble Head Nurse, Pyramid Head, Abstract Daddy,
+    /// Flesh Lips, Mandarin (above ground), Creeper swarm, and Mary Final Boss.
     pub fn new() -> Self {
         let player = CombatController::new(false, false);
         let enemies = vec![
@@ -1451,6 +1776,11 @@ impl CombatArena {
             CombatTargetEnemy::new_mannequin(2, Vec3::new(900.0, 0.0, 1800.0)),
             CombatTargetEnemy::new_nurse(3, Vec3::new(-900.0, 0.0, 2000.0)),
             CombatTargetEnemy::new_pyramid_head(4, Vec3::new(0.0, 0.0, 2800.0)),
+            CombatTargetEnemy::new_abstract_daddy(5, Vec3::new(1400.0, 0.0, 2400.0)),
+            CombatTargetEnemy::new_flesh_lips(6, Vec3::new(-1400.0, 0.0, 2400.0)),
+            CombatTargetEnemy::new_mandarin(7, Vec3::new(600.0, 0.0, 1200.0)),
+            CombatTargetEnemy::new_creeper(8, Vec3::new(-500.0, 0.0, 1100.0)),
+            CombatTargetEnemy::new_mary_boss(9, Vec3::new(0.0, 0.0, 3600.0)),
         ];
 
         Self {
@@ -1685,7 +2015,7 @@ mod tests {
         let dt = 1.0 / 60.0;
 
         // Verify initial state
-        assert_eq!(arena.enemies.len(), 4);
+        assert_eq!(arena.enemies.len(), 9);
         assert_eq!(arena.enemies[0].health, 700.0);
 
         // 1. Ready handgun and fire raycast at Lying Figure in front

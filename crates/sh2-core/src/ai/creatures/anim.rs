@@ -133,6 +133,78 @@ impl PyramidHeadAnimClips {
     pub const ATTACK_HIT_END: u32 = 105;
 }
 
+/// Clip definitions for Abstract Daddy (`chr/pap`, 29 bones, `pap.anm`, 686 frames).
+pub struct AbstractDaddyAnimClips;
+
+impl AbstractDaddyAnimClips {
+    pub const STAND: AnimationClip = AnimationClip::new(0, 29, 15.0, true);
+    pub const WALK: AnimationClip = AnimationClip::new(30, 89, 30.0, true);
+    pub const CHARGE_ATTACK: AnimationClip = AnimationClip::new(90, 149, 30.0, false);
+    pub const STRANGLE_GRAB: AnimationClip = AnimationClip::new(150, 209, 30.0, false);
+    pub const FLINCH: AnimationClip = AnimationClip::new(210, 245, 30.0, false);
+    pub const KNOCKDOWN: AnimationClip = AnimationClip::new(318, 430, 30.0, false);
+
+    pub const WALK_ROOT_MOTION_PER_FRAME: f32 = 18.0; // 540 units/s
+    pub const ATTACK_HIT_START: u32 = 110;
+    pub const ATTACK_HIT_END: u32 = 135;
+}
+
+/// Clip definitions for Flesh Lips (`chr/ike`, 16 bones, `ike.anm`, 541 frames).
+pub struct FleshLipsAnimClips;
+
+impl FleshLipsAnimClips {
+    pub const HANG_IDLE: AnimationClip = AnimationClip::new(0, 59, 15.0, true);
+    pub const SWING_ADVANCE: AnimationClip = AnimationClip::new(60, 149, 30.0, true);
+    pub const CHOKE_DESCEND: AnimationClip = AnimationClip::new(150, 239, 30.0, false);
+    pub const KICK_THRASH: AnimationClip = AnimationClip::new(240, 329, 30.0, false);
+    pub const FLINCH: AnimationClip = AnimationClip::new(330, 375, 30.0, false);
+    pub const FALL_DEATH: AnimationClip = AnimationClip::new(517, 540, 30.0, false);
+
+    pub const SWING_ROOT_MOTION_PER_FRAME: f32 = 12.0; // 360 units/s
+    pub const ATTACK_HIT_START: u32 = 180;
+    pub const ATTACK_HIT_END: u32 = 220;
+}
+
+/// Clip definitions for Mandarin (`chr/arm`, 15 bones, `arm.anm`, 405 frames).
+pub struct MandarinAnimClips;
+
+impl MandarinAnimClips {
+    pub const HANG_IDLE: AnimationClip = AnimationClip::new(0, 29, 15.0, true);
+    pub const CRAWL: AnimationClip = AnimationClip::new(30, 89, 30.0, true);
+    pub const TENTACLE_STRIKE: AnimationClip = AnimationClip::new(90, 149, 30.0, false);
+    pub const FLINCH: AnimationClip = AnimationClip::new(150, 180, 30.0, false);
+    pub const KNOCKDOWN: AnimationClip = AnimationClip::new(242, 320, 30.0, false);
+
+    pub const CRAWL_ROOT_MOTION_PER_FRAME: f32 = 15.0; // 450 units/s
+    pub const ATTACK_HIT_START: u32 = 105;
+    pub const ATTACK_HIT_END: u32 = 130;
+}
+
+/// Clip definitions for Creeper cockroach swarm (`chr/tyu`, 22 bones, `tyu.anm`, 8 frames).
+pub struct CreeperAnimClips;
+
+impl CreeperAnimClips {
+    pub const SCUTTLE: AnimationClip = AnimationClip::new(0, 7, 30.0, true);
+    pub const BITE: AnimationClip = AnimationClip::new(0, 7, 30.0, false);
+
+    pub const SCUTTLE_ROOT_MOTION_PER_FRAME: f32 = 40.0; // 1200 units/s
+}
+
+/// Clip definitions for Mary / Maria Final Boss (`chr/bos`, 45 bones, `bos.anm`, 228 frames).
+pub struct MaryBossAnimClips;
+
+impl MaryBossAnimClips {
+    pub const HOVER_IDLE: AnimationClip = AnimationClip::new(0, 45, 15.0, true);
+    pub const MOTH_SWARM_ATTACK: AnimationClip = AnimationClip::new(46, 105, 30.0, false);
+    pub const TENTACLE_WHIP: AnimationClip = AnimationClip::new(106, 165, 30.0, false);
+    pub const FLINCH: AnimationClip = AnimationClip::new(166, 196, 30.0, false);
+    pub const DEATH_FALL: AnimationClip = AnimationClip::new(197, 227, 30.0, false);
+
+    pub const HOVER_ROOT_MOTION_PER_FRAME: f32 = 14.0; // 420 units/s
+    pub const ATTACK_HIT_START: u32 = 65;
+    pub const ATTACK_HIT_END: u32 = 95;
+}
+
 /// Generalized creature animation state synchronized with AI FSMs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CreatureAnimStateKind {
@@ -223,6 +295,51 @@ impl CreatureAnimationController {
         Self::new(
             CreatureAnimStateKind::Idle,
             PyramidHeadAnimClips::STAND,
+            0.0,
+        )
+    }
+
+    /// Factory for Abstract Daddy controller.
+    pub fn new_abstract_daddy() -> Self {
+        Self::new(
+            CreatureAnimStateKind::Idle,
+            AbstractDaddyAnimClips::STAND,
+            0.0,
+        )
+    }
+
+    /// Factory for Flesh Lips controller.
+    pub fn new_flesh_lips() -> Self {
+        Self::new(
+            CreatureAnimStateKind::Idle,
+            FleshLipsAnimClips::HANG_IDLE,
+            0.0,
+        )
+    }
+
+    /// Factory for Mandarin controller.
+    pub fn new_mandarin() -> Self {
+        Self::new(
+            CreatureAnimStateKind::Idle,
+            MandarinAnimClips::HANG_IDLE,
+            0.0,
+        )
+    }
+
+    /// Factory for Creeper controller.
+    pub fn new_creeper() -> Self {
+        Self::new(
+            CreatureAnimStateKind::Locomotion,
+            CreeperAnimClips::SCUTTLE,
+            CreeperAnimClips::SCUTTLE_ROOT_MOTION_PER_FRAME,
+        )
+    }
+
+    /// Factory for Mary Boss controller.
+    pub fn new_mary_boss() -> Self {
+        Self::new(
+            CreatureAnimStateKind::Idle,
+            MaryBossAnimClips::HOVER_IDLE,
             0.0,
         )
     }

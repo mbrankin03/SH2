@@ -8,6 +8,7 @@ use crate::animation::{
 };
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
+use crate::collision::{CollisionConfig, CollisionWorld};
 use crate::input::{ControlScheme, HapticFeedback, InputManager};
 use crate::locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
@@ -25,6 +26,10 @@ pub struct SimulationCore {
     pub scenario: ScenarioState,
     /// Controller and gamepad manager.
     pub input: InputManager,
+    /// Collision detection and response environment.
+    pub collision: CollisionWorld,
+    /// Collision kinematics tuning parameters.
+    pub collision_config: CollisionConfig,
     /// Authentic 1:1 PS2/PC player locomotion and turning controller.
     pub locomotion: PlayerLocomotionController,
     /// Character skeletal animation controller.
@@ -62,6 +67,8 @@ impl SimulationCore {
             camera,
             scenario,
             input: InputManager::new(Default::default()),
+            collision: CollisionWorld::new(),
+            collision_config: CollisionConfig::default(),
             locomotion: PlayerLocomotionController::new(),
             animation: CharacterAnimationController::new(
                 AnimationStateKind::Idle,
@@ -148,7 +155,14 @@ impl SimulationCore {
         let out =
             self.locomotion
                 .update(&locomotion_in, &mut self.scenario.player_yaw, dt, is_tank);
-        self.scenario.player_position += out.delta_position;
+
+        // Apply locomotion delta with collision wall pushback and floor sampling
+        let desired_pos = self.scenario.player_position + out.delta_position;
+        self.scenario.player_position = self.collision.resolve_character_movement(
+            self.scenario.player_position,
+            desired_pos,
+            &self.collision_config,
+        );
         self.last_locomotion = out;
 
         // 3b. Update animation locomotion state machine based on calibrated locomotion state

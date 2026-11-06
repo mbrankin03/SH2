@@ -103,8 +103,10 @@ impl Ps2CameraController {
             // Camera eye is positioned East (+X) behind James framing towards the mirror: (-18811.6, -900.0, 20429.55)
             player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0)
         } else if player_pos.x < -50000.0 {
-            // Authentic PS2 rr21 hotel boiler room entrance camera position inside the room RD boundaries
-            Vec3::new(-100700.0, -1400.0, -59000.0)
+            // Authentic PS2 rr21 hotel boiler room entrance camera position inside the room RD boundaries:
+            // High fixed perspective (Road 0 RD area: X in [-99900, -99500], Z in [-59750, -59350], Y = -1450)
+            // looking back across the room toward the doorway corridor.
+            Vec3::new(-99700.0, -1450.0, -59600.0)
         } else {
             player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
         };
@@ -162,8 +164,9 @@ impl Ps2CameraController {
             player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0)
         } else if player_pos.x < -50000.0 {
             // Authentic PS2 rr21 hotel boiler room entrance camera position inside the room RD boundaries:
-            // Centered in RD rect (-100700, -1400, -59000), framed down at James entering from the sinks
-            Vec3::new(-100700.0, -1400.0, -59000.0)
+            // High fixed perspective (Road 0 RD area: X in [-99900, -99500], Z in [-59750, -59350], Y = -1450)
+            // looking back across the room toward the doorway corridor.
+            Vec3::new(-99700.0, -1450.0, -59600.0)
         } else {
             // General chase camera fallback for open areas
             player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)

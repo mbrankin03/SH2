@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+sh2-assets = { path = "../sh2-assets" }
 glam = { workspace = true }
 bytemuck = { workspace = true }
 thiserror = { workspace = true }

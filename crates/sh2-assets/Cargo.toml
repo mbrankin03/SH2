@@ -6,7 +6,6 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-sh2-core = { workspace = true }
 bytemuck = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

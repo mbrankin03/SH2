@@ -2043,7 +2043,6 @@ dependencies = [
  "bytemuck",
  "image",
  "log",
- "sh2-core",
  "thiserror 2.0.21",
  "tracing",
 ]
@@ -2074,6 +2073,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "sh2-assets",
  "thiserror 2.0.21",
  "tracing",
 ]

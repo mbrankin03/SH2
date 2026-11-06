@@ -1117,6 +1117,9 @@ pub struct CombatTargetEnemy {
     pub name: &'static str,
     pub position: Vec3,
     pub yaw: f32,
+    pub spawn_origin: Vec3,
+    pub aggro_radius: f32,
+    pub is_aggroed: bool,
     pub health: f32,
     pub max_health: f32,
     pub endurance: f32,
@@ -1143,6 +1146,9 @@ impl CombatTargetEnemy {
             name: "Lying Figure (scu)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 1800.0,
+            is_aggroed: false,
             health: 700.0,
             max_health: 700.0,
             endurance: 285.0,
@@ -1169,6 +1175,9 @@ impl CombatTargetEnemy {
             name: "Mannequin (mkn)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 1800.0,
+            is_aggroed: false,
             health: 490.0,
             max_health: 490.0,
             endurance: 200.0,
@@ -1195,6 +1204,9 @@ impl CombatTargetEnemy {
             name: "Bubble Head Nurse (nse)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 1800.0,
+            is_aggroed: false,
             health: 600.0,
             max_health: 600.0,
             endurance: 260.0,
@@ -1221,6 +1233,9 @@ impl CombatTargetEnemy {
             name: "Pyramid Head (red)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 2000.0,
+            is_aggroed: false,
             health: 2000.0,
             max_health: 2000.0,
             endurance: 1000.0,
@@ -1247,6 +1262,9 @@ impl CombatTargetEnemy {
             name: "Abstract Daddy (pap)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 2000.0,
+            is_aggroed: false,
             health: 1800.0,
             max_health: 1800.0,
             endurance: 800.0,
@@ -1273,6 +1291,9 @@ impl CombatTargetEnemy {
             name: "Flesh Lips (ike)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 2000.0,
+            is_aggroed: false,
             health: 1200.0,
             max_health: 1200.0,
             endurance: 600.0,
@@ -1299,6 +1320,9 @@ impl CombatTargetEnemy {
             name: "Mandarin (arm)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 1800.0,
+            is_aggroed: false,
             health: 500.0,
             max_health: 500.0,
             endurance: 250.0,
@@ -1325,6 +1349,9 @@ impl CombatTargetEnemy {
             name: "Creeper (tyu)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 1600.0,
+            is_aggroed: false,
             health: 50.0,
             max_health: 50.0,
             endurance: 20.0,
@@ -1351,6 +1378,9 @@ impl CombatTargetEnemy {
             name: "Mary Final Boss (bos)",
             position,
             yaw: 0.0,
+            spawn_origin: position,
+            aggro_radius: 2200.0,
+            is_aggroed: false,
             health: 2500.0,
             max_health: 2500.0,
             endurance: 1200.0,
@@ -1388,6 +1418,7 @@ impl CombatTargetEnemy {
         self.endurance = (self.endurance - atk.sp).max(0.0);
         self.is_attacking = false;
         self.attack_timer = 0.0;
+        self.is_aggroed = true; // Retaliate immediately if struck
 
         if self.is_downed {
             // Attacks against downed enemies finish them off or trigger death twitch
@@ -1455,63 +1486,83 @@ impl CombatTargetEnemy {
             let dx = player_pos.x - self.position.x;
             let dz = player_pos.z - self.position.z;
             let dist = (dx * dx + dz * dz).sqrt();
-            let desired_yaw = dx.atan2(dz);
 
-            // Smoothly turn towards player
-            let mut diff = desired_yaw - self.yaw;
-            while diff > PI {
-                diff -= 2.0 * PI;
+            // Aggro threshold checking:
+            // Monster activates if player enters its section territory (aggro_radius)
+            // or if it was struck by an attack.
+            if !self.is_aggroed && dist <= self.aggro_radius {
+                self.is_aggroed = true;
             }
-            while diff < -PI {
-                diff += 2.0 * PI;
-            }
-            self.yaw += diff.clamp(-3.0 * dt, 3.0 * dt);
 
-            if self.is_attacking {
-                self.attack_timer += dt;
-                // Attack animation duration ~1.0 - 1.2s
-                let max_atk_time = if self.id == 1 { 1.2 } else { 1.0 };
-                if self.attack_timer >= max_atk_time {
-                    self.is_attacking = false;
-                    self.attack_timer = 0.0;
-                    self.attack_cooldown = 1.5;
-                    if self.id != 1 {
-                        self.is_kick_next = !self.is_kick_next;
+            if self.is_aggroed {
+                let desired_yaw = dx.atan2(dz);
+
+                // Smoothly turn towards player
+                let mut diff = desired_yaw - self.yaw;
+                while diff > PI {
+                    diff -= 2.0 * PI;
+                }
+                while diff < -PI {
+                    diff += 2.0 * PI;
+                }
+                self.yaw += diff.clamp(-3.0 * dt, 3.0 * dt);
+
+                if self.is_attacking {
+                    self.attack_timer += dt;
+                    // Attack animation duration ~1.0 - 1.2s
+                    let max_atk_time = if self.id == 1 { 1.2 } else { 1.0 };
+                    if self.attack_timer >= max_atk_time {
+                        self.is_attacking = false;
+                        self.attack_timer = 0.0;
+                        self.attack_cooldown = 1.5;
+                        if self.id != 1 {
+                            self.is_kick_next = !self.is_kick_next;
+                        }
+                    }
+                } else {
+                    let attack_range = match self.id {
+                        1 => 1200.0, // Lying figure acid spray
+                        2 => 650.0,  // Mannequin
+                        3 => 800.0,  // Nurse pipe swing
+                        4 => 1100.0, // Pyramid Head great knife
+                        5 => 800.0,  // Abstract Daddy strangle
+                        6 => 700.0,  // Flesh Lips kick/choke
+                        7 => 600.0,  // Mandarin tentacle strike
+                        8 => 200.0,  // Creeper bite
+                        9 => 1400.0, // Mary final boss moth swarm
+                        _ => 700.0,
+                    };
+                    if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < 0.6 {
+                        // Trigger creature attack
+                        self.is_attacking = true;
+                        self.attack_timer = 0.0;
+                    } else if dist > 450.0 || (self.id == 8 && dist > 150.0) {
+                        // Move towards player using authentic walk root motion
+                        let walk_speed = match self.id {
+                            1 => 402.0,  // scu
+                            2 => 576.0,  // mkn
+                            3 => 480.0,  // nse
+                            4 => 330.0,  // red
+                            5 => 540.0,  // pap
+                            6 => 360.0,  // ike
+                            7 => 450.0,  // arm
+                            8 => 1200.0, // tyu
+                            9 => 420.0,  // bos
+                            _ => 400.0,
+                        };
+                        self.position.x += self.yaw.sin() * walk_speed * dt;
+                        self.position.z += self.yaw.cos() * walk_speed * dt;
                     }
                 }
             } else {
-                let attack_range = match self.id {
-                    1 => 1200.0, // Lying figure acid spray
-                    2 => 650.0,  // Mannequin
-                    3 => 800.0,  // Nurse pipe swing
-                    4 => 1100.0, // Pyramid Head great knife
-                    5 => 800.0,  // Abstract Daddy strangle
-                    6 => 700.0,  // Flesh Lips kick/choke
-                    7 => 600.0,  // Mandarin tentacle strike
-                    8 => 200.0,  // Creeper bite
-                    9 => 1400.0, // Mary final boss moth swarm
-                    _ => 700.0,
-                };
-                if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < 0.6 {
-                    // Trigger creature attack
-                    self.is_attacking = true;
-                    self.attack_timer = 0.0;
-                } else if dist > 450.0 || (self.id == 8 && dist > 150.0) {
-                    // Move towards player using authentic walk root motion
-                    let walk_speed = match self.id {
-                        1 => 402.0,  // scu
-                        2 => 576.0,  // mkn
-                        3 => 480.0,  // nse
-                        4 => 330.0,  // red
-                        5 => 540.0,  // pap
-                        6 => 360.0,  // ike
-                        7 => 450.0,  // arm
-                        8 => 1200.0, // tyu
-                        9 => 420.0,  // bos
-                        _ => 400.0,
-                    };
-                    self.position.x += self.yaw.sin() * walk_speed * dt;
-                    self.position.z += self.yaw.cos() * walk_speed * dt;
+                // Return smoothly towards home anchor if drifted, or idle in place
+                let home_dx = self.spawn_origin.x - self.position.x;
+                let home_dz = self.spawn_origin.z - self.position.z;
+                let home_dist = (home_dx * home_dx + home_dz * home_dz).sqrt();
+                if home_dist > 50.0 {
+                    self.yaw = home_dx.atan2(home_dz);
+                    self.position.x += self.yaw.sin() * 200.0 * dt;
+                    self.position.z += self.yaw.cos() * 200.0 * dt;
                 }
             }
         }
@@ -1525,8 +1576,10 @@ impl CombatTargetEnemy {
                     crate::ai::creatures::lying_figure::ScuState::Damage
                 } else if self.is_attacking {
                     crate::ai::creatures::lying_figure::ScuState::Attack
-                } else {
+                } else if self.is_aggroed {
                     crate::ai::creatures::lying_figure::ScuState::Chase
+                } else {
+                    crate::ai::creatures::lying_figure::ScuState::Wander
                 };
                 self.anim.sync_lying_figure(scu_state);
             }
@@ -1537,8 +1590,10 @@ impl CombatTargetEnemy {
                     crate::ai::creatures::mannequin::MknState::Damage
                 } else if self.is_attacking {
                     crate::ai::creatures::mannequin::MknState::Attack
-                } else {
+                } else if self.is_aggroed {
                     crate::ai::creatures::mannequin::MknState::Chase
+                } else {
+                    crate::ai::creatures::mannequin::MknState::Event
                 };
                 self.anim.sync_mannequin(mkn_state, self.is_kick_next);
             }
@@ -1549,16 +1604,20 @@ impl CombatTargetEnemy {
                     crate::ai::creatures::nurse::NseState::Damage
                 } else if self.is_attacking {
                     crate::ai::creatures::nurse::NseState::Attack
-                } else {
+                } else if self.is_aggroed {
                     crate::ai::creatures::nurse::NseState::Chase
+                } else {
+                    crate::ai::creatures::nurse::NseState::Confuse
                 };
                 self.anim.sync_nurse(nse_state);
             }
             4 => {
                 let red_state = if self.is_attacking {
                     crate::ai::creatures::pyramid_head::RedState::Attack
-                } else {
+                } else if self.is_aggroed {
                     crate::ai::creatures::pyramid_head::RedState::Chase
+                } else {
+                    crate::ai::creatures::pyramid_head::RedState::Stand
                 };
                 self.anim.sync_pyramid_head(red_state);
             }
@@ -1592,11 +1651,19 @@ impl CombatTargetEnemy {
                         )),
                         None,
                     );
-                } else {
+                } else if self.is_aggroed {
                     self.anim.transition_to(
                         CreatureAnimStateKind::Locomotion,
                         AbstractDaddyAnimClips::WALK,
                         AbstractDaddyAnimClips::WALK_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Idle,
+                        AbstractDaddyAnimClips::STAND,
+                        0.0,
                         None,
                         None,
                     );
@@ -1632,11 +1699,19 @@ impl CombatTargetEnemy {
                         )),
                         None,
                     );
-                } else {
+                } else if self.is_aggroed {
                     self.anim.transition_to(
                         CreatureAnimStateKind::Locomotion,
                         FleshLipsAnimClips::SWING_ADVANCE,
                         FleshLipsAnimClips::SWING_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Idle,
+                        FleshLipsAnimClips::HANG_IDLE,
+                        0.0,
                         None,
                         None,
                     );
@@ -1672,11 +1747,19 @@ impl CombatTargetEnemy {
                         )),
                         None,
                     );
-                } else {
+                } else if self.is_aggroed {
                     self.anim.transition_to(
                         CreatureAnimStateKind::Locomotion,
                         MandarinAnimClips::CRAWL,
                         MandarinAnimClips::CRAWL_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Idle,
+                        MandarinAnimClips::HANG_IDLE,
+                        0.0,
                         None,
                         None,
                     );
@@ -1693,11 +1776,19 @@ impl CombatTargetEnemy {
                         None,
                         None,
                     );
-                } else {
+                } else if self.is_aggroed {
                     self.anim.transition_to(
                         CreatureAnimStateKind::Locomotion,
                         CreeperAnimClips::SCUTTLE,
                         CreeperAnimClips::SCUTTLE_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Idle,
+                        CreeperAnimClips::SCUTTLE,
+                        0.0,
                         None,
                         None,
                     );
@@ -1733,11 +1824,19 @@ impl CombatTargetEnemy {
                         )),
                         None,
                     );
-                } else {
+                } else if self.is_aggroed {
                     self.anim.transition_to(
                         CreatureAnimStateKind::Locomotion,
                         MaryBossAnimClips::HOVER_IDLE,
                         MaryBossAnimClips::HOVER_ROOT_MOTION_PER_FRAME,
+                        None,
+                        None,
+                    );
+                } else {
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::Idle,
+                        MaryBossAnimClips::HOVER_IDLE,
+                        0.0,
                         None,
                         None,
                     );
@@ -1766,21 +1865,26 @@ impl Default for CombatArena {
 }
 
 impl CombatArena {
-    /// Initialize a combat test arena with all monsters and bosses:
-    /// Lying Figure, Mannequin, Bubble Head Nurse, Pyramid Head, Abstract Daddy,
-    /// Flesh Lips, Mandarin (above ground), Creeper swarm, and Mary Final Boss.
+    /// Initialize a combat test arena with all monsters and bosses separated into
+    /// distinct thematic sections across the arena map:
+    /// - Front Courtyard: Lying Figure (`[0, 0, 1500]`), Mannequin (`[2200, 0, 1500]`), Creeper (`[-2200, 0, 1500]`)
+    /// - Middle Wing (Hanging/Corridor): Nurse (`[-3000, 0, 3600]`), Mandarin (`[0, 0, 3600]`), Flesh Lips (`[3000, 0, 3600]`)
+    /// - Boss Sanctuary (Deep North): Abstract Daddy (`[-2600, 0, 5800]`), Pyramid Head (`[0, 0, 5800]`), Mary Final Boss (`[2600, 0, 5800]`)
     pub fn new() -> Self {
         let player = CombatController::new(false, false);
         let enemies = vec![
+            // Section 1: Front Entry Courtyard (Z ~ 1500, active when approaching)
             CombatTargetEnemy::new_lying_figure(1, Vec3::new(0.0, 0.0, 1500.0)),
-            CombatTargetEnemy::new_mannequin(2, Vec3::new(900.0, 0.0, 1800.0)),
-            CombatTargetEnemy::new_nurse(3, Vec3::new(-900.0, 0.0, 2000.0)),
-            CombatTargetEnemy::new_pyramid_head(4, Vec3::new(0.0, 0.0, 2800.0)),
-            CombatTargetEnemy::new_abstract_daddy(5, Vec3::new(1400.0, 0.0, 2400.0)),
-            CombatTargetEnemy::new_flesh_lips(6, Vec3::new(-1400.0, 0.0, 2400.0)),
-            CombatTargetEnemy::new_mandarin(7, Vec3::new(600.0, 0.0, 1200.0)),
-            CombatTargetEnemy::new_creeper(8, Vec3::new(-500.0, 0.0, 1100.0)),
-            CombatTargetEnemy::new_mary_boss(9, Vec3::new(0.0, 0.0, 3600.0)),
+            CombatTargetEnemy::new_mannequin(2, Vec3::new(2200.0, 0.0, 1500.0)),
+            CombatTargetEnemy::new_creeper(8, Vec3::new(-2200.0, 0.0, 1500.0)),
+            // Section 2: Middle Gallery & Grate Chambers (Z ~ 3600)
+            CombatTargetEnemy::new_nurse(3, Vec3::new(-3000.0, 0.0, 3600.0)),
+            CombatTargetEnemy::new_mandarin(7, Vec3::new(0.0, 0.0, 3600.0)),
+            CombatTargetEnemy::new_flesh_lips(6, Vec3::new(3000.0, 0.0, 3600.0)),
+            // Section 3: Deep Boss Sanctuary (Z ~ 5800)
+            CombatTargetEnemy::new_abstract_daddy(5, Vec3::new(-2600.0, 0.0, 5800.0)),
+            CombatTargetEnemy::new_pyramid_head(4, Vec3::new(0.0, 0.0, 5800.0)),
+            CombatTargetEnemy::new_mary_boss(9, Vec3::new(2600.0, 0.0, 5800.0)),
         ];
 
         Self {

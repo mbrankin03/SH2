@@ -3898,16 +3898,20 @@ impl ApplicationHandler for SilentHillApp {
                                     )
                                 } else if enemy.flinch_timer > 0.0 {
                                     "STAGGERED / FLINCHING".to_string()
+                                } else if enemy.is_aggroed {
+                                    "ENGAGED (Approaching)".to_string()
                                 } else {
-                                    "ACTIVE".to_string()
+                                    "STANDBY (In Section)".to_string()
                                 };
 
                                 let color = if enemy.is_dead {
                                     muted
                                 } else if enemy.is_downed {
                                     cyan
-                                } else {
+                                } else if enemy.is_aggroed {
                                     green
+                                } else {
+                                    muted
                                 };
 
                                 state.menu_rasterizer.draw_text(

@@ -13,8 +13,9 @@ pub use model_viewer::{
     TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,
 };
 pub use visualizer::{
-    build_chara_collision_debug_lines, build_collision_debug_lines, build_skeleton_debug_lines,
-    build_wireframe_lines, DebugLineVertex,
+    build_chara_collision_debug_lines, build_collision_debug_lines,
+    build_collision_debug_lines_iter, build_skeleton_debug_lines, build_wireframe_lines,
+    DebugLineVertex,
 };
 
 #[derive(Debug, Default)]

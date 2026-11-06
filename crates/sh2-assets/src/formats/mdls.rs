@@ -39,6 +39,7 @@
 //! | `+0x24` | `[f32; 2]` | `uvs` | Texture mapping coordinates $(U, V)$ |
 //! | `+0x2C` | `[u8; 4]`  | `bones` | Bone indices ($b_0$ primary bone, $b_{1..3}$ pair indices) |
 
+use super::binary::{read_f32, read_i16, read_u16, read_u32};
 use crate::error::AssetError;
 use crate::formats::dxt::decode_dxt;
 use std::collections::HashMap;
@@ -166,6 +167,8 @@ pub struct ModelFile {
     pub parents: Vec<u8>,
     /// Bind pose model-space transform matrices per bone (row-major $4 \times 4$).
     pub initial_matrices: Vec<[[f32; 4]; 4]>,
+    /// Pre-computed inverted bind pose matrices per bone ($M_{initial}^{-1}$) for zero-allocation skinning.
+    pub inv_initial_matrices: Vec<[[f32; 4]; 4]>,
     /// Bone pairing table `(parent, child)` referenced by primitive blend weights.
     pub pairs: Vec<(u8, u8)>,
     /// Sub-mesh primitives defining draw ranges and material settings.
@@ -772,72 +775,20 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
+    let inv_initial_matrices = initial_matrices
+        .iter()
+        .map(|m| crate::formats::anm::mat4_inverse(*m))
+        .collect();
+
     Ok(ModelFile {
         bone_count,
         parents,
         initial_matrices,
+        inv_initial_matrices,
         pairs,
         primitives,
         strip_indices,
         vertices,
         textures,
     })
-}
-
-#[inline(always)]
-fn read_u16(data: &[u8], ofs: usize) -> Result<u16, AssetError> {
-    if ofs + 2 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 2,
-            available: data.len(),
-        })
-    } else {
-        Ok(u16::from_le_bytes([data[ofs], data[ofs + 1]]))
-    }
-}
-
-#[inline(always)]
-fn read_i16(data: &[u8], ofs: usize) -> Result<i16, AssetError> {
-    if ofs + 2 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 2,
-            available: data.len(),
-        })
-    } else {
-        Ok(i16::from_le_bytes([data[ofs], data[ofs + 1]]))
-    }
-}
-
-#[inline(always)]
-fn read_u32(data: &[u8], ofs: usize) -> Result<u32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(u32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
-    }
-}
-
-#[inline(always)]
-fn read_f32(data: &[u8], ofs: usize) -> Result<f32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(f32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
-    }
 }

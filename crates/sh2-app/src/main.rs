@@ -9,13 +9,17 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+use sh2_app::synthetic_geometry::{
+    create_fallback_room_geometry, create_model_viewer_pedestal_geometry,
+    create_synthetic_fog_runway_geometry,
+};
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::{
-    compute_bind_locals, compute_skin_matrices, evaluate_pose, interpolate_frames, parse_anm,
-    AnimationFile, AnimationFrame,
+    compute_bind_locals, compute_skin_matrices_with_inv_into, evaluate_pose_into,
+    interpolate_frames, parse_anm, AnimationFile, AnimationFrame,
 };
 use sh2_assets::formats::bink::{decode_bink_audio_track, BinkHeader, BinkVideoStream};
-use sh2_assets::formats::map::{BatchGroup, MapBatch, MapFile, MapMaterial};
+use sh2_assets::formats::map::MapFile;
 use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
 use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
@@ -40,6 +44,9 @@ struct CharacterAsset {
     gpu_mesh: GpuSkeletalMesh,
     model: ModelFile,
     bind_locals: Vec<[[f32; 4]; 4]>,
+    dynamic_locals: Vec<[[f32; 4]; 4]>,
+    pose_scratch: Vec<[[f32; 4]; 4]>,
+    skin_scratch: Vec<[[f32; 4]; 4]>,
     anm: AnimationFile,
     vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -47,507 +54,28 @@ struct CharacterAsset {
     secondary_physics: SecondaryBonePhysics,
 }
 
-/// Generate an authentic 3D Silent Hill enclosed room with floor, textured walls, ceiling, and columns.
-fn create_fallback_room_geometry() -> MapFile {
-    let mut map = MapFile::default();
-    map.materials.push(MapMaterial {
-        mode: 1,
-        texture_id: 0,
-        color: 0xFF888888,
-        overlay: 0,
-        specularity: 0.5,
-    });
-
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    let mut colors = Vec::new();
-    let mut indices = Vec::new();
-
-    let mut add_quad =
-        |p0: [f32; 3], p1: [f32; 3], p2: [f32; 3], p3: [f32; 3], normal: [f32; 3], col: [u8; 4]| {
-            let base_idx = positions.len() as u32;
-            positions.extend_from_slice(&[p0, p1, p2, p3]);
-            normals.extend_from_slice(&[normal, normal, normal, normal]);
-            uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-            colors.extend_from_slice(&[col, col, col, col]);
-            indices.extend_from_slice(&[
-                base_idx,
-                base_idx + 1,
-                base_idx + 2,
-                base_idx,
-                base_idx + 2,
-                base_idx + 3,
-            ]);
-        };
-
-    let w = 8000.0;
-    let l = 12000.0;
-    let h = -2400.0; // Y down in PS2 coordinate system
-
-    // Floor (Y = 0.0, normal points UP = -Y)
-    add_quad(
-        [-w, 0.0, -l],
-        [w, 0.0, -l],
-        [w, 0.0, l],
-        [-w, 0.0, l],
-        [0.0, -1.0, 0.0],
-        [160, 150, 140, 255],
-    );
-
-    // Ceiling (Y = h, normal points DOWN = +Y)
-    add_quad(
-        [-w, h, l],
-        [w, h, l],
-        [w, h, -l],
-        [-w, h, -l],
-        [0.0, 1.0, 0.0],
-        [110, 100, 95, 255],
-    );
-
-    // North Wall (Z = -l)
-    add_quad(
-        [-w, h, -l],
-        [w, h, -l],
-        [w, 0.0, -l],
-        [-w, 0.0, -l],
-        [0.0, 0.0, 1.0],
-        [180, 170, 160, 255],
-    );
-
-    // South Wall (Z = l)
-    add_quad(
-        [w, h, l],
-        [-w, h, l],
-        [-w, 0.0, l],
-        [w, 0.0, l],
-        [0.0, 0.0, -1.0],
-        [180, 170, 160, 255],
-    );
-
-    // West Wall (X = -w)
-    add_quad(
-        [-w, h, l],
-        [-w, h, -l],
-        [-w, 0.0, -l],
-        [-w, 0.0, l],
-        [1.0, 0.0, 0.0],
-        [175, 165, 155, 255],
-    );
-
-    // East Wall (X = w)
-    add_quad(
-        [w, h, -l],
-        [w, h, l],
-        [w, 0.0, l],
-        [w, 0.0, -l],
-        [-1.0, 0.0, 0.0],
-        [175, 165, 155, 255],
-    );
-
-    // Pillar / Column in center of room
-    let pw = 600.0;
-    let pz = -3000.0;
-    // Front face
-    add_quad(
-        [-pw, h, pz - pw],
-        [pw, h, pz - pw],
-        [pw, 0.0, pz - pw],
-        [-pw, 0.0, pz - pw],
-        [0.0, 0.0, -1.0],
-        [220, 200, 180, 255],
-    );
-    // Back face
-    add_quad(
-        [pw, h, pz + pw],
-        [-pw, h, pz + pw],
-        [-pw, 0.0, pz + pw],
-        [pw, 0.0, pz + pw],
-        [0.0, 0.0, 1.0],
-        [220, 200, 180, 255],
-    );
-    // Left face
-    add_quad(
-        [-pw, h, pz + pw],
-        [-pw, h, pz - pw],
-        [-pw, 0.0, pz - pw],
-        [-pw, 0.0, pz + pw],
-        [-1.0, 0.0, 0.0],
-        [200, 180, 160, 255],
-    );
-    // Right face
-    add_quad(
-        [pw, h, pz - pw],
-        [pw, h, pz + pw],
-        [pw, 0.0, pz + pw],
-        [pw, 0.0, pz - pw],
-        [1.0, 0.0, 0.0],
-        [200, 180, 160, 255],
-    );
-
-    map.batches.push(MapBatch {
-        group: BatchGroup::Opaque,
-        material_index: 0,
-        geo_id: 1,
-        positions,
-        uvs,
-        colors,
-        normals,
-        indices,
-    });
-
-    map
-}
-
-/// Generate an extended outdoor synthetic fog calibration runway with distance markers.
-/// Floor runs from Z = 0 to Z = 120,000 (120m) with crossbar markers at 5m, 10m, 25m, 50m, 75m, 100m
-/// and vertical light poles / torches at measured intervals to calibrate volumetric fog extinction.
-fn create_synthetic_fog_runway_geometry() -> MapFile {
-    let mut map = MapFile::default();
-    map.materials.push(MapMaterial {
-        mode: 1,
-        texture_id: 0,
-        color: 0xFF555555,
-        overlay: 0,
-        specularity: 0.2,
-    });
-
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    let mut colors = Vec::new();
-    let mut indices = Vec::new();
-
-    let mut add_quad =
-        |p0: [f32; 3], p1: [f32; 3], p2: [f32; 3], p3: [f32; 3], normal: [f32; 3], col: [u8; 4]| {
-            let base_idx = positions.len() as u32;
-            positions.extend_from_slice(&[p0, p1, p2, p3]);
-            normals.extend_from_slice(&[normal, normal, normal, normal]);
-            uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-            colors.extend_from_slice(&[col, col, col, col]);
-            indices.extend_from_slice(&[
-                base_idx,
-                base_idx + 1,
-                base_idx + 2,
-                base_idx,
-                base_idx + 2,
-                base_idx + 3,
-            ]);
-        };
-
-    let w = 4000.0; // 4 meters wide
-    let length = 120000.0; // 120 meters long runway
-
-    // Main asphalt runway floor (Y = 0, normal points UP = -Y in PS2 coordinate space)
-    add_quad(
-        [-w, 0.0, -5000.0],
-        [w, 0.0, -5000.0],
-        [w, 0.0, length],
-        [-w, 0.0, length],
-        [0.0, -1.0, 0.0],
-        [70, 75, 80, 255],
-    );
-
-    // Distance marker crossbars every 5m, 10m, 25m, 50m, 75m, 100m
-    let distance_markers = [5000.0, 10000.0, 25000.0, 50000.0, 75000.0, 100000.0];
-    for &dist in &distance_markers {
-        let m_thick = 300.0;
-        let col = if dist == 50000.0 || dist == 100000.0 {
-            [240, 220, 50, 255] // Bright yellow major line
-        } else {
-            [220, 220, 220, 255] // White distance marker line
-        };
-
-        add_quad(
-            [-w * 0.9, -2.0, dist - m_thick],
-            [w * 0.9, -2.0, dist - m_thick],
-            [w * 0.9, -2.0, dist + m_thick],
-            [-w * 0.9, -2.0, dist + m_thick],
-            [0.0, -1.0, 0.0],
-            col,
-        );
-
-        // Measured distance marker pylons on left and right sides
-        for &side in &[-1.0f32, 1.0f32] {
-            let px = side * (w + 800.0);
-            let pz = dist;
-            let ph = -3200.0; // 3.2m tall light pole
-            let pw = 150.0;
-
-            // Light pole column
-            add_quad(
-                [px - pw, ph, pz - pw],
-                [px + pw, ph, pz - pw],
-                [px + pw, 0.0, pz - pw],
-                [px - pw, 0.0, pz - pw],
-                [0.0, 0.0, -1.0],
-                [180, 140, 60, 255],
-            );
-            add_quad(
-                [px + pw, ph, pz + pw],
-                [px - pw, ph, pz + pw],
-                [px - pw, 0.0, pz + pw],
-                [px + pw, 0.0, pz + pw],
-                [0.0, 0.0, 1.0],
-                [180, 140, 60, 255],
-            );
-            // Lamp glowing beacon at top of pole
-            let bw = 250.0;
-            add_quad(
-                [px - bw, ph - bw * 2.0, pz - bw],
-                [px + bw, ph - bw * 2.0, pz - bw],
-                [px + bw, ph, pz - bw],
-                [px - bw, ph, pz - bw],
-                [0.0, 0.0, -1.0],
-                [255, 230, 160, 255],
-            );
-        }
-    }
-
-    map.batches.push(MapBatch {
-        group: BatchGroup::Opaque,
-        material_index: 0,
-        geo_id: 2,
-        positions,
-        uvs,
-        colors,
-        normals,
-        indices,
-    });
-
-    map
-}
-
-/// Generate a calibrated neutral 3D Model Viewer pedestal, metric floor grid, and vertical height scale pole.
-///
-/// Coordinates follow PS2 conventions:
-/// - Floor plane at $Y = 0.0$ (normal pointing UP = $(0, -1, 0)$).
-/// - 1 meter = $1000.0$ world units.
-/// - Metric height scale pole at $X = -1100.0, Z = -300.0$ with tick markers at $0.5\text{m}$, $1.0\text{m}$,
-///   $1.5\text{m}$, $1.8\text{m}$ (human eye height), and $2.0\text{m}$.
-fn create_model_viewer_pedestal_geometry() -> MapFile {
-    let mut map = MapFile::default();
-    map.materials.push(MapMaterial {
-        mode: 1,
-        texture_id: 0,
-        color: 0xFF666666,
-        overlay: 0,
-        specularity: 0.3,
-    });
-
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    let mut colors = Vec::new();
-    let mut indices = Vec::new();
-
-    let mut add_quad =
-        |p0: [f32; 3], p1: [f32; 3], p2: [f32; 3], p3: [f32; 3], normal: [f32; 3], col: [u8; 4]| {
-            let base_idx = positions.len() as u32;
-            positions.extend_from_slice(&[p0, p1, p2, p3]);
-            normals.extend_from_slice(&[normal, normal, normal, normal]);
-            uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
-            colors.extend_from_slice(&[col, col, col, col]);
-            indices.extend_from_slice(&[
-                base_idx,
-                base_idx + 1,
-                base_idx + 2,
-                base_idx,
-                base_idx + 2,
-                base_idx + 3,
-            ]);
-        };
-
-    // 1. Dark Studio Floor Plane (6m x 6m)
-    let floor_ext = 3500.0;
-    add_quad(
-        [-floor_ext, 4.0, -floor_ext],
-        [floor_ext, 4.0, -floor_ext],
-        [floor_ext, 4.0, floor_ext],
-        [-floor_ext, 4.0, floor_ext],
-        [0.0, -1.0, 0.0],
-        [36, 38, 42, 255],
-    );
-
-    // 2. Metric Floor Grid Lines (every 0.5m = 500 units, major 1.0m = 1000 units)
-    for step in -6..=6 {
-        let coord = step as f32 * 500.0;
-        let is_axis = step == 0;
-        let is_meter = step % 2 == 0;
-        let half_w = if is_axis {
-            10.0
-        } else if is_meter {
-            6.0
-        } else {
-            3.0
-        };
-        let col_x = if is_axis {
-            [180, 70, 70, 255] // X-axis red-tinted line
-        } else if is_meter {
-            [85, 92, 102, 255]
-        } else {
-            [55, 60, 68, 255]
-        };
-        let col_z = if is_axis {
-            [70, 110, 185, 255] // Z-axis blue-tinted line
-        } else if is_meter {
-            [85, 92, 102, 255]
-        } else {
-            [55, 60, 68, 255]
-        };
-
-        // Line parallel to X at Z = coord
-        add_quad(
-            [-3000.0, 1.5, coord - half_w],
-            [3000.0, 1.5, coord - half_w],
-            [3000.0, 1.5, coord + half_w],
-            [-3000.0, 1.5, coord + half_w],
-            [0.0, -1.0, 0.0],
-            col_x,
-        );
-
-        // Line parallel to Z at X = coord
-        add_quad(
-            [coord - half_w, 1.5, -3000.0],
-            [coord + half_w, 1.5, -3000.0],
-            [coord + half_w, 1.5, 3000.0],
-            [coord - half_w, 1.5, 3000.0],
-            [0.0, -1.0, 0.0],
-            col_z,
-        );
-    }
-
-    // 3. Octagonal Turntable Pedestal Disc (Radius = 750mm, Top surface at Y = 0.0)
-    let segments = 16;
-    let radius = 750.0f32;
-    let rim_radius = 790.0f32;
-    let ped_depth = 85.0f32; // Extends downward from Y = 0.5 to Y = +85.5
-
-    for i in 0..segments {
-        let a0 = (i as f32 / segments as f32) * std::f32::consts::TAU;
-        let a1 = ((i + 1) as f32 / segments as f32) * std::f32::consts::TAU;
-        let (s0, c0) = a0.sin_cos();
-        let (s1, c1) = a1.sin_cos();
-
-        // Top disc wedge (alternating subtle slate tones for turntable rotation visibility)
-        let top_col = if i % 2 == 0 {
-            [68, 72, 80, 255]
-        } else {
-            [60, 64, 72, 255]
-        };
-        add_quad(
-            [0.0, 0.5, 0.0],
-            [c0 * radius, 0.5, s0 * radius],
-            [c1 * radius, 0.5, s1 * radius],
-            [0.0, 0.5, 0.0],
-            [0.0, -1.0, 0.0],
-            top_col,
-        );
-
-        // Outer metallic bevel ring
-        add_quad(
-            [c0 * radius, 0.5, s0 * radius],
-            [c0 * rim_radius, 8.0, s0 * rim_radius],
-            [c1 * rim_radius, 8.0, s1 * rim_radius],
-            [c1 * radius, 0.5, s1 * radius],
-            [0.0, -1.0, 0.0],
-            [120, 125, 135, 255],
-        );
-
-        // Vertical side skirt of pedestal
-        let nx = (c0 + c1) * 0.5;
-        let nz = (s0 + s1) * 0.5;
-        add_quad(
-            [c0 * rim_radius, 8.0, s0 * rim_radius],
-            [c0 * rim_radius, ped_depth, s0 * rim_radius],
-            [c1 * rim_radius, ped_depth, s1 * rim_radius],
-            [c1 * rim_radius, 8.0, s1 * rim_radius],
-            [nx, 0.0, nz],
-            [48, 52, 58, 255],
-        );
-    }
-
-    // 4. Metric Height Scale Post (at X = -950mm, Z = -200mm, height = 2.2m = -2200 units)
-    let post_x = -950.0;
-    let post_z = -200.0;
-    let post_w = 14.0;
-    let post_h = -2200.0;
-
-    // Vertical scale mast
-    add_quad(
-        [post_x - post_w, post_h, post_z],
-        [post_x + post_w, post_h, post_z],
-        [post_x + post_w, 0.0, post_z],
-        [post_x - post_w, 0.0, post_z],
-        [0.0, 0.0, 1.0],
-        [140, 145, 155, 255],
-    );
-
-    // Height tick crossbars every 0.25m (250 units), major ticks at 0.5m, 1.0m, 1.5m, 1.8m (human height), 2.0m
-    let ticks: &[(f32, f32, [u8; 4])] = &[
-        (-250.0, 50.0, [110, 115, 120, 255]),
-        (-500.0, 95.0, [180, 185, 195, 255]), // 0.5m
-        (-750.0, 50.0, [110, 115, 120, 255]),
-        (-1000.0, 130.0, [240, 205, 55, 255]), // 1.0m (Gold marker)
-        (-1250.0, 50.0, [110, 115, 120, 255]),
-        (-1500.0, 95.0, [180, 185, 195, 255]), // 1.5m
-        (-1750.0, 65.0, [100, 210, 230, 255]), // 1.75m (Cyan reference)
-        (-2000.0, 130.0, [240, 205, 55, 255]), // 2.0m (Gold marker)
-    ];
-
-    for &(ty, width, col) in ticks {
-        add_quad(
-            [post_x, ty - 6.0, post_z + 2.0],
-            [post_x + width, ty - 6.0, post_z + 2.0],
-            [post_x + width, ty + 6.0, post_z + 2.0],
-            [post_x, ty + 6.0, post_z + 2.0],
-            [0.0, 0.0, 1.0],
-            col,
-        );
-    }
-
-    map.batches.push(MapBatch {
-        group: BatchGroup::Opaque,
-        material_index: 0,
-        geo_id: 3,
-        positions,
-        uvs,
-        colors,
-        normals,
-        indices,
-    });
-
-    map
-}
-
 /// Locate and load authentic `.cld` collision file for the given test room, falling back to procedural bounds.
 fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision::CollisionWorld {
-    let base_roots = [
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-    ];
+    let resolver = sh2_assets::AssetPathResolver::resolve();
 
     let cld_relative = match room {
-        TestRoomKind::ObservationDeck => Some("data/bg/ob/ob01.cld"),
-        TestRoomKind::RestroomStart => Some("data/bg/er/er01.cld"),
-        TestRoomKind::HotelBoilerRoom => Some("data/bg/rr/rr21.cld"),
+        TestRoomKind::ObservationDeck => Some("bg/ob/ob01.cld"),
+        TestRoomKind::RestroomStart => Some("bg/er/er01.cld"),
+        TestRoomKind::HotelBoilerRoom => Some("bg/rr/rr21.cld"),
         _ => None,
     };
 
     if let Some(rel) = cld_relative {
-        for base in &base_roots {
-            let p = std::path::PathBuf::from(base).join(rel);
-            if p.exists() {
-                if let Ok(data) = std::fs::read(&p) {
-                    if let Ok(cld) = sh2_assets::formats::cld::parse_cld(&data) {
-                        tracing::info!(
-                            "Loaded authentic .cld collision file ({rel}) with {} floors and {} walls",
-                            cld.floors.len(),
-                            cld.walls.len()
-                        );
-                        return sh2_core::collision::CollisionWorld::from_cld(&cld);
-                    }
+        if let Some(p) = resolver.resolve_file(rel) {
+            if let Ok(data) = std::fs::read(&p) {
+                if let Ok(cld) = sh2_assets::formats::cld::parse_cld(&data) {
+                    tracing::info!(
+                        "Loaded authentic .cld collision file ({}) with {} floors and {} walls",
+                        p.display(),
+                        cld.floors.len(),
+                        cld.walls.len()
+                    );
+                    return sh2_core::collision::CollisionWorld::from_cld(&cld);
                 }
             }
         }
@@ -564,35 +92,24 @@ fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision::CollisionW
 
 /// Locate and load authentic `.cam` camera volume file for the given test room, checking SH2:EE overrides first.
 fn find_cam_file_for_room(room: TestRoomKind) -> Option<sh2_assets::formats::cam::CamFile> {
-    let base_roots = [
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-    ];
+    let resolver = sh2_assets::AssetPathResolver::resolve();
 
     let cam_rel = match room {
-        TestRoomKind::RestroomStart => Some(("sh2e/bg/er/er01.cam", "data/bg/er/er01.cam")),
-        TestRoomKind::HotelBoilerRoom => Some(("sh2e/bg/rr/rr21.cam", "data/bg/rr/rr21.cam")),
+        TestRoomKind::RestroomStart => Some("bg/er/er01.cam"),
+        TestRoomKind::HotelBoilerRoom => Some("bg/rr/rr21.cam"),
         _ => None,
     };
 
-    if let Some((sh2e_rel, data_rel)) = cam_rel {
-        for base in &base_roots {
-            let base_path = std::path::PathBuf::from(base);
-            // Check SH2:EE override first, then vanilla data
-            let candidates = [base_path.join(sh2e_rel), base_path.join(data_rel)];
-            for p in candidates {
-                if p.exists() {
-                    if let Ok(bytes) = std::fs::read(&p) {
-                        if let Ok(cam) = sh2_assets::formats::cam::parse_cam(&bytes) {
-                            tracing::info!(
-                                "Loaded authentic .cam camera file ({}) with {} road records",
-                                p.display(),
-                                cam.records.len()
-                            );
-                            return Some(cam);
-                        }
-                    }
+    if let Some(rel) = cam_rel {
+        if let Some(p) = resolver.resolve_file(rel) {
+            if let Ok(bytes) = std::fs::read(&p) {
+                if let Ok(cam) = sh2_assets::formats::cam::parse_cam(&bytes) {
+                    tracing::info!(
+                        "Loaded authentic .cam camera file ({}) with {} road records",
+                        p.display(),
+                        cam.records.len()
+                    );
+                    return Some(cam);
                 }
             }
         }
@@ -603,10 +120,10 @@ fn find_cam_file_for_room(room: TestRoomKind) -> Option<sh2_assets::formats::cam
 fn find_map_file_for_room(
     room: TestRoomKind,
 ) -> (MapFile, glam::Vec3, f32, sh2_renderer::fog::FogUniforms) {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
     let base_roots = [
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
     ];
 
     match room {
@@ -892,10 +409,10 @@ fn load_character_asset(
     mdl_rel_paths: &[&str],
     anm_rel_paths: &[&str],
 ) -> Option<CharacterAsset> {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
     let base_roots = [
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
     ];
 
     let mut mdl_bytes = None;
@@ -1048,11 +565,18 @@ fn load_character_asset(
         SecondaryBonePhysics::for_james()
     };
 
+    let dynamic_locals = bind_locals.clone();
+    let pose_scratch = Vec::with_capacity(model.bone_count);
+    let skin_scratch = Vec::with_capacity(model.bone_count);
+
     Some(CharacterAsset {
         name: character_name,
         gpu_mesh,
         model,
         bind_locals,
+        dynamic_locals,
+        pose_scratch,
+        skin_scratch,
         anm,
         vanilla_texture_bind_groups,
         hd_texture_bind_groups,
@@ -1107,24 +631,15 @@ fn open_fmv_session(
     entry: &'static FmvCatalogEntry,
     source_pref: FmvVideoSource,
 ) -> Option<ActiveFmvSession> {
-    let upscaled_mp4_roots = [
-        "tools/vsr_pipeline/output",
-        "/home/matthewb/Documents/SH2-Port/tools/vsr_pipeline/output",
-        "/home/matthewb/dev/SH2/tools/vsr_pipeline/output",
-        "movie",
-        "sh2e/movie",
-    ];
+    let upscaled_mp4_roots = ["tools/vsr_pipeline/output", "movie", "sh2e/movie"];
 
+    let resolver = sh2_assets::AssetPathResolver::resolve();
     let base_roots = [
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
-        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
     ];
 
-    let og_hq_roots = [
-        "sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie",
-        "/home/matthewb/Documents/SH2-Port/sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie",
-    ];
+    let og_hq_roots = ["sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie"];
 
     // MP4 candidate filenames for locally upscaled VSR masters (e.g. `toilet_4k_master.mp4`, `toilet.mp4`)
     let mp4_cands = [
@@ -1447,6 +962,7 @@ struct AppState {
     key_pan_up: bool,
     key_pan_down: bool,
     last_menu_state_log: String,
+    last_menu_revision: u64,
     active_audio_device: Option<String>,
     debug_collision_overlay: bool,
     debug_camera_hud: bool,
@@ -1699,11 +1215,7 @@ impl ApplicationHandler for SilentHillApp {
         let audio_bank = Some(MenuAudioBank::load_from_dirs(&data_dir, Some(&ee_dir)));
 
         let host_devices = AudioEngine::enumerate_output_devices();
-        let config_candidates = [
-            "config.json",
-            "/home/matthewb/dev/SH2/config.json",
-            "/home/matthewb/Documents/SH2-Port/config.json",
-        ];
+        let config_candidates = ["config.json", "../config.json"];
         let chosen_config_path = config_candidates
             .iter()
             .find(|p| std::path::Path::new(p).exists())
@@ -1867,6 +1379,7 @@ impl ApplicationHandler for SilentHillApp {
             key_pan_up: false,
             key_pan_down: false,
             last_menu_state_log: String::new(),
+            last_menu_revision: u64::MAX,
             active_audio_device: target_audio_device,
             debug_collision_overlay: false,
             debug_camera_hud: true,
@@ -2035,6 +1548,12 @@ impl ApplicationHandler for SilentHillApp {
                                     engine.stop_bgm(std::time::Duration::from_millis(150));
                                     engine.set_bgm_paused(false);
                                 }
+                                state.menu_ctrl.in_game_active = false;
+                                state.menu_ctrl.pause_menu.close();
+                                state.menu_ctrl.title_sm.phase = TitlePhase::MainMenu;
+                                state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                                state.menu_ctrl.title_sm.is_fading_out = false;
+                                state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
                                 tracing::info!("Pause Menu: Exited to Main Menu.");
                             }
                         }
@@ -2635,6 +2154,11 @@ impl ApplicationHandler for SilentHillApp {
                     state
                         .surface
                         .configure(&state.render_ctx.device, &state.surface_config);
+                    state.render_ctx.resize(new_size.width, new_size.height);
+                    state.blit_bind_group = state.blitter.create_bind_group(
+                        &state.render_ctx.device,
+                        &state.render_ctx.ldr_output_view,
+                    );
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -2850,13 +2374,14 @@ impl ApplicationHandler for SilentHillApp {
                     state.fmv_viewer.is_paused = false;
                 }
 
-                // When menu is active, log formatted state changes so console/headless/testing builds observe menu navigation
-                if !state.menu_ctrl.in_game_active {
+                // When menu is active, log formatted state changes only when menu revision changes
+                if !state.menu_ctrl.in_game_active
+                    && state.last_menu_revision != state.menu_ctrl.revision
+                {
+                    state.last_menu_revision = state.menu_ctrl.revision;
                     let current_text = state.menu_ctrl.overlay_text().join(" | ");
-                    if current_text != state.last_menu_state_log {
-                        tracing::info!("[SH2 MENU HUD] {}", current_text);
-                        state.last_menu_state_log = current_text;
-                    }
+                    tracing::info!("[SH2 MENU HUD] {}", current_text);
+                    state.last_menu_state_log = current_text;
                 }
 
                 let is_in_game = state.menu_ctrl.in_game_active;
@@ -3091,7 +2616,7 @@ impl ApplicationHandler for SilentHillApp {
                     let mut skin_matrices = Vec::new();
                     let mut debug_lines = Vec::new();
 
-                    if let Some(ref c) = state.viewer_asset {
+                    if let Some(ref mut c) = state.viewer_asset {
                         let (f0, f1, alpha_frame) = state.model_viewer.sample_cursor();
                         let frame_count = c.anm.frames.len();
                         if frame_count > 0 {
@@ -3100,10 +2625,17 @@ impl ApplicationHandler for SilentHillApp {
                                 &c.anm.frames[f1 % frame_count],
                                 alpha_frame,
                             );
-                            let pose =
-                                evaluate_pose(&c.model.parents, &c.bind_locals, &blended_frame);
-                            let local_skin =
-                                compute_skin_matrices(&pose, &c.model.initial_matrices);
+                            evaluate_pose_into(
+                                &c.model.parents,
+                                &c.bind_locals,
+                                &blended_frame,
+                                &mut c.pose_scratch,
+                            );
+                            compute_skin_matrices_with_inv_into(
+                                &c.pose_scratch,
+                                &c.model.inv_initial_matrices,
+                                &mut c.skin_scratch,
+                            );
 
                             let (s, c_yaw) = state.model_viewer.turntable_yaw.sin_cos();
                             let world_mat = [
@@ -3113,8 +2645,8 @@ impl ApplicationHandler for SilentHillApp {
                                 [0.0, 0.0, 0.0, 1.0],
                             ];
 
-                            skin_matrices.reserve(local_skin.len());
-                            for m_skin in &local_skin {
+                            skin_matrices.reserve(c.skin_scratch.len());
+                            for m_skin in &c.skin_scratch {
                                 let mut combined = [[0.0; 4]; 4];
                                 for r in 0..4 {
                                     for col in 0..4 {
@@ -3165,7 +2697,7 @@ impl ApplicationHandler for SilentHillApp {
                             {
                                 debug_lines.extend(build_skeleton_debug_lines(
                                     &c.model.parents,
-                                    &pose,
+                                    &c.pose_scratch,
                                     &world_mat,
                                     45.0,
                                 ));
@@ -3275,13 +2807,20 @@ impl ApplicationHandler for SilentHillApp {
 
                             let dt_physics = 1.0 / 60.0;
                             c.secondary_physics.step(dt_physics, player_pos, player_yaw);
-                            let mut dynamic_locals = c.bind_locals.clone();
-                            c.secondary_physics.apply_to_locals(&mut dynamic_locals);
+                            c.dynamic_locals.copy_from_slice(&c.bind_locals);
+                            c.secondary_physics.apply_to_locals(&mut c.dynamic_locals);
 
-                            let pose =
-                                evaluate_pose(&c.model.parents, &dynamic_locals, &blended_frame);
-                            let local_skin =
-                                compute_skin_matrices(&pose, &c.model.initial_matrices);
+                            evaluate_pose_into(
+                                &c.model.parents,
+                                &c.dynamic_locals,
+                                &blended_frame,
+                                &mut c.pose_scratch,
+                            );
+                            compute_skin_matrices_with_inv_into(
+                                &c.pose_scratch,
+                                &c.model.inv_initial_matrices,
+                                &mut c.skin_scratch,
+                            );
 
                             let (s, c_yaw) = player_yaw.sin_cos();
                             let world_mat = [
@@ -3291,8 +2830,8 @@ impl ApplicationHandler for SilentHillApp {
                                 [0.0, 0.0, 0.0, 1.0],
                             ];
 
-                            skin_matrices.reserve(local_skin.len());
-                            for m_skin in &local_skin {
+                            skin_matrices.reserve(c.skin_scratch.len());
+                            for m_skin in &c.skin_scratch {
                                 let mut combined = [[0.0; 4]; 4];
                                 for r in 0..4 {
                                     for col in 0..4 {
@@ -3323,25 +2862,25 @@ impl ApplicationHandler for SilentHillApp {
 
                     if is_in_game {
                         if state.debug_collision_overlay {
-                            let floors: Vec<[[f32; 3]; 3]> = state
-                                .sim_core
-                                .collision
-                                .floors
-                                .iter()
-                                .map(|f| f.v)
-                                .collect();
-                            let walls: Vec<([f32; 2], [f32; 2], f32, f32)> = state
+                            let floors_iter = state.sim_core.collision.floors.iter().map(|f| f.v);
+                            let walls_iter = state
                                 .sim_core
                                 .collision
                                 .all_walls()
-                                .map(|w| (w.start, w.end, w.y_top, w.y_bottom))
-                                .collect();
+                                .map(|w| (w.start, w.end, w.y_top, w.y_bottom));
 
-                            let mut debug_lines = sh2_debug::build_collision_debug_lines(
-                                &floors,
-                                &walls,
+                            let mut debug_lines = Vec::with_capacity(
+                                state.sim_core.collision.floors.len() * 6
+                                    + state.sim_core.collision.walls.len() * 8
+                                    + 72,
+                            );
+
+                            sh2_debug::build_collision_debug_lines_iter(
+                                floors_iter,
+                                walls_iter,
                                 [0.0, 1.0, 0.8, 1.0], // Cyan/green floor wireframes
                                 [1.0, 0.2, 0.2, 1.0], // Red wall wireframes
+                                &mut debug_lines,
                             );
 
                             // Draw player cylinder

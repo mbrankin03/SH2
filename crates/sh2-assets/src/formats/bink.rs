@@ -22,7 +22,6 @@
 //! `4 * N` bytes `(u16 sample_rate, u16 flags)`, and `4 * N` bytes track IDs) and the frame offset index table.
 
 use crate::error::AssetError;
-use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -651,9 +650,7 @@ pub struct BinkVideoStream {
     pub current_frame_index: u32,
     child: Option<Child>,
     scratch_buf: Vec<u8>,
-    plane_pool_y: Vec<u8>,
-    plane_pool_u: Vec<u8>,
-    plane_pool_v: Vec<u8>,
+    plane_buffers: (Vec<u8>, Vec<u8>, Vec<u8>),
 }
 
 impl BinkVideoStream {
@@ -667,9 +664,7 @@ impl BinkVideoStream {
             current_frame_index: 0,
             child: None,
             scratch_buf: Vec::new(),
-            plane_pool_y: Vec::new(),
-            plane_pool_u: Vec::new(),
-            plane_pool_v: Vec::new(),
+            plane_buffers: (Vec::new(), Vec::new(), Vec::new()),
         };
         stream.spawn_decoder(0.0);
         Ok(stream)
@@ -683,9 +678,7 @@ impl BinkVideoStream {
             current_frame_index: 0,
             child: None,
             scratch_buf: Vec::new(),
-            plane_pool_y: Vec::new(),
-            plane_pool_u: Vec::new(),
-            plane_pool_v: Vec::new(),
+            plane_buffers: (Vec::new(), Vec::new(), Vec::new()),
         }
     }
 
@@ -750,42 +743,34 @@ impl BinkVideoStream {
                     self.scratch_buf.resize(total_len, 0);
                 }
                 if stdout.read_exact(&mut self.scratch_buf).is_ok() {
-                    // Recycle planes using pre-reserved scratch vectors where possible
-                    if self.plane_pool_y.capacity() < y_len {
-                        self.plane_pool_y
-                            .reserve_exact(y_len - self.plane_pool_y.capacity());
-                    }
-                    self.plane_pool_y.clear();
-                    self.plane_pool_y
-                        .extend_from_slice(&self.scratch_buf[0..y_len]);
+                    // Pre-reserve and reuse plane vectors to avoid allocating 3MB/frame heap memory.
+                    let (ref mut bp_y, ref mut bp_u, ref mut bp_v) = self.plane_buffers;
 
-                    if self.plane_pool_u.capacity() < uv_len {
-                        self.plane_pool_u
-                            .reserve_exact(uv_len - self.plane_pool_u.capacity());
+                    if bp_y.capacity() < y_len {
+                        bp_y.reserve_exact(y_len - bp_y.capacity());
                     }
-                    self.plane_pool_u.clear();
-                    self.plane_pool_u
-                        .extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
+                    bp_y.clear();
+                    bp_y.extend_from_slice(&self.scratch_buf[0..y_len]);
 
-                    if self.plane_pool_v.capacity() < uv_len {
-                        self.plane_pool_v
-                            .reserve_exact(uv_len - self.plane_pool_v.capacity());
+                    if bp_u.capacity() < uv_len {
+                        bp_u.reserve_exact(uv_len - bp_u.capacity());
                     }
-                    self.plane_pool_v.clear();
-                    self.plane_pool_v
-                        .extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
+                    bp_u.clear();
+                    bp_u.extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
 
-                    let y_plane = std::mem::take(&mut self.plane_pool_y);
-                    let u_plane = std::mem::take(&mut self.plane_pool_u);
-                    let v_plane = std::mem::take(&mut self.plane_pool_v);
+                    if bp_v.capacity() < uv_len {
+                        bp_v.reserve_exact(uv_len - bp_v.capacity());
+                    }
+                    bp_v.clear();
+                    bp_v.extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
 
                     return Some(Yuv420Frame {
                         width: w,
                         height: h,
                         frame_index: frame_idx,
-                        y_plane,
-                        u_plane,
-                        v_plane,
+                        y_plane: bp_y.clone(),
+                        u_plane: bp_u.clone(),
+                        v_plane: bp_v.clone(),
                     });
                 }
             }
@@ -1537,14 +1522,9 @@ pub fn game_root_from_movie_path(movie_path: &Path) -> Option<PathBuf> {
         }
     }
     // Check known candidate paths relative to cwd or repository
-    let candidates = [
-        PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
-        PathBuf::from("/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
-    ];
-    for c in &candidates {
-        if retail_messages_available(c) {
-            return Some(c.clone());
-        }
+    let resolver = crate::resolver::AssetPathResolver::resolve();
+    if retail_messages_available(&resolver.game_root) {
+        return Some(resolver.game_root);
     }
     None
 }
@@ -1578,14 +1558,27 @@ pub fn load_retail_subtitles(root: &Path, movie_id: &str) -> Option<Vec<RetailSu
     Some(cues)
 }
 
-type RetailCueCache = Mutex<HashMap<(PathBuf, String), Option<Arc<Vec<RetailSubtitleCue>>>>>;
+type RetailCueCache = Mutex<Vec<((PathBuf, String), Option<Arc<Vec<RetailSubtitleCue>>>)>>;
+const MAX_RETAIL_CUE_CACHE_ENTRIES: usize = 32;
 
 fn retail_cues_cached(root: &Path, movie_id: &str) -> Option<Arc<Vec<RetailSubtitleCue>>> {
     static CACHE: OnceLock<RetailCueCache> = OnceLock::new();
-    let mut map = CACHE.get_or_init(Default::default).lock().ok()?;
-    map.entry((root.to_path_buf(), movie_id.to_string()))
-        .or_insert_with(|| load_retail_subtitles(root, movie_id).map(Arc::new))
-        .clone()
+    let mut entries = CACHE.get_or_init(Default::default).lock().ok()?;
+    let key = (root.to_path_buf(), movie_id.to_string());
+
+    if let Some(pos) = entries.iter().position(|(k, _)| k == &key) {
+        let entry = entries.remove(pos);
+        let val = entry.1.clone();
+        entries.push(entry);
+        return val;
+    }
+
+    let loaded = load_retail_subtitles(root, movie_id).map(Arc::new);
+    if entries.len() >= MAX_RETAIL_CUE_CACHE_ENTRIES {
+        entries.remove(0);
+    }
+    entries.push((key, loaded.clone()));
+    loaded
 }
 
 /// Subtitle text for a movie frame: the retail table and `.mes` text when the retail rip is found

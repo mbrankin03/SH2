@@ -824,6 +824,165 @@ impl RenderContext {
             .write_buffer(&self.spotlight_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
+    /// Reconfigures offscreen intermediate targets (Depth, HDR, Fog, and LDR surfaces) when window resolution changes.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+
+        if self.config.width == width && self.config.height == height {
+            return;
+        }
+
+        self.config.width = width;
+        self.config.height = height;
+
+        // 1. Recreate depth texture & view
+        self.depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("32-bit Float Depth Texture (Resized)"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.depth_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.depth_view = self
+            .depth_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 2. Recreate HDR color texture & view
+        self.hdr_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("RGBA16 Float HDR Color Texture (Resized)"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.hdr_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.hdr_color_view = self
+            .hdr_color_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 3. Recreate fog color texture & view
+        self.fog_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("RGBA16 Float Fog Color Texture (Resized)"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.hdr_format,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.fog_color_view = self
+            .fog_color_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 4. Recreate LDR output texture & view
+        self.ldr_output_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("RGBA8 Unorm Post-Processed LDR Output Texture (Resized)"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.output_format,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.ldr_output_view = self
+            .ldr_output_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // 5. Recreate fog bind group
+        self.fog_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fog Bind Group (Resized)"),
+            layout: &self.fog_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.fog_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.hdr_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.fog_color_view),
+                },
+            ],
+        });
+
+        // 6. Recreate post bind groups
+        self.post_bind_group_fog = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (With Fog Resized)"),
+            layout: &self.post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.fog_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.ldr_output_view),
+                },
+            ],
+        });
+
+        self.post_bind_group_direct = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Post Bind Group (Direct HDR Resized)"),
+            layout: &self.post_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.post_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.hdr_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.ldr_output_view),
+                },
+            ],
+        });
+    }
+
     /// Creates a GPU diffuse texture bind group with bilinear filtering using a specific texture view.
     pub fn create_texture_bind_group_from_view(
         &self,

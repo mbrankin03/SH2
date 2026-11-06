@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod menu_controller;
+pub mod synthetic_geometry;
 
 pub use app::SilentHill2App;
 pub use menu_controller::AppMenuController;

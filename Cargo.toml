@@ -47,6 +47,11 @@ kira = "0.9"
 # Gamepad Input
 gilrs = "0.11"
 
+[workspace.lints.clippy]
+clone_on_ref_ptr = "warn"
+cloned_instead_of_copied = "warn"
+inefficient_to_string = "warn"
+
 # Compilation Profiles
 # Game development profile: Keep dev builds responsive without sacrificing debuggability
 [profile.dev]

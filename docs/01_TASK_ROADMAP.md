@@ -138,23 +138,25 @@ To maintain a lean, modern, and memory-safe Rust codebase, the engine implements
 
 ### **SH2-49: Engine Hardening, Zero-Allocation Hot Paths & Codebase Deduplication**
 - **Priority**: High / Urgent (Execute immediately following completion of SH2-31)
+- **Status**: [x] Completed
 - **Scope**: All workspace crates (`sh2-audio`, `sh2-assets`, `sh2-core`, `sh2-renderer`, `sh2-app`, `sh2-ui`, `sh2-debug`).
 - **Stage 1 — Memory Leak Elimination & Decoder Buffer Stability**:
-  - Eliminate explicit `Box::leak` in `crates/sh2-audio/src/engine.rs` (`migrate_stream_to_device`) by replacing leaked `&str` with owned `String` / client index matching.
-  - Fix faux-pooling 3 MB/frame reallocation in FMV decoder (`crates/sh2-assets/src/formats/bink.rs`) by replacing `std::mem::take` with double-buffered vector swap / direct plane buffer reuse.
-  - Bound static `RetailCueCache` in `bink.rs` to active FMV sessions or enforce bounded capacity.
+  - [x] Eliminate explicit `Box::leak` in `crates/sh2-audio/src/engine.rs` (`migrate_stream_to_device`) by replacing leaked `&str` with owned `String` / client index matching.
+  - [x] Fix faux-pooling 3 MB/frame reallocation in FMV decoder (`crates/sh2-assets/src/formats/bink.rs`) by replacing `std::mem::take` with double-buffered vector swap / direct plane buffer reuse.
+  - [x] Bound static `RetailCueCache` in `bink.rs` to active FMV sessions or enforce bounded capacity.
 - **Stage 2 — Zero-Allocation Hot Paths (60–240 Hz Render Loop)**:
-  - Pre-invert bind pose matrices (`inv_initial_matrices`) once at model ingest in `sh2-assets::formats::anm` instead of recalculating 41–71 matrix inverses on CPU every frame.
-  - Add reusable scratch buffers in `AppState` / `CharacterAsset` (`dynamic_locals`, `pose_scratch`, `skin_scratch`) to eliminate per-frame `bind_locals.clone()` and vector reallocations in secondary physics & animation evaluation.
-  - Replace per-frame string allocations in menu controller dirty check (`overlay_text().join(" | ")`) with a dirty revision counter / state discriminant.
-  - Avoid per-frame intermediate vector allocations for debug line rendering (`floors.iter().map().collect()`, `all_walls().map().collect()`) by passing iterators or pre-allocated vertex slices directly.
+  - [x] Pre-invert bind pose matrices (`inv_initial_matrices`) once at model ingest in `sh2-assets::formats::anm` instead of recalculating 41–71 matrix inverses on CPU every frame.
+  - [x] Add reusable scratch buffers in `AppState` / `CharacterAsset` (`dynamic_locals`, `pose_scratch`, `skin_scratch`) to eliminate per-frame `bind_locals.clone()` and vector reallocations in secondary physics & animation evaluation.
+  - [x] Replace per-frame string allocations in menu controller dirty check (`overlay_text().join(" | ")`) with a dirty revision counter / state discriminant.
+  - [x] Avoid per-frame intermediate vector allocations for debug line rendering (`floors.iter().map().collect()`, `all_walls().map().collect()`) by passing iterators or pre-allocated vertex slices directly.
 - **Stage 3 — Architectural Trimming, Deduplication & Modularization**:
-  - Consolidate duplicate binary reader functions (`read_u16`, `read_i16`, `read_u32`, `read_f32`) from `map.rs`, `anm.rs`, `mdls.rs`, and `sound.rs` into a shared `sh2_assets::formats::binary` helper module.
-  - Unify hardcoded retail search paths across `sh2-app`, `sh2-assets`, and `sh2-audio` into a centralized `AssetPathResolver` with `SH2_DATA_DIR` environment support.
-  - Extract synthetic test rooms and duplicate `add_quad` geometry builders from `crates/sh2-app/src/main.rs` into a dedicated `crates/sh2-app/src/synthetic_geometry.rs` module.
-  - Implement proper off-screen target resize handling in `RenderContext::resize` for HDR, depth, fog, and LDR surfaces.
+  - [x] Consolidate duplicate binary reader functions (`read_u16`, `read_i16`, `read_u32`, `read_f32`) from `map.rs`, `anm.rs`, `mdls.rs`, and `sound.rs` into a shared `sh2_assets::formats::binary` helper module.
+  - [x] Unify hardcoded retail search paths across `sh2-app`, `sh2-assets`, and `sh2-audio` into a centralized `AssetPathResolver` with `SH2_DATA_DIR` environment support.
+  - [x] Extract synthetic test rooms and duplicate `add_quad` geometry builders from `crates/sh2-app/src/main.rs` into a dedicated `crates/sh2-app/src/synthetic_geometry.rs` module.
+  - [x] Implement proper off-screen target resize handling in `RenderContext::resize` for HDR, depth, fog, and LDR surfaces.
+  - [x] Fix pause menu quit handling to properly transition to Main Menu.
 - **Stage 4 — Automated CI Guardrails & Allocation Regression Testing**:
-  - Add `[workspace.lints.clippy]` to root `Cargo.toml` configuring `box_leak = "deny"`, `clone_on_ref_ptr = "warn"`, `cloned_instead_of_copied = "warn"`, and `inefficient_to_string = "warn"`.
-  - Add CI AST/grep guardrail step in `.github/workflows/ci.yml` blocking forbidden patterns (`Box::leak`, `mem::take` on capacity pools, and hardcoded `/home/` developer paths).
-  - Implement zero-allocation regression unit tests in `sh2-core/tests` using a tracking allocator to verify 0 heap allocations during the 60 Hz simulation game tick.
-  - Standardize in-place `_into` API conventions (`evaluate_pose_into`, `compute_skin_matrices_into`) across asset and rendering layers.
+  - [x] Add `[workspace.lints.clippy]` to root `Cargo.toml` configuring `box_leak = "deny"`, `clone_on_ref_ptr = "warn"`, `cloned_instead_of_copied = "warn"`, and `inefficient_to_string = "warn"`.
+  - [x] Add CI AST/grep guardrail step in `.github/workflows/ci.yml` blocking forbidden patterns (`Box::leak`, `mem::take` on capacity pools, and hardcoded `/home/` developer paths).
+  - [x] Implement zero-allocation regression unit tests in `sh2-core/tests` using a tracking allocator to verify 0 heap allocations during the 60 Hz simulation game tick.
+  - [x] Standardize in-place `_into` API conventions (`evaluate_pose_into`, `compute_skin_matrices_into`) across asset and rendering layers.

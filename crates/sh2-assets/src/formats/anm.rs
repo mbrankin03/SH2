@@ -19,6 +19,7 @@
 //!   When `(block * 8)` wraps across the aligned `per_frame = (bone_count + 7) & !7` boundary,
 //!   a complete [`AnimationFrame`] has been decoded.
 
+use super::binary::{read_f32, read_i16, read_u16, read_u32};
 use crate::error::AssetError;
 
 /// Transform track encoding types declared in the 4-bit nibbles of block headers.
@@ -420,7 +421,23 @@ pub fn evaluate_pose(
     frame: &AnimationFrame,
 ) -> Vec<[[f32; 4]; 4]> {
     let n = parents.len().min(bind_locals.len());
-    let mut world = vec![[[0.0; 4]; 4]; n];
+    let mut world = Vec::with_capacity(n);
+    evaluate_pose_into(parents, bind_locals, frame, &mut world);
+    world
+}
+
+/// Zero-allocation pose evaluation directly into an existing scratch vector.
+pub fn evaluate_pose_into(
+    parents: &[u8],
+    bind_locals: &[[[f32; 4]; 4]],
+    frame: &AnimationFrame,
+    out_world: &mut Vec<[[f32; 4]; 4]>,
+) {
+    let n = parents.len().min(bind_locals.len());
+    out_world.clear();
+    if out_world.capacity() < n {
+        out_world.reserve(n - out_world.capacity());
+    }
 
     for i in 0..n {
         let mut loc = bind_locals[i];
@@ -444,13 +461,12 @@ pub fn evaluate_pose(
 
         let p = parents[i];
         if p == 255 || (p as usize) >= n {
-            world[i] = loc;
+            out_world.push(loc);
         } else {
-            world[i] = mat4_mul(world[p as usize], loc);
+            let parent_m = out_world[p as usize];
+            out_world.push(mat4_mul(parent_m, loc));
         }
     }
-
-    world
 }
 
 /// Computes final skinning matrices ($M_{skin} = M_{world} \cdot M_{initial}^{-1}$) for each bone.
@@ -463,6 +479,35 @@ pub fn compute_skin_matrices(
     for i in 0..n {
         let inv_init = mat4_inverse(initial_matrices[i]);
         skin.push(mat4_mul(world_matrices[i], inv_init));
+    }
+    skin
+}
+
+/// Zero-allocation in-place computation of skinning matrices using pre-inverted bind pose matrices.
+pub fn compute_skin_matrices_with_inv_into(
+    world_matrices: &[[[f32; 4]; 4]],
+    inv_initial_matrices: &[[[f32; 4]; 4]],
+    out_skin: &mut Vec<[[f32; 4]; 4]>,
+) {
+    let n = world_matrices.len().min(inv_initial_matrices.len());
+    out_skin.clear();
+    if out_skin.capacity() < n {
+        out_skin.reserve(n - out_skin.capacity());
+    }
+    for i in 0..n {
+        out_skin.push(mat4_mul(world_matrices[i], inv_initial_matrices[i]));
+    }
+}
+
+/// Computes final skinning matrices using pre-inverted bind pose matrices.
+pub fn compute_skin_matrices_with_inv(
+    world_matrices: &[[[f32; 4]; 4]],
+    inv_initial_matrices: &[[[f32; 4]; 4]],
+) -> Vec<[[f32; 4]; 4]> {
+    let n = world_matrices.len().min(inv_initial_matrices.len());
+    let mut skin = Vec::with_capacity(n);
+    for i in 0..n {
+        skin.push(mat4_mul(world_matrices[i], inv_initial_matrices[i]));
     }
     skin
 }
@@ -631,63 +676,5 @@ fn f16_to_f32(h: u16) -> f32 {
     } else {
         // Normalized half float
         f32::from_bits((sign << 31) | ((exp + 112) << 23) | (mant << 13))
-    }
-}
-
-#[inline(always)]
-fn read_u16(data: &[u8], ofs: usize) -> Result<u16, AssetError> {
-    if ofs + 2 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 2,
-            available: data.len(),
-        })
-    } else {
-        Ok(u16::from_le_bytes([data[ofs], data[ofs + 1]]))
-    }
-}
-
-#[inline(always)]
-fn read_i16(data: &[u8], ofs: usize) -> Result<i16, AssetError> {
-    if ofs + 2 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 2,
-            available: data.len(),
-        })
-    } else {
-        Ok(i16::from_le_bytes([data[ofs], data[ofs + 1]]))
-    }
-}
-
-#[inline(always)]
-fn read_u32(data: &[u8], ofs: usize) -> Result<u32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(u32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
-    }
-}
-
-#[inline(always)]
-fn read_f32(data: &[u8], ofs: usize) -> Result<f32, AssetError> {
-    if ofs + 4 > data.len() {
-        Err(AssetError::BufferUnderflow {
-            required: ofs + 4,
-            available: data.len(),
-        })
-    } else {
-        Ok(f32::from_le_bytes([
-            data[ofs],
-            data[ofs + 1],
-            data[ofs + 2],
-            data[ofs + 3],
-        ]))
     }
 }

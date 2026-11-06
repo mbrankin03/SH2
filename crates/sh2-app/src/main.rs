@@ -3136,29 +3136,13 @@ impl ApplicationHandler for SilentHillApp {
                                     );
 
                                     let (es, ec_yaw) = enemy.yaw.sin_cos();
-                                    // When downed on floor, lay flat or offset Y
-                                    let (ey, rx_rot) = if enemy.is_downed {
-                                        (enemy.position.y + 100.0, true)
-                                    } else {
-                                        (enemy.position.y, false)
-                                    };
-
-                                    let world_mat = if rx_rot {
-                                        // Rotate 90 deg on X so enemy lies flat on back/stomach
-                                        [
-                                            [ec_yaw, 0.0, es, enemy.position.x],
-                                            [0.0, 0.0, 1.0, ey],
-                                            [-es, -1.0, 0.0, enemy.position.z],
-                                            [0.0, 0.0, 0.0, 1.0],
-                                        ]
-                                    } else {
-                                        [
-                                            [ec_yaw, 0.0, es, enemy.position.x],
-                                            [0.0, 1.0, 0.0, ey],
-                                            [-es, 0.0, ec_yaw, enemy.position.z],
-                                            [0.0, 0.0, 0.0, 1.0],
-                                        ]
-                                    };
+                                    let ey = enemy.position.y;
+                                    let world_mat = [
+                                        [ec_yaw, 0.0, es, enemy.position.x],
+                                        [0.0, 1.0, 0.0, ey],
+                                        [-es, 0.0, ec_yaw, enemy.position.z],
+                                        [0.0, 0.0, 0.0, 1.0],
+                                    ];
 
                                     let mut enemy_mats = Vec::with_capacity(skin.len());
                                     for m_skin in &skin {

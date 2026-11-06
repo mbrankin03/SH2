@@ -1125,6 +1125,10 @@ pub struct CombatTargetEnemy {
     pub is_dead: bool,
     pub flinch_timer: f32,
     pub down_timer: f32,
+    pub attack_cooldown: f32,
+    pub attack_timer: f32,
+    pub is_attacking: bool,
+    pub is_kick_next: bool,
     pub hitbox_radius: f32,
     pub hitbox_height: f32,
     pub anim: CreatureAnimationController,
@@ -1147,6 +1151,10 @@ impl CombatTargetEnemy {
             is_dead: false,
             flinch_timer: 0.0,
             down_timer: 0.0,
+            attack_cooldown: 0.5,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
             hitbox_radius: 350.0,
             hitbox_height: 1500.0,
             anim: CreatureAnimationController::new_lying_figure(),
@@ -1169,6 +1177,10 @@ impl CombatTargetEnemy {
             is_dead: false,
             flinch_timer: 0.0,
             down_timer: 0.0,
+            attack_cooldown: 0.8,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
             hitbox_radius: 300.0,
             hitbox_height: 1600.0,
             anim: CreatureAnimationController::new_mannequin(),
@@ -1192,6 +1204,8 @@ impl CombatTargetEnemy {
 
         self.health = (self.health - atk.ap).max(0.0);
         self.endurance = (self.endurance - atk.sp).max(0.0);
+        self.is_attacking = false;
+        self.attack_timer = 0.0;
 
         if self.is_downed {
             // Attacks against downed enemies finish them off or trigger death twitch
@@ -1214,6 +1228,8 @@ impl CombatTargetEnemy {
                 crate::ai::creatures::lying_figure::ScuState::Down
             } else if self.flinch_timer > 0.0 {
                 crate::ai::creatures::lying_figure::ScuState::Damage
+            } else if self.is_attacking {
+                crate::ai::creatures::lying_figure::ScuState::Attack
             } else {
                 crate::ai::creatures::lying_figure::ScuState::Chase
             };
@@ -1223,15 +1239,17 @@ impl CombatTargetEnemy {
                 crate::ai::creatures::mannequin::MknState::Down
             } else if self.flinch_timer > 0.0 {
                 crate::ai::creatures::mannequin::MknState::Damage
+            } else if self.is_attacking {
+                crate::ai::creatures::mannequin::MknState::Attack
             } else {
                 crate::ai::creatures::mannequin::MknState::Chase
             };
-            self.anim.sync_mannequin(mkn_state, false);
+            self.anim.sync_mannequin(mkn_state, self.is_kick_next);
         }
     }
 
-    /// Update enemy timers.
-    pub fn update(&mut self, dt: f32) {
+    /// Update enemy timers, attack logic, and navigation towards player.
+    pub fn update(&mut self, player_pos: Vec3, dt: f32) {
         if self.is_dead {
             self.anim.update(dt, self.yaw);
             return;
@@ -1239,12 +1257,58 @@ impl CombatTargetEnemy {
         if self.flinch_timer > 0.0 {
             self.flinch_timer = (self.flinch_timer - dt).max(0.0);
         }
-        if self.is_downed {
+        if self.down_timer > 0.0 {
             self.down_timer -= dt;
             if self.down_timer <= 0.0 && self.health > 0.0 {
                 // Recover from floor
                 self.is_downed = false;
                 self.endurance = self.max_endurance * 0.5;
+            }
+        }
+        if self.attack_cooldown > 0.0 {
+            self.attack_cooldown = (self.attack_cooldown - dt).max(0.0);
+        }
+
+        if !self.is_downed && self.flinch_timer <= 0.0 {
+            let dx = player_pos.x - self.position.x;
+            let dz = player_pos.z - self.position.z;
+            let dist = (dx * dx + dz * dz).sqrt();
+            let desired_yaw = dx.atan2(dz);
+
+            // Smoothly turn towards player
+            let mut diff = desired_yaw - self.yaw;
+            while diff > PI {
+                diff -= 2.0 * PI;
+            }
+            while diff < -PI {
+                diff += 2.0 * PI;
+            }
+            self.yaw += diff.clamp(-3.0 * dt, 3.0 * dt);
+
+            if self.is_attacking {
+                self.attack_timer += dt;
+                // Attack animation duration ~1.0 - 1.2s
+                let max_atk_time = if self.id == 1 { 1.2 } else { 1.0 };
+                if self.attack_timer >= max_atk_time {
+                    self.is_attacking = false;
+                    self.attack_timer = 0.0;
+                    self.attack_cooldown = 1.5;
+                    if self.id != 1 {
+                        self.is_kick_next = !self.is_kick_next;
+                    }
+                }
+            } else {
+                let attack_range = if self.id == 1 { 1200.0 } else { 650.0 };
+                if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < 0.6 {
+                    // Trigger creature attack
+                    self.is_attacking = true;
+                    self.attack_timer = 0.0;
+                } else if dist > 450.0 {
+                    // Move towards player using authentic walk root motion
+                    let walk_speed = if self.id == 1 { 402.0 } else { 576.0 };
+                    self.position.x += self.yaw.sin() * walk_speed * dt;
+                    self.position.z += self.yaw.cos() * walk_speed * dt;
+                }
             }
         }
 
@@ -1254,6 +1318,8 @@ impl CombatTargetEnemy {
                 crate::ai::creatures::lying_figure::ScuState::Down
             } else if self.flinch_timer > 0.0 {
                 crate::ai::creatures::lying_figure::ScuState::Damage
+            } else if self.is_attacking {
+                crate::ai::creatures::lying_figure::ScuState::Attack
             } else {
                 crate::ai::creatures::lying_figure::ScuState::Chase
             };
@@ -1263,10 +1329,12 @@ impl CombatTargetEnemy {
                 crate::ai::creatures::mannequin::MknState::Down
             } else if self.flinch_timer > 0.0 {
                 crate::ai::creatures::mannequin::MknState::Damage
+            } else if self.is_attacking {
+                crate::ai::creatures::mannequin::MknState::Attack
             } else {
                 crate::ai::creatures::mannequin::MknState::Chase
             };
-            self.anim.sync_mannequin(mkn_state, false);
+            self.anim.sync_mannequin(mkn_state, self.is_kick_next);
         }
         self.anim.update(dt, self.yaw);
     }
@@ -1341,8 +1409,9 @@ impl CombatArena {
         }
 
         // Update target enemies
+        let player_p = self.player_position;
         for enemy in &mut self.enemies {
-            enemy.update(dt);
+            enemy.update(player_p, dt);
         }
     }
 

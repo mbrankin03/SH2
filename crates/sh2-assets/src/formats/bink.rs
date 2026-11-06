@@ -650,7 +650,7 @@ pub struct BinkVideoStream {
     pub current_frame_index: u32,
     child: Option<Child>,
     scratch_buf: Vec<u8>,
-    plane_buffers: (Vec<u8>, Vec<u8>, Vec<u8>),
+    current_frame: Option<Yuv420Frame>,
 }
 
 impl BinkVideoStream {
@@ -664,7 +664,7 @@ impl BinkVideoStream {
             current_frame_index: 0,
             child: None,
             scratch_buf: Vec::new(),
-            plane_buffers: (Vec::new(), Vec::new(), Vec::new()),
+            current_frame: None,
         };
         stream.spawn_decoder(0.0);
         Ok(stream)
@@ -678,7 +678,7 @@ impl BinkVideoStream {
             current_frame_index: 0,
             child: None,
             scratch_buf: Vec::new(),
-            plane_buffers: (Vec::new(), Vec::new(), Vec::new()),
+            current_frame: None,
         }
     }
 
@@ -720,9 +720,10 @@ impl BinkVideoStream {
         }
     }
 
-    /// Reads and returns the next sequential `Yuv420Frame`, or `None` if the stream has reached `frame_count`.
-    pub fn next_frame(&mut self) -> Option<Yuv420Frame> {
+    /// Reads the next sequential `Yuv420Frame` borrowing its internal buffers, or `None` if the stream has reached `frame_count`.
+    pub fn next_frame(&mut self) -> Option<&Yuv420Frame> {
         if self.current_frame_index >= self.header.frame_count {
+            self.current_frame = None;
             return None;
         }
 
@@ -743,41 +744,59 @@ impl BinkVideoStream {
                     self.scratch_buf.resize(total_len, 0);
                 }
                 if stdout.read_exact(&mut self.scratch_buf).is_ok() {
-                    // Pre-reserve and reuse plane vectors to avoid allocating 3MB/frame heap memory.
-                    let (ref mut bp_y, ref mut bp_u, ref mut bp_v) = self.plane_buffers;
+                    // Update current_frame in-place or construct it using pre-reserved plane buffers
+                    if let Some(ref mut frame) = self.current_frame {
+                        frame.width = w;
+                        frame.height = h;
+                        frame.frame_index = frame_idx;
 
-                    if bp_y.capacity() < y_len {
-                        bp_y.reserve_exact(y_len - bp_y.capacity());
+                        if frame.y_plane.capacity() < y_len {
+                            frame.y_plane.reserve_exact(y_len - frame.y_plane.len());
+                        }
+                        frame.y_plane.clear();
+                        frame.y_plane.extend_from_slice(&self.scratch_buf[0..y_len]);
+
+                        if frame.u_plane.capacity() < uv_len {
+                            frame.u_plane.reserve_exact(uv_len - frame.u_plane.len());
+                        }
+                        frame.u_plane.clear();
+                        frame
+                            .u_plane
+                            .extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
+
+                        if frame.v_plane.capacity() < uv_len {
+                            frame.v_plane.reserve_exact(uv_len - frame.v_plane.len());
+                        }
+                        frame.v_plane.clear();
+                        frame
+                            .v_plane
+                            .extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
+                    } else {
+                        let mut y_plane = Vec::with_capacity(y_len);
+                        y_plane.extend_from_slice(&self.scratch_buf[0..y_len]);
+                        let mut u_plane = Vec::with_capacity(uv_len);
+                        u_plane.extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
+                        let mut v_plane = Vec::with_capacity(uv_len);
+                        v_plane.extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
+
+                        self.current_frame = Some(Yuv420Frame {
+                            width: w,
+                            height: h,
+                            frame_index: frame_idx,
+                            y_plane,
+                            u_plane,
+                            v_plane,
+                        });
                     }
-                    bp_y.clear();
-                    bp_y.extend_from_slice(&self.scratch_buf[0..y_len]);
 
-                    if bp_u.capacity() < uv_len {
-                        bp_u.reserve_exact(uv_len - bp_u.capacity());
-                    }
-                    bp_u.clear();
-                    bp_u.extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
-
-                    if bp_v.capacity() < uv_len {
-                        bp_v.reserve_exact(uv_len - bp_v.capacity());
-                    }
-                    bp_v.clear();
-                    bp_v.extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
-
-                    return Some(Yuv420Frame {
-                        width: w,
-                        height: h,
-                        frame_index: frame_idx,
-                        y_plane: bp_y.clone(),
-                        u_plane: bp_u.clone(),
-                        v_plane: bp_v.clone(),
-                    });
+                    return self.current_frame.as_ref();
                 }
             }
         }
 
         // Deterministic synthetic test pattern fallback when ffmpeg stream finishes early or in headless CI
-        Some(Yuv420Frame::generate_synthetic_test_frame(w, h, frame_idx))
+        self.current_frame = Some(Yuv420Frame::generate_synthetic_test_frame(w, h, frame_idx));
+        self.current_frame.as_ref()
     }
 
     /// Restarts the video stream from frame 0.

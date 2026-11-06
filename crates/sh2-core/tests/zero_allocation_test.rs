@@ -46,12 +46,18 @@ fn test_zero_allocation_simulation_tick() {
     let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
 
     // Warm-up tick to settle any initial lazy initialization
-    sim.update(Duration::from_millis(16));
+    for _ in 0..10 {
+        sim.update(Duration::from_millis(16));
+    }
 
     // Engage continuous locomotion & turning
     sim.input.state.left_stick_y = 1.0;
     sim.input.state.left_stick_x = 0.5;
     sim.input.state.is_running = true;
+
+    for _ in 0..10 {
+        sim.update(Duration::from_millis(16));
+    }
 
     TRACKER.reset();
 

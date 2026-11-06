@@ -436,7 +436,7 @@ pub fn evaluate_pose_into(
     let n = parents.len().min(bind_locals.len());
     out_world.clear();
     if out_world.capacity() < n {
-        out_world.reserve(n - out_world.capacity());
+        out_world.reserve(n);
     }
 
     for i in 0..n {
@@ -492,7 +492,7 @@ pub fn compute_skin_matrices_with_inv_into(
     let n = world_matrices.len().min(inv_initial_matrices.len());
     out_skin.clear();
     if out_skin.capacity() < n {
-        out_skin.reserve(n - out_skin.capacity());
+        out_skin.reserve(n);
     }
     for i in 0..n {
         out_skin.push(mat4_mul(world_matrices[i], inv_initial_matrices[i]));

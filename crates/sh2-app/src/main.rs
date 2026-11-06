@@ -515,10 +515,10 @@ fn load_character_asset(
                                 Some(&format!("{character_name} SH2:EE HD Texture {tidx}")),
                             )
                         } else {
-                            van_bg.clone()
+                            Arc::clone(&van_bg)
                         }
                     } else {
-                        van_bg.clone()
+                        Arc::clone(&van_bg)
                     }
                 } else {
                     let (hw, hh, hd_rgba) = upscale_hd_preview_rgba(&rgba, tex.width, tex.height);
@@ -535,8 +535,8 @@ fn load_character_asset(
                 continue;
             }
         }
-        vanilla_texture_bind_groups.push(ctx.default_texture_bind_group.clone());
-        hd_texture_bind_groups.push(ctx.default_texture_bind_group.clone());
+        vanilla_texture_bind_groups.push(Arc::clone(&ctx.default_texture_bind_group));
+        hd_texture_bind_groups.push(Arc::clone(&ctx.default_texture_bind_group));
     }
 
     // Remap each GPU primitive's `texture_index` to its dense 0..N slot in `*_texture_bind_groups`
@@ -901,7 +901,7 @@ fn open_fmv_session(
 
     // Decode and upload initial frame 0 immediately so the first render pass shows video
     if let Some(first_frame) = stream.next_frame() {
-        fmv_pipeline.upload_frame(queue, &gpu_surface, &first_frame);
+        fmv_pipeline.upload_frame(queue, &gpu_surface, first_frame);
     }
 
     Some(ActiveFmvSession {
@@ -966,6 +966,7 @@ struct AppState {
     active_audio_device: Option<String>,
     debug_collision_overlay: bool,
     debug_camera_hud: bool,
+    skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
     last_frame: Instant,
     frame_counter: u32,
     sim_time: f32,
@@ -1002,7 +1003,7 @@ impl ApplicationHandler for SilentHillApp {
 
         // Create surface safely bound to the window
         let surface = instance
-            .create_surface(window.clone())
+            .create_surface(Arc::clone(&window))
             .expect("Failed to create window surface");
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -1057,8 +1058,8 @@ impl ApplicationHandler for SilentHillApp {
         let render_ctx = RenderContext::from_device(
             instance,
             adapter,
-            device.clone(),
-            queue.clone(),
+            Arc::clone(&device),
+            Arc::clone(&queue),
             render_config,
         );
 
@@ -1079,7 +1080,7 @@ impl ApplicationHandler for SilentHillApp {
         for (m_idx, mat) in map_file.materials.iter().enumerate() {
             let tex_id = mat.texture_id as u32;
             if let Some(bg) = tex_bg_cache.get(&tex_id) {
-                map_texture_bind_groups.push(bg.clone());
+                map_texture_bind_groups.push(Arc::clone(bg));
                 continue;
             }
 
@@ -1091,12 +1092,12 @@ impl ApplicationHandler for SilentHillApp {
                         &rgba,
                         Some(&format!("Map Material {m_idx} Texture {tex_id}")),
                     );
-                    tex_bg_cache.insert(tex_id, bg.clone());
+                    tex_bg_cache.insert(tex_id, Arc::clone(&bg));
                     map_texture_bind_groups.push(bg);
                     continue;
                 }
             }
-            map_texture_bind_groups.push(render_ctx.default_texture_bind_group.clone());
+            map_texture_bind_groups.push(Arc::clone(&render_ctx.default_texture_bind_group));
         }
 
         // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
@@ -1383,6 +1384,7 @@ impl ApplicationHandler for SilentHillApp {
             active_audio_device: target_audio_device,
             debug_collision_overlay: false,
             debug_camera_hud: true,
+            skin_matrices_scratch: Vec::with_capacity(128),
             last_frame: Instant::now(),
             frame_counter: 0,
             sim_time: 0.0,
@@ -2445,7 +2447,7 @@ impl ApplicationHandler for SilentHillApp {
                                     state.fmv_pipeline.upload_frame(
                                         &state.render_ctx.queue,
                                         &session.gpu_surface,
-                                        &frame,
+                                        frame,
                                     );
                                 } else {
                                     // Loop seamlessly on completion in theater mode
@@ -2463,7 +2465,7 @@ impl ApplicationHandler for SilentHillApp {
                                         state.fmv_pipeline.upload_frame(
                                             &state.render_ctx.queue,
                                             &session.gpu_surface,
-                                            &frame,
+                                            frame,
                                         );
                                     }
                                     break;
@@ -2613,7 +2615,7 @@ impl ApplicationHandler for SilentHillApp {
                     };
                     state.render_ctx.update_spotlight(&spot_uniforms);
 
-                    let mut skin_matrices = Vec::new();
+                    state.skin_matrices_scratch.clear();
                     let mut debug_lines = Vec::new();
 
                     if let Some(ref mut c) = state.viewer_asset {
@@ -2645,7 +2647,7 @@ impl ApplicationHandler for SilentHillApp {
                                 [0.0, 0.0, 0.0, 1.0],
                             ];
 
-                            skin_matrices.reserve(c.skin_scratch.len());
+                            state.skin_matrices_scratch.reserve(c.skin_scratch.len());
                             for m_skin in &c.skin_scratch {
                                 let mut combined = [[0.0; 4]; 4];
                                 for r in 0..4 {
@@ -2656,7 +2658,7 @@ impl ApplicationHandler for SilentHillApp {
                                             + world_mat[r][3] * m_skin[3][col];
                                     }
                                 }
-                                skin_matrices.push(combined);
+                                state.skin_matrices_scratch.push(combined);
                             }
 
                             if state.model_viewer.render_mode == ViewerRenderMode::Wireframe
@@ -2686,7 +2688,7 @@ impl ApplicationHandler for SilentHillApp {
                                     &c.model.vertices.positions,
                                     &c.model.vertices.bone_indices,
                                     &c.model.vertices.weights,
-                                    &skin_matrices,
+                                    &state.skin_matrices_scratch,
                                     &all_tris,
                                     [0.15, 0.92, 0.65, 1.0],
                                 ));
@@ -2706,7 +2708,7 @@ impl ApplicationHandler for SilentHillApp {
                     }
 
                     let skeletal_draw = if let Some(ref c) = state.viewer_asset {
-                        if !skin_matrices.is_empty() {
+                        if !state.skin_matrices_scratch.is_empty() {
                             let tex_slice = match state.model_viewer.texture_source {
                                 TextureSourceMode::EnhancedHd => {
                                     c.hd_texture_bind_groups.as_slice()
@@ -2715,7 +2717,11 @@ impl ApplicationHandler for SilentHillApp {
                                     c.vanilla_texture_bind_groups.as_slice()
                                 }
                             };
-                            vec![(&c.gpu_mesh, skin_matrices.as_slice(), Some(tex_slice))]
+                            vec![(
+                                &c.gpu_mesh,
+                                state.skin_matrices_scratch.as_slice(),
+                                Some(tex_slice),
+                            )]
                         } else {
                             vec![]
                         }
@@ -2778,7 +2784,7 @@ impl ApplicationHandler for SilentHillApp {
                         state.character.as_mut().or(state.maria.as_mut())
                     };
 
-                    let mut skin_matrices = Vec::new();
+                    state.skin_matrices_scratch.clear();
                     if let Some(ref mut c) = active_char {
                         let (prev_cursor, cur_cursor, blend) =
                             state.sim_core.animation.evaluate_blended_cursor();
@@ -2830,7 +2836,7 @@ impl ApplicationHandler for SilentHillApp {
                                 [0.0, 0.0, 0.0, 1.0],
                             ];
 
-                            skin_matrices.reserve(c.skin_scratch.len());
+                            state.skin_matrices_scratch.reserve(c.skin_scratch.len());
                             for m_skin in &c.skin_scratch {
                                 let mut combined = [[0.0; 4]; 4];
                                 for r in 0..4 {
@@ -2841,16 +2847,16 @@ impl ApplicationHandler for SilentHillApp {
                                             + world_mat[r][3] * m_skin[3][col];
                                     }
                                 }
-                                skin_matrices.push(combined);
+                                state.skin_matrices_scratch.push(combined);
                             }
                         }
                     }
 
                     let skeletal_draw = if let Some(c) = active_char {
-                        if !skin_matrices.is_empty() {
+                        if !state.skin_matrices_scratch.is_empty() {
                             vec![(
                                 &c.gpu_mesh,
-                                skin_matrices.as_slice(),
+                                state.skin_matrices_scratch.as_slice(),
                                 Some(c.texture_bind_groups.as_slice()),
                             )]
                         } else {

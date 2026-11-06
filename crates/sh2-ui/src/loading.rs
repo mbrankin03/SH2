@@ -171,17 +171,31 @@ pub enum LoadingPathPattern {
     BottomRightToTopLeft,
     /// Gentle S-curve arc traversing across the center display.
     CurvedArc,
+    /// Walking straight vertically up the center.
+    CenterStraight,
+    /// Diagonal step path starting mid-left traversing toward upper-center.
+    LeftToCenterArc,
+    /// Diagonal step path starting mid-right traversing toward upper-center.
+    RightToCenterArc,
+    /// Meandering S-curve wandering across the right half of the screen.
+    RightMeander,
 }
 
 impl LoadingPathPattern {
+    pub const ALL: [Self; 8] = [
+        Self::UpwardWander,
+        Self::BottomLeftToTopRight,
+        Self::BottomRightToTopLeft,
+        Self::CurvedArc,
+        Self::CenterStraight,
+        Self::LeftToCenterArc,
+        Self::RightToCenterArc,
+        Self::RightMeander,
+    ];
+
     /// Select a pattern based on seed or cycling index.
     pub fn from_index(index: usize) -> Self {
-        match index % 4 {
-            0 => Self::UpwardWander,
-            1 => Self::BottomLeftToTopRight,
-            2 => Self::BottomRightToTopLeft,
-            _ => Self::CurvedArc,
-        }
+        Self::ALL[index % Self::ALL.len()]
     }
 }
 
@@ -229,14 +243,26 @@ pub struct LoadingScreen {
     pub target_room_label: String,
 }
 
+static TRANSITION_CYCLE_COUNTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 impl LoadingScreen {
     /// Create a new footstep loading screen for a destination stage.
+    /// Each transition automatically cycles through authentic PS2 path patterns.
     pub fn new(target_label: impl Into<String>, min_duration: f32, require_press: bool) -> Self {
+        let cycle = TRANSITION_CYCLE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self::new_with_seed(target_label, min_duration, require_press, cycle)
+    }
+
+    /// Create a new footstep loading screen with an explicit variation seed.
+    pub fn new_with_seed(
+        target_label: impl Into<String>,
+        min_duration: f32,
+        require_press: bool,
+        seed: usize,
+    ) -> Self {
         let label_str = target_label.into();
-        let pattern_seed = label_str
-            .bytes()
-            .fold(0usize, |acc, b| acc.wrapping_add(b as usize));
-        let path_pattern = LoadingPathPattern::from_index(pattern_seed);
+        let path_pattern = LoadingPathPattern::from_index(seed);
 
         Self {
             elapsed_seconds: 0.0,
@@ -306,29 +332,53 @@ impl LoadingScreen {
 
         let (center_x, base_y, heading_angle) = match self.path_pattern {
             LoadingPathPattern::UpwardWander => {
-                let y = 410.0 - t * 46.0;
-                let wander = (t * 0.75).sin() * 22.0;
+                let y = 415.0 - t * 45.0;
+                let wander = (t * 0.75).sin() * 24.0;
                 let x = 320.0 + wander + lateral_offset;
-                let angle = (t * 0.75).cos() * 0.15 + gait_angle_offset;
+                let angle = (t * 0.75).cos() * 0.16 + gait_angle_offset;
                 (x, y, angle)
             }
             LoadingPathPattern::BottomLeftToTopRight => {
-                let y = 420.0 - t * 45.0;
-                let x = 200.0 + t * 30.0 + lateral_offset;
-                let angle = 0.35 + gait_angle_offset;
+                let y = 425.0 - t * 44.0;
+                let x = 190.0 + t * 32.0 + lateral_offset;
+                let angle = 0.36 + gait_angle_offset;
                 (x, y, angle)
             }
             LoadingPathPattern::BottomRightToTopLeft => {
-                let y = 420.0 - t * 45.0;
-                let x = 440.0 - t * 30.0 + lateral_offset;
-                let angle = -0.35 + gait_angle_offset;
+                let y = 425.0 - t * 44.0;
+                let x = 450.0 - t * 32.0 + lateral_offset;
+                let angle = -0.36 + gait_angle_offset;
                 (x, y, angle)
             }
             LoadingPathPattern::CurvedArc => {
-                let y = 415.0 - t * 46.0;
-                let arc = ((t - 3.5) * 0.5).sin() * 45.0;
+                let y = 420.0 - t * 45.0;
+                let arc = ((t - 3.5) * 0.52).sin() * 48.0;
                 let x = 320.0 + arc + lateral_offset;
-                let angle = ((t - 3.5) * 0.5).cos() * 0.25 + gait_angle_offset;
+                let angle = ((t - 3.5) * 0.52).cos() * 0.26 + gait_angle_offset;
+                (x, y, angle)
+            }
+            LoadingPathPattern::CenterStraight => {
+                let y = 420.0 - t * 45.0;
+                let x = 320.0 + lateral_offset;
+                (x, y, gait_angle_offset)
+            }
+            LoadingPathPattern::LeftToCenterArc => {
+                let y = 425.0 - t * 44.0;
+                let x = 230.0 + (t * 0.25).sin() * 90.0 + lateral_offset;
+                let angle = 0.28 + gait_angle_offset;
+                (x, y, angle)
+            }
+            LoadingPathPattern::RightToCenterArc => {
+                let y = 425.0 - t * 44.0;
+                let x = 410.0 - (t * 0.25).sin() * 90.0 + lateral_offset;
+                let angle = -0.28 + gait_angle_offset;
+                (x, y, angle)
+            }
+            LoadingPathPattern::RightMeander => {
+                let y = 415.0 - t * 44.0;
+                let wander = ((t + 1.0) * 0.8).cos() * 26.0;
+                let x = 370.0 + wander + lateral_offset;
+                let angle = -((t + 1.0) * 0.8).sin() * 0.18 + gait_angle_offset;
                 (x, y, angle)
             }
         };
@@ -579,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_loading_screen_patterns() {
-        for i in 0..4 {
+        for i in 0..8 {
             let pattern = LoadingPathPattern::from_index(i);
             let mut loading = LoadingScreen::new("Test Room", 1.0, false).with_pattern(pattern);
             for _ in 0..60 {
@@ -590,5 +640,10 @@ mod tests {
             assert!(step.x > 50.0 && step.x < 590.0);
             assert!(step.y > 50.0 && step.y < 450.0);
         }
+
+        // Verify that consecutive calls cycle across patterns
+        let ls1 = LoadingScreen::new("Preview", 1.0, false);
+        let ls2 = LoadingScreen::new("Preview", 1.0, false);
+        assert_ne!(ls1.path_pattern, ls2.path_pattern);
     }
 }

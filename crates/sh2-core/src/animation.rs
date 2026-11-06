@@ -20,6 +20,10 @@ pub enum AnimationStateKind {
     Attack,
     /// Stumble or damage reaction.
     Damage,
+    /// Grabbed by creature and struggling to break free (`0x533d00`).
+    Held,
+    /// Knocked down or collapsed on the floor.
+    Fall,
 }
 
 /// Tuple representing an animation cursor: `(frame_0, frame_1, alpha)`.
@@ -93,6 +97,12 @@ impl JamesBasicClips {
     pub const AIM: AnimationClip = AnimationClip::new(200, 230, 30.0, true);
     /// Weapon strike / attack execution (frames 231..=270).
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
+    /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 121).
+    pub const HURT: AnimationClip = AnimationClip::new(453, 470, 15.0, false);
+    /// Struggle held animation during grab (frames 457..=461 held/writhing loop, 30 fps).
+    pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(457, 461, 30.0, true);
+    /// Collapse / death fall animation (frames 256..=280, PS2 index 112).
+    pub const FALL: AnimationClip = AnimationClip::new(256, 280, 15.0, false);
 }
 
 /// Standard locomotion animation clips for Maria in `xmar_wpnone.anm` (Born From a Wish).

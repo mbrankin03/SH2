@@ -985,6 +985,7 @@ struct AppState {
     key_ready_held: bool,
     key_attack_pressed: bool,
     key_attack_held: bool,
+    struggle_button_press_count: u32,
     model_viewer: ModelViewerState,
     viewer_asset: Option<CharacterAsset>,
     loaded_viewer_model_idx: usize,
@@ -1477,6 +1478,7 @@ impl ApplicationHandler for SilentHillApp {
             key_ready_held: false,
             key_attack_pressed: false,
             key_attack_held: false,
+            struggle_button_press_count: 0,
             model_viewer,
             viewer_asset,
             loaded_viewer_model_idx,
@@ -2226,6 +2228,13 @@ impl ApplicationHandler for SilentHillApp {
                         _ => {}
                     }
 
+                    // Count any key press while held in grapple for authentic struggle meter drain (0x5565c0)
+                    if pressed
+                        && state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                    {
+                        state.struggle_button_press_count += 1;
+                    }
+
                     // Compute accumulated directional keyboard input
                     let mut kb_y = 0.0f32;
                     let mut kb_x = 0.0f32;
@@ -2288,6 +2297,11 @@ impl ApplicationHandler for SilentHillApp {
                             state.key_attack_pressed = true;
                         }
                         state.key_attack_held = pressed;
+                    }
+                    if pressed
+                        && state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                    {
+                        state.struggle_button_press_count += 1;
                     }
                 }
             }
@@ -2995,12 +3009,55 @@ impl ApplicationHandler for SilentHillApp {
                             let dt_sec = dt.as_secs_f32().min(0.05);
                             let atk_pressed = state.key_attack_pressed;
                             state.key_attack_pressed = false;
+
+                            // Process struggle input if currently held by a creature (0x5565c0)
+                            let struggle_presses = state.struggle_button_press_count;
+                            state.struggle_button_press_count = 0;
+                            if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                            {
+                                state.combat_arena.player.process_struggle_inputs(
+                                    struggle_presses,
+                                    dt_sec,
+                                    false,
+                                );
+                            }
+
                             state.combat_arena.tick(
                                 state.key_ready_held,
                                 atk_pressed,
                                 state.key_attack_held,
                                 dt_sec,
                             );
+
+                            // Sync James player position and yaw back from arena (e.g. grapple turn/facing)
+                            if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                            {
+                                state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;
+                            }
+
+                            // Drive James's skeletal animation when in combat states (Held struggle loop 457..=461, Hurt flinch, Fall)
+                            match state.combat_arena.player.mode {
+                                sh2_core::combat::CombatMode::Held => {
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Held,
+                                        sh2_core::animation::JamesBasicClips::STRUGGLE_HELD,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Hurt => {
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Damage,
+                                        sh2_core::animation::JamesBasicClips::HURT,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Dying
+                                | sh2_core::combat::CombatMode::Dead => {
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Fall,
+                                        sh2_core::animation::JamesBasicClips::FALL,
+                                    );
+                                }
+                                _ => {}
+                            }
 
                             // Play any combat sound effects requested by the combat state machine
                             if let Some(sfx_id) = state.combat_arena.player.pending_sfx.take() {

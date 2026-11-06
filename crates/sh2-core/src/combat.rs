@@ -1930,10 +1930,53 @@ impl CombatArena {
             self.attack_hit_registered = false;
         }
 
-        // Update target enemies
+        // Update target enemies and check for grapple/hold interactions with James
         let player_p = self.player_position;
+        let is_god_mode = self.player.god_mode;
+        let is_dying_or_dead =
+            self.player.mode == CombatMode::Dead || self.player.mode == CombatMode::Dying;
+
         for enemy in &mut self.enemies {
             enemy.update(player_p, dt);
+
+            // Grapple / Grab Attack Resolution (1:1 with authentic PS2 en_red, en_pap, en_ike, en_bos)
+            // When an attacking enemy with a grapple move connects with player within grapple range:
+            if !is_god_mode && !is_dying_or_dead && enemy.is_attacking {
+                let dx = enemy.position.x - player_p.x;
+                let dz = enemy.position.z - player_p.z;
+                let dist = (dx * dx + dz * dz).sqrt();
+
+                let (grab_range, meter) = match enemy.id {
+                    4 => (380.0, 0.70), // Pyramid Head one-handed choke lift
+                    5 => (420.0, 0.70), // Abstract Daddy strangle grapple
+                    6 => (450.0, 0.70), // Flesh Lips ceiling choke descent
+                    8 => (220.0, 0.50), // Creeper latch / bite
+                    9 => (550.0, 0.70), // Mary Final Boss tentacle grapple
+                    _ => (0.0, 0.0),
+                };
+
+                if grab_range > 0.0
+                    && dist <= grab_range
+                    && self.player.mode != CombatMode::Held
+                    && self.player.invulnerability_timer <= 0.0
+                {
+                    self.player.apply_grab(meter);
+                    // Authentic PS2 orientation: snap James to face the grabbing enemy
+                    self.player_yaw = dx.atan2(dz);
+                }
+            }
+        }
+
+        // When held in grapple, apply authentic hold damage over time (0.2 * 30 DPS = 6.0 DPS)
+        if self.player.mode == CombatMode::Held {
+            let hold_dps = 0.2 * 30.0;
+            self.player.health = (self.player.health - hold_dps * dt).max(0.0);
+            if self.player.health <= 0.0 {
+                self.player.mode = CombatMode::Dying;
+                self.player.anim_frame = 0.0;
+                self.player.clip_length = 24.0;
+                self.player.pending_sfx = Some(11050); // Death scream
+            }
         }
     }
 

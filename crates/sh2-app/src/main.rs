@@ -2278,8 +2278,10 @@ impl ApplicationHandler for SilentHillApp {
                             if pressed =>
                         {
                             let stage_name = state.active_test_room.label();
+                            // In test rooms and sandbox gameplay, allow saving unless in cutscenes
+                            let can_save = true;
                             state.menu_ctrl.pause_menu.open(
-                                false,
+                                can_save,
                                 stage_name,
                                 state.sim_time as f64,
                             );

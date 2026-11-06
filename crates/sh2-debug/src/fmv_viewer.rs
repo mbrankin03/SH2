@@ -238,6 +238,8 @@ impl FmvAspectMode {
 /// Cutscene video source flavor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FmvVideoSource {
+    /// Locally upscaled 4K AI Master MP4 video (`tools/vsr_pipeline/output/` or `movie/*.mp4`).
+    Upscaled4kMp4,
     /// SH2:EE 1080p60 AI-upscaled & motion-interpolated videos (`sh2e/movie/`).
     #[default]
     Enhanced1080p60,
@@ -250,14 +252,16 @@ pub enum FmvVideoSource {
 impl FmvVideoSource {
     pub const fn next(self) -> Self {
         match self {
+            Self::Upscaled4kMp4 => Self::Enhanced1080p60,
             Self::Enhanced1080p60 => Self::OgHqPs2Masters,
             Self::OgHqPs2Masters => Self::VanillaPc,
-            Self::VanillaPc => Self::Enhanced1080p60,
+            Self::VanillaPc => Self::Upscaled4kMp4,
         }
     }
 
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::Upscaled4kMp4 => "4K MASTER MP4 (LOCAL AI VSR UPSCALE)",
             Self::Enhanced1080p60 => "SH2:EE 1080P60 (AI-UPSCALED)",
             Self::OgHqPs2Masters => "OG HQ PS2 MASTERS (NATURAL 30FPS)",
             Self::VanillaPc => "VANILLA PC (640x384 / 4:3 30FPS)",
@@ -505,6 +509,14 @@ impl FmvViewerState {
                 }
             }
             FmvAspectMode::RawUncropped => (0.0, 1.0, w / h),
+        }
+    }
+
+    /// Returns formatted BGM stream label for HUD rendering.
+    pub fn bgm_stream_label(&self, bgm_file: Option<&str>, description: &str) -> String {
+        match bgm_file {
+            Some(file) => format!("{} ({})", file, description),
+            None => format!("Silent / In-Movie ({})", description),
         }
     }
 

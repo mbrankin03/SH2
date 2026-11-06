@@ -32,6 +32,152 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// Supported Bink Video 4-byte magic signatures (`BIKf`, `BIKg`, `BIKh`, `BIKi`).
 pub const BINK_MAGICS: [&[u8; 4]; 4] = [b"BIKf", b"BIKg", b"BIKh", b"BIKi"];
 
+/// Supported MP4 / QuickTime 4-byte brand signatures (`ftyp`).
+pub const MP4_FTYP_MAGIC: &[u8; 4] = b"ftyp";
+
+/// Checks if buffer begins with an MP4 / MOV container signature (`....ftyp`).
+pub fn is_mp4_header(data: &[u8]) -> bool {
+    data.len() >= 8 && &data[4..8] == MP4_FTYP_MAGIC
+}
+
+/// Probes an MP4 or Bink file using `ffprobe` to extract dimension, framerate, and duration metadata.
+pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, AssetError> {
+    let path_ref = path.as_ref();
+    let out = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,width,height,r_frame_rate,nb_frames,sample_rate,channels:format=duration",
+            "-of",
+            "default=noprint_wrappers=1",
+            &path_ref.to_string_lossy(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let output =
+        out.map_err(|e| AssetError::InvalidData(format!("Failed to execute ffprobe: {e}")))?;
+    if !output.status.success() {
+        return Err(AssetError::InvalidData(format!(
+            "ffprobe exited with failure on {}",
+            path_ref.display()
+        )));
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut width = 1920u32;
+    let mut height = 1080u32;
+    let mut fps_num = 30u32;
+    let mut fps_den = 1u32;
+    let mut nb_frames = 0u32;
+    let mut duration_secs = 0.0f64;
+    let mut audio_tracks = Vec::new();
+
+    let mut in_audio = false;
+    let mut cur_ar = 48000u32;
+    let mut cur_ch = 2u8;
+
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some((k, v)) = line.split_once('=') {
+            match k {
+                "codec_type" => {
+                    if in_audio {
+                        let tid = audio_tracks.len() as u32;
+                        audio_tracks.push(BinkAudioTrack {
+                            track_id: tid,
+                            sample_rate: cur_ar,
+                            channels: cur_ch,
+                            is_dct: true,
+                            raw_flags: 0,
+                        });
+                    }
+                    in_audio = v == "audio";
+                    cur_ar = 48000;
+                    cur_ch = 2;
+                }
+                "width" => {
+                    if let Ok(w) = v.parse::<u32>() {
+                        width = w;
+                    }
+                }
+                "height" => {
+                    if let Ok(h) = v.parse::<u32>() {
+                        height = h;
+                    }
+                }
+                "r_frame_rate" => {
+                    if let Some((num_s, den_s)) = v.split_once('/') {
+                        let num: u32 = num_s.parse().unwrap_or(30);
+                        let den: u32 = den_s.parse().unwrap_or(1);
+                        if num > 0 && den > 0 {
+                            fps_num = num;
+                            fps_den = den;
+                        }
+                    }
+                }
+                "nb_frames" => {
+                    if let Ok(n) = v.parse::<u32>() {
+                        nb_frames = n;
+                    }
+                }
+                "sample_rate" => {
+                    if let Ok(sr) = v.parse::<u32>() {
+                        cur_ar = sr;
+                    }
+                }
+                "channels" => {
+                    if let Ok(c) = v.parse::<u8>() {
+                        cur_ch = c;
+                    }
+                }
+                "duration" => {
+                    if let Ok(d) = v.parse::<f64>() {
+                        duration_secs = d;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if in_audio {
+        let tid = audio_tracks.len() as u32;
+        audio_tracks.push(BinkAudioTrack {
+            track_id: tid,
+            sample_rate: cur_ar,
+            channels: cur_ch,
+            is_dct: true,
+            raw_flags: 0,
+        });
+    }
+
+    if nb_frames == 0 && duration_secs > 0.0 {
+        let fps = fps_num as f64 / fps_den as f64;
+        nb_frames = (duration_secs * fps).round() as u32;
+    }
+    if nb_frames == 0 {
+        nb_frames = 600;
+    }
+
+    Ok(BinkHeader {
+        magic: *b"MP4v",
+        file_size: (width as u64 * height as u64 * 2) * nb_frames.max(1) as u64,
+        frame_count: nb_frames.max(1),
+        largest_frame_size: 65536,
+        width,
+        height,
+        fps_num,
+        fps_den,
+        video_flags: 0,
+        audio_tracks,
+        indexed_frames: nb_frames as usize,
+    })
+}
+
 /// Metadata for an audio stream embedded inside a `.bik` container.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinkAudioTrack {
@@ -221,12 +367,22 @@ pub fn parse_bink_header(data: &[u8]) -> Result<BinkHeader, AssetError> {
     })
 }
 
-/// Reads and parses the Bink header from a `.bik` file on disk without loading the entire multi-megabyte payload.
+/// Reads and parses the video header from a `.bik` or `.mp4` file on disk.
 pub fn parse_bink_file_header(path: impl AsRef<Path>) -> Result<BinkHeader, AssetError> {
-    let mut file = fs::File::open(path.as_ref())?;
+    let path_ref = path.as_ref();
+    let mut file = fs::File::open(path_ref)?;
     let mut buf = vec![0u8; 65536];
     let n = file.read(&mut buf)?;
     buf.truncate(n);
+
+    if is_mp4_header(&buf)
+        || path_ref
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("mp4"))
+    {
+        return probe_video_container(path_ref);
+    }
+
     parse_bink_header(&buf)
 }
 
@@ -248,6 +404,40 @@ pub struct Yuv420Frame {
 }
 
 impl Yuv420Frame {
+    /// Constructs a frame by taking ownership of pre-allocated plane buffers.
+    pub fn new_reused(
+        width: u32,
+        height: u32,
+        frame_index: u32,
+        y_plane: Vec<u8>,
+        u_plane: Vec<u8>,
+        v_plane: Vec<u8>,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            frame_index,
+            y_plane,
+            u_plane,
+            v_plane,
+        }
+    }
+
+    /// Copies planar data directly into existing target planes, avoiding new heap allocations.
+    pub fn copy_into(
+        &self,
+        target_y: &mut Vec<u8>,
+        target_u: &mut Vec<u8>,
+        target_v: &mut Vec<u8>,
+    ) {
+        target_y.clear();
+        target_y.extend_from_slice(&self.y_plane);
+        target_u.clear();
+        target_u.extend_from_slice(&self.u_plane);
+        target_v.clear();
+        target_v.extend_from_slice(&self.v_plane);
+    }
+
     /// Expected total byte size of a packed planar YUV420p frame (`width * height * 3 / 2`).
     pub const fn expected_byte_len(width: u32, height: u32) -> usize {
         let w = width as usize;
@@ -383,7 +573,8 @@ pub fn decode_bink_audio_track(
     let map_arg = format!("0:a:{track}?");
     let sample_rate = header
         .audio_tracks
-        .first()
+        .get(track)
+        .or_else(|| header.audio_tracks.first())
         .map(|t| t.sample_rate.max(44100))
         .unwrap_or(48000);
 
@@ -421,7 +612,25 @@ pub fn decode_bink_audio_track(
             sample_rate,
             pcm_s16le: out.stdout,
         }),
-        _ => {
+        Ok(out) => {
+            tracing::warn!(
+                "[Bink/MP4 Audio] ffmpeg process returned status {:?} (stdout len {}) for file '{}', falling back to silent buffer",
+                out.status,
+                out.stdout.len(),
+                path.as_ref().display()
+            );
+            // Fallback silent PCM buffer matching duration so playback clocks remain deterministic
+            let total_frames = (header.duration_secs() * sample_rate as f64).ceil() as usize;
+            Ok(DecodedFmvAudio {
+                sample_rate,
+                pcm_s16le: vec![0u8; total_frames.min(48000 * 10) * 4],
+            })
+        }
+        Err(e) => {
+            tracing::warn!(
+                "[Bink/MP4 Audio] Failed to execute ffmpeg ({e}) for file '{}', falling back to silent buffer",
+                path.as_ref().display()
+            );
             // Fallback silent PCM buffer matching duration so playback clocks remain deterministic
             let total_frames = (header.duration_secs() * sample_rate as f64).ceil() as usize;
             Ok(DecodedFmvAudio {
@@ -442,6 +651,9 @@ pub struct BinkVideoStream {
     pub current_frame_index: u32,
     child: Option<Child>,
     scratch_buf: Vec<u8>,
+    plane_pool_y: Vec<u8>,
+    plane_pool_u: Vec<u8>,
+    plane_pool_v: Vec<u8>,
 }
 
 impl BinkVideoStream {
@@ -455,6 +667,9 @@ impl BinkVideoStream {
             current_frame_index: 0,
             child: None,
             scratch_buf: Vec::new(),
+            plane_pool_y: Vec::new(),
+            plane_pool_u: Vec::new(),
+            plane_pool_v: Vec::new(),
         };
         stream.spawn_decoder(0.0);
         Ok(stream)
@@ -468,6 +683,9 @@ impl BinkVideoStream {
             current_frame_index: 0,
             child: None,
             scratch_buf: Vec::new(),
+            plane_pool_y: Vec::new(),
+            plane_pool_u: Vec::new(),
+            plane_pool_v: Vec::new(),
         }
     }
 
@@ -532,9 +750,35 @@ impl BinkVideoStream {
                     self.scratch_buf.resize(total_len, 0);
                 }
                 if stdout.read_exact(&mut self.scratch_buf).is_ok() {
-                    let y_plane = self.scratch_buf[0..y_len].to_vec();
-                    let u_plane = self.scratch_buf[y_len..y_len + uv_len].to_vec();
-                    let v_plane = self.scratch_buf[y_len + uv_len..total_len].to_vec();
+                    // Recycle planes using pre-reserved scratch vectors where possible
+                    if self.plane_pool_y.capacity() < y_len {
+                        self.plane_pool_y
+                            .reserve_exact(y_len - self.plane_pool_y.capacity());
+                    }
+                    self.plane_pool_y.clear();
+                    self.plane_pool_y
+                        .extend_from_slice(&self.scratch_buf[0..y_len]);
+
+                    if self.plane_pool_u.capacity() < uv_len {
+                        self.plane_pool_u
+                            .reserve_exact(uv_len - self.plane_pool_u.capacity());
+                    }
+                    self.plane_pool_u.clear();
+                    self.plane_pool_u
+                        .extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
+
+                    if self.plane_pool_v.capacity() < uv_len {
+                        self.plane_pool_v
+                            .reserve_exact(uv_len - self.plane_pool_v.capacity());
+                    }
+                    self.plane_pool_v.clear();
+                    self.plane_pool_v
+                        .extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
+
+                    let y_plane = std::mem::take(&mut self.plane_pool_y);
+                    let u_plane = std::mem::take(&mut self.plane_pool_u);
+                    let v_plane = std::mem::take(&mut self.plane_pool_v);
+
                     return Some(Yuv420Frame {
                         width: w,
                         height: h,

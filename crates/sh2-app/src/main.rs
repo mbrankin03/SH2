@@ -1012,6 +1012,8 @@ struct ActiveFmvSession {
     frame_accumulator_sec: f32,
     /// Cached decoded audio (sample rate, s16le PCM) so loops/restarts can replay it.
     audio: Option<(u32, Vec<u8>)>,
+    /// Cutscene paired background music (ADX/AIX decoded data, retail volume, fade) to replay on restart.
+    bgm_stream: Option<(sh2_assets::DecodedAdx, f32, std::time::Duration)>,
 }
 
 /// Locate and open a `.bik` movie stream for the requested [`FmvCatalogEntry`] and source preference.
@@ -1024,6 +1026,14 @@ fn open_fmv_session(
     entry: &'static FmvCatalogEntry,
     source_pref: FmvVideoSource,
 ) -> Option<ActiveFmvSession> {
+    let upscaled_mp4_roots = [
+        "tools/vsr_pipeline/output",
+        "/home/matthewb/Documents/SH2-Port/tools/vsr_pipeline/output",
+        "/home/matthewb/dev/SH2/tools/vsr_pipeline/output",
+        "movie",
+        "sh2e/movie",
+    ];
+
     let base_roots = [
         "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
         "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
@@ -1035,8 +1045,28 @@ fn open_fmv_session(
         "/home/matthewb/Documents/SH2-Port/sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie",
     ];
 
+    // MP4 candidate filenames for locally upscaled VSR masters (e.g. `toilet_4k_master.mp4`, `toilet.mp4`)
+    let mp4_cands = [
+        format!("{}_4k_master.mp4", entry.id),
+        format!("{}.mp4", entry.id),
+    ];
+
     let mut chosen_path: Option<(PathBuf, bool)> = None;
     match source_pref {
+        FmvVideoSource::Upscaled4kMp4 => {
+            for dir in &upscaled_mp4_roots {
+                for mp4_name in &mp4_cands {
+                    let cand = PathBuf::from(dir).join(mp4_name);
+                    if cand.exists() {
+                        chosen_path = Some((cand, true));
+                        break;
+                    }
+                }
+                if chosen_path.is_some() {
+                    break;
+                }
+            }
+        }
         FmvVideoSource::OgHqPs2Masters => {
             for dir in &og_hq_roots {
                 let cand = PathBuf::from(dir).join(entry.filename);
@@ -1067,6 +1097,20 @@ fn open_fmv_session(
     }
 
     // Graceful fallback chain if user preference is missing for this cutscene
+    if chosen_path.is_none() {
+        for dir in &upscaled_mp4_roots {
+            for mp4_name in &mp4_cands {
+                let cand = PathBuf::from(dir).join(mp4_name);
+                if cand.exists() {
+                    chosen_path = Some((cand, true));
+                    break;
+                }
+            }
+            if chosen_path.is_some() {
+                break;
+            }
+        }
+    }
     if chosen_path.is_none() {
         for dir in &og_hq_roots {
             let cand = PathBuf::from(dir).join(entry.filename);
@@ -1110,6 +1154,7 @@ fn open_fmv_session(
     };
 
     let mut fmv_audio: Option<(u32, Vec<u8>)> = None;
+    let mut cutscene_bgm_data: Option<(sh2_assets::DecodedAdx, f32, std::time::Duration)> = None;
     let (mut stream, is_hd_source) = if let Some((ref path, is_hd)) = chosen_path {
         match BinkVideoStream::open(path) {
             Ok(s) => {
@@ -1147,7 +1192,77 @@ fn open_fmv_session(
                             fmv_audio = Some((decoded.sample_rate, decoded.pcm_s16le));
                         }
                         _ => {
-                            engine.stop_bgm(std::time::Duration::from_millis(50));
+                            engine.stop_fmv_audio(std::time::Duration::from_millis(50));
+                        }
+                    }
+
+                    // Handle paired cutscene BGM streaming (SH2-39 CRI ADX / AIX containers)
+                    if let Some(cutscene_map) =
+                        sh2_audio::cutscene_bgm::find_cutscene_audio_mapping(entry.id)
+                    {
+                        match cutscene_map.bgm_action {
+                            sh2_audio::cutscene_bgm::CutsceneBgmAction::StartNew => {
+                                if let Some(rel_bgm) = cutscene_map.bgm_file {
+                                    let mut resolved_bgm: Option<PathBuf> = None;
+                                    for base in &base_roots {
+                                        if let Some(p) =
+                                            sh2_audio::cutscene_bgm::resolve_bgm_stream_path(
+                                                base, rel_bgm,
+                                            )
+                                        {
+                                            resolved_bgm = Some(p);
+                                            break;
+                                        }
+                                    }
+                                    if let Some(full_bgm_path) = resolved_bgm {
+                                        if let Ok(bytes) = std::fs::read(&full_bgm_path) {
+                                            let decoded_res = if rel_bgm.ends_with(".aix") {
+                                                sh2_assets::formats::aix::decode_aix_mixed(&bytes)
+                                            } else {
+                                                sh2_assets::decode_adx(&bytes)
+                                            };
+                                            match decoded_res {
+                                                Ok(adx) => {
+                                                    tracing::info!(
+                                                        "[FMV Player] Playing cutscene BGM '{}' (vol {:.2}, fade {:?})",
+                                                        rel_bgm,
+                                                        cutscene_map.retail_master_volume,
+                                                        cutscene_map.fade_in
+                                                    );
+                                                    if let Err(e) = engine.play_bgm_with_fade(
+                                                        &adx,
+                                                        cutscene_map.retail_master_volume,
+                                                        cutscene_map.fade_in,
+                                                    ) {
+                                                        tracing::warn!("[FMV Player] BGM playback warning: {:?}", e);
+                                                    }
+                                                    cutscene_bgm_data = Some((
+                                                        adx,
+                                                        cutscene_map.retail_master_volume,
+                                                        cutscene_map.fade_in,
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("[FMV Player] Failed to decode cutscene BGM '{}': {:?}", rel_bgm, e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            sh2_audio::cutscene_bgm::CutsceneBgmAction::KeepActive => {
+                                tracing::info!(
+                                    "[FMV Player] Cutscene '{}' keeps active ambient BGM (retail parity)",
+                                    entry.id
+                                );
+                            }
+                            sh2_audio::cutscene_bgm::CutsceneBgmAction::Silence => {
+                                tracing::info!(
+                                    "[FMV Player] Cutscene '{}' silences BGM track (self-contained mix)",
+                                    entry.id
+                                );
+                                engine.stop_bgm(cutscene_map.fade_out);
+                            }
                         }
                     }
                 }
@@ -1201,6 +1316,7 @@ fn open_fmv_session(
         is_hd_source,
         frame_accumulator_sec: 0.0,
         audio: fmv_audio,
+        bgm_stream: cutscene_bgm_data,
     })
 }
 
@@ -1740,7 +1856,10 @@ impl ApplicationHandler for SilentHillApp {
                                 | winit::keyboard::KeyCode::Backspace => {
                                     if let Some(ref mut engine) = state.audio_engine {
                                         engine.stop_bgm(std::time::Duration::from_millis(120));
+                                        engine
+                                            .stop_fmv_audio(std::time::Duration::from_millis(120));
                                     }
+                                    state.fmv_session = None;
                                     state.menu_ctrl.in_game_active = false;
                                     state.menu_ctrl.title_sm.phase = TitlePhase::OptionsMenu;
                                     state.menu_ctrl.title_sm.fade_alpha = 1.0;
@@ -1752,6 +1871,7 @@ impl ApplicationHandler for SilentHillApp {
                                 | winit::keyboard::KeyCode::PageDown
                                 | winit::keyboard::KeyCode::ArrowRight
                                 | winit::keyboard::KeyCode::KeyD => {
+                                    state.fmv_viewer.audio_track = None;
                                     state.fmv_viewer.next_movie();
                                     tracing::info!(
                                         "[FMV Player] Selected cutscene [{}/{}]: {}",
@@ -1764,6 +1884,7 @@ impl ApplicationHandler for SilentHillApp {
                                 | winit::keyboard::KeyCode::PageUp
                                 | winit::keyboard::KeyCode::ArrowLeft
                                 | winit::keyboard::KeyCode::KeyA => {
+                                    state.fmv_viewer.audio_track = None;
                                     state.fmv_viewer.prev_movie();
                                     tracing::info!(
                                         "[FMV Player] Selected cutscene [{}/{}]: {}",
@@ -2404,10 +2525,14 @@ impl ApplicationHandler for SilentHillApp {
                                 } else {
                                     // Loop seamlessly on completion in theater mode
                                     session.stream.restart();
-                                    if let (Some(engine), Some((sr, pcm))) =
-                                        (state.audio_engine.as_mut(), session.audio.as_ref())
-                                    {
-                                        let _ = engine.play_fmv_pcm(*sr, pcm, 1.0);
+                                    if let Some(engine) = state.audio_engine.as_mut() {
+                                        if let Some((sr, pcm)) = session.audio.as_ref() {
+                                            let _ = engine.play_fmv_pcm(*sr, pcm, 1.0);
+                                        }
+                                        if let Some((adx, vol, fade)) = session.bgm_stream.as_ref()
+                                        {
+                                            let _ = engine.play_bgm_with_fade(adx, *vol, *fade);
+                                        }
                                     }
                                     if let Some(frame) = session.stream.next_frame() {
                                         state.fmv_pipeline.upload_frame(
@@ -3129,6 +3254,23 @@ impl ApplicationHandler for SilentHillApp {
                                     yellow,
                                     true,
                                 );
+                                let cutscene_map =
+                                    sh2_audio::cutscene_bgm::find_cutscene_audio_mapping(
+                                        session.entry.id,
+                                    );
+                                let bgm_desc =
+                                    cutscene_map.map(|m| m.description).unwrap_or("None");
+                                let bgm_file = cutscene_map.and_then(|m| m.bgm_file);
+                                let bgm_label =
+                                    state.fmv_viewer.bgm_stream_label(bgm_file, bgm_desc);
+                                state.menu_rasterizer.draw_text(
+                                    &format!("MUSIC  : {}", bgm_label),
+                                    24,
+                                    108,
+                                    1,
+                                    yellow,
+                                    true,
+                                );
                                 state.menu_rasterizer.draw_text(
                                     &format!(
                                         "ASPECT : {} | CAS SHARPEN : {} | GRAIN : {} | SUBS : {}",
@@ -3146,7 +3288,7 @@ impl ApplicationHandler for SilentHillApp {
                                         }
                                     ),
                                     24,
-                                    110,
+                                    126,
                                     1,
                                     cyan,
                                     true,

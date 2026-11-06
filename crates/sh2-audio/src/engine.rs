@@ -8,7 +8,7 @@
 //!   - Environmental DSP / Reverb matching PS2/PC presets (interiors, foggy streets, outdoor open areas).
 //!   - Subtitle synchronization with `.mes` event cues and automatic BGM/SFX volume ducking during dialogue.
 
-use cpal::traits::HostTrait;
+use cpal::traits::{DeviceTrait, HostTrait};
 use glam::Vec3;
 use kira::{
     effect::reverb::{ReverbBuilder, ReverbHandle},
@@ -174,15 +174,142 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
+    /// Enumerate all currently available audio output device names on the host system.
+    ///
+    /// Resolves human-readable device names (e.g. "MiniFuse 2", "Headphones", "HDMI") via PulseAudio / PipeWire
+    /// when available on Linux desktop systems, cleanly filtering out internal ALSA DSP plugins like "speex",
+    /// "speexrate", "samplerate", or "upmix".
+    pub fn enumerate_output_devices() -> Vec<String> {
+        let mut devices = Vec::new();
+
+        // 1. Attempt querying PulseAudio / PipeWire sinks for friendly display descriptions
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(output) = std::process::Command::new("pactl")
+                .args(["-f", "json", "list", "sinks"])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        if let Some(sinks) = val.as_array() {
+                            for sink in sinks {
+                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let desc = sink
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or(name);
+
+                                // Filter out non-hardware / internal DSP filter sinks
+                                if name.contains("spotifast")
+                                    || desc.contains("Soloist")
+                                    || name.contains("Loopback")
+                                    || desc.contains("Loopback")
+                                {
+                                    continue;
+                                }
+
+                                let clean_name = desc.trim().to_string();
+                                if !clean_name.is_empty() && !devices.contains(&clean_name) {
+                                    devices.push(clean_name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Query CPAL host devices if pactl is unavailable or returns no sinks
+        if devices.is_empty() {
+            let host = cpal::default_host();
+            if let Ok(iter) = host.output_devices() {
+                for device in iter {
+                    if let Ok(name) = device.name() {
+                        // Filter out raw ALSA software rate/resample plugins that confuse users
+                        let lower = name.to_lowercase();
+                        if lower.contains("speex")
+                            || lower.contains("rate")
+                            || lower.contains("samplerate")
+                            || lower.contains("upmix")
+                            || lower.contains("vdownmix")
+                        {
+                            continue;
+                        }
+                        if !devices.contains(&name) {
+                            devices.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        devices
+    }
+
     /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects.
-    pub fn new() -> Result<Self, AudioError> {
-        // Query the default output device explicitly. Passing an explicit device to Kira prevents
-        // background thread reconnection loops (check_stream) on platforms like Windows where querying
-        // default devices from an uninitialized COM thread causes access violations.
+    ///
+    /// If `device_name` is provided, attempts to open that specific audio output device;
+    /// otherwise falls back to the system default device.
+    ///
+    /// On Linux desktop (PipeWire/PulseAudio), if a human-friendly description is given (e.g. "MiniFuse 2"),
+    /// this switches the default PipeWire sink or selects the Pulse/PipeWire stream device to avoid
+    /// raw ALSA plugin errors (such as 'speex' rate converter format mismatches).
+    pub fn new_with_device(device_name: Option<&str>) -> Result<Self, AudioError> {
+        // Disallow or sanitize buggy ALSA software filter names if previously saved in config.json
+        let clean_device_name = match device_name {
+            Some(name) => {
+                let lower = name.to_lowercase();
+                if lower.contains("speex")
+                    || lower.contains("rate")
+                    || lower.contains("samplerate")
+                    || lower.contains("upmix")
+                    || lower.contains("vdownmix")
+                {
+                    tracing::warn!("Ignoring invalid/legacy ALSA DSP plugin device name: '{name}'; using system default.");
+                    None
+                } else {
+                    Some(name)
+                }
+            }
+            None => None,
+        };
+
         let host = cpal::default_host();
-        let device = host.default_output_device().ok_or_else(|| {
-            AudioError::InitError("No default audio output device available".into())
-        })?;
+        let device = if let Some(target_name) = clean_device_name {
+            let mut found = None;
+            if let Ok(iter) = host.output_devices() {
+                for dev in iter {
+                    if let Ok(name) = dev.name() {
+                        if name == target_name {
+                            found = Some(dev);
+                            break;
+                        }
+                    }
+                }
+            }
+            if found.is_none() {
+                // If not found as a raw CPAL device name, prefer 'pulse', 'pipewire', or default
+                found = host.output_devices().ok().and_then(|mut iter| {
+                    iter.find(|d| {
+                        d.name()
+                            .map(|n| n == "pipewire" || n == "pulse" || n == "default")
+                            .unwrap_or(false)
+                    })
+                });
+            }
+            found.or_else(|| host.default_output_device())
+        } else {
+            // For default on Linux, prefer "pipewire" or "pulse" over arbitrary ALSA raw nodes if present
+            let pulse_or_pipewire = host.output_devices().ok().and_then(|mut iter| {
+                iter.find(|d| {
+                    d.name()
+                        .map(|n| n == "pipewire" || n == "pulse")
+                        .unwrap_or(false)
+                })
+            });
+            pulse_or_pipewire.or_else(|| host.default_output_device())
+        }
+        .ok_or_else(|| AudioError::InitError("No audio output device available".into()))?;
 
         let settings = AudioManagerSettings {
             backend_settings: CpalBackendSettings {
@@ -245,7 +372,7 @@ impl AudioEngine {
             )
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        Ok(Self {
+        let mut engine = Self {
             manager: Some(manager),
             bgm_track: Some(bgm_track),
             fmv_track: Some(fmv_track),
@@ -260,11 +387,22 @@ impl AudioEngine {
             active_voice_handle: None,
             active_dialogue: None,
             master_volume: 1.0,
-            bgm_volume: 1.0,
-            sfx_volume: 1.0,
+            bgm_volume: 0.85,
+            sfx_volume: 0.9,
             voice_volume: 1.0,
             ducking_attenuation: 0.35,
-        })
+        };
+
+        if let Some(target) = clean_device_name {
+            engine.migrate_stream_to_device(Some(target));
+        }
+
+        Ok(engine)
+    }
+
+    /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects using the default output device.
+    pub fn new() -> Result<Self, AudioError> {
+        Self::new_with_device(None)
     }
 
     /// Checks if the audio backend was successfully initialized and active.
@@ -805,6 +943,247 @@ impl AudioEngine {
     /// Sets the master volume level [0.0..1.0].
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume.clamp(0.0, 1.0);
+    }
+
+    /// Migrates the active running game audio stream to the requested device in real-time.
+    ///
+    /// On Linux with PipeWire/PulseAudio, this uses `pactl move-sink-input` to immediately
+    /// move the existing ALSA/PipeWire stream to the requested hardware sink without destroying
+    /// the audio manager or interrupting audio playback.
+    pub fn migrate_stream_to_device(&mut self, _device_name: Option<&str>) {
+        #[cfg(target_os = "linux")]
+        {
+            let target_sink_name = if let Some(target) = _device_name {
+                let output = std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", "sinks"])
+                    .output()
+                    .ok();
+                let mut found = None;
+                let target_clean = target.trim();
+                if let Some(out) = output {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                        if let Some(sinks) = val.as_array() {
+                            // Helper to test if a sink is a virtual/loopback node we should exclude
+                            let is_ignored = |name: &str, desc: &str| -> bool {
+                                name.contains("Loopback")
+                                    || desc.contains("Loopback")
+                                    || name.contains("spotifast")
+                                    || desc.contains("Soloist")
+                                    || desc.contains("monitor")
+                            };
+
+                            // 1. Exact match on description or name (ignoring loopback/virtual)
+                            for sink in sinks {
+                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let desc = sink
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or(name);
+                                if is_ignored(name, desc) && !target_clean.contains("Loopback") {
+                                    continue;
+                                }
+                                if desc.trim().eq_ignore_ascii_case(target_clean)
+                                    || name.trim().eq_ignore_ascii_case(target_clean)
+                                {
+                                    found = Some(name.to_string());
+                                    break;
+                                }
+                            }
+
+                            // 2. Fuzzy / token-based match (e.g. DualSense, MiniFuse 2)
+                            if found.is_none() {
+                                let target_lower = target_clean.to_lowercase();
+                                for sink in sinks {
+                                    let name =
+                                        sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                    let desc = sink
+                                        .get("description")
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or(name);
+                                    if is_ignored(name, desc) && !target_clean.contains("Loopback")
+                                    {
+                                        continue;
+                                    }
+                                    let props = sink.get("properties");
+                                    let dev_desc = props
+                                        .and_then(|p| p.get("device.description"))
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or("");
+                                    let nick = props
+                                        .and_then(|p| p.get("node.nick"))
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("");
+                                    let card_name = props
+                                        .and_then(|p| p.get("alsa.card_name"))
+                                        .and_then(|c| c.as_str())
+                                        .unwrap_or("");
+
+                                    let haystack =
+                                        format!("{name} {desc} {dev_desc} {nick} {card_name}")
+                                            .to_lowercase();
+                                    if target_lower
+                                        .split_whitespace()
+                                        .any(|tok| tok.len() > 3 && haystack.contains(tok))
+                                    {
+                                        found = Some(name.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                found
+            } else {
+                // If default requested, find default sink name from pactl
+                std::process::Command::new("pactl")
+                    .arg("get-default-sink")
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+            };
+
+            if let Some(sink) = target_sink_name {
+                let my_pid = std::process::id();
+                let my_pid_str = my_pid.to_string();
+
+                // Map client index -> client PID from `pactl list clients`
+                let mut client_pids = std::collections::HashMap::new();
+                if let Ok(clients_out) = std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", "clients"])
+                    .output()
+                {
+                    if let Ok(clients_val) =
+                        serde_json::from_slice::<serde_json::Value>(&clients_out.stdout)
+                    {
+                        if let Some(clients) = clients_val.as_array() {
+                            for client in clients {
+                                let c_idx = client.get("index").and_then(|i| i.as_u64());
+                                let c_pid = client
+                                    .get("properties")
+                                    .and_then(|p| p.get("application.process.id"))
+                                    .and_then(|pid| pid.as_str());
+                                if let (Some(idx), Some(pid)) = (c_idx, c_pid) {
+                                    client_pids.insert(idx.to_string(), pid.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Ok(input_output) = std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", "sink-inputs"])
+                    .output()
+                {
+                    if let Ok(input_val) =
+                        serde_json::from_slice::<serde_json::Value>(&input_output.stdout)
+                    {
+                        if let Some(inputs) = input_val.as_array() {
+                            for input in inputs {
+                                let idx = input.get("index").and_then(|i| i.as_u64());
+                                let props = input.get("properties");
+
+                                let input_pid = props
+                                    .and_then(|p| p.get("application.process.id"))
+                                    .and_then(|pid| pid.as_str());
+                                let client_id =
+                                    input.get("client").and_then(|c| c.as_str()).or_else(|| {
+                                        input.get("client").and_then(|c| c.as_u64()).map(|u| {
+                                            // Some pactl versions serialize client index as number
+                                            Box::leak(u.to_string().into_boxed_str()) as &str
+                                        })
+                                    });
+                                let client_pid = client_id.and_then(|cid| client_pids.get(cid));
+
+                                let app = props
+                                    .and_then(|p| p.get("application.name"))
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("");
+
+                                let is_our_process = input_pid == Some(&my_pid_str)
+                                    || client_pid.map(|p| p.as_str()) == Some(&my_pid_str)
+                                    || app.to_lowercase().contains("sh2");
+
+                                if is_our_process {
+                                    if let Some(i) = idx {
+                                        let res = std::process::Command::new("pactl")
+                                            .args(["move-sink-input", &i.to_string(), &sink])
+                                            .status();
+                                        tracing::info!(
+                                            "[Audio] Live migrated stream #{} (PID {}) to sink '{}' (success: {:?})",
+                                            i,
+                                            my_pid,
+                                            sink,
+                                            res.map(|s| s.success()).unwrap_or(false)
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sets the background music volume level [0.0..1.0].
+    pub fn set_bgm_volume(&mut self, volume: f32) {
+        self.bgm_volume = volume.clamp(0.0, 1.0);
+        if let Some(ref mut track) = self.bgm_track {
+            track.set_volume(
+                Volume::Amplitude((self.bgm_volume * self.master_volume) as f64),
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Sets the sound effects volume level [0.0..1.0].
+    pub fn set_sfx_volume(&mut self, volume: f32) {
+        self.sfx_volume = volume.clamp(0.0, 1.0);
+        if let Some(ref mut track) = self.sfx_track {
+            track.set_volume(
+                Volume::Amplitude((self.sfx_volume * self.master_volume) as f64),
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Sets the dialogue voice volume level [0.0..1.0].
+    pub fn set_voice_volume(&mut self, volume: f32) {
+        self.voice_volume = volume.clamp(0.0, 1.0);
+        if let Some(ref mut track) = self.voice_track {
+            track.set_volume(
+                Volume::Amplitude((self.voice_volume * self.master_volume) as f64),
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    /// Sets the environmental DSP reverb mix ratio [0.0..1.0].
+    pub fn set_reverb_mix(&mut self, mix: f32) {
+        if let Some(ref mut reverb) = self.reverb_handle {
+            reverb.set_mix(
+                mix.clamp(0.0, 1.0) as f64,
+                Tween {
+                    duration: Duration::from_millis(50),
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
     }
 }
 

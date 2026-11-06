@@ -16,6 +16,8 @@ pub struct AppMenuController {
     pub config_path: PathBuf,
     /// Has the user completed title sequence and transitioned to in-game world?
     pub in_game_active: bool,
+    /// Flag indicating that configuration was committed and needs to be applied by the engine loop.
+    pub config_applied_pending: Option<AppConfig>,
 }
 
 impl AppMenuController {
@@ -33,6 +35,7 @@ impl AppMenuController {
             pause_menu,
             config_path: path,
             in_game_active: false,
+            config_applied_pending: None,
         }
     }
 
@@ -112,6 +115,7 @@ impl AppMenuController {
                         return MenuSoundCue::Confirm;
                     }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);
                     } else {
@@ -133,8 +137,10 @@ impl AppMenuController {
         } else {
             let cue = self.title_sm.handle_input(action);
             if self.title_sm.phase == TitlePhase::OptionsMenu {
-                // Initialize fresh draft in options menu
+                // Refresh live audio output devices upon opening options menu so newly plugged devices appear immediately
+                let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
                 self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+                self.options_menu.set_audio_devices(fresh_devices);
             }
             cue
         }
@@ -146,6 +152,17 @@ impl AppMenuController {
             || (self.pause_menu.is_open
                 && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu)
         {
+            // If switching into Audio tab, merge live discovered devices into options menu
+            if (!forward && self.options_menu.active_tab == sh2_ui::options::OptionsTab::Controls)
+                || (forward && self.options_menu.active_tab == sh2_ui::options::OptionsTab::Video)
+            {
+                let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
+                for dev in fresh_devices {
+                    if !self.options_menu.audio_devices.contains(&dev) {
+                        self.options_menu.audio_devices.push(dev);
+                    }
+                }
+            }
             self.options_menu.switch_tab(forward);
             MenuSoundCue::CursorMove
         } else {
@@ -179,6 +196,7 @@ impl AppMenuController {
                 }
                 MenuNavAction::Confirm => {
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);
                     } else {
@@ -200,8 +218,10 @@ impl AppMenuController {
         } else {
             let (cue, action) = self.pause_menu.handle_nav(action);
             if action == PauseAction::OpenOptions {
-                // Initialize fresh draft in options menu
+                // Refresh live audio output devices upon opening options menu so newly plugged devices appear immediately
+                let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
                 self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+                self.options_menu.set_audio_devices(fresh_devices);
             } else if action == PauseAction::QuitToTitle {
                 // Reset in_game_active flag and return to Main Menu
                 self.in_game_active = false;

@@ -975,6 +975,8 @@ struct AppState {
     combat_arena: sh2_core::combat::CombatArena,
     enemy_scu_asset: Option<CharacterAsset>,
     enemy_mkn_asset: Option<CharacterAsset>,
+    enemy_nse_asset: Option<CharacterAsset>,
+    enemy_red_asset: Option<CharacterAsset>,
     key_ready_held: bool,
     key_attack_pressed: bool,
     key_attack_held: bool,
@@ -1154,7 +1156,7 @@ impl ApplicationHandler for SilentHillApp {
             &["data/chr2/mar/xmar_wpnone.anm", "data/chr/mar/lll_mar.anm"],
         );
 
-        // Preload authentic enemy models for Combat Testing Arena (SH2-13)
+        // Preload authentic enemy models for Combat Testing Arena (SH2-13 / SH2-57)
         let enemy_scu_asset = load_character_asset(
             &render_ctx,
             "Lying Figure (scu)",
@@ -1166,6 +1168,18 @@ impl ApplicationHandler for SilentHillApp {
             "Mannequin (mkn)",
             &["data/chr/mkn/mkn.mdl"],
             &["data/chr/mkn/mkn.anm"],
+        );
+        let enemy_nse_asset = load_character_asset(
+            &render_ctx,
+            "Bubble Head Nurse (nse)",
+            &["data/chr/nse/nse.mdl"],
+            &["data/chr/nse/nse.anm"],
+        );
+        let enemy_red_asset = load_character_asset(
+            &render_ctx,
+            "Pyramid Head (red)",
+            &["data/chr/red/red.mdl"],
+            &["data/chr/red/red.anm"],
         );
 
         let mut combat_arena = sh2_core::combat::CombatArena::new();
@@ -1418,6 +1432,8 @@ impl ApplicationHandler for SilentHillApp {
             combat_arena,
             enemy_scu_asset,
             enemy_mkn_asset,
+            enemy_nse_asset,
+            enemy_red_asset,
             key_ready_held: false,
             key_attack_pressed: false,
             key_attack_held: false,
@@ -3082,10 +3098,12 @@ impl ApplicationHandler for SilentHillApp {
                     let mut enemy_skin_matrices: Vec<Vec<[[f32; 4]; 4]>> = Vec::new();
                     if state.active_test_room == TestRoomKind::CombatArena {
                         for enemy in &state.combat_arena.enemies {
-                            let asset = if enemy.id == 1 {
-                                state.enemy_scu_asset.as_ref()
-                            } else {
-                                state.enemy_mkn_asset.as_ref()
+                            let asset = match enemy.id {
+                                1 => state.enemy_scu_asset.as_ref(),
+                                2 => state.enemy_mkn_asset.as_ref(),
+                                3 => state.enemy_nse_asset.as_ref(),
+                                4 => state.enemy_red_asset.as_ref(),
+                                _ => None,
                             };
 
                             if let Some(ea) = asset {
@@ -3165,10 +3183,12 @@ impl ApplicationHandler for SilentHillApp {
 
                         let mut mat_idx = 0;
                         for enemy in &state.combat_arena.enemies {
-                            let asset = if enemy.id == 1 {
-                                state.enemy_scu_asset.as_ref()
-                            } else {
-                                state.enemy_mkn_asset.as_ref()
+                            let asset = match enemy.id {
+                                1 => state.enemy_scu_asset.as_ref(),
+                                2 => state.enemy_mkn_asset.as_ref(),
+                                3 => state.enemy_nse_asset.as_ref(),
+                                4 => state.enemy_red_asset.as_ref(),
+                                _ => None,
                             };
                             if let Some(ea) = asset {
                                 if mat_idx < enemy_skin_matrices.len() {

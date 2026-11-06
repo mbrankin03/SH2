@@ -1187,6 +1187,58 @@ impl CombatTargetEnemy {
         }
     }
 
+    /// Create a Bubble Head Nurse (nse) test target with authentic Normal difficulty values.
+    /// Health: 600, Endurance: 260.
+    pub fn new_nurse(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Bubble Head Nurse (nse)",
+            position,
+            yaw: 0.0,
+            health: 600.0,
+            max_health: 600.0,
+            endurance: 260.0,
+            max_endurance: 260.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 0.6,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 320.0,
+            hitbox_height: 1600.0,
+            anim: CreatureAnimationController::new_nurse(),
+        }
+    }
+
+    /// Create a Pyramid Head (red) boss target.
+    /// Health: 2000, Endurance: 1000.
+    pub fn new_pyramid_head(id: u32, position: Vec3) -> Self {
+        Self {
+            id,
+            name: "Pyramid Head (red)",
+            position,
+            yaw: 0.0,
+            health: 2000.0,
+            max_health: 2000.0,
+            endurance: 1000.0,
+            max_endurance: 1000.0,
+            is_downed: false,
+            is_dead: false,
+            flinch_timer: 0.0,
+            down_timer: 0.0,
+            attack_cooldown: 1.0,
+            attack_timer: 0.0,
+            is_attacking: false,
+            is_kick_next: false,
+            hitbox_radius: 450.0,
+            hitbox_height: 2200.0,
+            anim: CreatureAnimationController::new_pyramid_head(),
+        }
+    }
+
     /// Get current active collision hitbox.
     pub fn hitbox(&self) -> CombatHitbox {
         if self.is_downed {
@@ -1298,14 +1350,30 @@ impl CombatTargetEnemy {
                     }
                 }
             } else {
-                let attack_range = if self.id == 1 { 1200.0 } else { 650.0 };
+                let attack_range = if self.id == 1 {
+                    1200.0
+                } else if self.id == 3 {
+                    800.0 // Nurse pipe swing
+                } else if self.id == 4 {
+                    1100.0 // Pyramid Head great knife
+                } else {
+                    650.0 // Mannequin
+                };
                 if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < 0.6 {
                     // Trigger creature attack
                     self.is_attacking = true;
                     self.attack_timer = 0.0;
                 } else if dist > 450.0 {
                     // Move towards player using authentic walk root motion
-                    let walk_speed = if self.id == 1 { 402.0 } else { 576.0 };
+                    let walk_speed = if self.id == 1 {
+                        402.0
+                    } else if self.id == 3 {
+                        480.0
+                    } else if self.id == 4 {
+                        330.0
+                    } else {
+                        576.0
+                    };
                     self.position.x += self.yaw.sin() * walk_speed * dt;
                     self.position.z += self.yaw.cos() * walk_speed * dt;
                 }
@@ -1324,7 +1392,7 @@ impl CombatTargetEnemy {
                 crate::ai::creatures::lying_figure::ScuState::Chase
             };
             self.anim.sync_lying_figure(scu_state);
-        } else {
+        } else if self.id == 2 {
             let mkn_state = if self.is_dead || self.is_downed {
                 crate::ai::creatures::mannequin::MknState::Down
             } else if self.flinch_timer > 0.0 {
@@ -1335,6 +1403,24 @@ impl CombatTargetEnemy {
                 crate::ai::creatures::mannequin::MknState::Chase
             };
             self.anim.sync_mannequin(mkn_state, self.is_kick_next);
+        } else if self.id == 3 {
+            let nse_state = if self.is_dead || self.is_downed {
+                crate::ai::creatures::nurse::NseState::Down
+            } else if self.flinch_timer > 0.0 {
+                crate::ai::creatures::nurse::NseState::Damage
+            } else if self.is_attacking {
+                crate::ai::creatures::nurse::NseState::Attack
+            } else {
+                crate::ai::creatures::nurse::NseState::Chase
+            };
+            self.anim.sync_nurse(nse_state);
+        } else if self.id == 4 {
+            let red_state = if self.is_attacking {
+                crate::ai::creatures::pyramid_head::RedState::Attack
+            } else {
+                crate::ai::creatures::pyramid_head::RedState::Chase
+            };
+            self.anim.sync_pyramid_head(red_state);
         }
         self.anim.update(dt, self.yaw);
     }
@@ -1357,12 +1443,14 @@ impl Default for CombatArena {
 }
 
 impl CombatArena {
-    /// Initialize a combat test arena with a Lying Figure and a Mannequin placed in front of player.
+    /// Initialize a combat test arena with Lying Figure, Mannequin, Bubble Head Nurse, and Pyramid Head.
     pub fn new() -> Self {
         let player = CombatController::new(false, false);
         let enemies = vec![
             CombatTargetEnemy::new_lying_figure(1, Vec3::new(0.0, 0.0, 1500.0)),
-            CombatTargetEnemy::new_mannequin(2, Vec3::new(1200.0, 0.0, 2200.0)),
+            CombatTargetEnemy::new_mannequin(2, Vec3::new(900.0, 0.0, 1800.0)),
+            CombatTargetEnemy::new_nurse(3, Vec3::new(-900.0, 0.0, 2000.0)),
+            CombatTargetEnemy::new_pyramid_head(4, Vec3::new(0.0, 0.0, 2800.0)),
         ];
 
         Self {
@@ -1597,7 +1685,7 @@ mod tests {
         let dt = 1.0 / 60.0;
 
         // Verify initial state
-        assert_eq!(arena.enemies.len(), 2);
+        assert_eq!(arena.enemies.len(), 4);
         assert_eq!(arena.enemies[0].health, 700.0);
 
         // 1. Ready handgun and fire raycast at Lying Figure in front

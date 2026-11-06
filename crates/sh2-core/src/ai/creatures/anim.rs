@@ -118,6 +118,21 @@ impl MariaAnimClips {
     pub const RUN_ROOT_MOTION_PER_FRAME: f32 = 20.0; // 600 units/s
 }
 
+/// Clip definitions for Pyramid Head (`chr/red`, 45 bones, `red.anm`).
+pub struct PyramidHeadAnimClips;
+
+impl PyramidHeadAnimClips {
+    pub const STAND: AnimationClip = AnimationClip::new(0, 29, 15.0, true);
+    pub const WALK: AnimationClip = AnimationClip::new(30, 70, 30.0, true);
+    pub const GREAT_KNIFE_SWING: AnimationClip = AnimationClip::new(71, 120, 30.0, false);
+    pub const OVERHEAD_EXECUTION: AnimationClip = AnimationClip::new(121, 175, 30.0, false);
+    pub const CHOKE_GRAB: AnimationClip = AnimationClip::new(176, 220, 30.0, false);
+
+    pub const WALK_ROOT_MOTION_PER_FRAME: f32 = 11.0; // 330 units/s
+    pub const ATTACK_HIT_START: u32 = 90;
+    pub const ATTACK_HIT_END: u32 = 105;
+}
+
 /// Generalized creature animation state synchronized with AI FSMs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CreatureAnimStateKind {
@@ -201,6 +216,15 @@ impl CreatureAnimationController {
     /// Factory for Maria companion controller.
     pub fn new_maria() -> Self {
         Self::new(CreatureAnimStateKind::Idle, MariaAnimClips::STAND, 0.0)
+    }
+
+    /// Factory for Pyramid Head controller.
+    pub fn new_pyramid_head() -> Self {
+        Self::new(
+            CreatureAnimStateKind::Idle,
+            PyramidHeadAnimClips::STAND,
+            0.0,
+        )
     }
 
     pub fn state(&self) -> CreatureAnimStateKind {
@@ -610,6 +634,52 @@ impl CreatureAnimationController {
                 self.transition_to(
                     CreatureAnimStateKind::Knockdown,
                     MariaAnimClips::FLINCH_DOWNED,
+                    0.0,
+                    None,
+                    None,
+                );
+            }
+        }
+    }
+
+    /// Synchronize controller state from Pyramid Head FSM state (`RedState`).
+    pub fn sync_pyramid_head(&mut self, state: crate::ai::creatures::pyramid_head::RedState) {
+        use crate::ai::creatures::pyramid_head::RedState;
+        match state {
+            RedState::Stand | RedState::Confuse | RedState::Leave => {
+                self.transition_to(
+                    CreatureAnimStateKind::Idle,
+                    PyramidHeadAnimClips::STAND,
+                    0.0,
+                    None,
+                    None,
+                );
+            }
+            RedState::Wander | RedState::Chase | RedState::Hunt | RedState::Stairs => {
+                self.transition_to(
+                    CreatureAnimStateKind::Locomotion,
+                    PyramidHeadAnimClips::WALK,
+                    PyramidHeadAnimClips::WALK_ROOT_MOTION_PER_FRAME,
+                    None,
+                    None,
+                );
+            }
+            RedState::Attack => {
+                self.transition_to(
+                    CreatureAnimStateKind::AttackPrimary,
+                    PyramidHeadAnimClips::GREAT_KNIFE_SWING,
+                    0.0,
+                    Some((
+                        PyramidHeadAnimClips::ATTACK_HIT_START,
+                        PyramidHeadAnimClips::ATTACK_HIT_END,
+                    )),
+                    None,
+                );
+            }
+            RedState::Grab => {
+                self.transition_to(
+                    CreatureAnimStateKind::AttackSecondary,
+                    PyramidHeadAnimClips::CHOKE_GRAB,
                     0.0,
                     None,
                     None,

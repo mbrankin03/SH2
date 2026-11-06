@@ -3268,6 +3268,67 @@ impl ApplicationHandler for SilentHillApp {
                                     interpolate_frames(&prev_frame, &blended_frame, blend);
                             }
 
+                            // Authentic PS2/PC Dual-Track Skeletal Layering for Grapple / Choke states
+                            // (SLUS_202.28 `shCharacterAnimeReconstruct` / `lower_hold` + `upper_hold`):
+                            // When James is held, layer the authentic upper-body struggle (head thrash,
+                            // throat clutch, arm fight) over the creature-specific lower-body stance/suspension.
+                            if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                            {
+                                if let Some(g_idx) = state.combat_arena.grappling_enemy_idx {
+                                    let enemy_id = state
+                                        .combat_arena
+                                        .enemies
+                                        .get(g_idx)
+                                        .map(|e| e.id)
+                                        .unwrap_or(0);
+                                    let (lower_frame_idx, upper_clip) = match enemy_id {
+                                        // Mary Boss (#9): Lower suspended taut in air (771 @ table 0x6cf1d8)
+                                        // + Upper choke struggle (798..=809 @ table 0x6cf260 aid 21217)
+                                        9 => (Some(771), Some((798, 809, 15.0f32))),
+                                        // Flesh Lips (#6): Lower overhead suspended (739 @ table 0x6cecc8)
+                                        // + Upper reaching choke (798..=809 @ aid 367)
+                                        6 => (Some(739), Some((798, 809, 15.0f32))),
+                                        // Abstract Daddy (#5): Lower bed grapple (756 @ table 0x6cebbc)
+                                        // + Upper torso push/thrash (612..=629 @ aid 128)
+                                        5 => (Some(756), Some((612, 629, 15.0f32))),
+                                        _ => (None, None),
+                                    };
+
+                                    if let (Some(l_idx), Some((u_start, u_end, u_fps))) =
+                                        (lower_frame_idx, upper_clip)
+                                    {
+                                        let anim_time = state.sim_core.animation.clip_time();
+                                        let u_len = (u_end - u_start + 1) as f32;
+                                        let u_cursor =
+                                            u_start as f32 + ((anim_time * u_fps) % u_len);
+                                        let uf0 = (u_cursor.floor() as usize) % frame_count;
+                                        let uf1 = (u_cursor.ceil() as usize) % frame_count;
+                                        let uf_frac = u_cursor.fract();
+                                        let upper_frame = interpolate_frames(
+                                            &c.anm.frames[uf0],
+                                            &c.anm.frames[uf1],
+                                            uf_frac,
+                                        );
+                                        let lower_frame = &c.anm.frames[l_idx % frame_count];
+
+                                        // Blend Lower body from lower_frame, Upper body from upper_frame
+                                        blended_frame = lower_frame.clone();
+                                        for b in 0..c.model.bone_count {
+                                            // Upper body bones in James's skeleton:
+                                            // Chest (4..=7), Neck (13..=15), Head (18..=22), Arms & Hands (25..=36)
+                                            let is_upper = (4..=7).contains(&b)
+                                                || (13..=15).contains(&b)
+                                                || (18..=22).contains(&b)
+                                                || b >= 25;
+                                            if is_upper && b < upper_frame.bones.len() {
+                                                blended_frame.bones[b] =
+                                                    upper_frame.bones[b].clone();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             let dt_physics = 1.0 / 60.0;
                             c.secondary_physics.step(dt_physics, player_pos, player_yaw);
                             c.dynamic_locals.copy_from_slice(&c.bind_locals);

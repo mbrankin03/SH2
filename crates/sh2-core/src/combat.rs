@@ -2230,8 +2230,9 @@ impl CombatArena {
                     } else {
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
                         let anchor_dist = match g.id {
-                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
-                            8 => 80.0, // Creeper bites at feet
+                            6 => 40.0,  // Flesh Lips hangs directly overhead / straddles James's neck
+                            8 => 80.0,  // Creeper bites at feet
+                            9 => 220.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170)
                             _ => 150.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;

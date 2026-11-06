@@ -148,6 +148,25 @@ mod tests {
             assert_eq!(map.name, "rr21");
             assert!(!map.batches.is_empty(), "rr21.map must contain batches");
         }
+
+        // Test parsing authentic hotel boiler room collision (rr21.cld)
+        let rr_cld_path = format!("{ROOT_ASSETS}/data/bg/rr/rr21.cld");
+        if Path::new(&rr_cld_path).exists() {
+            let data = fs::read(&rr_cld_path).expect("Failed to read rr21.cld");
+            let cld = sh2_assets::formats::cld::parse_cld(&data).expect("Failed to parse rr21.cld");
+            println!(
+                "Parsed rr21.cld (Hotel Boiler Room): origin={:?}, floors={}, walls={}",
+                cld.origin,
+                cld.floors.len(),
+                cld.walls.len()
+            );
+            assert_eq!(cld.origin, [-120000.0, -80000.0]);
+            assert!(
+                !cld.floors.is_empty(),
+                "rr21.cld must contain floor triangles"
+            );
+            assert!(!cld.walls.is_empty(), "rr21.cld must contain wall segments");
+        }
     }
 
     #[test]

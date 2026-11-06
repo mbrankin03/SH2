@@ -12,7 +12,10 @@ pub use model_viewer::{
     ModelCategory, ModelViewerEntry, ModelViewerState, OrbitCamera, StageLightingRig,
     TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,
 };
-pub use visualizer::{build_skeleton_debug_lines, build_wireframe_lines, DebugLineVertex};
+pub use visualizer::{
+    build_chara_collision_debug_lines, build_collision_debug_lines, build_skeleton_debug_lines,
+    build_wireframe_lines, DebugLineVertex,
+};
 
 #[derive(Debug, Default)]
 pub struct DebugState {

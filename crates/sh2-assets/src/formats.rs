@@ -4,6 +4,7 @@ pub mod adx;
 pub mod aix;
 pub mod anm;
 pub mod bink;
+pub mod cld;
 pub mod dxt;
 pub mod map;
 pub mod mdls;
@@ -21,6 +22,7 @@ pub use bink::{
     parse_bink_file_header, parse_bink_header, BinkAudioTrack, BinkHeader, BinkVideoStream,
     DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, BINK_MAGICS,
 };
+pub use cld::{parse_cld, CldFile, FloorTriangle, WallSegment};
 pub use dxt::{decode_dds_file, decode_dxt};
 pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
 pub use mdls::{parse_mdl, ModelFile, ModelPrimitive, ModelTexture, ModelVertices};

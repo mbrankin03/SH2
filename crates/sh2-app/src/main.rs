@@ -520,7 +520,47 @@ fn create_model_viewer_pedestal_geometry() -> MapFile {
     map
 }
 
-/// Locate authentic Silent Hill 2 level map on disk based on requested test room or fallback
+/// Locate and load authentic `.cld` collision file for the given test room, falling back to procedural bounds.
+fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision::CollisionWorld {
+    let base_roots = [
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        "/home/matthewb/dev/SH2/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+    ];
+
+    let cld_relative = match room {
+        TestRoomKind::ObservationDeck => Some("data/bg/ob/ob01.cld"),
+        TestRoomKind::RestroomStart => Some("data/bg/er/er01.cld"),
+        TestRoomKind::HotelBoilerRoom => Some("data/bg/rr/rr21.cld"),
+        _ => None,
+    };
+
+    if let Some(rel) = cld_relative {
+        for base in &base_roots {
+            let p = std::path::PathBuf::from(base).join(rel);
+            if p.exists() {
+                if let Ok(data) = std::fs::read(&p) {
+                    if let Ok(cld) = sh2_assets::formats::cld::parse_cld(&data) {
+                        tracing::info!(
+                            "Loaded authentic .cld collision file ({rel}) with {} floors and {} walls",
+                            cld.floors.len(),
+                            cld.walls.len()
+                        );
+                        return sh2_core::collision::CollisionWorld::from_cld(&cld);
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::warn!(
+        "Using synthetic fallback room collision bounds for {:?}",
+        room
+    );
+    sh2_core::collision::CollisionWorld::create_synthetic_room(
+        8000.0, 12000.0, 3000.0, 600.0, 600.0,
+    )
+}
 fn find_map_file_for_room(
     room: TestRoomKind,
 ) -> (MapFile, glam::Vec3, f32, sh2_renderer::fog::FogUniforms) {
@@ -1367,6 +1407,7 @@ struct AppState {
     key_pan_up: bool,
     key_pan_down: bool,
     last_menu_state_log: String,
+    debug_collision_overlay: bool,
     last_frame: Instant,
     frame_counter: u32,
     sim_time: f32,
@@ -1517,6 +1558,7 @@ impl ApplicationHandler for SilentHillApp {
         );
 
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        sim_core.collision = find_cld_file_for_room(initial_room);
         sim_core.input.set_control_scheme(ControlScheme::Tank);
         sim_core.scenario.flashlight_on = true;
         sim_core.scenario.player_position = player_pos;
@@ -1756,6 +1798,7 @@ impl ApplicationHandler for SilentHillApp {
             key_pan_up: false,
             key_pan_down: false,
             last_menu_state_log: String::new(),
+            debug_collision_overlay: false,
             last_frame: Instant::now(),
             frame_counter: 0,
             sim_time: 0.0,
@@ -2268,6 +2311,13 @@ impl ApplicationHandler for SilentHillApp {
                                 state.model_viewer.turntable_yaw = 0.0;
                                 tracing::info!("[Model Viewer] Reset orbit camera framing.");
                             }
+                            winit::keyboard::KeyCode::KeyK if pressed => {
+                                state.debug_collision_overlay = !state.debug_collision_overlay;
+                                tracing::info!(
+                                    "[Debug] Collision wireframe overlay (clDbgDrawBGColiPoly): {}",
+                                    state.debug_collision_overlay
+                                );
+                            }
                             _ => {}
                         }
                         return;
@@ -2377,6 +2427,13 @@ impl ApplicationHandler for SilentHillApp {
                                 _ => "Exponential Squared",
                             };
                             tracing::info!("[Fog Tweak] Falloff curve: {}", curve_name);
+                        }
+                        winit::keyboard::KeyCode::KeyK if pressed => {
+                            state.debug_collision_overlay = !state.debug_collision_overlay;
+                            tracing::info!(
+                                "[Debug] Collision wireframe overlay (clDbgDrawBGColiPoly): {}",
+                                state.debug_collision_overlay
+                            );
                         }
                         _ => {}
                     }
@@ -2492,6 +2549,7 @@ impl ApplicationHandler for SilentHillApp {
                     state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
                     state.fog_uniforms = new_fog;
                     state.render_ctx.update_fog(&state.fog_uniforms);
+                    state.sim_core.collision = find_cld_file_for_room(new_room);
                     state.sim_core.scenario.player_position = new_pos;
                     state.sim_core.scenario.player_yaw = new_yaw;
                     state.sim_core.camera.reset_to_player(new_pos, new_yaw);
@@ -3028,11 +3086,51 @@ impl ApplicationHandler for SilentHillApp {
                     };
 
                     if is_in_game {
-                        state.render_ctx.render_scene(
-                            Some(&state.gpu_map),
-                            Some(&state.map_texture_bind_groups),
-                            &skeletal_draw,
-                        );
+                        if state.debug_collision_overlay {
+                            let floors: Vec<[[f32; 3]; 3]> = state
+                                .sim_core
+                                .collision
+                                .floors
+                                .iter()
+                                .map(|f| f.v)
+                                .collect();
+                            let walls: Vec<([f32; 2], [f32; 2], f32, f32)> = state
+                                .sim_core
+                                .collision
+                                .all_walls()
+                                .map(|w| (w.start, w.end, w.y_top, w.y_bottom))
+                                .collect();
+
+                            let mut debug_lines = sh2_debug::build_collision_debug_lines(
+                                &floors,
+                                &walls,
+                                [0.0, 1.0, 0.8, 1.0], // Cyan/green floor wireframes
+                                [1.0, 0.2, 0.2, 1.0], // Red wall wireframes
+                            );
+
+                            // Draw player cylinder
+                            let chara_lines = sh2_debug::build_chara_collision_debug_lines(
+                                player_pos.into(),
+                                state.sim_core.collision_config.radius,
+                                state.sim_core.collision_config.height,
+                                16,
+                                [1.0, 0.9, 0.1, 1.0], // Yellow player collision cylinder
+                            );
+                            debug_lines.extend(chara_lines);
+
+                            state.render_ctx.render_scene_with_debug_lines(
+                                Some(&state.gpu_map),
+                                Some(&state.map_texture_bind_groups),
+                                &skeletal_draw,
+                                &debug_lines,
+                            );
+                        } else {
+                            state.render_ctx.render_scene(
+                                Some(&state.gpu_map),
+                                Some(&state.map_texture_bind_groups),
+                                &skeletal_draw,
+                            );
+                        }
                     }
                 }
 

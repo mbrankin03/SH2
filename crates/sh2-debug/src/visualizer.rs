@@ -190,3 +190,118 @@ pub fn build_wireframe_lines(
 
     lines
 }
+
+/// Generates debug wireframe lines for background collision geometry (`clDbgDrawBGColiPoly`).
+///
+/// Floors are drawn with `floor_color` (e.g. green/cyan) and walls are drawn as vertical quad frames
+/// with `wall_color` (e.g. red/orange).
+pub fn build_collision_debug_lines(
+    floors: &[[[f32; 3]; 3]],
+    walls: &[([f32; 2], [f32; 2], f32, f32)],
+    floor_color: [f32; 4],
+    wall_color: [f32; 4],
+) -> Vec<DebugLineVertex> {
+    let mut lines = Vec::with_capacity(floors.len() * 6 + walls.len() * 8);
+
+    // 1. Floor triangles
+    for tri in floors {
+        let p0 = tri[0];
+        let p1 = tri[1];
+        let p2 = tri[2];
+
+        lines.push(DebugLineVertex::new(p0, floor_color));
+        lines.push(DebugLineVertex::new(p1, floor_color));
+
+        lines.push(DebugLineVertex::new(p1, floor_color));
+        lines.push(DebugLineVertex::new(p2, floor_color));
+
+        lines.push(DebugLineVertex::new(p2, floor_color));
+        lines.push(DebugLineVertex::new(p0, floor_color));
+    }
+
+    // 2. Wall segment vertical quads: (start, end, y_top, y_bottom)
+    for &(start, end, y_top, y_bottom) in walls {
+        let top_0 = [start[0], y_top, start[1]];
+        let top_1 = [end[0], y_top, end[1]];
+        let bot_0 = [start[0], y_bottom, start[1]];
+        let bot_1 = [end[0], y_bottom, end[1]];
+
+        // Top line
+        lines.push(DebugLineVertex::new(top_0, wall_color));
+        lines.push(DebugLineVertex::new(top_1, wall_color));
+
+        // Bottom line
+        lines.push(DebugLineVertex::new(bot_0, wall_color));
+        lines.push(DebugLineVertex::new(bot_1, wall_color));
+
+        // Left vertical
+        lines.push(DebugLineVertex::new(top_0, wall_color));
+        lines.push(DebugLineVertex::new(bot_0, wall_color));
+
+        // Right vertical
+        lines.push(DebugLineVertex::new(top_1, wall_color));
+        lines.push(DebugLineVertex::new(bot_1, wall_color));
+    }
+
+    lines
+}
+
+/// Generates debug wireframe lines for character collision cylinders (`clDbgDrawCharaColi`).
+///
+/// Draws top and bottom circular rings connected by vertical boundary lines.
+pub fn build_chara_collision_debug_lines(
+    pos: [f32; 3],
+    radius: f32,
+    height: f32,
+    segments: usize,
+    color: [f32; 4],
+) -> Vec<DebugLineVertex> {
+    let segs = segments.max(8);
+    let mut lines = Vec::with_capacity(segs * 4 + 8);
+    let y_feet = pos[1];
+    let y_head = pos[1] - height;
+
+    for i in 0..segs {
+        let theta0 = (i as f32) * std::f32::consts::TAU / (segs as f32);
+        let theta1 = ((i + 1) as f32) * std::f32::consts::TAU / (segs as f32);
+
+        let cos0 = theta0.cos() * radius;
+        let sin0 = theta0.sin() * radius;
+        let cos1 = theta1.cos() * radius;
+        let sin1 = theta1.sin() * radius;
+
+        // Feet ring
+        lines.push(DebugLineVertex::new(
+            [pos[0] + cos0, y_feet, pos[2] + sin0],
+            color,
+        ));
+        lines.push(DebugLineVertex::new(
+            [pos[0] + cos1, y_feet, pos[2] + sin1],
+            color,
+        ));
+
+        // Head ring
+        lines.push(DebugLineVertex::new(
+            [pos[0] + cos0, y_head, pos[2] + sin0],
+            color,
+        ));
+        lines.push(DebugLineVertex::new(
+            [pos[0] + cos1, y_head, pos[2] + sin1],
+            color,
+        ));
+
+        // 4 Vertical cardinal pillars
+        if i % (segs / 4) == 0 {
+            lines.push(DebugLineVertex::new(
+                [pos[0] + cos0, y_feet, pos[2] + sin0],
+                color,
+            ));
+            lines.push(DebugLineVertex::new(
+                [pos[0] + cos0, y_head, pos[2] + sin0],
+                color,
+            ));
+        }
+    }
+
+    lines
+}

@@ -63,7 +63,20 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 
 ## Phase 5: Gameplay Core & Scenarios (`sh2-core`)
 - [x] Decouple simulation clock from rendering (fixed 60 Hz physics/animation tick rate).
-- [ ] Implement camera system (third-person exploration, fixed cinematic cameras, right-stick search).
+- [ ] Implement camera system (third-person exploration, fixed cinematic cameras, right-stick search):
+  - [x] **SH2-31: Authentic PS2 `.cam` Binary Parser & Volume Switching**
+    - 128-byte `_VC_ROAD_DATA` record parser with sentinel values (`ofs_watch_hy`, `projection`, `tmp.chs.ofs_hy`).
+    - Lookahead watch targeting (`vcSetWatchTgtXzPos`), screen framing (`vcAdjCamOfsAngByCharaInScreen`), and yaw limits (`vcCorrectCamMatAngForcibly`).
+  - [ ] **SH2-50: Automated Room Loader Hook & SH2:EE Override Resolution for `.cam` Files**
+    - Connect room lifecycle in `sh2-app` / `sh2-core` to auto-ingest `data/bg/<area>/<room>.cam` on door warps.
+    - Check and prioritize SH2:EE widescreen/high-framerate override `.cam` files in `sh2e/bg/<area>/<room>.cam`.
+  - [ ] **SH2-51: Authentic PS2 `LOCUS_CIRCLE` and `THROUGH_DOOR` Camera Algorithms**
+    - Port `vcMakeIdealCamPosForLocusCircleCam` for circular tracking rails (spiral staircases, gazebos).
+    - Port `THROUGH_DOOR` camera transition lerp when James transitions through doors.
+  - [ ] **SH2-52: Scripted Event Camera Triggers, Enemy Encounter Framing & Cutscene Handoffs**
+    - Support `VC_RD_USE_NEAR_ENEMY_F` (0x0040) combat volume switches.
+    - Connect `.mes` dialogue events and cutscene script triggers (`vcSetCameraScript`).
+    - Seamless handoff between gameplay `.cam` volumes and FMV playback.
 - [ ] Port Main Scenario (*Letter from Silent Heaven*): James's inventory, state machines, and puzzles.
 - [ ] Port Sub-Scenario (*Born from a Wish*): Maria's Baldwin Mansion stages 53–58 from `prog_wish.c`.
 - [ ] **SH2-47: Scripted Sequence System & Environmental Horror Triggers**
@@ -100,3 +113,28 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 - [ ] Native controller input mapping (standard XInput / Android GameController + touchscreen).
 - [ ] Multi-swapchain rendering: Primary OLED (3D gameplay) + Secondary screen (Companion UI).
 - [ ] Automated Gradle / `cargo-apk` build pipeline for instant ADB install to Thor.
+
+## High Priority / Urgent Optimization & Hardening
+
+### **SH2-49: Engine Hardening, Zero-Allocation Hot Paths & Codebase Deduplication**
+- **Priority**: High / Urgent (Execute immediately following completion of SH2-31)
+- **Scope**: All workspace crates (`sh2-audio`, `sh2-assets`, `sh2-core`, `sh2-renderer`, `sh2-app`, `sh2-ui`, `sh2-debug`).
+- **Stage 1 — Memory Leak Elimination & Decoder Buffer Stability**:
+  - Eliminate explicit `Box::leak` in `crates/sh2-audio/src/engine.rs` (`migrate_stream_to_device`) by replacing leaked `&str` with owned `String` / client index matching.
+  - Fix faux-pooling 3 MB/frame reallocation in FMV decoder (`crates/sh2-assets/src/formats/bink.rs`) by replacing `std::mem::take` with double-buffered vector swap / direct plane buffer reuse.
+  - Bound static `RetailCueCache` in `bink.rs` to active FMV sessions or enforce bounded capacity.
+- **Stage 2 — Zero-Allocation Hot Paths (60–240 Hz Render Loop)**:
+  - Pre-invert bind pose matrices (`inv_initial_matrices`) once at model ingest in `sh2-assets::formats::anm` instead of recalculating 41–71 matrix inverses on CPU every frame.
+  - Add reusable scratch buffers in `AppState` / `CharacterAsset` (`dynamic_locals`, `pose_scratch`, `skin_scratch`) to eliminate per-frame `bind_locals.clone()` and vector reallocations in secondary physics & animation evaluation.
+  - Replace per-frame string allocations in menu controller dirty check (`overlay_text().join(" | ")`) with a dirty revision counter / state discriminant.
+  - Avoid per-frame intermediate vector allocations for debug line rendering (`floors.iter().map().collect()`, `all_walls().map().collect()`) by passing iterators or pre-allocated vertex slices directly.
+- **Stage 3 — Architectural Trimming, Deduplication & Modularization**:
+  - Consolidate duplicate binary reader functions (`read_u16`, `read_i16`, `read_u32`, `read_f32`) from `map.rs`, `anm.rs`, `mdls.rs`, and `sound.rs` into a shared `sh2_assets::formats::binary` helper module.
+  - Unify hardcoded retail search paths across `sh2-app`, `sh2-assets`, and `sh2-audio` into a centralized `AssetPathResolver` with `SH2_DATA_DIR` environment support.
+  - Extract synthetic test rooms and duplicate `add_quad` geometry builders from `crates/sh2-app/src/main.rs` into a dedicated `crates/sh2-app/src/synthetic_geometry.rs` module.
+  - Implement proper off-screen target resize handling in `RenderContext::resize` for HDR, depth, fog, and LDR surfaces.
+- **Stage 4 — Automated CI Guardrails & Allocation Regression Testing**:
+  - Add `[workspace.lints.clippy]` to root `Cargo.toml` configuring `box_leak = "deny"`, `clone_on_ref_ptr = "warn"`, `cloned_instead_of_copied = "warn"`, and `inefficient_to_string = "warn"`.
+  - Add CI AST/grep guardrail step in `.github/workflows/ci.yml` blocking forbidden patterns (`Box::leak`, `mem::take` on capacity pools, and hardcoded `/home/` developer paths).
+  - Implement zero-allocation regression unit tests in `sh2-core/tests` using a tracking allocator to verify 0 heap allocations during the 60 Hz simulation game tick.
+  - Standardize in-place `_into` API conventions (`evaluate_pose_into`, `compute_skin_matrices_into`) across asset and rendering layers.

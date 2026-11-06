@@ -753,4 +753,69 @@ mod tests {
             assert!(!mixed.frames.is_empty());
         }
     }
+
+    #[test]
+    fn test_cam_binary_parsing_er01_and_rr21() {
+        let er01_path = format!("{ROOT_ASSETS}/data/bg/er/er01.cam");
+        if Path::new(&er01_path).exists() {
+            let data = fs::read(&er01_path).expect("Failed to read er01.cam");
+            let cam = parse_cam(&data).expect("Failed to parse er01.cam");
+
+            // er01 has 4 active records + 1 terminal record
+            assert_eq!(cam.records.len(), 4);
+
+            // Record 2 is the sink/mirror view
+            let sink_rec = &cam.records[2];
+            assert_eq!(sink_rec.rd_type, RoadType::RoadPrioHigh);
+            assert_eq!(sink_rec.projection, 757.0);
+            assert_eq!(sink_rec.ofs_watch_hy, -1510.0);
+            let (sw_min_x, sw_max_x) = sink_rec.lim_sw.x_bounds();
+            let (sw_min_z, sw_max_z) = sink_rec.lim_sw.z_bounds();
+            assert_eq!(sw_min_x, -19958.0);
+            assert_eq!(sw_max_x, -19310.0);
+            assert_eq!(sw_min_z, 20214.0);
+            assert_eq!(sw_max_z, 20880.0);
+
+            // Check sentinel substitution on Record 0: ofs_watch_hy=10000.0 -> -300.0, projection=0.0 -> 448.0
+            let exit_rec = &cam.records[0];
+            assert_eq!(exit_rec.ofs_watch_hy, -300.0);
+            assert_eq!(exit_rec.projection, 448.0);
+            assert_eq!(exit_rec.rd_type, RoadType::Road);
+
+            // Record 1: Stalls
+            let stall_rec = &cam.records[1];
+            assert_eq!(stall_rec.ofs_watch_hy, -300.0);
+            assert_eq!(stall_rec.projection, 448.0);
+
+            // Volume selection tests in er01:
+            // 1. Sink framing
+            let active_sink = cam.find_active_record([-19600.0, -1000.0, 20500.0], 0.0);
+            assert!(active_sink.is_some());
+            assert_eq!(active_sink.unwrap().projection, 757.0);
+
+            // 2. Stalls framing
+            let active_stalls = cam.find_active_record([-19000.0, -1000.0, 20500.0], 0.0);
+            assert!(active_stalls.is_some());
+            assert_eq!(active_stalls.unwrap().rd_type, RoadType::Road);
+
+            // 3. Exit door framing
+            let active_exit = cam.find_active_record([-18800.0, -1000.0, 19000.0], 0.0);
+            assert!(active_exit.is_some());
+            assert_eq!(active_exit.unwrap().rd_type, RoadType::RoadPrioHigh);
+        }
+
+        let rr21_path = format!("{ROOT_ASSETS}/data/bg/rr/rr21.cam");
+        if Path::new(&rr21_path).exists() {
+            let data = fs::read(&rr21_path).expect("Failed to read rr21.cam");
+            let cam = parse_cam(&data).expect("Failed to parse rr21.cam");
+
+            // rr21 has 3 active records + 1 terminal record
+            assert_eq!(cam.records.len(), 3);
+            assert_eq!(cam.records[0].cam_mv_type, CamMovementType::Chase);
+            assert_eq!(cam.records[1].cam_mv_type, CamMovementType::FixedAngle);
+            assert_eq!(cam.records[2].cam_mv_type, CamMovementType::FixedAngle);
+            assert_eq!(cam.records[1].projection, 512.0);
+            assert_eq!(cam.records[2].projection, 480.0);
+        }
+    }
 }

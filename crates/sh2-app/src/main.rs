@@ -3086,11 +3086,13 @@ impl ApplicationHandler for SilentHillApp {
                             match state.combat_arena.player.mode {
                                 sh2_core::combat::CombatMode::Held => {
                                     state.sim_core.animation_locked = true;
-                                    // Select authentic struggle animation based on the grabbing monster:
-                                    // - Creeper (#8): leg shake / struggle (frames 588..=611, anim_id 128)
-                                    // - Abstract Daddy (#5) / Lying Figure (#1): torso push struggle (frames 612..=629, anim_id 129)
-                                    // - Flesh Lips (#6): overhead neck choke struggle (frames 457..=468, PS2 lower_hold 0x21dc80-0x21dca4)
-                                    // - Pyramid Head (#4) / Mary Boss (#9): neck/side strangle struggle
+                                    // Select authentic struggle animation based on the grabbing monster from PS2/PC lower_hold tables:
+                                    // - Creeper (#8): leg shake / struggle (frames 588..=611, table 0x6ceaf0)
+                                    // - Lying Figure (#1): torso push struggle (frames 612..=629)
+                                    // - Abstract Daddy (#5): bed grapple struggle (frames 741..=771, table 0x6cebbc)
+                                    // - Flesh Lips (#6): overhead ceiling choke struggle (frames 800..=809, table 0x6cecc8)
+                                    // - Pyramid Head (#4): one-handed choke lift (frames 1084..=1113, table 0x8ba424)
+                                    // - Mary Boss (#9): tentacle choke hold (frames 757..=786 @ 26.25fps, table 0x6cf1d8)
                                     let struggle_clip = if let Some(g_idx) =
                                         state.combat_arena.grappling_enemy_idx
                                     {
@@ -3102,14 +3104,20 @@ impl ApplicationHandler for SilentHillApp {
                                             .unwrap_or(0);
                                         match enemy_id {
                                             8 => sh2_core::animation::JamesBasicClips::STRUGGLE_LEG,
-                                            1 | 5 => {
+                                            1 => {
                                                 sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
                                             }
-                                            6 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_OVERHEAD
+                                            5 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_DADDY
                                             }
-                                            4 | 9 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_SIDE
+                                            6 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_FLESH_LIPS
+                                            }
+                                            4 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_CHOKE_LIFT
+                                            }
+                                            9 => {
+                                                sh2_core::animation::JamesBasicClips::STRUGGLE_CHOKE_MARY
                                             }
                                             _ => {
                                                 sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO

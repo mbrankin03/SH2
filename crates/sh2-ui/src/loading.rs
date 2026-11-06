@@ -434,11 +434,12 @@ impl LoadingScreen {
                     "STARTING..."
                 };
                 let center_x = rast.width / 2;
+                let prompt_height = (20.0 * scale_y).round().max(16.0) as usize;
                 font.draw_line_centered(
                     rast,
                     prompt,
                     (center_x, (430.0 * scale_y).round() as usize),
-                    20,
+                    prompt_height,
                     Sh2TextColor::White,
                     true,
                 );
@@ -446,11 +447,12 @@ impl LoadingScreen {
         } else {
             // Subtle loading stage text
             let center_x = rast.width / 2;
+            let stage_height = (18.0 * scale_y).round().max(14.0) as usize;
             font.draw_line_centered(
                 rast,
                 &format!("LOADING {}...", self.target_room_label.to_uppercase()),
                 (center_x, (440.0 * scale_y).round() as usize),
-                18,
+                stage_height,
                 Sh2TextColor::White,
                 true,
             );

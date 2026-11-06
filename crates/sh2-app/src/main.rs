@@ -985,6 +985,7 @@ struct AppState {
     key_ready_held: bool,
     key_attack_pressed: bool,
     key_attack_held: bool,
+    combat_enemy_idx: usize,
     struggle_button_press_count: u32,
     model_viewer: ModelViewerState,
     viewer_asset: Option<CharacterAsset>,
@@ -1478,6 +1479,7 @@ impl ApplicationHandler for SilentHillApp {
             key_ready_held: false,
             key_attack_pressed: false,
             key_attack_held: false,
+            combat_enemy_idx: 0,
             struggle_button_press_count: 0,
             model_viewer,
             viewer_asset,
@@ -2224,6 +2226,40 @@ impl ApplicationHandler for SilentHillApp {
                             state.combat_arena.player.weapon =
                                 sh2_core::combat::WeaponGrip::GreatKnife;
                             tracing::info!("[Combat] Equipped Great Knife");
+                        }
+                        // Teleport / cycle selected enemy right in front of James for testing combat & grab interactions
+                        winit::keyboard::KeyCode::Tab
+                            if pressed && !state.combat_arena.enemies.is_empty() =>
+                        {
+                            let fwd = glam::Vec3::new(
+                                state.sim_core.scenario.player_yaw.sin(),
+                                0.0,
+                                state.sim_core.scenario.player_yaw.cos(),
+                            );
+                            let target_pos = state.combat_arena.player_position + fwd * 350.0;
+                            let facing_yaw =
+                                state.sim_core.scenario.player_yaw + std::f32::consts::PI;
+
+                            // Advance focus to next enemy
+                            state.combat_enemy_idx =
+                                (state.combat_enemy_idx + 1) % state.combat_arena.enemies.len();
+                            let target_enemy =
+                                &mut state.combat_arena.enemies[state.combat_enemy_idx];
+
+                            // Teleport selected enemy in front of player and engage
+                            target_enemy.position = target_pos;
+                            target_enemy.yaw = facing_yaw;
+                            target_enemy.is_aggroed = true;
+                            target_enemy.flinch_timer = 0.0;
+                            target_enemy.attack_cooldown = 0.2;
+
+                            tracing::info!(
+                                "[Combat] Cycled to Enemy #{}: {} (teleported to X:{:.1} Z:{:.1})",
+                                target_enemy.id,
+                                target_enemy.name,
+                                target_pos.x,
+                                target_pos.z
+                            );
                         }
                         _ => {}
                     }
@@ -4022,8 +4058,26 @@ impl ApplicationHandler for SilentHillApp {
                                 ey_offset += 20;
                             }
 
+                            let cur_anim_clip = state.sim_core.animation.current_clip();
+                            let anim_state_name = format!("{:?}", state.sim_core.animation.state());
                             state.menu_rasterizer.draw_text(
-                                "[Controls: Right-Click / Hold R: Ready | Left-Click / Space: Attack | 1..6: Weapons | WASD: Move]",
+                                &format!(
+                                    "[ANIM STATE: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
+                                    anim_state_name,
+                                    cur_anim_clip.start_frame,
+                                    cur_anim_clip.end_frame,
+                                    cur_anim_clip.fps,
+                                    state.sim_core.animation.clip_time()
+                                ),
+                                20,
+                                645,
+                                1,
+                                cyan,
+                                true,
+                            );
+
+                            state.menu_rasterizer.draw_text(
+                                "[Controls: Right-Click/R: Ready | Space: Attack | 1..6: Weapons | Tab: Cycle Enemy | WASD: Move]",
                                 20,
                                 670,
                                 1,

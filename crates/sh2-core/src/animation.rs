@@ -97,10 +97,11 @@ impl JamesBasicClips {
     pub const AIM: AnimationClip = AnimationClip::new(200, 230, 30.0, true);
     /// Weapon strike / attack execution (frames 231..=270).
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
-    /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 121).
+    /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 121, 15 fps).
     pub const HURT: AnimationClip = AnimationClip::new(453, 470, 15.0, false);
-    /// Struggle held animation during creature grab (frames 615..=622 upright throat/chest push loop, PS2 index 128, 15 fps).
-    pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(615, 622, 15.0, true);
+    /// Struggle held animation during creature grab (authentic PS2 M_HELD loop in combat.c:1631:
+    /// frames 457..=461 inside J_HURT, 15 fps, where James writhes and pushes against attacker's grip).
+    pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(457, 461, 15.0, true);
     /// Collapse / death fall animation (frames 256..=280, PS2 index 112).
     pub const FALL: AnimationClip = AnimationClip::new(256, 280, 15.0, false);
 }

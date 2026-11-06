@@ -3441,6 +3441,12 @@ impl ApplicationHandler for SilentHillApp {
 
                     // If in-game pause menu is active, render authentic pause overlay
                     if is_in_game && state.menu_ctrl.pause_menu.is_open {
+                        let tint = [1.0f32, 1.0, 1.0, 1.0];
+                        state.render_ctx.queue.write_buffer(
+                            &state.menu_uniform_buffer,
+                            0,
+                            bytemuck::cast_slice(&tint),
+                        );
                         state.menu_rasterizer.clear();
                         let font = sh2_ui::AtlasFont::shared(None);
 

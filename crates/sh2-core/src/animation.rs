@@ -99,8 +99,8 @@ impl JamesBasicClips {
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
     /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 121).
     pub const HURT: AnimationClip = AnimationClip::new(453, 470, 15.0, false);
-    /// Struggle held animation during grab (frames 457..=461 held/writhing loop, 30 fps).
-    pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(457, 461, 30.0, true);
+    /// Struggle held animation during creature grab (frames 615..=622 upright throat/chest push loop, PS2 index 128, 15 fps).
+    pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(615, 622, 15.0, true);
     /// Collapse / death fall animation (frames 256..=280, PS2 index 112).
     pub const FALL: AnimationClip = AnimationClip::new(256, 280, 15.0, false);
 }

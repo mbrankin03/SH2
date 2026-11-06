@@ -9,11 +9,12 @@
 
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
-use image::ImageReader;
-use std::io::Cursor;
+use sh2_assets::formats::texture::parse_texture_container;
+use sh2_assets::resolver::AssetPathResolver;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Static embedded 64x64 footstep sprite decoded from authentic retail .
+/// Static footstep sprite loaded and ingested at runtime from retail assets.
 static FOOTSTEP_SPRITE: OnceLock<FootstepSprite> = OnceLock::new();
 
 /// Pre-decoded footstep alpha silhouette sprite.
@@ -24,33 +25,138 @@ pub struct FootstepSprite {
 }
 
 impl FootstepSprite {
-    /// Retrieve or lazily decode the embedded footstep sprite.
+    /// Ingest the footstep texture from the retail  texture container
+    /// (checking  or ),
+    /// falling back to procedural generation if game assets have not been installed yet.
     pub fn get() -> &'static Self {
         FOOTSTEP_SPRITE.get_or_init(|| {
-            let bytes = include_bytes!("../assets/footstep.png");
-            let img = ImageReader::new(Cursor::new(bytes))
-                .with_guessed_format()
-                .expect("Valid footstep PNG format")
-                .decode()
-                .expect("Decode footstep image")
-                .to_rgba8();
-
-            let width = img.width();
-            let height = img.height();
-            let mut alpha = Vec::with_capacity((width * height) as usize);
-
-            for pixel in img.pixels() {
-                // The footstep texture is stored as an alpha mask with pure white RGB.
-                // Strictly use the alpha channel (pixel[3]) so the sole silhouette is preserved.
-                alpha.push(pixel[3]);
+            if let Some(sprite) = Self::load_from_retail_assets() {
+                return sprite;
             }
-
-            FootstepSprite {
-                width,
-                height,
-                alpha,
-            }
+            Self::generate_procedural_fallback()
         })
+    }
+
+    /// Try to ingest the authentic retail footstep texture from disk.
+    fn load_from_retail_assets() -> Option<Self> {
+        let resolver = AssetPathResolver::resolve();
+        let candidate_rel_paths = [
+            "effect/footmark.tbn2",
+            "pic/effect/footmark.tbn2",
+            "data/pic/effect/footmark.tbn2",
+        ];
+
+        let mut tbn2_path: Option<PathBuf> = None;
+        for rel in &candidate_rel_paths {
+            if let Some(path) = resolver.resolve_file(rel) {
+                tbn2_path = Some(path);
+                break;
+            }
+        }
+
+        // Direct candidate fallbacks if running from nested test working directories
+        if tbn2_path.is_none() {
+            let direct_candidates = [
+                "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+                "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+                "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+                "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
+                "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
+                "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
+            ];
+            for cand in &direct_candidates {
+                let p = Path::new(cand);
+                if p.is_file() {
+                    tbn2_path = Some(p.to_path_buf());
+                    break;
+                }
+            }
+        }
+
+        let path = tbn2_path?;
+        let bytes = std::fs::read(&path).ok()?;
+        let textures = parse_texture_container(&bytes, 0).ok()?;
+        let tex = textures.first()?;
+        let rgba = tex.to_rgba().ok()?;
+
+        let width = tex.width as u32;
+        let height = tex.height as u32;
+        let mut alpha = Vec::with_capacity((width * height) as usize);
+
+        let (chunks, _) = rgba.as_chunks::<4>();
+        for chunk in chunks {
+            alpha.push(chunk[3]);
+        }
+
+        Some(Self {
+            width,
+            height,
+            alpha,
+        })
+    }
+
+    /// Procedural mathematical sole generation when retail asset files are absent (e.g. CI environments).
+    fn generate_procedural_fallback() -> Self {
+        let width = 64u32;
+        let height = 128u32;
+        let mut alpha = vec![0u8; (width * height) as usize];
+
+        for y in 0..height {
+            let ny = y as f32 / height as f32; // 0.0 (toe) to 1.0 (heel)
+            for x in 0..width {
+                let nx = (x as f32 - 32.0) / 32.0; // -1.0 (outer) to +1.0 (inner)
+
+                let mut in_sole = false;
+                let mut intensity = 0.0f32;
+
+                if (0.06..=0.50).contains(&ny) {
+                    // Forefoot & ball of foot
+                    let cy = 0.28;
+                    let rx = 0.62 + (0.28 - (ny - cy).abs()) * 0.25;
+                    let ry = 0.22;
+                    let dx = nx / rx;
+                    let dy = (ny - cy) / ry;
+                    let dist = dx * dx + dy * dy;
+                    if dist <= 1.0 {
+                        in_sole = true;
+                        intensity = 1.0 - ((dist - 0.75) / 0.25).clamp(0.0, 1.0);
+                    }
+                } else if (0.50..=0.66).contains(&ny) {
+                    // Arch & waist (inner cutout)
+                    let arch_inner = 0.18 + (ny - 0.50) * 0.2;
+                    let arch_outer = -0.52;
+                    if (arch_outer..=arch_inner).contains(&nx) {
+                        in_sole = true;
+                        intensity = 1.0;
+                    }
+                } else if (0.66..=0.94).contains(&ny) {
+                    // Heel
+                    let cy = 0.80;
+                    let rx = 0.48;
+                    let ry = 0.14;
+                    let dx = nx / rx;
+                    let dy = (ny - cy) / ry;
+                    let dist = dx * dx + dy * dy;
+                    if dist <= 1.0 {
+                        in_sole = true;
+                        intensity = 1.0 - ((dist - 0.75) / 0.25).clamp(0.0, 1.0);
+                    }
+                }
+
+                if in_sole {
+                    // Subtle sole tread grooving
+                    let tread = if y % 6 == 0 { 0.75 } else { 1.0 };
+                    let val = (intensity * tread * 255.0).clamp(0.0, 255.0) as u8;
+                    alpha[(y * width + x) as usize] = val;
+                }
+            }
+        }
+
+        Self {
+            width,
+            height,
+            alpha,
+        }
     }
 }
 
@@ -450,6 +556,29 @@ mod tests {
         assert!(
             non_zero_count > 50,
             "Expected rendered footstep pixels on black backdrop"
+        );
+    }
+
+    #[test]
+    fn test_footstep_sprite_ingestion_and_fallback() {
+        let sprite = FootstepSprite::get();
+        assert!(sprite.width > 0);
+        assert!(sprite.height > 0);
+        assert_eq!(sprite.alpha.len(), (sprite.width * sprite.height) as usize);
+        let non_zeros = sprite.alpha.iter().filter(|&&a| a > 0).count();
+        assert!(
+            non_zeros > 500,
+            "Footstep sprite should have substantive silhouette data"
+        );
+
+        // Test procedural generator directly
+        let fallback = FootstepSprite::generate_procedural_fallback();
+        assert_eq!(fallback.width, 64);
+        assert_eq!(fallback.height, 128);
+        let fb_non_zeros = fallback.alpha.iter().filter(|&&a| a > 0).count();
+        assert!(
+            fb_non_zeros > 1000,
+            "Procedural fallback should generate full foot silhouette"
         );
     }
 

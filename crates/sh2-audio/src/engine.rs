@@ -176,19 +176,73 @@ pub struct AudioEngine {
 impl AudioEngine {
     /// Enumerate all currently available audio output device names on the host system.
     ///
-    /// The first entry or special designation can be treated as the system default.
+    /// Resolves human-readable device names (e.g. "MiniFuse 2", "Headphones", "HDMI") via PulseAudio / PipeWire
+    /// when available on Linux desktop systems, cleanly filtering out internal ALSA DSP plugins like "speex",
+    /// "speexrate", "samplerate", or "upmix".
     pub fn enumerate_output_devices() -> Vec<String> {
-        let host = cpal::default_host();
         let mut devices = Vec::new();
-        if let Ok(iter) = host.output_devices() {
-            for device in iter {
-                if let Ok(name) = device.name() {
-                    if !devices.contains(&name) {
-                        devices.push(name);
+
+        // 1. Attempt querying PulseAudio / PipeWire sinks for friendly display descriptions
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(output) = std::process::Command::new("pactl")
+                .args(["-f", "json", "list", "sinks"])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        if let Some(sinks) = val.as_array() {
+                            for sink in sinks {
+                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let desc = sink
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or(name);
+
+                                // Filter out non-hardware / internal DSP filter sinks
+                                if name.contains("spotifast")
+                                    || desc.contains("Soloist")
+                                    || name.contains("Loopback")
+                                    || desc.contains("Loopback")
+                                {
+                                    continue;
+                                }
+
+                                let clean_name = desc.trim().to_string();
+                                if !clean_name.is_empty() && !devices.contains(&clean_name) {
+                                    devices.push(clean_name);
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+
+        // 2. Query CPAL host devices if pactl is unavailable or returns no sinks
+        if devices.is_empty() {
+            let host = cpal::default_host();
+            if let Ok(iter) = host.output_devices() {
+                for device in iter {
+                    if let Ok(name) = device.name() {
+                        // Filter out raw ALSA software rate/resample plugins that confuse users
+                        let lower = name.to_lowercase();
+                        if lower.contains("speex")
+                            || lower.contains("rate")
+                            || lower.contains("samplerate")
+                            || lower.contains("upmix")
+                            || lower.contains("vdownmix")
+                        {
+                            continue;
+                        }
+                        if !devices.contains(&name) {
+                            devices.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
         devices
     }
 

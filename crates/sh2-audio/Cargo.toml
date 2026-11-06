@@ -12,6 +12,7 @@ glam = { workspace = true }
 mint = "0.5"
 kira = { workspace = true }
 cpal = "0.15"
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }

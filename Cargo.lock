@@ -2056,6 +2056,7 @@ dependencies = [
  "kira",
  "log",
  "mint",
+ "serde_json",
  "sh2-assets",
  "sh2-core",
  "thiserror 2.0.21",

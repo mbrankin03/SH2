@@ -662,17 +662,17 @@ impl CombatController {
         self.anim_frame = 0.0;
     }
 
-    /// Process struggle escape input during grab (`0x5565c0`).
-    /// Each button press or analog stick flick shaves 1/30 s off struggle meter.
-    /// Also includes a continuous baseline struggle drain (1.0x on beginner, 0.35x on normal)
-    /// to guarantee James breaks free within 2.5-3.5 seconds even without manic mashing.
+    /// Process struggle escape input during grab (`0x5565c0` / `shBattleHuggedHuman` 0x00124db0).
+    /// In authentic PS2, button presses and stick inputs shave ~0.12 - 0.25 s per input from the 4.0s hold meter,
+    /// allowing ~15-20 rapid mashing presses to break free within ~1-2 seconds,
+    /// while passive time decay ensures release after 3.5-4.0s even with zero input.
     pub fn process_struggle_inputs(&mut self, button_press_count: u32, dt: f32, is_beginner: bool) {
         if self.mode != CombatMode::Held {
             return;
         }
 
-        let drain_from_presses = (button_press_count as f32) / 30.0;
-        let passive_rate = if is_beginner { 1.0 } else { 0.35 };
+        let drain_from_presses = (button_press_count as f32) * 0.135;
+        let passive_rate = if is_beginner { 1.5 } else { 1.0 };
         let passive_drain = dt * passive_rate;
         self.struggle_meter = (self.struggle_meter - (drain_from_presses + passive_drain)).max(0.0);
 
@@ -2011,13 +2011,15 @@ impl CombatArena {
                 let dz = enemy.position.z - player_p.z;
                 let dist = (dx * dx + dz * dz).sqrt();
 
+                // Authentic PS2 shBattleHuggedHuman (0x00124db0):
+                // Hold timer is 240 frames @ 60Hz = 4.0 seconds (reduced by player struggle button presses)
                 let (grab_range, meter) = match enemy.id {
-                    4 => (400.0, 0.70), // Pyramid Head one-handed choke lift
+                    4 => (400.0, 4.0), // Pyramid Head one-handed choke lift
                     // Authentic PS2 swing_hit (enemy.c:3094, 3305): reach 400.0 + James 130.0 = 530.0
-                    5 => (530.0, 0.70), // Abstract Daddy strangle grapple
-                    6 => (450.0, 0.70), // Flesh Lips ceiling choke descent
-                    8 => (220.0, 0.50), // Creeper latch / bite
-                    9 => (550.0, 0.70), // Mary Final Boss tentacle grapple
+                    5 => (530.0, 4.0), // Abstract Daddy strangle grapple
+                    6 => (450.0, 4.0), // Flesh Lips ceiling choke descent
+                    8 => (220.0, 3.0), // Creeper latch / bite
+                    9 => (550.0, 4.0), // Mary Final Boss tentacle grapple
                     _ => (0.0, 0.0),
                 };
 
@@ -2199,12 +2201,14 @@ impl CombatArena {
             let dz = enemy.position.z - player_p.z;
             let dist = (dx * dx + dz * dz).sqrt();
 
+            // Authentic PS2 shBattleHuggedHuman (0x00124db0):
+            // Hold timer is 240 frames @ 60Hz = 4.0 seconds (reduced by player struggle button presses)
             let (grab_range, meter) = match enemy.id {
-                4 => (400.0, 0.70),
-                5 => (530.0, 0.70),
-                6 => (450.0, 0.70),
-                8 => (220.0, 0.50),
-                9 => (550.0, 0.70),
+                4 => (400.0, 4.0),
+                5 => (530.0, 4.0),
+                6 => (450.0, 4.0),
+                8 => (220.0, 3.0),
+                9 => (550.0, 4.0),
                 _ => (0.0, 0.0),
             };
 

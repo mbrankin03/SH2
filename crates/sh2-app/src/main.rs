@@ -3283,14 +3283,14 @@ impl ApplicationHandler for SilentHillApp {
                                         .unwrap_or(0);
                                     let (lower_frame_idx, upper_clip) = match enemy_id {
                                         // Mary Boss (#9): Lower suspended taut in air (771 @ table 0x6cf1d8)
-                                        // + Upper choke struggle (798..=809 @ table 0x6cf260 aid 21217)
-                                        9 => (Some(771), Some((798, 809, 15.0f32))),
+                                        // + Upper choke struggle (776..=803 continuous struggle sequence @ PS2 table 0x6cf260 aid 21213-21217, 10.0 fps)
+                                        9 => (Some(771), Some((776, 803, 10.0f32))),
                                         // Flesh Lips (#6): Lower overhead suspended (739 @ table 0x6cecc8)
-                                        // + Upper reaching choke (798..=809 @ aid 367)
-                                        6 => (Some(739), Some((798, 809, 15.0f32))),
+                                        // + Upper reaching choke (776..=803 @ aid 363-367, 10.0 fps)
+                                        6 => (Some(739), Some((776, 803, 10.0f32))),
                                         // Abstract Daddy (#5): Lower bed grapple (756 @ table 0x6cebbc)
-                                        // + Upper torso push/thrash (612..=629 @ aid 128)
-                                        5 => (Some(756), Some((612, 629, 15.0f32))),
+                                        // + Upper torso push/thrash (612..=629 @ aid 128, 12.0 fps)
+                                        5 => (Some(756), Some((612, 629, 12.0f32))),
                                         _ => (None, None),
                                     };
 

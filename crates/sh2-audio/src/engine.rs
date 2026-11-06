@@ -133,6 +133,8 @@ pub struct AudioEngine {
 
     /// Sub-track handle for streaming background music.
     bgm_track: Option<TrackHandle>,
+    /// Dedicated sub-track handle for FMV cutscene audio stream (.bik decoded audio).
+    fmv_track: Option<TrackHandle>,
     /// Sub-track handle for 3D and 2D sound effects.
     sfx_track: Option<TrackHandle>,
     /// Sub-track handle for dialogue voice lines.
@@ -150,6 +152,8 @@ pub struct AudioEngine {
 
     /// Handle for currently playing background ambient/music stream.
     active_bgm_handle: Option<StaticSoundHandle>,
+    /// Handle for currently playing FMV movie audio stream.
+    active_fmv_handle: Option<StaticSoundHandle>,
     /// Currently playing voice clip handle.
     active_voice_handle: Option<StaticSoundHandle>,
 
@@ -196,6 +200,11 @@ impl AudioEngine {
             .add_sub_track(TrackBuilder::default())
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
+        // 1b. Create FMV Track
+        let fmv_track = manager
+            .add_sub_track(TrackBuilder::default())
+            .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
+
         // 2. Create Reverb Effect and SFX Track
         let mut sfx_track_builder = TrackBuilder::default();
         let reverb_handle = sfx_track_builder.add_effect(
@@ -239,6 +248,7 @@ impl AudioEngine {
         Ok(Self {
             manager: Some(manager),
             bgm_track: Some(bgm_track),
+            fmv_track: Some(fmv_track),
             sfx_track: Some(sfx_track),
             voice_track: Some(voice_track),
             spatial_scene: Some(spatial_scene),
@@ -246,6 +256,7 @@ impl AudioEngine {
             reverb_handle: Some(reverb_handle),
             current_preset: EnvironmentalPreset::Off,
             active_bgm_handle: None,
+            active_fmv_handle: None,
             active_voice_handle: None,
             active_dialogue: None,
             master_volume: 1.0,
@@ -514,23 +525,12 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Stops currently playing background music with a fade out.
-    pub fn stop_bgm(&mut self, fade_out: Duration) {
-        if let Some(mut handle) = self.active_bgm_handle.take() {
-            handle.stop(Tween {
-                duration: fade_out,
-                easing: Easing::Linear,
-                ..Default::default()
-            });
-        }
-    }
-
-    /// Plays decoded 16-bit signed little-endian stereo PCM audio for an FMV cutscene on the BGM track.
-    pub fn play_fmv_pcm(
+    /// Plays decoded ADX audio stream with explicit master volume scaling and optional fade-in.
+    pub fn play_bgm_with_fade(
         &mut self,
-        sample_rate: u32,
-        pcm_s16le: &[u8],
-        volume: f32,
+        adx: &DecodedAdx,
+        master_volume_factor: f32,
+        fade_in: Duration,
     ) -> Result<(), AudioError> {
         let manager = self
             .manager
@@ -542,6 +542,103 @@ impl AudioEngine {
             .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
 
         if let Some(mut old_handle) = self.active_bgm_handle.take() {
+            old_handle.stop(Tween {
+                duration: Duration::from_millis(50),
+                easing: Easing::Linear,
+                ..Default::default()
+            });
+        }
+
+        let frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
+        let target_vol = (master_volume_factor * self.bgm_volume * self.master_volume) as f64;
+        let mut settings = StaticSoundSettings::new().output_destination(bgm_track);
+
+        if fade_in.is_zero() {
+            settings = settings.volume(Volume::Amplitude(target_vol));
+        } else {
+            settings = settings.volume(Volume::Amplitude(0.0));
+        }
+
+        if adx.header.has_loop {
+            let start_sec = adx.header.loop_start_sample as f64 / adx.header.sample_rate as f64;
+            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate as f64;
+            settings = settings.loop_region(Region {
+                start: PlaybackPosition::Seconds(start_sec),
+                end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
+            });
+        }
+
+        let sound_data = StaticSoundData {
+            sample_rate: adx.header.sample_rate,
+            frames: Arc::from(frames),
+            settings,
+            slice: None,
+        };
+
+        let mut handle = manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+
+        if !fade_in.is_zero() {
+            handle.set_volume(
+                Volume::Amplitude(target_vol),
+                Tween {
+                    duration: fade_in,
+                    easing: Easing::Linear,
+                    ..Default::default()
+                },
+            );
+        }
+
+        self.active_bgm_handle = Some(handle);
+        Ok(())
+    }
+
+    /// Returns whether background music is currently actively playing.
+    pub fn is_bgm_playing(&self) -> bool {
+        self.active_bgm_handle.is_some()
+    }
+
+    /// Stops currently playing background music with a fade out.
+    pub fn stop_bgm(&mut self, fade_out: Duration) {
+        if let Some(mut handle) = self.active_bgm_handle.take() {
+            handle.stop(Tween {
+                duration: fade_out,
+                easing: Easing::Linear,
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Stops currently playing FMV cutscene audio stream.
+    pub fn stop_fmv_audio(&mut self, fade_out: Duration) {
+        if let Some(mut handle) = self.active_fmv_handle.take() {
+            handle.stop(Tween {
+                duration: fade_out,
+                easing: Easing::Linear,
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Plays decoded 16-bit signed little-endian stereo PCM audio for an FMV cutscene on the dedicated FMV track.
+    pub fn play_fmv_pcm(
+        &mut self,
+        sample_rate: u32,
+        pcm_s16le: &[u8],
+        volume: f32,
+    ) -> Result<(), AudioError> {
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let fmv_track = self
+            .fmv_track
+            .as_ref()
+            .or(self.bgm_track.as_ref())
+            .ok_or_else(|| AudioError::InitError("No fmv/bgm track".into()))?;
+
+        if let Some(mut old_handle) = self.active_fmv_handle.take() {
             old_handle.stop(Tween {
                 duration: Duration::from_millis(50),
                 easing: Easing::Linear,
@@ -561,7 +658,7 @@ impl AudioEngine {
         };
         let frames = wav_entry_to_frames(&wav);
         let settings = StaticSoundSettings::new()
-            .output_destination(bgm_track)
+            .output_destination(fmv_track)
             .volume(Volume::Amplitude(
                 (volume * self.bgm_volume * self.master_volume) as f64,
             ));
@@ -576,18 +673,25 @@ impl AudioEngine {
         let handle = manager
             .play(sound_data)
             .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
-        self.active_bgm_handle = Some(handle);
+        self.active_fmv_handle = Some(handle);
         Ok(())
     }
 
     /// Pauses or resumes active FMV / BGM audio playback.
     pub fn set_bgm_paused(&mut self, paused: bool) {
+        let tween = Tween {
+            duration: Duration::from_millis(40),
+            easing: Easing::Linear,
+            ..Default::default()
+        };
         if let Some(ref mut handle) = self.active_bgm_handle {
-            let tween = Tween {
-                duration: Duration::from_millis(40),
-                easing: Easing::Linear,
-                ..Default::default()
-            };
+            if paused {
+                handle.pause(tween);
+            } else {
+                handle.resume(tween);
+            }
+        }
+        if let Some(ref mut handle) = self.active_fmv_handle {
             if paused {
                 handle.pause(tween);
             } else {

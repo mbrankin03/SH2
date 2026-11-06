@@ -48,6 +48,11 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 - [x] Implement film grain post-processing shader with configurable intensity.
 - [x] Build skeletal mesh skinning shader for James, Maria, and creatures.
 - [x] Implement 1080p60 FMV video player with audio sync (FFmpeg / software decoder).
+- [x] Cutscene & FMV music: per-cutscene BGM/audio-track mapping and playback (SH2-39):
+  - Per-cutscene audio mapping table connecting all 21 FMVs and in-engine demos to retail BGM files, Bink audio tracks, start/stop actions, and master volumes (`0x8a73b4` / `SLUS_202.28`).
+  - CRI AIX multi-channel / multi-stream container parser, demuxer, and stereo downmixer (`crates/sh2-assets/src/formats/aix.rs`).
+  - Dedicated FMV audio sub-track and life cycle controls in `AudioEngine` allowing seamless independent streaming of paired ADX/AIX background music.
+  - Interactive FMV Player HUD display for cutscene music tracks and live playback integration.
 - [ ] **[Bonus / Extended Graphics]** Native HDR Display Pipeline:
   - Configure swapchain presentation for wide-gamut / high-dynamic-range surfaces (`Rgba16Float` / `Rgb10a2Unorm` with PQ / ScRGB Linear).
   - Implement HDR-calibrated color grading and filmic tonemapping (preserving inky pitch blacks while raising high-nit peaks for flashlights, streetlamps, and emergency strobes).

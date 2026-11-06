@@ -679,4 +679,59 @@ mod tests {
             .expect("Failed to load ob01.map with HD overrides");
         assert!(!ob_map.textures.is_empty());
     }
+
+    #[test]
+    fn test_aix_container_demux_and_decoding() {
+        let base_roots = [
+            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+            "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
+        ];
+
+        let mut sound_dir = None;
+        for base in &base_roots {
+            let p = Path::new(base).join("data/sound/adx");
+            if p.exists() {
+                sound_dir = Some(p);
+                break;
+            }
+        }
+
+        let sound_dir = match sound_dir {
+            Some(d) => d,
+            None => {
+                println!("Skipping test_aix_container_demux_and_decoding: sound/adx not found");
+                return;
+            }
+        };
+
+        // 1. Test bgm_118.aix (apart/bgm_118.aix) - multi-stream 5-channel ambient
+        let bgm_118_path = sound_dir.join("apart/bgm_118.aix");
+        if bgm_118_path.exists() {
+            let data = fs::read(&bgm_118_path).expect("Failed to read bgm_118.aix");
+            let raw_streams = formats::aix::demux_aix(&data).expect("Failed to demux bgm_118.aix");
+            assert_eq!(raw_streams.len(), 5);
+
+            // Test decoding full mixed ADX stereo
+            let mixed =
+                formats::aix::decode_aix_mixed(&data).expect("Failed to decode mixed bgm_118.aix");
+            assert_eq!(mixed.header.sample_rate, 24000);
+            assert_eq!(mixed.header.channels, 2);
+            assert!(!mixed.frames.is_empty());
+        }
+
+        // 2. Test bgm_114_b.aix (forest/bgm_114_b.aix) - 6-stream 44.1kHz container
+        let bgm_114_b_path = sound_dir.join("forest/bgm_114_b.aix");
+        if bgm_114_b_path.exists() {
+            let data = fs::read(&bgm_114_b_path).expect("Failed to read bgm_114_b.aix");
+            let raw_streams =
+                formats::aix::demux_aix(&data).expect("Failed to demux bgm_114_b.aix");
+            assert_eq!(raw_streams.len(), 6);
+
+            let mixed = formats::aix::decode_aix_mixed(&data)
+                .expect("Failed to decode mixed bgm_114_b.aix");
+            assert_eq!(mixed.header.sample_rate, 44100);
+            assert_eq!(mixed.header.channels, 2);
+            assert!(!mixed.frames.is_empty());
+        }
+    }
 }

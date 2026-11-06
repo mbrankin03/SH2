@@ -1,6 +1,7 @@
 //! Format parsers for SH2 binary files.
 
 pub mod adx;
+pub mod aix;
 pub mod anm;
 pub mod bink;
 pub mod dxt;

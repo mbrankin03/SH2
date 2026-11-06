@@ -250,9 +250,65 @@ impl AudioEngine {
     ///
     /// If `device_name` is provided, attempts to open that specific audio output device;
     /// otherwise falls back to the system default device.
+    ///
+    /// On Linux desktop (PipeWire/PulseAudio), if a human-friendly description is given (e.g. "MiniFuse 2"),
+    /// this switches the default PipeWire sink or selects the Pulse/PipeWire stream device to avoid
+    /// raw ALSA plugin errors (such as 'speex' rate converter format mismatches).
     pub fn new_with_device(device_name: Option<&str>) -> Result<Self, AudioError> {
+        // Disallow or sanitize buggy ALSA software filter names if previously saved in config.json
+        let clean_device_name = match device_name {
+            Some(name) => {
+                let lower = name.to_lowercase();
+                if lower.contains("speex")
+                    || lower.contains("rate")
+                    || lower.contains("samplerate")
+                    || lower.contains("upmix")
+                    || lower.contains("vdownmix")
+                {
+                    tracing::warn!("Ignoring invalid/legacy ALSA DSP plugin device name: '{name}'; using system default.");
+                    None
+                } else {
+                    Some(name)
+                }
+            }
+            None => None,
+        };
+
+        #[cfg(target_os = "linux")]
+        if let Some(target) = clean_device_name {
+            if let Ok(output) = std::process::Command::new("pactl")
+                .args(["-f", "json", "list", "sinks"])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        if let Some(sinks) = val.as_array() {
+                            for sink in sinks {
+                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let desc = sink
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or(name);
+                                if desc.trim().eq_ignore_ascii_case(target.trim())
+                                    || name.trim().eq_ignore_ascii_case(target.trim())
+                                {
+                                    let _ = std::process::Command::new("pactl")
+                                        .args(["set-default-sink", name])
+                                        .status();
+                                    tracing::info!(
+                                        "Set active PipeWire/PulseAudio sink to '{desc}' ({name})"
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let host = cpal::default_host();
-        let device = if let Some(target_name) = device_name {
+        let device = if let Some(target_name) = clean_device_name {
             let mut found = None;
             if let Ok(iter) = host.output_devices() {
                 for dev in iter {
@@ -265,13 +321,26 @@ impl AudioEngine {
                 }
             }
             if found.is_none() {
-                tracing::warn!(
-                    "Requested audio output device '{target_name}' not found; falling back to default."
-                );
+                // If not found as a raw CPAL device name, prefer 'pulse', 'pipewire', or default
+                found = host.output_devices().ok().and_then(|mut iter| {
+                    iter.find(|d| {
+                        d.name()
+                            .map(|n| n == "pipewire" || n == "pulse" || n == "default")
+                            .unwrap_or(false)
+                    })
+                });
             }
             found.or_else(|| host.default_output_device())
         } else {
-            host.default_output_device()
+            // For default on Linux, prefer "pipewire" or "pulse" over arbitrary ALSA raw nodes if present
+            let pulse_or_pipewire = host.output_devices().ok().and_then(|mut iter| {
+                iter.find(|d| {
+                    d.name()
+                        .map(|n| n == "pipewire" || n == "pulse")
+                        .unwrap_or(false)
+                })
+            });
+            pulse_or_pipewire.or_else(|| host.default_output_device())
         }
         .ok_or_else(|| AudioError::InitError("No audio output device available".into()))?;
 

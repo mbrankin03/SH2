@@ -4,13 +4,15 @@
 use sh2_core::config::AppConfig;
 use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine};
 use sh2_ui::options::{OptionsMenu, OptionsSoundCue};
+use sh2_ui::pause::{PauseAction, PauseMenu, PauseSubPhase};
 use std::path::{Path, PathBuf};
 
-/// App-level menu manager coordinating title sequence, scenario selection, and settings persistence.
+/// App-level menu manager coordinating title sequence, scenario selection, pause menu, and settings persistence.
 #[derive(Debug)]
 pub struct AppMenuController {
     pub title_sm: TitleStateMachine,
     pub options_menu: OptionsMenu,
+    pub pause_menu: PauseMenu,
     pub config_path: PathBuf,
     /// Has the user completed title sequence and transitioned to in-game world?
     pub in_game_active: bool,
@@ -23,10 +25,12 @@ impl AppMenuController {
         let loaded_config = AppConfig::load_from_file(&path);
         let options_menu = OptionsMenu::new(loaded_config);
         let title_sm = TitleStateMachine::new();
+        let pause_menu = PauseMenu::new();
 
         Self {
             title_sm,
             options_menu,
+            pause_menu,
             config_path: path,
             in_game_active: false,
         }
@@ -37,8 +41,7 @@ impl AppMenuController {
         if !self.in_game_active {
             self.title_sm.tick(dt);
             if self.title_sm.phase == TitlePhase::TransitionToGame
-                && self.title_sm.fade_alpha <= 0.01
-                && !self.title_sm.is_fading_out
+                && (self.title_sm.fade_alpha <= 0.05 || !self.title_sm.is_fading_out)
             {
                 self.in_game_active = true;
                 tracing::info!(
@@ -139,11 +142,73 @@ impl AppMenuController {
 
     /// Cycle tabs in Options Menu using shoulder triggers / Q & E keys.
     pub fn switch_options_tab(&mut self, forward: bool) -> MenuSoundCue {
-        if self.title_sm.phase == TitlePhase::OptionsMenu {
+        if self.title_sm.phase == TitlePhase::OptionsMenu
+            || (self.pause_menu.is_open
+                && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu)
+        {
             self.options_menu.switch_tab(forward);
             MenuSoundCue::CursorMove
         } else {
             MenuSoundCue::None
+        }
+    }
+
+    /// Handle pause menu navigation inputs.
+    pub fn handle_pause_nav(&mut self, action: MenuNavAction) -> (MenuSoundCue, PauseAction) {
+        if !self.pause_menu.is_open {
+            return (MenuSoundCue::None, PauseAction::None);
+        }
+
+        if self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
+            match action {
+                MenuNavAction::Up => {
+                    self.options_menu.navigate_vertical(-1);
+                    (MenuSoundCue::CursorMove, PauseAction::None)
+                }
+                MenuNavAction::Down => {
+                    self.options_menu.navigate_vertical(1);
+                    (MenuSoundCue::CursorMove, PauseAction::None)
+                }
+                MenuNavAction::Left => {
+                    self.options_menu.adjust_value(-1);
+                    (MenuSoundCue::CursorMove, PauseAction::None)
+                }
+                MenuNavAction::Right => {
+                    self.options_menu.adjust_value(1);
+                    (MenuSoundCue::CursorMove, PauseAction::None)
+                }
+                MenuNavAction::Confirm => {
+                    let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
+                        tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);
+                    } else {
+                        tracing::info!("Saved in-game configuration to {:?}", self.config_path);
+                    }
+                    let sound = if cue == OptionsSoundCue::ConfirmSave {
+                        MenuSoundCue::Confirm
+                    } else {
+                        MenuSoundCue::None
+                    };
+                    (sound, PauseAction::None)
+                }
+                MenuNavAction::Cancel => {
+                    self.options_menu.discard_changes();
+                    self.pause_menu.sub_phase = PauseSubPhase::Main;
+                    (MenuSoundCue::Cancel, PauseAction::None)
+                }
+            }
+        } else {
+            let (cue, action) = self.pause_menu.handle_nav(action);
+            if action == PauseAction::OpenOptions {
+                // Initialize fresh draft in options menu
+                self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+            } else if action == PauseAction::QuitToTitle {
+                // Reset in_game_active flag and return to Main Menu
+                self.in_game_active = false;
+                self.title_sm.phase = TitlePhase::MainMenu;
+                self.title_sm.fade_alpha = 1.0;
+            }
+            (cue, action)
         }
     }
 
@@ -311,6 +376,69 @@ mod tests {
         controller.title_sm.is_fading_out = false;
         controller.tick(0.016);
         assert!(controller.in_game_active);
+
+        let _ = std::fs::remove_file(&cfg_path);
+    }
+
+    #[test]
+    fn test_menu_controller_in_game_pause_flow() {
+        let temp_dir = std::env::temp_dir();
+        let cfg_path = temp_dir.join("test_sh2_pause_config.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
+        let mut controller = AppMenuController::new(&cfg_path);
+        controller.in_game_active = true;
+        assert!(!controller.pause_menu.is_open);
+
+        // Open pause menu
+        controller.pause_menu.open(false, "Toluca Lake", 120.0);
+        assert!(controller.pause_menu.is_open);
+
+        // Navigate Down (skips Save) -> Load (index 2)
+        let (cue, action) = controller.handle_pause_nav(MenuNavAction::Down);
+        assert_eq!(cue, MenuSoundCue::CursorMove);
+        assert_eq!(action, PauseAction::None);
+        assert_eq!(controller.pause_menu.selected_index, 2);
+
+        // Down -> Options (index 3)
+        controller.handle_pause_nav(MenuNavAction::Down);
+        assert_eq!(controller.pause_menu.selected_index, 3);
+
+        // Confirm -> Open Options sub-phase
+        let (cue, action) = controller.handle_pause_nav(MenuNavAction::Confirm);
+        assert_eq!(cue, MenuSoundCue::Confirm);
+        assert_eq!(action, PauseAction::OpenOptions);
+        assert_eq!(
+            controller.pause_menu.sub_phase,
+            PauseSubPhase::InOptionsMenu
+        );
+
+        // In options, test tab switching
+        let tab_cue = controller.switch_options_tab(true);
+        assert_eq!(tab_cue, MenuSoundCue::CursorMove);
+
+        // In options, cancel returns to pause menu Main sub-phase
+        let (cue, action) = controller.handle_pause_nav(MenuNavAction::Cancel);
+        assert_eq!(cue, MenuSoundCue::Cancel);
+        assert_eq!(action, PauseAction::None);
+        assert_eq!(controller.pause_menu.sub_phase, PauseSubPhase::Main);
+
+        // Navigate to Quit (index 4)
+        controller.handle_pause_nav(MenuNavAction::Down);
+        assert_eq!(controller.pause_menu.selected_index, 4);
+
+        // Confirm Quit -> QuitConfirm sub-phase
+        controller.handle_pause_nav(MenuNavAction::Confirm);
+        assert_eq!(controller.pause_menu.sub_phase, PauseSubPhase::QuitConfirm);
+
+        // Toggle to YES and confirm -> QuitToTitle
+        controller.handle_pause_nav(MenuNavAction::Left);
+        let (cue, action) = controller.handle_pause_nav(MenuNavAction::Confirm);
+        assert_eq!(cue, MenuSoundCue::Confirm);
+        assert_eq!(action, PauseAction::QuitToTitle);
+        assert!(!controller.pause_menu.is_open);
+        assert!(!controller.in_game_active);
+        assert_eq!(controller.title_sm.phase, TitlePhase::MainMenu);
 
         let _ = std::fs::remove_file(&cfg_path);
     }

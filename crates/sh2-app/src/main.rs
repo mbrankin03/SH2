@@ -30,6 +30,7 @@ use sh2_renderer::{
     RendererConfig, SurfaceBlitter,
 };
 use sh2_ui::menu::{MenuNavAction, MenuSoundCue, TestRoomKind, TitlePhase};
+use sh2_ui::pause::{PauseAction, PauseSubPhase};
 use sh2_ui::{ButtonSpriteSheet, TextRasterizer};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
@@ -1848,6 +1849,84 @@ impl ApplicationHandler for SilentHillApp {
                         return;
                     }
 
+                    // If in-game pause menu is active, route navigation inputs to the pause system
+                    if state.menu_ctrl.in_game_active && state.menu_ctrl.pause_menu.is_open {
+                        if pressed {
+                            let (sound, action) = match key_code {
+                                winit::keyboard::KeyCode::KeyW
+                                | winit::keyboard::KeyCode::ArrowUp => {
+                                    state.menu_ctrl.handle_pause_nav(MenuNavAction::Up)
+                                }
+                                winit::keyboard::KeyCode::KeyS
+                                | winit::keyboard::KeyCode::ArrowDown => {
+                                    state.menu_ctrl.handle_pause_nav(MenuNavAction::Down)
+                                }
+                                winit::keyboard::KeyCode::KeyA
+                                | winit::keyboard::KeyCode::ArrowLeft => {
+                                    state.menu_ctrl.handle_pause_nav(MenuNavAction::Left)
+                                }
+                                winit::keyboard::KeyCode::KeyD
+                                | winit::keyboard::KeyCode::ArrowRight => {
+                                    state.menu_ctrl.handle_pause_nav(MenuNavAction::Right)
+                                }
+                                winit::keyboard::KeyCode::Enter
+                                | winit::keyboard::KeyCode::NumpadEnter
+                                | winit::keyboard::KeyCode::Space => {
+                                    state.menu_ctrl.handle_pause_nav(MenuNavAction::Confirm)
+                                }
+                                winit::keyboard::KeyCode::Escape
+                                | winit::keyboard::KeyCode::Backspace => {
+                                    state.menu_ctrl.handle_pause_nav(MenuNavAction::Cancel)
+                                }
+                                winit::keyboard::KeyCode::KeyQ => {
+                                    let s = state.menu_ctrl.switch_options_tab(false);
+                                    (s, PauseAction::None)
+                                }
+                                winit::keyboard::KeyCode::KeyE => {
+                                    let s = state.menu_ctrl.switch_options_tab(true);
+                                    (s, PauseAction::None)
+                                }
+                                _ => (MenuSoundCue::None, PauseAction::None),
+                            };
+
+                            if sound != MenuSoundCue::None {
+                                tracing::info!("Pause menu sound emitted: {:?}", sound);
+                                if let Some(ref mut engine) = state.audio_engine {
+                                    let cue_kind = match sound {
+                                        MenuSoundCue::CursorMove => Some(SoundCueKind::CursorMove),
+                                        MenuSoundCue::Confirm => Some(SoundCueKind::Confirm),
+                                        MenuSoundCue::Cancel => Some(SoundCueKind::Cancel),
+                                        MenuSoundCue::GameStartTransition => {
+                                            Some(SoundCueKind::GameStartTransition)
+                                        }
+                                        MenuSoundCue::None => None,
+                                    };
+                                    if let Some(kind) = cue_kind {
+                                        let _ = play_menu_sound(
+                                            engine,
+                                            state.audio_bank.as_ref(),
+                                            kind,
+                                        );
+                                    }
+                                }
+                            }
+
+                            if action == PauseAction::Resume {
+                                if let Some(ref mut engine) = state.audio_engine {
+                                    engine.set_bgm_paused(false);
+                                }
+                                tracing::info!("Pause Menu: Resumed active gameplay.");
+                            } else if action == PauseAction::QuitToTitle {
+                                if let Some(ref mut engine) = state.audio_engine {
+                                    engine.stop_bgm(std::time::Duration::from_millis(150));
+                                    engine.set_bgm_paused(false);
+                                }
+                                tracing::info!("Pause Menu: Exited to Main Menu.");
+                            }
+                        }
+                        return;
+                    }
+
                     // If in the 1080p60 FMV Cutscene Viewer / Theater, route hotkeys to FmvViewerState
                     if state.active_test_room == TestRoomKind::FmvCutsceneViewer {
                         if pressed {
@@ -2195,6 +2274,29 @@ impl ApplicationHandler for SilentHillApp {
                     }
 
                     match key_code {
+                        winit::keyboard::KeyCode::Escape | winit::keyboard::KeyCode::Backspace
+                            if pressed =>
+                        {
+                            let stage_name = state.active_test_room.label();
+                            // Check user configuration: save_anywhere (PC mode) vs restricted to red squares (PS2 mode)
+                            let can_save =
+                                state.menu_ctrl.options_menu.draft_config.game.save_anywhere;
+                            state.menu_ctrl.pause_menu.open(
+                                can_save,
+                                stage_name,
+                                state.sim_time as f64,
+                            );
+                            if let Some(ref mut engine) = state.audio_engine {
+                                engine.set_bgm_paused(true);
+                                let _ = play_menu_sound(
+                                    engine,
+                                    state.audio_bank.as_ref(),
+                                    SoundCueKind::CursorMove,
+                                );
+                            }
+                            tracing::info!("Paused gameplay -> In-Game Pause Menu opened.");
+                            return;
+                        }
                         winit::keyboard::KeyCode::KeyW | winit::keyboard::KeyCode::ArrowUp => {
                             state.key_forward = pressed;
                         }
@@ -2471,10 +2573,14 @@ impl ApplicationHandler for SilentHillApp {
                 let is_fmv_viewer =
                     is_in_game && state.active_test_room == TestRoomKind::FmvCutsceneViewer;
 
+                let is_paused = is_in_game && state.menu_ctrl.pause_menu.is_open;
+
                 // Advance simulation time and frame counter for animated post-processing
-                let dt_sec = dt.as_secs_f32();
-                state.frame_counter = state.frame_counter.wrapping_add(1);
-                state.sim_time += dt_sec;
+                let dt_sec = if is_paused { 0.0 } else { dt.as_secs_f32() };
+                if !is_paused {
+                    state.frame_counter = state.frame_counter.wrapping_add(1);
+                    state.sim_time += dt_sec;
+                }
 
                 // Update fog animation time and drift
                 state.fog_uniforms.time = state.sim_time;
@@ -2594,38 +2700,40 @@ impl ApplicationHandler for SilentHillApp {
                     let mut zoom_delta = 0.0f32;
                     let mut pan_up_delta = 0.0f32;
 
-                    if state.key_left {
-                        orbit_yaw_delta -= 1.8 * dt_sec;
-                    }
-                    if state.key_right {
-                        orbit_yaw_delta += 1.8 * dt_sec;
-                    }
-                    if state.key_forward {
-                        orbit_pitch_delta += 1.2 * dt_sec;
-                    }
-                    if state.key_backward {
-                        orbit_pitch_delta -= 1.2 * dt_sec;
-                    }
-                    if state.key_zoom_in {
-                        zoom_delta -= 1400.0 * dt_sec;
-                    }
-                    if state.key_zoom_out {
-                        zoom_delta += 1400.0 * dt_sec;
-                    }
-                    if state.key_pan_up {
-                        pan_up_delta += 800.0 * dt_sec;
-                    }
-                    if state.key_pan_down {
-                        pan_up_delta -= 800.0 * dt_sec;
-                    }
+                    if !is_paused {
+                        if state.key_left {
+                            orbit_yaw_delta -= 1.8 * dt_sec;
+                        }
+                        if state.key_right {
+                            orbit_yaw_delta += 1.8 * dt_sec;
+                        }
+                        if state.key_forward {
+                            orbit_pitch_delta += 1.2 * dt_sec;
+                        }
+                        if state.key_backward {
+                            orbit_pitch_delta -= 1.2 * dt_sec;
+                        }
+                        if state.key_zoom_in {
+                            zoom_delta -= 1400.0 * dt_sec;
+                        }
+                        if state.key_zoom_out {
+                            zoom_delta += 1400.0 * dt_sec;
+                        }
+                        if state.key_pan_up {
+                            pan_up_delta += 800.0 * dt_sec;
+                        }
+                        if state.key_pan_down {
+                            pan_up_delta -= 800.0 * dt_sec;
+                        }
 
-                    state
-                        .model_viewer
-                        .camera
-                        .orbit(orbit_yaw_delta, orbit_pitch_delta);
-                    state.model_viewer.camera.zoom(zoom_delta);
-                    state.model_viewer.camera.pan(0.0, pan_up_delta);
-                    state.model_viewer.tick(dt_sec);
+                        state
+                            .model_viewer
+                            .camera
+                            .orbit(orbit_yaw_delta, orbit_pitch_delta);
+                        state.model_viewer.camera.zoom(zoom_delta);
+                        state.model_viewer.camera.pan(0.0, pan_up_delta);
+                        state.model_viewer.tick(dt_sec);
+                    }
 
                     let view = state.model_viewer.camera.view_matrix();
                     let proj = glam::Mat4::perspective_rh(
@@ -2797,7 +2905,9 @@ impl ApplicationHandler for SilentHillApp {
                     );
                 } else {
                     // 1. Advance simulation at fixed 60 Hz tick (runs animation controller update)
-                    state.sim_core.update(dt);
+                    if !is_paused {
+                        state.sim_core.update(dt);
+                    }
 
                     // 2. Compute smooth sub-frame interpolated view matrix for high refresh OLED
                     let alpha = state.sim_core.interpolation_alpha();
@@ -3304,6 +3414,62 @@ impl ApplicationHandler for SilentHillApp {
                             }
                         }
 
+                        state.render_ctx.queue.write_texture(
+                            wgpu::ImageCopyTexture {
+                                texture: &state.menu_text_texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &state.menu_rasterizer.pixels,
+                            wgpu::ImageDataLayout {
+                                offset: 0,
+                                bytes_per_row: Some(4 * state.menu_rasterizer.width as u32),
+                                rows_per_image: Some(state.menu_rasterizer.height as u32),
+                            },
+                            wgpu::Extent3d {
+                                width: state.menu_rasterizer.width as u32,
+                                height: state.menu_rasterizer.height as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+
+                        state.blitter.render_with_bind_group_and_load_op(
+                            &mut encoder,
+                            &state.menu_text_bind_group,
+                            &surface_view,
+                            wgpu::LoadOp::Load,
+                        );
+                    }
+
+                    // If in-game pause menu is active, render authentic pause overlay
+                    if is_in_game && state.menu_ctrl.pause_menu.is_open {
+                        let tint = [1.0f32, 1.0, 1.0, 1.0];
+                        state.render_ctx.queue.write_buffer(
+                            &state.menu_uniform_buffer,
+                            0,
+                            bytemuck::cast_slice(&tint),
+                        );
+                        state.menu_rasterizer.clear();
+                        let font = sh2_ui::AtlasFont::shared(None);
+
+                        if state.menu_ctrl.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
+                            // Sub-phase: Options Menu
+                            sh2_ui::draw_options_screen(
+                                &state.menu_ctrl.options_menu,
+                                font,
+                                &mut state.menu_rasterizer,
+                            );
+                        } else {
+                            // Authentic Pause Menu Screen with 50% dark backdrop & PS2 font
+                            sh2_ui::draw_pause_screen(
+                                &state.menu_ctrl.pause_menu,
+                                font,
+                                &mut state.menu_rasterizer,
+                            );
+                        }
+
+                        // Upload rasterized menu text overlay to GPU and blit over the frame
                         state.render_ctx.queue.write_texture(
                             wgpu::ImageCopyTexture {
                                 texture: &state.menu_text_texture,

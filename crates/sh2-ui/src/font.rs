@@ -121,6 +121,32 @@ impl TextRasterizer {
         self.pixels.fill(0);
     }
 
+    /// Blends an RGBA pixel into the buffer using standard alpha compositing.
+    pub fn blend_pixel(&mut self, x: usize, y: usize, color: [u8; 4]) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let alpha = color[3] as u32;
+        if alpha == 0 {
+            return;
+        }
+        let offset = (y * self.width + x) * 4;
+        if alpha == 255 {
+            self.pixels[offset..offset + 4].copy_from_slice(&color);
+        } else {
+            let inv_alpha = 255 - alpha;
+            let dst_r = self.pixels[offset] as u32;
+            let dst_g = self.pixels[offset + 1] as u32;
+            let dst_b = self.pixels[offset + 2] as u32;
+            let dst_a = self.pixels[offset + 3] as u32;
+
+            self.pixels[offset] = ((color[0] as u32 * alpha + dst_r * inv_alpha) / 255) as u8;
+            self.pixels[offset + 1] = ((color[1] as u32 * alpha + dst_g * inv_alpha) / 255) as u8;
+            self.pixels[offset + 2] = ((color[2] as u32 * alpha + dst_b * inv_alpha) / 255) as u8;
+            self.pixels[offset + 3] = (alpha + (dst_a * inv_alpha) / 255).min(255) as u8;
+        }
+    }
+
     /// Draw string with drop shadow at (x, y) with a given scale factor.
     pub fn draw_text(
         &mut self,

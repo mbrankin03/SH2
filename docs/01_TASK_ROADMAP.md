@@ -69,6 +69,12 @@ Phase 7: Packaging, Android NDK & AYN Thor Deployment (`sh2-app`)
 - [x] Wire in SH2:EE timing constants for 60 FPS pacing (flashlight speed, fog animation, boat rowing).
 
 ## Phase 6: Dual-Screen & Touch Companion UI (`sh2-ui`)
+- [x] In-Game Pause Menu (`SH2-45`):
+  - Authentic 1:1 Pause Menu state machine (`CONTINUE`, `SAVE`, `LOAD`, `OPTIONS`, `QUIT`) with PS2 parity (event `0x10`).
+  - Simulation freeze: halts game tick, physics, character locomotion, and camera while keeping background sound effects and options responsive.
+  - Quit confirmation dialog ("Exit to Main Menu? [YES / NO]") with default focus on NO.
+  - Full seamless roundtrip integration with `OptionsMenu` for live audio/video/controls adjustment from inside active gameplay.
+  - Authentic 50% alpha dark scrim backdrop and proportional PS2 bitmap atlas typography.
 - [ ] Port `sh23ds/port/source/map.c`: Real-time town map (Maps 1–35) and Baldwin Mansion (Map 36).
 - [ ] Implement real-time marker pen drawing system for discovered keys, memos, and locked doors.
 - [ ] Port `touchui_quick.c`: One-tap bottom-screen healing item quick-slots and weapon hot-swap.

@@ -95,7 +95,7 @@ impl OptionsMenu {
             OptionsTab::Video => 10,
             OptionsTab::Audio => 6,
             OptionsTab::Controls => 5,
-            OptionsTab::Game => 6,
+            OptionsTab::Game => 7,
         }
     }
 
@@ -106,7 +106,7 @@ impl OptionsMenu {
 
     /// Returns true if the currently selected row is the Test Rooms launcher.
     pub fn is_test_rooms_selected(&self) -> bool {
-        self.active_tab == OptionsTab::Game && self.selected_index == 5
+        self.active_tab == OptionsTab::Game && self.selected_index == 6
     }
 
     /// Retrieve the title and string value of an item in the active tab.
@@ -257,7 +257,15 @@ impl OptionsMenu {
                     "Bullet Multiplier",
                     self.draft_config.game.bullet_multiplier.label().to_string(),
                 )),
-                5 => Some(("Test Rooms", "[Press Enter to Select]".into())),
+                5 => Some((
+                    "Save Anywhere",
+                    if self.draft_config.game.save_anywhere {
+                        "ENABLED (PC)".into()
+                    } else {
+                        "DISABLED (PS2)".into()
+                    },
+                )),
+                6 => Some(("Test Rooms", "[Press Enter to Select]".into())),
                 _ => None,
             },
         }
@@ -440,7 +448,10 @@ impl OptionsMenu {
                         self.draft_config.game.bullet_multiplier.prev()
                     };
                 }
-                5 => return OptionsSoundCue::LaunchTestRooms,
+                5 => {
+                    self.draft_config.game.save_anywhere = !self.draft_config.game.save_anywhere;
+                }
+                6 => return OptionsSoundCue::LaunchTestRooms,
                 _ => return OptionsSoundCue::None,
             },
         }
@@ -723,6 +734,9 @@ fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Game, "Language") => "Select in-game text and subtitle language",
         (OptionsTab::Game, "Bullet Multiplier") => {
             "Multiplier for ammunition acquired from pickups"
+        }
+        (OptionsTab::Game, "Save Anywhere") => {
+            "Allow saving anytime via pause menu (PC) or restrict to Red Squares (PS2)"
         }
         (OptionsTab::Game, "Test Rooms") => {
             "Select debug sandbox stage, fog calibration, or model viewer"

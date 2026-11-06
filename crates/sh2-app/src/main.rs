@@ -4083,7 +4083,7 @@ impl ApplicationHandler for SilentHillApp {
                             let anim_state_name = format!("{:?}", state.sim_core.animation.state());
                             state.menu_rasterizer.draw_text(
                                 &format!(
-                                    "[ANIM STATE: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
+                                    "[JAMES ANIM: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
                                     anim_state_name,
                                     cur_anim_clip.start_frame,
                                     cur_anim_clip.end_frame,
@@ -4091,9 +4091,27 @@ impl ApplicationHandler for SilentHillApp {
                                     state.sim_core.animation.clip_time()
                                 ),
                                 20,
-                                645,
+                                625,
                                 1,
                                 cyan,
+                                true,
+                            );
+
+                            let enemy_clip = enemy.anim.current_clip();
+                            let enemy_anim_state = format!("{:?}", enemy.anim.state());
+                            state.menu_rasterizer.draw_text(
+                                &format!(
+                                    "[ENEMY ANIM: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
+                                    enemy_anim_state,
+                                    enemy_clip.start_frame,
+                                    enemy_clip.end_frame,
+                                    enemy_clip.fps,
+                                    enemy.anim.clip_time()
+                                ),
+                                20,
+                                645,
+                                1,
+                                green,
                                 true,
                             );
 

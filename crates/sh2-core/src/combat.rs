@@ -1675,10 +1675,19 @@ impl CombatTargetEnemy {
                         None,
                         None,
                     );
+                } else if self.is_grappling_player {
+                    // Authentic PS2 PAP_ANIM[3] looping strangle hold while smothering James
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackSecondary,
+                        AbstractDaddyAnimClips::STRUGGLE_HOLD,
+                        0.0,
+                        None,
+                        None,
+                    );
                 } else if self.is_attacking {
                     self.anim.transition_to(
                         CreatureAnimStateKind::AttackPrimary,
-                        AbstractDaddyAnimClips::STRANGLE_GRAB,
+                        AbstractDaddyAnimClips::LUNGE_GRAB,
                         0.0,
                         Some((
                             AbstractDaddyAnimClips::ATTACK_HIT_START,
@@ -1723,10 +1732,19 @@ impl CombatTargetEnemy {
                         None,
                         None,
                     );
+                } else if self.is_grappling_player {
+                    // Authentic PS2 IKE_ANIM[4] looping choke hold while straddling and strangling James
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackSecondary,
+                        FleshLipsAnimClips::CHOKE_HOLD,
+                        0.0,
+                        None,
+                        None,
+                    );
                 } else if self.is_attacking {
                     self.anim.transition_to(
                         CreatureAnimStateKind::AttackPrimary,
-                        FleshLipsAnimClips::CHOKE_DESCEND,
+                        FleshLipsAnimClips::GRAB_DESCEND,
                         0.0,
                         Some((
                             FleshLipsAnimClips::ATTACK_HIT_START,
@@ -1737,7 +1755,7 @@ impl CombatTargetEnemy {
                 } else if self.is_aggroed {
                     self.anim.transition_to(
                         CreatureAnimStateKind::Locomotion,
-                        FleshLipsAnimClips::SWING_ADVANCE,
+                        FleshLipsAnimClips::GLIDE_ADVANCE,
                         FleshLipsAnimClips::SWING_ROOT_MOTION_PER_FRAME,
                         None,
                         None,
@@ -1803,7 +1821,7 @@ impl CombatTargetEnemy {
             8 => {
                 // Creeper (tyu)
                 use crate::ai::creatures::anim::{CreatureAnimStateKind, CreeperAnimClips};
-                if self.is_attacking {
+                if self.is_attacking || self.is_grappling_player {
                     self.anim.transition_to(
                         CreatureAnimStateKind::AttackPrimary,
                         CreeperAnimClips::BITE,
@@ -1848,10 +1866,19 @@ impl CombatTargetEnemy {
                         None,
                         None,
                     );
+                } else if self.is_grappling_player {
+                    // Authentic PS2 BOS_ANIM[4] looping choke hold while strangling James
+                    self.anim.transition_to(
+                        CreatureAnimStateKind::AttackSecondary,
+                        MaryBossAnimClips::CHOKE_HOLD,
+                        0.0,
+                        None,
+                        None,
+                    );
                 } else if self.is_attacking {
                     self.anim.transition_to(
                         CreatureAnimStateKind::AttackPrimary,
-                        MaryBossAnimClips::MOTH_SWARM_ATTACK,
+                        MaryBossAnimClips::LUNGE_CATCH,
                         0.0,
                         Some((
                             MaryBossAnimClips::ATTACK_HIT_START,
@@ -2021,9 +2048,14 @@ impl CombatArena {
                         should_release = true;
                     } else {
                         // Authentic PS2 grapple coupling (enemy.c:3309):
-                        // Monster slides onto James and stays anchored 150mm in front of him
+                        // Monster slides onto James and stays anchored in front of him
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
-                        g.position = self.player_position + forward * 150.0;
+                        let anchor_dist = match g.id {
+                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
+                            8 => 80.0, // Creeper bites at feet
+                            _ => 150.0,
+                        };
+                        g.position = self.player_position + forward * anchor_dist;
                         g.yaw = self.player_yaw + std::f32::consts::PI;
                         g.is_grappling_player = true;
                     }
@@ -2196,7 +2228,12 @@ impl CombatArena {
                         should_release = true;
                     } else {
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
-                        g.position = self.player_position + forward * 150.0;
+                        let anchor_dist = match g.id {
+                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
+                            8 => 80.0, // Creeper bites at feet
+                            _ => 150.0,
+                        };
+                        g.position = self.player_position + forward * anchor_dist;
                         g.yaw = self.player_yaw + std::f32::consts::PI;
                         g.is_grappling_player = true;
                     }

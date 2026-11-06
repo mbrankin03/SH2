@@ -119,65 +119,105 @@ impl MariaAnimClips {
 }
 
 /// Clip definitions for Pyramid Head (`chr/red`, 45 bones, `red.anm`).
+/// Keyframe ranges correspond 1:1 with authentic PS2/PC `RED_ANIM` (0x892fa0, `red_anim` 0x6dfc70).
 pub struct PyramidHeadAnimClips;
 
 impl PyramidHeadAnimClips {
-    pub const STAND: AnimationClip = AnimationClip::new(0, 29, 15.0, true);
-    pub const WALK: AnimationClip = AnimationClip::new(30, 70, 30.0, true);
-    pub const GREAT_KNIFE_SWING: AnimationClip = AnimationClip::new(71, 120, 30.0, false);
-    pub const OVERHEAD_EXECUTION: AnimationClip = AnimationClip::new(121, 175, 30.0, false);
-    pub const CHOKE_GRAB: AnimationClip = AnimationClip::new(176, 220, 30.0, false);
+    /// Authentic standing idle (frames 306..=323, 15 fps).
+    pub const STAND: AnimationClip = AnimationClip::new(306, 323, 15.0, true);
+    /// Authentic walking stride (frames 0..=29, 30 fps).
+    pub const WALK: AnimationClip = AnimationClip::new(0, 29, 30.0, true);
+    /// Great Knife heavy horizontal/cleave swing (frames 30..=96, 30 fps).
+    pub const KNIFE_SWING: AnimationClip = AnimationClip::new(30, 96, 30.0, false);
+    /// Great Knife overhead execution swing (frames 97..=216, 30 fps).
+    pub const OVERHEAD_EXECUTION: AnimationClip = AnimationClip::new(97, 216, 30.0, false);
+    /// One-handed neck grab lift (frames 256..=270, 15 fps).
+    pub const CHOKE_LIFT: AnimationClip = AnimationClip::new(256, 270, 15.0, false);
+    /// Authentic looping choke hold while James struggles (frames 271..=294, 30 fps, looping).
+    pub const CHOKE_HOLD: AnimationClip = AnimationClip::new(271, 294, 30.0, true);
+    /// Release after grab/struggle breakout (frames 295..=305, 30 fps).
+    pub const CHOKE_RELEASE: AnimationClip = AnimationClip::new(295, 305, 30.0, false);
 
-    pub const WALK_ROOT_MOTION_PER_FRAME: f32 = 11.0; // 330 units/s
-    pub const ATTACK_HIT_START: u32 = 90;
-    pub const ATTACK_HIT_END: u32 = 105;
+    pub const WALK_ROOT_MOTION_PER_FRAME: f32 = 14.3; // 429 units/s
+    pub const ATTACK_HIT_START: u32 = 45;
+    pub const ATTACK_HIT_END: u32 = 70;
 }
 
 /// Clip definitions for Abstract Daddy (`chr/pap`, 29 bones, `pap.anm`, 686 frames).
+/// Keyframe ranges correspond 1:1 with authentic PS2/PC `PAP_ANIM` (0x892d90, `pap_anim` 0x6e0018).
 pub struct AbstractDaddyAnimClips;
 
 impl AbstractDaddyAnimClips {
-    pub const STAND: AnimationClip = AnimationClip::new(0, 29, 15.0, true);
-    pub const WALK: AnimationClip = AnimationClip::new(30, 89, 30.0, true);
-    pub const CHARGE_ATTACK: AnimationClip = AnimationClip::new(90, 149, 30.0, false);
-    pub const STRANGLE_GRAB: AnimationClip = AnimationClip::new(150, 209, 30.0, false);
-    pub const FLINCH: AnimationClip = AnimationClip::new(210, 245, 30.0, false);
-    pub const KNOCKDOWN: AnimationClip = AnimationClip::new(318, 430, 30.0, false);
+    /// Authentic standing idle breathing (frames 0..=21, 15 fps).
+    pub const STAND: AnimationClip = AnimationClip::new(0, 21, 15.0, true);
+    /// Authentic forward walk / stalk (frames 22..=49, 30 fps).
+    pub const WALK: AnimationClip = AnimationClip::new(22, 49, 30.0, true);
+    /// Forward lunge attack grab (frames 50..=69, 30 fps).
+    pub const LUNGE_GRAB: AnimationClip = AnimationClip::new(50, 69, 30.0, false);
+    /// Authentic looping struggle hold while smothering/strangling James (frames 70..=93, 30 fps, looping).
+    pub const STRUGGLE_HOLD: AnimationClip = AnimationClip::new(70, 93, 30.0, true);
+    /// Breakout recoil / release after James breaks free (frames 94..=113, 30 fps).
+    pub const STRUGGLE_RELEASE: AnimationClip = AnimationClip::new(94, 113, 30.0, false);
+    /// Flinch from light weapon impact (frames 114..=126, 30 fps).
+    pub const FLINCH: AnimationClip = AnimationClip::new(114, 126, 30.0, false);
+    /// Stagger / heavy flinch (frames 127..=155, 30 fps).
+    pub const HEAVY_FLINCH: AnimationClip = AnimationClip::new(127, 155, 30.0, false);
+    /// Knockdown collapse onto floor (frames 294..=325, 30 fps).
+    pub const KNOCKDOWN: AnimationClip = AnimationClip::new(294, 325, 30.0, false);
+    /// Final death collapse (frames 604..=621, 30 fps).
+    pub const DEATH: AnimationClip = AnimationClip::new(604, 621, 30.0, false);
 
-    pub const WALK_ROOT_MOTION_PER_FRAME: f32 = 18.0; // 540 units/s
-    pub const ATTACK_HIT_START: u32 = 110;
-    pub const ATTACK_HIT_END: u32 = 135;
+    pub const WALK_ROOT_MOTION_PER_FRAME: f32 = 20.8; // 624 units/s
+    pub const ATTACK_HIT_START: u32 = 56;
+    pub const ATTACK_HIT_END: u32 = 68;
 }
 
 /// Clip definitions for Flesh Lips (`chr/ike`, 16 bones, `ike.anm`, 541 frames).
+/// Keyframe ranges correspond 1:1 with authentic PS2/PC `IKE_ANIM` (0x892ce0, `ike_anim` 0x6de2a8).
 pub struct FleshLipsAnimClips;
 
 impl FleshLipsAnimClips {
-    pub const HANG_IDLE: AnimationClip = AnimationClip::new(0, 59, 15.0, true);
-    pub const SWING_ADVANCE: AnimationClip = AnimationClip::new(60, 149, 30.0, true);
-    pub const CHOKE_DESCEND: AnimationClip = AnimationClip::new(150, 239, 30.0, false);
-    pub const KICK_THRASH: AnimationClip = AnimationClip::new(240, 329, 30.0, false);
-    pub const FLINCH: AnimationClip = AnimationClip::new(330, 375, 30.0, false);
-    pub const FALL_DEATH: AnimationClip = AnimationClip::new(517, 540, 30.0, false);
+    /// Authentic hanging idle with swaying legs (frames 0..=22, 15 fps).
+    pub const HANG_IDLE: AnimationClip = AnimationClip::new(0, 22, 15.0, true);
+    /// Ceiling rail gliding approach (frames 0..=22, 30 fps).
+    pub const GLIDE_ADVANCE: AnimationClip = AnimationClip::new(0, 22, 30.0, true);
+    /// Attack grab: legs descend to grab James by the throat (frames 23..=54, 30 fps).
+    pub const GRAB_DESCEND: AnimationClip = AnimationClip::new(23, 54, 30.0, false);
+    /// Authentic looping choke hold while straddling and strangling James (frames 87..=110, 30 fps, looping).
+    pub const CHOKE_HOLD: AnimationClip = AnimationClip::new(87, 110, 30.0, true);
+    /// Release after struggle breakout (frames 111..=125, 30 fps).
+    pub const RELEASE: AnimationClip = AnimationClip::new(111, 125, 30.0, false);
+    /// Ceiling kick thrash (frames 466..=493, 30 fps).
+    pub const KICK_THRASH: AnimationClip = AnimationClip::new(466, 493, 30.0, false);
+    /// Flinch from gunfire (frames 126..=144, 30 fps).
+    pub const FLINCH: AnimationClip = AnimationClip::new(126, 144, 30.0, false);
+    /// Falling death from ceiling rails (frames 494..=516, 30 fps).
+    pub const FALL_DEATH: AnimationClip = AnimationClip::new(494, 516, 30.0, false);
 
     pub const SWING_ROOT_MOTION_PER_FRAME: f32 = 12.0; // 360 units/s
-    pub const ATTACK_HIT_START: u32 = 180;
-    pub const ATTACK_HIT_END: u32 = 220;
+    pub const ATTACK_HIT_START: u32 = 28;
+    pub const ATTACK_HIT_END: u32 = 32;
 }
 
 /// Clip definitions for Mandarin (`chr/arm`, 15 bones, `arm.anm`, 405 frames).
+/// Keyframe ranges correspond 1:1 with authentic PS2/PC `ARM_ANIM` (0x892e20, `arm_anim` 0x6df9a0).
 pub struct MandarinAnimClips;
 
 impl MandarinAnimClips {
-    pub const HANG_IDLE: AnimationClip = AnimationClip::new(0, 29, 15.0, true);
-    pub const CRAWL: AnimationClip = AnimationClip::new(30, 89, 30.0, true);
-    pub const TENTACLE_STRIKE: AnimationClip = AnimationClip::new(90, 149, 30.0, false);
-    pub const FLINCH: AnimationClip = AnimationClip::new(150, 180, 30.0, false);
-    pub const KNOCKDOWN: AnimationClip = AnimationClip::new(242, 320, 30.0, false);
+    /// Hanging idle below floor grates (frames 0..=48, 15 fps).
+    pub const HANG_IDLE: AnimationClip = AnimationClip::new(0, 48, 15.0, true);
+    /// Hand-over-hand under-grate crawl step 1 (frames 49..=65, 30 fps).
+    pub const CRAWL: AnimationClip = AnimationClip::new(49, 65, 30.0, true);
+    /// Tentacle strike upwards through floor grate (frames 83..=99, 30 fps).
+    pub const TENTACLE_STRIKE: AnimationClip = AnimationClip::new(83, 99, 30.0, false);
+    /// Flinch (frames 117..=132, 30 fps).
+    pub const FLINCH: AnimationClip = AnimationClip::new(117, 132, 30.0, false);
+    /// Death fall / drop (frames 273..=338, 30 fps).
+    pub const KNOCKDOWN: AnimationClip = AnimationClip::new(273, 338, 30.0, false);
 
-    pub const CRAWL_ROOT_MOTION_PER_FRAME: f32 = 15.0; // 450 units/s
-    pub const ATTACK_HIT_START: u32 = 105;
-    pub const ATTACK_HIT_END: u32 = 130;
+    pub const CRAWL_ROOT_MOTION_PER_FRAME: f32 = 19.5; // ~590 units/step
+    pub const ATTACK_HIT_START: u32 = 88;
+    pub const ATTACK_HIT_END: u32 = 96;
 }
 
 /// Clip definitions for Creeper cockroach swarm (`chr/tyu`, 22 bones, `tyu.anm`, 8 frames).
@@ -191,18 +231,30 @@ impl CreeperAnimClips {
 }
 
 /// Clip definitions for Mary / Maria Final Boss (`chr/bos`, 45 bones, `bos.anm`, 228 frames).
+/// Keyframe ranges correspond 1:1 with authentic PS2/PC `BOS_ANIM` (0x892e80, `bos_anim` 0x6de5b8).
 pub struct MaryBossAnimClips;
 
 impl MaryBossAnimClips {
-    pub const HOVER_IDLE: AnimationClip = AnimationClip::new(0, 45, 15.0, true);
-    pub const MOTH_SWARM_ATTACK: AnimationClip = AnimationClip::new(46, 105, 30.0, false);
-    pub const TENTACLE_WHIP: AnimationClip = AnimationClip::new(106, 165, 30.0, false);
-    pub const FLINCH: AnimationClip = AnimationClip::new(166, 196, 30.0, false);
-    pub const DEATH_FALL: AnimationClip = AnimationClip::new(197, 227, 30.0, false);
+    /// Authentic hovering idle in cage (frames 0..=58, 15 fps).
+    pub const HOVER_IDLE: AnimationClip = AnimationClip::new(0, 58, 15.0, true);
+    /// Forward lunge to catch James (frames 59..=73, 30 fps).
+    pub const LUNGE_CATCH: AnimationClip = AnimationClip::new(59, 73, 30.0, false);
+    /// Authentic looping choke hold while strangling James (frames 89..=112, 30 fps, looping).
+    pub const CHOKE_HOLD: AnimationClip = AnimationClip::new(89, 112, 30.0, true);
+    /// Release after struggle breakout (frames 113..=136, 30 fps).
+    pub const RELEASE: AnimationClip = AnimationClip::new(113, 136, 30.0, false);
+    /// Wing swipe attack (frames 173..=196, 30 fps).
+    pub const WING_SWIPE: AnimationClip = AnimationClip::new(173, 196, 30.0, false);
+    /// Flinch reaction (frames 146..=172, 30 fps).
+    pub const FLINCH: AnimationClip = AnimationClip::new(146, 172, 30.0, false);
+    /// Death fall (frames 146..=172, 30 fps).
+    pub const DEATH_FALL: AnimationClip = AnimationClip::new(146, 172, 30.0, false);
+    /// Defeated body on floor (frames 197..=227, 15 fps).
+    pub const FLOOR_BODY: AnimationClip = AnimationClip::new(197, 227, 15.0, true);
 
     pub const HOVER_ROOT_MOTION_PER_FRAME: f32 = 14.0; // 420 units/s
-    pub const ATTACK_HIT_START: u32 = 65;
-    pub const ATTACK_HIT_END: u32 = 95;
+    pub const ATTACK_HIT_START: u32 = 64;
+    pub const ATTACK_HIT_END: u32 = 72;
 }
 
 /// Generalized creature animation state synchronized with AI FSMs.
@@ -784,7 +836,7 @@ impl CreatureAnimationController {
             RedState::Attack => {
                 self.transition_to(
                     CreatureAnimStateKind::AttackPrimary,
-                    PyramidHeadAnimClips::GREAT_KNIFE_SWING,
+                    PyramidHeadAnimClips::KNIFE_SWING,
                     0.0,
                     Some((
                         PyramidHeadAnimClips::ATTACK_HIT_START,
@@ -796,7 +848,7 @@ impl CreatureAnimationController {
             RedState::Grab => {
                 self.transition_to(
                     CreatureAnimStateKind::AttackSecondary,
-                    PyramidHeadAnimClips::CHOKE_GRAB,
+                    PyramidHeadAnimClips::CHOKE_HOLD,
                     0.0,
                     None,
                     None,

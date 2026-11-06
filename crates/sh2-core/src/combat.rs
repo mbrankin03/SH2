@@ -1527,6 +1527,19 @@ impl CombatTargetEnemy {
                     self.attack_timer = 0.0;
                 } else if self.is_attacking {
                     self.attack_timer += dt;
+
+                    // Forward lunge root motion during initial attack swing/lunge frames:
+                    // Authentic PS2 pap_attack (enemy.c:3275-3312 frames 0..19) advances towards James to close the gap
+                    let lunge_speed = match self.id {
+                        5 => 500.0, // Abstract Daddy lunges forward to grapple James
+                        4 => 250.0, // Pyramid Head forward momentum
+                        _ => 0.0,
+                    };
+                    if lunge_speed > 0.0 && dist > 150.0 && self.attack_timer < 0.45 {
+                        self.position.x += self.yaw.sin() * lunge_speed * dt;
+                        self.position.z += self.yaw.cos() * lunge_speed * dt;
+                    }
+
                     // Attack animation duration ~1.0 - 1.2s
                     let max_atk_time = if self.id == 1 { 1.2 } else { 1.0 };
                     if self.attack_timer >= max_atk_time {
@@ -1538,19 +1551,21 @@ impl CombatTargetEnemy {
                         }
                     }
                 } else {
-                    let attack_range = match self.id {
-                        1 => 1200.0, // Lying figure acid spray
-                        2 => 650.0,  // Mannequin
-                        3 => 800.0,  // Nurse pipe swing
-                        4 => 1100.0, // Pyramid Head great knife
-                        5 => 800.0,  // Abstract Daddy strangle
-                        6 => 700.0,  // Flesh Lips kick/choke
-                        7 => 600.0,  // Mandarin tentacle strike
-                        8 => 200.0,  // Creeper bite
-                        9 => 1400.0, // Mary final boss moth swarm
-                        _ => 700.0,
+                    let (attack_range, max_angle) = match self.id {
+                        1 => (1200.0, 0.6), // Lying figure acid spray
+                        2 => (650.0, 0.6),  // Mannequin
+                        3 => (800.0, 0.6),  // Nurse pipe swing
+                        4 => (900.0, 0.6),  // Pyramid Head
+                        // Authentic PS2 pap_sense (enemy.c:3166): e->p_dist < 130.0 + 405.0 = 535.0, angle < 0.1745 (10 deg)
+                        5 => (535.0, 0.35), // Abstract Daddy lunge grab
+                        6 => (650.0, 0.6),  // Flesh Lips choke descent
+                        7 => (600.0, 0.6),  // Mandarin tentacle strike
+                        8 => (200.0, 0.6),  // Creeper bite
+                        9 => (1400.0, 0.6), // Mary final boss moth swarm
+                        _ => (700.0, 0.6),
                     };
-                    if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < 0.6 {
+                    if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < max_angle
+                    {
                         // Trigger creature attack
                         self.is_attacking = true;
                         self.attack_timer = 0.0;
@@ -1970,8 +1985,9 @@ impl CombatArena {
                 let dist = (dx * dx + dz * dz).sqrt();
 
                 let (grab_range, meter) = match enemy.id {
-                    4 => (380.0, 0.70), // Pyramid Head one-handed choke lift
-                    5 => (420.0, 0.70), // Abstract Daddy strangle grapple
+                    4 => (400.0, 0.70), // Pyramid Head one-handed choke lift
+                    // Authentic PS2 swing_hit (enemy.c:3094, 3305): reach 400.0 + James 130.0 = 530.0
+                    5 => (530.0, 0.70), // Abstract Daddy strangle grapple
                     6 => (450.0, 0.70), // Flesh Lips ceiling choke descent
                     8 => (220.0, 0.50), // Creeper latch / bite
                     9 => (550.0, 0.70), // Mary Final Boss tentacle grapple

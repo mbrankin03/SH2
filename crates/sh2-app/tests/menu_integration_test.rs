@@ -241,8 +241,19 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("FMV CUTSCENE PLAYER (1080P60)", SH2-10),
-    // and up once more to "MODEL & TEXTURE VIEWER" (SH2-36)
+    // Navigate up to wrap to the last entry ("LOADING SCREEN PREVIEW", SH2-44),
+    // and up once more to "FMV CUTSCENE PLAYER" (SH2-10)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::LoadingScreenTest
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Loading Screen Preview"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(
@@ -340,4 +351,75 @@ fn test_sh2_18_full_menu_and_options_flow() {
 
     // Clean up temporary test files
     let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_options_debug_tab_and_loading_screen_selection() {
+    let test_dir = std::env::temp_dir().join("sh2_test_options_debug_tab");
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir_all(&test_dir).unwrap();
+    let config_path = test_dir.join("config.json");
+
+    let mut controller = AppMenuController::new(&config_path);
+    controller.title_sm.phase = TitlePhase::OptionsMenu;
+
+    // Navigate to Debug tab (Tab 4)
+    controller.options_menu.active_tab = OptionsTab::Debug;
+    controller.options_menu.selected_index = 0;
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Debug);
+    assert_eq!(controller.options_menu.item_count(), 6);
+
+    // Toggle Instant Room Transitions
+    let (label, val) = controller.options_menu.item_display(0).unwrap();
+    assert_eq!(label, "Instant Room Cuts");
+    assert_eq!(val, "OFF (Authentic)");
+    controller.handle_nav(MenuNavAction::Right);
+    let (_, val_after) = controller.options_menu.item_display(0).unwrap();
+    assert_eq!(val_after, "ON (Fast / Skip)");
+    assert!(
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .instant_room_transitions
+    );
+
+    // Row 1: Min Loading Display
+    controller.handle_nav(MenuNavAction::Down);
+    assert_eq!(controller.options_menu.selected_index, 1);
+    controller.handle_nav(MenuNavAction::Right);
+    assert_eq!(
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .min_loading_screen_seconds,
+        3
+    );
+
+    // Row 2: Prompt To Continue
+    controller.handle_nav(MenuNavAction::Down);
+    assert_eq!(controller.options_menu.selected_index, 2);
+    controller.handle_nav(MenuNavAction::Right);
+    assert!(
+        !controller
+            .options_menu
+            .draft_config
+            .debug
+            .require_press_to_continue
+    );
+
+    // Row 3: Loading Screen Preview launcher
+    controller.handle_nav(MenuNavAction::Down);
+    assert_eq!(controller.options_menu.selected_index, 3);
+    assert!(controller.options_menu.is_loading_test_selected());
+    let cue = controller.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(controller.title_sm.phase, TitlePhase::TransitionToGame);
+    assert_eq!(
+        controller.title_sm.selected_test_room,
+        sh2_ui::menu::TestRoomKind::LoadingScreenTest
+    );
+
+    let _ = std::fs::remove_dir_all(&test_dir);
 }

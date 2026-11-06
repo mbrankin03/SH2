@@ -55,7 +55,7 @@ fn test_zero_allocation_simulation_tick() {
     sim.input.state.left_stick_x = 0.5;
     sim.input.state.is_running = true;
 
-    for _ in 0..30 {
+    for _ in 0..120 {
         sim.update(Duration::from_millis(16));
     }
 

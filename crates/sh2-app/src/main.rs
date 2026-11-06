@@ -35,7 +35,7 @@ use sh2_renderer::{
 };
 use sh2_ui::menu::{MenuNavAction, MenuSoundCue, TestRoomKind, TitlePhase};
 use sh2_ui::pause::{PauseAction, PauseSubPhase};
-use sh2_ui::{ButtonSpriteSheet, TextRasterizer};
+use sh2_ui::{ButtonSpriteSheet, LoadingScreen, TextRasterizer};
 
 /// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
 struct CharacterAsset {
@@ -310,7 +310,9 @@ fn find_map_file_for_room(
                 fog,
             )
         }
-        TestRoomKind::ModelAndTextureViewer | TestRoomKind::FmvCutsceneViewer => {
+        TestRoomKind::ModelAndTextureViewer
+        | TestRoomKind::FmvCutsceneViewer
+        | TestRoomKind::LoadingScreenTest => {
             tracing::info!("Generated 3D Model & Texture Viewer Pedestal Stage (SH2-36 / SH2-10).");
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.06, 0.07, 0.08, 1.0],
@@ -964,6 +966,7 @@ struct AppState {
     last_menu_state_log: String,
     last_menu_revision: u64,
     active_audio_device: Option<String>,
+    loading_screen: Option<LoadingScreen>,
     debug_collision_overlay: bool,
     debug_camera_hud: bool,
     skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
@@ -1382,6 +1385,7 @@ impl ApplicationHandler for SilentHillApp {
             last_menu_state_log: String::new(),
             last_menu_revision: u64::MAX,
             active_audio_device: target_audio_device,
+            loading_screen: None,
             debug_collision_overlay: false,
             debug_camera_hud: true,
             skin_matrices_scratch: Vec::with_capacity(128),
@@ -1411,6 +1415,32 @@ impl ApplicationHandler for SilentHillApp {
                     // If menu is active, route navigation inputs to the menu system
                     if !state.menu_ctrl.in_game_active {
                         if pressed {
+                            // Intercept Confirm button if loading screen is active
+                            if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame {
+                                if matches!(
+                                    key_code,
+                                    winit::keyboard::KeyCode::Enter
+                                        | winit::keyboard::KeyCode::NumpadEnter
+                                        | winit::keyboard::KeyCode::Space
+                                ) {
+                                    if let Some(ref mut ls) = state.loading_screen {
+                                        if ls.handle_confirm() {
+                                            tracing::info!(
+                                                "Loading Screen: Player pressed continue."
+                                            );
+                                            if let Some(ref mut engine) = state.audio_engine {
+                                                let _ = play_menu_sound(
+                                                    engine,
+                                                    state.audio_bank.as_ref(),
+                                                    SoundCueKind::Confirm,
+                                                );
+                                            }
+                                        }
+                                        return;
+                                    }
+                                }
+                            }
+
                             let sound = match key_code {
                                 winit::keyboard::KeyCode::KeyW
                                 | winit::keyboard::KeyCode::ArrowUp => {
@@ -2295,7 +2325,58 @@ impl ApplicationHandler for SilentHillApp {
                 }
 
                 // Advance menu transitions and fade state
-                state.menu_ctrl.tick(dt.as_secs_f32());
+                if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame {
+                    let min_dur = state
+                        .menu_ctrl
+                        .options_menu
+                        .draft_config
+                        .debug
+                        .min_loading_screen_seconds as f32;
+                    let require_press = state
+                        .menu_ctrl
+                        .options_menu
+                        .draft_config
+                        .debug
+                        .require_press_to_continue;
+                    let instant = state
+                        .menu_ctrl
+                        .options_menu
+                        .draft_config
+                        .debug
+                        .instant_room_transitions;
+
+                    if instant {
+                        state.loading_screen = None;
+                        state.menu_ctrl.tick(dt.as_secs_f32());
+                    } else {
+                        if state.loading_screen.is_none() {
+                            let label = state.menu_ctrl.title_sm.selected_test_room.label();
+                            let mut ls = LoadingScreen::new(label, min_dur, require_press);
+                            ls.mark_completed(); // Engine and assets are ready, begin loading display
+                            state.loading_screen = Some(ls);
+                        }
+
+                        if let Some(ref mut ls) = state.loading_screen {
+                            ls.tick(dt.as_secs_f32());
+                            if ls.footstep_sound_trigger {
+                                if let Some(ref mut engine) = state.audio_engine {
+                                    let _ = play_menu_sound(
+                                        engine,
+                                        state.audio_bank.as_ref(),
+                                        SoundCueKind::Footstep,
+                                    );
+                                }
+                            }
+                            if ls.transition_ready {
+                                state.loading_screen = None;
+                                state.menu_ctrl.tick(dt.as_secs_f32());
+                            }
+                        }
+                    }
+                } else {
+                    state.loading_screen = None;
+                    state.menu_ctrl.tick(dt.as_secs_f32());
+                }
 
                 // If user transitioned into game from Test Rooms menu, switch level map if needed
                 if state.menu_ctrl.in_game_active
@@ -3579,16 +3660,20 @@ impl ApplicationHandler for SilentHillApp {
                                 );
                             }
                             TitlePhase::TransitionToGame => {
-                                let label = state.menu_ctrl.title_sm.selected_test_room.label();
-                                let center_x = state.menu_rasterizer.width / 2;
-                                font.draw_line_centered(
-                                    &mut state.menu_rasterizer,
-                                    &format!("LOADING STAGE: {}...", label),
-                                    (center_x, 500),
-                                    24,
-                                    sh2_ui::Sh2TextColor::White,
-                                    true,
-                                );
+                                if let Some(ref ls) = state.loading_screen {
+                                    ls.render(font, &mut state.menu_rasterizer);
+                                } else {
+                                    let label = state.menu_ctrl.title_sm.selected_test_room.label();
+                                    let center_x = state.menu_rasterizer.width / 2;
+                                    font.draw_line_centered(
+                                        &mut state.menu_rasterizer,
+                                        &format!("LOADING STAGE: {}...", label),
+                                        (center_x, 500),
+                                        24,
+                                        sh2_ui::Sh2TextColor::White,
+                                        true,
+                                    );
+                                }
                             }
                             _ => {}
                         }

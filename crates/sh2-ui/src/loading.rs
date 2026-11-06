@@ -271,7 +271,7 @@ fn draw_footstep_silhouette(
     let y_end = (center_y + half_h).min(rast.height as i32 - 1);
 
     for y in y_start..=y_end {
-        let norm_y = (y - (center_y - half_h)) as f32 / (2.0 * half_w as f32).max(1.0);
+        let norm_y = (y - (center_y - half_h)) as f32 / (2.0 * half_h as f32).max(1.0);
         let src_y = ((norm_y * spr_h).round() as u32).min(sprite.height - 1);
 
         for x in x_start..=x_end {

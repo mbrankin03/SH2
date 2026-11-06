@@ -1416,28 +1416,28 @@ impl ApplicationHandler for SilentHillApp {
                     if !state.menu_ctrl.in_game_active {
                         if pressed {
                             // Intercept Confirm button if loading screen is active
-                            if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame {
-                                if matches!(
+                            if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame
+                                && matches!(
                                     key_code,
                                     winit::keyboard::KeyCode::Enter
                                         | winit::keyboard::KeyCode::NumpadEnter
                                         | winit::keyboard::KeyCode::Space
-                                ) {
-                                    if let Some(ref mut ls) = state.loading_screen {
-                                        if ls.handle_confirm() {
-                                            tracing::info!(
-                                                "Loading Screen: Player pressed continue."
+                                )
+                            {
+                                if let Some(ref mut ls) = state.loading_screen {
+                                    if ls.handle_confirm() {
+                                        tracing::info!(
+                                            "Loading Screen: Player pressed continue."
+                                        );
+                                        if let Some(ref mut engine) = state.audio_engine {
+                                            let _ = play_menu_sound(
+                                                engine,
+                                                state.audio_bank.as_ref(),
+                                                SoundCueKind::Confirm,
                                             );
-                                            if let Some(ref mut engine) = state.audio_engine {
-                                                let _ = play_menu_sound(
-                                                    engine,
-                                                    state.audio_bank.as_ref(),
-                                                    SoundCueKind::Confirm,
-                                                );
-                                            }
                                         }
-                                        return;
                                     }
+                                    return;
                                 }
                             }
 
@@ -3582,7 +3582,9 @@ impl ApplicationHandler for SilentHillApp {
                             .splash_konami_bg
                             .as_ref()
                             .or(state.splash_title_bg.as_ref()),
-                        TitlePhase::OptionsMenu | TitlePhase::TestRoomsSelect => None, // Authentic PS2 optmenu.c style draws over pure black backdrop
+                        TitlePhase::OptionsMenu
+                        | TitlePhase::TestRoomsSelect
+                        | TitlePhase::TransitionToGame => None, // Authentic PS2 draws over pure black backdrop
                         _ => state
                             .splash_title_bg
                             .as_ref()

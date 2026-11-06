@@ -404,7 +404,8 @@ pub fn parse_cld(data: &[u8]) -> Result<CldFile, AssetError> {
 
     for cell in 0..16 {
         let b0_ofs_pos = 32 + cell * 4;
-        let b0_table_ofs = i32::from_le_bytes(data[b0_ofs_pos..b0_ofs_pos + 4].try_into().unwrap()) as usize;
+        let b0_table_ofs =
+            i32::from_le_bytes(data[b0_ofs_pos..b0_ofs_pos + 4].try_into().unwrap()) as usize;
         if b0_table_ofs > 0 && b0_table_ofs + 4 <= data.len() {
             let mut cur = b0_table_ofs;
             while cur + 4 <= data.len() {
@@ -420,7 +421,8 @@ pub fn parse_cld(data: &[u8]) -> Result<CldFile, AssetError> {
         }
 
         let b1_ofs_pos = 96 + cell * 4;
-        let b1_table_ofs = i32::from_le_bytes(data[b1_ofs_pos..b1_ofs_pos + 4].try_into().unwrap()) as usize;
+        let b1_table_ofs =
+            i32::from_le_bytes(data[b1_ofs_pos..b1_ofs_pos + 4].try_into().unwrap()) as usize;
         if b1_table_ofs > 0 && b1_table_ofs + 4 <= data.len() {
             let mut cur = b1_table_ofs;
             while cur + 4 <= data.len() {

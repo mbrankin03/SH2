@@ -73,7 +73,10 @@ impl CharacterCylinder {
             if dist_sq < 1e-6 {
                 // Degenerate concentric case: push along +X
                 let half_pen = min_dist * 0.5;
-                return (Vec3::new(-half_pen, 0.0, 0.0), Vec3::new(half_pen, 0.0, 0.0));
+                return (
+                    Vec3::new(-half_pen, 0.0, 0.0),
+                    Vec3::new(half_pen, 0.0, 0.0),
+                );
             }
             return (Vec3::ZERO, Vec3::ZERO);
         }
@@ -96,8 +99,16 @@ impl CharacterCylinder {
             0.5
         };
 
-        let delta_a = Vec3::new(-nx * penetration * weight_a, 0.0, -nz * penetration * weight_a);
-        let delta_b = Vec3::new(nx * penetration * weight_b, 0.0, nz * penetration * weight_b);
+        let delta_a = Vec3::new(
+            -nx * penetration * weight_a,
+            0.0,
+            -nz * penetration * weight_a,
+        );
+        let delta_b = Vec3::new(
+            nx * penetration * weight_b,
+            0.0,
+            nz * penetration * weight_b,
+        );
 
         (delta_a, delta_b)
     }

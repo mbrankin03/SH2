@@ -115,10 +115,12 @@ impl CollisionWorld {
 
     /// Iterate over all active walls (static + extra + dynamic).
     pub fn all_walls(&self) -> impl Iterator<Item = &WallSegment> {
-        self.walls
-            .iter()
-            .chain(self.extra_walls.iter())
-            .chain(self.dynamic_walls.iter().filter(|dw| dw.active).map(|dw| &dw.segment))
+        self.walls.iter().chain(self.extra_walls.iter()).chain(
+            self.dynamic_walls
+                .iter()
+                .filter(|dw| dw.active)
+                .map(|dw| &dw.segment),
+        )
     }
 
     /// Merge multiple collision worlds into a single combined environment (`col_merge`).
@@ -457,11 +459,7 @@ impl CollisionController {
     }
 
     /// Update a character's position through full environment collision and separation.
-    pub fn update_character_kinematics(
-        &mut self,
-        id: CharacterId,
-        desired_pos: Vec3,
-    ) -> Vec3 {
+    pub fn update_character_kinematics(&mut self, id: CharacterId, desired_pos: Vec3) -> Vec3 {
         let (current_pos, config) = if let Some(c) = self.characters.iter().find(|c| c.id == id) {
             let mut cfg = self.config;
             cfg.radius = c.radius;
@@ -472,7 +470,9 @@ impl CollisionController {
         };
 
         // 1. Resolve background world geometry collision
-        let resolved_pos = self.world.resolve_character_movement(current_pos, desired_pos, &config);
+        let resolved_pos = self
+            .world
+            .resolve_character_movement(current_pos, desired_pos, &config);
 
         // Update stored cylinder position
         if let Some(c) = self.characters.iter_mut().find(|c| c.id == id) {
@@ -607,13 +607,8 @@ mod tests {
         let mut controller = CollisionController::new(world, config);
 
         // James at (0, 0, 0) with radius 260
-        let james = CharacterCylinder::new(
-            CharacterId(1),
-            Vec3::new(0.0, 0.0, 0.0),
-            260.0,
-            1800.0,
-            1.0,
-        );
+        let james =
+            CharacterCylinder::new(CharacterId(1), Vec3::new(0.0, 0.0, 0.0), 260.0, 1800.0, 1.0);
         // Nurse at (300, 0, 0) with radius 240. Combined radius = 500 > 300 (overlapping!)
         let nurse = CharacterCylinder::new(
             CharacterId(2),
@@ -628,8 +623,16 @@ mod tests {
 
         controller.resolve_character_separations();
 
-        let new_james = controller.characters.iter().find(|c| c.id == CharacterId(1)).unwrap();
-        let new_nurse = controller.characters.iter().find(|c| c.id == CharacterId(2)).unwrap();
+        let new_james = controller
+            .characters
+            .iter()
+            .find(|c| c.id == CharacterId(1))
+            .unwrap();
+        let new_nurse = controller
+            .characters
+            .iter()
+            .find(|c| c.id == CharacterId(2))
+            .unwrap();
 
         let dist = (new_nurse.position.x - new_james.position.x).abs();
         assert!(
@@ -642,7 +645,9 @@ mod tests {
     #[test]
     fn test_col_spawn_centroid_snapping() {
         let world = CollisionWorld::create_synthetic_room(4000.0, 4000.0, 3000.0, 0.0, 0.0);
-        let spawn = world.find_safe_spawn_point(500.0, 500.0).expect("Must find floor centroid");
+        let spawn = world
+            .find_safe_spawn_point(500.0, 500.0)
+            .expect("Must find floor centroid");
 
         // Synthetic floor quad (-2000..2000, -2000..2000) split into 2 triangles
         assert_eq!(spawn.y, 0.0);
@@ -677,7 +682,10 @@ mod tests {
         let room_b = CollisionWorld::create_synthetic_room(4000.0, 4000.0, 3000.0, 0.0, 0.0);
 
         let merged = CollisionWorld::merge(&[&room_a, &room_b]);
-        assert_eq!(merged.floors.len(), room_a.floors.len() + room_b.floors.len());
+        assert_eq!(
+            merged.floors.len(),
+            room_a.floors.len() + room_b.floors.len()
+        );
         assert_eq!(merged.walls.len(), room_a.walls.len() + room_b.walls.len());
     }
 }

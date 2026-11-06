@@ -217,7 +217,8 @@ impl SimulationCore {
         let eye_target = self.scenario.player_position + Vec3::new(0.0, -1200.0, 0.0);
         let filter = crate::collision::RaycastFilter::default();
         self.camera.curr_snapshot.eye =
-            self.collision.clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
+            self.collision
+                .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
 
         // 5. DualSense health heartbeat haptics
         if self.scenario.health <= 25.0 {

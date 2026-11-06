@@ -82,7 +82,9 @@ impl SpatialGrid {
                     if idx * 2 < cld.floors.len() && !floor_cells[cell_idx].contains(&(idx * 2)) {
                         floor_cells[cell_idx].push(idx * 2);
                     }
-                    if idx * 2 + 1 < cld.floors.len() && !floor_cells[cell_idx].contains(&(idx * 2 + 1)) {
+                    if idx * 2 + 1 < cld.floors.len()
+                        && !floor_cells[cell_idx].contains(&(idx * 2 + 1))
+                    {
                         floor_cells[cell_idx].push(idx * 2 + 1);
                     }
                 }
@@ -154,7 +156,13 @@ impl SpatialGrid {
     }
 
     /// Query cell and immediate 8-neighborhood for cylinder radius queries (`clGetHitSectListMOVE`).
-    pub fn query_neighborhood_cells(&self, x: f32, z: f32, radius: f32, out_cells: &mut Vec<usize>) {
+    pub fn query_neighborhood_cells(
+        &self,
+        x: f32,
+        z: f32,
+        radius: f32,
+        out_cells: &mut Vec<usize>,
+    ) {
         out_cells.clear();
         let min_cell = self.point_to_cell(x - radius, z - radius);
         let max_cell = self.point_to_cell(x + radius, z + radius);

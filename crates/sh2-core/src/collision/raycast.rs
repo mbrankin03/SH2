@@ -103,11 +103,9 @@ where
             continue;
         }
 
-        if let Some((t, _norm)) = intersect_segment_xz(
-            target.x, target.z,
-            camera_pos.x, camera_pos.z,
-            w,
-        ) {
+        if let Some((t, _norm)) =
+            intersect_segment_xz(target.x, target.z, camera_pos.x, camera_pos.z, w)
+        {
             if t >= 0.0 && t < best_t {
                 best_t = t;
             }

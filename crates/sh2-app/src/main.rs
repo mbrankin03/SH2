@@ -81,6 +81,15 @@ fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision::CollisionW
         }
     }
 
+    if room == TestRoomKind::CombatArena {
+        tracing::info!("Using open unobstructed arena collision bounds for CombatArena");
+        // Wide 12000x16000 room with 3500 height and NO center pillar (pw=0, pl=0)
+        // so the camera raycast is never blocked or clamped near the center.
+        return sh2_core::collision::CollisionWorld::create_synthetic_room(
+            12000.0, 16000.0, 3500.0, 0.0, 0.0,
+        );
+    }
+
     tracing::warn!(
         "Using synthetic fallback room collision bounds for {:?}",
         room
@@ -313,7 +322,6 @@ fn find_map_file_for_room(
         TestRoomKind::ModelAndTextureViewer
         | TestRoomKind::FmvCutsceneViewer
         | TestRoomKind::LoadingScreenTest => {
-            tracing::info!("Generated 3D Model & Texture Viewer Pedestal Stage (SH2-36 / SH2-10).");
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.06, 0.07, 0.08, 1.0],
                 fog_near: 5000.0,
@@ -328,6 +336,27 @@ fn find_map_file_for_room(
             (
                 create_model_viewer_pedestal_geometry(),
                 glam::Vec3::new(0.0, 0.0, 0.0),
+                0.0,
+                fog,
+            )
+        }
+        TestRoomKind::CombatArena => {
+            tracing::info!("Generated Combat Testing Arena Stage (SH2-13).");
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.12, 0.13, 0.16, 1.0],
+                fog_near: 2500.0,
+                fog_far: 20000.0,
+                density: 0.12,
+                time: 0.0,
+                step_count: 24,
+                curve_type: 0,
+                speed_mult: 1.0,
+                _padding: 0.0,
+            };
+            (
+                create_fallback_room_geometry(),
+                // Spawn James at Z = -1500.0, facing North (0.0 rad) directly looking toward the enemies (Z = 1200..2000)
+                glam::Vec3::new(0.0, 0.0, -1500.0),
                 0.0,
                 fog,
             )
@@ -943,6 +972,12 @@ struct AppState {
     active_test_room: TestRoomKind,
     fog_uniforms: sh2_renderer::fog::FogUniforms,
     menu_ctrl: AppMenuController,
+    combat_arena: sh2_core::combat::CombatArena,
+    enemy_scu_asset: Option<CharacterAsset>,
+    enemy_mkn_asset: Option<CharacterAsset>,
+    key_ready_held: bool,
+    key_attack_pressed: bool,
+    key_attack_held: bool,
     model_viewer: ModelViewerState,
     viewer_asset: Option<CharacterAsset>,
     loaded_viewer_model_idx: usize,
@@ -1118,6 +1153,24 @@ impl ApplicationHandler for SilentHillApp {
             &["data/chr/mar/lll_mar.mdl", "data/chr/mar/hhh_mar.mdl"],
             &["data/chr2/mar/xmar_wpnone.anm", "data/chr/mar/lll_mar.anm"],
         );
+
+        // Preload authentic enemy models for Combat Testing Arena (SH2-13)
+        let enemy_scu_asset = load_character_asset(
+            &render_ctx,
+            "Lying Figure (scu)",
+            &["data/chr/scu/scu.mdl"],
+            &["data/chr/scu/scu.anm"],
+        );
+        let enemy_mkn_asset = load_character_asset(
+            &render_ctx,
+            "Mannequin (mkn)",
+            &["data/chr/mkn/mkn.mdl"],
+            &["data/chr/mkn/mkn.anm"],
+        );
+
+        let mut combat_arena = sh2_core::combat::CombatArena::new();
+        // Give James his trusty wooden plank for the testing arena
+        combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
 
         let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
         sim_core.collision = find_cld_file_for_room(initial_room);
@@ -1362,6 +1415,12 @@ impl ApplicationHandler for SilentHillApp {
             active_test_room: initial_room,
             fog_uniforms,
             menu_ctrl,
+            combat_arena,
+            enemy_scu_asset,
+            enemy_mkn_asset,
+            key_ready_held: false,
+            key_attack_pressed: false,
+            key_attack_held: false,
             model_viewer,
             viewer_asset,
             loaded_viewer_model_idx,
@@ -2062,6 +2121,52 @@ impl ApplicationHandler for SilentHillApp {
                                 state.debug_camera_hud
                             );
                         }
+                        // Authentic Combat controls (Space / F / Enter to Attack, R / Shift to Ready, 1..6 to switch weapons)
+                        winit::keyboard::KeyCode::KeyR => {
+                            state.key_ready_held = pressed;
+                        }
+                        winit::keyboard::KeyCode::Space => {
+                            if pressed && !state.key_attack_held {
+                                state.key_attack_pressed = true;
+                            }
+                            state.key_attack_held = pressed;
+                        }
+                        winit::keyboard::KeyCode::Digit1 if pressed => {
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::WoodenPlank;
+                            tracing::info!("[Combat] Equipped Wooden Plank");
+                        }
+                        winit::keyboard::KeyCode::Digit2 if pressed => {
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::SteelPipe;
+                            tracing::info!("[Combat] Equipped Steel Pipe");
+                        }
+                        winit::keyboard::KeyCode::Digit3 if pressed => {
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::Handgun;
+                            state.combat_arena.player.loaded_rounds[0] = 10;
+                            state.combat_arena.player.spare_rounds[0] = 50;
+                            tracing::info!("[Combat] Equipped Handgun (10/50)");
+                        }
+                        winit::keyboard::KeyCode::Digit4 if pressed => {
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::Shotgun;
+                            state.combat_arena.player.loaded_rounds[1] = 6;
+                            state.combat_arena.player.spare_rounds[1] = 30;
+                            tracing::info!("[Combat] Equipped Shotgun (6/30)");
+                        }
+                        winit::keyboard::KeyCode::Digit5 if pressed => {
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::HuntingRifle;
+                            state.combat_arena.player.loaded_rounds[2] = 4;
+                            state.combat_arena.player.spare_rounds[2] = 20;
+                            tracing::info!("[Combat] Equipped Hunting Rifle (4/20)");
+                        }
+                        winit::keyboard::KeyCode::Digit6 if pressed => {
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::GreatKnife;
+                            tracing::info!("[Combat] Equipped Great Knife");
+                        }
                         _ => {}
                     }
 
@@ -2115,6 +2220,18 @@ impl ApplicationHandler for SilentHillApp {
                                 let _ = play_menu_sound(engine, state.audio_bank.as_ref(), kind);
                             }
                         }
+                    }
+                } else if state.menu_ctrl.in_game_active
+                    && state.active_test_room == TestRoomKind::CombatArena
+                {
+                    // PC/Modern combat controls: Right Click = Ready weapon, Left Click = Attack / Stomp
+                    if button == winit::event::MouseButton::Right {
+                        state.key_ready_held = pressed;
+                    } else if button == winit::event::MouseButton::Left {
+                        if pressed && !state.key_attack_held {
+                            state.key_attack_pressed = true;
+                        }
+                        state.key_attack_held = pressed;
                     }
                 }
             }
@@ -2386,6 +2503,11 @@ impl ApplicationHandler for SilentHillApp {
                     state.sim_core.scenario.player_yaw = new_yaw;
                     state.sim_core.camera.reset_to_player(new_pos, new_yaw);
                     state.active_test_room = new_room;
+                    if new_room == TestRoomKind::CombatArena {
+                        state.combat_arena = sh2_core::combat::CombatArena::new();
+                        state.combat_arena.player.weapon =
+                            sh2_core::combat::WeaponGrip::WoodenPlank;
+                    }
                     if new_room == TestRoomKind::ModelAndTextureViewer
                         && state.viewer_asset.is_none()
                     {
@@ -2809,6 +2931,29 @@ impl ApplicationHandler for SilentHillApp {
                     // 1. Advance simulation at fixed 60 Hz tick (runs animation controller update)
                     if !is_paused {
                         state.sim_core.update(dt);
+
+                        if state.active_test_room == TestRoomKind::CombatArena {
+                            state.combat_arena.player_position =
+                                state.sim_core.scenario.player_position;
+                            state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
+                            let dt_sec = dt.as_secs_f32().min(0.05);
+                            let atk_pressed = state.key_attack_pressed;
+                            state.key_attack_pressed = false;
+                            state.combat_arena.tick(
+                                state.key_ready_held,
+                                atk_pressed,
+                                state.key_attack_held,
+                                dt_sec,
+                            );
+
+                            // Play any combat sound effects requested by the combat state machine
+                            if let Some(sfx_id) = state.combat_arena.player.pending_sfx.take() {
+                                tracing::info!(
+                                    "[Combat SFX] Triggered sound effect ID: {}",
+                                    sfx_id
+                                );
+                            }
+                        }
                     }
 
                     // 2. Compute smooth sub-frame interpolated view matrix for high refresh OLED
@@ -2922,19 +3067,112 @@ impl ApplicationHandler for SilentHillApp {
                         }
                     }
 
-                    let skeletal_draw = if let Some(c) = active_char {
+                    let mut skeletal_draw = Vec::new();
+                    if let Some(c) = active_char {
                         if !state.skin_matrices_scratch.is_empty() {
-                            vec![(
+                            skeletal_draw.push((
                                 &c.gpu_mesh,
                                 state.skin_matrices_scratch.as_slice(),
                                 Some(c.texture_bind_groups.as_slice()),
-                            )]
-                        } else {
-                            vec![]
+                            ));
                         }
-                    } else {
-                        vec![]
-                    };
+                    }
+
+                    // Render enemy skeletal models when in Combat Arena
+                    let mut enemy_skin_matrices: Vec<Vec<[[f32; 4]; 4]>> = Vec::new();
+                    if state.active_test_room == TestRoomKind::CombatArena {
+                        for enemy in &state.combat_arena.enemies {
+                            let asset = if enemy.id == 1 {
+                                state.enemy_scu_asset.as_ref()
+                            } else {
+                                state.enemy_mkn_asset.as_ref()
+                            };
+
+                            if let Some(ea) = asset {
+                                let frame_count = ea.anm.frames.len();
+                                if frame_count > 0 {
+                                    // Flinch / Downed / Crawl anim frames
+                                    let anim_time = state.sim_time * 30.0;
+                                    let frame_idx = (anim_time as usize) % frame_count;
+                                    let frame = &ea.anm.frames[frame_idx];
+
+                                    let mut pose = Vec::with_capacity(ea.model.bone_count);
+                                    evaluate_pose_into(
+                                        &ea.model.parents,
+                                        &ea.bind_locals,
+                                        frame,
+                                        &mut pose,
+                                    );
+
+                                    let mut skin = Vec::with_capacity(ea.model.bone_count);
+                                    compute_skin_matrices_with_inv_into(
+                                        &pose,
+                                        &ea.model.inv_initial_matrices,
+                                        &mut skin,
+                                    );
+
+                                    let (es, ec_yaw) = enemy.yaw.sin_cos();
+                                    // When downed on floor, lay flat or offset Y
+                                    let (ey, rx_rot) = if enemy.is_downed {
+                                        (enemy.position.y + 100.0, true)
+                                    } else {
+                                        (enemy.position.y, false)
+                                    };
+
+                                    let world_mat = if rx_rot {
+                                        // Rotate 90 deg on X so enemy lies flat on back/stomach
+                                        [
+                                            [ec_yaw, 0.0, es, enemy.position.x],
+                                            [0.0, 0.0, 1.0, ey],
+                                            [-es, -1.0, 0.0, enemy.position.z],
+                                            [0.0, 0.0, 0.0, 1.0],
+                                        ]
+                                    } else {
+                                        [
+                                            [ec_yaw, 0.0, es, enemy.position.x],
+                                            [0.0, 1.0, 0.0, ey],
+                                            [-es, 0.0, ec_yaw, enemy.position.z],
+                                            [0.0, 0.0, 0.0, 1.0],
+                                        ]
+                                    };
+
+                                    let mut enemy_mats = Vec::with_capacity(skin.len());
+                                    for m_skin in &skin {
+                                        let mut combined = [[0.0; 4]; 4];
+                                        for r in 0..4 {
+                                            for col in 0..4 {
+                                                combined[r][col] = world_mat[r][0] * m_skin[0][col]
+                                                    + world_mat[r][1] * m_skin[1][col]
+                                                    + world_mat[r][2] * m_skin[2][col]
+                                                    + world_mat[r][3] * m_skin[3][col];
+                                            }
+                                        }
+                                        enemy_mats.push(combined);
+                                    }
+                                    enemy_skin_matrices.push(enemy_mats);
+                                }
+                            }
+                        }
+
+                        let mut mat_idx = 0;
+                        for enemy in &state.combat_arena.enemies {
+                            let asset = if enemy.id == 1 {
+                                state.enemy_scu_asset.as_ref()
+                            } else {
+                                state.enemy_mkn_asset.as_ref()
+                            };
+                            if let Some(ea) = asset {
+                                if mat_idx < enemy_skin_matrices.len() {
+                                    skeletal_draw.push((
+                                        &ea.gpu_mesh,
+                                        &enemy_skin_matrices[mat_idx],
+                                        Some(ea.texture_bind_groups.as_slice()),
+                                    ));
+                                    mat_idx += 1;
+                                }
+                            }
+                        }
+                    }
 
                     if is_in_game {
                         if state.debug_collision_overlay {
@@ -3530,6 +3768,87 @@ impl ApplicationHandler for SilentHillApp {
                             true,
                         );
 
+                        if state.active_test_room == TestRoomKind::CombatArena {
+                            let p = &state.combat_arena.player;
+                            let weapon_str = format!("{:?}", p.weapon);
+                            let ammo_str = if p.weapon.is_firearm() {
+                                format!("AMMO: {} / {}", p.loaded_ammo(), p.spare_ammo())
+                            } else {
+                                "MELEE".to_string()
+                            };
+                            let mode_str = format!("{:?}", p.mode);
+                            let atk_str = if let Some(atk) = p.active_attack {
+                                format!("ATTACKING (AP: {:.0}, SP: {:.0})", atk.ap, atk.sp)
+                            } else if p.mode == sh2_core::combat::CombatMode::Ready {
+                                "AIM / READY".to_string()
+                            } else {
+                                "IDLE".to_string()
+                            };
+
+                            state.menu_rasterizer.draw_text(
+                                &format!(
+                                    "[COMBAT ARENA] WEAPON: {} | {} | MODE: {} [{}]",
+                                    weapon_str, ammo_str, mode_str, atk_str
+                                ),
+                                20,
+                                122,
+                                1,
+                                yellow,
+                                true,
+                            );
+
+                            // Render enemy status lines
+                            let mut ey_offset = 142;
+                            for enemy in &state.combat_arena.enemies {
+                                let status_str = if enemy.is_dead {
+                                    "DEAD (Dispatched)".to_string()
+                                } else if enemy.is_downed {
+                                    format!(
+                                        "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
+                                        enemy.down_timer.max(0.0)
+                                    )
+                                } else if enemy.flinch_timer > 0.0 {
+                                    "STAGGERED / FLINCHING".to_string()
+                                } else {
+                                    "ACTIVE".to_string()
+                                };
+
+                                let color = if enemy.is_dead {
+                                    muted
+                                } else if enemy.is_downed {
+                                    cyan
+                                } else {
+                                    green
+                                };
+
+                                state.menu_rasterizer.draw_text(
+                                    &format!(
+                                        "ENEMY #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
+                                        enemy.id,
+                                        enemy.name,
+                                        enemy.health,
+                                        enemy.max_health,
+                                        status_str
+                                    ),
+                                    20,
+                                    ey_offset,
+                                    1,
+                                    color,
+                                    true,
+                                );
+                                ey_offset += 20;
+                            }
+
+                            state.menu_rasterizer.draw_text(
+                                "[Controls: Right-Click / Hold R: Ready | Left-Click / Space: Attack | 1..6: Weapons | WASD: Move]",
+                                20,
+                                670,
+                                1,
+                                muted,
+                                true,
+                            );
+                        }
+
                         state.render_ctx.queue.write_texture(
                             wgpu::ImageCopyTexture {
                                 texture: &state.menu_text_texture,
@@ -3773,6 +4092,7 @@ fn main() {
                 "fmv" | "fmv-viewer" | "cutscenes" | "movies" => {
                     Some(TestRoomKind::FmvCutsceneViewer)
                 }
+                "combat" | "arena" | "battle" => Some(TestRoomKind::CombatArena),
                 _ => {
                     tracing::warn!(
                         "Unknown test room: '{}', defaulting to Observation Deck",

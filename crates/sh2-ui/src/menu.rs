@@ -85,10 +85,12 @@ pub enum TestRoomKind {
     FmvCutsceneViewer,
     /// Interactive Animated Footstep Loading Screen Test Chamber (`SH2-44`).
     LoadingScreenTest,
+    /// Interactive Combat & Weapon Mechanics Arena (`SH2-13`).
+    CombatArena,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 8] = [
+    pub const ALL: [TestRoomKind; 9] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -97,6 +99,7 @@ impl TestRoomKind {
         TestRoomKind::ModelAndTextureViewer,
         TestRoomKind::FmvCutsceneViewer,
         TestRoomKind::LoadingScreenTest,
+        TestRoomKind::CombatArena,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -109,6 +112,7 @@ impl TestRoomKind {
             Self::ModelAndTextureViewer => "Model & Texture Viewer",
             Self::FmvCutsceneViewer => "FMV Cutscene Player",
             Self::LoadingScreenTest => "Loading Screen Preview",
+            Self::CombatArena => "Combat & Weapon Testing Arena",
         }
     }
 
@@ -127,6 +131,9 @@ impl TestRoomKind {
             Self::FmvCutsceneViewer => "Launch the 1080p60 cutscene theater player",
             Self::LoadingScreenTest => {
                 "Test authentic animated PS2 footstep loading screen & transition"
+            }
+            Self::CombatArena => {
+                "Real-time melee & firearm combat arena with Lying Figure & Mannequin targets"
             }
         }
     }

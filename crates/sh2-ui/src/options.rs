@@ -760,6 +760,9 @@ fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Audio, "Dialogue Volume") => {
             "Spoken character dialogue and voice volume level"
         }
+        (OptionsTab::Audio, "Output Device") => {
+            "Select active audio hardware output device (Speakers, Headphones, Interface)"
+        }
         (OptionsTab::Audio, "Speaker Config") => {
             "Audio channel configuration (Stereo, Surround, Headphones)"
         }

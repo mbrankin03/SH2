@@ -2600,7 +2600,7 @@ impl ApplicationHandler for SilentHillApp {
                         audio.set_voice_volume(cfg.audio.dialogue_volume);
                     }
 
-                    // Check if audio device changed and reinitialize audio manager if needed
+                    // Check if audio device changed and reinitialize or live-migrate audio manager
                     let current_device = state
                         .menu_ctrl
                         .options_menu
@@ -2609,25 +2609,34 @@ impl ApplicationHandler for SilentHillApp {
                         .selected_output_device
                         .as_deref();
                     if cfg.audio.selected_output_device.as_deref() != current_device {
-                        match AudioEngine::new_with_device(
-                            cfg.audio.selected_output_device.as_deref(),
-                        ) {
-                            Ok(mut new_engine) => {
-                                new_engine.set_master_volume(cfg.audio.master_volume);
-                                new_engine.set_bgm_volume(cfg.audio.bgm_volume);
-                                new_engine.set_sfx_volume(cfg.audio.sfx_volume);
-                                new_engine.set_voice_volume(cfg.audio.dialogue_volume);
-                                state.audio_engine = Some(new_engine);
-                                tracing::info!(
-                                    "[Options] Switched audio output device to {:?}",
-                                    cfg.audio
-                                        .selected_output_device
-                                        .as_deref()
-                                        .unwrap_or("Default")
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!("[Options] Failed to switch audio device: {:?}", e);
+                        if let Some(ref mut audio) = state.audio_engine {
+                            audio.migrate_stream_to_device(
+                                cfg.audio.selected_output_device.as_deref(),
+                            );
+                            tracing::info!(
+                                "[Options] Live migrated audio output stream to {:?}",
+                                cfg.audio
+                                    .selected_output_device
+                                    .as_deref()
+                                    .unwrap_or("Default (System)")
+                            );
+                        } else {
+                            match AudioEngine::new_with_device(
+                                cfg.audio.selected_output_device.as_deref(),
+                            ) {
+                                Ok(mut new_engine) => {
+                                    new_engine.set_master_volume(cfg.audio.master_volume);
+                                    new_engine.set_bgm_volume(cfg.audio.bgm_volume);
+                                    new_engine.set_sfx_volume(cfg.audio.sfx_volume);
+                                    new_engine.set_voice_volume(cfg.audio.dialogue_volume);
+                                    state.audio_engine = Some(new_engine);
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[Options] Failed to initialize audio device: {:?}",
+                                        e
+                                    );
+                                }
                             }
                         }
                     }

@@ -972,6 +972,86 @@ impl AudioEngine {
         self.master_volume = volume.clamp(0.0, 1.0);
     }
 
+    /// Migrates the active running game audio stream to the requested device in real-time.
+    ///
+    /// On Linux with PipeWire/PulseAudio, this uses `pactl move-sink-input` to immediately
+    /// move the existing ALSA/PipeWire stream to the requested hardware sink without destroying
+    /// the audio manager or interrupting audio playback.
+    pub fn migrate_stream_to_device(&mut self, device_name: Option<&str>) {
+        #[cfg(target_os = "linux")]
+        {
+            let target_sink_name = if let Some(target) = device_name {
+                let output = std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", "sinks"])
+                    .output()
+                    .ok();
+                let mut found = None;
+                if let Some(out) = output {
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                        if let Some(sinks) = val.as_array() {
+                            for sink in sinks {
+                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let desc = sink
+                                    .get("description")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or(name);
+                                if desc.trim().eq_ignore_ascii_case(target.trim())
+                                    || name.trim().eq_ignore_ascii_case(target.trim())
+                                {
+                                    found = Some(name.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                found
+            } else {
+                // If default requested, find default sink name
+                std::process::Command::new("pactl")
+                    .arg("get-default-sink")
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+            };
+
+            if let Some(sink) = target_sink_name {
+                if let Ok(input_output) = std::process::Command::new("pactl")
+                    .args(["-f", "json", "list", "sink-inputs"])
+                    .output()
+                {
+                    if let Ok(input_val) =
+                        serde_json::from_slice::<serde_json::Value>(&input_output.stdout)
+                    {
+                        if let Some(inputs) = input_val.as_array() {
+                            for input in inputs {
+                                let idx = input.get("index").and_then(|i| i.as_u64());
+                                let app = input
+                                    .get("properties")
+                                    .and_then(|p| p.get("application.name"))
+                                    .and_then(|a| a.as_str())
+                                    .unwrap_or("");
+                                if app.to_lowercase().contains("sh2") {
+                                    if let Some(i) = idx {
+                                        let _ = std::process::Command::new("pactl")
+                                            .args(["move-sink-input", &i.to_string(), &sink])
+                                            .status();
+                                        tracing::info!(
+                                            "[Audio] Live migrated stream #{} to sink '{}'",
+                                            i,
+                                            sink
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Sets the background music volume level [0.0..1.0].
     pub fn set_bgm_volume(&mut self, volume: f32) {
         self.bgm_volume = volume.clamp(0.0, 1.0);

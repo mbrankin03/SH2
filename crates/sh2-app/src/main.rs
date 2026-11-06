@@ -2278,8 +2278,9 @@ impl ApplicationHandler for SilentHillApp {
                             if pressed =>
                         {
                             let stage_name = state.active_test_room.label();
-                            // In test rooms and sandbox gameplay, allow saving unless in cutscenes
-                            let can_save = true;
+                            // Check user configuration: save_anywhere (PC mode) vs restricted to red squares (PS2 mode)
+                            let can_save =
+                                state.menu_ctrl.options_menu.draft_config.game.save_anywhere;
                             state.menu_ctrl.pause_menu.open(
                                 can_save,
                                 stage_name,

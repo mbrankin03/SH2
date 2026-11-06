@@ -533,6 +533,8 @@ pub struct GameOptions {
     pub subtitles: bool,
     pub language: GameLanguage,
     pub bullet_multiplier: BulletMultiplier,
+    /// Allow saving anywhere from the pause menu (Retail PC behavior) vs Red Squares only (PS2 original behavior).
+    pub save_anywhere: bool,
 }
 
 impl Default for GameOptions {
@@ -543,6 +545,7 @@ impl Default for GameOptions {
             subtitles: true,
             language: GameLanguage::default(),
             bullet_multiplier: BulletMultiplier::default(),
+            save_anywhere: true,
         }
     }
 }

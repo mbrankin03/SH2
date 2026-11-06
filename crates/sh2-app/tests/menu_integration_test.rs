@@ -229,7 +229,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     let mut debug_controller = AppMenuController::new(&config_path);
     debug_controller.title_sm.phase = TitlePhase::OptionsMenu;
     debug_controller.options_menu.active_tab = sh2_ui::OptionsTab::Game;
-    debug_controller.options_menu.selected_index = 5; // Test Rooms
+    debug_controller.options_menu.selected_index = 6; // Test Rooms (row index 6 now that Save Anywhere is row 5)
 
     let cue = debug_controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(cue, MenuSoundCue::Confirm);

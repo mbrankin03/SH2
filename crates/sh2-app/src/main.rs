@@ -1426,9 +1426,7 @@ impl ApplicationHandler for SilentHillApp {
                             {
                                 if let Some(ref mut ls) = state.loading_screen {
                                     if ls.handle_confirm() {
-                                        tracing::info!(
-                                            "Loading Screen: Player pressed continue."
-                                        );
+                                        tracing::info!("Loading Screen: Player pressed continue.");
                                         if let Some(ref mut engine) = state.audio_engine {
                                             let _ = play_menu_sound(
                                                 engine,

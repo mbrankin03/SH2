@@ -664,13 +664,16 @@ impl CombatController {
 
     /// Process struggle escape input during grab (`0x5565c0`).
     /// Each button press or analog stick flick shaves 1/30 s off struggle meter.
+    /// Also includes a continuous baseline struggle drain (1.0x on beginner, 0.35x on normal)
+    /// to guarantee James breaks free within 2.5-3.5 seconds even without manic mashing.
     pub fn process_struggle_inputs(&mut self, button_press_count: u32, dt: f32, is_beginner: bool) {
         if self.mode != CombatMode::Held {
             return;
         }
 
         let drain_from_presses = (button_press_count as f32) / 30.0;
-        let passive_drain = if is_beginner { dt } else { 0.0 };
+        let passive_rate = if is_beginner { 1.0 } else { 0.35 };
+        let passive_drain = dt * passive_rate;
         self.struggle_meter = (self.struggle_meter - (drain_from_presses + passive_drain)).max(0.0);
 
         if self.struggle_meter <= 0.0 {
@@ -1132,6 +1135,7 @@ pub struct CombatTargetEnemy {
     pub attack_timer: f32,
     pub is_attacking: bool,
     pub is_kick_next: bool,
+    pub is_grappling_player: bool,
     pub hitbox_radius: f32,
     pub hitbox_height: f32,
     pub anim: CreatureAnimationController,
@@ -1161,6 +1165,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 350.0,
             hitbox_height: 1500.0,
             anim: CreatureAnimationController::new_lying_figure(),
@@ -1190,6 +1195,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 300.0,
             hitbox_height: 1600.0,
             anim: CreatureAnimationController::new_mannequin(),
@@ -1219,6 +1225,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 320.0,
             hitbox_height: 1600.0,
             anim: CreatureAnimationController::new_nurse(),
@@ -1248,6 +1255,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 450.0,
             hitbox_height: 2200.0,
             anim: CreatureAnimationController::new_pyramid_head(),
@@ -1277,6 +1285,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 500.0,
             hitbox_height: 1800.0,
             anim: CreatureAnimationController::new_abstract_daddy(),
@@ -1306,6 +1315,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 400.0,
             hitbox_height: 1800.0,
             anim: CreatureAnimationController::new_flesh_lips(),
@@ -1335,6 +1345,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 350.0,
             hitbox_height: 1400.0,
             anim: CreatureAnimationController::new_mandarin(),
@@ -1364,6 +1375,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 150.0,
             hitbox_height: 200.0,
             anim: CreatureAnimationController::new_creeper(),
@@ -1393,6 +1405,7 @@ impl CombatTargetEnemy {
             attack_timer: 0.0,
             is_attacking: false,
             is_kick_next: false,
+            is_grappling_player: false,
             hitbox_radius: 500.0,
             hitbox_height: 2400.0,
             anim: CreatureAnimationController::new_mary_boss(),
@@ -1507,7 +1520,12 @@ impl CombatTargetEnemy {
                 }
                 self.yaw += diff.clamp(-3.0 * dt, 3.0 * dt);
 
-                if self.is_attacking {
+                if self.is_grappling_player {
+                    // Holding player in grapple lock (0x4b7160 / 0x4c00a0):
+                    // Attack timer does not expire and walk root motion is suspended
+                    self.is_attacking = true;
+                    self.attack_timer = 0.0;
+                } else if self.is_attacking {
                     self.attack_timer += dt;
                     // Attack animation duration ~1.0 - 1.2s
                     let max_atk_time = if self.id == 1 { 1.2 } else { 1.0 };
@@ -1612,7 +1630,9 @@ impl CombatTargetEnemy {
                 self.anim.sync_nurse(nse_state);
             }
             4 => {
-                let red_state = if self.is_attacking {
+                let red_state = if self.is_grappling_player {
+                    crate::ai::creatures::pyramid_head::RedState::Grab
+                } else if self.is_attacking {
                     crate::ai::creatures::pyramid_head::RedState::Attack
                 } else if self.is_aggroed {
                     crate::ai::creatures::pyramid_head::RedState::Chase
@@ -1856,6 +1876,8 @@ pub struct CombatArena {
     pub player_position: Vec3,
     pub player_yaw: f32,
     pub attack_hit_registered: bool,
+    /// Index of enemy currently holding James in a grapple lock (`0x533d00` / `0x4b7160`)
+    pub grappling_enemy_idx: Option<usize>,
 }
 
 impl Default for CombatArena {
@@ -1893,6 +1915,7 @@ impl CombatArena {
             player_position: Vec3::ZERO,
             player_yaw: 0.0,
             attack_hit_registered: false,
+            grappling_enemy_idx: None,
         }
     }
 
@@ -1936,7 +1959,7 @@ impl CombatArena {
         let is_dying_or_dead =
             self.player.mode == CombatMode::Dead || self.player.mode == CombatMode::Dying;
 
-        for enemy in &mut self.enemies {
+        for (idx, enemy) in self.enemies.iter_mut().enumerate() {
             enemy.update(player_p, dt);
 
             // Grapple / Grab Attack Resolution (1:1 with authentic PS2 en_red, en_pap, en_ike, en_bos)
@@ -1961,21 +1984,78 @@ impl CombatArena {
                     && self.player.invulnerability_timer <= 0.0
                 {
                     self.player.apply_grab(meter);
+                    // Bind creature to grapple state (e->slv = 2 in PS2 enemy.c)
+                    enemy.is_grappling_player = true;
+                    self.grappling_enemy_idx = Some(idx);
                     // Authentic PS2 orientation: snap James to face the grabbing enemy
                     self.player_yaw = dx.atan2(dz);
                 }
             }
         }
 
-        // When held in grapple, apply authentic hold damage over time (0.2 * 30 DPS = 6.0 DPS)
+        // When held in grapple: maintain creature anchor, apply authentic hold damage over time (0.2 * 30 DPS = 6.0 DPS),
+        // and handle grapple lifecycle & struggle breakout
         if self.player.mode == CombatMode::Held {
-            let hold_dps = 0.2 * 30.0;
-            self.player.health = (self.player.health - hold_dps * dt).max(0.0);
-            if self.player.health <= 0.0 {
-                self.player.mode = CombatMode::Dying;
-                self.player.anim_frame = 0.0;
-                self.player.clip_length = 24.0;
-                self.player.pending_sfx = Some(11050); // Death scream
+            // Validate grappler presence: if the grappler died, flinched, got knocked down, or was removed, release James!
+            let mut should_release = false;
+            if let Some(g_idx) = self.grappling_enemy_idx {
+                if g_idx < self.enemies.len() {
+                    let g = &mut self.enemies[g_idx];
+                    if g.is_dead || g.is_downed || g.flinch_timer > 0.0 {
+                        should_release = true;
+                    } else {
+                        // Authentic PS2 grapple coupling (enemy.c:3309):
+                        // Monster slides onto James and stays anchored 150mm in front of him
+                        let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+                        g.position = self.player_position + forward * 150.0;
+                        g.yaw = self.player_yaw + std::f32::consts::PI;
+                        g.is_grappling_player = true;
+                    }
+                } else {
+                    should_release = true;
+                }
+            } else {
+                // Ghost hold failsafe: if no enemy is bound, release James immediately
+                should_release = true;
+            }
+
+            if should_release {
+                if let Some(g_idx) = self.grappling_enemy_idx.take() {
+                    if g_idx < self.enemies.len() {
+                        self.enemies[g_idx].is_grappling_player = false;
+                        self.enemies[g_idx].is_attacking = false;
+                    }
+                }
+                self.player.mode = CombatMode::Free;
+                self.player.struggle_meter = 0.0;
+                self.player.invulnerability_timer = 0.5;
+            } else {
+                let hold_dps = 0.2 * 30.0;
+                self.player.health = (self.player.health - hold_dps * dt).max(0.0);
+                if self.player.health <= 0.0 {
+                    self.player.mode = CombatMode::Dying;
+                    self.player.anim_frame = 0.0;
+                    self.player.clip_length = 24.0;
+                    self.player.pending_sfx = Some(11050); // Death scream
+                    if let Some(g_idx) = self.grappling_enemy_idx.take() {
+                        if g_idx < self.enemies.len() {
+                            self.enemies[g_idx].is_grappling_player = false;
+                            self.enemies[g_idx].is_attacking = false;
+                        }
+                    }
+                }
+            }
+        } else if let Some(g_idx) = self.grappling_enemy_idx.take() {
+            // James broke free from struggle or took damage (PS2 enemy.c:3325 recoil breakout)
+            if g_idx < self.enemies.len() {
+                let g = &mut self.enemies[g_idx];
+                g.is_grappling_player = false;
+                g.is_attacking = false;
+                g.attack_cooldown = 2.0;
+                // Authentic PS2 recoil: push creature backward away from James
+                let backward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+                g.position += backward * 250.0;
+                g.flinch_timer = 0.5;
             }
         }
 
@@ -2385,5 +2465,48 @@ mod tests {
             "Enemies must push each other apart; got {}",
             enemy_sep
         );
+    }
+
+    #[test]
+    fn test_grapple_binding_anchor_and_breakout_recoil() {
+        let mut arena = CombatArena::new();
+        let dt = 1.0 / 60.0;
+
+        // Abstract Daddy is enemies[6] (id 5)
+        let pap_idx = 6;
+        assert_eq!(arena.enemies[pap_idx].id, 5);
+
+        // Position James at origin facing +Z
+        arena.player_position = Vec3::ZERO;
+        arena.player_yaw = 0.0;
+
+        // Place Abstract Daddy within grab reach (400 mm along +Z) and attacking
+        arena.enemies[pap_idx].position = Vec3::new(0.0, 0.0, 400.0);
+        arena.enemies[pap_idx].is_attacking = true;
+
+        arena.tick(false, false, false, dt);
+
+        // 1. Grab must connect and bind
+        assert_eq!(arena.player.mode, CombatMode::Held);
+        assert_eq!(arena.grappling_enemy_idx, Some(pap_idx));
+        assert!(arena.enemies[pap_idx].is_grappling_player);
+
+        // 2. Creature must be anchored 150mm in front of James
+        let pap_z = arena.enemies[pap_idx].position.z;
+        assert!((pap_z - 150.0).abs() < 1e-2, "Pap Z was {}", pap_z);
+
+        // 3. Struggle escape: simulate 30 button presses to drain meter
+        arena.player.process_struggle_inputs(30, dt, false);
+        assert_eq!(arena.player.mode, CombatMode::Hurt);
+
+        // Next arena tick processes the breakout & recoil
+        arena.tick(false, false, false, dt);
+
+        assert!(arena.grappling_enemy_idx.is_none());
+        assert!(!arena.enemies[pap_idx].is_grappling_player);
+        assert!(!arena.enemies[pap_idx].is_attacking);
+        // Recoil pushback: creature pushed backward by 250mm
+        assert!(arena.enemies[pap_idx].position.z > 150.0 + 200.0);
+        assert!(arena.enemies[pap_idx].flinch_timer > 0.0);
     }
 }

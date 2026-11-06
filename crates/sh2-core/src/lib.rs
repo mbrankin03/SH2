@@ -1,5 +1,6 @@
 //! sh2-core: Core engine simulation, state machines, math, camera, and timing.
 
+pub mod ai;
 pub mod animation;
 pub mod camera;
 pub mod clock;

@@ -81,6 +81,15 @@ fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision::CollisionW
         }
     }
 
+    if room == TestRoomKind::CombatArena {
+        tracing::info!("Using open unobstructed arena collision bounds for CombatArena");
+        // Wide 12000x16000 room with 3500 height and NO center pillar (pw=0, pl=0)
+        // so the camera raycast is never blocked or clamped near the center.
+        return sh2_core::collision::CollisionWorld::create_synthetic_room(
+            12000.0, 16000.0, 3500.0, 0.0, 0.0,
+        );
+    }
+
     tracing::warn!(
         "Using synthetic fallback room collision bounds for {:?}",
         room
@@ -334,10 +343,10 @@ fn find_map_file_for_room(
         TestRoomKind::CombatArena => {
             tracing::info!("Generated Combat Testing Arena Stage (SH2-13).");
             let fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.10, 0.11, 0.13, 1.0],
-                fog_near: 1200.0,
-                fog_far: 14000.0,
-                density: 0.20,
+                fog_color: [0.12, 0.13, 0.16, 1.0],
+                fog_near: 2500.0,
+                fog_far: 20000.0,
+                density: 0.12,
                 time: 0.0,
                 step_count: 24,
                 curve_type: 0,
@@ -346,7 +355,8 @@ fn find_map_file_for_room(
             };
             (
                 create_fallback_room_geometry(),
-                glam::Vec3::new(0.0, 0.0, 0.0),
+                // Spawn James at Z = -1500.0, facing North (0.0 rad) directly looking toward the enemies (Z = 1200..2000)
+                glam::Vec3::new(0.0, 0.0, -1500.0),
                 0.0,
                 fog,
             )
@@ -2211,6 +2221,18 @@ impl ApplicationHandler for SilentHillApp {
                             }
                         }
                     }
+                } else if state.menu_ctrl.in_game_active
+                    && state.active_test_room == TestRoomKind::CombatArena
+                {
+                    // PC/Modern combat controls: Right Click = Ready weapon, Left Click = Attack / Stomp
+                    if button == winit::event::MouseButton::Right {
+                        state.key_ready_held = pressed;
+                    } else if button == winit::event::MouseButton::Left {
+                        if pressed && !state.key_attack_held {
+                            state.key_attack_pressed = true;
+                        }
+                        state.key_attack_held = pressed;
+                    }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -3818,7 +3840,7 @@ impl ApplicationHandler for SilentHillApp {
                             }
 
                             state.menu_rasterizer.draw_text(
-                                "[Controls: Hold R: Ready Weapon | Space: Attack/Stomp | 1: Plank | 2: Pipe | 3: Handgun | 4: Shotgun | 5: Rifle | 6: Knife]",
+                                "[Controls: Right-Click / Hold R: Ready | Left-Click / Space: Attack | 1..6: Weapons | WASD: Move]",
                                 20,
                                 670,
                                 1,

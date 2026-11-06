@@ -1986,15 +1986,16 @@ impl CombatArena {
     /// Resolve mutual character-to-enemy and enemy-to-enemy cylinder collision separations.
     ///
     /// Upright enemies cannot be walked through by James, and upright enemies push apart from one another.
+    /// Follows authentic PS2 `clCheckColumn2ColumnHit` / `enemy.c:1494`:
+    /// `mind = 130.0 + enemy_size * 0.8` (where upright enemy size is ~150-200, giving `mind ~ 250..290mm`).
     pub fn resolve_character_separations(&mut self) {
-        let player_radius = 260.0;
         let is_held = self.player.mode == CombatMode::Held;
 
         // 1. Player vs Upright Enemies (only when not actively held in grab lock)
         if !is_held {
             for enemy in &mut self.enemies {
                 // Downed enemies and creepers (id 8) can be stepped over / stomped at feet
-                if enemy.is_dead || (enemy.is_downed && enemy.id != 8) {
+                if enemy.is_dead || enemy.is_downed || enemy.id == 8 {
                     continue;
                 }
                 // Air/ceiling monsters (Flesh Lips 6, Mandarin 7, Mary 9) do not block floor walking
@@ -2005,7 +2006,17 @@ impl CombatArena {
                 let dx = self.player_position.x - enemy.position.x;
                 let dz = self.player_position.z - enemy.position.z;
                 let dist_sq = dx * dx + dz * dz;
-                let min_dist = player_radius + enemy.hitbox_radius * 0.75;
+
+                // Authentic PS2 collision cylinder radius (`enemy.c:1494`):
+                // James collision radius is 130 mm (`s_col 130.0f`).
+                // Upright enemy radius is `size * 0.8` (scu/mkn/nse: 150*0.8=120; bosses: 200..320*0.8=160..256).
+                // Total minimum contact separation is 250.0 - 320.0 mm.
+                let enemy_col_radius = match enemy.id {
+                    4 => 200.0, // Pyramid Head (red)
+                    5 => 220.0, // Abstract Daddy (pap)
+                    _ => 130.0, // Standard humanoid monsters (scu, mkn, nse)
+                };
+                let min_dist = 130.0 + enemy_col_radius;
 
                 if dist_sq < min_dist * min_dist {
                     let dist = dist_sq.sqrt();
@@ -2033,7 +2044,7 @@ impl CombatArena {
         // 2. Enemy vs Enemy cylinder separation
         let enemy_count = self.enemies.len();
         for i in 0..enemy_count {
-            if self.enemies[i].is_dead || self.enemies[i].is_downed {
+            if self.enemies[i].is_dead || self.enemies[i].is_downed || self.enemies[i].id == 8 {
                 continue;
             }
             if self.enemies[i].id == 6 || self.enemies[i].id == 7 || self.enemies[i].id == 9 {
@@ -2041,7 +2052,7 @@ impl CombatArena {
             }
 
             for j in (i + 1)..enemy_count {
-                if self.enemies[j].is_dead || self.enemies[j].is_downed {
+                if self.enemies[j].is_dead || self.enemies[j].is_downed || self.enemies[j].id == 8 {
                     continue;
                 }
                 if self.enemies[j].id == 6 || self.enemies[j].id == 7 || self.enemies[j].id == 9 {
@@ -2051,8 +2062,18 @@ impl CombatArena {
                 let dx = self.enemies[i].position.x - self.enemies[j].position.x;
                 let dz = self.enemies[i].position.z - self.enemies[j].position.z;
                 let dist_sq = dx * dx + dz * dz;
-                let min_dist =
-                    (self.enemies[i].hitbox_radius + self.enemies[j].hitbox_radius) * 0.75;
+
+                let r_i = match self.enemies[i].id {
+                    4 => 200.0,
+                    5 => 220.0,
+                    _ => 130.0,
+                };
+                let r_j = match self.enemies[j].id {
+                    4 => 200.0,
+                    5 => 220.0,
+                    _ => 130.0,
+                };
+                let min_dist = r_i + r_j;
 
                 if dist_sq < min_dist * min_dist {
                     let dist = dist_sq.sqrt();
@@ -2334,32 +2355,33 @@ mod tests {
         let mut arena = CombatArena::new();
         // Place James at origin
         arena.player_position = Vec3::ZERO;
-        // Place Lying Figure (radius 350) overlapping James at (100, 0, 0)
+        // Place Lying Figure overlapping James at (100, 0, 0)
         arena.enemies[0].position = Vec3::new(100.0, 0.0, 0.0);
         let initial_player_x = arena.player_position.x;
         let initial_enemy_x = arena.enemies[0].position.x;
 
         arena.resolve_character_separations();
 
-        // James (radius 260) and Lying Figure (radius 350 * 0.75 = 262.5) min dist ~ 522.5.
+        // Authentic PS2 min contact distance is 130 + 130 = 260.0.
         // Initial dist was 100 -> they must push apart!
         let separation = (arena.player_position.x - arena.enemies[0].position.x).abs();
         assert!(
-            separation > 500.0,
+            separation >= 259.0,
             "Player and enemy must separate; got {}",
             separation
         );
         assert!(arena.player_position.x < initial_player_x);
         assert!(arena.enemies[0].position.x > initial_enemy_x);
 
-        // Test two enemies overlapping: place enemy 1 at (1000, 0, 0) and enemy 2 at (1100, 0, 0)
+        // Test two upright enemies overlapping: place enemy 1 (Mannequin) at (1000, 0, 0) and enemy 3 (Nurse) at (1100, 0, 0)
+        // Note: enemies[2] is Creeper (id 8) which is exempt from standing body collision
         arena.enemies[1].position = Vec3::new(1000.0, 0.0, 0.0);
-        arena.enemies[2].position = Vec3::new(1100.0, 0.0, 0.0);
+        arena.enemies[3].position = Vec3::new(1100.0, 0.0, 0.0);
         arena.resolve_character_separations();
 
-        let enemy_sep = (arena.enemies[1].position.x - arena.enemies[2].position.x).abs();
+        let enemy_sep = (arena.enemies[1].position.x - arena.enemies[3].position.x).abs();
         assert!(
-            enemy_sep > 300.0,
+            enemy_sep >= 259.0,
             "Enemies must push each other apart; got {}",
             enemy_sep
         );

@@ -266,7 +266,8 @@ impl LoadingScreen {
         for step in &self.footsteps {
             let scr_x = (step.x * scale_x).round() as i32;
             let scr_y = (step.y * scale_y).round() as i32;
-            let print_scale = scale_y * 0.85;
+            // Scale footstep sprite to authentic PS2 footprint dimensions (~54px height in 640x480 space)
+            let print_scale = scale_y * (64.0 / sprite.height as f32) * 0.85;
 
             draw_footstep_silhouette(rast, sprite, scr_x, scr_y, step, print_scale);
         }
@@ -345,16 +346,31 @@ fn draw_footstep_silhouette(
             }
 
             let sample_x = if step.is_right { 1.0 - norm_x } else { norm_x };
-            let src_x = ((sample_x * spr_w).floor() as u32).min(sprite.width - 1);
-            let src_y = ((norm_y * spr_h).floor() as u32).min(sprite.height - 1);
+            let fx = sample_x * (spr_w - 1.0);
+            let fy = norm_y * (spr_h - 1.0);
 
-            let src_idx = (src_y * sprite.width + src_x) as usize;
-            let val = sprite.alpha[src_idx];
-            if val == 0 {
+            let x0 = (fx.floor() as u32).min(sprite.width - 1);
+            let y0 = (fy.floor() as u32).min(sprite.height - 1);
+            let x1 = (x0 + 1).min(sprite.width - 1);
+            let y1 = (y0 + 1).min(sprite.height - 1);
+
+            let rx = fx - x0 as f32;
+            let ry = fy - y0 as f32;
+
+            let a00 = sprite.alpha[(y0 * sprite.width + x0) as usize] as f32;
+            let a10 = sprite.alpha[(y0 * sprite.width + x1) as usize] as f32;
+            let a01 = sprite.alpha[(y1 * sprite.width + x0) as usize] as f32;
+            let a11 = sprite.alpha[(y1 * sprite.width + x1) as usize] as f32;
+
+            let top = a00 * (1.0 - rx) + a10 * rx;
+            let bot = a01 * (1.0 - rx) + a11 * rx;
+            let interpolated_alpha = top * (1.0 - ry) + bot * ry;
+
+            if interpolated_alpha <= 0.001 {
                 continue;
             }
 
-            let effective_alpha = (val as f32 / 255.0) * step.alpha;
+            let effective_alpha = (interpolated_alpha / 255.0) * step.alpha;
             let dest_idx = (y as usize * rast.width + x as usize) * 4;
 
             // Blend pure white (255, 255, 255) over black

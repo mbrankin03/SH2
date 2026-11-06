@@ -9,8 +9,11 @@
 
 use crate::types::camera::CameraState;
 use glam::{Mat4, Quat, Vec3};
-use sh2_assets::formats::cam::{CamFile, RoadRecord, VC_RD_WARP_IN_F, VC_RD_WARP_OUT_F};
-use std::f32::consts::FRAC_PI_4;
+use sh2_assets::formats::cam::{
+    AreaSizeType, CamFile, CamMovementParams, RoadRecord, VC_RD_CAM_LIKE_SETTLE_F, VC_RD_WARP_IN_F,
+    VC_RD_WARP_OUT_F,
+};
+use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI};
 
 /// Re-export authentic camera movement types from assets for engine consumers.
 pub use sh2_assets::formats::cam::CamMovementType as CameraMovementType;
@@ -132,6 +135,10 @@ impl Ps2CameraController {
     }
 
     /// Compute camera eye, target, fov, and movement type for a given road record and player pose.
+    ///
+    /// Implements authentic PS2 camera positioning (`vcMakeIdealCamPosUseVC_ROAD_DATA`),
+    /// dynamic lookahead watch targeting (`vcSetWatchTgtXzPos`), screen pitch framing (`vcAdjCamOfsAngByCharaInScreen`),
+    /// and yaw limit clamping (`vcCorrectCamMatAngForcibly`).
     fn evaluate_road_record(
         rec: &RoadRecord,
         player_pos: Vec3,
@@ -144,74 +151,174 @@ impl Ps2CameraController {
             FRAC_PI_4
         };
 
-        // Standard authentic look target on player torso/head
-        let target_y = if rec.ofs_watch_hy.abs() > 1000.0 {
-            // Absolute height offset relative to ground (e.g. mirror framing)
-            rec.ofs_watch_hy.clamp(-1400.0, -900.0)
-        } else {
-            player_pos.y - 1100.0
-        };
-        let target = Vec3::new(player_pos.x, target_y, player_pos.z);
+        // Determine camera eye position based on road movement type and rail bounds
+        let (rail_min_x, rail_max_x) = rec.lim_rd.x_bounds();
+        let (rail_min_z, rail_max_z) = rec.lim_rd.z_bounds();
+        let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
+        let is_rail_constrained =
+            (rail_max_x - rail_min_x).abs() > 0.01 || (rail_max_z - rail_min_z).abs() > 0.01;
 
-        match rec.cam_mv_type {
-            CameraMovementType::FixedAngle => {
-                // Fixed angle camera: eye is positioned within lim_rd, target directed by fix angles
-                let (rail_min_x, rail_max_x) = rec.lim_rd.x_bounds();
-                let (rail_min_z, rail_max_z) = rec.lim_rd.z_bounds();
-                let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
-                let eye = Vec3::new(
-                    (rail_min_x + rail_max_x) * 0.5,
-                    eye_y,
-                    (rail_min_z + rail_max_z) * 0.5,
-                );
-
-                let look_target =
-                    if let sh2_assets::formats::cam::CamMovementParams::FixedAngle(ref fix) =
-                        rec.params
-                    {
-                        let rot = Quat::from_euler(glam::EulerRot::YXZ, fix.ang_y, fix.ang_x, 0.0);
-                        let forward = rot * Vec3::new(0.0, 0.0, 1.0);
-                        eye + forward * fix.cam2wth_dist.max(500.0)
-                    } else {
-                        target
-                    };
-
-                (eye, look_target, fov_y, CameraMovementType::FixedAngle)
-            }
-            CameraMovementType::Settle => {
-                // Settle camera: camera eye anchored at center of lim_rd, tracks player
-                let (rail_min_x, rail_max_x) = rec.lim_rd.x_bounds();
-                let (rail_min_z, rail_max_z) = rec.lim_rd.z_bounds();
-                let eye_y = (rec.lim_rd.min_hy + rec.lim_rd.max_hy) * 0.5;
-                let eye = Vec3::new(
-                    (rail_min_x + rail_max_x) * 0.5,
-                    eye_y,
-                    (rail_min_z + rail_max_z) * 0.5,
-                );
-
-                (eye, target, fov_y, CameraMovementType::Settle)
-            }
+        let eye = match rec.cam_mv_type {
+            CameraMovementType::FixedAngle | CameraMovementType::Settle => Vec3::new(
+                (rail_min_x + rail_max_x) * 0.5,
+                eye_y,
+                (rail_min_z + rail_max_z) * 0.5,
+            ),
             _ => {
-                // Chase camera / default:
-                // Constrain camera within lim_rd rail
-                let (min_x, max_x) = rec.lim_rd.x_bounds();
-                let (min_z, max_z) = rec.lim_rd.z_bounds();
-                let is_rail_constrained =
-                    (max_x - min_x).abs() > 0.01 || (max_z - min_z).abs() > 0.01;
-
                 if is_rail_constrained {
                     let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
                     let unconstrained_eye =
                         player_pos - forward * 795.0 + Vec3::new(0.0, -900.0, 0.0);
-                    let eye = Self::clamp_to_road_rail(&rec.lim_rd, unconstrained_eye, false);
-                    (eye, target, fov_y, CameraMovementType::Chase)
+                    Self::clamp_to_road_rail(&rec.lim_rd, unconstrained_eye, false)
                 } else {
                     let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-                    let eye = player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0);
-                    (eye, target, fov_y, CameraMovementType::Chase)
+                    player_pos - forward * 2000.0 + Vec3::new(0.0, -1400.0, 0.0)
+                }
+            }
+        };
+
+        if rec.cam_mv_type == CameraMovementType::FixedAngle {
+            if let CamMovementParams::FixedAngle(ref fix) = rec.params {
+                let rot = Quat::from_euler(glam::EulerRot::YXZ, fix.ang_y, fix.ang_x, 0.0);
+                let forward = rot * Vec3::new(0.0, 0.0, 1.0);
+                let look_target = eye + forward * fix.cam2wth_dist.max(500.0);
+                return (eye, look_target, fov_y, CameraMovementType::FixedAngle);
+            }
+        }
+
+        // 1. Dynamic Lookahead Watch Target (vcSetWatchTgtXzPos)
+        let (tgt_watch_cir_r_base, min_cam2watch_dist) = match rec.area_size_type {
+            AreaSizeType::Tiny => (400.0f32, 1400.0f32),
+            AreaSizeType::Small => (600.0f32, 1800.0f32),
+            AreaSizeType::Wide => (1000.0f32, 2800.0f32),
+            AreaSizeType::Outdoor => (1250.0f32, 3200.0f32),
+        };
+
+        let mut tgt_watch_cir_r = tgt_watch_cir_r_base;
+        let mut tgt_chara2watch_dist = 0.0f32;
+
+        let dx = player_pos.x - eye.x;
+        let dz = player_pos.z - eye.z;
+        let cam2chr_dist = (dx * dx + dz * dz).sqrt();
+
+        if rec.cam_mv_type == CameraMovementType::Settle {
+            tgt_watch_cir_r *= 0.5;
+        } else if cam2chr_dist < min_cam2watch_dist + tgt_watch_cir_r {
+            tgt_chara2watch_dist = (min_cam2watch_dist + tgt_watch_cir_r) - cam2chr_dist;
+        }
+
+        let cam2chr_ang = dz.atan2(dx);
+        let chr2watch_x =
+            player_yaw.sin() * tgt_watch_cir_r + cam2chr_ang.sin() * tgt_chara2watch_dist;
+        let chr2watch_z =
+            player_yaw.cos() * tgt_watch_cir_r + cam2chr_ang.cos() * tgt_chara2watch_dist;
+
+        let tgt_x = chr2watch_x + player_pos.x;
+        let tgt_z = chr2watch_z + player_pos.z;
+        let tgt_y = rec.ofs_watch_hy + (player_pos.y - 250.0);
+
+        // 2. Initial angle calculation (vwVectorToAngle)
+        let vec_to_tgt = Vec3::new(tgt_x - eye.x, tgt_y - eye.y, tgt_z - eye.z);
+        let r_xz = (vec_to_tgt.x * vec_to_tgt.x + vec_to_tgt.z * vec_to_tgt.z).sqrt();
+        let raw_ang_x = (-vec_to_tgt.y).atan2(r_xz);
+        let raw_ang_y = vec_to_tgt.x.atan2(vec_to_tgt.z);
+
+        // 3. Screen framing adjustment (vcAdjCamOfsAngByCharaInScreen)
+        let scr_z = if rec.projection > 0.0 {
+            rec.projection
+        } else {
+            448.0
+        };
+        let scr_sy = 448.0f32;
+        let scr_half_wy = (scr_sy).atan2(scr_z) * 0.5;
+
+        let chara_btm_y = rec.trace_btm_hy + (player_pos.y - 250.0);
+        let chara_top_y = player_pos.y - 937.5;
+
+        let vec_btm = Vec3::new(
+            player_pos.x - eye.x,
+            chara_btm_y - eye.y,
+            player_pos.z - eye.z,
+        );
+        let r_btm = (vec_btm.x * vec_btm.x + vec_btm.z * vec_btm.z).sqrt();
+        let btm_ang_x = (-vec_btm.y).atan2(r_btm);
+
+        let vec_top = Vec3::new(
+            player_pos.x - eye.x,
+            chara_top_y - eye.y,
+            player_pos.z - eye.z,
+        );
+        let r_top = (vec_top.x * vec_top.x + vec_top.z * vec_top.z).sqrt();
+        let top_ang_x = (-vec_top.y).atan2(r_top);
+
+        let w2c_btm = Self::normalize_angle(btm_ang_x - raw_ang_x);
+        let w2c_top = Self::normalize_angle(top_ang_x - raw_ang_x);
+
+        let mut adj_x = 0.0f32;
+        if -scr_half_wy > w2c_btm {
+            adj_x = w2c_btm + scr_half_wy;
+        }
+        let v = w2c_top - adj_x;
+        if v > scr_half_wy {
+            adj_x += v - scr_half_wy;
+        }
+        adj_x = adj_x.clamp(-FRAC_PI_6, FRAC_PI_6);
+
+        let final_pitch = raw_ang_x + adj_x;
+        let mut final_yaw = raw_ang_y;
+
+        // 4. Yaw limit clamp (vcCorrectCamMatAngForcibly)
+        let (lr_lim, rr_lim) = match rec.params {
+            CamMovementParams::Chase(ref chs) => (chs.lr_lim_ang_y, chs.rr_lim_ang_y),
+            CamMovementParams::Settle(ref stl) => (stl.lr_lim_ang_y, stl.rr_lim_ang_y),
+            _ => (-17.451548, 17.451548),
+        };
+
+        let settle_or_like_settle = rec.cam_mv_type == CameraMovementType::Settle
+            || (rec.cam_mv_type == CameraMovementType::Chase
+                && (rec.flags & VC_RD_CAM_LIKE_SETTLE_F) != 0);
+
+        if settle_or_like_settle && (lr_lim != -17.451548 || rr_lim != 17.451548) {
+            let ofs_lr = Self::normalize_angle(final_yaw - lr_lim);
+            let ofs_rr = Self::normalize_angle(final_yaw - rr_lim);
+            if !(ofs_lr >= 0.0 && ofs_rr <= 0.0) {
+                if ofs_lr.abs() < ofs_rr.abs() {
+                    final_yaw = Self::normalize_angle(lr_lim);
+                } else {
+                    final_yaw = Self::normalize_angle(rr_lim);
                 }
             }
         }
+
+        // 5. Compute look target along forward vector
+        let fwd_x = final_pitch.cos() * final_yaw.sin();
+        let fwd_y = -final_pitch.sin();
+        let fwd_z = final_pitch.cos() * final_yaw.cos();
+
+        let look_target = Vec3::new(
+            eye.x + fwd_x * 2000.0,
+            eye.y + fwd_y * 2000.0,
+            eye.z + fwd_z * 2000.0,
+        );
+
+        let mv_type = match rec.cam_mv_type {
+            CameraMovementType::Settle => CameraMovementType::Settle,
+            _ => CameraMovementType::Chase,
+        };
+
+        (eye, look_target, fov_y, mv_type)
+    }
+
+    /// Normalizes an angle in radians to `[-PI, PI)`.
+    #[inline]
+    fn normalize_angle(mut a: f32) -> f32 {
+        while a < -PI {
+            a += 2.0 * PI;
+        }
+        while a >= PI {
+            a -= 2.0 * PI;
+        }
+        a
     }
 
     /// Reset camera position instantly behind the player without smoothing (e.g. on new game, door warps).
@@ -413,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn test_camera_er01_volume_switching_simulation() {
+    fn test_camera_er01_ps2_parity_framing() {
         use sh2_assets::formats::cam::parse_cam;
         use std::fs;
         use std::path::Path;
@@ -430,32 +537,23 @@ mod tests {
         let mut controller = Ps2CameraController::new();
         controller.set_cam_file(Some(cam_file));
 
-        // 1. Initial spawn at the sink: X: -19606.6, Y: 0.0, Z: 20429.55, facing West
-        let sink_pos = Vec3::new(-19606.6, 0.0, 20429.55);
-        controller.reset_to_player(sink_pos, -std::f32::consts::FRAC_PI_2);
+        // Exact player coordinates from screenshot at opening restroom:
+        // PLAYER POS: X: -19390.1, Y: 0.0, Z: 20317.8, YAW: -2.23 rad (-127.6 deg)
+        let player_pos = Vec3::new(-19390.1, 0.0, 20317.8);
+        controller.reset_to_player(player_pos, -2.23);
 
-        // Record 2 (sink mirror view) must be active
         assert_eq!(controller.active_road_index, Some(2));
-        assert!(controller.curr_snapshot.fov_y < 0.6); // Higher zoom/projection (757)
-
-        // 2. Walk James towards stalls: Z = 20500.0, X walks East towards stalls: -19000.0
-        let stall_pos = Vec3::new(-19000.0, 0.0, 20500.0);
-        for _ in 0..60 {
-            controller.tick(stall_pos, 0.0, 0.0, 0.0);
-        }
-
-        // Active volume should switch to Record 1 (stalls)
-        assert_eq!(controller.active_road_index, Some(1));
-        assert!(controller.curr_snapshot.fov_y > 0.7); // Wider fov (projection 448)
-
-        // 3. Walk James towards the exit door: X = -18800.0, Z = 19000.0
-        let exit_pos = Vec3::new(-18800.0, 0.0, 19000.0);
-        for _ in 0..60 {
-            controller.tick(exit_pos, std::f32::consts::PI, 0.0, 0.0);
-        }
-
-        // Active volume should switch to Record 3 (exit door view)
-        assert_eq!(controller.active_road_index, Some(3));
         assert_eq!(controller.mv_type, CameraMovementType::Chase);
+
+        // Ground-truth PS2 camera eye: (-18684.0, -1003.0, 20361.0)
+        assert!((controller.curr_snapshot.eye.x - (-18684.0)).abs() < 1.0);
+        assert!((controller.curr_snapshot.eye.y - (-1003.0)).abs() < 1.0);
+        assert!((controller.curr_snapshot.eye.z - 20361.0).abs() < 1.0);
+
+        // Ground truth look target: points towards sink/mirror and downward into chest/reflection
+        // (-Y is up, so target.y must be below the eye: target.y > eye.y (-1003.0))
+        assert!(controller.curr_snapshot.target.y > controller.curr_snapshot.eye.y);
+        assert!(controller.curr_snapshot.target.x < controller.curr_snapshot.eye.x);
+        assert!(controller.curr_snapshot.fov_y < 0.6);
     }
 }

@@ -3288,9 +3288,9 @@ impl ApplicationHandler for SilentHillApp {
                                         // Flesh Lips (#6): Lower overhead suspended (739 @ table 0x6cecc8)
                                         // + Upper reaching choke (776..=803 @ aid 363-367, 10.0 fps)
                                         6 => (Some(739), Some((776, 803, 10.0f32))),
-                                        // Abstract Daddy (#5): Lower bed grapple (756 @ table 0x6cebbc)
-                                        // + Upper torso push/thrash struggle loop (742..=767 @ table 0x6cebf8 aid 508, 1536 speed = 22.5 fps)
-                                        5 => (Some(756), Some((742, 767, 22.5f32))),
+                                        // Abstract Daddy (#5): Authentic PS2 upright struggle (table 0x6cebbc aid 301 / 0x6cebf8 aid 501)
+                                        // Dynamic upright lower body (frames 722..=741) with upper body thrash (frames 742..=767 @ 22.5 fps)
+                                        5 => (None, Some((742, 767, 22.5f32))),
                                         _ => (None, None),
                                     };
 

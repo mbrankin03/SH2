@@ -2053,10 +2053,11 @@ impl CombatArena {
                         // Monster slides onto James and stays anchored in front of him
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
                         let anchor_dist = match g.id {
-                            6 => 40.0,  // Flesh Lips hangs directly overhead / straddles James's neck
-                            8 => 80.0,  // Creeper bites at feet
+                            5 => 380.0, // Abstract Daddy standing grapple distance (in front of James, not clipping into him)
+                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
+                            8 => 80.0, // Creeper bites at feet
                             9 => 220.0, // Mary Final Boss hovers close-range with tentacles wrapped around James
-                            _ => 150.0,
+                            _ => 250.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;
                         g.yaw = self.player_yaw + std::f32::consts::PI;
@@ -2234,10 +2235,11 @@ impl CombatArena {
                     } else {
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
                         let anchor_dist = match g.id {
-                            6 => 40.0,  // Flesh Lips hangs directly overhead / straddles James's neck
-                            8 => 80.0,  // Creeper bites at feet
+                            5 => 380.0, // Abstract Daddy standing grapple distance (in front of James, not clipping into him)
+                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
+                            8 => 80.0, // Creeper bites at feet
                             9 => 220.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170)
-                            _ => 150.0,
+                            _ => 250.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;
                         g.yaw = self.player_yaw + std::f32::consts::PI;
@@ -2759,9 +2761,9 @@ mod tests {
         assert_eq!(arena.grappling_enemy_idx, Some(pap_idx));
         assert!(arena.enemies[pap_idx].is_grappling_player);
 
-        // 2. Creature must be anchored 150mm in front of James
+        // 2. Creature must be anchored 380mm in front of James (clear of mesh collision)
         let pap_z = arena.enemies[pap_idx].position.z;
-        assert!((pap_z - 150.0).abs() < 1e-2, "Pap Z was {}", pap_z);
+        assert!((pap_z - 380.0).abs() < 1e-2, "Pap Z was {}", pap_z);
 
         // 3. Struggle escape: simulate 30 button presses to drain meter
         arena.player.process_struggle_inputs(30, dt, false);
@@ -2774,7 +2776,7 @@ mod tests {
         assert!(!arena.enemies[pap_idx].is_grappling_player);
         assert!(!arena.enemies[pap_idx].is_attacking);
         // Recoil pushback: creature pushed backward by 250mm
-        assert!(arena.enemies[pap_idx].position.z > 150.0 + 200.0);
+        assert!(arena.enemies[pap_idx].position.z > 380.0 + 200.0);
         assert!(arena.enemies[pap_idx].flinch_timer > 0.0);
     }
 

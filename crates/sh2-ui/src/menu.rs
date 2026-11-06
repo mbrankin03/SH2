@@ -480,22 +480,21 @@ pub fn draw_title_screen(
                     let btn_x = center_xi - (scaled_w / 2);
 
                     if is_selected {
-                        // Render authentic GlowCursor behind the active item
+                        // Render authentic 1:1 PS2 smooth procedural GlowCursor behind the active item
                         let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
                         let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
                         let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
-                        let glow_x = center_xi - (glow_w / 2);
                         let btn_h = (rect.height as f32 * btn_scale) as i32;
-                        let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                        let glow_center_y = y + (btn_h / 2);
 
-                        atlas.blit_sprite(
-                            AuthenticButtonSprite::GlowCursor,
+                        ButtonSpriteSheet::draw_analytic_glow_cursor(
                             &mut rast.pixels,
                             rast.width,
                             rast.height,
-                            glow_x,
-                            glow_y,
-                            glow_scale,
+                            center_xi,
+                            glow_center_y,
+                            glow_w,
+                            glow_h,
                             [1.0, 1.0, 1.0, 0.95],
                         );
                     }
@@ -636,21 +635,22 @@ pub fn draw_scenario_selection(
             let x = center_xi - (w / 2);
 
             if is_selected {
+                // Render authentic 1:1 PS2 smooth procedural GlowCursor behind the active item
                 let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
-                let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
+                // Proportional horizontal expansion for long scenario titles
+                let glow_w = (glow_rect.width as f32 * glow_scale * 1.08) as i32;
                 let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
-                let glow_x = center_xi - (glow_w / 2);
                 let btn_h = (rect.height as f32 * scale) as i32;
-                let glow_y = y + (btn_h / 2) - (glow_h / 2);
+                let glow_center_y = y + (btn_h / 2);
 
-                atlas.blit_sprite(
-                    AuthenticButtonSprite::GlowCursor,
+                ButtonSpriteSheet::draw_analytic_glow_cursor(
                     &mut rast.pixels,
                     rast.width,
                     rast.height,
-                    glow_x,
-                    glow_y,
-                    glow_scale,
+                    center_xi,
+                    glow_center_y,
+                    glow_w,
+                    glow_h,
                     [1.0, 1.0, 1.0, 0.95],
                 );
             }
@@ -762,17 +762,16 @@ pub fn draw_difficulty_selection(
                     let glow_scale = 0.46f32;
                     let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
                     let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
-                    let glow_x = center_xi - (glow_w / 2);
                     let btn_h = (rect.height as f32 * scale) as i32;
-                    let glow_y = y + (btn_h / 2) - (glow_h / 2);
-                    atlas.blit_sprite(
-                        AuthenticButtonSprite::GlowCursor,
+                    let glow_center_y = y + (btn_h / 2);
+                    ButtonSpriteSheet::draw_analytic_glow_cursor(
                         &mut rast.pixels,
                         rast.width,
                         rast.height,
-                        glow_x,
-                        glow_y,
-                        glow_scale,
+                        center_xi,
+                        glow_center_y,
+                        glow_w,
+                        glow_h,
                         [1.0, 1.0, 1.0, 0.90],
                     );
                 }
@@ -814,17 +813,16 @@ pub fn draw_difficulty_selection(
                     let glow_scale = 0.46f32;
                     let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
                     let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
-                    let glow_x = center_xi - (glow_w / 2);
                     let btn_h = (rect.height as f32 * scale) as i32;
-                    let glow_y = y + (btn_h / 2) - (glow_h / 2);
-                    atlas.blit_sprite(
-                        AuthenticButtonSprite::GlowCursor,
+                    let glow_center_y = y + (btn_h / 2);
+                    ButtonSpriteSheet::draw_analytic_glow_cursor(
                         &mut rast.pixels,
                         rast.width,
                         rast.height,
-                        glow_x,
-                        glow_y,
-                        glow_scale,
+                        center_xi,
+                        glow_center_y,
+                        glow_w,
+                        glow_h,
                         [1.0, 1.0, 1.0, 0.90],
                     );
                 }

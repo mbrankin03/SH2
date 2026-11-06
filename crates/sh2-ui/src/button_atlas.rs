@@ -39,73 +39,73 @@ impl AuthenticButtonSprite {
     pub fn atlas_rect(&self) -> AtlasRect {
         match self {
             Self::Load => AtlasRect {
-                x: 273,
+                x: 257,
                 y: 399,
                 width: 263,
                 height: 98,
             },
             Self::Continue => AtlasRect {
-                x: 170,
+                x: 154,
                 y: 531,
                 width: 466,
                 height: 98,
             },
             Self::NewGame => AtlasRect {
-                x: 161,
+                x: 145,
                 y: 655,
                 width: 487,
                 height: 98,
             },
             Self::Options => AtlasRect {
-                x: 191,
+                x: 175,
                 y: 783,
                 width: 422,
                 height: 98,
             },
             Self::Movies => AtlasRect {
-                x: 268,
+                x: 252,
                 y: 909,
                 width: 265,
                 height: 98,
             },
             Self::Exit => AtlasRect {
-                x: 299,
+                x: 283,
                 y: 1685,
                 width: 226,
                 height: 97,
             },
             Self::ActionLevel => AtlasRect {
-                x: 887,
+                x: 871,
                 y: 401,
                 width: 556,
                 height: 92,
             },
             Self::RiddleLevel => AtlasRect {
-                x: 897,
+                x: 881,
                 y: 1045,
                 width: 540,
                 height: 91,
             },
             Self::Hard => AtlasRect {
-                x: 1060,
+                x: 1044,
                 y: 530,
                 width: 225,
                 height: 90,
             },
             Self::Normal => AtlasRect {
-                x: 1009,
+                x: 993,
                 y: 657,
                 width: 329,
                 height: 92,
             },
             Self::Easy => AtlasRect {
-                x: 1068,
+                x: 1052,
                 y: 789,
                 width: 211,
                 height: 92,
             },
             Self::Beginner => AtlasRect {
-                x: 977,
+                x: 961,
                 y: 917,
                 width: 375,
                 height: 91,
@@ -117,13 +117,13 @@ impl AuthenticButtonSprite {
                 height: 126,
             },
             Self::MainScenario => AtlasRect {
-                x: 86,
+                x: 70,
                 y: 1804,
                 width: 1400,
                 height: 99,
             },
             Self::SubScenario => AtlasRect {
-                x: 246,
+                x: 230,
                 y: 1932,
                 width: 1073,
                 height: 99,
@@ -311,6 +311,198 @@ impl ButtonSpriteSheet {
                     dst[dst_idx] = out_r.clamp(0.0, 255.0) as u8;
                     dst[dst_idx + 1] = out_g.clamp(0.0, 255.0) as u8;
                     dst[dst_idx + 2] = out_b.clamp(0.0, 255.0) as u8;
+                    dst[dst_idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+
+    /// Renders an authentic 1:1 PS2 procedural elliptical selection glow cursor directly onto `dst`.
+    ///
+    /// The PS2 original authored the selection highlight as a pure white horizontal ellipse with a
+    /// solid white core (`r <= 0.45`) and an exponential Gaussian-like soft falloff (`exp(-4.2 * t^1.4)`),
+    /// feathered across the outer 55% of its bounds.
+    ///
+    /// To eliminate 8-bit quantized contour banding and stepping on dark backdrops (such as Toluca
+    /// Lake water or options panels), this method evaluates the exact continuous distance field and
+    /// applies 8x8 Bayer spatial matrix dithering across the alpha composite channel.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_analytic_glow_cursor(
+        dst: &mut [u8],
+        dst_width: usize,
+        dst_height: usize,
+        center_x: i32,
+        center_y: i32,
+        glow_width: i32,
+        glow_height: i32,
+        tint: [f32; 4],
+    ) {
+        if glow_width <= 0 || glow_height <= 0 {
+            return;
+        }
+
+        let half_w = glow_width as f32 * 0.5;
+        let half_h = glow_height as f32 * 0.5;
+        let rx = half_w * 0.965;
+        let ry = half_h * 0.965;
+        if rx <= 0.001 || ry <= 0.001 {
+            return;
+        }
+
+        let min_x = (center_x - (glow_width / 2)).max(0);
+        let max_x = (center_x + (glow_width / 2)).min(dst_width as i32 - 1);
+        let min_y = (center_y - (glow_height / 2)).max(0);
+        let max_y = (center_y + (glow_height / 2)).min(dst_height as i32 - 1);
+
+        if min_x > max_x || min_y > max_y {
+            return;
+        }
+
+        // Standard 8x8 Bayer matrix for spatial alpha dithering
+        const BAYER_8X8: [[f32; 8]; 8] = [
+            [
+                0.0 / 64.0,
+                32.0 / 64.0,
+                8.0 / 64.0,
+                40.0 / 64.0,
+                2.0 / 64.0,
+                34.0 / 64.0,
+                10.0 / 64.0,
+                42.0 / 64.0,
+            ],
+            [
+                48.0 / 64.0,
+                16.0 / 64.0,
+                56.0 / 64.0,
+                24.0 / 64.0,
+                50.0 / 64.0,
+                18.0 / 64.0,
+                58.0 / 64.0,
+                26.0 / 64.0,
+            ],
+            [
+                12.0 / 64.0,
+                44.0 / 64.0,
+                4.0 / 64.0,
+                36.0 / 64.0,
+                14.0 / 64.0,
+                46.0 / 64.0,
+                6.0 / 64.0,
+                38.0 / 64.0,
+            ],
+            [
+                60.0 / 64.0,
+                28.0 / 64.0,
+                52.0 / 64.0,
+                20.0 / 64.0,
+                62.0 / 64.0,
+                30.0 / 64.0,
+                54.0 / 64.0,
+                22.0 / 64.0,
+            ],
+            [
+                3.0 / 64.0,
+                35.0 / 64.0,
+                11.0 / 64.0,
+                43.0 / 64.0,
+                1.0 / 64.0,
+                33.0 / 64.0,
+                9.0 / 64.0,
+                41.0 / 64.0,
+            ],
+            [
+                51.0 / 64.0,
+                19.0 / 64.0,
+                59.0 / 64.0,
+                27.0 / 64.0,
+                49.0 / 64.0,
+                17.0 / 64.0,
+                57.0 / 64.0,
+                25.0 / 64.0,
+            ],
+            [
+                15.0 / 64.0,
+                47.0 / 64.0,
+                7.0 / 64.0,
+                39.0 / 64.0,
+                13.0 / 64.0,
+                45.0 / 64.0,
+                5.0 / 64.0,
+                37.0 / 64.0,
+            ],
+            [
+                63.0 / 64.0,
+                31.0 / 64.0,
+                55.0 / 64.0,
+                23.0 / 64.0,
+                61.0 / 64.0,
+                29.0 / 64.0,
+                53.0 / 64.0,
+                21.0 / 64.0,
+            ],
+        ];
+
+        let s_r = 255.0 * tint[0];
+        let s_g = 255.0 * tint[1];
+        let s_b = 255.0 * tint[2];
+        let base_alpha = tint[3];
+
+        for out_y in min_y..=max_y {
+            let dy = out_y as f32 - center_y as f32;
+            let ny = dy / ry;
+            let ny_sq = ny * ny;
+            if ny_sq >= 1.15 {
+                continue;
+            }
+
+            let bayer_row = &BAYER_8X8[(out_y as usize) & 7];
+            let row_offset = out_y as usize * dst_width;
+
+            for out_x in min_x..=max_x {
+                let dx = out_x as f32 - center_x as f32;
+                let nx = dx / rx;
+                let r_sq = nx * nx + ny_sq;
+                if r_sq >= 1.15 {
+                    continue;
+                }
+
+                let r = r_sq.sqrt();
+                let analytic_alpha = if r <= 0.45 {
+                    1.0f32
+                } else if r >= 1.05 {
+                    0.0f32
+                } else {
+                    let t = (r - 0.45) / 0.55;
+                    (-4.2 * t.powf(1.4)).exp()
+                };
+
+                if analytic_alpha <= 0.002 {
+                    continue;
+                }
+
+                // Spatial Bayer dither offset in range [-0.5 / 255, +0.5 / 255]
+                let dither = (bayer_row[(out_x as usize) & 7] - 0.5) / 255.0;
+                let s_a = ((analytic_alpha * base_alpha) + dither).clamp(0.0, 1.0);
+                if s_a <= 0.004 {
+                    continue;
+                }
+
+                let dst_idx = (row_offset + out_x as usize) * 4;
+                let d_r = dst[dst_idx] as f32;
+                let d_g = dst[dst_idx + 1] as f32;
+                let d_b = dst[dst_idx + 2] as f32;
+                let d_a = dst[dst_idx + 3] as f32 / 255.0;
+
+                // Alpha composite (over operator)
+                let out_a = s_a + d_a * (1.0 - s_a);
+                if out_a > 0.0 {
+                    let blended_r = (s_r * s_a + d_r * d_a * (1.0 - s_a)) / out_a;
+                    let blended_g = (s_g * s_a + d_g * d_a * (1.0 - s_a)) / out_a;
+                    let blended_b = (s_b * s_a + d_b * d_a * (1.0 - s_a)) / out_a;
+
+                    dst[dst_idx] = blended_r.clamp(0.0, 255.0) as u8;
+                    dst[dst_idx + 1] = blended_g.clamp(0.0, 255.0) as u8;
+                    dst[dst_idx + 2] = blended_b.clamp(0.0, 255.0) as u8;
                     dst[dst_idx + 3] = (out_a * 255.0).clamp(0.0, 255.0) as u8;
                 }
             }

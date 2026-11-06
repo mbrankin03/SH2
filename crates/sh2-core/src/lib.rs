@@ -4,6 +4,7 @@ pub mod animation;
 pub mod camera;
 pub mod clock;
 pub mod collision;
+pub mod combat;
 pub mod config;
 pub mod input;
 pub mod locomotion;
@@ -22,6 +23,12 @@ pub use animation::{
 };
 pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
 pub use clock::EngineClock;
+pub use combat::{
+    AttackSpec, CombatArena, CombatController, CombatHitbox, CombatMode, CombatTargetEnemy,
+    WeaponGrip, ATK_HANDGUN, ATK_HUNTING_RIFLE, ATK_KICKS, ATK_PIPE_COMBO, ATK_PIPE_LUNGE,
+    ATK_PIPE_OVERHEAD, ATK_PIPE_SWING, ATK_PLANK_COMBO, ATK_PLANK_HEAVY, ATK_PLANK_LIGHT,
+    ATK_SHOTGUN, ATK_STOMPS,
+};
 pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, BulletMultiplier, ButtonGlyphStyle, ControlOptions,
     FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution, RiddleDifficulty,

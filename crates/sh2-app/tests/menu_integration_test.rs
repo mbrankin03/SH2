@@ -241,8 +241,19 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("LOADING SCREEN PREVIEW", SH2-44),
-    // and up once more to "FMV CUTSCENE PLAYER" (SH2-10)
+    // Navigate up to wrap to the last entry ("COMBAT & WEAPON TESTING ARENA", SH2-13),
+    // and up once more to "LOADING SCREEN PREVIEW" (SH2-44), then "FMV CUTSCENE PLAYER" (SH2-10)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::CombatArena
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Combat & Weapon Testing Arena"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(

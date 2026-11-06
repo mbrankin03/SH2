@@ -312,8 +312,9 @@ fn find_map_file_for_room(
         }
         TestRoomKind::ModelAndTextureViewer
         | TestRoomKind::FmvCutsceneViewer
-        | TestRoomKind::LoadingScreenTest => {
-            tracing::info!("Generated 3D Model & Texture Viewer Pedestal Stage (SH2-36 / SH2-10).");
+        | TestRoomKind::LoadingScreenTest
+        | TestRoomKind::CombatArena => {
+            tracing::info!("Generated Combat Testing Arena Stage (SH2-13).");
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.06, 0.07, 0.08, 1.0],
                 fog_near: 5000.0,
@@ -3772,6 +3773,9 @@ fn main() {
                 }
                 "fmv" | "fmv-viewer" | "cutscenes" | "movies" => {
                     Some(TestRoomKind::FmvCutsceneViewer)
+                }
+                "combat" | "arena" | "battle" => {
+                    Some(TestRoomKind::CombatArena)
                 }
                 _ => {
                     tracing::warn!(

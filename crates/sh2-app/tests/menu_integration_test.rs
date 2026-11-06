@@ -298,7 +298,9 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert!(!in_game_controller.pause_menu.is_open);
 
     // ESC / Pause opens the pause menu with location and play time
-    in_game_controller.pause_menu.open(false, "Outdoor Observation Deck", 450.0);
+    in_game_controller
+        .pause_menu
+        .open(false, "Outdoor Observation Deck", 450.0);
     assert!(in_game_controller.pause_menu.is_open);
     assert_eq!(in_game_controller.pause_menu.selected_index, 0); // CONTINUE
 

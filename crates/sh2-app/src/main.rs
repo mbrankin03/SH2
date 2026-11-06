@@ -2274,8 +2274,7 @@ impl ApplicationHandler for SilentHillApp {
                     }
 
                     match key_code {
-                        winit::keyboard::KeyCode::Escape
-                        | winit::keyboard::KeyCode::Backspace
+                        winit::keyboard::KeyCode::Escape | winit::keyboard::KeyCode::Backspace
                             if pressed =>
                         {
                             let stage_name = state.active_test_room.label();

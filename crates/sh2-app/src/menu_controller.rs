@@ -144,7 +144,8 @@ impl AppMenuController {
     /// Cycle tabs in Options Menu using shoulder triggers / Q & E keys.
     pub fn switch_options_tab(&mut self, forward: bool) -> MenuSoundCue {
         if self.title_sm.phase == TitlePhase::OptionsMenu
-            || (self.pause_menu.is_open && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu)
+            || (self.pause_menu.is_open
+                && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu)
         {
             self.options_menu.switch_tab(forward);
             MenuSoundCue::CursorMove
@@ -408,7 +409,10 @@ mod tests {
         let (cue, action) = controller.handle_pause_nav(MenuNavAction::Confirm);
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(action, PauseAction::OpenOptions);
-        assert_eq!(controller.pause_menu.sub_phase, PauseSubPhase::InOptionsMenu);
+        assert_eq!(
+            controller.pause_menu.sub_phase,
+            PauseSubPhase::InOptionsMenu
+        );
 
         // In options, test tab switching
         let tab_cue = controller.switch_options_tab(true);

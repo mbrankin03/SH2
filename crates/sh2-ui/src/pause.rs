@@ -159,9 +159,7 @@ impl PauseMenu {
                             (MenuSoundCue::Cancel, PauseAction::None)
                         }
                     }
-                    PauseMenuOption::Load => {
-                        (MenuSoundCue::Confirm, PauseAction::Load)
-                    }
+                    PauseMenuOption::Load => (MenuSoundCue::Confirm, PauseAction::Load),
                     PauseMenuOption::Options => {
                         self.sub_phase = PauseSubPhase::InOptionsMenu;
                         (MenuSoundCue::Confirm, PauseAction::OpenOptions)
@@ -179,7 +177,10 @@ impl PauseMenu {
                 }
             },
             PauseSubPhase::QuitConfirm => match action {
-                MenuNavAction::Left | MenuNavAction::Right | MenuNavAction::Up | MenuNavAction::Down => {
+                MenuNavAction::Left
+                | MenuNavAction::Right
+                | MenuNavAction::Up
+                | MenuNavAction::Down => {
                     self.quit_confirm_index ^= 1;
                     (MenuSoundCue::CursorMove, PauseAction::None)
                 }
@@ -312,14 +313,7 @@ pub fn draw_pause_screen(
                     opt.label().to_string()
                 };
 
-                font.draw_line_centered(
-                    rasterizer,
-                    &label,
-                    (center_x, y),
-                    text_scale,
-                    color,
-                    true,
-                );
+                font.draw_line_centered(rasterizer, &label, (center_x, y), text_scale, color, true);
             }
 
             // Footer prompt

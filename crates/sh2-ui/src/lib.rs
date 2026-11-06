@@ -17,9 +17,7 @@ pub use menu::{
     MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,
 };
 pub use options::{draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsTab};
-pub use pause::{
-    draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase,
-};
+pub use pause::{draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActivePanel {

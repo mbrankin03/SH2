@@ -2122,33 +2122,39 @@ impl ApplicationHandler for SilentHillApp {
                             state.key_attack_held = pressed;
                         }
                         winit::keyboard::KeyCode::Digit1 if pressed => {
-                            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::WoodenPlank;
                             tracing::info!("[Combat] Equipped Wooden Plank");
                         }
                         winit::keyboard::KeyCode::Digit2 if pressed => {
-                            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::SteelPipe;
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::SteelPipe;
                             tracing::info!("[Combat] Equipped Steel Pipe");
                         }
                         winit::keyboard::KeyCode::Digit3 if pressed => {
-                            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::Handgun;
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::Handgun;
                             state.combat_arena.player.loaded_rounds[0] = 10;
                             state.combat_arena.player.spare_rounds[0] = 50;
                             tracing::info!("[Combat] Equipped Handgun (10/50)");
                         }
                         winit::keyboard::KeyCode::Digit4 if pressed => {
-                            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::Shotgun;
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::Shotgun;
                             state.combat_arena.player.loaded_rounds[1] = 6;
                             state.combat_arena.player.spare_rounds[1] = 30;
                             tracing::info!("[Combat] Equipped Shotgun (6/30)");
                         }
                         winit::keyboard::KeyCode::Digit5 if pressed => {
-                            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::HuntingRifle;
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::HuntingRifle;
                             state.combat_arena.player.loaded_rounds[2] = 4;
                             state.combat_arena.player.spare_rounds[2] = 20;
                             tracing::info!("[Combat] Equipped Hunting Rifle (4/20)");
                         }
                         winit::keyboard::KeyCode::Digit6 if pressed => {
-                            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::GreatKnife;
+                            state.combat_arena.player.weapon =
+                                sh2_core::combat::WeaponGrip::GreatKnife;
                             tracing::info!("[Combat] Equipped Great Knife");
                         }
                         _ => {}
@@ -2477,7 +2483,8 @@ impl ApplicationHandler for SilentHillApp {
                     state.active_test_room = new_room;
                     if new_room == TestRoomKind::CombatArena {
                         state.combat_arena = sh2_core::combat::CombatArena::new();
-                        state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
+                        state.combat_arena.player.weapon =
+                            sh2_core::combat::WeaponGrip::WoodenPlank;
                     }
                     if new_room == TestRoomKind::ModelAndTextureViewer
                         && state.viewer_asset.is_none()
@@ -2904,7 +2911,8 @@ impl ApplicationHandler for SilentHillApp {
                         state.sim_core.update(dt);
 
                         if state.active_test_room == TestRoomKind::CombatArena {
-                            state.combat_arena.player_position = state.sim_core.scenario.player_position;
+                            state.combat_arena.player_position =
+                                state.sim_core.scenario.player_position;
                             state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
                             let dt_sec = dt.as_secs_f32().min(0.05);
                             let atk_pressed = state.key_attack_pressed;
@@ -2918,7 +2926,10 @@ impl ApplicationHandler for SilentHillApp {
 
                             // Play any combat sound effects requested by the combat state machine
                             if let Some(sfx_id) = state.combat_arena.player.pending_sfx.take() {
-                                tracing::info!("[Combat SFX] Triggered sound effect ID: {}", sfx_id);
+                                tracing::info!(
+                                    "[Combat SFX] Triggered sound effect ID: {}",
+                                    sfx_id
+                                );
                             }
                         }
                     }
@@ -3064,10 +3075,19 @@ impl ApplicationHandler for SilentHillApp {
                                     let frame = &ea.anm.frames[frame_idx];
 
                                     let mut pose = Vec::with_capacity(ea.model.bone_count);
-                                    evaluate_pose_into(&ea.model.parents, &ea.bind_locals, frame, &mut pose);
+                                    evaluate_pose_into(
+                                        &ea.model.parents,
+                                        &ea.bind_locals,
+                                        frame,
+                                        &mut pose,
+                                    );
 
                                     let mut skin = Vec::with_capacity(ea.model.bone_count);
-                                    compute_skin_matrices_with_inv_into(&pose, &ea.model.inv_initial_matrices, &mut skin);
+                                    compute_skin_matrices_with_inv_into(
+                                        &pose,
+                                        &ea.model.inv_initial_matrices,
+                                        &mut skin,
+                                    );
 
                                     let (es, ec_yaw) = enemy.yaw.sin_cos();
                                     // When downed on floor, lay flat or offset Y
@@ -3761,7 +3781,10 @@ impl ApplicationHandler for SilentHillApp {
                                 let status_str = if enemy.is_dead {
                                     "DEAD (Dispatched)".to_string()
                                 } else if enemy.is_downed {
-                                    format!("DOWNED (Stomp to Finish!) [Recover in {:.1}s]", enemy.down_timer.max(0.0))
+                                    format!(
+                                        "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
+                                        enemy.down_timer.max(0.0)
+                                    )
                                 } else if enemy.flinch_timer > 0.0 {
                                     "STAGGERED / FLINCHING".to_string()
                                 } else {
@@ -3779,7 +3802,11 @@ impl ApplicationHandler for SilentHillApp {
                                 state.menu_rasterizer.draw_text(
                                     &format!(
                                         "ENEMY #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
-                                        enemy.id, enemy.name, enemy.health, enemy.max_health, status_str
+                                        enemy.id,
+                                        enemy.name,
+                                        enemy.health,
+                                        enemy.max_health,
+                                        status_str
                                     ),
                                     20,
                                     ey_offset,
@@ -4043,9 +4070,7 @@ fn main() {
                 "fmv" | "fmv-viewer" | "cutscenes" | "movies" => {
                     Some(TestRoomKind::FmvCutsceneViewer)
                 }
-                "combat" | "arena" | "battle" => {
-                    Some(TestRoomKind::CombatArena)
-                }
+                "combat" | "arena" | "battle" => Some(TestRoomKind::CombatArena),
                 _ => {
                     tracing::warn!(
                         "Unknown test room: '{}', defaulting to Observation Deck",

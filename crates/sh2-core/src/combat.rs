@@ -59,9 +59,9 @@ impl WeaponGrip {
     /// Return the corresponding authentic ammo item ID if firearm.
     pub const fn ammo_item_id(&self) -> Option<u32> {
         match self {
-            Self::Handgun => Some(5),       // Handgun bullets
-            Self::Shotgun => Some(7),       // Shotgun shells
-            Self::HuntingRifle => Some(9),  // Rifle shells
+            Self::Handgun => Some(5),        // Handgun bullets
+            Self::Shotgun => Some(7),        // Shotgun shells
+            Self::HuntingRifle => Some(9),   // Rifle shells
             Self::MariaRevolver => Some(11), // Revolver bullets
             _ => None,
         }
@@ -106,7 +106,11 @@ impl WeaponGrip {
     /// 4: chainsaw
     pub const fn kick_type(&self) -> usize {
         match self {
-            Self::None | Self::Handgun | Self::HyperSpray | Self::MariaRevolver | Self::MariaChineseCleaver => 0,
+            Self::None
+            | Self::Handgun
+            | Self::HyperSpray
+            | Self::MariaRevolver
+            | Self::MariaChineseCleaver => 0,
             Self::Shotgun | Self::HuntingRifle => 1,
             Self::WoodenPlank | Self::SteelPipe => 2,
             Self::GreatKnife => 3,
@@ -131,20 +135,120 @@ pub struct AttackSpec {
 
 /// Authentic PS2 / PC Kick attack specs (IDs 31..35).
 pub const ATK_KICKS: [AttackSpec; 5] = [
-    AttackSpec { id: 31, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 7, last_hit_frame: 10, sfx_id: 11040 },
-    AttackSpec { id: 32, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 7, last_hit_frame: 10, sfx_id: 11040 },
-    AttackSpec { id: 33, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 7, last_hit_frame: 10, sfx_id: 11040 },
-    AttackSpec { id: 34, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 9, last_hit_frame: 9, sfx_id: 11040 },
-    AttackSpec { id: 35, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 7, last_hit_frame: 11, sfx_id: 11040 },
+    AttackSpec {
+        id: 31,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 7,
+        last_hit_frame: 10,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 32,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 7,
+        last_hit_frame: 10,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 33,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 7,
+        last_hit_frame: 10,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 34,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 9,
+        last_hit_frame: 9,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 35,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 7,
+        last_hit_frame: 11,
+        sfx_id: 11040,
+    },
 ];
 
 /// Authentic PS2 / PC Stomp attack specs (IDs 36..40).
 pub const ATK_STOMPS: [AttackSpec; 5] = [
-    AttackSpec { id: 36, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 3, last_hit_frame: 9, sfx_id: 11040 },
-    AttackSpec { id: 37, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 3, last_hit_frame: 9, sfx_id: 11040 },
-    AttackSpec { id: 38, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 3, last_hit_frame: 9, sfx_id: 11040 },
-    AttackSpec { id: 39, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 3, last_hit_frame: 9, sfx_id: 11040 },
-    AttackSpec { id: 40, kind: 1, ap: 9999.9, sp: 0.1, min_range: 0.0, max_range: 350.0, first_hit_frame: 3, last_hit_frame: 9, sfx_id: 11040 },
+    AttackSpec {
+        id: 36,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 3,
+        last_hit_frame: 9,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 37,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 3,
+        last_hit_frame: 9,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 38,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 3,
+        last_hit_frame: 9,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 39,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 3,
+        last_hit_frame: 9,
+        sfx_id: 11040,
+    },
+    AttackSpec {
+        id: 40,
+        kind: 1,
+        ap: 9999.9,
+        sp: 0.1,
+        min_range: 0.0,
+        max_range: 350.0,
+        first_hit_frame: 3,
+        last_hit_frame: 9,
+        sfx_id: 11040,
+    },
 ];
 
 /// Authentic Plank attacks (`sh2_attack_list`):
@@ -152,13 +256,37 @@ pub const ATK_STOMPS: [AttackSpec; 5] = [
 /// 13: Combo swing (ap 80, sp 80)
 /// 14: Downward heavy swing (ap 140, sp 80)
 pub const ATK_PLANK_LIGHT: AttackSpec = AttackSpec {
-    id: 12, kind: 2, ap: 100.0, sp: 80.0, min_range: -150.0, max_range: 350.0, first_hit_frame: 12, last_hit_frame: 15, sfx_id: 11032,
+    id: 12,
+    kind: 2,
+    ap: 100.0,
+    sp: 80.0,
+    min_range: -150.0,
+    max_range: 350.0,
+    first_hit_frame: 12,
+    last_hit_frame: 15,
+    sfx_id: 11032,
 };
 pub const ATK_PLANK_COMBO: AttackSpec = AttackSpec {
-    id: 13, kind: 2, ap: 80.0, sp: 80.0, min_range: -150.0, max_range: 350.0, first_hit_frame: 8, last_hit_frame: 11, sfx_id: 11032,
+    id: 13,
+    kind: 2,
+    ap: 80.0,
+    sp: 80.0,
+    min_range: -150.0,
+    max_range: 350.0,
+    first_hit_frame: 8,
+    last_hit_frame: 11,
+    sfx_id: 11032,
 };
 pub const ATK_PLANK_HEAVY: AttackSpec = AttackSpec {
-    id: 14, kind: 2, ap: 140.0, sp: 80.0, min_range: -150.0, max_range: 350.0, first_hit_frame: 8, last_hit_frame: 10, sfx_id: 11032,
+    id: 14,
+    kind: 2,
+    ap: 140.0,
+    sp: 80.0,
+    min_range: -150.0,
+    max_range: 350.0,
+    first_hit_frame: 8,
+    last_hit_frame: 10,
+    sfx_id: 11032,
 };
 
 /// Steel pipe attacks (`sh2_attack_list`):
@@ -167,47 +295,103 @@ pub const ATK_PLANK_HEAVY: AttackSpec = AttackSpec {
 /// 17: Overhead heavy swing (ap 160, sp 100)
 /// 18: Lunge forward thrust (ap 130, sp 50)
 pub const ATK_PIPE_SWING: AttackSpec = AttackSpec {
-    id: 15, kind: 2, ap: 120.0, sp: 100.0, min_range: -150.0, max_range: 540.0, first_hit_frame: 10, last_hit_frame: 12, sfx_id: 11040,
+    id: 15,
+    kind: 2,
+    ap: 120.0,
+    sp: 100.0,
+    min_range: -150.0,
+    max_range: 540.0,
+    first_hit_frame: 10,
+    last_hit_frame: 12,
+    sfx_id: 11040,
 };
 pub const ATK_PIPE_COMBO: AttackSpec = AttackSpec {
-    id: 16, kind: 2, ap: 96.0, sp: 100.0, min_range: -150.0, max_range: 540.0, first_hit_frame: 4, last_hit_frame: 6, sfx_id: 11040,
+    id: 16,
+    kind: 2,
+    ap: 96.0,
+    sp: 100.0,
+    min_range: -150.0,
+    max_range: 540.0,
+    first_hit_frame: 4,
+    last_hit_frame: 6,
+    sfx_id: 11040,
 };
 pub const ATK_PIPE_OVERHEAD: AttackSpec = AttackSpec {
-    id: 17, kind: 2, ap: 160.0, sp: 100.0, min_range: -150.0, max_range: 540.0, first_hit_frame: 15, last_hit_frame: 17, sfx_id: 11040,
+    id: 17,
+    kind: 2,
+    ap: 160.0,
+    sp: 100.0,
+    min_range: -150.0,
+    max_range: 540.0,
+    first_hit_frame: 15,
+    last_hit_frame: 17,
+    sfx_id: 11040,
 };
 pub const ATK_PIPE_LUNGE: AttackSpec = AttackSpec {
-    id: 18, kind: 2, ap: 130.0, sp: 50.0, min_range: -150.0, max_range: 540.0, first_hit_frame: 8, last_hit_frame: 10, sfx_id: 11040,
+    id: 18,
+    kind: 2,
+    ap: 130.0,
+    sp: 50.0,
+    min_range: -150.0,
+    max_range: 540.0,
+    first_hit_frame: 8,
+    last_hit_frame: 10,
+    sfx_id: 11040,
 };
 
 /// Firearm attack specs (`0x543600`, `0x543810`):
 pub const ATK_HANDGUN: AttackSpec = AttackSpec {
-    id: 2, kind: 0, ap: 120.0, sp: 60.0, min_range: -100.0, max_range: 7500.0, first_hit_frame: 0, last_hit_frame: 10, sfx_id: 11048,
+    id: 2,
+    kind: 0,
+    ap: 120.0,
+    sp: 60.0,
+    min_range: -100.0,
+    max_range: 7500.0,
+    first_hit_frame: 0,
+    last_hit_frame: 10,
+    sfx_id: 11048,
 };
 pub const ATK_SHOTGUN: AttackSpec = AttackSpec {
-    id: 4, kind: 0, ap: 100.0, sp: 120.0, min_range: -100.0, max_range: 5000.0, first_hit_frame: 0, last_hit_frame: 10, sfx_id: 11051,
+    id: 4,
+    kind: 0,
+    ap: 100.0,
+    sp: 120.0,
+    min_range: -100.0,
+    max_range: 5000.0,
+    first_hit_frame: 0,
+    last_hit_frame: 10,
+    sfx_id: 11051,
 };
 pub const ATK_HUNTING_RIFLE: AttackSpec = AttackSpec {
-    id: 6, kind: 0, ap: 500.0, sp: 150.0, min_range: -350.0, max_range: 9000.0, first_hit_frame: 0, last_hit_frame: 10, sfx_id: 11048,
+    id: 6,
+    kind: 0,
+    ap: 500.0,
+    sp: 150.0,
+    min_range: -350.0,
+    max_range: 9000.0,
+    first_hit_frame: 0,
+    last_hit_frame: 10,
+    sfx_id: 11048,
 };
 
 /// Current combat posture / action mode of the player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CombatMode {
     #[default]
-    Free,       // Normal locomotion / unready
-    Raise,      // Raising weapon to aim posture
-    Ready,      // Aiming / ready to attack
-    Swing,      // Melee attack in progress
-    Rebound,    // Melee attack hit rebound recoil
-    Recover,    // Melee attack follow-through recovery
-    Lower,      // Lowering weapon back to free
-    Shot,       // Gun discharging
-    Reload,     // Gun reloading animation
-    Stomp,      // Stomping / kicking downed enemy
-    Hurt,       // Taking damage / flinching
-    Held,       // Grabbed by enemy (struggling)
-    Dying,      // Dying scream / collapse
-    Dead,       // Fully dead
+    Free, // Normal locomotion / unready
+    Raise,   // Raising weapon to aim posture
+    Ready,   // Aiming / ready to attack
+    Swing,   // Melee attack in progress
+    Rebound, // Melee attack hit rebound recoil
+    Recover, // Melee attack follow-through recovery
+    Lower,   // Lowering weapon back to free
+    Shot,    // Gun discharging
+    Reload,  // Gun reloading animation
+    Stomp,   // Stomping / kicking downed enemy
+    Hurt,    // Taking damage / flinching
+    Held,    // Grabbed by enemy (struggling)
+    Dying,   // Dying scream / collapse
+    Dead,    // Fully dead
 }
 
 /// Attack button tap-versus-hold timing state (Enhanced Edition `HoldToStomp` and `SwapLightHeavyAttack`).
@@ -243,7 +427,7 @@ pub struct CombatController {
     /// Rounds currently loaded in firearms.
     pub loaded_rounds: [u32; 4], // [Handgun, Shotgun, Rifle, Revolver]
     /// Spare inventory rounds.
-    pub spare_rounds: [u32; 4],  // [Handgun, Shotgun, Rifle, Revolver]
+    pub spare_rounds: [u32; 4], // [Handgun, Shotgun, Rifle, Revolver]
     /// Frame at which rounds transfer during reload cycle.
     pub reload_transfer_frame: f32,
     /// Whether rounds have transferred during this reload.
@@ -286,13 +470,25 @@ impl CombatController {
     /// `is_maria`: whether active player is Maria.
     pub fn new(is_easy_diff: bool, is_maria: bool) -> Self {
         let max_hp = if is_maria {
-            if is_easy_diff { 160.0 } else { 80.0 }
+            if is_easy_diff {
+                160.0
+            } else {
+                80.0
+            }
         } else {
-            if is_easy_diff { 200.0 } else { 100.0 }
+            if is_easy_diff {
+                200.0
+            } else {
+                100.0
+            }
         };
 
         Self {
-            weapon: if is_maria { WeaponGrip::MariaChineseCleaver } else { WeaponGrip::WoodenPlank },
+            weapon: if is_maria {
+                WeaponGrip::MariaChineseCleaver
+            } else {
+                WeaponGrip::WoodenPlank
+            },
             shoulder_side: 0,
             mode: CombatMode::Free,
             anim_frame: 0.0,
@@ -304,7 +500,7 @@ impl CombatController {
             charge_timer: -1.0,
             charge_is_stomp: false,
             combo_requested: false,
-            loaded_rounds: [10, 6, 4, 10], // Full clips for each gun
+            loaded_rounds: [10, 6, 4, 10],  // Full clips for each gun
             spare_rounds: [30, 18, 12, 30], // Starting spare reserves
             reload_transfer_frame: 21.0,
             reload_transferred: false,
@@ -374,7 +570,11 @@ impl CombatController {
         if self.mode == CombatMode::Free || self.mode == CombatMode::Ready {
             let was_ready = self.mode == CombatMode::Ready;
             self.weapon = weapon;
-            self.mode = if was_ready { CombatMode::Ready } else { CombatMode::Free };
+            self.mode = if was_ready {
+                CombatMode::Ready
+            } else {
+                CombatMode::Free
+            };
             self.anim_frame = 0.0;
             self.active_attack = None;
             self.anim_ended = false;
@@ -419,7 +619,11 @@ impl CombatController {
 
     /// Player receives attack damage from enemy.
     pub fn apply_damage(&mut self, ap: f32, is_fog_spray: bool) {
-        if self.god_mode || self.invulnerability_timer > 0.0 || self.mode == CombatMode::Dead || self.mode == CombatMode::Dying {
+        if self.god_mode
+            || self.invulnerability_timer > 0.0
+            || self.mode == CombatMode::Dead
+            || self.mode == CombatMode::Dying
+        {
             return;
         }
 
@@ -499,7 +703,10 @@ impl CombatController {
         }
 
         // Advance animation frame if in active combat clip
-        if self.mode != CombatMode::Free && self.mode != CombatMode::Ready && self.mode != CombatMode::Held {
+        if self.mode != CombatMode::Free
+            && self.mode != CombatMode::Ready
+            && self.mode != CombatMode::Held
+        {
             self.anim_frame += dt * 30.0 * (self.anim_speed / 2048.0);
             if self.anim_frame >= self.clip_length {
                 self.anim_frame = self.clip_length;
@@ -621,13 +828,21 @@ impl CombatController {
                 }
                 if self.anim_ended {
                     self.shoulder_side ^= 1;
-                    self.mode = if ready_held { CombatMode::Ready } else { CombatMode::Free };
+                    self.mode = if ready_held {
+                        CombatMode::Ready
+                    } else {
+                        CombatMode::Free
+                    };
                 }
             }
             CombatMode::Shot => {
                 if self.anim_ended {
                     self.active_attack = None;
-                    self.mode = if ready_held { CombatMode::Ready } else { CombatMode::Free };
+                    self.mode = if ready_held {
+                        CombatMode::Ready
+                    } else {
+                        CombatMode::Free
+                    };
                 }
             }
             CombatMode::Reload => {
@@ -637,13 +852,21 @@ impl CombatController {
                     self.pending_sfx = Some(11029); // Reload sound
                 }
                 if self.anim_ended {
-                    self.mode = if ready_held { CombatMode::Ready } else { CombatMode::Free };
+                    self.mode = if ready_held {
+                        CombatMode::Ready
+                    } else {
+                        CombatMode::Free
+                    };
                 }
             }
             CombatMode::Stomp => {
                 if self.anim_ended {
                     self.active_attack = None;
-                    self.mode = if ready_held { CombatMode::Ready } else { CombatMode::Free };
+                    self.mode = if ready_held {
+                        CombatMode::Ready
+                    } else {
+                        CombatMode::Free
+                    };
                 }
             }
             CombatMode::Lower | CombatMode::Rebound | CombatMode::Hurt => {
@@ -842,7 +1065,13 @@ impl CombatHitbox {
 
     /// Test if a ray (e.g. gunshot) intersects this cylinder between min_dist and max_dist.
     /// Returns distance `t` along ray direction if hit occurs.
-    pub fn intersects_ray(&self, origin: Vec3, dir: Vec3, min_dist: f32, max_dist: f32) -> Option<f32> {
+    pub fn intersects_ray(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        min_dist: f32,
+        max_dist: f32,
+    ) -> Option<f32> {
         let hx = dir.x;
         let hz = dir.z;
         let h2 = hx * hx + hz * hz;
@@ -1046,12 +1275,16 @@ impl CombatArena {
     /// Execute simulation tick (60 Hz).
     pub fn tick(&mut self, ready_held: bool, action_pressed: bool, action_held: bool, dt: f32) {
         let has_downed = self.has_downed_enemy_at_feet();
-        self.player.handle_combat_inputs(ready_held, action_pressed, action_held, has_downed, dt);
+        self.player
+            .handle_combat_inputs(ready_held, action_pressed, action_held, has_downed, dt);
 
         // Check if an attack was triggered this tick and perform hit detection
         if let Some(atk) = self.player.active_attack {
             let hit_frame = self.player.anim_frame as u8;
-            if !self.attack_hit_registered && hit_frame >= atk.first_hit_frame && hit_frame <= atk.last_hit_frame {
+            if !self.attack_hit_registered
+                && hit_frame >= atk.first_hit_frame
+                && hit_frame <= atk.last_hit_frame
+            {
                 self.attack_hit_registered = true;
                 self.resolve_attack_hits(&atk);
             }
@@ -1085,7 +1318,11 @@ impl CombatArena {
                         if enemy.is_dead {
                             continue;
                         }
-                        if let Some(t) = enemy.hitbox().intersects_ray(muzzle, pellet_dir, 0.0, atk.max_range) {
+                        if let Some(t) =
+                            enemy
+                                .hitbox()
+                                .intersects_ray(muzzle, pellet_dir, 0.0, atk.max_range)
+                        {
                             if closest_enemy.is_none() || t < closest_enemy.unwrap().1 {
                                 closest_enemy = Some((idx, t));
                             }
@@ -1103,7 +1340,11 @@ impl CombatArena {
                     if enemy.is_dead {
                         continue;
                     }
-                    if let Some(t) = enemy.hitbox().intersects_ray(muzzle, forward, 0.0, atk.max_range) {
+                    if let Some(t) =
+                        enemy
+                            .hitbox()
+                            .intersects_ray(muzzle, forward, 0.0, atk.max_range)
+                    {
                         if closest_enemy.is_none() || t < closest_enemy.unwrap().1 {
                             closest_enemy = Some((idx, t));
                         }
@@ -1121,7 +1362,8 @@ impl CombatArena {
                 if !enemy.is_downed || enemy.is_dead {
                     continue;
                 }
-                let dist = (Vec3::new(enemy.position.x, 0.0, enemy.position.z) - feet_check).length();
+                let dist =
+                    (Vec3::new(enemy.position.x, 0.0, enemy.position.z) - feet_check).length();
                 if dist <= (enemy.hitbox_radius * 1.5 + atk.max_range) {
                     enemy.receive_hit(atk);
                 }

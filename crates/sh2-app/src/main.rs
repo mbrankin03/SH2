@@ -3089,45 +3089,14 @@ impl ApplicationHandler for SilentHillApp {
                                 sh2_core::combat::CombatMode::Held => {
                                     state.sim_core.animation_locked = true;
                                     // Select authentic struggle animation based on the grabbing monster from PS2/PC lower_hold tables:
-                                    // - Creeper (#8): leg shake / struggle (frames 588..=611, table 0x6ceaf0, aid 127)
-                                    // - Lying Figure (#1): torso push struggle (frames 612..=629, aid 128)
-                                    // - Abstract Daddy (#5): bed grapple struggle (frames 612..=629, aid 128)
-                                    // - Flesh Lips (#6): overhead ceiling choke struggle (frames 457..=468, aid 121)
-                                    // - Pyramid Head (#4): one-handed choke lift (frames 457..=468, aid 121)
-                                    // - Mary Boss (#9): tentacle choke hold (frames 632..=649 @ 15.0fps, aid 129)
-                                    let struggle_clip = if let Some(g_idx) =
-                                        state.combat_arena.grappling_enemy_idx
-                                    {
-                                        let enemy_id = state
-                                            .combat_arena
-                                            .enemies
-                                            .get(g_idx)
-                                            .map(|e| e.id)
-                                            .unwrap_or(0);
-                                        match enemy_id {
-                                            8 => sh2_core::animation::JamesBasicClips::STRUGGLE_LEG,
-                                            1 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
-                                            }
-                                            5 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_DADDY
-                                            }
-                                            6 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_FLESH_LIPS
-                                            }
-                                            4 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_CHOKE_LIFT
-                                            }
-                                            9 => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_CHOKE_MARY
-                                            }
-                                            _ => {
-                                                sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
-                                            }
-                                        }
-                                    } else {
-                                        sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO
-                                    };
+                                    // Delegate to modular sh2_core::combat::GrappleAnchor controller (1:1 PS2 PlayerCheckAnimeLower Case 17)
+                                    let struggle_clip = state
+                                        .combat_arena
+                                        .grappling_enemy_idx
+                                        .and_then(|idx| state.combat_arena.enemies.get(idx))
+                                        .and_then(|e| sh2_core::combat::BestiaryId::from_raw(e.id))
+                                        .map(|id| sh2_core::combat::GrappleAnchor::for_species(id).struggle_clip)
+                                        .unwrap_or(sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO);
                                     if state.sim_core.animation.current_clip().start_frame
                                         != struggle_clip.start_frame
                                     {
@@ -3391,22 +3360,17 @@ impl ApplicationHandler for SilentHillApp {
                                 );
 
                                 let (es, ec_yaw) = enemy.yaw.sin_cos();
-                                // Height adjustments for specific monsters:
-                                // - Flesh Lips (6): hung from ceiling frame; descends during grab so its lower legs encircle James' neck
-                                // - Mandarin (7): in retail hangs below floor grates (root Y +880); elevate by -1000 so it crawls visibly above ground
-                                // - Mary Boss (9): hovering cage boss (elevate Y by -1000; during grapple stays aligned with James)
-                                let y_offset = match enemy.id {
-                                    6 => {
+                                // Query modular GrappleAnchor vertical elevation offsets (1:1 PS2 enIKEInitData / hugging_pos):
+                                let y_offset = sh2_core::combat::BestiaryId::from_raw(enemy.id)
+                                    .map(|species| {
+                                        let anchor = sh2_core::combat::GrappleAnchor::for_species(species);
                                         if enemy.is_grappling_player {
-                                            -650.0 // Authentic PS2 grapple height: descends so legs clamp James's neck
+                                            anchor.vertical_offset
                                         } else {
-                                            -1200.0 // Ceiling hanging stance
+                                            anchor.default_height_offset
                                         }
-                                    }
-                                    7 => -1000.0,
-                                    9 => -1000.0,
-                                    _ => 0.0,
-                                };
+                                    })
+                                    .unwrap_or(0.0);
                                 let ey = enemy.position.y + y_offset;
                                 let world_mat = [
                                     [ec_yaw, 0.0, es, enemy.position.x],

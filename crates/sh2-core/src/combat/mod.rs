@@ -16,6 +16,9 @@
 //!   - `Patches/HoldToStomp.cpp`: Digital button timing (0.2s hold for stomp vs tap for kick).
 //!   - `Patches/SwapLightHeavyAttack.cpp`: 0.2s hold for heavy downswing vs tap for light swing.
 
+pub mod grapple;
+pub use grapple::{BestiaryId, GrappleAnchor, PS2_HUGGING_POS, PS2_HURIHODOKI_TIMER};
+
 use crate::ai::creatures::anim::CreatureAnimationController;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -2271,15 +2274,11 @@ impl CombatArena {
                     if g.is_dead || g.is_downed || g.flinch_timer > 0.0 {
                         should_release = true;
                     } else {
-                        let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
-                        let anchor_dist = match g.id {
-                            5 => 580.0, // Abstract Daddy grapple distance (accounts for Daddy's 354mm forward bone extent so chest contacts James' hands)
-                            6 => 400.0, // Flesh Lips authentic PS2 grapple anchor distance (enIKECtrlAttack 0x15207c)
-                            8 => 80.0, // Creeper bites at feet
-                            9 => 500.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170 / shGetEnemyBOSAttackPos 0x220df0)
-                            _ => 250.0,
-                        };
-                        g.position = self.player_position + forward * anchor_dist;
+                        // Delegate relative anchor positioning to modular GrappleAnchor controller (1:1 PS2 PlayerCheckHuggedPos)
+                        let anchor = BestiaryId::from_raw(g.id)
+                            .map(GrappleAnchor::for_species)
+                            .unwrap_or_else(GrappleAnchor::default_fallback);
+                        g.position = anchor.compute_world_anchor(self.player_position, self.player_yaw);
                         g.yaw = self.player_yaw + std::f32::consts::PI;
                         g.is_grappling_player = true;
                     }

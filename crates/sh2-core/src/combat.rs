@@ -2092,9 +2092,9 @@ impl CombatArena {
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
                         let anchor_dist = match g.id {
                             5 => 580.0, // Abstract Daddy grapple distance (accounts for Daddy's 354mm forward bone extent so chest contacts James' hands)
-                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
+                            6 => 400.0, // Flesh Lips authentic PS2 grapple anchor distance (enIKECtrlAttack 0x15207c)
                             8 => 80.0, // Creeper bites at feet
-                            9 => 220.0, // Mary Final Boss hovers close-range with tentacles wrapped around James
+                            9 => 450.0, // Mary Final Boss tentacle reach grapple distance (enBOSCtrlAttack)
                             _ => 250.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;
@@ -2274,9 +2274,9 @@ impl CombatArena {
                         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
                         let anchor_dist = match g.id {
                             5 => 580.0, // Abstract Daddy grapple distance (accounts for Daddy's 354mm forward bone extent so chest contacts James' hands)
-                            6 => 40.0, // Flesh Lips hangs directly overhead / straddles James's neck
+                            6 => 400.0, // Flesh Lips authentic PS2 grapple anchor distance (enIKECtrlAttack 0x15207c)
                             8 => 80.0, // Creeper bites at feet
-                            9 => 220.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170)
+                            9 => 450.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170)
                             _ => 250.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;

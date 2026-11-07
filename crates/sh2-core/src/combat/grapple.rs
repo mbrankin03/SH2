@@ -207,4 +207,28 @@ mod tests {
         assert!((anchor.z - 353.9123).abs() < 1e-3);
         assert!((anchor.x - 43.5385).abs() < 1e-3);
     }
+
+    #[test]
+    fn test_ps2_grapple_struggle_clips_parity() {
+        // 1:1 PS2 PlayerCheckAnimeUpper & PlayerCheckAnimeLower Case 17:
+        // Choke holds (Flesh Lips overhead and Mary boss choke) map to pjames_anim aid 129 (632..=649 @ 15.0fps)
+        let ike_anchor = GrappleAnchor::for_species(BestiaryId::FleshLips);
+        assert_eq!(ike_anchor.struggle_clip.start_frame, 632);
+        assert_eq!(ike_anchor.struggle_clip.end_frame, 649);
+        assert_eq!(ike_anchor.struggle_clip.fps, 15.0);
+        assert!(ike_anchor.struggle_clip.looping);
+
+        let mary_anchor = GrappleAnchor::for_species(BestiaryId::MaryBoss);
+        assert_eq!(mary_anchor.struggle_clip.start_frame, 632);
+        assert_eq!(mary_anchor.struggle_clip.end_frame, 649);
+
+        // Torso grabs (Daddy, Lying Figure) map to pjames_anim aid 128 (612..=629 @ 15.0fps)
+        let daddy_anchor = GrappleAnchor::for_species(BestiaryId::AbstractDaddy);
+        assert_eq!(daddy_anchor.struggle_clip.start_frame, 612);
+        assert_eq!(daddy_anchor.struggle_clip.end_frame, 629);
+
+        let scu_anchor = GrappleAnchor::for_species(BestiaryId::LyingFigure);
+        assert_eq!(scu_anchor.struggle_clip.start_frame, 612);
+        assert_eq!(scu_anchor.struggle_clip.end_frame, 629);
+    }
 }

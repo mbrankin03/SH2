@@ -539,6 +539,16 @@ impl CreatureAnimationController {
         }
     }
 
+    /// Checks if a non-looping animation clip has finished playing its full duration.
+    pub fn is_clip_finished(&self) -> bool {
+        if self.current_clip.looping {
+            false
+        } else {
+            let dur = self.current_clip.duration_seconds();
+            dur > 0.0 && self.clip_time >= dur - 0.001
+        }
+    }
+
     /// Synchronize controller state from Lying Figure FSM state (`ScuState`).
     pub fn sync_lying_figure(&mut self, state: ScuState) {
         match state {

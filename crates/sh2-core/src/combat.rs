@@ -1529,10 +1529,15 @@ impl CombatTargetEnemy {
                     self.attack_timer += dt;
 
                     // Forward lunge root motion during initial attack swing/lunge frames:
-                    // Authentic PS2 pap_attack (enemy.c:3275-3312 frames 0..19) advances towards James to close the gap
+                    // - Abstract Daddy (5): authentic PS2 pap_attack (enemy.c:3275-3312) advances towards James to close the gap
+                    // - Pyramid Head (4): Great Knife forward momentum
+                    // - Mary Boss (9): authentic PS2 enBOSCtrlAttack (0x0014055c) swoops forward 600mm to catch James
+                    // - Mannequin (2) / Nurse (3): slight attack step
                     let lunge_speed = match self.id {
-                        5 => 500.0, // Abstract Daddy lunges forward to grapple James
-                        4 => 250.0, // Pyramid Head forward momentum
+                        5 => 500.0,
+                        4 => 250.0,
+                        9 => 600.0,
+                        2 | 3 => 150.0,
                         _ => 0.0,
                     };
                     if lunge_speed > 0.0 && dist > 150.0 && self.attack_timer < 0.45 {
@@ -1540,12 +1545,35 @@ impl CombatTargetEnemy {
                         self.position.z += self.yaw.cos() * lunge_speed * dt;
                     }
 
-                    // Attack animation duration ~1.0 - 1.2s
-                    let max_atk_time = if self.id == 1 { 1.2 } else { 1.0 };
-                    if self.attack_timer >= max_atk_time {
+                    // Authentic animation-driven attack duration:
+                    // Rather than an arbitrary 1.0s hard cutoff, wait until the non-looping
+                    // attack clip finishes, or fall back to authentic clip duration per creature
+                    let clip_dur = self.anim.current_clip().duration_seconds();
+                    let min_atk_time = if clip_dur > 0.1 && !self.anim.current_clip().looping {
+                        clip_dur
+                    } else {
+                        match self.id {
+                            1 => 0.80, // Lying Figure acid spray / flail
+                            2 => 1.17, // Mannequin swing / kick
+                            3 => 1.23, // Nurse pipe swing
+                            4 => 2.25, // Pyramid Head knife swing
+                            5 => 0.67, // Abstract Daddy lunge
+                            6 => 1.07, // Flesh Lips ceiling grab descent
+                            7 => 0.57, // Mandarin tentacle strike
+                            8 => 0.27, // Creeper bite
+                            9 => 0.50, // Mary Boss lunge catch
+                            _ => 1.0,
+                        }
+                    };
+
+                    if self.anim.is_clip_finished() || self.attack_timer >= min_atk_time {
                         self.is_attacking = false;
                         self.attack_timer = 0.0;
-                        self.attack_cooldown = 1.5;
+                        self.attack_cooldown = match self.id {
+                            4 => 2.5, // Pyramid Head recovery
+                            9 => 1.2, // Mary Boss recovery
+                            _ => 1.5,
+                        };
                         if self.id != 1 {
                             self.is_kick_next = !self.is_kick_next;
                         }
@@ -1561,7 +1589,8 @@ impl CombatTargetEnemy {
                         6 => (650.0, 0.6),  // Flesh Lips choke descent
                         7 => (600.0, 0.6),  // Mandarin tentacle strike
                         8 => (200.0, 0.6),  // Creeper bite
-                        9 => (1400.0, 0.6), // Mary final boss moth swarm
+                        // Authentic PS2 enBOSCanAttackPlayer (0x00140b24): dist <= 600.0, angle <= 0.0872 rad (~5 deg)
+                        9 => (600.0, 0.35), // Mary final boss tentacle grapple lunge
                         _ => (700.0, 0.6),
                     };
                     if dist <= attack_range && self.attack_cooldown <= 0.0 && diff.abs() < max_angle
@@ -1867,10 +1896,19 @@ impl CombatTargetEnemy {
                         None,
                     );
                 } else if self.is_grappling_player {
-                    // Authentic PS2 BOS_ANIM[4] looping choke hold while strangling James
+                    // Authentic PS2 enBOSCtrlAttack (0x00140450):
+                    // When Mary latches onto James, she transitions through LIFT_CARRY (74..=88) into CHOKE_HOLD (89..=112)
+                    let choke_clip = if self.anim.current_clip() == MaryBossAnimClips::CHOKE_HOLD
+                        || (self.anim.current_clip() == MaryBossAnimClips::LIFT_CARRY
+                            && self.anim.is_clip_finished())
+                    {
+                        MaryBossAnimClips::CHOKE_HOLD
+                    } else {
+                        MaryBossAnimClips::LIFT_CARRY
+                    };
                     self.anim.transition_to(
                         CreatureAnimStateKind::AttackSecondary,
-                        MaryBossAnimClips::CHOKE_HOLD,
+                        choke_clip,
                         0.0,
                         None,
                         None,

@@ -308,6 +308,40 @@ mod tests {
 
         assert_eq!(anm.bone_count, model.bone_count);
         assert!(!anm.frames.is_empty(), "Animation should contain frames");
+
+        let jms_basic_path = format!("{ROOT_ASSETS}/data/chr/jms/jms_basic1.anm");
+        if Path::new(&jms_basic_path).exists() {
+            let b_data = fs::read(&jms_basic_path).expect("read jms_basic1");
+            let b_anm =
+                parse_anm(&b_data, model.bone_count, &model.parents).expect("parse jms_basic1");
+            println!("JMS_BASIC1 total frames: {}", b_anm.frames.len());
+
+            // Check where discontinuities or keyframe changes occur
+            let mut diffs = Vec::new();
+            for i in 1..b_anm.frames.len() {
+                // compute root translation delta or bone 0/1 delta
+                let f0 = &b_anm.frames[i - 1];
+                let f1 = &b_anm.frames[i];
+                let mut max_rot_diff: f32 = 0.0;
+                for b in 0..model.bone_count {
+                    if let (Some(t0), Some(t1)) = (&f0.bones[b], &f1.bones[b]) {
+                        if let (Some(r0), Some(r1)) = (t0.rotation, t1.rotation) {
+                            let d = (r0[0] - r1[0])
+                                .abs()
+                                .max((r0[1] - r1[1]).abs())
+                                .max((r0[2] - r1[2]).abs());
+                            if d > max_rot_diff {
+                                max_rot_diff = d;
+                            }
+                        }
+                    }
+                }
+                if max_rot_diff > 1.2 {
+                    diffs.push(i);
+                }
+            }
+            println!("JMS_BASIC1 clip cuts (>1.2 rad jump): {:?}", diffs);
+        }
     }
 
     #[test]

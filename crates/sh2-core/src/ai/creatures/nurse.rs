@@ -8,6 +8,7 @@
 //!   - Pipe swing attacks: reach 400–600 units, AP 12–18.
 //!   - Erratic twitching locomotion: staggered burst steps alternating with sudden pauses.
 
+use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::CreatureStats;
 use crate::ai::sensory::{
     evaluate_sensory, normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting,
@@ -43,6 +44,7 @@ pub struct NurseController {
     pub state_timer: f32,
     pub twitch_timer: f32,
     pub sensory: SensoryProfile,
+    pub anim: CreatureAnimationController,
 }
 
 impl NurseController {
@@ -65,6 +67,7 @@ impl NurseController {
             state_timer: 0.0,
             twitch_timer: 0.0,
             sensory: SensoryProfile::nurse(),
+            anim: CreatureAnimationController::new_nurse(),
         }
     }
 
@@ -188,6 +191,10 @@ impl NurseController {
 
             _ => {}
         }
+
+        // Synchronize and update skeletal animation controller
+        self.anim.sync_nurse(self.state);
+        self.anim.update(dt, self.yaw);
     }
 
     fn turn_towards(&mut self, desired_yaw: f32, max_step: f32) {
@@ -205,6 +212,7 @@ impl NurseController {
         } else {
             self.state = NseState::Damage;
         }
+        self.anim.sync_nurse(self.state);
     }
 }
 

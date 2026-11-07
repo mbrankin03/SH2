@@ -87,10 +87,12 @@ pub enum TestRoomKind {
     LoadingScreenTest,
     /// Interactive Combat & Weapon Mechanics Arena (`SH2-13`).
     CombatArena,
+    /// Interactive Creature Grapple Animation & Elevation Debug Room (`SH2-57`).
+    GrappleAnimationRoom,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 9] = [
+    pub const ALL: [TestRoomKind; 10] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -100,6 +102,7 @@ impl TestRoomKind {
         TestRoomKind::FmvCutsceneViewer,
         TestRoomKind::LoadingScreenTest,
         TestRoomKind::CombatArena,
+        TestRoomKind::GrappleAnimationRoom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -113,6 +116,7 @@ impl TestRoomKind {
             Self::FmvCutsceneViewer => "FMV Cutscene Player",
             Self::LoadingScreenTest => "Loading Screen Preview",
             Self::CombatArena => "Combat & Weapon Testing Arena",
+            Self::GrappleAnimationRoom => "Grapple Animation Room",
         }
     }
 
@@ -134,6 +138,9 @@ impl TestRoomKind {
             }
             Self::CombatArena => {
                 "Real-time melee & firearm combat arena with Lying Figure & Mannequin targets"
+            }
+            Self::GrappleAnimationRoom => {
+                "Pairwise creature grapple animation viewer with free orbit/flight camera"
             }
         }
     }
@@ -993,10 +1000,21 @@ pub fn draw_test_rooms_screen(sm: &TitleStateMachine, font: &AtlasFont, rast: &m
         true,
     );
 
-    let base_y = 100.0 * scale_y;
-    let step_y = 38.0 * scale_y;
+    let count = TestRoomKind::ALL.len();
+    let start_y = 86.0;
+    let end_y = 376.0;
+    let step_y = if count > 1 {
+        ((end_y - start_y) / (count - 1) as f32).min(38.0) * scale_y
+    } else {
+        38.0 * scale_y
+    };
+    let base_y = start_y * scale_y;
     let center_panel_x = (x_offset + 320.0 * scale_x).round() as usize;
-    let font_size = (18.0 * scale_y).round() as usize;
+    let font_size = if count > 8 {
+        (16.0 * scale_y).round() as usize
+    } else {
+        (18.0 * scale_y).round() as usize
+    };
 
     for (idx, room) in TestRoomKind::ALL.iter().enumerate() {
         let y = (base_y + idx as f32 * step_y).round() as usize;

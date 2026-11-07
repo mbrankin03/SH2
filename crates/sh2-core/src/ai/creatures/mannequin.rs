@@ -14,6 +14,7 @@
 //! - Walk root motion: 19.2 units per frame (`0x893070` anime 1, 30 fps = 576 units/s).
 //! - Normal health: 490 HP (70% of Lying Figure).
 
+use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::CreatureStats;
 use crate::ai::sensory::{
     evaluate_sensory, is_lit_by_flashlight, normalize_angle, DifficultyLevel, PerceivableTarget,
@@ -55,6 +56,7 @@ pub struct MannequinController {
     pub state_timer: f32,
     pub is_kick_next: bool,
     pub sensory: SensoryProfile,
+    pub anim: CreatureAnimationController,
 }
 
 impl MannequinController {
@@ -77,6 +79,7 @@ impl MannequinController {
             state_timer: 0.0,
             is_kick_next: false,
             sensory: SensoryProfile::mannequin(),
+            anim: CreatureAnimationController::new_mannequin(),
         }
     }
 
@@ -237,6 +240,10 @@ impl MannequinController {
 
             _ => {}
         }
+
+        // Synchronize and advance skeletal animation controller
+        self.anim.sync_mannequin(self.state, self.is_kick_next);
+        self.anim.update(dt, self.yaw);
     }
 
     fn turn_towards(&mut self, desired_yaw: f32, max_step: f32) {
@@ -254,6 +261,7 @@ impl MannequinController {
         } else {
             self.state = MknState::Damage;
         }
+        self.anim.sync_mannequin(self.state, self.is_kick_next);
     }
 }
 

@@ -42,6 +42,8 @@ pub struct SimulationCore {
     pub tick_counter: u64,
     /// Last tick's locomotion output.
     pub last_locomotion: LocomotionOutput,
+    /// When true, locomotion state changes do not overwrite the active animation clip.
+    pub animation_locked: bool,
 }
 
 impl Default for SimulationCore {
@@ -85,6 +87,7 @@ impl SimulationCore {
                 footstep_triggered: false,
                 footstep_volume: 0.5,
             },
+            animation_locked: false,
         }
     }
 
@@ -166,40 +169,42 @@ impl SimulationCore {
         self.last_locomotion = out;
 
         // 3b. Update animation locomotion state machine based on calibrated locomotion state
-        match out.state {
-            LocomotionState::Stand | LocomotionState::Relax | LocomotionState::Alert => {
-                self.animation
-                    .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
-            }
-            LocomotionState::Walk
-            | LocomotionState::StrafeLeftWalk
-            | LocomotionState::StrafeRightWalk => {
-                self.animation
-                    .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
-            }
-            LocomotionState::Back => {
-                self.animation
-                    .transition_to(AnimationStateKind::Back, self.locomotion_clips.back);
-            }
-            LocomotionState::Run1
-            | LocomotionState::Run2
-            | LocomotionState::Run3
-            | LocomotionState::StrafeLeftRun
-            | LocomotionState::StrafeRightRun => {
-                self.animation
-                    .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
-            }
-            LocomotionState::TurnLeft | LocomotionState::TurnRight => {
-                self.animation
-                    .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
-            }
-            LocomotionState::QuickTurnLeft | LocomotionState::QuickTurnRight => {
-                self.animation
-                    .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
-            }
-            LocomotionState::Tired => {
-                self.animation
-                    .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
+        if !self.animation_locked {
+            match out.state {
+                LocomotionState::Stand | LocomotionState::Relax | LocomotionState::Alert => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
+                }
+                LocomotionState::Walk
+                | LocomotionState::StrafeLeftWalk
+                | LocomotionState::StrafeRightWalk => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
+                }
+                LocomotionState::Back => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Back, self.locomotion_clips.back);
+                }
+                LocomotionState::Run1
+                | LocomotionState::Run2
+                | LocomotionState::Run3
+                | LocomotionState::StrafeLeftRun
+                | LocomotionState::StrafeRightRun => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
+                }
+                LocomotionState::TurnLeft | LocomotionState::TurnRight => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
+                }
+                LocomotionState::QuickTurnLeft | LocomotionState::QuickTurnRight => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
+                }
+                LocomotionState::Tired => {
+                    self.animation
+                        .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
+                }
             }
         }
 

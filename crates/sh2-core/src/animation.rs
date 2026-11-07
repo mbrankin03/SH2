@@ -122,8 +122,10 @@ impl JamesBasicClips {
     /// (pjames_anim aid 128 frames 612..=629, PS2 speed 1024 = 15.0 fps).
     pub const STRUGGLE_DADDY: AnimationClip = AnimationClip::new(612, 629, 15.0, true);
     /// Authentic PS2/PC James struggle clip against Flesh Lips overhead ceiling choke
-    /// (pjames_anim aid 121 frames 457..=468, speed 1024 = 15.0 fps).
-    pub const STRUGGLE_FLESH_LIPS: AnimationClip = AnimationClip::new(457, 468, 15.0, true);
+    /// (`pjames_na_anim` aid 463 frames 864..=903, speed 768 = 11.25 fps; looping core frames 868..=886).
+    /// James desperately reaches upward above his head with both hands grabbing and prying at the dangling
+    /// creature legs wrapped around his throat.
+    pub const STRUGGLE_FLESH_LIPS: AnimationClip = AnimationClip::new(868, 886, 11.25, true);
     /// Authentic PS2/PC James struggle clip against Pyramid Head one-handed overhead choke lift
     /// (pjames_anim aid 121 frames 457..=468, speed 1024 = 15.0 fps).
     pub const STRUGGLE_CHOKE_LIFT: AnimationClip = AnimationClip::new(457, 468, 15.0, true);

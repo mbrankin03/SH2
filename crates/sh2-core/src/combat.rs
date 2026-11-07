@@ -2094,7 +2094,7 @@ impl CombatArena {
                             5 => 580.0, // Abstract Daddy grapple distance (accounts for Daddy's 354mm forward bone extent so chest contacts James' hands)
                             6 => 400.0, // Flesh Lips authentic PS2 grapple anchor distance (enIKECtrlAttack 0x15207c)
                             8 => 80.0, // Creeper bites at feet
-                            9 => 450.0, // Mary Final Boss tentacle reach grapple distance (enBOSCtrlAttack)
+                            9 => 500.0, // Mary Final Boss tentacle reach grapple distance (enBOSCtrlAttack / shGetEnemyBOSAttackPos 0x220df0)
                             _ => 250.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;
@@ -2276,7 +2276,7 @@ impl CombatArena {
                             5 => 580.0, // Abstract Daddy grapple distance (accounts for Daddy's 354mm forward bone extent so chest contacts James' hands)
                             6 => 400.0, // Flesh Lips authentic PS2 grapple anchor distance (enIKECtrlAttack 0x15207c)
                             8 => 80.0, // Creeper bites at feet
-                            9 => 450.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170)
+                            9 => 500.0, // Mary Boss tentacle reach distance (shBattleAttackHitCheckToHuman 0x123170 / shGetEnemyBOSAttackPos 0x220df0)
                             _ => 250.0,
                         };
                         g.position = self.player_position + forward * anchor_dist;

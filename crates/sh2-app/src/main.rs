@@ -3089,12 +3089,12 @@ impl ApplicationHandler for SilentHillApp {
                                 sh2_core::combat::CombatMode::Held => {
                                     state.sim_core.animation_locked = true;
                                     // Select authentic struggle animation based on the grabbing monster from PS2/PC lower_hold tables:
-                                    // - Creeper (#8): leg shake / struggle (frames 588..=611, table 0x6ceaf0)
-                                    // - Lying Figure (#1): torso push struggle (frames 612..=629)
-                                    // - Abstract Daddy (#5): bed grapple struggle (frames 741..=771, table 0x6cebbc)
-                                    // - Flesh Lips (#6): overhead ceiling choke struggle (frames 800..=809, table 0x6cecc8)
-                                    // - Pyramid Head (#4): one-handed choke lift (frames 1084..=1113, table 0x8ba424)
-                                    // - Mary Boss (#9): tentacle choke hold (frames 757..=786 @ 26.25fps, table 0x6cf1d8)
+                                    // - Creeper (#8): leg shake / struggle (frames 588..=611, table 0x6ceaf0, aid 127)
+                                    // - Lying Figure (#1): torso push struggle (frames 612..=629, aid 128)
+                                    // - Abstract Daddy (#5): bed grapple struggle (frames 612..=629, aid 128)
+                                    // - Flesh Lips (#6): overhead ceiling choke struggle (frames 457..=468, aid 121)
+                                    // - Pyramid Head (#4): one-handed choke lift (frames 457..=468, aid 121)
+                                    // - Mary Boss (#9): tentacle choke hold (frames 632..=649 @ 15.0fps, aid 129)
                                     let struggle_clip = if let Some(g_idx) =
                                         state.combat_arena.grappling_enemy_idx
                                     {
@@ -3392,11 +3392,17 @@ impl ApplicationHandler for SilentHillApp {
 
                                 let (es, ec_yaw) = enemy.yaw.sin_cos();
                                 // Height adjustments for specific monsters:
-                                // - Flesh Lips (6): hung from ceiling frame (elevate Y by -1200 so it hangs down into room)
+                                // - Flesh Lips (6): hung from ceiling frame; descends during grab so its lower legs encircle James' neck
                                 // - Mandarin (7): in retail hangs below floor grates (root Y +880); elevate by -1000 so it crawls visibly above ground
-                                // - Mary Boss (9): hovering cage boss (elevate Y by -1000)
+                                // - Mary Boss (9): hovering cage boss (elevate Y by -1000; during grapple stays aligned with James)
                                 let y_offset = match enemy.id {
-                                    6 => -1200.0,
+                                    6 => {
+                                        if enemy.is_grappling_player {
+                                            -650.0 // Authentic PS2 grapple height: descends so legs clamp James's neck
+                                        } else {
+                                            -1200.0 // Ceiling hanging stance
+                                        }
+                                    }
                                     7 => -1000.0,
                                     9 => -1000.0,
                                     _ => 0.0,

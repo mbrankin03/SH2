@@ -975,9 +975,18 @@ struct AppState {
     combat_arena: sh2_core::combat::CombatArena,
     enemy_scu_asset: Option<CharacterAsset>,
     enemy_mkn_asset: Option<CharacterAsset>,
+    enemy_nse_asset: Option<CharacterAsset>,
+    enemy_red_asset: Option<CharacterAsset>,
+    enemy_pap_asset: Option<CharacterAsset>,
+    enemy_ike_asset: Option<CharacterAsset>,
+    enemy_arm_asset: Option<CharacterAsset>,
+    enemy_tyu_asset: Option<CharacterAsset>,
+    enemy_bos_asset: Option<CharacterAsset>,
     key_ready_held: bool,
     key_attack_pressed: bool,
     key_attack_held: bool,
+    combat_enemy_idx: usize,
+    struggle_button_press_count: u32,
     model_viewer: ModelViewerState,
     viewer_asset: Option<CharacterAsset>,
     loaded_viewer_model_idx: usize,
@@ -1154,7 +1163,7 @@ impl ApplicationHandler for SilentHillApp {
             &["data/chr2/mar/xmar_wpnone.anm", "data/chr/mar/lll_mar.anm"],
         );
 
-        // Preload authentic enemy models for Combat Testing Arena (SH2-13)
+        // Preload authentic enemy models for Combat Testing Arena (SH2-13 / SH2-57)
         let enemy_scu_asset = load_character_asset(
             &render_ctx,
             "Lying Figure (scu)",
@@ -1166,6 +1175,48 @@ impl ApplicationHandler for SilentHillApp {
             "Mannequin (mkn)",
             &["data/chr/mkn/mkn.mdl"],
             &["data/chr/mkn/mkn.anm"],
+        );
+        let enemy_nse_asset = load_character_asset(
+            &render_ctx,
+            "Bubble Head Nurse (nse)",
+            &["data/chr/nse/nse.mdl"],
+            &["data/chr/nse/nse.anm"],
+        );
+        let enemy_red_asset = load_character_asset(
+            &render_ctx,
+            "Pyramid Head (red)",
+            &["data/chr/red/red.mdl"],
+            &["data/chr/red/red.anm"],
+        );
+        let enemy_pap_asset = load_character_asset(
+            &render_ctx,
+            "Abstract Daddy (pap)",
+            &["data/chr/pap/pap.mdl"],
+            &["data/chr/pap/pap.anm"],
+        );
+        let enemy_ike_asset = load_character_asset(
+            &render_ctx,
+            "Flesh Lips (ike)",
+            &["data/chr/ike/ike.mdl"],
+            &["data/chr/ike/ike.anm"],
+        );
+        let enemy_arm_asset = load_character_asset(
+            &render_ctx,
+            "Mandarin (arm)",
+            &["data/chr/arm/arm.mdl"],
+            &["data/chr/arm/arm.anm"],
+        );
+        let enemy_tyu_asset = load_character_asset(
+            &render_ctx,
+            "Creeper (tyu)",
+            &["data/chr/tyu/tyu.mdl"],
+            &["data/chr/tyu/tyu.anm"],
+        );
+        let enemy_bos_asset = load_character_asset(
+            &render_ctx,
+            "Mary Final Boss (bos)",
+            &["data/chr/bos/bos.mdl"],
+            &["data/chr/bos/bos.anm"],
         );
 
         let mut combat_arena = sh2_core::combat::CombatArena::new();
@@ -1418,9 +1469,18 @@ impl ApplicationHandler for SilentHillApp {
             combat_arena,
             enemy_scu_asset,
             enemy_mkn_asset,
+            enemy_nse_asset,
+            enemy_red_asset,
+            enemy_pap_asset,
+            enemy_ike_asset,
+            enemy_arm_asset,
+            enemy_tyu_asset,
+            enemy_bos_asset,
             key_ready_held: false,
             key_attack_pressed: false,
             key_attack_held: false,
+            combat_enemy_idx: 0,
+            struggle_button_press_count: 0,
             model_viewer,
             viewer_asset,
             loaded_viewer_model_idx,
@@ -2167,7 +2227,59 @@ impl ApplicationHandler for SilentHillApp {
                                 sh2_core::combat::WeaponGrip::GreatKnife;
                             tracing::info!("[Combat] Equipped Great Knife");
                         }
+                        // Teleport / cycle selected enemy right in front of James for testing combat & grab interactions
+                        winit::keyboard::KeyCode::Tab
+                            if pressed && !state.combat_arena.enemies.is_empty() =>
+                        {
+                            let fwd = glam::Vec3::new(
+                                state.sim_core.scenario.player_yaw.sin(),
+                                0.0,
+                                state.sim_core.scenario.player_yaw.cos(),
+                            );
+                            let target_pos = state.combat_arena.player_position + fwd * 350.0;
+                            let facing_yaw =
+                                state.sim_core.scenario.player_yaw + std::f32::consts::PI;
+
+                            // Advance focus to next enemy
+                            state.combat_enemy_idx =
+                                (state.combat_enemy_idx + 1) % state.combat_arena.enemies.len();
+                            let target_enemy =
+                                &mut state.combat_arena.enemies[state.combat_enemy_idx];
+
+                            // Teleport selected enemy in front of player and engage
+                            target_enemy.position = target_pos;
+                            target_enemy.yaw = facing_yaw;
+                            target_enemy.is_aggroed = true;
+                            target_enemy.flinch_timer = 0.0;
+                            target_enemy.attack_cooldown = 0.2;
+
+                            // Revive / reset James on creature cycling so arena testing is always fresh
+                            state.combat_arena.player.health = state.combat_arena.player.max_health;
+                            state.combat_arena.player.mode = sh2_core::combat::CombatMode::Free;
+                            state.combat_arena.player.invulnerability_timer = 0.0;
+                            state.combat_arena.player.struggle_meter = 0.0;
+                            state.combat_arena.grapple_session = None;
+                            state.combat_arena.grappling_enemy_idx = None;
+                            state.sim_core.animation_locked = false;
+
+                            tracing::info!(
+                                "[Combat] Cycled to Enemy #{}: {} (teleported to X:{:.1} Z:{:.1})",
+                                target_enemy.id,
+                                target_enemy.name,
+                                target_pos.x,
+                                target_pos.z
+                            );
+                        }
                         _ => {}
+                    }
+
+                    // Count any key press while held in grapple for authentic struggle meter drain (0x5565c0).
+                    // Filter out OS key repeat so holding a movement/run key does not drain 4s in 0.45s.
+                    if pressed
+                        && !key_event.repeat
+                        && state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                    {
+                        state.struggle_button_press_count += 1;
                     }
 
                     // Compute accumulated directional keyboard input
@@ -2232,6 +2344,11 @@ impl ApplicationHandler for SilentHillApp {
                             state.key_attack_pressed = true;
                         }
                         state.key_attack_held = pressed;
+                    }
+                    if pressed
+                        && state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                    {
+                        state.struggle_button_press_count += 1;
                     }
                 }
             }
@@ -2939,12 +3056,105 @@ impl ApplicationHandler for SilentHillApp {
                             let dt_sec = dt.as_secs_f32().min(0.05);
                             let atk_pressed = state.key_attack_pressed;
                             state.key_attack_pressed = false;
-                            state.combat_arena.tick(
+
+                            // Process struggle input if currently held by a creature (0x5565c0)
+                            let struggle_presses = state.struggle_button_press_count;
+                            state.struggle_button_press_count = 0;
+                            if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                            {
+                                state.combat_arena.player.process_struggle_inputs(
+                                    struggle_presses,
+                                    dt_sec,
+                                    false,
+                                );
+                            }
+
+                            state.combat_arena.tick_isolated(
                                 state.key_ready_held,
                                 atk_pressed,
                                 state.key_attack_held,
                                 dt_sec,
+                                state.combat_enemy_idx,
                             );
+
+                            // Sync James player position and yaw back from arena (e.g. grapple turn/facing & enemy pushback)
+                            state.sim_core.scenario.player_position =
+                                state.combat_arena.player_position;
+                            if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
+                            {
+                                state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;
+                            }
+
+                            // Drive James's skeletal animation when in combat states (Aim, Attack, Held struggle loops, Hurt flinch, Fall)
+                            match state.combat_arena.player.mode {
+                                sh2_core::combat::CombatMode::Held => {
+                                    state.sim_core.animation_locked = true;
+                                    // Select authentic struggle/breakout animation from modular GrappleSession (1:1 PS2 PlayerCheckAnimeUpper/Lower Case 17)
+                                    let struggle_clip = state
+                                        .combat_arena
+                                        .active_grapple_player_clip()
+                                        .unwrap_or(sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO);
+                                    if state.sim_core.animation.current_clip().start_frame
+                                        != struggle_clip.start_frame
+                                    {
+                                        tracing::info!(
+                                            "[Combat Grapple] James held by Enemy #{}: transitioning to clip frames {}..={} @ {:.0}fps",
+                                            state.combat_arena.grappling_enemy_idx.map(|idx| state.combat_arena.enemies.get(idx).map(|e| e.id).unwrap_or(0)).unwrap_or(0),
+                                            struggle_clip.start_frame,
+                                            struggle_clip.end_frame,
+                                            struggle_clip.fps
+                                        );
+                                    }
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Held,
+                                        struggle_clip,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Hurt => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Damage,
+                                        sh2_core::animation::JamesBasicClips::HURT,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Dying
+                                | sh2_core::combat::CombatMode::Dead => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Fall,
+                                        sh2_core::animation::JamesBasicClips::FALL,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Ready
+                                | sh2_core::combat::CombatMode::Raise => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Aim,
+                                        sh2_core::animation::JamesBasicClips::AIM,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Swing
+                                | sh2_core::combat::CombatMode::Shot
+                                | sh2_core::combat::CombatMode::Recover => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Attack,
+                                        sh2_core::animation::JamesBasicClips::ATTACK,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Stomp => {
+                                    state.sim_core.animation_locked = true;
+                                    state.sim_core.animation.transition_to(
+                                        sh2_core::animation::AnimationStateKind::Attack,
+                                        sh2_core::animation::JamesBasicClips::ATTACK,
+                                    );
+                                }
+                                sh2_core::combat::CombatMode::Free
+                                | sh2_core::combat::CombatMode::Lower => {
+                                    state.sim_core.animation_locked = false;
+                                }
+                                _ => {}
+                            }
 
                             // Play any combat sound effects requested by the combat state machine
                             if let Some(sfx_id) = state.combat_arena.player.pending_sfx.take() {
@@ -3078,98 +3288,118 @@ impl ApplicationHandler for SilentHillApp {
                         }
                     }
 
-                    // Render enemy skeletal models when in Combat Arena
+                    // Render enemy skeletal models when in Combat Arena (only the actively selected enemy is rendered and active)
                     let mut enemy_skin_matrices: Vec<Vec<[[f32; 4]; 4]>> = Vec::new();
-                    if state.active_test_room == TestRoomKind::CombatArena {
-                        for enemy in &state.combat_arena.enemies {
-                            let asset = if enemy.id == 1 {
-                                state.enemy_scu_asset.as_ref()
-                            } else {
-                                state.enemy_mkn_asset.as_ref()
-                            };
+                    if state.active_test_room == TestRoomKind::CombatArena
+                        && !state.combat_arena.enemies.is_empty()
+                    {
+                        let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
+                        let enemy = &state.combat_arena.enemies[active_idx];
+                        let asset = match enemy.id {
+                            1 => state.enemy_scu_asset.as_ref(),
+                            2 => state.enemy_mkn_asset.as_ref(),
+                            3 => state.enemy_nse_asset.as_ref(),
+                            4 => state.enemy_red_asset.as_ref(),
+                            5 => state.enemy_pap_asset.as_ref(),
+                            6 => state.enemy_ike_asset.as_ref(),
+                            7 => state.enemy_arm_asset.as_ref(),
+                            8 => state.enemy_tyu_asset.as_ref(),
+                            9 => state.enemy_bos_asset.as_ref(),
+                            _ => None,
+                        };
 
-                            if let Some(ea) = asset {
-                                let frame_count = ea.anm.frames.len();
-                                if frame_count > 0 {
-                                    // Flinch / Downed / Crawl anim frames
-                                    let anim_time = state.sim_time * 30.0;
-                                    let frame_idx = (anim_time as usize) % frame_count;
-                                    let frame = &ea.anm.frames[frame_idx];
+                        if let Some(ea) = asset {
+                            let frame_count = ea.anm.frames.len();
+                            if frame_count > 0 {
+                                // Evaluate synchronized skeletal animation frame from creature FSM
+                                let (prev_cursor, cur_cursor, blend) =
+                                    enemy.anim.evaluate_blended_cursor();
+                                let f0 = (cur_cursor.0 as usize) % frame_count;
+                                let f1 = (cur_cursor.1 as usize) % frame_count;
+                                let alpha = cur_cursor.2;
 
-                                    let mut pose = Vec::with_capacity(ea.model.bone_count);
-                                    evaluate_pose_into(
-                                        &ea.model.parents,
-                                        &ea.bind_locals,
-                                        frame,
-                                        &mut pose,
-                                    );
+                                let cur_frame = interpolate_frames(
+                                    &ea.anm.frames[f0],
+                                    &ea.anm.frames[f1],
+                                    alpha,
+                                );
 
-                                    let mut skin = Vec::with_capacity(ea.model.bone_count);
-                                    compute_skin_matrices_with_inv_into(
-                                        &pose,
-                                        &ea.model.inv_initial_matrices,
-                                        &mut skin,
-                                    );
-
-                                    let (es, ec_yaw) = enemy.yaw.sin_cos();
-                                    // When downed on floor, lay flat or offset Y
-                                    let (ey, rx_rot) = if enemy.is_downed {
-                                        (enemy.position.y + 100.0, true)
+                                let frame = if let Some(prev) = prev_cursor {
+                                    if blend < 1.0 {
+                                        let pf0 = (prev.0 as usize) % frame_count;
+                                        let pf1 = (prev.1 as usize) % frame_count;
+                                        let prev_frame = interpolate_frames(
+                                            &ea.anm.frames[pf0],
+                                            &ea.anm.frames[pf1],
+                                            prev.2,
+                                        );
+                                        interpolate_frames(&prev_frame, &cur_frame, blend)
                                     } else {
-                                        (enemy.position.y, false)
-                                    };
-
-                                    let world_mat = if rx_rot {
-                                        // Rotate 90 deg on X so enemy lies flat on back/stomach
-                                        [
-                                            [ec_yaw, 0.0, es, enemy.position.x],
-                                            [0.0, 0.0, 1.0, ey],
-                                            [-es, -1.0, 0.0, enemy.position.z],
-                                            [0.0, 0.0, 0.0, 1.0],
-                                        ]
-                                    } else {
-                                        [
-                                            [ec_yaw, 0.0, es, enemy.position.x],
-                                            [0.0, 1.0, 0.0, ey],
-                                            [-es, 0.0, ec_yaw, enemy.position.z],
-                                            [0.0, 0.0, 0.0, 1.0],
-                                        ]
-                                    };
-
-                                    let mut enemy_mats = Vec::with_capacity(skin.len());
-                                    for m_skin in &skin {
-                                        let mut combined = [[0.0; 4]; 4];
-                                        for r in 0..4 {
-                                            for col in 0..4 {
-                                                combined[r][col] = world_mat[r][0] * m_skin[0][col]
-                                                    + world_mat[r][1] * m_skin[1][col]
-                                                    + world_mat[r][2] * m_skin[2][col]
-                                                    + world_mat[r][3] * m_skin[3][col];
-                                            }
-                                        }
-                                        enemy_mats.push(combined);
+                                        cur_frame
                                     }
-                                    enemy_skin_matrices.push(enemy_mats);
+                                } else {
+                                    cur_frame
+                                };
+
+                                let mut pose = Vec::with_capacity(ea.model.bone_count);
+                                evaluate_pose_into(
+                                    &ea.model.parents,
+                                    &ea.bind_locals,
+                                    &frame,
+                                    &mut pose,
+                                );
+
+                                let mut skin = Vec::with_capacity(ea.model.bone_count);
+                                compute_skin_matrices_with_inv_into(
+                                    &pose,
+                                    &ea.model.inv_initial_matrices,
+                                    &mut skin,
+                                );
+
+                                let (es, ec_yaw) = enemy.yaw.sin_cos();
+                                // Query modular GrappleAnchor vertical elevation offsets (1:1 PS2 enIKEInitData / hugging_pos):
+                                let y_offset = sh2_core::combat::BestiaryId::from_raw(enemy.id)
+                                    .map(|species| {
+                                        let anchor = sh2_core::combat::GrappleAnchor::for_species(species);
+                                        if enemy.is_grappling_player {
+                                            anchor.vertical_offset
+                                        } else {
+                                            anchor.default_height_offset
+                                        }
+                                    })
+                                    .unwrap_or(0.0);
+                                let ey = enemy.position.y + y_offset;
+                                let world_mat = [
+                                    [ec_yaw, 0.0, es, enemy.position.x],
+                                    [0.0, 1.0, 0.0, ey],
+                                    [-es, 0.0, ec_yaw, enemy.position.z],
+                                    [0.0, 0.0, 0.0, 1.0],
+                                ];
+
+                                let mut enemy_mats = Vec::with_capacity(skin.len());
+                                for m_skin in &skin {
+                                    let mut combined = [[0.0; 4]; 4];
+                                    for r in 0..4 {
+                                        for col in 0..4 {
+                                            combined[r][col] = world_mat[r][0] * m_skin[0][col]
+                                                + world_mat[r][1] * m_skin[1][col]
+                                                + world_mat[r][2] * m_skin[2][col]
+                                                + world_mat[r][3] * m_skin[3][col];
+                                        }
+                                    }
+                                    enemy_mats.push(combined);
                                 }
+                                enemy_skin_matrices.push(enemy_mats);
                             }
                         }
 
-                        let mut mat_idx = 0;
-                        for enemy in &state.combat_arena.enemies {
-                            let asset = if enemy.id == 1 {
-                                state.enemy_scu_asset.as_ref()
-                            } else {
-                                state.enemy_mkn_asset.as_ref()
-                            };
-                            if let Some(ea) = asset {
-                                if mat_idx < enemy_skin_matrices.len() {
-                                    skeletal_draw.push((
-                                        &ea.gpu_mesh,
-                                        &enemy_skin_matrices[mat_idx],
-                                        Some(ea.texture_bind_groups.as_slice()),
-                                    ));
-                                    mat_idx += 1;
-                                }
+                        if let Some(ea) = asset {
+                            if !enemy_skin_matrices.is_empty() {
+                                skeletal_draw.push((
+                                    &ea.gpu_mesh,
+                                    &enemy_skin_matrices[0],
+                                    Some(ea.texture_bind_groups.as_slice()),
+                                ));
                             }
                         }
                     }
@@ -3206,6 +3436,28 @@ impl ApplicationHandler for SilentHillApp {
                                 [1.0, 0.9, 0.1, 1.0], // Yellow player collision cylinder
                             );
                             debug_lines.extend(chara_lines);
+
+                            // In Combat Arena, draw active enemy cylinder
+                            if state.active_test_room == TestRoomKind::CombatArena
+                                && !state.combat_arena.enemies.is_empty()
+                            {
+                                let active_idx =
+                                    state.combat_enemy_idx % state.combat_arena.enemies.len();
+                                let e = &state.combat_arena.enemies[active_idx];
+                                let enemy_radius = match e.id {
+                                    4 => 200.0,
+                                    5 => 220.0,
+                                    _ => 130.0,
+                                };
+                                let enemy_lines = sh2_debug::build_chara_collision_debug_lines(
+                                    [e.position.x, e.position.y, e.position.z],
+                                    enemy_radius,
+                                    1800.0,
+                                    16,
+                                    [1.0, 0.2, 0.8, 1.0], // Magenta enemy cylinder
+                                );
+                                debug_lines.extend(enemy_lines);
+                            }
 
                             state.render_ctx.render_scene_with_debug_lines(
                                 Some(&state.gpu_map),
@@ -3797,50 +4049,102 @@ impl ApplicationHandler for SilentHillApp {
                                 true,
                             );
 
-                            // Render enemy status lines
-                            let mut ey_offset = 142;
-                            for enemy in &state.combat_arena.enemies {
-                                let status_str = if enemy.is_dead {
-                                    "DEAD (Dispatched)".to_string()
-                                } else if enemy.is_downed {
-                                    format!(
-                                        "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
-                                        enemy.down_timer.max(0.0)
-                                    )
-                                } else if enemy.flinch_timer > 0.0 {
-                                    "STAGGERED / FLINCHING".to_string()
-                                } else {
-                                    "ACTIVE".to_string()
-                                };
+                            // Render active enemy status line
+                            let active_idx =
+                                state.combat_enemy_idx % state.combat_arena.enemies.len();
+                            let enemy = &state.combat_arena.enemies[active_idx];
+                            let status_str = if enemy.is_dead {
+                                "DEAD (Dispatched)".to_string()
+                            } else if enemy.is_downed {
+                                format!(
+                                    "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
+                                    enemy.down_timer.max(0.0)
+                                )
+                            } else if enemy.flinch_timer > 0.0 {
+                                "STAGGERED / FLINCHING".to_string()
+                            } else if enemy.is_attacking {
+                                "ATTACKING / GRAPPLING".to_string()
+                            } else if enemy.is_aggroed {
+                                "ENGAGED (Approaching)".to_string()
+                            } else {
+                                "STANDBY (In Section)".to_string()
+                            };
 
-                                let color = if enemy.is_dead {
-                                    muted
-                                } else if enemy.is_downed {
-                                    cyan
-                                } else {
-                                    green
-                                };
-
-                                state.menu_rasterizer.draw_text(
-                                    &format!(
-                                        "ENEMY #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
-                                        enemy.id,
-                                        enemy.name,
-                                        enemy.health,
-                                        enemy.max_health,
-                                        status_str
-                                    ),
-                                    20,
-                                    ey_offset,
-                                    1,
-                                    color,
-                                    true,
-                                );
-                                ey_offset += 20;
-                            }
+                            let color = if enemy.is_dead {
+                                muted
+                            } else if enemy.is_downed {
+                                cyan
+                            } else if enemy.is_attacking || enemy.is_aggroed {
+                                green
+                            } else {
+                                muted
+                            };
 
                             state.menu_rasterizer.draw_text(
-                                "[Controls: Right-Click / Hold R: Ready | Left-Click / Space: Attack | 1..6: Weapons | WASD: Move]",
+                                &format!(
+                                    "ACTIVE TARGET [{}/{}]: Enemy #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
+                                    active_idx + 1,
+                                    state.combat_arena.enemies.len(),
+                                    enemy.id,
+                                    enemy.name,
+                                    enemy.health,
+                                    enemy.max_health,
+                                    status_str
+                                ),
+                                20,
+                                142,
+                                1,
+                                color,
+                                true,
+                            );
+
+                            state.menu_rasterizer.draw_text(
+                                "[Press TAB to Cycle Active Test Creature]",
+                                20,
+                                162,
+                                1,
+                                yellow,
+                                true,
+                            );
+
+                            let cur_anim_clip = state.sim_core.animation.current_clip();
+                            let anim_state_name = format!("{:?}", state.sim_core.animation.state());
+                            state.menu_rasterizer.draw_text(
+                                &format!(
+                                    "[JAMES ANIM: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
+                                    anim_state_name,
+                                    cur_anim_clip.start_frame,
+                                    cur_anim_clip.end_frame,
+                                    cur_anim_clip.fps,
+                                    state.sim_core.animation.clip_time()
+                                ),
+                                20,
+                                625,
+                                1,
+                                cyan,
+                                true,
+                            );
+
+                            let enemy_clip = enemy.anim.current_clip();
+                            let enemy_anim_state = format!("{:?}", enemy.anim.state());
+                            state.menu_rasterizer.draw_text(
+                                &format!(
+                                    "[ENEMY ANIM: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
+                                    enemy_anim_state,
+                                    enemy_clip.start_frame,
+                                    enemy_clip.end_frame,
+                                    enemy_clip.fps,
+                                    enemy.anim.clip_time()
+                                ),
+                                20,
+                                645,
+                                1,
+                                green,
+                                true,
+                            );
+
+                            state.menu_rasterizer.draw_text(
+                                "[Controls: Right-Click/R: Ready | Space: Attack | 1..6: Weapons | Tab: Cycle Enemy | WASD: Move]",
                                 20,
                                 670,
                                 1,

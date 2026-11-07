@@ -9,6 +9,7 @@
 //!   - `0x4c65d0`: Common damage calculation: AP against HP, SP against endurance, knockdown check.
 //!   - `0x4c3e30`: Endurance recovery rates per second.
 
+pub mod anim;
 pub mod creeper;
 pub mod lying_figure;
 pub mod mannequin;

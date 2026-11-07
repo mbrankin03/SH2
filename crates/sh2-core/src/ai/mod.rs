@@ -85,6 +85,17 @@ impl ActiveEnemy {
         }
     }
 
+    /// Access the creature's skeletal animation controller if supported.
+    pub fn anim(&self) -> Option<&crate::ai::creatures::anim::CreatureAnimationController> {
+        match self {
+            Self::LyingFigure(e) => Some(&e.anim),
+            Self::Mannequin(e) => Some(&e.anim),
+            Self::Nurse(e) => Some(&e.anim),
+            Self::Creeper(_) => None,
+            Self::PyramidHead(_) => None,
+        }
+    }
+
     pub fn update(
         &mut self,
         target: &PerceivableTarget,

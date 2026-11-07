@@ -2272,8 +2272,10 @@ impl ApplicationHandler for SilentHillApp {
                         _ => {}
                     }
 
-                    // Count any key press while held in grapple for authentic struggle meter drain (0x5565c0)
+                    // Count any key press while held in grapple for authentic struggle meter drain (0x5565c0).
+                    // Filter out OS key repeat so holding a movement/run key does not drain 4s in 0.45s.
                     if pressed
+                        && !key_event.repeat
                         && state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
                     {
                         state.struggle_button_press_count += 1;

@@ -2258,6 +2258,7 @@ impl ApplicationHandler for SilentHillApp {
                             state.combat_arena.player.mode = sh2_core::combat::CombatMode::Free;
                             state.combat_arena.player.invulnerability_timer = 0.0;
                             state.combat_arena.player.struggle_meter = 0.0;
+                            state.combat_arena.grapple_session = None;
                             state.combat_arena.grappling_enemy_idx = None;
                             state.sim_core.animation_locked = false;
 
@@ -3088,14 +3089,10 @@ impl ApplicationHandler for SilentHillApp {
                             match state.combat_arena.player.mode {
                                 sh2_core::combat::CombatMode::Held => {
                                     state.sim_core.animation_locked = true;
-                                    // Select authentic struggle animation based on the grabbing monster from PS2/PC lower_hold tables:
-                                    // Delegate to modular sh2_core::combat::GrappleAnchor controller (1:1 PS2 PlayerCheckAnimeLower Case 17)
+                                    // Select authentic struggle/breakout animation from modular GrappleSession (1:1 PS2 PlayerCheckAnimeUpper/Lower Case 17)
                                     let struggle_clip = state
                                         .combat_arena
-                                        .grappling_enemy_idx
-                                        .and_then(|idx| state.combat_arena.enemies.get(idx))
-                                        .and_then(|e| sh2_core::combat::BestiaryId::from_raw(e.id))
-                                        .map(|id| sh2_core::combat::GrappleAnchor::for_species(id).struggle_clip)
+                                        .active_grapple_player_clip()
                                         .unwrap_or(sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO);
                                     if state.sim_core.animation.current_clip().start_frame
                                         != struggle_clip.start_frame

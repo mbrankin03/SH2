@@ -17,7 +17,12 @@
 //!   - `Patches/SwapLightHeavyAttack.cpp`: 0.2s hold for heavy downswing vs tap for light swing.
 
 pub mod grapple;
-pub use grapple::{BestiaryId, GrappleAnchor, PS2_HUGGING_POS, PS2_HURIHODOKI_TIMER};
+pub use grapple::{
+    compute_creature_grapple_transform, compute_grapple_coupling, get_grapple_spec, BestiaryId,
+    GrappleAnchor, GrappleFacingMode, GrapplePhase, GrappleSession, GrappleSpec, PS2_HUGGING_POS,
+    PS2_HURIHODOKI_TIMER, SPEC_ABSTRACT_DADDY, SPEC_CREEPER, SPEC_FLESH_LIPS, SPEC_MARY_BOSS,
+    SPEC_PYRAMID_HEAD,
+};
 
 use crate::ai::creatures::anim::CreatureAnimationController;
 use glam::Vec3;
@@ -1961,6 +1966,8 @@ pub struct CombatArena {
     pub attack_hit_registered: bool,
     /// Index of enemy currently holding James in a grapple lock (`0x533d00` / `0x4b7160`)
     pub grappling_enemy_idx: Option<usize>,
+    /// Modular authentic PS2 grapple session state machine
+    pub grapple_session: Option<GrappleSession>,
 }
 
 impl Default for CombatArena {
@@ -1999,6 +2006,7 @@ impl CombatArena {
             player_yaw: 0.0,
             attack_hit_registered: false,
             grappling_enemy_idx: None,
+            grapple_session: None,
         }
     }
 
@@ -2014,6 +2022,68 @@ impl CombatArena {
             let dist = (Vec3::new(e.position.x, 0.0, e.position.z) - feet_check).length();
             dist <= (e.hitbox_radius + 350.0)
         })
+    }
+
+    /// Query the authentic animation clip James should play if currently grappled.
+    #[inline]
+    pub fn active_grapple_player_clip(&self) -> Option<crate::animation::AnimationClip> {
+        self.grapple_session.as_ref().map(|s| s.active_player_clip())
+    }
+
+    /// Register button mashing or stick flicks to accelerate breakout.
+    #[inline]
+    pub fn register_grapple_struggle_input(&mut self, button_presses: u32) {
+        if let Some(session) = &mut self.grapple_session {
+            session.register_struggle_input(button_presses);
+            self.player.struggle_meter = session.struggle_gauge;
+        }
+    }
+
+    /// Check if a specific enemy can initiate an authentic grapple attack on James.
+    pub fn check_enemy_grapple_initiation(&mut self, enemy_idx: usize) -> bool {
+        let is_god_mode = self.player.god_mode;
+        let is_dying_or_dead =
+            self.player.mode == CombatMode::Dead || self.player.mode == CombatMode::Dying;
+        if is_god_mode || is_dying_or_dead || self.grapple_session.is_some() {
+            return false;
+        }
+
+        if let Some(enemy) = self.enemies.get_mut(enemy_idx) {
+            let player_p = self.player_position;
+            if let Some(session) = GrappleSession::try_initiate(
+                enemy_idx,
+                enemy,
+                &mut self.player,
+                player_p,
+                &mut self.player_yaw,
+                2, // Normal difficulty
+            ) {
+                self.grappling_enemy_idx = Some(enemy_idx);
+                self.grapple_session = Some(session);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Advance active grapple session lifecycle and maintain creature anchoring.
+    pub fn process_grapple_lifecycle(&mut self, dt: f32) {
+        if let Some(session) = &mut self.grapple_session {
+            session.update(
+                dt,
+                &mut self.player,
+                &mut self.enemies,
+                self.player_position,
+                self.player_yaw,
+            );
+            self.grappling_enemy_idx = Some(session.enemy_idx);
+            if session.is_finished() {
+                self.grapple_session = None;
+                self.grappling_enemy_idx = None;
+            }
+        } else {
+            self.grappling_enemy_idx = None;
+        }
     }
 
     /// Execute simulation tick (60 Hz).
@@ -2038,119 +2108,17 @@ impl CombatArena {
 
         // Update target enemies and check for grapple/hold interactions with James
         let player_p = self.player_position;
-        let is_god_mode = self.player.god_mode;
-        let is_dying_or_dead =
-            self.player.mode == CombatMode::Dead || self.player.mode == CombatMode::Dying;
+        let is_in_grapple = self.grapple_session.is_some() || self.player.mode == CombatMode::Held;
 
-        for (idx, enemy) in self.enemies.iter_mut().enumerate() {
-            enemy.update(player_p, dt);
-
-            // Grapple / Grab Attack Resolution (1:1 with authentic PS2 en_red, en_pap, en_ike, en_bos)
-            // When an attacking enemy with a grapple move connects with player within grapple range:
-            if !is_god_mode && !is_dying_or_dead && enemy.is_attacking {
-                let dx = enemy.position.x - player_p.x;
-                let dz = enemy.position.z - player_p.z;
-                let dist = (dx * dx + dz * dz).sqrt();
-
-                // Authentic PS2 shBattleHuggedHuman (0x00124db0):
-                // Hold timer is 240 frames @ 60Hz = 4.0 seconds (reduced by player struggle button presses)
-                let (grab_range, meter) = match enemy.id {
-                    4 => (400.0, 4.0), // Pyramid Head one-handed choke lift
-                    // Authentic PS2 swing_hit (enemy.c:3094, 3305): reach 400.0 + James 130.0 = 530.0
-                    5 => (530.0, 4.0), // Abstract Daddy strangle grapple
-                    6 => (450.0, 4.0), // Flesh Lips ceiling choke descent
-                    8 => (220.0, 3.0), // Creeper latch / bite
-                    9 => (550.0, 4.0), // Mary Final Boss tentacle grapple
-                    _ => (0.0, 0.0),
-                };
-
-                if grab_range > 0.0
-                    && dist <= grab_range
-                    && self.player.mode != CombatMode::Held
-                    && self.player.invulnerability_timer <= 0.0
-                {
-                    self.player.apply_grab(meter);
-                    // Bind creature to grapple state (e->slv = 2 in PS2 enemy.c)
-                    enemy.is_grappling_player = true;
-                    self.grappling_enemy_idx = Some(idx);
-                    // Authentic PS2 orientation: snap James to face the grabbing enemy
-                    self.player_yaw = dx.atan2(dz);
-                }
+        for idx in 0..self.enemies.len() {
+            self.enemies[idx].update(player_p, dt);
+            if !is_in_grapple {
+                self.check_enemy_grapple_initiation(idx);
             }
         }
 
-        // When held in grapple: maintain creature anchor, apply authentic hold damage over time (0.2 * 30 DPS = 6.0 DPS),
-        // and handle grapple lifecycle & struggle breakout
-        if self.player.mode == CombatMode::Held {
-            // Validate grappler presence: if the grappler died, flinched, got knocked down, or was removed, release James!
-            let mut should_release = false;
-            if let Some(g_idx) = self.grappling_enemy_idx {
-                if g_idx < self.enemies.len() {
-                    let g = &mut self.enemies[g_idx];
-                    if g.is_dead || g.is_downed || g.flinch_timer > 0.0 {
-                        should_release = true;
-                    } else {
-                        // Authentic PS2 grapple coupling (enemy.c:3309, 4342):
-                        // Monster slides onto James and stays anchored in front of him
-                        let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
-                        let anchor_dist = match g.id {
-                            5 => 580.0, // Abstract Daddy grapple distance (accounts for Daddy's 354mm forward bone extent so chest contacts James' hands)
-                            6 => 400.0, // Flesh Lips authentic PS2 grapple anchor distance (enIKECtrlAttack 0x15207c)
-                            8 => 80.0, // Creeper bites at feet
-                            9 => 500.0, // Mary Final Boss tentacle reach grapple distance (enBOSCtrlAttack / shGetEnemyBOSAttackPos 0x220df0)
-                            _ => 250.0,
-                        };
-                        g.position = self.player_position + forward * anchor_dist;
-                        g.yaw = self.player_yaw + std::f32::consts::PI;
-                        g.is_grappling_player = true;
-                    }
-                } else {
-                    should_release = true;
-                }
-            } else {
-                // Ghost hold failsafe: if no enemy is bound, release James immediately
-                should_release = true;
-            }
-
-            if should_release {
-                if let Some(g_idx) = self.grappling_enemy_idx.take() {
-                    if g_idx < self.enemies.len() {
-                        self.enemies[g_idx].is_grappling_player = false;
-                        self.enemies[g_idx].is_attacking = false;
-                    }
-                }
-                self.player.mode = CombatMode::Free;
-                self.player.struggle_meter = 0.0;
-                self.player.invulnerability_timer = 0.5;
-            } else {
-                let hold_dps = 0.2 * 30.0;
-                self.player.health = (self.player.health - hold_dps * dt).max(0.0);
-                if self.player.health <= 0.0 {
-                    self.player.mode = CombatMode::Dying;
-                    self.player.anim_frame = 0.0;
-                    self.player.clip_length = 24.0;
-                    self.player.pending_sfx = Some(11050); // Death scream
-                    if let Some(g_idx) = self.grappling_enemy_idx.take() {
-                        if g_idx < self.enemies.len() {
-                            self.enemies[g_idx].is_grappling_player = false;
-                            self.enemies[g_idx].is_attacking = false;
-                        }
-                    }
-                }
-            }
-        } else if let Some(g_idx) = self.grappling_enemy_idx.take() {
-            // James broke free from struggle or took damage (PS2 enemy.c:3325 recoil breakout)
-            if g_idx < self.enemies.len() {
-                let g = &mut self.enemies[g_idx];
-                g.is_grappling_player = false;
-                g.is_attacking = false;
-                g.attack_cooldown = 2.0;
-                // Authentic PS2 recoil: push creature backward away from James
-                let backward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
-                g.position += backward * 250.0;
-                g.flinch_timer = 0.5;
-            }
-        }
+        // Advance active grapple session lifecycle and maintain creature anchoring
+        self.process_grapple_lifecycle(dt);
 
         // Mutual character & enemy cylinder collision separation (authentic PS2 clCheckColumn2ColumnHit)
         self.resolve_character_separations();
@@ -2231,101 +2199,16 @@ impl CombatArena {
         }
 
         let player_p = self.player_position;
-        let is_god_mode = self.player.god_mode;
-        let is_dying_or_dead =
-            self.player.mode == CombatMode::Dead || self.player.mode == CombatMode::Dying;
+        let is_in_grapple = self.grapple_session.is_some() || self.player.mode == CombatMode::Held;
 
         let enemy = &mut self.enemies[isolated_idx];
         enemy.update(player_p, dt);
 
-        if !is_god_mode && !is_dying_or_dead && enemy.is_attacking {
-            let dx = enemy.position.x - player_p.x;
-            let dz = enemy.position.z - player_p.z;
-            let dist = (dx * dx + dz * dz).sqrt();
-
-            // Authentic PS2 shBattleHuggedHuman (0x00124db0):
-            // Hold timer is 240 frames @ 60Hz = 4.0 seconds (reduced by player struggle button presses)
-            let (grab_range, meter) = match enemy.id {
-                4 => (400.0, 4.0),
-                5 => (530.0, 4.0),
-                6 => (450.0, 4.0),
-                8 => (220.0, 3.0),
-                9 => (550.0, 4.0),
-                _ => (0.0, 0.0),
-            };
-
-            if grab_range > 0.0
-                && dist <= grab_range
-                && self.player.mode != CombatMode::Held
-                && self.player.invulnerability_timer <= 0.0
-            {
-                self.player.apply_grab(meter);
-                enemy.is_grappling_player = true;
-                self.grappling_enemy_idx = Some(isolated_idx);
-                self.player_yaw = dx.atan2(dz);
-            }
+        if !is_in_grapple {
+            self.check_enemy_grapple_initiation(isolated_idx);
         }
 
-        if self.player.mode == CombatMode::Held {
-            let mut should_release = false;
-            if let Some(g_idx) = self.grappling_enemy_idx {
-                if g_idx == isolated_idx {
-                    let g = &mut self.enemies[isolated_idx];
-                    if g.is_dead || g.is_downed || g.flinch_timer > 0.0 {
-                        should_release = true;
-                    } else {
-                        // Delegate relative anchor positioning to modular GrappleAnchor controller (1:1 PS2 PlayerCheckHuggedPos)
-                        let anchor = BestiaryId::from_raw(g.id)
-                            .map(GrappleAnchor::for_species)
-                            .unwrap_or_else(GrappleAnchor::default_fallback);
-                        g.position = anchor.compute_world_anchor(self.player_position, self.player_yaw);
-                        g.yaw = self.player_yaw + std::f32::consts::PI;
-                        g.is_grappling_player = true;
-                    }
-                } else {
-                    should_release = true;
-                }
-            } else {
-                should_release = true;
-            }
-
-            if should_release {
-                if let Some(g_idx) = self.grappling_enemy_idx.take() {
-                    if g_idx < self.enemies.len() {
-                        self.enemies[g_idx].is_grappling_player = false;
-                        self.enemies[g_idx].is_attacking = false;
-                    }
-                }
-                self.player.mode = CombatMode::Free;
-                self.player.struggle_meter = 0.0;
-                self.player.invulnerability_timer = 0.5;
-            } else {
-                let hold_dps = 0.2 * 30.0;
-                self.player.health = (self.player.health - hold_dps * dt).max(0.0);
-                if self.player.health <= 0.0 {
-                    self.player.mode = CombatMode::Dying;
-                    self.player.anim_frame = 0.0;
-                    self.player.clip_length = 24.0;
-                    self.player.pending_sfx = Some(11050);
-                    if let Some(g_idx) = self.grappling_enemy_idx.take() {
-                        if g_idx < self.enemies.len() {
-                            self.enemies[g_idx].is_grappling_player = false;
-                            self.enemies[g_idx].is_attacking = false;
-                        }
-                    }
-                }
-            }
-        } else if let Some(g_idx) = self.grappling_enemy_idx.take() {
-            if g_idx < self.enemies.len() {
-                let g = &mut self.enemies[g_idx];
-                g.is_grappling_player = false;
-                g.is_attacking = false;
-                g.attack_cooldown = 2.0;
-                let backward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
-                g.position += backward * 250.0;
-                g.flinch_timer = 0.5;
-            }
-        }
+        self.process_grapple_lifecycle(dt);
 
         // Mutual collision separation with the active enemy
         if self.player.mode != CombatMode::Held {

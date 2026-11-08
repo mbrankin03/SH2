@@ -42,133 +42,129 @@ const AGL_PLAY_SUBCLIPS: &[ViewerSubClip] = &[
 
 const AGL_HAKA_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "3502: Graveyard Part 1",
-        AnimationClip::new(0, 882, 30.0, false),
+        "3501/3509: Graveyard Part 1",
+        AnimationClip::new(0, 839, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3503: Graveyard Part 2",
-        AnimationClip::new(883, 1320, 30.0, false),
+        "3510: Graveyard Part 2",
+        AnimationClip::new(840, 1502, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3504: Graveyard Part 3",
-        AnimationClip::new(1321, 2119, 30.0, false),
+        "3511: Graveyard Part 3",
+        AnimationClip::new(1503, 1998, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3505: Graveyard Part 4",
-        AnimationClip::new(2120, 2969, 30.0, false),
+        "3512: Graveyard Part 4",
+        AnimationClip::new(1999, 2799, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3506: Graveyard Part 5",
-        AnimationClip::new(2970, 3612, 30.0, false),
+        "3513: Graveyard Part 5",
+        AnimationClip::new(2800, 3439, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3507: Graveyard Part 6",
-        AnimationClip::new(3613, 4325, 30.0, false),
+        "3514: Graveyard Part 6",
+        AnimationClip::new(3440, 3896, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3508: Graveyard Part 7",
-        AnimationClip::new(4326, 5480, 30.0, false),
+        "3515: Graveyard Part 7",
+        AnimationClip::new(3897, 4168, 30.0, false),
     ),
 ];
 
 const AGL_KNIFE_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "3509: Mirror Knife Part 1",
-        AnimationClip::new(0, 683, 30.0, false),
+        "3516: Mirror Knife Part 1",
+        AnimationClip::new(0, 559, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3510: Mirror Knife Part 2",
-        AnimationClip::new(684, 1346, 30.0, false),
+        "3517: Mirror Knife Part 2",
+        AnimationClip::new(560, 1379, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3511: Mirror Knife Part 3",
-        AnimationClip::new(1347, 1842, 30.0, false),
+        "3518: Mirror Knife Part 3",
+        AnimationClip::new(1380, 2125, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3512: Mirror Knife Part 4",
-        AnimationClip::new(1843, 2643, 30.0, false),
+        "3519: Mirror Knife Part 4",
+        AnimationClip::new(2126, 2829, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3513: Mirror Knife Part 5",
-        AnimationClip::new(2644, 3283, 30.0, false),
+        "3520: Mirror Knife Part 5",
+        AnimationClip::new(2830, 3588, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3514: Mirror Knife Part 6",
-        AnimationClip::new(3284, 3740, 30.0, false),
+        "3521: Mirror Knife Part 6",
+        AnimationClip::new(3589, 4429, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3515: Mirror Knife Part 7",
-        AnimationClip::new(3741, 4012, 30.0, false),
+        "3522: Mirror Knife Part 7",
+        AnimationClip::new(4430, 4935, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "3523: Mirror Knife Part 8",
+        AnimationClip::new(4936, 5486, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "3524: Mirror Knife Part 9",
+        AnimationClip::new(5487, 5941, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "3525: Mirror Knife Part 10",
+        AnimationClip::new(5942, 6370, 30.0, false),
     ),
 ];
 
 const AGL_PAPA_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "3516: Abstract Daddy Part 1",
-        AnimationClip::new(0, 559, 30.0, false),
+        "3502/3503: Abstract Daddy Part 1",
+        AnimationClip::new(0, 506, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3517: Abstract Daddy Part 2",
-        AnimationClip::new(560, 1379, 30.0, false),
+        "3504: Abstract Daddy Part 2",
+        AnimationClip::new(507, 1305, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3518: Abstract Daddy Part 3",
-        AnimationClip::new(1380, 2125, 30.0, false),
+        "3505: Abstract Daddy Part 3",
+        AnimationClip::new(1306, 2156, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3519: Abstract Daddy Part 4",
-        AnimationClip::new(2126, 2829, 30.0, false),
+        "3506: Abstract Daddy Part 4",
+        AnimationClip::new(2157, 2799, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3520: Abstract Daddy Part 5",
-        AnimationClip::new(2830, 3588, 30.0, false),
+        "3507: Abstract Daddy Part 5",
+        AnimationClip::new(2800, 3512, 30.0, false),
     ),
     ViewerSubClip::new(
-        "3521: Abstract Daddy Part 6",
-        AnimationClip::new(3589, 4429, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "3522: Abstract Daddy Part 7",
-        AnimationClip::new(4430, 4935, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "3523: Abstract Daddy Part 8",
-        AnimationClip::new(4936, 5486, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "3524: Abstract Daddy Part 9",
-        AnimationClip::new(5487, 5941, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "3525: Abstract Daddy Part 10",
-        AnimationClip::new(5942, 6370, 30.0, false),
+        "3508: Abstract Daddy Part 6",
+        AnimationClip::new(3513, 4667, 30.0, false),
     ),
 ];
 
 const AGL_FIRE_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
         "3526: Burning Staircase Part 1",
-        AnimationClip::new(0, 944, 30.0, false),
+        AnimationClip::new(0, 1109, 30.0, false),
     ),
     ViewerSubClip::new(
         "3527: Burning Staircase Part 2",
-        AnimationClip::new(945, 1615, 30.0, false),
+        AnimationClip::new(1110, 1780, 30.0, false),
     ),
     ViewerSubClip::new(
         "3528: Burning Staircase Part 3",
-        AnimationClip::new(1616, 2488, 30.0, false),
+        AnimationClip::new(1781, 2653, 30.0, false),
     ),
     ViewerSubClip::new(
         "3529: Burning Staircase Part 4",
-        AnimationClip::new(2489, 3800, 30.0, false),
+        AnimationClip::new(2654, 3965, 30.0, false),
     ),
     ViewerSubClip::new(
         "3530: Burning Staircase Part 5",
-        AnimationClip::new(3801, 4660, 30.0, false),
+        AnimationClip::new(3966, 4825, 30.0, false),
     ),
     ViewerSubClip::new(
         "3531: Burning Staircase Part 6",
-        AnimationClip::new(4661, 5938, 30.0, false),
+        AnimationClip::new(4826, 6103, 30.0, false),
     ),
 ];
 
@@ -183,123 +179,130 @@ const EDI_PLAY_SUBCLIPS: &[ViewerSubClip] = &[
 
 const EDI_GERO_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4502: Toilet Vomiting Part 1",
-        AnimationClip::new(0, 84, 30.0, true),
+        "4502/4503: Toilet Vomiting Part 1",
+        AnimationClip::new(0, 1055, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4503: Toilet Vomiting Part 2",
-        AnimationClip::new(85, 1068, 30.0, false),
+        "4504: Toilet Vomiting Part 2",
+        AnimationClip::new(1056, 2688, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4504: Toilet Vomiting Part 3",
-        AnimationClip::new(1069, 2701, 30.0, false),
+        "4505: Toilet Vomiting Part 3",
+        AnimationClip::new(2689, 3479, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4505: Toilet Vomiting Part 4",
-        AnimationClip::new(2702, 3492, 30.0, false),
+        "4506: Toilet Vomiting Part 4",
+        AnimationClip::new(3480, 3650, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4506: Toilet Vomiting Part 5",
-        AnimationClip::new(3493, 3663, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4507: Toilet Vomiting Part 6",
-        AnimationClip::new(3664, 4156, 30.0, false),
+        "4507: Toilet Vomiting Part 5",
+        AnimationClip::new(3651, 4143, 30.0, false),
     ),
 ];
 
 const EDI_KOROSU_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4513: Prison Corpse Part 1",
-        AnimationClip::new(0, 660, 30.0, false),
+        "4519: Prison Corpse Part 1",
+        AnimationClip::new(0, 490, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4514: Prison Corpse Part 2",
-        AnimationClip::new(661, 1041, 30.0, false),
+        "4520: Prison Corpse Part 2",
+        AnimationClip::new(491, 1301, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4515: Prison Corpse Part 3",
-        AnimationClip::new(1042, 1213, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4516: Prison Corpse Part 4",
-        AnimationClip::new(1214, 1590, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4517: Prison Corpse Part 5",
-        AnimationClip::new(1591, 2035, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4518: Prison Corpse Part 6",
-        AnimationClip::new(2036, 2246, 30.0, false),
+        "4521: Prison Corpse Part 3",
+        AnimationClip::new(1302, 1688, 30.0, false),
     ),
 ];
 
 const EDI_BP1_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4508: Bowling Alley 1 Part 1",
-        AnimationClip::new(0, 967, 30.0, false),
+        "4511: Bowling Alley 1 Part 1",
+        AnimationClip::new(0, 763, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4509: Bowling Alley 1 Part 2",
-        AnimationClip::new(968, 1939, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4510: Bowling Alley 1 Part 3",
-        AnimationClip::new(1940, 2871, 30.0, false),
+        "4512: Bowling Alley 1 Part 2",
+        AnimationClip::new(764, 1189, 30.0, false),
     ),
 ];
 
 const EDI_BP2_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4511: Bowling Alley 2 Part 1",
-        AnimationClip::new(0, 763, 30.0, false),
+        "4513: Bowling Alley 2 Part 1",
+        AnimationClip::new(0, 731, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4512: Bowling Alley 2 Part 2",
-        AnimationClip::new(764, 1189, 30.0, false),
+        "4514: Bowling Alley 2 Part 2",
+        AnimationClip::new(732, 1112, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "4515: Bowling Alley 2 Part 3",
+        AnimationClip::new(1113, 1284, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "4516: Bowling Alley 2 Part 4",
+        AnimationClip::new(1285, 1661, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "4517: Bowling Alley 2 Part 5",
+        AnimationClip::new(1662, 2106, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "4518: Bowling Alley 2 Part 6",
+        AnimationClip::new(2107, 2317, 30.0, false),
     ),
 ];
 
 const EDI_KILLER_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4519: Meat Locker Intro Part 1",
-        AnimationClip::new(0, 490, 30.0, false),
+        "4508: Meat Locker Intro Part 1",
+        AnimationClip::new(0, 967, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4520: Meat Locker Intro Part 2",
-        AnimationClip::new(491, 1301, 30.0, false),
+        "4509: Meat Locker Intro Part 2",
+        AnimationClip::new(968, 1939, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4521: Meat Locker Intro Part 3",
-        AnimationClip::new(1302, 1688, 30.0, false),
+        "4510: Meat Locker Intro Part 3",
+        AnimationClip::new(1940, 2871, 30.0, false),
     ),
 ];
 
 const EDI_KILLER_E_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
         "4522: Eddie Death Part 1",
-        AnimationClip::new(0, 669, 30.0, false),
+        AnimationClip::new(0, 671, 30.0, false),
     ),
     ViewerSubClip::new(
         "4523: Eddie Death Part 2",
-        AnimationClip::new(670, 1448, 30.0, false),
+        AnimationClip::new(672, 1450, 30.0, false),
     ),
     ViewerSubClip::new(
         "4524: Eddie Death Part 3",
-        AnimationClip::new(1449, 1918, 30.0, false),
+        AnimationClip::new(1451, 1920, 30.0, false),
     ),
     ViewerSubClip::new(
         "4525: Eddie Death Part 4",
-        AnimationClip::new(1919, 2569, 30.0, false),
+        AnimationClip::new(1921, 2571, 30.0, false),
     ),
     ViewerSubClip::new(
         "4526: Eddie Death Part 5",
-        AnimationClip::new(2570, 2780, 30.0, false),
+        AnimationClip::new(2572, 2782, 30.0, false),
     ),
     ViewerSubClip::new(
         "4527: Eddie Death Part 6",
-        AnimationClip::new(2781, 4051, 30.0, false),
+        AnimationClip::new(2783, 4053, 30.0, false),
+    ),
+];
+
+const EDI_KILLER_I_SUBCLIPS: &[ViewerSubClip] = &[
+    ViewerSubClip::new(
+        "4526: Meat Locker Short Part 1",
+        AnimationClip::new(0, 210, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "4527: Meat Locker Short Part 2",
+        AnimationClip::new(211, 1481, 30.0, false),
     ),
 ];
 
@@ -376,355 +379,271 @@ const LAU_PLAY_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
     LauraAnimClips::WALK_IDLE,
 )];
 
-const LAU_KICK_SUBCLIPS: &[ViewerSubClip] = &[
-    ViewerSubClip::new(
-        "2502: Key Kick Part 1",
-        AnimationClip::new(0, 623, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2503: Key Kick Part 2",
-        AnimationClip::new(624, 1521, 30.0, false),
-    ),
-];
+const LAU_KAGIKERI_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "2502: Key Kick Cutscene",
+    AnimationClip::new(0, 632, 30.0, false),
+)];
 
-const LAU_WALL_SUBCLIPS: &[ViewerSubClip] = &[
+const LAU_HEI_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2504: Brick Wall Part 1",
-        AnimationClip::new(0, 504, 30.0, false),
+        "2503: Brick Wall Part 1",
+        AnimationClip::new(0, 364, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2505: Brick Wall Part 2",
-        AnimationClip::new(505, 845, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2506: Brick Wall Part 3",
-        AnimationClip::new(846, 1344, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2507: Brick Wall Part 4",
-        AnimationClip::new(1345, 1988, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2508: Brick Wall Part 5",
-        AnimationClip::new(1989, 2529, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2509: Brick Wall Part 6",
-        AnimationClip::new(2530, 3098, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2510: Brick Wall Part 7",
-        AnimationClip::new(3099, 3812, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2511: Brick Wall Part 8",
-        AnimationClip::new(3813, 4199, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2512: Brick Wall Part 9",
-        AnimationClip::new(4200, 4449, 30.0, false),
+        "2504: Brick Wall Part 2",
+        AnimationClip::new(365, 467, 30.0, false),
     ),
 ];
 
 const LAU_BP1_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2513: Bowling Alley 1 Part 1",
-        AnimationClip::new(0, 967, 30.0, false),
+        "2505: Bowling Alley 1 Part 1",
+        AnimationClip::new(0, 763, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2514: Bowling Alley 1 Part 2",
-        AnimationClip::new(968, 1939, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2515: Bowling Alley 1 Part 3",
-        AnimationClip::new(1940, 2871, 30.0, false),
+        "2506: Bowling Alley 1 Part 2",
+        AnimationClip::new(764, 1189, 30.0, false),
     ),
 ];
 
 const LAU_BP2_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2516: Bowling Alley 2 Part 1",
-        AnimationClip::new(0, 763, 30.0, false),
+        "2507: Bowling Alley 2 Part 1",
+        AnimationClip::new(0, 660, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2517: Bowling Alley 2 Part 2",
-        AnimationClip::new(764, 1189, 30.0, false),
+        "2508: Bowling Alley 2 Part 2",
+        AnimationClip::new(661, 1041, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2509: Bowling Alley 2 Part 3",
+        AnimationClip::new(1042, 1213, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2510: Bowling Alley 2 Part 4",
+        AnimationClip::new(1214, 1590, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2511: Bowling Alley 2 Part 5",
+        AnimationClip::new(1591, 2035, 30.0, false),
     ),
 ];
 
-const LAU_TEDDY_SUBCLIPS: &[ViewerSubClip] = &[
+const LAU_HP_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2518: Hospital Teddy Part 1",
-        AnimationClip::new(0, 434, 30.0, false),
+        "2512: Hospital Bears Part 1",
+        AnimationClip::new(0, 99, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2519: Hospital Teddy Part 2",
-        AnimationClip::new(435, 1134, 30.0, false),
+        "2513: Hospital Bears Part 2",
+        AnimationClip::new(100, 209, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2520: Hospital Teddy Part 3",
-        AnimationClip::new(1135, 1919, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2521: Hospital Teddy Part 4",
-        AnimationClip::new(1920, 2504, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2522: Hospital Teddy Part 5",
-        AnimationClip::new(2505, 3260, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2523: Hospital Teddy Part 6",
-        AnimationClip::new(3261, 4100, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2524: Hospital Teddy Part 7",
-        AnimationClip::new(4101, 4291, 30.0, false),
+        "2514: Hospital Bears Part 3",
+        AnimationClip::new(210, 358, 30.0, false),
     ),
 ];
 
-const LAU_DAMASI_SUBCLIPS: &[ViewerSubClip] = &[
+const LAU_DAMASU_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2525: Exam Room Trick Part 1",
-        AnimationClip::new(0, 569, 30.0, false),
+        "2515: Exam Room Trick Part 1",
+        AnimationClip::new(0, 913, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2526: Exam Room Trick Part 2",
-        AnimationClip::new(570, 1289, 30.0, false),
+        "2516: Exam Room Trick Part 2",
+        AnimationClip::new(914, 1444, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2527: Exam Room Trick Part 3",
-        AnimationClip::new(1290, 2005, 30.0, false),
+        "2517: Exam Room Trick Part 3",
+        AnimationClip::new(1445, 2324, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2528: Exam Room Trick Part 4",
-        AnimationClip::new(2006, 2609, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2529: Exam Room Trick Part 5",
-        AnimationClip::new(2610, 3157, 30.0, false),
+        "2518: Exam Room Trick Part 4",
+        AnimationClip::new(2325, 3084, 30.0, false),
     ),
 ];
 
-const LAU_PIANO1_SUBCLIPS: &[ViewerSubClip] = &[
+const LAU_DAMASU_M_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2530: Hotel Piano 1 Part 1",
-        AnimationClip::new(0, 811, 30.0, false),
+        "2519: Exam Room Lock-In Part 1",
+        AnimationClip::new(0, 552, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2531: Hotel Piano 1 Part 2",
-        AnimationClip::new(812, 1699, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2532: Hotel Piano 1 Part 3",
-        AnimationClip::new(1700, 2248, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2533: Hotel Piano 1 Part 4",
-        AnimationClip::new(2249, 2569, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2534: Hotel Piano 1 Part 5",
-        AnimationClip::new(2570, 3269, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "2535: Hotel Piano 1 Part 6",
-        AnimationClip::new(3270, 4050, 30.0, false),
+        "2520: Exam Room Lock-In Part 2",
+        AnimationClip::new(553, 962, 30.0, false),
     ),
 ];
 
-const LAU_PIANO2_SUBCLIPS: &[ViewerSubClip] = &[
+const LAU_PIANO_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2536: Hotel Piano 2 Part 1",
-        AnimationClip::new(0, 419, 30.0, false),
+        "2521: Hotel Piano Part 1",
+        AnimationClip::new(0, 225, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2537: Hotel Piano 2 Part 2",
-        AnimationClip::new(420, 1084, 30.0, false),
+        "2522: Hotel Piano Part 2",
+        AnimationClip::new(226, 468, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2538: Hotel Piano 2 Part 3",
-        AnimationClip::new(1085, 1986, 30.0, false),
+        "2523: Hotel Piano Part 3",
+        AnimationClip::new(469, 1188, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2524: Hotel Piano Part 4",
+        AnimationClip::new(1189, 1904, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2525: Hotel Piano Part 5",
+        AnimationClip::new(1905, 2685, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2526: Hotel Piano Part 6",
+        AnimationClip::new(2686, 3446, 30.0, false),
     ),
 ];
 
-const LAU_KOKUHAKU_SUBCLIPS: &[ViewerSubClip] = &[
+const LAU_ROOM312_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "2539: Room 312 Confession 1",
-        AnimationClip::new(0, 629, 30.0, false),
+        "2527: Room 312 Part 1",
+        AnimationClip::new(0, 1639, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2540: Room 312 Confession 2",
-        AnimationClip::new(630, 1184, 30.0, false),
+        "2528: Room 312 Part 2",
+        AnimationClip::new(1640, 1728, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2541: Room 312 Confession 3",
-        AnimationClip::new(1185, 1939, 30.0, false),
+        "2529: Room 312 Part 3",
+        AnimationClip::new(1729, 2248, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2542: Room 312 Confession 4",
-        AnimationClip::new(1940, 2589, 30.0, false),
+        "2530: Room 312 Part 4",
+        AnimationClip::new(2249, 2559, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2543: Room 312 Confession 5",
-        AnimationClip::new(2590, 3259, 30.0, false),
+        "2531: Room 312 Part 5",
+        AnimationClip::new(2560, 3219, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2544: Room 312 Confession 6",
-        AnimationClip::new(3260, 4169, 30.0, false),
+        "2532: Room 312 Part 6",
+        AnimationClip::new(3220, 4004, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2545: Room 312 Confession 7",
-        AnimationClip::new(4170, 4800, 30.0, false),
+        "2533: Room 312 Part 7",
+        AnimationClip::new(4005, 4420, 30.0, false),
     ),
     ViewerSubClip::new(
-        "2546: Room 312 Confession 8",
-        AnimationClip::new(4801, 5605, 30.0, false),
+        "2534: Room 312 Part 8",
+        AnimationClip::new(4421, 5246, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2535: Room 312 Part 9",
+        AnimationClip::new(5247, 5946, 30.0, false),
+    ),
+    ViewerSubClip::new(
+        "2536: Room 312 Part 10",
+        AnimationClip::new(5947, 6699, 30.0, false),
     ),
 ];
+
+const LAU_EXIT_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "2537: Leave Ending Walk",
+    AnimationClip::new(0, 233, 30.0, false),
+)];
+
+const LAU_YARINAOSHI_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "2538: Leave Ending Bedside",
+    AnimationClip::new(0, 1331, 30.0, false),
+)];
 
 const MRY_PLAY_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new("4091: Walk / Apparition A", MaryNpcAnimClips::WALK_A),
     ViewerSubClip::new("4092: Walk / Apparition B", MaryNpcAnimClips::WALK_B),
 ];
 
-const MRY_BEG_SUBCLIPS: &[ViewerSubClip] = &[
+const MRY_FUKATSU_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4002: Final Boss Intro Part 1",
-        AnimationClip::new(0, 725, 30.0, false),
+        "4002: Rebirth Ending Part 1",
+        AnimationClip::new(0, 400, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4003: Final Boss Intro Part 2",
-        AnimationClip::new(726, 1344, 30.0, false),
+        "4003: Rebirth Ending Part 2",
+        AnimationClip::new(401, 1106, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4004: Final Boss Intro Part 3",
-        AnimationClip::new(1345, 2248, 30.0, false),
+        "4004: Rebirth Ending Part 3",
+        AnimationClip::new(1107, 1862, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4005: Final Boss Intro Part 4",
-        AnimationClip::new(2249, 2585, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4006: Final Boss Intro Part 5",
-        AnimationClip::new(2586, 3034, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4007: Final Boss Intro Part 6",
-        AnimationClip::new(3035, 3600, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4008: Final Boss Intro Part 7",
-        AnimationClip::new(3601, 4126, 30.0, false),
+        "4005: Rebirth Ending Part 4",
+        AnimationClip::new(1863, 2050, 30.0, false),
     ),
 ];
 
-const MRY_END_A_SUBCLIPS: &[ViewerSubClip] = &[
+const MRY_JISATSU_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4009: Leave Ending Part 1",
-        AnimationClip::new(0, 629, 30.0, false),
+        "4006: In Water Ending Part 1",
+        AnimationClip::new(0, 559, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4010: Leave Ending Part 2",
-        AnimationClip::new(630, 1299, 30.0, false),
+        "4007: In Water Ending Part 2",
+        AnimationClip::new(560, 1170, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4011: Leave Ending Part 3",
-        AnimationClip::new(1300, 1794, 30.0, false),
+        "4008: In Water Ending Part 3",
+        AnimationClip::new(1171, 1558, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4012: Leave Ending Part 4",
-        AnimationClip::new(1795, 2329, 30.0, false),
+        "4009: In Water Ending Part 4",
+        AnimationClip::new(1559, 2041, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4013: Leave Ending Part 5",
-        AnimationClip::new(2330, 3059, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4014: Leave Ending Part 6",
-        AnimationClip::new(3060, 3644, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4015: Leave Ending Part 7",
-        AnimationClip::new(3645, 4564, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4016: Leave Ending Part 8",
-        AnimationClip::new(4565, 5134, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4017: Leave Ending Part 9",
-        AnimationClip::new(5135, 5884, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4018: Leave Ending Part 10",
-        AnimationClip::new(5885, 6506, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4019: Leave Ending Part 11",
-        AnimationClip::new(6507, 7440, 30.0, false),
+        "4010: In Water Ending Part 5",
+        AnimationClip::new(2042, 2229, 30.0, false),
     ),
 ];
 
-const MRY_END_B_SUBCLIPS: &[ViewerSubClip] = &[
+const MRY_MAR_ISHO_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4020: In Water Ending Part 1",
-        AnimationClip::new(0, 819, 30.0, false),
+        "4011: Maria Ending Part 1",
+        AnimationClip::new(0, 477, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4021: In Water Ending Part 2",
-        AnimationClip::new(820, 1469, 30.0, false),
+        "4012: Maria Ending Part 2",
+        AnimationClip::new(478, 1321, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4022: In Water Ending Part 3",
-        AnimationClip::new(1470, 2114, 30.0, false),
+        "4013: Maria Ending Part 3",
+        AnimationClip::new(1322, 1997, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4023: In Water Ending Part 4",
-        AnimationClip::new(2115, 2864, 30.0, false),
+        "4014: Maria Ending Part 4",
+        AnimationClip::new(1998, 2831, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4024: In Water Ending Part 5",
-        AnimationClip::new(2865, 3449, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4025: In Water Ending Part 6",
-        AnimationClip::new(3450, 4214, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4026: In Water Ending Part 7",
-        AnimationClip::new(4215, 5024, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4027: In Water Ending Part 8",
-        AnimationClip::new(5025, 5609, 30.0, false),
-    ),
-    ViewerSubClip::new(
-        "4028: In Water Ending Part 9",
-        AnimationClip::new(5610, 6280, 30.0, false),
+        "4015: Maria Ending Part 5",
+        AnimationClip::new(2832, 3019, 30.0, false),
     ),
 ];
 
-const MRY_END_D_SUBCLIPS: &[ViewerSubClip] = &[
+const MRY_YARINAOSHI_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new(
-        "4029: Rebirth Ending Part 1",
-        AnimationClip::new(0, 654, 30.0, false),
+        "4016: Leave Ending Part 1",
+        AnimationClip::new(0, 467, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4030: Rebirth Ending Part 2",
-        AnimationClip::new(655, 1344, 30.0, false),
+        "4017: Leave Ending Part 2",
+        AnimationClip::new(468, 1120, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4031: Rebirth Ending Part 3",
-        AnimationClip::new(1345, 2005, 30.0, false),
+        "4018: Leave Ending Part 3",
+        AnimationClip::new(1121, 1633, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4032: Rebirth Ending Part 4",
-        AnimationClip::new(2006, 2639, 30.0, false),
+        "4019: Leave Ending Part 4",
+        AnimationClip::new(1634, 1975, 30.0, false),
     ),
     ViewerSubClip::new(
-        "4033: Rebirth Ending Part 5",
-        AnimationClip::new(2640, 3158, 30.0, false),
+        "4020: Leave Ending Part 5",
+        AnimationClip::new(1976, 2163, 30.0, false),
     ),
 ];
 
@@ -837,26 +756,29 @@ pub fn sub_clips_for_anm(model_id: &str, anm_rel_path: &str) -> &'static [Viewer
         ("hhh_edi", "data/demo/bp_edi_2/hhh_edi.anm") => EDI_BP2_SUBCLIPS,
         ("hhh_edi", "data/demo/killer_edi/hhh_edi.anm") => EDI_KILLER_SUBCLIPS,
         ("hhh_edi", "data/demo/killer_edi_e/hhh_edi.anm") => EDI_KILLER_E_SUBCLIPS,
+        ("hhh_edi", "data/demo/killer_edi_i/hhh_edi.anm") => EDI_KILLER_I_SUBCLIPS,
 
         ("lll_edi", "data/chr/edi/lll_edi.anm") => EDB_BOSS_SUBCLIPS,
         ("lll_edi", "data/demo/killer_edi_d/lll_edi.anm") => EDB_DEATH_SUBCLIPS,
 
         ("lau", "data/chr/lau/p_lau.anm") => LAU_PLAY_SUBCLIPS,
-        ("lau", "data/demo/kick_key/lau.anm") => LAU_KICK_SUBCLIPS,
-        ("lau", "data/demo/lau_wall/lau.anm") => LAU_WALL_SUBCLIPS,
+        ("lau", "data/demo/kagikeri/lau.anm") => LAU_KAGIKERI_SUBCLIPS,
+        ("lau", "data/demo/hei_lau/lau.anm") => LAU_HEI_SUBCLIPS,
         ("lau", "data/demo/bp_edi_1/lau.anm") => LAU_BP1_SUBCLIPS,
         ("lau", "data/demo/bp_edi_2/lau.anm") => LAU_BP2_SUBCLIPS,
-        ("lau", "data/demo/teddy_a/lau.anm") => LAU_TEDDY_SUBCLIPS,
-        ("lau", "data/demo/lau_damasi/lau.anm") => LAU_DAMASI_SUBCLIPS,
-        ("lau", "data/demo/piano_lau_1/lau.anm") => LAU_PIANO1_SUBCLIPS,
-        ("lau", "data/demo/piano_lau_2/lau.anm") => LAU_PIANO2_SUBCLIPS,
-        ("lau", "data/demo/kokuhaku/lau.anm") => LAU_KOKUHAKU_SUBCLIPS,
+        ("lau", "data/demo/hp_lau/lau.anm") => LAU_HP_SUBCLIPS,
+        ("lau", "data/demo/lau_damasu/lau.anm") => LAU_DAMASU_SUBCLIPS,
+        ("lau", "data/demo/lau_damasu_m/lau.anm") => LAU_DAMASU_M_SUBCLIPS,
+        ("lau", "data/demo/piano_lau/lau.anm") => LAU_PIANO_SUBCLIPS,
+        ("lau", "data/demo/room312/lau.anm") => LAU_ROOM312_SUBCLIPS,
+        ("lau", "data/demo/exit/lau.anm") => LAU_EXIT_SUBCLIPS,
+        ("lau", "data/demo/mry_yarinaoshi_i/lau.anm") => LAU_YARINAOSHI_SUBCLIPS,
 
         ("mry", "data/chr/mry/p_mry.anm") => MRY_PLAY_SUBCLIPS,
-        ("mry", "data/demo/mry_yarinaosi_beg/mry.anm") => MRY_BEG_SUBCLIPS,
-        ("mry", "data/demo/mry_yarinaosi_end_a/mry.anm") => MRY_END_A_SUBCLIPS,
-        ("mry", "data/demo/mry_yarinaosi_end_b/mry.anm") => MRY_END_B_SUBCLIPS,
-        ("mry", "data/demo/mry_yarinaosi_end_d/mry.anm") => MRY_END_D_SUBCLIPS,
+        ("mry", "data/demo/fukatsu_a/mry.anm") => MRY_FUKATSU_SUBCLIPS,
+        ("mry", "data/demo/jisatsu_a/mry.anm") => MRY_JISATSU_SUBCLIPS,
+        ("mry", "data/demo/mar_isho_a/mry.anm") => MRY_MAR_ISHO_SUBCLIPS,
+        ("mry", "data/demo/mry_yarinaoshi_a/mry.anm") => MRY_YARINAOSHI_SUBCLIPS,
 
         ("scu", "data/chr/scu/scu.anm") => SCU_SUBCLIPS,
         ("mkn", "data/chr/mkn/mkn.anm") => MKN_SUBCLIPS,

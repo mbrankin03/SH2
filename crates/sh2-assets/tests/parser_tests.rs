@@ -961,5 +961,29 @@ mod tests {
                 );
             }
         }
+
+        // Verify delta/hold frame persistence (`t == 0` in PS2 `shExec` at `0x001002c0`):
+        // In `data/demo/knife_agl/agl.anm` (Mirror Room cutscene), keyframes at 10-15 Hz are
+        // followed by 1-2 hold frames (`t == 0` for all 75 bones). Verify that held frames retain
+        // the previous frame's bone transforms and never snap back to `None` / standing bind pose.
+        let agl_mdl =
+            parse_mdl(&fs::read(&agl_path).expect("read agl.mdl")).expect("parse agl.mdl");
+        let knife_bytes = fs::read(format!("{ROOT_ASSETS}/data/demo/knife_agl/agl.anm"))
+            .expect("read knife_agl/agl.anm");
+        let knife_anm = parse_anm(&knife_bytes, agl_mdl.bone_count, &agl_mdl.parents)
+            .expect("parse knife_agl/agl.anm");
+        assert_eq!(knife_anm.frames.len(), 6371);
+        for f_idx in 217..=390 {
+            let frame = &knife_anm.frames[f_idx];
+            for b_idx in 0..agl_mdl.bone_count {
+                let bt = frame.bones[b_idx].as_ref().unwrap_or_else(|| {
+                    panic!("knife_agl/agl.anm frame {f_idx} bone {b_idx} lost held transform")
+                });
+                assert!(
+                    bt.rotation.is_some() && bt.translation.is_some(),
+                    "knife_agl/agl.anm frame {f_idx} bone {b_idx} missing held rot/trans"
+                );
+            }
+        }
     }
 }

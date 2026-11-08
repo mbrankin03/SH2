@@ -394,9 +394,11 @@ fn parse_anm_with_stride(
             }
 
             if bone_idx < bone_count && t != 0 {
+                let prev_rot = cur_frame[bone_idx].as_ref().and_then(|b| b.rotation);
+                let prev_trans = cur_frame[bone_idx].as_ref().and_then(|b| b.translation);
                 cur_frame[bone_idx] = Some(BoneTransform {
-                    rotation: rot,
-                    translation: trans,
+                    rotation: rot.or(prev_rot),
+                    translation: trans.or(prev_trans),
                     track_type: AnimationTrackType::from(t),
                 });
             }
@@ -407,7 +409,6 @@ fn parse_anm_with_stride(
             frames.push(AnimationFrame {
                 bones: cur_frame.clone(),
             });
-            cur_frame = vec![None; bone_count];
         }
     }
 

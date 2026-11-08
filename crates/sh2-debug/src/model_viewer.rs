@@ -1168,6 +1168,20 @@ mod tests {
                     ap
                 );
 
+                for sc in crate::subclips::sub_clips_for_anm(entry.id, ap) {
+                    assert!(
+                        sc.clip.start_frame <= sc.clip.end_frame
+                            && (sc.clip.end_frame as usize) < anm.frames.len(),
+                        "Entry '{}' animation '{}' sub-clip '{}' range {}..={} exceeds total frames {}",
+                        entry.id,
+                        ap,
+                        sc.label,
+                        sc.clip.start_frame,
+                        sc.clip.end_frame,
+                        anm.frames.len()
+                    );
+                }
+
                 // Check frame 0, mid-frame, and last frame for finite, bounded vertex skinning
                 let check_frames = [0, anm.frames.len() / 2, anm.frames.len() - 1];
                 for &fi in &check_frames {

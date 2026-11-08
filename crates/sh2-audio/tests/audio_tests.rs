@@ -640,22 +640,22 @@ mod tests {
                 }
             }
         }
-        // Verify authentic sh2pc.exe (0x54AFC1) James footstep mappings:
-        // - Concrete (0): 11001 -> sddata[147]
-        // - Wood (1): 11007 -> sddata[149]
-        // - Metal (2): 11000 -> sddata[146]
-        // - Carpet (3): 11005 -> sddata[151]
-        // - Water (4): 11003 -> sddata[148] / 83, 84
-        // - Grass (5): 11002 -> sddata[142]
-        // - Gravel (6): 11004 -> sddata[150]
-        // - Blood/Glass (7): 11003/11008 -> sddata[148, 141]
+        // Verify authentic sh2pc.exe (0x54AFC1) & .cld floor geometry James footstep mappings:
+        // - Concrete (.cld 0, 12): 11001 -> sddata[147]
+        // - Wood (.cld 7 — Baldwin Mansion `ma`, Pete's Bowling Lanes `bw01`): 19907 / 11005 -> sddata[95, 151]
+        // - Metal (.cld 5, 9, 11): 11000 -> sddata[146]
+        // - Carpet (.cld 8 — Lakeview Hotel `rr` & Apartments `ap`): 11009 -> sddata[144]
+        // - Water (.cld 6): 11003 -> sddata[148] / 83, 84
+        // - Grass (.cld 2): 11002 -> sddata[142]
+        // - Gravel (.cld 1, 3, 4): 11004 / 11007 -> sddata[150, 149]
+        // - Blood/Glass (.cld 10): 11003/11008 -> sddata[148, 141]
         assert_eq!(
             footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Concrete, false).0,
             147
         );
         assert_eq!(
-            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Wood, false).0,
-            149
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Wood, false),
+            (95, 151)
         );
         assert_eq!(
             footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Metal, false).0,
@@ -663,7 +663,7 @@ mod tests {
         );
         assert_eq!(
             footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Carpet, false).0,
-            151
+            144
         );
         assert_eq!(
             footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Water, false).0,

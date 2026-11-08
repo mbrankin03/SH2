@@ -39,7 +39,7 @@ pub(crate) const SPATIAL_SFX_PRESETS: &[(u32, &str)] = &[
     (11056, "11056 (0x2B30): Hunting Rifle Shot (sddata[26])"),
     (11032, "11032 (0x2B18): Wooden Plank Hit (sddata[346])"),
     (11040, "11040 (0x2B20): Steel Pipe Hit (sddata[348])"),
-    (11007, "11007 (0x2AFF): James Wood Footstep (sddata[149])"),
+    (11005, "11005 (0x2AFD): James Wood Footstep (sddata[151])"),
     (5698, "5698 (0x1642): Chainsaw Loop (sddata[352], Looped)"),
     (11001, "11001 (0x2AF9): James Concrete Step (sddata[147])"),
 ];

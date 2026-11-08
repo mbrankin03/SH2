@@ -576,7 +576,7 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
         },
         SurfacePadZone {
             pad_index: 1,
-            material_id: 0x81, // Wood / Planks (`se_id = 11007` -> `sddata[149]`)
+            material_id: 0x81, // Wood / Planks (`se_id = 11005` / `19907` -> `sddata[95, 151]`)
             min_x: -2800.0,
             max_x: -200.0,
             min_z: -4600.0,
@@ -594,7 +594,7 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
         },
         SurfacePadZone {
             pad_index: 3,
-            material_id: 0x83, // Carpet / Rug (`se_id = 11005` -> `sddata[151]`)
+            material_id: 0x83, // Carpet / Rug (`se_id = 11009` / `11054` -> `sddata[144, 145]`)
             min_x: 3000.0,
             max_x: 5600.0,
             min_z: -4600.0,

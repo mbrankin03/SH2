@@ -23,20 +23,20 @@ use super::raycast::{clamp_camera_ray, RaycastFilter};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum SurfaceMaterial {
-    /// Asphalt, concrete, stone, and tile surfaces (`.cld` material `0, 8, 12` -> `11001` / `11009` -> `sddata[147, 144]`).
+    /// Asphalt, concrete, and stone surfaces (`.cld` material `0, 12` -> `11001` -> `sddata[147]`).
     #[default]
     Concrete = 0,
-    /// Wooden planks, floorboards, and stairs (`.cld` material `3` -> `11007` -> `sddata[149, 95]`).
+    /// Wooden planks, bowling lanes, and floorboards (`.cld` material `7` -> `11005` -> `sddata[151, 95]`).
     Wood = 1,
     /// Metal grating, iron stairs, and boiler plates (`.cld` material `5, 9, 11` -> `11000` / `11006` -> `sddata[146, 143]`).
     Metal = 2,
-    /// Carpet, rugs, and padded hospital/hotel hallways (`.cld` material `7` -> `11005` -> `sddata[151, 145]`).
+    /// Carpet, rugs, and padded hotel/apartment hallways (`.cld` material `8` -> `11009` / `11054` -> `sddata[144, 145]`).
     Carpet = 3,
     /// Shallow water puddles, flooded basement, and sewers (`.cld` material `6` -> `11003` -> `sddata[148, 83, 84]`).
     Water = 4,
     /// Forest grass, brush, and foliage trails (`.cld` material `2` -> `11002` -> `sddata[142]`).
     Grass = 5,
-    /// Dirt, gravel, loose rubble, and forest/cemetery paths (`.cld` material `1, 4` -> `11004` -> `sddata[150]`).
+    /// Dirt, gravel, loose rubble, and forest/cemetery paths (`.cld` material `1, 3, 4` -> `11004` / `11007` -> `sddata[150, 149]`).
     Gravel = 6,
     /// Viscous blood / broken glass / wet organic surfaces (`.cld` material `10` -> `11008` / `11003` -> `sddata[148, 141]`).
     Blood = 7,
@@ -75,15 +75,16 @@ impl SurfaceMaterial {
 
     /// Maps a raw `.cld` `FloorTriangle::material` attribute (`u32`) to a [`SurfaceMaterial`].
     ///
-    /// Matches `sh2pc.exe` `0x54A9A0` / `0x54AFC1` (James) and `0x5495C0` (Maria) switch table (`0..=12`):
-    /// - `0, 8, 12` -> [`Self::Concrete`] (`11001` / `11009`)
-    /// - `1, 4` -> [`Self::Gravel`] (`11004` Dirt/Gravel)
-    /// - `2` -> [`Self::Grass`] (`11002` Grass)
-    /// - `3` -> [`Self::Wood`] (`11007` Wood)
-    /// - `5, 9, 11` -> [`Self::Metal`] (`11000` Metal Grating / `11006` Solid Metal)
-    /// - `6` -> [`Self::Water`] (`11003` Water)
-    /// - `7` -> [`Self::Carpet`] (`11005` Carpet)
-    /// - `10` -> [`Self::Blood`] (`11008` Glass / Wet / Special)
+    /// Matches `sh2pc.exe` `0x54A9A0` / `0x54AFC1` (James) and `0x5495C0` (Maria) switch table (`0..=12`)
+    /// verified against `.cld` room geometry across `ap`, `bw`, `ca..cd`, `hp`, `ps`, `rr`, `ru`, and `ma`:
+    /// - `0, 12` -> [`Self::Concrete`] (`11001` Concrete/Stone -> `sddata[147]`)
+    /// - `1, 3, 4` -> [`Self::Gravel`] (`11004` / `11007` Dirt/Gravel/Sand -> `sddata[150, 149]`)
+    /// - `2` -> [`Self::Grass`] (`11002` Grass -> `sddata[142]`)
+    /// - `5, 9, 11` -> [`Self::Metal`] (`11000` Metal Grating / `11006` Solid Metal -> `sddata[146, 143]`)
+    /// - `6` -> [`Self::Water`] (`11003` Water -> `sddata[148, 83, 84]`)
+    /// - `7` -> [`Self::Wood`] (`11005` Wood floorboards / Baldwin Mansion `ma` / Bowling `bw01` -> `sddata[151, 95]`)
+    /// - `8` -> [`Self::Carpet`] (`11009` / `11054` Carpeted Hotel `rr` & Apartment `ap` corridors -> `sddata[144, 145]`)
+    /// - `10` -> [`Self::Blood`] (`11008` Glass / Wet / Special -> `sddata[148, 141]`)
     ///
     /// Also supports synthetic test pad markers (`0x80..=0x87`) which map `1:1` to `SurfaceMaterial::from_index`.
     #[inline]
@@ -92,13 +93,13 @@ impl SurfaceMaterial {
             return Self::from_index((raw & 0x07) as u8);
         }
         match raw & 0x0F {
-            0 | 8 | 12 => Self::Concrete,
-            1 | 4 => Self::Gravel,
+            0 | 12 => Self::Concrete,
+            1 | 3 | 4 => Self::Gravel,
             2 => Self::Grass,
-            3 => Self::Wood,
             5 | 9 | 11 => Self::Metal,
             6 => Self::Water,
-            7 => Self::Carpet,
+            7 => Self::Wood,
+            8 => Self::Carpet,
             10 => Self::Blood,
             _ => Self::from_index((raw & 0x07) as u8),
         }

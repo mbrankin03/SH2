@@ -442,7 +442,7 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         mdl_paths: &["data/chr/item/i_letter.mdl", "data/chr/item/i_radio.mdl"],
         anm_paths: &["data/chr/item/p_i_letter.anm"],
         hd_override_dir: None,
-        default_distance: 800.0,
+        default_distance: 250.0,
         default_target_y: -150.0,
     },
 ];
@@ -752,6 +752,28 @@ impl ModelViewerState {
         subclips.get(idx).copied()
     }
 
+    /// Returns `true` if the active `.anm` is the shared 8-weapon pose lookup table (`jms_weapon.anm`),
+    /// where each frame `0..=7` belongs to a different weapon's 2-bone proportions and must stay
+    /// locked to the active weapon's dedicated pose sub-clip.
+    fn is_shared_weapon_pose_table(&self) -> bool {
+        self.current_anm_path() == Some("data/chr/wp/jms_weapon.anm")
+            && !self.available_subclips().is_empty()
+    }
+
+    fn apply_default_subclip_for_current_anm(&mut self) {
+        if self.is_shared_weapon_pose_table() {
+            self.selected_subclip_index = Some(0);
+            if let Some(sc) = self.active_subclip() {
+                self.current_frame = sc.clip.start_frame as f32;
+                self.base_fps = sc.clip.fps;
+            }
+        } else {
+            self.selected_subclip_index = None;
+            self.base_fps = 30.0;
+            self.current_frame = 0.0;
+        }
+    }
+
     /// Cycles to the next named PS2 sub-clip within the active `.anm` file, wrapping back to
     /// `None` ("ALL FRAMES") after the last sub-clip.
     pub fn next_subclip(&mut self) {
@@ -759,6 +781,14 @@ impl ModelViewerState {
         if subclips.is_empty() {
             self.selected_subclip_index = None;
             self.base_fps = 30.0;
+            return;
+        }
+        if self.is_shared_weapon_pose_table() {
+            self.selected_subclip_index = Some(0);
+            if let Some(sc) = self.active_subclip() {
+                self.current_frame = sc.clip.start_frame as f32;
+                self.base_fps = sc.clip.fps;
+            }
             return;
         }
         self.selected_subclip_index = match self.selected_subclip_index {
@@ -781,6 +811,14 @@ impl ModelViewerState {
         if subclips.is_empty() {
             self.selected_subclip_index = None;
             self.base_fps = 30.0;
+            return;
+        }
+        if self.is_shared_weapon_pose_table() {
+            self.selected_subclip_index = Some(0);
+            if let Some(sc) = self.active_subclip() {
+                self.current_frame = sc.clip.start_frame as f32;
+                self.base_fps = sc.clip.fps;
+            }
             return;
         }
         self.selected_subclip_index = match self.selected_subclip_index {
@@ -837,9 +875,7 @@ impl ModelViewerState {
     pub fn set_model_index(&mut self, index: usize) {
         self.selected_model_index = index % BESTIARY_CATALOG.len();
         self.selected_anm_index = 0;
-        self.selected_subclip_index = None;
-        self.base_fps = 30.0;
-        self.current_frame = 0.0;
+        self.apply_default_subclip_for_current_anm();
         self.camera.reset_for_entry(self.current_entry());
     }
 
@@ -863,9 +899,7 @@ impl ModelViewerState {
     pub fn next_animation_clip(&mut self) {
         let count = self.current_entry().anm_paths.len().max(1);
         self.selected_anm_index = (self.selected_anm_index + 1) % count;
-        self.selected_subclip_index = None;
-        self.base_fps = 30.0;
-        self.current_frame = 0.0;
+        self.apply_default_subclip_for_current_anm();
     }
 
     /// Cycles to the previous `.anm` animation file for the active model.
@@ -876,9 +910,7 @@ impl ModelViewerState {
         } else {
             self.selected_anm_index -= 1;
         }
-        self.selected_subclip_index = None;
-        self.base_fps = 30.0;
-        self.current_frame = 0.0;
+        self.apply_default_subclip_for_current_anm();
     }
 
     /// Updates total frame count when a new `.anm` file is loaded.
@@ -1086,6 +1118,35 @@ mod tests {
         assert!(viewer.select_by_name("lll_edi"));
         viewer.set_total_frames(437);
         assert_eq!(viewer.available_subclips().len(), 21);
+
+        // Verify all 8 weapons using `jms_weapon.anm` automatically lock onto their dedicated
+        // 1-frame weapon pose (`0..=7`) and never drift onto another weapon's bone-1 tip offset
+        let weapon_frames = [
+            ("wp_handgun", 0usize),
+            ("wp_shotgun", 1),
+            ("wp_riflgun", 2),
+            ("wp_sp", 3),
+            ("wp_kakuzai", 4),
+            ("wp_pipe", 5),
+            ("wp_nata", 6),
+            ("wp_csaw", 7),
+        ];
+        for (wp_id, expected_frame) in weapon_frames {
+            assert!(viewer.select_by_name(wp_id));
+            viewer.set_total_frames(8);
+            viewer.is_paused = false;
+            assert_eq!(viewer.selected_subclip_index, Some(0));
+            viewer.tick(0.5);
+            let (f0, f1, _) = viewer.sample_cursor();
+            assert_eq!(
+                f0, expected_frame,
+                "Weapon {wp_id} drifted off frame {expected_frame}"
+            );
+            assert_eq!(
+                f1, expected_frame,
+                "Weapon {wp_id} drifted off frame {expected_frame}"
+            );
+        }
     }
 
     #[test]

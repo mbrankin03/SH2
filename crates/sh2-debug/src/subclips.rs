@@ -740,6 +740,59 @@ const BOS_SUBCLIPS: &[ViewerSubClip] = &[
     ViewerSubClip::new("5809: Floor Body", MaryBossAnimClips::FLOOR_BODY),
 ];
 
+// ============================================================================
+// Weapons & Key Items (`jms_weapon.anm` 8-weapon pose table & `p_i_letter.anm`)
+// ============================================================================
+// In `data/chr/wp/jms_weapon.anm` (8 frames total), each frame `0..=7` encodes
+// the static 2-bone bind pose (`bone 0` = right-hand grip, `bone 1` = muzzle/tip)
+// for one specific weapon ID. Playing across frames 0..=7 on a single weapon
+// applies the other 7 weapons' tip positions to `bone 1`.
+
+const WP_HANDGUN_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 0: Handgun (M92F)",
+    AnimationClip::new(0, 0, 30.0, true),
+)];
+
+const WP_SHOTGUN_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 1: Shotgun",
+    AnimationClip::new(1, 1, 30.0, true),
+)];
+
+const WP_RIFLGUN_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 2: Hunting Rifle",
+    AnimationClip::new(2, 2, 30.0, true),
+)];
+
+const WP_SP_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 3: Hyper Spray Can",
+    AnimationClip::new(3, 3, 30.0, true),
+)];
+
+const WP_KAKUZAI_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 4: Wooden Plank",
+    AnimationClip::new(4, 4, 30.0, true),
+)];
+
+const WP_PIPE_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 5: Steel Pipe",
+    AnimationClip::new(5, 5, 30.0, true),
+)];
+
+const WP_NATA_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 6: Great Knife",
+    AnimationClip::new(6, 6, 30.0, true),
+)];
+
+const WP_CSAW_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Weapon Pose 7: Chainsaw",
+    AnimationClip::new(7, 7, 30.0, true),
+)];
+
+const I_LETTER_SUBCLIPS: &[ViewerSubClip] = &[ViewerSubClip::new(
+    "Letter Unfold & Hold",
+    AnimationClip::new(0, 72, 30.0, true),
+)];
+
 /// Returns the slice of named PS2 animation sub-clips for a given `(model_id, anm_rel_path)` pair.
 pub fn sub_clips_for_anm(model_id: &str, anm_rel_path: &str) -> &'static [ViewerSubClip] {
     match (model_id, anm_rel_path) {
@@ -790,6 +843,16 @@ pub fn sub_clips_for_anm(model_id: &str, anm_rel_path: &str) -> &'static [Viewer
         ("arm", "data/chr/arm/arm.anm") => ARM_SUBCLIPS,
         ("tyu", "data/chr/tyu/tyu.anm") => TYU_SUBCLIPS,
         ("bos", "data/chr/bos/bos.anm") => BOS_SUBCLIPS,
+
+        ("wp_handgun", "data/chr/wp/jms_weapon.anm") => WP_HANDGUN_SUBCLIPS,
+        ("wp_shotgun", "data/chr/wp/jms_weapon.anm") => WP_SHOTGUN_SUBCLIPS,
+        ("wp_riflgun", "data/chr/wp/jms_weapon.anm") => WP_RIFLGUN_SUBCLIPS,
+        ("wp_sp", "data/chr/wp/jms_weapon.anm") => WP_SP_SUBCLIPS,
+        ("wp_kakuzai", "data/chr/wp/jms_weapon.anm") => WP_KAKUZAI_SUBCLIPS,
+        ("wp_pipe", "data/chr/wp/jms_weapon.anm") => WP_PIPE_SUBCLIPS,
+        ("wp_nata", "data/chr/wp/jms_weapon.anm") => WP_NATA_SUBCLIPS,
+        ("wp_csaw", "data/chr/wp/jms_weapon.anm") => WP_CSAW_SUBCLIPS,
+        ("i_letter", "data/chr/item/p_i_letter.anm") => I_LETTER_SUBCLIPS,
         _ => &[],
     }
 }

@@ -9,8 +9,8 @@ use sh2_assets::formats::anm::{
     compute_skin_matrices_with_inv_into, evaluate_pose_into, interpolate_frames_into,
 };
 use sh2_debug::{
-    build_skeleton_debug_lines, build_wireframe_lines, StageLightingRig, TextureSourceMode,
-    ViewerRenderMode, BESTIARY_CATALOG,
+    build_skeleton_debug_lines, build_wireframe_lines, ModelCategory, StageLightingRig,
+    TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,
 };
 use sh2_ui::menu::TitlePhase;
 
@@ -325,11 +325,34 @@ impl RoomController for ModelViewerRoomController {
                     &mut c.skin_scratch,
                 );
 
+                let entry = state.model_viewer.current_entry();
                 let (s, c_yaw) = state.model_viewer.turntable_yaw.sin_cos();
+                let (tx, ty, tz) = if entry.category == ModelCategory::WeaponOrItem
+                    && !c.model.vertices.positions.is_empty()
+                {
+                    let mut min_p = [f32::INFINITY; 3];
+                    let mut max_p = [f32::NEG_INFINITY; 3];
+                    for p in &c.model.vertices.positions {
+                        for k in 0..3 {
+                            min_p[k] = min_p[k].min(p[k]);
+                            max_p[k] = max_p[k].max(p[k]);
+                        }
+                    }
+                    let cx = 0.5 * (min_p[0] + max_p[0]);
+                    let cy = 0.5 * (min_p[1] + max_p[1]);
+                    let cz = 0.5 * (min_p[2] + max_p[2]);
+                    (
+                        -(c_yaw * cx + s * cz),
+                        entry.default_target_y - cy,
+                        -(-s * cx + c_yaw * cz),
+                    )
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
                 let world_mat = [
-                    [c_yaw, 0.0, s, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [-s, 0.0, c_yaw, 0.0],
+                    [c_yaw, 0.0, s, tx],
+                    [0.0, 1.0, 0.0, ty],
+                    [-s, 0.0, c_yaw, tz],
                     [0.0, 0.0, 0.0, 1.0],
                 ];
 

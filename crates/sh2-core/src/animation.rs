@@ -20,6 +20,10 @@ pub enum AnimationStateKind {
     Attack,
     /// Stumble or damage reaction.
     Damage,
+    /// Grabbed by creature and struggling to break free (`0x533d00`).
+    Held,
+    /// Knocked down or collapsed on the floor.
+    Fall,
 }
 
 /// Tuple representing an animation cursor: `(frame_0, frame_1, alpha)`.
@@ -93,6 +97,148 @@ impl JamesBasicClips {
     pub const AIM: AnimationClip = AnimationClip::new(200, 230, 30.0, true);
     /// Weapon strike / attack execution (frames 231..=270).
     pub const ATTACK: AnimationClip = AnimationClip::new(231, 270, 30.0, false);
+    /// Damage / hurt flinch reaction (frames 453..=470, PS2 index 122, speed 1024 = 15.0 fps).
+    pub const HURT: AnimationClip = AnimationClip::new(453, 470, 15.0, false);
+    /// Authentic PS2/PC James struggle clip against overhead neck chokes / Flesh Lips & Pyramid Head
+    /// (pjames_anim aid 121 frames 453..=470 / 457..=468, speed 1024 = 15.0 fps, PS2 lower_hold lines 0x21dc80-0x21dca4).
+    /// James tilts his head upward with mouth gasping and raises both hands up reaching for the creature's legs/hands strangling his throat.
+    pub const STRUGGLE_OVERHEAD: AnimationClip = AnimationClip::new(457, 468, 15.0, true);
+    /// Generic struggle held animation (used as fallback: frames 457..=461 inside J_HURT, 15.0 fps).
+    pub const STRUGGLE_HELD: AnimationClip = AnimationClip::new(457, 461, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against leg attacks / Creepers
+    /// (pjames_anim aid 127 frames 588..=611, speed 2048 = 30.0 fps).
+    pub const STRUGGLE_LEG: AnimationClip = AnimationClip::new(588, 611, 30.0, true);
+    /// Authentic PS2/PC James struggle clip against torso grabs / Lying Figure & Abstract Daddy
+    /// (pjames_anim aid 128 frames 612..=629, speed 1024 = 15.0 fps).
+    pub const STRUGGLE_TORSO: AnimationClip = AnimationClip::new(612, 629, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against standing throat / tentacle choke holds / Mary Boss
+    /// (pjames_anim aid 129 frames 632..=649, speed 1024 = 15.0 fps).
+    /// James desperately reaches up with both hands clutching at his throat and fighting against the tentacles strangling him.
+    pub const STRUGGLE_CHOKE_MARY: AnimationClip = AnimationClip::new(632, 649, 15.0, true);
+    /// Authentic PS2/PC James breakout release push when breaking free from grab
+    /// (pjames_anim aid 130 frames 652..=670, speed 2048 = 30.0 fps).
+    pub const STRUGGLE_RELEASE: AnimationClip = AnimationClip::new(652, 670, 30.0, false);
+    /// Authentic PS2/PC James struggle clip against torso pinning / standing grapples / Abstract Daddy & Lying Figure
+    /// (pjames_anim aid 128 frames 612..=629, PS2 speed 1024 = 15.0 fps).
+    pub const STRUGGLE_DADDY: AnimationClip = AnimationClip::new(612, 629, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against Flesh Lips overhead ceiling choke & Mary Boss choke
+    /// (`pjames_anim` aid 129 frames 632..=649, PS2 speed 1024 = 15.0 fps, looping).
+    /// James desperately reaches upward with both hands clutching at his throat/neck,
+    /// fighting against strangulation (1:1 with authentic PS2 PlayerCheckAnimeUpper/Lower Case 17).
+    pub const STRUGGLE_FLESH_LIPS: AnimationClip = AnimationClip::new(632, 649, 15.0, true);
+    /// Authentic PS2/PC James struggle clip against Pyramid Head one-handed overhead choke lift
+    /// (pjames_anim aid 121 frames 457..=468, speed 1024 = 15.0 fps).
+    pub const STRUGGLE_CHOKE_LIFT: AnimationClip = AnimationClip::new(457, 468, 15.0, true);
+    /// Authentic PS2/PC James breakout release push from Mary / Lying Figure choke (pjames_anim aid 130 frames 652..=670, speed 2048 = 30.0 fps).
+    pub const STRUGGLE_CHOKE_RELEASE: AnimationClip = AnimationClip::new(652, 670, 30.0, false);
+    /// Authentic PS2/PC James downed enemy kick action (pjames_anim aid 132 frames 682..=701, speed 768 = 11.25 fps).
+    pub const KICK_DOWNED: AnimationClip = AnimationClip::new(682, 701, 11.25, false);
+    /// Authentic PS2/PC James downed enemy weapon stomp action (pjames_anim aid 133 frames 702..=719, speed 512 = 7.5 fps).
+    pub const STOMP_DOWNED: AnimationClip = AnimationClip::new(702, 719, 7.5, false);
+    /// Collapse / death fall animation (frames 256..=280, PS2 index 112, speed 1024 = 15.0 fps).
+    pub const FALL: AnimationClip = AnimationClip::new(256, 280, 15.0, false);
+}
+
+/// Stage-specific animation clips for James Sunderland (boss grapple sequences).
+/// In authentic retail Silent Hill 2 (`SLUS_202.28`), James's stage-specific struggle animations
+/// (`aid=20029..20057`) are loaded from each stage overlay's `.anm` file via `PlayerGetStageAnime`:
+/// - Pyramid Head (`gx_ast`): `jms_stg_apart_stair.anm` (`440..=538`, `aid=20029..20032`)
+/// - Flesh Lips (`gy_hxw`): `jms_stg_hospital_1fw_b.anm` (`230..=328`, `aid=20038..20041` — byte-identical 99-frame sequence to Pyramid Head)
+/// - Abstract Daddy (`gz_lre`): `jms_stg_labyrinth_e.anm` (`298..=465`, `aid=20042..20049`)
+/// - Mary Final Boss (`gz_erc`): `jms_stg_end_recovery.anm` (`218..=301`, `aid=20054..20057`)
+pub struct JamesStageClips;
+
+impl JamesStageClips {
+    /// Authentic Flesh Lips overhead ceiling choke struggle loop (`aid=20039`)
+    /// (loaded from `jms_stg_hospital_1fw_b.anm` frames 245..=268 @ 30fps, looping).
+    /// Byte-for-byte identical to Pyramid Head's choke loop (`jms_stg_apart_stair.anm` 455..=478).
+    pub const FLESH_LIPS_CHOKE_LOOP: AnimationClip = AnimationClip::new(245, 268, 30.0, true);
+
+    /// Flesh Lips initial ceiling choke grab hit (`aid=20038`)
+    /// (loaded from `jms_stg_hospital_1fw_b.anm` frames 230..=244 @ 15fps).
+    pub const FLESH_LIPS_CHOKE_GRAB: AnimationClip = AnimationClip::new(230, 244, 15.0, false);
+
+    /// Flesh Lips ceiling choke release / breakout drop (`aid=20040`)
+    /// (loaded from `jms_stg_hospital_1fw_b.anm` frames 269..=298 @ 15fps).
+    pub const FLESH_LIPS_CHOKE_RELEASE: AnimationClip = AnimationClip::new(269, 298, 15.0, false);
+
+    /// Flesh Lips ceiling choke death drop (`aid=20041`)
+    /// (loaded from `jms_stg_hospital_1fw_b.anm` frames 299..=328 @ 15fps).
+    pub const FLESH_LIPS_CHOKE_DEATH: AnimationClip = AnimationClip::new(299, 328, 15.0, false);
+
+    /// Full Flesh Lips choke sequence including grab entry and struggle loop
+    /// (loaded from `jms_stg_hospital_1fw_b.anm` frames 230..=268 @ 15fps).
+    pub const FLESH_LIPS_CHOKE_FULL: AnimationClip = AnimationClip::new(230, 268, 15.0, true);
+
+    /// Authentic Flesh Lips overhead ceiling choke struggle loop alias (`aid=20039`, 245..=268 @ 30fps).
+    pub const FLESH_LIPS_CEILING_CHOKE_LOOP: AnimationClip =
+        AnimationClip::new(245, 268, 30.0, true);
+
+    /// Authentic Mary Final Boss tentacle choke struggle loop (`aid=20054`)
+    /// (loaded from `jms_stg_end_recovery.anm` frames 218..=241 @ 30fps, looping).
+    /// Root bone translation elevates James to `Ty = -602.3mm` while struggling with both hands at throat.
+    pub const MARY_TENTACLE_CHOKE_LOOP: AnimationClip = AnimationClip::new(218, 241, 30.0, true);
+
+    /// Authentic Mary Final Boss Phase 1 initial tentacle catch & lift (`aid=20056`)
+    /// (loaded from `jms_stg_end_recovery.anm` frames 272..=286 @ 15fps, non-looping).
+    /// Root bone translation hoists James from `Ty = -561.2mm` up to `Ty = -602.3mm` in lockstep with `bos` frames 74..=88.
+    pub const MARY_TENTACLE_CHOKE_FULL: AnimationClip = AnimationClip::new(272, 286, 15.0, false);
+
+    /// Mary Final Boss tentacle choke breakout release (`aid=20055`)
+    /// (loaded from `jms_stg_end_recovery.anm` frames 287..=301 @ 15fps, non-looping).
+    pub const MARY_TENTACLE_CHOKE_RELEASE: AnimationClip =
+        AnimationClip::new(287, 301, 15.0, false);
+
+    /// Mary Final Boss tentacle choke death collapse (`aid=20057`)
+    /// (loaded from `jms_stg_end_recovery.anm` frames 242..=271 @ 15fps, non-looping).
+    pub const MARY_TENTACLE_CHOKE_DEATH: AnimationClip = AnimationClip::new(242, 271, 15.0, false);
+
+    /// Authentic Pyramid Head staircase one-handed choke lift hold (`aid=20030`)
+    /// (loaded from `jms_stg_apart_stair.anm` frames 455..=478 @ 30fps / `spd=2048`, looping).
+    pub const PYRAMID_HEAD_STAIR_CHOKE_LOOP: AnimationClip =
+        AnimationClip::new(455, 478, 30.0, true);
+
+    /// Pyramid Head staircase initial neck grab hit (`aid=20029`)
+    /// (loaded from `jms_stg_apart_stair.anm` frames 440..=454 @ 15fps / `spd=1024`).
+    pub const PYRAMID_HEAD_STAIR_CHOKE_GRAB: AnimationClip =
+        AnimationClip::new(440, 454, 15.0, false);
+
+    /// Pyramid Head staircase choke release drop (`aid=20031`)
+    /// (loaded from `jms_stg_apart_stair.anm` frames 479..=508 @ 15fps / `spd=1024`).
+    pub const PYRAMID_HEAD_STAIR_CHOKE_RELEASE: AnimationClip =
+        AnimationClip::new(479, 508, 15.0, false);
+
+    /// Pyramid Head staircase choke death drop (`aid=20032`)
+    /// (loaded from `jms_stg_apart_stair.anm` frames 509..=538 @ 15fps / `spd=1024`).
+    pub const PYRAMID_HEAD_STAIR_CHOKE_DEATH: AnimationClip =
+        AnimationClip::new(509, 538, 15.0, false);
+
+    /// Pyramid Head apartment 2F/3F choke lift reaction
+    /// (loaded from `jms_stg_apart_w2f.anm` frames 351..=357 @ 15fps, looping).
+    pub const PYRAMID_HEAD_APART_CHOKE_LOOP: AnimationClip =
+        AnimationClip::new(351, 357, 15.0, true);
+
+    /// Authentic Abstract Daddy Labyrinth East front smother hold loop (`aid=20043`)
+    /// (loaded from `jms_stg_labyrinth_e.anm` frames 313..=336 @ 30fps, looping).
+    pub const ABSTRACT_DADDY_STRUGGLE_LIFT: AnimationClip =
+        AnimationClip::new(313, 336, 30.0, true);
+
+    /// Abstract Daddy Labyrinth East front grab entry (`aid=20042`)
+    /// (loaded from `jms_stg_labyrinth_e.anm` frames 298..=312 @ 15fps).
+    pub const ABSTRACT_DADDY_FRONT_GRAB: AnimationClip = AnimationClip::new(298, 312, 15.0, false);
+
+    /// Abstract Daddy Labyrinth East front breakout release (`aid=20045`)
+    /// (loaded from `jms_stg_labyrinth_e.anm` frames 337..=351 @ 15fps).
+    pub const ABSTRACT_DADDY_FRONT_RELEASE: AnimationClip =
+        AnimationClip::new(337, 351, 15.0, false);
+
+    /// Abstract Daddy Labyrinth East front death collapse (`aid=20044`)
+    /// (loaded from `jms_stg_labyrinth_e.anm` frames 352..=381 @ 15fps).
+    pub const ABSTRACT_DADDY_FRONT_DEATH: AnimationClip = AnimationClip::new(352, 381, 15.0, false);
+
+    /// Abstract Daddy Labyrinth East rear smother hold loop (`aid=20047`)
+    /// (loaded from `jms_stg_labyrinth_e.anm` frames 397..=420 @ 30fps, looping).
+    pub const ABSTRACT_DADDY_BACK_LOOP: AnimationClip = AnimationClip::new(397, 420, 30.0, true);
 }
 
 /// Standard locomotion animation clips for Maria in `xmar_wpnone.anm` (Born From a Wish).

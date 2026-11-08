@@ -525,17 +525,18 @@ fn lerp_angle(a: f32, b: f32, alpha: f32) -> f32 {
     a + diff * alpha
 }
 
-/// Linearly interpolates (LERP / SLERP equivalent for Euler tracks) between two animation frames.
-///
-/// Rotation tracks interpolate along the shortest arc on $[-\pi, \pi]$ to prevent sudden
-/// 180-degree angular flips when angles wrap around boundary coordinates.
-pub fn interpolate_frames(
+/// Zero-allocation variant of [`interpolate_frames`] writing into a pre-allocated [`AnimationFrame`] buffer.
+pub fn interpolate_frames_into(
     frame_a: &AnimationFrame,
     frame_b: &AnimationFrame,
     alpha: f32,
-) -> AnimationFrame {
+    out: &mut AnimationFrame,
+) {
     let bone_count = frame_a.bones.len().max(frame_b.bones.len());
-    let mut bones = Vec::with_capacity(bone_count);
+    out.bones.clear();
+    if out.bones.capacity() < bone_count {
+        out.bones.reserve(bone_count - out.bones.capacity());
+    }
 
     let alpha = alpha.clamp(0.0, 1.0);
     let inv_alpha = 1.0 - alpha;
@@ -566,19 +567,77 @@ pub fn interpolate_frames(
                     (None, Some(tb)) => Some(tb),
                     (None, None) => None,
                 };
-                bones.push(Some(BoneTransform {
+                out.bones.push(Some(BoneTransform {
                     rotation: rot,
                     translation: trans,
                     track_type: a.track_type,
                 }));
             }
-            (Some(a), None) => bones.push(Some(a.clone())),
-            (None, Some(b)) => bones.push(Some(b.clone())),
-            (None, None) => bones.push(None),
+            (Some(a), None) => out.bones.push(Some(a.clone())),
+            (None, Some(b)) => out.bones.push(Some(b.clone())),
+            (None, None) => out.bones.push(None),
         }
     }
+}
 
-    AnimationFrame { bones }
+/// Blends `prev_frame` (weight `1.0 - alpha`) into `target` (weight `alpha`) in-place
+/// with zero heap allocations.
+pub fn blend_frame_in_place(prev_frame: &AnimationFrame, alpha: f32, target: &mut AnimationFrame) {
+    let alpha = alpha.clamp(0.0, 1.0);
+    let inv_alpha = 1.0 - alpha;
+    for (i, target_bone) in target.bones.iter_mut().enumerate() {
+        let b_a = prev_frame.bones.get(i).and_then(|x| x.as_ref());
+        let b_b = target_bone.take();
+        *target_bone = match (b_a, b_b) {
+            (Some(a), Some(b)) => {
+                let rot = match (a.rotation, b.rotation) {
+                    (Some(ra), Some(rb)) => Some([
+                        lerp_angle(ra[0], rb[0], alpha),
+                        lerp_angle(ra[1], rb[1], alpha),
+                        lerp_angle(ra[2], rb[2], alpha),
+                    ]),
+                    (Some(ra), None) => Some(ra),
+                    (None, Some(rb)) => Some(rb),
+                    (None, None) => None,
+                };
+                let trans = match (a.translation, b.translation) {
+                    (Some(ta), Some(tb)) => Some([
+                        ta[0] * inv_alpha + tb[0] * alpha,
+                        ta[1] * inv_alpha + tb[1] * alpha,
+                        ta[2] * inv_alpha + tb[2] * alpha,
+                    ]),
+                    (Some(ta), None) => Some(ta),
+                    (None, Some(tb)) => Some(tb),
+                    (None, None) => None,
+                };
+                Some(BoneTransform {
+                    rotation: rot,
+                    translation: trans,
+                    track_type: b.track_type,
+                })
+            }
+            (Some(a), None) => Some(a.clone()),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+    }
+}
+
+/// Linearly interpolates (LERP / SLERP equivalent for Euler tracks) between two animation frames.
+///
+/// Rotation tracks interpolate along the shortest arc on $[-\pi, \pi]$ to prevent sudden
+/// 180-degree angular flips when angles wrap around boundary coordinates.
+pub fn interpolate_frames(
+    frame_a: &AnimationFrame,
+    frame_b: &AnimationFrame,
+    alpha: f32,
+) -> AnimationFrame {
+    let bone_count = frame_a.bones.len().max(frame_b.bones.len());
+    let mut out = AnimationFrame {
+        bones: Vec::with_capacity(bone_count),
+    };
+    interpolate_frames_into(frame_a, frame_b, alpha, &mut out);
+    out
 }
 
 /// Row-major 4x4 matrix multiplication: $C = A \cdot B$.

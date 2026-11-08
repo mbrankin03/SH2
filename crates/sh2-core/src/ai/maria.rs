@@ -21,6 +21,7 @@
 //!   - Max health: 1,000 HP.
 //!   - If Maria's health reaches 0, companion death event triggers game over.
 
+use crate::ai::creatures::anim::CreatureAnimationController;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -77,6 +78,8 @@ pub struct MariaCompanionController {
     pub panic_distance: f32,
     /// Panic duration remaining (seconds).
     pub panic_timer: f32,
+    /// Skeletal animation controller for companion clips and crossfades.
+    pub anim: CreatureAnimationController,
 }
 
 impl Default for MariaCompanionController {
@@ -95,6 +98,7 @@ impl Default for MariaCompanionController {
             run_distance: 3000.0,
             panic_distance: 1500.0,
             panic_timer: 0.0,
+            anim: CreatureAnimationController::new_maria(),
         }
     }
 }
@@ -181,6 +185,8 @@ impl MariaCompanionController {
             // Cower / back away facing the nearest threat
             // Turn towards James for safety
             self.yaw = dx.atan2(dz);
+            self.anim.sync_maria(self.state);
+            self.anim.update(dt, self.yaw);
             return;
         }
 
@@ -230,6 +236,10 @@ impl MariaCompanionController {
             // Standing idle: gently align facing to look towards James
             self.yaw = dx.atan2(dz);
         }
+
+        // Synchronize and update skeletal animation controller with root motion displacement
+        self.anim.sync_maria(self.state);
+        self.anim.update(dt, self.yaw);
     }
 
     /// Apply damage to Maria from enemy blows or friendly fire (`0x52d280`).
@@ -251,6 +261,7 @@ impl MariaCompanionController {
             self.state = MariaState::Downed;
             self.panic_timer = 3.0;
         }
+        self.anim.sync_maria(self.state);
     }
 
     /// Target arbitration check (`0x542ad0`).

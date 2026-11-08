@@ -290,6 +290,8 @@ pub struct FmvViewerState {
     pub show_hud: bool,
     /// Selected Bink audio track override (`None` = per-movie default, e.g. uncut murder.bik).
     pub audio_track: Option<usize>,
+    /// Whether restored cut/unused audio (`VHSAudio` uncut PS2 `murder.bik` Track 1 with Mary screaming) is enabled by default (`SH2-62`).
+    pub enable_restored_cut_audio: bool,
     /// Real-time sharpening level (0 = off, 1 = soft, 2 = medium, 3 = strong).
     pub sharpen_level: u8,
     /// Elapsed playback clock in seconds for audio-video master synchronization.
@@ -328,6 +330,7 @@ impl FmvViewerState {
             subtitles_enabled: true,
             show_hud: true,
             audio_track: None,
+            enable_restored_cut_audio: true,
             sharpen_level: 1,
             elapsed_secs: 0.0,
             duration_secs: 1.0,
@@ -411,6 +414,25 @@ impl FmvViewerState {
         self.is_paused = !self.is_paused;
     }
 
+    /// Resolves the default Bink audio track index for `filename` (`SH2-62`):
+    /// - `"open.bik"`: Track `1` (Vocal mix with Mary/Maria dialogue).
+    /// - `"murder.bik"`: Track `1` (Uncut PS2 VHS with Mary's screams restored per `VHSAudio`)
+    ///   when `self.enable_restored_cut_audio` is `true`, or Track `0` (Censored PC VHS static) when `false`.
+    /// - All other `.bik` movies: Track `0`.
+    pub fn default_audio_track_for(&self, filename: &str) -> usize {
+        if filename.eq_ignore_ascii_case("open.bik") {
+            1
+        } else if filename.eq_ignore_ascii_case("murder.bik") {
+            if self.enable_restored_cut_audio {
+                1
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
+
     /// Cycles cutscene video source: SH2:EE 1080p60 -> OG HQ PS2 Masters (30fps) -> Vanilla PC.
     /// Human-readable label for the currently active audio track.
     pub fn audio_track_label(&self, filename: &str, total_tracks: usize) -> String {
@@ -418,11 +440,7 @@ impl FmvViewerState {
             return "TRACK 1/1 : STEREO 48KHZ (DEFAULT)".to_string();
         }
 
-        let default_track = if matches!(filename, "murder.bik" | "open.bik") {
-            1
-        } else {
-            0
-        };
+        let default_track = self.default_audio_track_for(filename);
         let current = self.audio_track.unwrap_or(default_track);
 
         match filename {
@@ -579,5 +597,24 @@ mod tests {
         // Advance 1.0 second at 59.94 fps -> frame 59
         let frame = viewer.tick(1.0);
         assert!(frame == 59 || frame == 60);
+    }
+
+    #[test]
+    fn test_murder_bik_uncut_vhs_track_respects_enable_restored_cut_audio() {
+        let mut viewer = FmvViewerState::new();
+        assert!(viewer.enable_restored_cut_audio);
+        assert_eq!(viewer.default_audio_track_for("murder.bik"), 1);
+        assert_eq!(viewer.default_audio_track_for("open.bik"), 1);
+        assert_eq!(viewer.default_audio_track_for("deai.bik"), 0);
+        assert!(viewer
+            .audio_track_label("murder.bik", 2)
+            .contains("UNCUT PS2 VHS"));
+
+        viewer.enable_restored_cut_audio = false;
+        assert_eq!(viewer.default_audio_track_for("murder.bik"), 0);
+        assert_eq!(viewer.default_audio_track_for("open.bik"), 1);
+        assert!(viewer
+            .audio_track_label("murder.bik", 2)
+            .contains("CENSORED PC VHS"));
     }
 }

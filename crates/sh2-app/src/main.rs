@@ -444,6 +444,11 @@ impl ApplicationHandler for SilentHillApp {
 
         let fmv_pipeline = FmvVideoPipeline::new(&device, RenderContext::OUTPUT_FORMAT);
         let mut fmv_viewer = FmvViewerState::new();
+        fmv_viewer.enable_restored_cut_audio = menu_ctrl
+            .options_menu
+            .original_config
+            .audio
+            .enable_restored_cut_audio;
         if let Some(ref movie_query) = self.initial_fmv_movie {
             if fmv_viewer.select_by_name(movie_query) {
                 tracing::info!(
@@ -480,7 +485,12 @@ impl ApplicationHandler for SilentHillApp {
         let loaded_fmv_movie_idx = fmv_viewer.selected_movie_index;
         let loaded_fmv_source = fmv_viewer.video_source;
 
-        let bgm_manager = BgmManager::new(&resolver.game_root, initial_audio_pack);
+        let mut bgm_manager = BgmManager::new(&resolver.game_root, initial_audio_pack);
+        bgm_manager.event_flags.enable_restored_cut_audio = menu_ctrl
+            .options_menu
+            .original_config
+            .audio
+            .enable_restored_cut_audio;
 
         self.state = Some(AppState {
             window,
@@ -652,6 +662,10 @@ impl ApplicationHandler for SilentHillApp {
                                     audio.set_sfx_volume(cfg.audio.sfx_volume);
                                     audio.set_voice_volume(cfg.audio.dialogue_volume);
                                 }
+                                state.fmv_viewer.enable_restored_cut_audio =
+                                    cfg.audio.enable_restored_cut_audio;
+                                state.bgm_manager.event_flags.enable_restored_cut_audio =
+                                    cfg.audio.enable_restored_cut_audio;
                                 let resolved_pack = state
                                     .menu_ctrl
                                     .audio_pack_status
@@ -742,6 +756,10 @@ impl ApplicationHandler for SilentHillApp {
                                     audio.set_sfx_volume(cfg.audio.sfx_volume);
                                     audio.set_voice_volume(cfg.audio.dialogue_volume);
                                 }
+                                state.fmv_viewer.enable_restored_cut_audio =
+                                    cfg.audio.enable_restored_cut_audio;
+                                state.bgm_manager.event_flags.enable_restored_cut_audio =
+                                    cfg.audio.enable_restored_cut_audio;
                                 let resolved_pack = state
                                     .menu_ctrl
                                     .audio_pack_status
@@ -967,6 +985,10 @@ impl ApplicationHandler for SilentHillApp {
                         audio.set_sfx_volume(cfg.audio.sfx_volume);
                         audio.set_voice_volume(cfg.audio.dialogue_volume);
                     }
+                    state.fmv_viewer.enable_restored_cut_audio =
+                        cfg.audio.enable_restored_cut_audio;
+                    state.bgm_manager.event_flags.enable_restored_cut_audio =
+                        cfg.audio.enable_restored_cut_audio;
                     let resolved_pack = state
                         .menu_ctrl
                         .audio_pack_status

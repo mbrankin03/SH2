@@ -31,9 +31,16 @@ use kira::{
 };
 use mint::{Quaternion, Vector3};
 use sh2_assets::{DecodedAdx, DialogueMessage, WavEntry};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use thiserror::Error;
+
+/// Global mutex serializing `cpal` host/device queries across threads.
+///
+/// On Windows WASAPI, concurrent `cpal::default_host().output_devices()` calls from
+/// parallel threads (e.g., during multi-threaded `cargo test` execution) can race inside
+/// `IMMDeviceEnumerator` COM initialization/uninitialization (`STATUS_ACCESS_VIOLATION`).
+static CPAL_HOST_ENUM_LOCK: Mutex<()> = Mutex::new(());
 
 /// Error type for audio playback and management.
 #[derive(Error, Debug)]
@@ -223,6 +230,9 @@ impl AudioEngine {
 
         // 2. Query CPAL host devices if pactl is unavailable or returns no sinks
         if devices.is_empty() {
+            let _guard = CPAL_HOST_ENUM_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let host = cpal::default_host();
             if let Ok(iter) = host.output_devices() {
                 for device in iter {
@@ -276,40 +286,45 @@ impl AudioEngine {
             None => None,
         };
 
-        let host = cpal::default_host();
-        let device = if let Some(target_name) = clean_device_name {
-            let mut found = None;
-            if let Ok(iter) = host.output_devices() {
-                for dev in iter {
-                    if let Ok(name) = dev.name() {
-                        if name == target_name {
-                            found = Some(dev);
-                            break;
+        let device = {
+            let _guard = CPAL_HOST_ENUM_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let host = cpal::default_host();
+            if let Some(target_name) = clean_device_name {
+                let mut found = None;
+                if let Ok(iter) = host.output_devices() {
+                    for dev in iter {
+                        if let Ok(name) = dev.name() {
+                            if name == target_name {
+                                found = Some(dev);
+                                break;
+                            }
                         }
                     }
                 }
-            }
-            if found.is_none() {
-                // If not found as a raw CPAL device name, prefer 'pulse', 'pipewire', or default
-                found = host.output_devices().ok().and_then(|mut iter| {
+                if found.is_none() {
+                    // If not found as a raw CPAL device name, prefer 'pulse', 'pipewire', or default
+                    found = host.output_devices().ok().and_then(|mut iter| {
+                        iter.find(|d| {
+                            d.name()
+                                .map(|n| n == "pipewire" || n == "pulse" || n == "default")
+                                .unwrap_or(false)
+                        })
+                    });
+                }
+                found.or_else(|| host.default_output_device())
+            } else {
+                // For default on Linux, prefer "pipewire" or "pulse" over arbitrary ALSA raw nodes if present
+                let pulse_or_pipewire = host.output_devices().ok().and_then(|mut iter| {
                     iter.find(|d| {
                         d.name()
-                            .map(|n| n == "pipewire" || n == "pulse" || n == "default")
+                            .map(|n| n == "pipewire" || n == "pulse")
                             .unwrap_or(false)
                     })
                 });
+                pulse_or_pipewire.or_else(|| host.default_output_device())
             }
-            found.or_else(|| host.default_output_device())
-        } else {
-            // For default on Linux, prefer "pipewire" or "pulse" over arbitrary ALSA raw nodes if present
-            let pulse_or_pipewire = host.output_devices().ok().and_then(|mut iter| {
-                iter.find(|d| {
-                    d.name()
-                        .map(|n| n == "pipewire" || n == "pulse")
-                        .unwrap_or(false)
-                })
-            });
-            pulse_or_pipewire.or_else(|| host.default_output_device())
         }
         .ok_or_else(|| AudioError::InitError("No audio output device available".into()))?;
 

@@ -128,9 +128,9 @@ impl OptionsMenu {
             OptionsTab::Video => 10,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
-                    8
+                    9
                 } else {
-                    7
+                    8
                 }
             }
             OptionsTab::Controls => 5,
@@ -254,7 +254,15 @@ impl OptionsMenu {
                         "NO".into()
                     },
                 )),
-                7 if self.audio_pack_status.both_detected() => Some((
+                7 => Some((
+                    "Restored Cut Audio",
+                    if self.draft_config.audio.enable_restored_cut_audio {
+                        "ON (Restored)".into()
+                    } else {
+                        "OFF (Vanilla)".into()
+                    },
+                )),
+                8 if self.audio_pack_status.both_detected() => Some((
                     "Audio Pack",
                     self.draft_config
                         .audio
@@ -512,7 +520,11 @@ impl OptionsMenu {
                     self.draft_config.audio.mute_in_background =
                         !self.draft_config.audio.mute_in_background;
                 }
-                7 if self.audio_pack_status.both_detected() => {
+                7 => {
+                    self.draft_config.audio.enable_restored_cut_audio =
+                        !self.draft_config.audio.enable_restored_cut_audio;
+                }
+                8 if self.audio_pack_status.both_detected() => {
                     self.draft_config.audio.audio_pack_source = if forward {
                         self.draft_config.audio.audio_pack_source.next()
                     } else {
@@ -876,6 +888,9 @@ fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
             "Audio channel configuration (Stereo, Surround, Headphones)"
         }
         (OptionsTab::Audio, "Mute in Background") => "Silence audio when game window loses focus",
+        (OptionsTab::Audio, "Restored Cut Audio") => {
+            "Restore cut audio cues (Mary's Laura letter voiceover, closet & street bonus SFX)"
+        }
         (OptionsTab::Audio, "Audio Pack") => {
             "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"
         }

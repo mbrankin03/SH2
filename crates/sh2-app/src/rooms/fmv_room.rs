@@ -174,12 +174,9 @@ pub(crate) fn open_fmv_session(
                 );
                 if let Some(ref mut engine) = audio_engine {
                     // sh2e murder.bik: track 1 is the restored uncut VHS audio (Mary), matching
-                    // the Enhancements VHSAudio patch; open.bik track 1 is the voiced mix.
-                    let default_track = if matches!(entry.filename, "murder.bik" | "open.bik") {
-                        1
-                    } else {
-                        0
-                    };
+                    // the Enhancements VHSAudio patch when `enable_restored_cut_audio` is true;
+                    // open.bik track 1 is the voiced mix.
+                    let default_track = fmv_viewer.default_audio_track_for(entry.filename);
                     let track = fmv_viewer.audio_track.unwrap_or(default_track);
                     tracing::info!(
                         "[FMV Player] Audio track {} of {}",
@@ -394,14 +391,9 @@ impl RoomController for FmvRoomController {
                     .unwrap_or(1)
                     .max(1);
                 let cur = state.fmv_viewer.audio_track.unwrap_or(
-                    if matches!(
-                        state.fmv_viewer.current_entry().filename,
-                        "murder.bik" | "open.bik"
-                    ) {
-                        1
-                    } else {
-                        0
-                    },
+                    state
+                        .fmv_viewer
+                        .default_audio_track_for(state.fmv_viewer.current_entry().filename),
                 );
                 state.fmv_viewer.audio_track = Some((cur + 1) % n);
                 state.fmv_viewer.is_paused = false;

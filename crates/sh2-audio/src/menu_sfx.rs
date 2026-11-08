@@ -1,5 +1,8 @@
 //! Authentic sound effect loading and playback for `sddata.bin`, `voice.afs`, and `sh2e/sound/extra/*.wav` (`SH2-61`).
 
+use crate::beta_audio_catalog::{
+    CutSfxCatalogEntry, LAURA_LETTER_VOICEOVER_SLICES, VOICE_AFS_LAURA_LETTER_INDEX,
+};
 use crate::sfx_bank::{
     compute_se_call_pos_distance_f, footstep_sddata_indices, resolve_se_id_to_sddata_index,
     resolve_se_id_to_voice_afs_index, SfxSpatialEval,
@@ -8,7 +11,7 @@ use crate::{AudioEngine, AudioError};
 use glam::Vec3;
 use kira::sound::static_sound::StaticSoundHandle;
 use sh2_assets::formats::sound::{
-    decode_afs_slice_to_wav, parse_afs_index, parse_sddata, WavEntry,
+    decode_afs_slice_to_wav, parse_afs_index, parse_sddata, slice_wav_time_range, WavEntry,
 };
 use sh2_core::{AudioPackPreference, SurfaceMaterial};
 use std::collections::HashMap;
@@ -46,9 +49,13 @@ pub struct MenuAudioBank {
     pub sddata_path: Option<PathBuf>,
     /// Resolved on-disk path of the `voice.afs` streamed SFX container, if available.
     pub voice_afs_path: Option<PathBuf>,
+    /// Resolved `data/` directory path for on-demand extra WAV loading (`SH2-62`).
+    pub data_root: Option<PathBuf>,
+    /// Resolved `sh2e/` directory path for on-demand extra WAV loading (`SH2-62`).
+    pub ee_root: Option<PathBuf>,
     /// All 417 RIFF WAVE entries extracted from `sddata.bin` (`0..=416`).
     pub entries: Vec<WavEntry>,
-    /// Preloaded streamed SFX entries from `voice.afs` (keyed by AFS entry index `13..=44`).
+    /// Preloaded streamed SFX entries from `voice.afs` (keyed by AFS entry index `13..=44`, plus `119` for `SCENE_45`).
     pub voice_afs_sfx: HashMap<usize, WavEntry>,
     /// Menu cursor move (`10000` / `sddata[293]`).
     pub cursor_move: Option<WavEntry>,
@@ -64,12 +71,18 @@ pub struct MenuAudioBank {
     pub flashlight_on: Option<WavEntry>,
     /// Flashlight turn off (`sh2e/sound/extra/flashlight_off.wav` or `sddata[292]`).
     pub flashlight_off: Option<WavEntry>,
+    /// Restored Apartment Closet cutscene bonus audio (`sh2e/sound/extra/sankaku_toujyou_2.wav`) (`SH2-62`).
+    pub closet_bonus_audio: Option<WavEntry>,
+    /// Restored Lying Figure street footsteps (`sh2e/sound/extra/machi.wav`) (`SH2-62`).
+    pub machi_steps_audio: Option<WavEntry>,
     /// Default footstep (`sddata[147]` / `11001`).
     pub footstep: Option<WavEntry>,
     /// Alternating left/right footstep parity toggle so consecutive steps alternate between `(left, right)` samples.
     pub step_parity: bool,
     /// Active footstep sound handle (`0x518270`: repeating a footstep stops the previous footstep tail so steps never stack).
     pub last_footstep_handle: Option<StaticSoundHandle>,
+    /// Active voiceover/cut-audio audition handle so starting a new slice cleanly fades out the previous slice (`SH2-62`).
+    pub active_cut_audio_handle: Option<StaticSoundHandle>,
 }
 
 impl MenuAudioBank {
@@ -91,6 +104,8 @@ impl MenuAudioBank {
             loaded_source: source,
             sddata_path: None,
             voice_afs_path: None,
+            data_root: Some(data_root.to_path_buf()),
+            ee_root: ee_root.map(|p| p.to_path_buf()),
             entries: Vec::new(),
             voice_afs_sfx: HashMap::new(),
             cursor_move: None,
@@ -100,9 +115,12 @@ impl MenuAudioBank {
             save_sound: None,
             flashlight_on: None,
             flashlight_off: None,
+            closet_bonus_audio: None,
+            machi_steps_audio: None,
             footstep: None,
             step_parity: false,
             last_footstep_handle: None,
+            active_cut_audio_handle: None,
         };
 
         let prefer_ee = matches!(
@@ -229,6 +247,20 @@ impl MenuAudioBank {
             prefer_ee,
             "sound/extra/flashlight_off.wav",
             &mut sfx_bank.flashlight_off,
+        );
+        Self::load_extra_wav_override(
+            data_root,
+            ee_root,
+            true,
+            "sound/extra/sankaku_toujyou_2.wav",
+            &mut sfx_bank.closet_bonus_audio,
+        );
+        Self::load_extra_wav_override(
+            data_root,
+            ee_root,
+            true,
+            "sound/extra/machi.wav",
+            &mut sfx_bank.machi_steps_audio,
         );
 
         sfx_bank
@@ -441,7 +473,7 @@ impl MenuAudioBank {
         )
     }
 
-    /// Play a sound cue through the audio engine using authentic audio.
+    /// Plays a sound cue through the audio engine using authentic audio.
     pub fn play(
         &self,
         engine: &mut AudioEngine,
@@ -465,6 +497,132 @@ impl MenuAudioBank {
             // Fallback synthetic generator if asset was unavailable
             synthesize_fallback_cue(engine, cue)
         }
+    }
+
+    /// Stops any currently playing cut/beta audio or voiceover slice (`SH2-62`).
+    pub fn stop_active_cut_audio(&mut self) {
+        if let Some(mut handle) = self.active_cut_audio_handle.take() {
+            handle.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(60),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Lazily loads and caches a single entry (`0..=158`) from `voice.afs` on disk (`SH2-62`).
+    pub fn load_voice_afs_entry(&mut self, entry_index: usize) -> Option<WavEntry> {
+        if let Some(cached) = self.voice_afs_sfx.get(&entry_index) {
+            return Some(cached.clone());
+        }
+        let afs_path = self.voice_afs_path.as_ref()?;
+        let mut file = File::open(afs_path).ok()?;
+        let mut header_buf = vec![0u8; 2048];
+        let n = file.read(&mut header_buf).ok()?;
+        header_buf.truncate(n);
+        let afs_idx = parse_afs_index(&header_buf).ok()?;
+        let desc = afs_idx.get(entry_index)?;
+        if desc.length == 0 || desc.length > 32 * 1024 * 1024 {
+            return None;
+        }
+        let mut slice = vec![0u8; desc.length as usize];
+        file.seek(SeekFrom::Start(desc.offset as u64)).ok()?;
+        file.read_exact(&mut slice).ok()?;
+        let wav = decode_afs_slice_to_wav(&slice, entry_index as u32).ok()?;
+        self.voice_afs_sfx.insert(entry_index, wav.clone());
+        Some(wav)
+    }
+
+    /// Plays one of the 11 timed voiceover slices (`page_index` `0..=10`) of Mary's unused letter
+    /// to Laura (`voice.afs[119]` / `SCENE_45` in `PlayUnusedAudio.cpp`) (`SH2-62`).
+    pub fn play_laura_letter_slice(
+        &mut self,
+        engine: &mut AudioEngine,
+        page_index: usize,
+        volume: f32,
+    ) -> Result<Option<StaticSoundHandle>, AudioError> {
+        self.stop_active_cut_audio();
+        let slice_meta = LAURA_LETTER_VOICEOVER_SLICES
+            .get(page_index)
+            .copied()
+            .unwrap_or(LAURA_LETTER_VOICEOVER_SLICES[0]);
+
+        if let Some(full_wav) = self.load_voice_afs_entry(VOICE_AFS_LAURA_LETTER_INDEX) {
+            let sliced = slice_wav_time_range(&full_wav, slice_meta.start_sec, slice_meta.end_sec);
+            if !sliced.data.is_empty() {
+                let handle = engine.play_sfx_2d(&sliced, volume)?;
+                self.active_cut_audio_handle = Some(handle);
+                return Ok(None);
+            }
+        }
+
+        let handle = synthesize_fallback_cue(engine, SoundCueKind::Confirm)?;
+        self.active_cut_audio_handle = handle;
+        Ok(None)
+    }
+
+    /// Resolves and plays any [`CutSfxCatalogEntry`] (`sddata.bin` unreferenced/3D cue, `voice.afs` stream,
+    /// or `sh2e/sound/extra/*.wav` bonus cue), stopping any previously auditioned cut audio first (`SH2-62`).
+    pub fn play_cut_catalog_entry(
+        &mut self,
+        engine: &mut AudioEngine,
+        entry: &CutSfxCatalogEntry,
+        volume: f32,
+    ) -> Result<Option<StaticSoundHandle>, AudioError> {
+        self.stop_active_cut_audio();
+
+        if let Some(sd_idx) = entry.sddata_index {
+            if let Some(wav) = self.get_sddata_entry(sd_idx).cloned() {
+                let handle = engine.play_sfx_2d(&wav, volume)?;
+                self.active_cut_audio_handle = Some(handle);
+                return Ok(None);
+            }
+        }
+
+        if let Some(afs_idx) = entry.voice_afs_index {
+            // For `SCENE_45` (119), play the opening slice (0..11.7s) when auditioned from the catalog
+            if afs_idx == VOICE_AFS_LAURA_LETTER_INDEX {
+                if let Some(full_wav) = self.load_voice_afs_entry(afs_idx) {
+                    let preview = slice_wav_time_range(&full_wav, 0.0, 11.7);
+                    let handle = engine.play_sfx_2d(&preview, volume)?;
+                    self.active_cut_audio_handle = Some(handle);
+                    return Ok(None);
+                }
+            } else if let Some(wav) = self.load_voice_afs_entry(afs_idx) {
+                let handle = engine.play_sfx_2d(&wav, volume)?;
+                self.active_cut_audio_handle = Some(handle);
+                return Ok(None);
+            }
+        }
+
+        if let Some(rel) = entry.extra_rel_path {
+            let wav_opt = if rel.ends_with("sankaku_toujyou_2.wav") {
+                self.closet_bonus_audio.clone()
+            } else if rel.ends_with("machi.wav") {
+                self.machi_steps_audio.clone()
+            } else {
+                let mut slot = None;
+                if let Some(ref dr) = self.data_root {
+                    Self::load_extra_wav_override(
+                        dr,
+                        self.ee_root.as_deref(),
+                        true,
+                        rel,
+                        &mut slot,
+                    );
+                }
+                slot
+            };
+            if let Some(wav) = wav_opt {
+                let handle = engine.play_sfx_2d(&wav, volume)?;
+                self.active_cut_audio_handle = Some(handle);
+                return Ok(None);
+            }
+        }
+
+        let handle = synthesize_fallback_cue(engine, SoundCueKind::Confirm)?;
+        self.active_cut_audio_handle = handle;
+        Ok(None)
     }
 }
 

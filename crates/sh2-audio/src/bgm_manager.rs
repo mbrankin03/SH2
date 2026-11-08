@@ -162,6 +162,8 @@ pub struct BgmEventFlags {
     pub event_mode_active: bool,
     /// Optional explicit override for `EvBgmControl` return value.
     pub ev_bgm_override: Option<u32>,
+    /// Whether SH2:EE restored cut/unused audio (`MusicBoxVolume.cpp` 7th-layer Hotel 1F/2F music box attenuation) is enabled (`SH2-62`).
+    pub enable_restored_cut_audio: bool,
 }
 
 /// Resolves the active BGM page (`0..=47`) for the given `stage_id`, `room_id`, and `flags`.
@@ -304,13 +306,22 @@ pub fn pick_bgm_page(stage_id: u32, room_id: u32, flags: &BgmEventFlags) -> u32 
         // Stage 40: Lakeview Hotel 1F (`Stg_hotel_1f_f`)
         40 => {
             if (flags.flag_61b & 0x01) == 0 {
-                35 // Page 35 -> hotel/bgm_112.aix
+                35 // Page 35 -> hotel/bgm_112_NG.aix
             } else {
-                34 // Page 34 -> hotel/bgm_017.adx
+                34 // Page 34 -> hotel/bgm_112.aix (7-layer music box AIX in sh2e/)
             }
         }
         // Stage 41: Lakeview Hotel 2F (`Stg_hotel_2f_f`)
-        41 => 36, // Page 36 -> hotel/bgm_009.adx
+        // When `enable_restored_cut_audio` is true and the music box puzzle is solved (`flag_61b & 1`),
+        // `MusicBoxVolume.cpp` calls `shBgmCall(0x22)` (`Page 34` -> `hotel/bgm_112.aix`) so the 7th layer
+        // (`Track 6`, quieter/muffled Cinderella music box) plays in the 2F hallways connected to the lobby.
+        41 => {
+            if flags.enable_restored_cut_audio && (flags.flag_61b & 0x01) != 0 {
+                34 // Page 34 -> hotel/bgm_112.aix (MusicBoxVolume.cpp 7th-layer restoration)
+            } else {
+                36 // Page 36 -> hotel/bgm_121.aix
+            }
+        }
         // Stage 42: Lakeview Hotel 3F (`Stg_hotel_3f_f`)
         42 => {
             if room_id == 0xA2 {
@@ -458,6 +469,15 @@ pub fn eval_stage_ev_bgm_control(stage_id: u32, room_id: u32, flags: &BgmEventFl
                 page
             }
         }
+        // Stage 41 (`Stg_hotel_2f_f`): `MusicBoxVolume.cpp` `GetStageBgmBank()` returns situation `4`
+        // once the Hotel 1F music box puzzle is solved (`flag_61b & 0x01`).
+        41 => {
+            if flags.enable_restored_cut_audio && (flags.flag_61b & 0x01) != 0 {
+                4
+            } else {
+                0
+            }
+        }
         42 => (flags.flag_620 >> 13) & 4,
         43 => flags.flag_61c & 4,
         44 => {
@@ -548,26 +568,71 @@ pub fn extract_record_track_fades(
     out
 }
 
+/// Applies SH2:EE `Patches/MusicBoxVolume.cpp` 7th-layer (`Track 6`) Cinderella music box attenuation
+/// overrides to a single `_SOUND_DATA` record when `enable_restored_cut_audio` is `true` (`SH2-62`):
+/// - **Stage 40 (`STAGE_40_SOUND_DATA`, Lakeview Hotel 1F)**:
+///   - Record `0` (default fallback / employee hallway): `chanstat[4] = 0x0000_0000` (no loud music box outside known areas).
+///   - Records `6..=11` (1F West hallway): `chanstat[4] = 0x0000_0000`, `chanstat[6] = 0x0010_0000`
+///     (quieter music box on Track 6 in the 1F West hallway when situation `4` is active).
+///   - Records `12..=18` and `21..=27` (closed rooms other than lobby `19` and reception `20`):
+///     `chanstat[4] = 0x0000_0000` (no music box inside closed rooms).
+/// - **Stage 41 (`STAGE_41_SOUND_DATA`, Lakeview Hotel 2F)**:
+///   - Records `3..=9` (2F hallways connected to the lobby) and Record `12` (2F cloak room):
+///     `flags = 0x4000_0010` (`1_073_741_840`, bit 4 set for situation `4`) and `chanstat[6] = 0x0010_0000`
+///     (quieter music box on Track 6 in 2F lobby-connected hallways after the music box puzzle is solved).
+#[inline]
+pub fn apply_music_box_volume_patch(
+    stage_id: u32,
+    rec_idx: usize,
+    record: &SoundDataRecord,
+    enable_restored_cut_audio: bool,
+) -> SoundDataRecord {
+    let mut rec = *record;
+    if !enable_restored_cut_audio {
+        return rec;
+    }
+    match stage_id {
+        40 => {
+            if rec_idx == 0 {
+                rec.chanstat[4] = 0x0000_0000;
+            } else if (6..=11).contains(&rec_idx) {
+                rec.chanstat[4] = 0x0000_0000;
+                rec.chanstat[6] = 0x0010_0000;
+            } else if (12..=27).contains(&rec_idx) && rec_idx != 19 && rec_idx != 20 {
+                rec.chanstat[4] = 0x0000_0000;
+            }
+        }
+        41 if (3..=9).contains(&rec_idx) || rec_idx == 12 => {
+            rec.flags = 0x4000_0010;
+            rec.chanstat[6] = 0x0010_0000;
+        }
+        _ => {}
+    }
+    rec
+}
+
 /// Evaluates `_SOUND_DATA` spatial volume bounding boxes for `stage_id` at `player_pos` and `situation_page`.
 ///
-/// Faithfully implements `sndGetSoundAryByCharaPos` (`0x5187E0` in `sh2pc.exe`, `0x221540` in `SLUS_202.28`)
-/// and the priority reduction loop in `SeBgmManager` (`0x516372..0x5163FC`):
-/// - If `situation_page >= 6`: uses [`SITUATION_PRESETS_6_TO_15`] (`0x8A9EB8`) directly (`get_num = 1`).
-/// - Otherwise (`situation_page < 6`):
-///   - Tests records `1..N` in `STAGE_SOUND_DATA[stage_id]` against `player_pos`:
-///     - `x + 50.0 >= rec.x0` and `x - 50.0 <= rec.x2`
-///     - `z + 50.0 >= rec.z2` and `z - 50.0 <= rec.z0`
-///     - `y >= rec.max_y` and `y <= rec.min_y` (note: in SH2 Y-down coordinates, `max_y` is the more negative
-///       ceiling/upper bound and `min_y` is the floor/lower bound; we support both `rec.max_y <= y <= rec.min_y`
-///       and `rec.min_y <= y <= rec.max_y` so standard Y-up test arenas also match cleanly).
-///   - Accumulates up to `MAX_MATCHED_SOUND_AREAS` (`8`) matching boxes.
-///   - If `0` boxes matched, falls back to record `0` (`STAGE_SOUND_DATA[stage_id][0]`, stage default).
-///   - Across all matched records, selects the `fade_in` and `fade_out` types with the highest [`FADE_PRIO`]
-///     for each of the 7 tracks.
+/// Calls [`evaluate_sound_areas_with_restoration`] with `enable_restored_cut_audio = false` for 1:1 vanilla PC/PS2 parity.
 pub fn evaluate_sound_areas(
     stage_id: u32,
     player_pos: Vec3,
     situation_page: u32,
+) -> SoundAreaEvaluation {
+    evaluate_sound_areas_with_restoration(stage_id, player_pos, situation_page, false)
+}
+
+/// Evaluates `_SOUND_DATA` spatial volume bounding boxes for `stage_id` at `player_pos` and `situation_page`,
+/// optionally applying SH2:EE `Patches/MusicBoxVolume.cpp` 7th-layer (`Track 6`) Hotel 1F/2F music box
+/// spatial attenuation when `enable_restored_cut_audio` is `true` (`SH2-62`).
+///
+/// Faithfully implements `sndGetSoundAryByCharaPos` (`0x5187E0` in `sh2pc.exe`, `0x221540` in `SLUS_202.28`)
+/// and the priority reduction loop in `SeBgmManager` (`0x516372..0x5163FC`).
+pub fn evaluate_sound_areas_with_restoration(
+    stage_id: u32,
+    player_pos: Vec3,
+    situation_page: u32,
+    enable_restored_cut_audio: bool,
 ) -> SoundAreaEvaluation {
     if (6..=15).contains(&situation_page) {
         let preset_idx = (situation_page - 6) as usize;
@@ -630,7 +695,13 @@ pub fn evaluate_sound_areas(
 
     let mut resolved = [(0u8, 0u8); BGM_MAX_TRACKS];
     for &rec_idx in eval_indices {
-        let rec_fades = extract_record_track_fades(&records[rec_idx], situation_page);
+        let patched_rec = apply_music_box_volume_patch(
+            stage_id,
+            rec_idx,
+            &records[rec_idx],
+            enable_restored_cut_audio,
+        );
+        let rec_fades = extract_record_track_fades(&patched_rec, situation_page);
         for track_idx in 0..BGM_MAX_TRACKS {
             let (cand_in, cand_out) = rec_fades[track_idx];
             let (cur_in, cur_out) = resolved[track_idx];
@@ -909,7 +980,12 @@ impl BgmManager {
                 min_enemy_dist_xz,
                 &self.event_flags,
             );
-            let eval = evaluate_sound_areas(self.stage_id, player_pos, self.situation_page);
+            let eval = evaluate_sound_areas_with_restoration(
+                self.stage_id,
+                player_pos,
+                self.situation_page,
+                self.event_flags.enable_restored_cut_audio,
+            );
 
             if !self.loaded_is_adx {
                 for (i, &(in_type, out_type)) in eval.track_fades.iter().enumerate() {

@@ -9,8 +9,8 @@ use sh2_assets::formats::anm::{
     compute_skin_matrices_with_inv_into, evaluate_pose_into, interpolate_frames_into,
 };
 use sh2_debug::{
-    build_skeleton_debug_lines, build_wireframe_lines, StageLightingRig, TextureSourceMode,
-    ViewerRenderMode, BESTIARY_CATALOG,
+    build_skeleton_debug_lines, build_wireframe_lines, ModelCategory, StageLightingRig,
+    TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,
 };
 use sh2_ui::menu::TitlePhase;
 
@@ -73,6 +73,23 @@ impl RoomController for ModelViewerRoomController {
                     "[Model Viewer] Switched animation clip index to {}",
                     state.model_viewer.selected_anm_index
                 );
+            }
+            KeyCode::KeyC if pressed => {
+                state.model_viewer.next_subclip();
+                if let Some(sc) = state.model_viewer.active_subclip() {
+                    tracing::info!(
+                        "[Model Viewer] Selected PS2 Sub-Clip: {} (frames {}..={} @ {:.2} FPS)",
+                        sc.label,
+                        sc.clip.start_frame,
+                        sc.clip.end_frame,
+                        sc.clip.fps
+                    );
+                } else {
+                    tracing::info!(
+                        "[Model Viewer] Selected PS2 Sub-Clip: ALL FRAMES (0..{} @ 30.0 FPS)",
+                        state.model_viewer.total_frames
+                    );
+                }
             }
             KeyCode::Space if pressed => {
                 state.model_viewer.toggle_pause();
@@ -308,11 +325,34 @@ impl RoomController for ModelViewerRoomController {
                     &mut c.skin_scratch,
                 );
 
+                let entry = state.model_viewer.current_entry();
                 let (s, c_yaw) = state.model_viewer.turntable_yaw.sin_cos();
+                let (tx, ty, tz) = if entry.category == ModelCategory::WeaponOrItem
+                    && !c.model.vertices.positions.is_empty()
+                {
+                    let mut min_p = [f32::INFINITY; 3];
+                    let mut max_p = [f32::NEG_INFINITY; 3];
+                    for p in &c.model.vertices.positions {
+                        for k in 0..3 {
+                            min_p[k] = min_p[k].min(p[k]);
+                            max_p[k] = max_p[k].max(p[k]);
+                        }
+                    }
+                    let cx = 0.5 * (min_p[0] + max_p[0]);
+                    let cy = 0.5 * (min_p[1] + max_p[1]);
+                    let cz = 0.5 * (min_p[2] + max_p[2]);
+                    (
+                        -(c_yaw * cx + s * cz),
+                        entry.default_target_y - cy,
+                        -(-s * cx + c_yaw * cz),
+                    )
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
                 let world_mat = [
-                    [c_yaw, 0.0, s, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [-s, 0.0, c_yaw, 0.0],
+                    [c_yaw, 0.0, s, tx],
+                    [0.0, 1.0, 0.0, ty],
+                    [-s, 0.0, c_yaw, tz],
                     [0.0, 0.0, 0.0, 1.0],
                 ];
 
@@ -466,6 +506,26 @@ impl RoomController for ModelViewerRoomController {
         } else {
             "PLAYING"
         };
+        let subclips = state.model_viewer.available_subclips();
+        let subclip_info = if let Some(sc) = state.model_viewer.active_subclip() {
+            let idx = state.model_viewer.selected_subclip_index.unwrap_or(0) + 1;
+            format!(
+                "SUB-CLIP [{}/{}] {} ({}..={} @ {:.2} FPS)",
+                idx,
+                subclips.len(),
+                sc.label,
+                sc.clip.start_frame,
+                sc.clip.end_frame,
+                sc.clip.fps
+            )
+        } else if !subclips.is_empty() {
+            format!(
+                "SUB-CLIP [ALL/{}] FULL TRACK (PRESS [C] FOR PS2 SUB-CLIPS)",
+                subclips.len()
+            )
+        } else {
+            "SUB-CLIP [FULL TRACK]".to_string()
+        };
         state.menu_rasterizer.draw_text(
             &format!(
                 "ANIM CLIP [{}/{}] : {} | {} | FRAME {:03.0}/{:03} | SPEED {:.1}X",
@@ -483,6 +543,9 @@ impl RoomController for ModelViewerRoomController {
             green,
             true,
         );
+        state
+            .menu_rasterizer
+            .draw_text(&subclip_info, 24, 110, 1, yellow, true);
 
         state.menu_rasterizer.draw_text(
             &format!(
@@ -500,7 +563,7 @@ impl RoomController for ModelViewerRoomController {
                 }
             ),
             24,
-            112,
+            128,
             1,
             white,
             true,
@@ -518,7 +581,7 @@ impl RoomController for ModelViewerRoomController {
                 }
             ),
             24,
-            132,
+            146,
             1,
             cyan,
             true,
@@ -526,7 +589,7 @@ impl RoomController for ModelViewerRoomController {
 
         // Bottom hotkey legend
         state.menu_rasterizer.draw_text(
-            "[N/P or PgDn/PgUp] Next/Prev Model  [M/Tab] Next .ANM Clip  [Space] Play/Pause  [[ / ]] Step Frame  [-/+] Speed  [R] Reverse",
+            "[N/P or PgDn/PgUp] Next/Prev Model  [M/Tab] Next .ANM File  [C] Next PS2 Sub-Clip  [Space] Play/Pause  [[ / ]] Step  [-/+] Speed  [R] Rev",
             24,
             666,
             1,

@@ -37,6 +37,10 @@ use crate::ai::creatures::lying_figure::ScuState;
 use crate::ai::creatures::mannequin::MknState;
 use crate::ai::creatures::nurse::NseState;
 use crate::ai::maria::MariaState;
+pub use crate::ai::npcs::{
+    AngelaAnimClips, EdbState, EddieBossAnimClips, EddieNpcAnimClips, LauraAnimClips,
+    MaryNpcAnimClips, NpcAnimState,
+};
 use crate::animation::{AnimationClip, BlendedFrameCursor, FrameCursor};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};

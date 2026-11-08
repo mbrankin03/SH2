@@ -9,7 +9,7 @@ use sh2_app::synthetic_geometry::{
 };
 use sh2_assets::formats::anm::{compute_bind_locals, parse_anm, AnimationFile, AnimationFrame};
 use sh2_assets::formats::map::MapFile;
-use sh2_assets::formats::mdls::{parse_mdl, ModelFile};
+use sh2_assets::formats::mdls::{companion_texture_mdl_path, parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
 use sh2_core::SecondaryBonePhysics;
 use sh2_debug::ModelViewerEntry;
@@ -437,14 +437,18 @@ pub(crate) fn load_character_asset(
 
     let mut mdl_bytes = None;
     let mut hd_mdl_bytes = None;
+    let mut loaded_mdl_rel = None;
+    let mut loaded_base_root = None;
     let mut anm_bytes = None;
 
     for base in &base_roots {
-        for mdl_sub in mdl_rel_paths {
+        for &mdl_sub in mdl_rel_paths {
             let p = PathBuf::from(base).join(mdl_sub);
             if let Ok(bytes) = std::fs::read(&p) {
                 tracing::info!("Found model asset: {:?}", p);
                 mdl_bytes = Some(bytes);
+                loaded_mdl_rel = Some(mdl_sub);
+                loaded_base_root = Some(base.clone());
 
                 // Check if a corresponding vanilla or sh2e override model exists for texture comparison
                 if let Some(stripped) = mdl_sub.strip_prefix("data/") {
@@ -484,8 +488,39 @@ pub(crate) fn load_character_asset(
     }
 
     let mdl_bytes = mdl_bytes?;
-    let model = parse_mdl(&mdl_bytes).ok()?;
-    let hd_model = hd_mdl_bytes.as_deref().and_then(|b| parse_mdl(b).ok());
+    let mut model = parse_mdl(&mdl_bytes).ok()?;
+    let mut hd_model = hd_mdl_bytes.as_deref().and_then(|b| parse_mdl(b).ok());
+
+    // If this is a `no_tex = 1` reflection or untextured variant (e.g. `ragl.mdl`, `rhhh_edi.mdl`,
+    // `rlau.mdl`, `rmry.mdl`), bind the embedded textures from its primary companion `.mdl`.
+    if model.textures.is_empty() {
+        if let (Some(mdl_rel), Some(ref base)) = (loaded_mdl_rel, loaded_base_root) {
+            if let Some(comp_rel) = companion_texture_mdl_path(mdl_rel) {
+                let comp_path = PathBuf::from(base).join(comp_rel);
+                if let Ok(comp_bytes) = std::fs::read(&comp_path) {
+                    if let Ok(comp_mdl) = parse_mdl(&comp_bytes) {
+                        tracing::info!(
+                            "Loaded {} externalized companion textures from '{}' for '{}'",
+                            comp_mdl.textures.len(),
+                            comp_rel,
+                            mdl_rel
+                        );
+                        model.textures = comp_mdl.textures;
+                    }
+                }
+                if hd_model.as_ref().is_none_or(|h| h.textures.is_empty()) {
+                    if let Some(stripped) = comp_rel.strip_prefix("data/") {
+                        let sh2e_comp = PathBuf::from(base).join("sh2e").join(stripped);
+                        if let Ok(hd_comp_bytes) = std::fs::read(&sh2e_comp) {
+                            if let Ok(hd_comp_mdl) = parse_mdl(&hd_comp_bytes) {
+                                hd_model = Some(hd_comp_mdl);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Parse animation if available and compatible, otherwise synthesize a 1-frame bind-pose track
     let anm = anm_bytes

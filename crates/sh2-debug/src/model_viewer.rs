@@ -7,6 +7,8 @@
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::subclips::{sub_clips_for_anm, ViewerSubClip};
+
 /// Category classification for entries in the 3D Model & Bestiary Viewer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelCategory {
@@ -152,12 +154,15 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         id: "hhh_edi",
         display_name: "Eddie Dombrowski (High-LOD - hhh_edi)",
         category: ModelCategory::StoryNpc,
-        mdl_paths: &["data/chr/edi/hhh_edi.mdl"],
+        mdl_paths: &["data/chr/edi/hhh_edi.mdl", "data/chr/edi/rhhh_edi.mdl"],
         anm_paths: &[
             "data/chr/edi/p_edi.anm",
             "data/demo/gero_edi/hhh_edi.anm",
             "data/demo/edi_korosu/hhh_edi.anm",
             "data/demo/bp_edi_1/hhh_edi.anm",
+            "data/demo/bp_edi_2/hhh_edi.anm",
+            "data/demo/killer_edi/hhh_edi.anm",
+            "data/demo/killer_edi_e/hhh_edi.anm",
         ],
         hd_override_dir: Some("sh2e/chr/edi"),
         default_distance: 2500.0,
@@ -165,10 +170,13 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
     },
     ModelViewerEntry {
         id: "lll_edi",
-        display_name: "Eddie Dombrowski (Gameplay LOD - lll_edi)",
+        display_name: "Eddie Dombrowski (Gameplay & Boss - lll_edi)",
         category: ModelCategory::StoryNpc,
         mdl_paths: &["data/chr/edi/lll_edi.mdl"],
-        anm_paths: &["data/chr/edi/lll_edi.anm"],
+        anm_paths: &[
+            "data/chr/edi/lll_edi.anm",
+            "data/demo/killer_edi_d/lll_edi.anm",
+        ],
         hd_override_dir: Some("sh2e/chr/edi"),
         default_distance: 2500.0,
         default_target_y: -850.0,
@@ -177,8 +185,21 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         id: "lau",
         display_name: "Laura (lau)",
         category: ModelCategory::StoryNpc,
-        mdl_paths: &["data/chr/lau/lau.mdl"],
-        anm_paths: &["data/chr/lau/p_lau.anm"],
+        mdl_paths: &["data/chr/lau/lau.mdl", "data/chr/item/rlau.mdl"],
+        anm_paths: &[
+            "data/chr/lau/p_lau.anm",
+            "data/demo/hei_lau/lau.anm",
+            "data/demo/kagikeri/lau.anm",
+            "data/demo/bp_edi_1/lau.anm",
+            "data/demo/bp_edi_2/lau.anm",
+            "data/demo/hp_lau/lau.anm",
+            "data/demo/lau_damasu/lau.anm",
+            "data/demo/lau_damasu_m/lau.anm",
+            "data/demo/piano_lau/lau.anm",
+            "data/demo/room312/lau.anm",
+            "data/demo/exit/lau.anm",
+            "data/demo/mry_yarinaoshi_i/lau.anm",
+        ],
         hd_override_dir: Some("sh2e/chr/lau"),
         default_distance: 2000.0,
         default_target_y: -600.0,
@@ -187,8 +208,14 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         id: "mry",
         display_name: "Mary Shepherd-Sunderland (mry)",
         category: ModelCategory::StoryNpc,
-        mdl_paths: &["data/chr/mry/mry.mdl"],
-        anm_paths: &["data/chr/mry/p_mry.anm"],
+        mdl_paths: &["data/chr/mry/mry.mdl", "data/chr/item/rmry.mdl"],
+        anm_paths: &[
+            "data/chr/mry/p_mry.anm",
+            "data/demo/fukatsu_a/mry.anm",
+            "data/demo/jisatsu_a/mry.anm",
+            "data/demo/mar_isho_a/mry.anm",
+            "data/demo/mry_yarinaoshi_a/mry.anm",
+        ],
         hd_override_dir: Some("sh2e/chr/mry"),
         default_distance: 2400.0,
         default_target_y: -820.0,
@@ -197,8 +224,14 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         id: "agl",
         display_name: "Angela Orosco (agl)",
         category: ModelCategory::StoryNpc,
-        mdl_paths: &["data/chr/agl/agl.mdl"],
-        anm_paths: &["data/chr/agl/p_agl.anm"],
+        mdl_paths: &["data/chr/agl/agl.mdl", "data/chr/agl/ragl.mdl"],
+        anm_paths: &[
+            "data/chr/agl/p_agl.anm",
+            "data/demo/haka_agl/agl.anm",
+            "data/demo/knife_agl/agl.anm",
+            "data/demo/papa_agl/agl.anm",
+            "data/demo/fire_agl/agl.anm",
+        ],
         hd_override_dir: Some("sh2e/chr/agl"),
         default_distance: 2400.0,
         default_target_y: -800.0,
@@ -409,7 +442,7 @@ pub const BESTIARY_CATALOG: &[ModelViewerEntry] = &[
         mdl_paths: &["data/chr/item/i_letter.mdl", "data/chr/item/i_radio.mdl"],
         anm_paths: &["data/chr/item/p_i_letter.anm"],
         hd_override_dir: None,
-        default_distance: 800.0,
+        default_distance: 250.0,
         default_target_y: -150.0,
     },
 ];
@@ -622,6 +655,8 @@ pub struct ModelViewerState {
     pub selected_model_index: usize,
     /// Index into the active model's `anm_paths` list.
     pub selected_anm_index: usize,
+    /// Optional index into the active `.anm` file's named PS2 sub-clips (`None` = play entire `.anm` track).
+    pub selected_subclip_index: Option<usize>,
     /// Total animation frames in the currently loaded `.anm` file.
     pub total_frames: usize,
     /// Continuous animation playhead position in frames `[0.0, total_frames)`.
@@ -630,7 +665,7 @@ pub struct ModelViewerState {
     pub is_paused: bool,
     /// Playback speed multiplier (`-2.0` to `2.0`, default `1.0`).
     pub playback_speed: f32,
-    /// Base animation framerate (30.0 FPS standard PS2 animation rate).
+    /// Base animation framerate (30.0 FPS standard PS2 animation rate, or active sub-clip FPS).
     pub base_fps: f32,
     /// Whether the pedestal turntable auto-rotates the model continuously.
     pub turntable_enabled: bool,
@@ -667,6 +702,7 @@ impl ModelViewerState {
         Self {
             selected_model_index: 0,
             selected_anm_index: 0,
+            selected_subclip_index: None,
             total_frames: 1,
             current_frame: 0.0,
             is_paused: false,
@@ -687,6 +723,116 @@ impl ModelViewerState {
     /// Returns the currently selected [`ModelViewerEntry`].
     pub fn current_entry(&self) -> &'static ModelViewerEntry {
         &BESTIARY_CATALOG[self.selected_model_index % BESTIARY_CATALOG.len()]
+    }
+
+    /// Returns the relative path of the currently selected `.anm` file, if any.
+    pub fn current_anm_path(&self) -> Option<&'static str> {
+        let entry = self.current_entry();
+        if entry.anm_paths.is_empty() {
+            None
+        } else {
+            Some(entry.anm_paths[self.selected_anm_index % entry.anm_paths.len()])
+        }
+    }
+
+    /// Returns the slice of named PS2 sub-clips defined for the active `(model, anm)` pair.
+    pub fn available_subclips(&self) -> &'static [ViewerSubClip] {
+        let entry = self.current_entry();
+        if let Some(anm_path) = self.current_anm_path() {
+            sub_clips_for_anm(entry.id, anm_path)
+        } else {
+            &[]
+        }
+    }
+
+    /// Returns the currently selected [`ViewerSubClip`], if any.
+    pub fn active_subclip(&self) -> Option<ViewerSubClip> {
+        let idx = self.selected_subclip_index?;
+        let subclips = self.available_subclips();
+        subclips.get(idx).copied()
+    }
+
+    /// Returns `true` if the active `.anm` is the shared 8-weapon pose lookup table (`jms_weapon.anm`),
+    /// where each frame `0..=7` belongs to a different weapon's 2-bone proportions and must stay
+    /// locked to the active weapon's dedicated pose sub-clip.
+    fn is_shared_weapon_pose_table(&self) -> bool {
+        self.current_anm_path() == Some("data/chr/wp/jms_weapon.anm")
+            && !self.available_subclips().is_empty()
+    }
+
+    fn apply_default_subclip_for_current_anm(&mut self) {
+        if self.is_shared_weapon_pose_table() {
+            self.selected_subclip_index = Some(0);
+            if let Some(sc) = self.active_subclip() {
+                self.current_frame = sc.clip.start_frame as f32;
+                self.base_fps = sc.clip.fps;
+            }
+        } else {
+            self.selected_subclip_index = None;
+            self.base_fps = 30.0;
+            self.current_frame = 0.0;
+        }
+    }
+
+    /// Cycles to the next named PS2 sub-clip within the active `.anm` file, wrapping back to
+    /// `None` ("ALL FRAMES") after the last sub-clip.
+    pub fn next_subclip(&mut self) {
+        let subclips = self.available_subclips();
+        if subclips.is_empty() {
+            self.selected_subclip_index = None;
+            self.base_fps = 30.0;
+            return;
+        }
+        if self.is_shared_weapon_pose_table() {
+            self.selected_subclip_index = Some(0);
+            if let Some(sc) = self.active_subclip() {
+                self.current_frame = sc.clip.start_frame as f32;
+                self.base_fps = sc.clip.fps;
+            }
+            return;
+        }
+        self.selected_subclip_index = match self.selected_subclip_index {
+            None => Some(0),
+            Some(i) if i + 1 < subclips.len() => Some(i + 1),
+            Some(_) => None,
+        };
+        if let Some(sc) = self.active_subclip() {
+            self.current_frame = sc.clip.start_frame as f32;
+            self.base_fps = sc.clip.fps;
+        } else {
+            self.current_frame = 0.0;
+            self.base_fps = 30.0;
+        }
+    }
+
+    /// Cycles to the previous named PS2 sub-clip within the active `.anm` file.
+    pub fn prev_subclip(&mut self) {
+        let subclips = self.available_subclips();
+        if subclips.is_empty() {
+            self.selected_subclip_index = None;
+            self.base_fps = 30.0;
+            return;
+        }
+        if self.is_shared_weapon_pose_table() {
+            self.selected_subclip_index = Some(0);
+            if let Some(sc) = self.active_subclip() {
+                self.current_frame = sc.clip.start_frame as f32;
+                self.base_fps = sc.clip.fps;
+            }
+            return;
+        }
+        self.selected_subclip_index = match self.selected_subclip_index {
+            None => Some(subclips.len() - 1),
+            Some(0) => None,
+            Some(i) => Some(i - 1),
+        };
+        if let Some(sc) = self.active_subclip() {
+            self.current_frame = sc.clip.start_frame as f32;
+            self.base_fps = sc.clip.fps;
+        } else {
+            self.current_frame = 0.0;
+            self.base_fps = 30.0;
+        }
     }
 
     /// Selects a model by matching its CLI name or substring (case-insensitive).
@@ -729,7 +875,7 @@ impl ModelViewerState {
     pub fn set_model_index(&mut self, index: usize) {
         self.selected_model_index = index % BESTIARY_CATALOG.len();
         self.selected_anm_index = 0;
-        self.current_frame = 0.0;
+        self.apply_default_subclip_for_current_anm();
         self.camera.reset_for_entry(self.current_entry());
     }
 
@@ -753,7 +899,7 @@ impl ModelViewerState {
     pub fn next_animation_clip(&mut self) {
         let count = self.current_entry().anm_paths.len().max(1);
         self.selected_anm_index = (self.selected_anm_index + 1) % count;
-        self.current_frame = 0.0;
+        self.apply_default_subclip_for_current_anm();
     }
 
     /// Cycles to the previous `.anm` animation file for the active model.
@@ -764,7 +910,7 @@ impl ModelViewerState {
         } else {
             self.selected_anm_index -= 1;
         }
-        self.current_frame = 0.0;
+        self.apply_default_subclip_for_current_anm();
     }
 
     /// Updates total frame count when a new `.anm` file is loaded.
@@ -781,8 +927,18 @@ impl ModelViewerState {
     /// Steps animation playhead forward or backward by `delta_frames` (automatically pauses).
     pub fn step_frame(&mut self, delta_frames: i32) {
         self.is_paused = true;
-        let total = self.total_frames.max(1) as f32;
-        self.current_frame = (self.current_frame.floor() + delta_frames as f32).rem_euclid(total);
+        if let Some(sc) = self.active_subclip() {
+            let start = (sc.clip.start_frame as usize).min(self.total_frames.saturating_sub(1));
+            let end = (sc.clip.end_frame as usize).min(self.total_frames.saturating_sub(1));
+            let span = (end.saturating_sub(start) + 1).max(1) as f32;
+            let rel =
+                (self.current_frame.floor() - start as f32 + delta_frames as f32).rem_euclid(span);
+            self.current_frame = start as f32 + rel;
+        } else {
+            let total = self.total_frames.max(1) as f32;
+            self.current_frame =
+                (self.current_frame.floor() + delta_frames as f32).rem_euclid(total);
+        }
     }
 
     /// Adjusts playback speed multiplier within `[-2.0, 2.0]`.
@@ -804,9 +960,22 @@ impl ModelViewerState {
         }
 
         if !self.is_paused && self.total_frames > 1 {
-            let total = self.total_frames as f32;
-            let frame_delta = self.base_fps * self.playback_speed * dt;
-            self.current_frame = (self.current_frame + frame_delta).rem_euclid(total);
+            if let Some(sc) = self.active_subclip() {
+                let start = (sc.clip.start_frame as usize).min(self.total_frames - 1) as f32;
+                let end = (sc.clip.end_frame as usize).min(self.total_frames - 1) as f32;
+                let span = (end - start).max(0.0);
+                if span <= f32::EPSILON {
+                    self.current_frame = start;
+                } else {
+                    let frame_delta = sc.clip.fps * self.playback_speed * dt;
+                    let rel = (self.current_frame - start + frame_delta).rem_euclid(span);
+                    self.current_frame = start + rel;
+                }
+            } else {
+                let total = self.total_frames as f32;
+                let frame_delta = self.base_fps * self.playback_speed * dt;
+                self.current_frame = (self.current_frame + frame_delta).rem_euclid(total);
+            }
         }
     }
 
@@ -815,10 +984,27 @@ impl ModelViewerState {
         if self.total_frames <= 1 {
             return (0, 0, 0.0);
         }
-        let f0 = (self.current_frame.floor() as usize) % self.total_frames;
-        let f1 = (f0 + 1) % self.total_frames;
-        let alpha = (self.current_frame - self.current_frame.floor()).clamp(0.0, 1.0);
-        (f0, f1, alpha)
+        if let Some(sc) = self.active_subclip() {
+            let start = (sc.clip.start_frame as usize).min(self.total_frames - 1);
+            let end = (sc.clip.end_frame as usize).min(self.total_frames - 1);
+            let f0 = (self.current_frame.floor() as usize).clamp(start, end);
+            let f1 = if f0 >= end {
+                if sc.clip.looping {
+                    start
+                } else {
+                    end
+                }
+            } else {
+                f0 + 1
+            };
+            let alpha = (self.current_frame - self.current_frame.floor()).clamp(0.0, 1.0);
+            (f0, f1, alpha)
+        } else {
+            let f0 = (self.current_frame.floor() as usize) % self.total_frames;
+            let f1 = (f0 + 1) % self.total_frames;
+            let alpha = (self.current_frame - self.current_frame.floor()).clamp(0.0, 1.0);
+            (f0, f1, alpha)
+        }
     }
 }
 
@@ -900,6 +1086,70 @@ mod tests {
     }
 
     #[test]
+    fn test_sh2_34_npc_subclip_cycling_and_playback_bounds() {
+        let mut viewer = ModelViewerState::new();
+        assert!(viewer.select_by_name("agl"));
+        viewer.set_total_frames(298);
+        assert_eq!(viewer.available_subclips().len(), 4);
+        assert!(viewer.active_subclip().is_none());
+
+        // Cycle to first sub-clip (3904: Idle Breathe, 133..=206 @ 1.875 fps)
+        viewer.next_subclip();
+        let sc0 = viewer.active_subclip().expect("subclip 0 active");
+        assert_eq!(sc0.clip.start_frame, 133);
+        assert_eq!(sc0.clip.end_frame, 206);
+        assert!((viewer.base_fps - 1.875).abs() < 1e-4);
+
+        // Cycle to second sub-clip (3901: Walk Cycle A, 0..=63 @ 30.0 fps)
+        viewer.next_subclip();
+        let sc1 = viewer.active_subclip().expect("subclip 1 active");
+        assert_eq!(sc1.clip.start_frame, 0);
+        assert_eq!(sc1.clip.end_frame, 63);
+        assert!((viewer.current_frame - 0.0).abs() < 1e-4);
+
+        // Stepping backward from start_frame wraps to end_frame within the sub-clip
+        viewer.step_frame(-1);
+        assert_eq!(viewer.current_frame, 63.0);
+        let (f0, f1, _) = viewer.sample_cursor();
+        assert_eq!(f0, 63);
+        assert_eq!(f1, 0);
+
+        // Also verify Eddie Boss (`lll_edi`) exposes all 21 combat/damage PS2 sub-clips
+        assert!(viewer.select_by_name("lll_edi"));
+        viewer.set_total_frames(437);
+        assert_eq!(viewer.available_subclips().len(), 21);
+
+        // Verify all 8 weapons using `jms_weapon.anm` automatically lock onto their dedicated
+        // 1-frame weapon pose (`0..=7`) and never drift onto another weapon's bone-1 tip offset
+        let weapon_frames = [
+            ("wp_handgun", 0usize),
+            ("wp_shotgun", 1),
+            ("wp_riflgun", 2),
+            ("wp_sp", 3),
+            ("wp_kakuzai", 4),
+            ("wp_pipe", 5),
+            ("wp_nata", 6),
+            ("wp_csaw", 7),
+        ];
+        for (wp_id, expected_frame) in weapon_frames {
+            assert!(viewer.select_by_name(wp_id));
+            viewer.set_total_frames(8);
+            viewer.is_paused = false;
+            assert_eq!(viewer.selected_subclip_index, Some(0));
+            viewer.tick(0.5);
+            let (f0, f1, _) = viewer.sample_cursor();
+            assert_eq!(
+                f0, expected_frame,
+                "Weapon {wp_id} drifted off frame {expected_frame}"
+            );
+            assert_eq!(
+                f1, expected_frame,
+                "Weapon {wp_id} drifted off frame {expected_frame}"
+            );
+        }
+    }
+
+    #[test]
     fn test_all_bestiary_catalog_models_and_animations_skin_cleanly() {
         use sh2_assets::formats::anm::{
             compute_bind_locals, compute_skin_matrices, evaluate_pose, parse_anm,
@@ -978,6 +1228,20 @@ mod tests {
                     entry.id,
                     ap
                 );
+
+                for sc in crate::subclips::sub_clips_for_anm(entry.id, ap) {
+                    assert!(
+                        sc.clip.start_frame <= sc.clip.end_frame
+                            && (sc.clip.end_frame as usize) < anm.frames.len(),
+                        "Entry '{}' animation '{}' sub-clip '{}' range {}..={} exceeds total frames {}",
+                        entry.id,
+                        ap,
+                        sc.label,
+                        sc.clip.start_frame,
+                        sc.clip.end_frame,
+                        anm.frames.len()
+                    );
+                }
 
                 // Check frame 0, mid-frame, and last frame for finite, bounded vertex skinning
                 let check_frames = [0, anm.frames.len() / 2, anm.frames.len() - 1];

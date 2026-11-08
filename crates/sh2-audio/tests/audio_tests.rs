@@ -954,4 +954,203 @@ mod tests {
         let eval_41_restored = evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, true);
         assert_eq!(eval_41_restored.track_fades[6], (1, 1)); // Restored: quieter Track 6 plays in 2F lobby-connected hallway!
     }
+
+    #[test]
+    fn test_sh2_55_wav_smpl_loop_header_parsing_and_loop_region_scaling() {
+        // 1. Construct a synthetic RIFF WAVE with a standard 60-byte `smpl` chunk specifying loop_start = 400, loop_end = 1200
+        let mut smpl_payload = vec![0u8; 60];
+        smpl_payload[28..32].copy_from_slice(&1u32.to_le_bytes()); // num_sample_loops = 1
+        smpl_payload[44..48].copy_from_slice(&400u32.to_le_bytes()); // loop_start = 400
+        smpl_payload[48..52].copy_from_slice(&1200u32.to_le_bytes()); // loop_end = 1200
+        assert_eq!(
+            sh2_assets::parse_wav_smpl_loop(&smpl_payload),
+            Some((400, 1200))
+        );
+
+        // 2. Verify LoopRegionSamples proportional upsample scaling (16,000 Hz -> 48,000 Hz = 3x)
+        let reg = LoopRegionSamples::from_source_samples(400, 1200, 16_000, 48_000, 4800)
+            .expect("Expected valid LoopRegionSamples");
+        assert_eq!(reg.loop_start_frame, 1200);
+        assert_eq!(reg.loop_end_frame, 3600);
+        assert_eq!(reg.sample_rate, 48_000);
+    }
+
+    #[test]
+    fn test_sh2_55_sample_accurate_loop_crossfade_eliminates_discontinuity() {
+        // Create a 48 kHz buffer with a severe step discontinuity between loop_start and loop_end - 1:
+        // frames[loop_start] = (+0.75, -0.75), while frames[loop_end - 1] = (-0.80, +0.80).
+        let total = 4800usize;
+        let loop_start = 0usize;
+        let loop_end = 4000usize;
+        let mut frames = Vec::with_capacity(total);
+        for i in 0..total {
+            if i < 2000 {
+                frames.push(kira::Frame::new(0.75, -0.75));
+            } else {
+                frames.push(kira::Frame::new(-0.80, 0.80));
+            }
+        }
+
+        let initial_step = measure_loop_boundary_step_delta(&frames, loop_start, loop_end);
+        assert!(
+            initial_step > 2.0,
+            "Expected large un-crossfaded step discontinuity > 2.0, got {initial_step}"
+        );
+
+        let region = LoopRegionSamples {
+            sample_rate: 48_000,
+            loop_start_frame: loop_start,
+            loop_end_frame: loop_end,
+            total_frames: total,
+        };
+        apply_loop_boundary_crossfade(&mut frames, region, DEFAULT_LOOP_CROSSFADE_SAMPLES_48K);
+
+        // Buffer should be truncated to `loop_end` (4000) and `frames[loop_end - 1]` must match `frames[loop_start]`
+        assert_eq!(frames.len(), loop_end);
+        let post_step = measure_loop_boundary_step_delta(&frames, loop_start, loop_end);
+        assert!(
+            post_step < 1e-5,
+            "Expected crossfaded loop boundary step delta < 1e-5, got {post_step}"
+        );
+    }
+
+    #[test]
+    fn test_sh2_55_dynamic_room_acoustics_from_cam_volumes() {
+        use sh2_assets::{
+            AreaSizeType, CamFile, CamMovementParams, CamMovementType, RoadArea, RoadRecord,
+            RoadType,
+        };
+
+        let make_record =
+            |x_span: f32, z_span: f32, y_span: f32, size: AreaSizeType, rd_type: RoadType| {
+                RoadRecord {
+                    lim_sw: RoadArea {
+                        x0: 0.0,
+                        z0: 0.0,
+                        x1: x_span,
+                        z1: z_span,
+                        x2: x_span,
+                        z2: z_span,
+                        min_hy: 0.0,
+                        max_hy: -y_span,
+                    },
+                    lim_rd: RoadArea {
+                        x0: 0.0,
+                        z0: 0.0,
+                        x1: x_span,
+                        z1: z_span,
+                        x2: x_span,
+                        z2: z_span,
+                        min_hy: 0.0,
+                        max_hy: -y_span,
+                    },
+                    kind_id: 0,
+                    flags: 0,
+                    area_size_type: size,
+                    rd_type,
+                    mv_y_type: 0,
+                    ofs_watch_hy: -300.0,
+                    trace_btm_hy: -300.0,
+                    rd_dir_type: 0,
+                    projection: 448.0,
+                    proj_volume: 0.0,
+                    proj_sec: 0.5,
+                    cam_mv_type: CamMovementType::Chase,
+                    params: CamMovementParams::default(),
+                }
+            };
+
+        // 1. Outdoor street volume (`AreaSizeType::Outdoor`) -> `EnvironmentalPreset::FoggyStreets`
+        let rec_outdoor = make_record(
+            12000.0,
+            10000.0,
+            3000.0,
+            AreaSizeType::Outdoor,
+            RoadType::Road,
+        );
+        let prof_outdoor = evaluate_room_acoustics(Some(&rec_outdoor), false);
+        assert_eq!(prof_outdoor.preset, EnvironmentalPreset::FoggyStreets);
+        assert!((prof_outdoor.damping - 0.70).abs() < 1e-4);
+
+        // 2. Elongated narrow apartment hallway (`1600 x 8000`, aspect = 5.0) -> `EnvironmentalPreset::Corridor`
+        let rec_corridor = make_record(1600.0, 8000.0, 2600.0, AreaSizeType::Tiny, RoadType::Road);
+        let prof_corridor = evaluate_room_acoustics(Some(&rec_corridor), true);
+        assert_eq!(prof_corridor.preset, EnvironmentalPreset::Corridor);
+        assert!(prof_corridor.feedback >= 0.72);
+        assert!(prof_corridor.spatial_spread < 0.80);
+
+        // 3. Standard square interior room (`3000 x 3200`, `AreaSizeType::Small`) -> `EnvironmentalPreset::InteriorRoom`
+        let rec_room = make_record(3000.0, 3200.0, 2600.0, AreaSizeType::Small, RoadType::Road);
+        let prof_room = evaluate_room_acoustics(Some(&rec_room), true);
+        assert_eq!(prof_room.preset, EnvironmentalPreset::InteriorRoom);
+
+        // 4. Wide interior prison/labyrinth chamber (`AreaSizeType::Wide`) -> `EnvironmentalPreset::CavernousEcho`
+        let rec_cavern = make_record(9000.0, 9000.0, 6000.0, AreaSizeType::Wide, RoadType::Effect);
+        let prof_cavern = evaluate_room_acoustics(Some(&rec_cavern), true);
+        assert_eq!(prof_cavern.preset, EnvironmentalPreset::CavernousEcho);
+        assert!(prof_cavern.wet_mix >= 0.55);
+
+        // 5. Evaluate directly via `CamFile` at player position
+        let cam = CamFile {
+            records: vec![rec_corridor],
+        };
+        let prof_pos =
+            evaluate_room_acoustics_for_pos(&cam, Vec3::new(800.0, -1000.0, 4000.0), true);
+        assert_eq!(prof_pos.preset, EnvironmentalPreset::Corridor);
+    }
+
+    #[test]
+    fn test_sh2_55_lock_free_audio_ringbuffer_multithreaded_spsc() {
+        use std::sync::Arc;
+
+        let rb = Arc::new(AudioRingBuffer::with_capacity(1024));
+        assert_eq!(rb.capacity(), 1024);
+        assert_eq!(rb.available_read(), 0);
+        assert_eq!(rb.available_write(), 1024);
+        assert!(rb.needs_refill());
+
+        let total_frames_to_stream = 16_384usize;
+        let rb_producer = Arc::clone(&rb);
+
+        let producer = std::thread::spawn(move || {
+            let mut sent = 0usize;
+            let mut batch = [kira::Frame::new(0.0, 0.0); 128];
+            while sent < total_frames_to_stream {
+                let n = (total_frames_to_stream - sent).min(batch.len());
+                for (i, slot) in batch.iter_mut().take(n).enumerate() {
+                    let idx = (sent + i) as f32;
+                    *slot = kira::Frame::new(idx, -idx);
+                }
+                let written = rb_producer.push_frames(&batch[..n]);
+                sent += written;
+                if written == 0 {
+                    std::thread::yield_now();
+                }
+            }
+        });
+
+        let mut received = 0usize;
+        let mut out_buf = [kira::Frame::new(0.0, 0.0); 96];
+        while received < total_frames_to_stream {
+            let avail = rb.available_read();
+            if avail == 0 {
+                std::thread::yield_now();
+                continue;
+            }
+            let to_pop = avail.min(out_buf.len());
+            let popped = rb.pop_frames(&mut out_buf[..to_pop]);
+            for (i, frame) in out_buf.iter().take(popped).enumerate() {
+                let expected = (received + i) as f32;
+                assert_eq!(frame.left, expected);
+                assert_eq!(frame.right, -expected);
+            }
+            received += popped;
+        }
+
+        producer
+            .join()
+            .expect("Producer thread should complete cleanly");
+        assert_eq!(rb.available_read(), 0);
+        assert_eq!(rb.underrun_count(), 0);
+    }
 }

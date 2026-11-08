@@ -1,13 +1,24 @@
+#![forbid(unsafe_code)]
 //! sh2-audio: High-definition streaming sound engine using kira.
 
+pub mod acoustics;
 pub mod beta_audio_catalog;
 pub mod bgm_data;
 pub mod bgm_manager;
 pub mod cutscene_bgm;
+pub mod device_routing;
+pub mod dialogue;
+pub mod dsp_resample;
 pub mod engine;
+pub mod looping;
 pub mod menu_sfx;
+pub mod ringbuffer;
 pub mod sfx_bank;
 
+pub use acoustics::{
+    evaluate_room_acoustics, evaluate_room_acoustics_for_pos, EnvironmentalPreset,
+    RoomAcousticsProfile,
+};
 pub use beta_audio_catalog::{
     CutAudioRestoreAction, CutAudioRestorer, CutSfxCatalogEntry, CutSfxCategory,
     LauraLetterVoiceSlice, Ps2PrototypeSdbSummary, Ps2PrototypeSfcEntry, CS_APT_RPT_CLOSET_ID,
@@ -35,8 +46,17 @@ pub use cutscene_bgm::{
     resolve_bgm_stream_path_for_source, CutsceneAudioMapping, CutsceneBgmAction,
     CUTSCENE_AUDIO_MAP,
 };
-pub use engine::{ActiveDialogue, AudioEngine, AudioError, EnvironmentalPreset};
+pub use dialogue::ActiveDialogue;
+pub use dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
+pub use engine::{AudioEngine, AudioError};
+pub use looping::{
+    apply_loop_boundary_crossfade, measure_loop_boundary_step_delta, LoopRegionSamples,
+    DEFAULT_LOOP_CROSSFADE_SAMPLES_48K,
+};
 pub use menu_sfx::{play_menu_sound, MenuAudioBank, SoundCueKind};
+pub use ringbuffer::{
+    pack_stereo_frame, unpack_stereo_frame, AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES,
+};
 pub use sfx_bank::{
     compute_ps2_sfx_attenuation_gain, compute_se_call_pos_distance_f, compute_sfx_distance_param_v,
     footstep_sddata_indices, resolve_se_id_to_sddata_index, resolve_se_id_to_voice_afs_index,

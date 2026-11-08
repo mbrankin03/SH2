@@ -4,7 +4,9 @@
 use sh2_assets::formats::anm::parse_anm;
 use sh2_assets::formats::mdls::parse_mdl;
 use sh2_core::ai::creatures::anim::{
-    CreatureAnimStateKind, LyingFigureAnimClips, MannequinAnimClips, MariaAnimClips, NurseAnimClips,
+    AngelaAnimClips, CreatureAnimStateKind, CreatureAnimationController, EdbState,
+    EddieBossAnimClips, EddieNpcAnimClips, LauraAnimClips, LyingFigureAnimClips,
+    MannequinAnimClips, MariaAnimClips, MaryNpcAnimClips, NpcAnimState, NurseAnimClips,
 };
 use sh2_core::ai::creatures::lying_figure::{LyingFigureController, ScuState};
 use sh2_core::ai::creatures::mannequin::{MannequinController, MknState};
@@ -217,4 +219,189 @@ fn test_nurse_and_maria_fsm_to_skeletal_sync() {
     assert_eq!(maria.state, MariaState::Panic);
     assert_eq!(maria.anim.state(), CreatureAnimStateKind::Cower);
     assert_eq!(maria.anim.current_clip(), MariaAnimClips::COWER_PANIC);
+}
+
+#[test]
+fn test_sh2_34_npc_and_eddie_boss_retail_anm_conformance() {
+    if !Path::new(RETAIL_CHR_ROOT).exists() {
+        println!("Skipping SH2-34 retail anm test: assets not present");
+        return;
+    }
+
+    // 1. Angela Orosco (`agl.mdl`: 75 bones, `p_agl.anm`: 298 frames)
+    let agl_mdl = parse_mdl(&fs::read(format!("{RETAIL_CHR_ROOT}/agl/agl.mdl")).expect("agl.mdl"))
+        .expect("agl mdl parse");
+    let agl_anm = parse_anm(
+        &fs::read(format!("{RETAIL_CHR_ROOT}/agl/p_agl.anm")).expect("p_agl.anm"),
+        agl_mdl.bone_count,
+        &agl_mdl.parents,
+    )
+    .expect("p_agl anm parse");
+    assert_eq!(agl_mdl.bone_count, 75);
+    assert_eq!(agl_anm.frames.len(), 298);
+    assert!(AngelaAnimClips::WALK_A.end_frame < agl_anm.frames.len() as u32);
+    assert!(AngelaAnimClips::WALK_B.end_frame < agl_anm.frames.len() as u32);
+    assert!(AngelaAnimClips::IDLE_BREATHE.end_frame < agl_anm.frames.len() as u32);
+    assert_eq!(
+        AngelaAnimClips::STAIR_WALK.end_frame,
+        (agl_anm.frames.len() - 1) as u32
+    );
+
+    // 2. Eddie High-LOD (`hhh_edi.mdl`: 64 bones, `p_edi.anm`: 368 frames)
+    let edi_mdl =
+        parse_mdl(&fs::read(format!("{RETAIL_CHR_ROOT}/edi/hhh_edi.mdl")).expect("hhh_edi.mdl"))
+            .expect("hhh_edi mdl parse");
+    let edi_anm = parse_anm(
+        &fs::read(format!("{RETAIL_CHR_ROOT}/edi/p_edi.anm")).expect("p_edi.anm"),
+        edi_mdl.bone_count,
+        &edi_mdl.parents,
+    )
+    .expect("p_edi anm parse");
+    assert_eq!(edi_mdl.bone_count, 64);
+    assert_eq!(edi_anm.frames.len(), 368);
+    assert!(EddieNpcAnimClips::IDLE_BREATHE_A.end_frame < edi_anm.frames.len() as u32);
+    assert!(EddieNpcAnimClips::IDLE_BREATHE_B.end_frame < edi_anm.frames.len() as u32);
+    assert!(EddieNpcAnimClips::TALK_GESTURE.end_frame < edi_anm.frames.len() as u32);
+    assert!(EddieNpcAnimClips::COWER_SIT.end_frame < edi_anm.frames.len() as u32);
+    assert!(EddieNpcAnimClips::STAND_IDLE.end_frame < edi_anm.frames.len() as u32);
+    assert_eq!(
+        EddieNpcAnimClips::STATIC_POSE.end_frame,
+        (edi_anm.frames.len() - 1) as u32
+    );
+
+    // 3. Eddie Gameplay & Boss (`en_edb`, `lll_edi.mdl`: 35 bones, `lll_edi.anm`: 437 frames)
+    let edb_mdl =
+        parse_mdl(&fs::read(format!("{RETAIL_CHR_ROOT}/edi/lll_edi.mdl")).expect("lll_edi.mdl"))
+            .expect("lll_edi mdl parse");
+    let edb_anm = parse_anm(
+        &fs::read(format!("{RETAIL_CHR_ROOT}/edi/lll_edi.anm")).expect("lll_edi.anm"),
+        edb_mdl.bone_count,
+        &edb_mdl.parents,
+    )
+    .expect("lll_edi anm parse");
+    assert_eq!(edb_mdl.bone_count, 35);
+    assert_eq!(edb_anm.frames.len(), 437);
+    assert!(EddieBossAnimClips::STAND.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::WALK.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::RUN.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::AIM_STEP_LEFT.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::AIM_STEP_RIGHT.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::SHOOT_REVOLVER.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::AIM_HOLD_RECOIL.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::MELEE_PUNCH.end_frame < edb_anm.frames.len() as u32);
+    assert!(EddieBossAnimClips::RELOAD_TURN.end_frame < edb_anm.frames.len() as u32);
+    for dmg_clip in &EddieBossAnimClips::DAMAGE_CLIPS {
+        assert!(dmg_clip.end_frame < edb_anm.frames.len() as u32);
+    }
+    assert_eq!(
+        EddieBossAnimClips::DAMAGE_CLIPS[11].end_frame,
+        (edb_anm.frames.len() - 1) as u32
+    );
+
+    // 4. Laura (`lau.mdl`: 89 bones, `p_lau.anm`: 73 frames)
+    let lau_mdl = parse_mdl(&fs::read(format!("{RETAIL_CHR_ROOT}/lau/lau.mdl")).expect("lau.mdl"))
+        .expect("lau mdl parse");
+    let lau_anm = parse_anm(
+        &fs::read(format!("{RETAIL_CHR_ROOT}/lau/p_lau.anm")).expect("p_lau.anm"),
+        lau_mdl.bone_count,
+        &lau_mdl.parents,
+    )
+    .expect("p_lau anm parse");
+    assert_eq!(lau_mdl.bone_count, 89);
+    assert_eq!(lau_anm.frames.len(), 73);
+    assert_eq!(
+        LauraAnimClips::WALK_IDLE.end_frame,
+        (lau_anm.frames.len() - 1) as u32
+    );
+
+    // 5. Mary Shepherd-Sunderland (`mry.mdl`: 81 bones, `p_mry.anm`: 135 frames)
+    let mry_mdl = parse_mdl(&fs::read(format!("{RETAIL_CHR_ROOT}/mry/mry.mdl")).expect("mry.mdl"))
+        .expect("mry mdl parse");
+    let mry_anm = parse_anm(
+        &fs::read(format!("{RETAIL_CHR_ROOT}/mry/p_mry.anm")).expect("p_mry.anm"),
+        mry_mdl.bone_count,
+        &mry_mdl.parents,
+    )
+    .expect("p_mry anm parse");
+    assert_eq!(mry_mdl.bone_count, 81);
+    assert_eq!(mry_anm.frames.len(), 135);
+    assert!(MaryNpcAnimClips::WALK_A.end_frame < mry_anm.frames.len() as u32);
+    assert_eq!(
+        MaryNpcAnimClips::WALK_B.end_frame,
+        (mry_anm.frames.len() - 1) as u32
+    );
+}
+
+#[test]
+fn test_sh2_34_npc_and_eddie_boss_state_synchronization() {
+    // 1. Angela state transitions & root motion
+    let mut agl = CreatureAnimationController::new_angela();
+    assert_eq!(agl.state(), CreatureAnimStateKind::Idle);
+    assert_eq!(agl.current_clip(), AngelaAnimClips::IDLE_BREATHE);
+    agl.sync_angela(NpcAnimState::WalkPrimary);
+    assert_eq!(agl.state(), CreatureAnimStateKind::Locomotion);
+    assert_eq!(agl.current_clip(), AngelaAnimClips::WALK_A);
+    agl.update(0.25, 0.0);
+    assert!(agl.root_motion_delta().z > 0.0);
+
+    // 2. Eddie High-LOD NPC dialogue & cower synchronization
+    let mut edi_npc = CreatureAnimationController::new_eddie_npc();
+    assert_eq!(edi_npc.current_clip(), EddieNpcAnimClips::IDLE_BREATHE_A);
+    edi_npc.sync_eddie_npc(NpcAnimState::TalkOrGesture);
+    assert_eq!(edi_npc.current_clip(), EddieNpcAnimClips::TALK_GESTURE);
+    edi_npc.sync_eddie_npc(NpcAnimState::CowerOrSpecial);
+    assert_eq!(edi_npc.state(), CreatureAnimStateKind::Cower);
+    assert_eq!(edi_npc.current_clip(), EddieNpcAnimClips::COWER_SIT);
+
+    // 3. Eddie Boss (`en_edb`) combat state machine synchronization
+    let mut edb = CreatureAnimationController::new_eddie_boss();
+    assert_eq!(edb.current_clip(), EddieBossAnimClips::STAND);
+
+    edb.sync_eddie_boss(EdbState::Run);
+    assert_eq!(edb.state(), CreatureAnimStateKind::Locomotion);
+    assert_eq!(edb.current_clip(), EddieBossAnimClips::RUN);
+    edb.update(0.2, 0.0);
+    assert!(edb.root_motion_delta().z > 0.0);
+
+    // Shoot revolver (frames 98..=121, hit window 102..=106)
+    edb.sync_eddie_boss(EdbState::ShootRevolver);
+    assert_eq!(edb.state(), CreatureAnimStateKind::AttackPrimary);
+    assert_eq!(edb.current_clip(), EddieBossAnimClips::SHOOT_REVOLVER);
+    edb.update(5.0 / 30.0, 0.0); // frame 103
+    assert!(edb.is_in_hit_window());
+
+    // Melee punch (frames 164..=196 at 22.5 fps, hit window 174..=182)
+    edb.sync_eddie_boss(EdbState::MeleePunch);
+    assert_eq!(edb.state(), CreatureAnimStateKind::AttackSecondary);
+    assert_eq!(edb.current_clip(), EddieBossAnimClips::MELEE_PUNCH);
+    edb.update(12.0 / 22.5, 0.0); // frame 176
+    assert!(edb.is_in_hit_window());
+
+    // Reload turn (frames 197..=256 at 30 fps, cartridge event at 215..=217)
+    edb.sync_eddie_boss(EdbState::ReloadTurn);
+    assert_eq!(edb.state(), CreatureAnimStateKind::Recovery);
+    edb.update(19.0 / 30.0, 0.0); // frame 216
+    assert!(edb.is_in_particle_window());
+
+    // Directional damage reactions (5910..=5921)
+    for variant in 0..12u8 {
+        edb.sync_eddie_boss(EdbState::Damage(variant));
+        assert_eq!(edb.state(), CreatureAnimStateKind::Flinch);
+        assert_eq!(
+            edb.current_clip(),
+            EddieBossAnimClips::DAMAGE_CLIPS[variant as usize]
+        );
+    }
+
+    // 4. Laura & Mary NPC locomotion synchronization
+    let mut lau = CreatureAnimationController::new_laura();
+    lau.sync_laura(NpcAnimState::WalkPrimary);
+    lau.update(0.1, 0.0);
+    assert!(lau.root_motion_delta().z > 0.0);
+
+    let mut mry = CreatureAnimationController::new_mary_npc();
+    mry.sync_mary_npc(NpcAnimState::WalkSecondary);
+    assert_eq!(mry.current_clip(), MaryNpcAnimClips::WALK_B);
+    mry.update(0.1, 0.0);
+    assert!(mry.root_motion_delta().z > 0.0);
 }

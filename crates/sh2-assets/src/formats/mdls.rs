@@ -181,6 +181,33 @@ pub struct ModelFile {
     pub textures: HashMap<u32, ModelTexture>,
 }
 
+/// Returns the canonical companion `.mdl` path that provides the embedded texture container
+/// for `no_tex = 1` mirror/reflection or untextured character model variants.
+///
+/// On the PS2 (`SLUS_202.28`), reflection models (`ragl.mdl`, `rhhh_edi.mdl`, `rlau.mdl`, `rmry.mdl`)
+/// and untextured cutscene variants (`hhh_edi_notex.mdl`) set `no_tex = 1` in their 64-byte file header
+/// and bind the already-resident GS VRAM textures uploaded by their primary character `.mdl`.
+pub fn companion_texture_mdl_path(mdl_rel_path: &str) -> Option<&'static str> {
+    let normalized = mdl_rel_path.replace('\\', "/");
+    let file_name = normalized.rsplit('/').next().unwrap_or(mdl_rel_path);
+    match file_name {
+        "ragl.mdl" => Some("data/chr/agl/agl.mdl"),
+        "rhhh_edi.mdl" | "hhh_edi_notex.mdl" => Some("data/chr/edi/hhh_edi.mdl"),
+        "rlau.mdl" => Some("data/chr/lau/lau.mdl"),
+        "rmry.mdl" => Some("data/chr/mry/mry.mdl"),
+        "rmxx.mdl" => Some("data/chr/mxx/mxx.mdl"),
+        "rhhh_jms.mdl" | "hhh_jms_notex.mdl" => Some("data/chr/jms/hhh_jms.mdl"),
+        "rhhl_jms.mdl" | "hhl_jms_notex.mdl" => Some("data/chr/jms/hhl_jms.mdl"),
+        "rhll_jms.mdl" | "hll_jms_notex.mdl" => Some("data/chr/jms/hll_jms.mdl"),
+        "rlll_jms.mdl" | "lll_jms_notex.mdl" => Some("data/chr/jms/lll_jms.mdl"),
+        "rhhh_mar.mdl" | "hhh_mar_notex.mdl" | "rhhh_mar_notex.mdl" => {
+            Some("data/chr/mar/hhh_mar.mdl")
+        }
+        "rlll_mar.mdl" => Some("data/chr/mar/lll_mar.mdl"),
+        _ => None,
+    }
+}
+
 /// Parses a Silent Hill 2 character model file (`.mdl` / `.mdls`) from raw bytes.
 ///
 /// # Errors

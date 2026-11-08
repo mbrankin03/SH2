@@ -84,6 +84,28 @@ pub struct AnimationFile {
     pub frames: Vec<AnimationFrame>,
 }
 
+/// Checks whether `p` sits on a 2-byte `0x0000` 4-byte alignment pad at a frame boundary
+/// (either at EOF or between concatenated sub-clips in a multi-clip `d*_anime_adr_list` drama `.anm`).
+///
+/// In PS2 `SLUS_202.28` (`dangela_anime_adr_list`, `deddie_anime_adr_list`, `dlaura_anime_adr_list`,
+/// `dmary_anime_adr_list`), concatenated cutscene sub-clips are 4-byte aligned so MIPS `lw` can read
+/// the initial block header. Every sub-clip begins at frame 0 with all 8 bones in its first block
+/// initialized (`0x22222222` or `0xaaaaaaaa`), so the low and high 16-bit halves of the next clip's
+/// first block header are non-zero and identical.
+#[inline]
+fn is_interclip_or_eof_alignment_pad(data: &[u8], p: usize) -> bool {
+    if p + 2 > data.len() || data[p] != 0 || data[p + 1] != 0 {
+        return false;
+    }
+    if p + 2 == data.len() {
+        return true;
+    }
+    p + 6 <= data.len()
+        && (data[p + 2] != 0 || data[p + 3] != 0)
+        && data[p + 2] == data[p + 4]
+        && data[p + 3] == data[p + 5]
+}
+
 /// Tests if the animation byte stream can be validly and completely decoded with the given bone count stride.
 fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
     if bone_count == 0 {
@@ -93,7 +115,16 @@ fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
     let mut p = 0usize;
     let mut block = 0usize;
 
-    while p + 4 <= data.len() {
+    while p < data.len() {
+        if (block * 8).is_multiple_of(per_frame) && is_interclip_or_eof_alignment_pad(data, p) {
+            p += 2;
+            if p == data.len() {
+                break;
+            }
+        }
+        if p + 4 > data.len() {
+            return false;
+        }
         let header = match read_u32(data, p) {
             Ok(h) => h,
             Err(_) => return false,
@@ -227,7 +258,13 @@ fn parse_anm_with_stride(
     let mut p = 0usize;
     let mut block = 0usize;
 
-    while p + 4 <= data.len() {
+    while p < data.len() {
+        if (block * 8).is_multiple_of(per_frame) && is_interclip_or_eof_alignment_pad(data, p) {
+            p += 2;
+        }
+        if p + 4 > data.len() {
+            break;
+        }
         let header = read_u32(data, p)?;
         p += 4;
 

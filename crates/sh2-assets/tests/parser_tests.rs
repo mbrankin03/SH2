@@ -846,4 +846,120 @@ mod tests {
             assert_eq!(cam.records[2].projection, 480.0);
         }
     }
+
+    #[test]
+    fn test_sh2_34_primary_npc_models_reflection_fallbacks_and_animations() {
+        use sh2_assets::formats::mdls::companion_texture_mdl_path;
+
+        // Verify companion texture path mapping for `no_tex = 1` reflection/variant models
+        assert_eq!(
+            companion_texture_mdl_path("data/chr/agl/ragl.mdl"),
+            Some("data/chr/agl/agl.mdl")
+        );
+        assert_eq!(
+            companion_texture_mdl_path("data/chr/edi/rhhh_edi.mdl"),
+            Some("data/chr/edi/hhh_edi.mdl")
+        );
+        assert_eq!(
+            companion_texture_mdl_path("data/chr/edi/hhh_edi_notex.mdl"),
+            Some("data/chr/edi/hhh_edi.mdl")
+        );
+        assert_eq!(
+            companion_texture_mdl_path("data/chr/item/rlau.mdl"),
+            Some("data/chr/lau/lau.mdl")
+        );
+        assert_eq!(
+            companion_texture_mdl_path("data/chr/item/rmry.mdl"),
+            Some("data/chr/mry/mry.mdl")
+        );
+
+        let agl_path = format!("{ROOT_ASSETS}/data/chr/agl/agl.mdl");
+        if !Path::new(&agl_path).exists() {
+            println!("Skipping SH2-34 retail asset test: retail assets not present");
+            return;
+        }
+
+        // Ground-truth primary NPC skeleton & geometry specifications from PS2 SLUS_202.28:
+        let primary_models = [
+            ("data/chr/agl/agl.mdl", 75usize, 105usize, 19usize),
+            ("data/chr/edi/hhh_edi.mdl", 64, 85, 31),
+            ("data/chr/edi/lll_edi.mdl", 35, 47, 26),
+            ("data/chr/lau/lau.mdl", 89, 167, 21),
+            ("data/chr/mry/mry.mdl", 81, 94, 22),
+        ];
+
+        for (rel_mdl, exp_bones, exp_pairs, exp_prims) in primary_models {
+            let bytes = fs::read(format!("{ROOT_ASSETS}/{rel_mdl}"))
+                .expect("Failed to read primary NPC mdl");
+            let mdl = parse_mdl(&bytes).expect("Failed to parse primary NPC mdl");
+            assert_eq!(
+                mdl.bone_count, exp_bones,
+                "Bone count mismatch for {rel_mdl}"
+            );
+            assert_eq!(
+                mdl.pairs.len(),
+                exp_pairs,
+                "Bone pair mismatch for {rel_mdl}"
+            );
+            assert_eq!(
+                mdl.primitives.len(),
+                exp_prims,
+                "Primitive count mismatch for {rel_mdl}"
+            );
+            assert!(
+                !mdl.textures.is_empty(),
+                "Expected embedded textures in {rel_mdl}"
+            );
+            assert_eq!(mdl.parents[0], 255);
+            assert_eq!(mdl.parents[1], 255);
+
+            // Verify every primitive's texture_index maps to a valid embedded texture
+            for prim in &mdl.primitives {
+                let tid = prim.texture_index as u32;
+                assert!(
+                    mdl.textures.contains_key(&tid),
+                    "Primary model {rel_mdl} primitive texture_index {tid} missing in embedded textures"
+                );
+            }
+
+            // Verify every embedded texture decodes cleanly to RGBA8
+            for tex in mdl.textures.values() {
+                let rgba = tex.to_rgba().expect("Failed to decode NPC DXT texture");
+                assert_eq!(rgba.len(), tex.width * tex.height * 4);
+            }
+        }
+
+        // Verify reflection/untextured models (`no_tex = 1`) match companion texture IDs 1:1
+        let reflection_models = [
+            "data/chr/agl/ragl.mdl",
+            "data/chr/edi/rhhh_edi.mdl",
+            "data/chr/edi/hhh_edi_notex.mdl",
+            "data/chr/item/rlau.mdl",
+            "data/chr/item/rmry.mdl",
+        ];
+
+        for refl_rel in reflection_models {
+            let refl_bytes = fs::read(format!("{ROOT_ASSETS}/{refl_rel}"))
+                .expect("Failed to read reflection mdl");
+            let refl_mdl = parse_mdl(&refl_bytes).expect("Failed to parse reflection mdl");
+            assert!(
+                refl_mdl.textures.is_empty(),
+                "Expected no_tex=1 reflection model {refl_rel} to have 0 embedded textures"
+            );
+
+            let comp_rel = companion_texture_mdl_path(refl_rel).expect("Missing companion path");
+            let comp_bytes = fs::read(format!("{ROOT_ASSETS}/{comp_rel}"))
+                .expect("Failed to read companion mdl");
+            let comp_mdl = parse_mdl(&comp_bytes).expect("Failed to parse companion mdl");
+            assert_eq!(refl_mdl.bone_count, comp_mdl.bone_count);
+
+            for prim in &refl_mdl.primitives {
+                let tid = prim.texture_index as u32;
+                assert!(
+                    comp_mdl.textures.contains_key(&tid),
+                    "Reflection model {refl_rel} primitive texture_index {tid} missing in companion {comp_rel}"
+                );
+            }
+        }
+    }
 }

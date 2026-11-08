@@ -10,6 +10,7 @@
 
 pub mod creatures;
 pub mod maria;
+pub mod npcs;
 pub mod radio;
 pub mod sensory;
 

@@ -580,7 +580,7 @@ pub const LAURA_LETTER_VOICEOVER_SLICES: [LauraLetterVoiceSlice; 11] = [
 pub enum CutAudioRestoreAction {
     /// No state transition on this tick.
     None,
-    /// Play slice `page_index` (`0..=10`) of `voice.afs[133]` (`SCENE_45` Mary's letter to Laura).
+    /// Play slice `page_index` (`0..=10`) of `voice.afs[119]` (`SCENE_45` Mary's letter to Laura).
     PlayLauraLetterSlice(usize),
     /// Stop any currently playing `SCENE_45` voiceover slice (e.g. player skipped page or cutscene ended).
     StopLauraLetterVoiceover,

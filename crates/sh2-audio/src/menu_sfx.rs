@@ -55,7 +55,7 @@ pub struct MenuAudioBank {
     pub ee_root: Option<PathBuf>,
     /// All 417 RIFF WAVE entries extracted from `sddata.bin` (`0..=416`).
     pub entries: Vec<WavEntry>,
-    /// Preloaded streamed SFX entries from `voice.afs` (keyed by AFS entry index `13..=44`, plus `133` for `SCENE_45`).
+    /// Preloaded streamed SFX entries from `voice.afs` (keyed by AFS entry index `13..=44`, plus `119` for `SCENE_45`).
     pub voice_afs_sfx: HashMap<usize, WavEntry>,
     /// Menu cursor move (`10000` / `sddata[293]`).
     pub cursor_move: Option<WavEntry>,
@@ -534,7 +534,7 @@ impl MenuAudioBank {
     }
 
     /// Plays one of the 11 timed voiceover slices (`page_index` `0..=10`) of Mary's unused letter
-    /// to Laura (`voice.afs[133]` / `SCENE_45` in `PlayUnusedAudio.cpp`) (`SH2-62`).
+    /// to Laura (`voice.afs[119]` / `SCENE_45` in `PlayUnusedAudio.cpp`) (`SH2-62`).
     pub fn play_laura_letter_slice(
         &mut self,
         engine: &mut AudioEngine,
@@ -580,7 +580,7 @@ impl MenuAudioBank {
         }
 
         if let Some(afs_idx) = entry.voice_afs_index {
-            // For `SCENE_45` (133), play the opening slice (0..11.7s) when auditioned from the catalog
+            // For `SCENE_45` (119), play the opening slice (0..11.7s) when auditioned from the catalog
             if afs_idx == VOICE_AFS_LAURA_LETTER_INDEX {
                 if let Some(full_wav) = self.load_voice_afs_entry(afs_idx) {
                     let preview = slice_wav_time_range(&full_wav, 0.0, 11.7);

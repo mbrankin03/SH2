@@ -857,7 +857,7 @@ mod tests {
             CutAudioRestoreAction::StopLauraLetterVoiceover
         );
 
-        // 4. Verify on-disk decoding of `voice.afs[133]` (`SCENE_45`) and `sankaku_toujyou_2.wav` / `machi.wav` when assets exist
+        // 4. Verify on-disk decoding of `voice.afs[119]` (`SCENE_45`) and `sankaku_toujyou_2.wav` / `machi.wav` when assets exist
         let resolver = sh2_assets::AssetPathResolver::resolve();
         if !resolver.data_dir.join("sound/sddata.bin").exists() {
             return;
@@ -866,7 +866,7 @@ mod tests {
             MenuAudioBank::load_from_dirs(&resolver.data_dir, resolver.sh2e_dir.as_deref());
         let laura_wav = bank
             .load_voice_afs_entry(VOICE_AFS_LAURA_LETTER_INDEX)
-            .expect("Expected voice.afs[133] (SCENE_45) to decode cleanly");
+            .expect("Expected voice.afs[119] (SCENE_45) to decode cleanly");
         assert!(laura_wav.sample_rate >= 22050);
         let slice_0 = sh2_assets::slice_wav_time_range(
             &laura_wav,

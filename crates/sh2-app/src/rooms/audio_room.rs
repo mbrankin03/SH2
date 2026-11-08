@@ -115,7 +115,7 @@ pub(crate) struct AudioDebugState {
     pub test_emitter_distance: f32,
     /// Selected index into [`CUT_AND_RARE_AUDIO_CATALOG`] (`SH2-62`).
     pub cut_catalog_index: usize,
-    /// Selected slice index (`0..=10`) into [`LAURA_LETTER_VOICEOVER_SLICES`] (`voice.afs[133]` / `SCENE_45`) (`SH2-62`).
+    /// Selected slice index (`0..=10`) into [`LAURA_LETTER_VOICEOVER_SLICES`] (`voice.afs[119]` / `SCENE_45`) (`SH2-62`).
     pub laura_slice_index: usize,
     /// Selected index into [`E3_PROTOTYPE_SDB_CATALOG`] (`SH2-62`).
     pub proto_sdb_index: usize,
@@ -564,7 +564,7 @@ impl RoomController for AudioDebugRoomController {
                     state.audio_debug.last_sfx_triggered = entry.title;
                     return;
                 }
-                // [KeyK]: Step through and play Mary's 11 restored letter slices (`voice.afs[133]` / `SCENE_45`, `PlayUnusedAudio.cpp`) (`SH2-62`)
+                // [KeyK]: Step through and play Mary's 11 restored letter slices (`voice.afs[119]` / `SCENE_45`, `PlayUnusedAudio.cpp`) (`SH2-62`)
                 KeyCode::KeyK => {
                     let slice_idx = state.audio_debug.laura_slice_index;
                     let slice = LAURA_LETTER_VOICEOVER_SLICES[slice_idx];
@@ -605,6 +605,8 @@ impl RoomController for AudioDebugRoomController {
                         .draft_config
                         .audio
                         .enable_restored_cut_audio = next_val;
+                    state.fmv_viewer.enable_restored_cut_audio = next_val;
+                    state.bgm_manager.event_flags.enable_restored_cut_audio = next_val;
                     if !next_val {
                         if let Some(ref mut bank) = state.audio_bank {
                             bank.stop_active_cut_audio();
@@ -1225,7 +1227,7 @@ impl RoomController for AudioDebugRoomController {
 
         state.menu_rasterizer.draw_text(
             &format!(
-                "LAURA LETTER VOICEOVER [K] (voice.afs[133] / SCENE_45): Page {}/11 ({:.2}s..{:.2}s) \"{}\"",
+                "LAURA LETTER VOICEOVER [K] (voice.afs[119] / SCENE_45): Page {}/11 ({:.2}s..{:.2}s) \"{}\"",
                 laura_slice.page_index + 1,
                 laura_slice.start_sec,
                 laura_slice.end_sec,

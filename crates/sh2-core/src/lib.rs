@@ -25,6 +25,7 @@ pub use animation::{
 };
 pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
 pub use clock::{EngineClock, FramePacer, DEFAULT_MAX_ACCUMULATED};
+pub use collision::{FloorSample, SurfaceMaterial};
 pub use combat::{
     AttackSpec, CombatArena, CombatController, CombatHitbox, CombatMode, CombatTargetEnemy,
     WeaponGrip, ATK_HANDGUN, ATK_HUNTING_RIFLE, ATK_KICKS, ATK_PIPE_COMBO, ATK_PIPE_LUNGE,
@@ -43,7 +44,8 @@ pub use input::{
 };
 pub use locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
-    MARIA_COMPANION_SPEED_MULTIPLIER, QUICK_TURN_SPEED_RAD_PER_SEC, SH2_WORLD_UNIT_SCALE,
+    MARIA_COMPANION_SPEED_MULTIPLIER, MIN_FOOTSTEP_INTERVAL_SECS, QUICK_TURN_SPEED_RAD_PER_SEC,
+    SH2_WORLD_UNIT_SCALE,
 };
 pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
 pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};

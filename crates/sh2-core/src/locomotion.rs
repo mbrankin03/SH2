@@ -26,6 +26,12 @@ pub const MARIA_COMPANION_SPEED_MULTIPLIER: f32 = 0.8;
 /// Quick turn 180° angular velocity in radians per second ($5.5\text{ rad/s}$, completing $180^\circ$ in $\approx 0.57\text{ s}$).
 pub const QUICK_TURN_SPEED_RAD_PER_SEC: f32 = 5.497_787_5;
 
+/// Minimum time interval in seconds between consecutive footstep triggers (`SH2:EE DoubleFootstepFix.cpp` mitigation).
+///
+/// Prevents the double-footstep glitch when transitioning rapidly between `Stand`, `Walk`, and `Run`
+/// or when gait phase crosses a threshold on adjacent animation transition frames.
+pub const MIN_FOOTSTEP_INTERVAL_SECS: f32 = 0.20;
+
 /// Locomotion state flags matching PS2 lower-body state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
@@ -304,6 +310,8 @@ pub struct PlayerLocomotionController {
     allowed_states: u32,
     /// Footstep phase counter (0.0 to 1.0 cycle).
     footstep_phase: f32,
+    /// Minimum inter-step debounce timer in seconds (`SH2:EE DoubleFootstepFix.cpp` mitigation).
+    footstep_cooldown: f32,
 }
 
 impl Default for PlayerLocomotionController {
@@ -329,6 +337,7 @@ impl PlayerLocomotionController {
             cam_locked: false,
             allowed_states: get_allowed_transitions(LocomotionState::Stand),
             footstep_phase: 0.0,
+            footstep_cooldown: 0.0,
         }
     }
 
@@ -700,7 +709,8 @@ impl PlayerLocomotionController {
         let delta_z = move_angle.cos() * final_speed_units_per_sec * dt;
         let delta_position = Vec3::new(delta_x, 0.0, delta_z);
 
-        // Footstep timing & acoustic volume
+        // Footstep timing & acoustic volume (with SH2:EE DoubleFootstepFix.cpp debounce mitigation)
+        self.footstep_cooldown = (self.footstep_cooldown - dt).max(0.0);
         let mut footstep_triggered = false;
         let footstep_volume = if self.state.is_running() { 0.8 } else { 0.5 };
 
@@ -709,7 +719,10 @@ impl PlayerLocomotionController {
             self.footstep_phase += dt * stride_freq;
             if self.footstep_phase >= 0.5 {
                 self.footstep_phase -= 0.5;
-                footstep_triggered = true;
+                if self.footstep_cooldown <= 0.0 {
+                    footstep_triggered = true;
+                    self.footstep_cooldown = MIN_FOOTSTEP_INTERVAL_SECS;
+                }
             }
         } else {
             self.footstep_phase = 0.0;
@@ -877,5 +890,42 @@ mod tests {
             controller.update(&LocomotionInput::default(), &mut yaw, dt, true);
         }
         assert_eq!(controller.speed_mps, 0.0);
+    }
+
+    #[test]
+    fn test_sh2_61_double_footstep_glitch_mitigation() {
+        let mut controller = PlayerLocomotionController::new();
+        let mut yaw = 0.0f32;
+        let dt = 1.0 / 60.0;
+
+        // Simulate rapid toggling between Walk and Run1 while moving forward
+        let mut last_step_tick: Option<u32> = None;
+        let mut step_count = 0u32;
+
+        for tick in 0..180u32 {
+            let input = LocomotionInput {
+                stick_y: 1.0,
+                run_held: (tick / 3) % 2 == 0,
+                ..Default::default()
+            };
+            let out = controller.update(&input, &mut yaw, dt, true);
+            if out.footstep_triggered {
+                if let Some(prev) = last_step_tick {
+                    let elapsed_secs = (tick - prev) as f32 * dt;
+                    assert!(
+                        elapsed_secs + 1e-4 >= MIN_FOOTSTEP_INTERVAL_SECS,
+                        "Double-footstep glitch detected! Two footsteps triggered {}s apart (< {}s)",
+                        elapsed_secs,
+                        MIN_FOOTSTEP_INTERVAL_SECS
+                    );
+                }
+                last_step_tick = Some(tick);
+                step_count += 1;
+            }
+        }
+        assert!(
+            step_count >= 5,
+            "Expected footsteps during 3s walk/run movement"
+        );
     }
 }

@@ -563,4 +563,106 @@ mod tests {
             "Expected high-frequency 9.5 kHz harshness to be attenuated below 0.18 RMS, got {rms}"
         );
     }
+
+    #[test]
+    fn test_sh2_61_ps2_sfx_attenuation_formula_and_spatial_eval() {
+        // 1. Verify exact PS2 attenuation formula: gain = min(1.0, 25.5 / (255.0 * (1.0 - v)))
+        assert!((compute_ps2_sfx_attenuation_gain(1.0) - 1.0).abs() < 1e-6);
+        assert!((compute_ps2_sfx_attenuation_gain(0.95) - 1.0).abs() < 1e-6);
+        assert!((compute_ps2_sfx_attenuation_gain(0.90) - 1.0).abs() < 1e-5);
+        // At v = 0.8: 25.5 / (255 * 0.2) = 25.5 / 51.0 = 0.5
+        assert!((compute_ps2_sfx_attenuation_gain(0.80) - 0.5).abs() < 1e-5);
+        // At v = 0.5: 25.5 / (255 * 0.5) = 0.2
+        assert!((compute_ps2_sfx_attenuation_gain(0.50) - 0.2).abs() < 1e-5);
+        // At v = 0.0: 25.5 / 255 = 0.1
+        assert!((compute_ps2_sfx_attenuation_gain(0.0) - 0.1).abs() < 1e-5);
+
+        // 2. Verify SeCallPosDistanceF (0x5155E0) inner (1500.0) and outer (11500.0) distance bounds
+        let listener = Vec3::ZERO;
+        let eval_inner =
+            compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(0.0, 0.0, 1200.0), 1.0);
+        assert!((eval_inner.proximity_v - 1.0).abs() < 1e-5);
+        assert!((eval_inner.effective_gain - 1.0).abs() < 1e-5);
+        assert_eq!(eval_inner.driver_attenuation_byte, 0);
+        assert!(eval_inner.stereo_pan.abs() < 1e-5);
+
+        // Halfway at d = 6500.0 -> v = 0.5, pan to right ear (listener facing +Z, right ear is -X)
+        let eval_mid =
+            compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(-6500.0, 0.0, 0.0), 1.0);
+        assert!((eval_mid.proximity_v - 0.5).abs() < 1e-5);
+        assert!((eval_mid.ps2_curve_gain - 0.2).abs() < 1e-5);
+        assert!((eval_mid.effective_gain - 0.1).abs() < 1e-5);
+        assert!((eval_mid.stereo_pan - 1.0).abs() < 1e-5);
+
+        // Beyond outer cutoff (11500.0) -> v = 0.0, effective_gain = 0.0, byte = 255
+        let eval_far =
+            compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(0.0, 0.0, 12000.0), 1.0);
+        assert_eq!(eval_far.proximity_v, 0.0);
+        assert_eq!(eval_far.effective_gain, 0.0);
+        assert_eq!(eval_far.driver_attenuation_byte, 255);
+    }
+
+    #[test]
+    fn test_sh2_61_se_id_lookup_and_dual_source_sfx_bank() {
+        // 1. Verify 666-entry SE_ID_TO_SDDATA_INDEX & 32-entry SE_ID_TO_VOICE_AFS_INDEX tables
+        assert_eq!(SE_ID_TO_SDDATA_INDEX.len(), 666);
+        assert_eq!(SE_ID_TO_VOICE_AFS_INDEX.len(), 32);
+        assert_eq!(resolve_se_id_to_sddata_index(10000), Some(293)); // CursorMove
+        assert_eq!(resolve_se_id_to_sddata_index(10002), Some(297)); // Confirm
+        assert_eq!(resolve_se_id_to_sddata_index(10003), Some(291)); // Cancel
+        assert_eq!(resolve_se_id_to_sddata_index(11030), Some(270)); // Dry fire click
+        assert_eq!(resolve_se_id_to_sddata_index(11032), Some(346)); // Plank swing
+        assert_eq!(resolve_se_id_to_sddata_index(11040), Some(348)); // Pipe / kick
+        assert_eq!(resolve_se_id_to_sddata_index(11044), Some(352)); // Chainsaw attack
+        assert_eq!(resolve_se_id_to_sddata_index(0x1642), Some(352)); // Chainsaw idle loop
+        assert_eq!(resolve_se_id_to_sddata_index(11048), Some(274)); // Handgun shot
+        assert_eq!(resolve_se_id_to_sddata_index(11051), Some(279)); // Shotgun blast
+        assert_eq!(resolve_se_id_to_voice_afs_index(10051), Some(35)); // Save point chime
+        assert_eq!(resolve_se_id_to_voice_afs_index(15002), Some(24)); // Game start transition
+
+        // 2. Verify all 8 surface materials resolve valid < 417 footstep indices for both James and Maria
+        for mat in sh2_core::SurfaceMaterial::ALL {
+            for is_maria in [false, true] {
+                for is_running in [false, true] {
+                    let (l, r) = footstep_sddata_indices(is_maria, mat, is_running);
+                    assert!(l < SDDATA_ENTRY_COUNT && r < SDDATA_ENTRY_COUNT);
+                    assert_ne!(
+                        l, r,
+                        "Left/Right footstep samples should alternate for {mat:?}"
+                    );
+                }
+            }
+        }
+
+        // 3. Verify dual-source loading of `MenuAudioBank` (`Sh2eeLossless` 48 kHz vs `Ps2Original`) when retail assets exist
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        if !resolver.data_dir.join("sound/sddata.bin").exists() {
+            println!("Skipping on-disk MenuAudioBank dual-source test (assets not present)");
+            return;
+        }
+
+        let bank_ee = MenuAudioBank::load_from_dirs_for_source(
+            &resolver.data_dir,
+            resolver.sh2e_dir.as_deref(),
+            sh2_core::AudioPackPreference::Sh2eeLossless,
+        );
+        assert_eq!(bank_ee.sddata_entry_count(), SDDATA_ENTRY_COUNT);
+        assert_eq!(bank_ee.primary_sample_rate(), 48000);
+        assert!(bank_ee.save_sound.is_some());
+        assert!(bank_ee.game_start.is_some());
+        assert!(bank_ee.flashlight_on.is_some());
+        assert!(bank_ee.flashlight_off.is_some());
+        assert!(bank_ee.resolve_se_id(11048).is_some());
+
+        let bank_ps2 = MenuAudioBank::load_from_dirs_for_source(
+            &resolver.data_dir,
+            resolver.sh2e_dir.as_deref(),
+            sh2_core::AudioPackPreference::Ps2Original,
+        );
+        assert_eq!(bank_ps2.sddata_entry_count(), SDDATA_ENTRY_COUNT);
+        assert!(bank_ps2.primary_sample_rate() < 48000);
+        assert!(bank_ps2.save_sound.is_some());
+        assert!(bank_ps2.game_start.is_some());
+        assert!(bank_ps2.resolve_se_id(11048).is_some());
+    }
 }

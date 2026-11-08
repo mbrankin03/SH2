@@ -16,9 +16,10 @@ use crate::rooms::combat_arena::CombatArenaRoomController;
 use crate::rooms::RoomController;
 use crate::state::AppState;
 use sh2_audio::{
-    bgm_page_entry, find_bgm_file_by_load_id, play_menu_sound, EnvironmentalPreset, SoundCueKind,
-    BGM_MAX_TRACKS, BGM_PAGES, FADE_TIME_SECS, STAGE_SOUND_DATA,
+    bgm_page_entry, compute_se_call_pos_distance_f, find_bgm_file_by_load_id, play_menu_sound,
+    EnvironmentalPreset, SoundCueKind, BGM_MAX_TRACKS, BGM_PAGES, FADE_TIME_SECS, STAGE_SOUND_DATA,
 };
+use sh2_core::SurfaceMaterial;
 use sh2_debug::DebugLineVertex;
 use sh2_ui::menu::TitlePhase;
 
@@ -101,6 +102,10 @@ pub(crate) struct AudioDebugState {
     pub reverb_preset_idx: usize,
     /// Last triggered SFX cue label for HUD display.
     pub last_sfx_triggered: &'static str,
+    /// Active surface material override for testing 8-material footsteps (`SH2-61`).
+    pub test_surface_material: SurfaceMaterial,
+    /// Simulated 3D SFX emitter distance (`1500.0..=11500.0`) for testing `SeCallPosDistanceF` (`0x5155E0`).
+    pub test_emitter_distance: f32,
 }
 
 impl Default for AudioDebugState {
@@ -113,6 +118,8 @@ impl Default for AudioDebugState {
             show_sound_boxes_3d: true,
             reverb_preset_idx: 0,
             last_sfx_triggered: "None",
+            test_surface_material: SurfaceMaterial::Concrete,
+            test_emitter_distance: 3500.0,
         }
     }
 }
@@ -405,6 +412,67 @@ impl RoomController for AudioDebugRoomController {
                     state.audio_debug.last_sfx_triggered = "15002: GameStartTransition (0x3A9A)";
                     return;
                 }
+                // [J]: Trigger Save Point Chime (`10051` / `0x2743` in `voice.afs` entry `35` or `sh2e/sound/extra/save_sound.wav`) (`SH2-61`)
+                KeyCode::KeyJ => {
+                    if let Some(ref mut eng) = state.audio_engine {
+                        let _ = play_menu_sound(
+                            eng,
+                            state.audio_bank.as_ref(),
+                            SoundCueKind::SavePoint,
+                        );
+                    }
+                    state.audio_debug.last_sfx_triggered = "10051: SavePoint Chime (0x2743)";
+                    return;
+                }
+                // [M]: Cycle Surface Material (`Concrete -> Wood -> Metal -> Carpet -> Water -> Grass -> Gravel -> Blood`) & play footstep (`SH2-61`)
+                KeyCode::KeyM => {
+                    state.audio_debug.test_surface_material =
+                        state.audio_debug.test_surface_material.next();
+                    state.sim_core.active_floor_material = state.audio_debug.test_surface_material;
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_footstep(
+                            eng,
+                            state.active_maria,
+                            state.audio_debug.test_surface_material,
+                            state.sim_core.input.state.is_running,
+                            0.95,
+                        );
+                    }
+                    state.audio_debug.last_sfx_triggered =
+                        state.audio_debug.test_surface_material.label();
+                    tracing::info!(
+                        "[Audio Debug] Cycled footstep surface material -> {}",
+                        state.audio_debug.test_surface_material.label()
+                    );
+                    return;
+                }
+                // [H]: Trigger 3D Spatialized Handgun Fire (`11048` / `0x2B28`) at `test_emitter_distance` (`SeCallPosDistanceF` `0x5155E0`) (`SH2-61`)
+                KeyCode::KeyH => {
+                    const DIST_STEPS: &[f32] = &[1500.0, 4000.0, 6500.0, 9000.0, 11500.0];
+                    let next_dist = DIST_STEPS
+                        .iter()
+                        .copied()
+                        .find(|&d| d > state.audio_debug.test_emitter_distance + 10.0)
+                        .unwrap_or(DIST_STEPS[0]);
+                    state.audio_debug.test_emitter_distance = next_dist;
+
+                    let p_pos = state.sim_core.scenario.player_position;
+                    let p_yaw = state.sim_core.scenario.player_yaw;
+                    let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+                    let right = glam::Vec3::new(p_yaw.cos(), 0.0, -p_yaw.sin());
+                    let emitter_pos = p_pos + (fwd * 0.7 + right * 0.7).normalize() * next_dist;
+
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_ref())
+                    {
+                        eng.set_listener_transform(p_pos, fwd);
+                        let _ = bank.play_se_id_3d(eng, 11048, p_pos, p_yaw, emitter_pos, 1.0);
+                    }
+                    state.audio_debug.last_sfx_triggered = "11048: 3D Handgun Shot (0x2B28)";
+                    return;
+                }
                 _ => {}
             }
         }
@@ -423,7 +491,31 @@ impl RoomController for AudioDebugRoomController {
         is_in_game: bool,
     ) {
         if !is_paused {
-            let _ = state.sim_core.update(dt);
+            let ticks = state.sim_core.update(dt);
+            if ticks > 0 {
+                let p_pos = state.sim_core.scenario.player_position;
+                let p_yaw = state.sim_core.scenario.player_yaw;
+                let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+                if let Some(ref mut eng) = state.audio_engine {
+                    eng.set_listener_transform(p_pos, fwd);
+                }
+                if state.sim_core.footstep_triggered_since_last_poll {
+                    state.sim_core.footstep_triggered_since_last_poll = false;
+                    let mat = state.audio_debug.test_surface_material;
+                    state.sim_core.active_floor_material = mat;
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_footstep(
+                            eng,
+                            state.active_maria,
+                            mat,
+                            state.sim_core.last_locomotion.state.is_running(),
+                            state.sim_core.last_locomotion.footstep_volume,
+                        );
+                    }
+                }
+            }
 
             if is_in_game {
                 let (stg, _) = state.audio_debug.current_stage_preset();
@@ -829,7 +921,7 @@ impl RoomController for AudioDebugRoomController {
 
         state.menu_rasterizer.draw_text(
             &format!(
-                "AUDIO ENGINE : {} | DSP REVERB [E]: {:?} | LAST SFX [U/I/O/L]: {}",
+                "AUDIO ENGINE : {} | DSP REVERB [E]: {:?} | LAST SFX [U/I/O/L/J/H]: {}",
                 eng_status,
                 state.audio_debug.reverb_preset(),
                 state.audio_debug.last_sfx_triggered
@@ -841,13 +933,50 @@ impl RoomController for AudioDebugRoomController {
             true,
         );
 
+        let bank_samples = state
+            .audio_bank
+            .as_ref()
+            .map(|b| b.sddata_entry_count())
+            .unwrap_or(0);
+        let bank_rate = state
+            .audio_bank
+            .as_ref()
+            .map(|b| b.primary_sample_rate())
+            .unwrap_or(0);
+        let spatial_eval = compute_se_call_pos_distance_f(
+            p_pos,
+            state.sim_core.scenario.player_yaw,
+            p_pos
+                + glam::Vec3::new(1.0, 0.0, 1.0).normalize()
+                    * state.audio_debug.test_emitter_distance,
+            1.0,
+        );
+
+        state.menu_rasterizer.draw_text(
+            &format!(
+                "SFX BANK (SH2-61): {} / 417 WAVs ({} Hz) | Footstep Surface [M]: {} | 3D Shot [H]: dist={:.0}u (v={:.2}, gain={:.0}%, pan={:+.2})",
+                bank_samples,
+                bank_rate,
+                state.audio_debug.test_surface_material.label(),
+                state.audio_debug.test_emitter_distance,
+                spatial_eval.proximity_v,
+                spatial_eval.effective_gain * 100.0,
+                spatial_eval.stereo_pan
+            ),
+            20,
+            372,
+            1,
+            green,
+            true,
+        );
+
         state.menu_rasterizer.draw_text(
             &format!(
                 "3D SOUND AREA WIREFRAMES [V]: {} (Green = Active Box, Cyan = Inactive Box, Yellow = James 50u Probe)",
                 if state.audio_debug.show_sound_boxes_3d { "ON" } else { "OFF" }
             ),
             20,
-            372,
+            392,
             1,
             white,
             true,
@@ -863,7 +992,7 @@ impl RoomController for AudioDebugRoomController {
             true,
         );
         state.menu_rasterizer.draw_text(
-            "[WASD + Shift] Walk Through Sound Areas  |  [T] Cycle Situation (Calm/LowHP/EnemyNear/MusicBox/Mute)  |  [1-7, 0] Solo Layer",
+            "[WASD + Shift] Walk Through Sound Areas  |  [M] Cycle Footstep Material  |  [T] Cycle Situation  |  [1-7, 0] Solo Layer",
             20,
             668,
             1,
@@ -871,7 +1000,7 @@ impl RoomController for AudioDebugRoomController {
             true,
         );
         state.menu_rasterizer.draw_text(
-            "[U/I/O/L] Play Menu SFX (Cursor/Confirm/Cancel/Start)  |  [E] Cycle Reverb Preset  |  [V] 3D Sound Boxes  |  [Esc] Exit",
+            "[U/I/O/L/J] SFX (Cursor/Confirm/Cancel/Start/Save)  |  [H] 3D Gun Shot  |  [F] Flashlight  |  [E] Reverb  |  [V] 3D Boxes",
             20,
             688,
             1,

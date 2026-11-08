@@ -44,7 +44,9 @@ pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture}
 pub use mdls::{parse_mdl, ModelFile, ModelPrimitive, ModelTexture, ModelVertices};
 pub use mes::{parse_mes, DialogueMessage, MessageTable};
 pub use sound::{
-    parse_sddata, parse_sdm_headers, parse_sdm_sdb, SdmEntryHeader, SoundBank, WavEntry,
+    decode_afs_entry_to_wav, decode_afs_slice_to_wav, parse_afs_index, parse_sddata,
+    parse_sdm_headers, parse_sdm_sdb, AfsArchiveIndex, AfsEntry, SdmEntryHeader, SoundBank,
+    WavEntry, AFS_MAGIC,
 };
 pub use texture::{
     decode_texture_bytes, generate_mipmap_chain_rgba, mip_level_count_for_size,

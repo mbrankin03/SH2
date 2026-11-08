@@ -709,20 +709,54 @@ impl PlayerLocomotionController {
         let delta_z = move_angle.cos() * final_speed_units_per_sec * dt;
         let delta_position = Vec3::new(delta_x, 0.0, delta_z);
 
-        // Footstep timing & acoustic volume (with SH2:EE DoubleFootstepFix.cpp debounce mitigation)
+        // Footstep timing & acoustic volume (`sh2pc.exe` 0x54A9A0 / 0x5495C0 24-frame gait cycle
+        // with heel strikes at relative frames 5 and 17, plus SH2:EE DoubleFootstepFix.cpp debounce)
         self.footstep_cooldown = (self.footstep_cooldown - dt).max(0.0);
         let mut footstep_triggered = false;
         let footstep_volume = if self.state.is_running() { 0.8 } else { 0.5 };
 
         if self.state.is_moving() && self.speed_mps > 0.1 {
-            let stride_freq = if self.state.is_running() { 2.4 } else { 1.6 };
-            self.footstep_phase += dt * stride_freq;
-            if self.footstep_phase >= 0.5 {
-                self.footstep_phase -= 0.5;
-                if self.footstep_cooldown <= 0.0 {
-                    footstep_triggered = true;
-                    self.footstep_cooldown = MIN_FOOTSTEP_INTERVAL_SECS;
+            // Compute effective playback FPS matching `LocomotionAnimationSync` (`0x54c186` / `0x6ceac4`).
+            // Every movement clip (`Walk`, `Back`, `StrafeWalk`, `Run1..3`, `StrafeRun`) is a 24-frame
+            // full stride cycle with two heel strikes per cycle (at frames 5 and 17, i.e., every 12 frames).
+            let effective_anim_fps = match self.state {
+                LocomotionState::Walk => {
+                    let ty = (self.speed_mps / 1.5).clamp(0.0, 1.0);
+                    (512.0 + 896.0 * ty) / 2048.0 * 30.0
                 }
+                LocomotionState::Back => {
+                    let ty = (self.speed_mps / 1.2).clamp(0.0, 1.0);
+                    (512.0 + 1024.0 * ty) / 2048.0 * 30.0
+                }
+                LocomotionState::StrafeLeftWalk | LocomotionState::StrafeRightWalk => 22.5,
+                LocomotionState::Run1 => 22.5,
+                LocomotionState::Run2 => 26.25,
+                LocomotionState::Run3
+                | LocomotionState::StrafeLeftRun
+                | LocomotionState::StrafeRightRun => 30.0,
+                _ => 20.625,
+            };
+            let stride_freq = effective_anim_fps / 24.0;
+            let prev_phase = self.footstep_phase;
+            self.footstep_phase += dt * stride_freq;
+
+            // Trigger footsteps at the two authentic heel-strike phases of the 24-frame cycle:
+            // frame 5 / 24 (0.20833) and frame 17 / 24 (0.70833).
+            const HEEL_STRIKE_1: f32 = 5.0 / 24.0;
+            const HEEL_STRIKE_2: f32 = 17.0 / 24.0;
+
+            let crossed_heel_strike = (prev_phase < HEEL_STRIKE_1
+                && self.footstep_phase >= HEEL_STRIKE_1)
+                || (prev_phase < HEEL_STRIKE_2 && self.footstep_phase >= HEEL_STRIKE_2)
+                || (self.footstep_phase >= 1.0 + HEEL_STRIKE_1);
+
+            if self.footstep_phase >= 1.0 {
+                self.footstep_phase %= 1.0;
+            }
+
+            if crossed_heel_strike && self.footstep_cooldown <= 0.0 {
+                footstep_triggered = true;
+                self.footstep_cooldown = MIN_FOOTSTEP_INTERVAL_SECS;
             }
         } else {
             self.footstep_phase = 0.0;
@@ -926,6 +960,60 @@ mod tests {
         assert!(
             step_count >= 5,
             "Expected footsteps during 3s walk/run movement"
+        );
+    }
+
+    #[test]
+    fn test_sh2_61_authentic_walk_and_run_footstep_cadence() {
+        let mut controller = PlayerLocomotionController::new();
+        let mut yaw = 0.0f32;
+        let dt = 1.0 / 60.0;
+
+        // 1. Full-speed forward Walk (1.5 m/s -> 20.625 FPS on 24-frame cycle = 1.71875 steps/sec, ~0.582s interval).
+        // Over 600 ticks (10.0 seconds), we expect ~17 footsteps (specifically 17 steps: 10.0 * 20.625 / 12.0 = 17.1875).
+        let walk_input = LocomotionInput {
+            stick_y: 1.0,
+            run_held: false,
+            ..Default::default()
+        };
+        let mut walk_steps = Vec::new();
+        for tick in 0..600u32 {
+            let out = controller.update(&walk_input, &mut yaw, dt, true);
+            if out.footstep_triggered {
+                walk_steps.push(tick as f32 * dt);
+            }
+        }
+        assert!(
+            (16..=18).contains(&walk_steps.len()),
+            "Full walk over 10s should trigger ~17 footsteps (1.72 steps/s), got {}",
+            walk_steps.len()
+        );
+        for pair in walk_steps.windows(2) {
+            let interval = pair[1] - pair[0];
+            assert!(
+                (interval - (12.0 / 20.625)).abs() < 0.03,
+                "Walk step interval should be ~0.582s (12 frames @ 20.625 FPS), got {interval:.3}s"
+            );
+        }
+
+        // 2. Half-speed forward Walk (stick_y = 0.5 -> slower cadence than full walk)
+        controller.reset();
+        let slow_walk_input = LocomotionInput {
+            stick_y: 0.5,
+            run_held: false,
+            ..Default::default()
+        };
+        let mut slow_walk_steps = 0usize;
+        for _ in 0..600u32 {
+            let out = controller.update(&slow_walk_input, &mut yaw, dt, true);
+            if out.footstep_triggered {
+                slow_walk_steps += 1;
+            }
+        }
+        assert!(
+            slow_walk_steps < walk_steps.len(),
+            "Half-tilt walk ({slow_walk_steps} steps) must have slower cadence than full walk ({} steps)",
+            walk_steps.len()
         );
     }
 }

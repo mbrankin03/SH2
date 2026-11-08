@@ -1,7 +1,7 @@
 //! Interactive Main Menu overlay and options presenter.
 //! Integrates `TitleStateMachine` and `OptionsMenu` into the interactive render loop.
 
-use sh2_core::config::AppConfig;
+use sh2_core::config::{AppConfig, AudioPackDetectionStatus};
 use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine};
 use sh2_ui::options::{OptionsMenu, OptionsSoundCue};
 use sh2_ui::pause::{PauseAction, PauseMenu, PauseSubPhase};
@@ -20,14 +20,33 @@ pub struct AppMenuController {
     pub config_applied_pending: Option<AppConfig>,
     /// Revision counter bumped whenever interactive menu selections or phases change.
     pub revision: u64,
+    /// Detected filesystem status for SH2:EE Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) audio packs (`SH2-59`).
+    pub audio_pack_status: AudioPackDetectionStatus,
 }
 
 impl AppMenuController {
-    /// Initialize with a configuration file path (e.g. `config.json`).
+    /// Initialize with a configuration file path (e.g. `config.json`), scanning the active game root for audio packs.
     pub fn new<P: AsRef<Path>>(config_path: P) -> Self {
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let status = AudioPackDetectionStatus::detect_from_root(&resolver.game_root);
+        // In test environments where no retail/sh2e assets exist on disk at `resolver.game_root`,
+        // default to both packs present unless explicitly overridden via `new_with_audio_packs`.
+        let effective_status = if !status.sh2ee_lossless_present && !status.ps2_original_present {
+            AudioPackDetectionStatus::default()
+        } else {
+            status
+        };
+        Self::new_with_audio_packs(config_path, effective_status)
+    }
+
+    /// Initialize with a configuration file path and an explicit [`AudioPackDetectionStatus`].
+    pub fn new_with_audio_packs<P: AsRef<Path>>(
+        config_path: P,
+        audio_pack_status: AudioPackDetectionStatus,
+    ) -> Self {
         let path = config_path.as_ref().to_path_buf();
         let loaded_config = AppConfig::load_from_file(&path);
-        let options_menu = OptionsMenu::new(loaded_config);
+        let options_menu = OptionsMenu::new_with_audio_packs(loaded_config, audio_pack_status);
         let title_sm = TitleStateMachine::new();
         let pause_menu = PauseMenu::new();
 
@@ -39,7 +58,21 @@ impl AppMenuController {
             in_game_active: false,
             config_applied_pending: None,
             revision: 0,
+            audio_pack_status,
         }
+    }
+
+    /// Updates the detected audio pack status on both the controller and the nested `OptionsMenu`.
+    pub fn set_audio_pack_status(&mut self, status: AudioPackDetectionStatus) {
+        self.audio_pack_status = status;
+        self.options_menu.set_audio_pack_status(status);
+    }
+
+    /// Resolves the active concrete [`sh2_core::AudioPackPreference`] (`Sh2eeLossless` or `Ps2Original`)
+    /// based on the user's configured preference (`Auto`, `Sh2eeLossless`, `Ps2Original`) and detected packs.
+    pub fn resolved_audio_pack_source(&self) -> sh2_core::AudioPackPreference {
+        self.audio_pack_status
+            .resolve_source(self.options_menu.original_config.audio.audio_pack_source)
     }
 
     /// Process per-frame animations and fade transitions.
@@ -80,6 +113,9 @@ impl AppMenuController {
                 }
                 MenuNavAction::Left => {
                     let cue = self.options_menu.adjust_value(-1);
+                    if self.options_menu.active_tab == sh2_ui::options::OptionsTab::Audio {
+                        self.config_applied_pending = Some(self.options_menu.draft_config.clone());
+                    }
                     if cue == OptionsSoundCue::LaunchFmvViewer {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
@@ -102,6 +138,9 @@ impl AppMenuController {
                 }
                 MenuNavAction::Right => {
                     let cue = self.options_menu.adjust_value(1);
+                    if self.options_menu.active_tab == sh2_ui::options::OptionsTab::Audio {
+                        self.config_applied_pending = Some(self.options_menu.draft_config.clone());
+                    }
                     if cue == OptionsSoundCue::LaunchFmvViewer {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
@@ -156,8 +195,9 @@ impl AppMenuController {
                     }
                 }
                 MenuNavAction::Cancel => {
-                    // Discard and return to Main Menu
+                    // Discard and return to Main Menu, restoring original audio config if live-previewed
                     self.options_menu.discard_changes();
+                    self.config_applied_pending = Some(self.options_menu.original_config.clone());
                     self.title_sm.phase = TitlePhase::MainMenu;
                     MenuSoundCue::Cancel
                 }
@@ -167,7 +207,10 @@ impl AppMenuController {
             if self.title_sm.phase == TitlePhase::OptionsMenu {
                 // Refresh live audio output devices upon opening options menu so newly plugged devices appear immediately
                 let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
-                self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+                self.options_menu = OptionsMenu::new_with_audio_packs(
+                    self.options_menu.original_config.clone(),
+                    self.audio_pack_status,
+                );
                 self.options_menu.set_audio_devices(fresh_devices);
             }
             cue
@@ -218,10 +261,16 @@ impl AppMenuController {
                 }
                 MenuNavAction::Left => {
                     self.options_menu.adjust_value(-1);
+                    if self.options_menu.active_tab == sh2_ui::options::OptionsTab::Audio {
+                        self.config_applied_pending = Some(self.options_menu.draft_config.clone());
+                    }
                     (MenuSoundCue::CursorMove, PauseAction::None)
                 }
                 MenuNavAction::Right => {
                     self.options_menu.adjust_value(1);
+                    if self.options_menu.active_tab == sh2_ui::options::OptionsTab::Audio {
+                        self.config_applied_pending = Some(self.options_menu.draft_config.clone());
+                    }
                     (MenuSoundCue::CursorMove, PauseAction::None)
                 }
                 MenuNavAction::Confirm => {
@@ -241,6 +290,7 @@ impl AppMenuController {
                 }
                 MenuNavAction::Cancel => {
                     self.options_menu.discard_changes();
+                    self.config_applied_pending = Some(self.options_menu.original_config.clone());
                     self.pause_menu.sub_phase = PauseSubPhase::Main;
                     (MenuSoundCue::Cancel, PauseAction::None)
                 }
@@ -250,7 +300,10 @@ impl AppMenuController {
             if action == PauseAction::OpenOptions {
                 // Refresh live audio output devices upon opening options menu so newly plugged devices appear immediately
                 let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
-                self.options_menu = OptionsMenu::new(self.options_menu.original_config.clone());
+                self.options_menu = OptionsMenu::new_with_audio_packs(
+                    self.options_menu.original_config.clone(),
+                    self.audio_pack_status,
+                );
                 self.options_menu.set_audio_devices(fresh_devices);
             } else if action == PauseAction::QuitToTitle {
                 // Reset in_game_active flag and return to Main Menu

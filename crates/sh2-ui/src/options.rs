@@ -3,7 +3,7 @@
 
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
-use sh2_core::config::AppConfig;
+use sh2_core::config::{AppConfig, AudioPackDetectionStatus};
 
 /// High-level Options category tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -85,10 +85,19 @@ pub struct OptionsMenu {
     pub is_dirty: bool,
     /// Discovered host audio output devices (e.g. "Default", "Speakers", "Headphones").
     pub audio_devices: Vec<String>,
+    /// Filesystem detection status for SH2:EE Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) audio packs (`SH2-59`).
+    pub audio_pack_status: AudioPackDetectionStatus,
 }
 
 impl OptionsMenu {
     pub fn new(config: AppConfig) -> Self {
+        Self::new_with_audio_packs(config, AudioPackDetectionStatus::default())
+    }
+
+    pub fn new_with_audio_packs(
+        config: AppConfig,
+        audio_pack_status: AudioPackDetectionStatus,
+    ) -> Self {
         Self {
             active_tab: OptionsTab::Video,
             selected_index: 0,
@@ -96,7 +105,13 @@ impl OptionsMenu {
             original_config: config,
             is_dirty: false,
             audio_devices: vec!["Default (System)".into()],
+            audio_pack_status,
         }
+    }
+
+    /// Updates the detected filesystem audio pack status (`SH2-59`).
+    pub fn set_audio_pack_status(&mut self, status: AudioPackDetectionStatus) {
+        self.audio_pack_status = status;
     }
 
     /// Sets the list of available host audio devices.
@@ -111,7 +126,13 @@ impl OptionsMenu {
     pub fn item_count(&self) -> usize {
         match self.active_tab {
             OptionsTab::Video => 10,
-            OptionsTab::Audio => 7,
+            OptionsTab::Audio => {
+                if self.audio_pack_status.both_detected() {
+                    8
+                } else {
+                    7
+                }
+            }
             OptionsTab::Controls => 5,
             OptionsTab::Game => 7,
             OptionsTab::Debug => 6,
@@ -232,6 +253,14 @@ impl OptionsMenu {
                     } else {
                         "NO".into()
                     },
+                )),
+                7 if self.audio_pack_status.both_detected() => Some((
+                    "Audio Pack",
+                    self.draft_config
+                        .audio
+                        .audio_pack_source
+                        .label()
+                        .to_string(),
                 )),
                 _ => None,
             },
@@ -482,6 +511,13 @@ impl OptionsMenu {
                 6 => {
                     self.draft_config.audio.mute_in_background =
                         !self.draft_config.audio.mute_in_background;
+                }
+                7 if self.audio_pack_status.both_detected() => {
+                    self.draft_config.audio.audio_pack_source = if forward {
+                        self.draft_config.audio.audio_pack_source.next()
+                    } else {
+                        self.draft_config.audio.audio_pack_source.prev()
+                    };
                 }
                 _ => return OptionsSoundCue::None,
             },
@@ -840,6 +876,9 @@ fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
             "Audio channel configuration (Stereo, Surround, Headphones)"
         }
         (OptionsTab::Audio, "Mute in Background") => "Silence audio when game window loses focus",
+        (OptionsTab::Audio, "Audio Pack") => {
+            "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"
+        }
 
         (OptionsTab::Controls, "Movement Style") => {
             "Character control scheme (3D Tank or 2D Directional)"

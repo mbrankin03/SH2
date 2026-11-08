@@ -194,14 +194,10 @@ impl RoomController for CombatArenaRoomController {
             }
             // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/adx/`) and Original PS2/PC (`data/sound/adx/`) BGM packs (`SH2-60`)
             KeyCode::KeyB if pressed && !repeat => {
-                let next_source = match state.bgm_manager.audio_pack_source {
-                    sh2_core::AudioPackSource::EnhancedLossless => {
-                        sh2_core::AudioPackSource::OriginalPs2
-                    }
-                    sh2_core::AudioPackSource::OriginalPs2 => {
-                        sh2_core::AudioPackSource::EnhancedLossless
-                    }
-                };
+                let next_source = state
+                    .bgm_manager
+                    .audio_pack_source
+                    .toggle_concrete(&state.menu_ctrl.audio_pack_status);
                 if let Err(e) = state
                     .bgm_manager
                     .set_audio_pack_source(next_source, state.audio_engine.as_mut())

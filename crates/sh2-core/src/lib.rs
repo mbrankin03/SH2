@@ -32,9 +32,10 @@ pub use combat::{
     ATK_SHOTGUN, ATK_STOMPS,
 };
 pub use config::{
-    ActionDifficulty, AppConfig, AudioOptions, AudioPackSource, BulletMultiplier, ButtonGlyphStyle,
-    ControlOptions, FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution,
-    RiddleDifficulty, SpeakerConfiguration, VideoOptions, WindowDisplayMode,
+    ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
+    AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, FogQuality, FrameRateCap,
+    GameLanguage, GameOptions, InternalResolution, RiddleDifficulty, SpeakerConfiguration,
+    VideoOptions, WindowDisplayMode,
 };
 pub use input::{
     ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,

@@ -5,7 +5,6 @@ mod assets;
 mod rooms;
 mod state;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -339,11 +338,18 @@ impl ApplicationHandler for SilentHillApp {
             .ok()
             .map(|t| ButtonSpriteSheet::new(t.width, t.height, t.rgba));
 
-        let data_dir =
-            PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data");
-        let ee_dir =
-            PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e");
-        let audio_bank = Some(MenuAudioBank::load_from_dirs(&data_dir, Some(&ee_dir)));
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let data_dir = resolver.data_dir.clone();
+        let ee_dir = resolver.sh2e_dir.clone();
+        let detected_audio_packs =
+            sh2_core::AudioPackDetectionStatus::detect_from_root(&resolver.game_root);
+        tracing::info!(
+            "[Audio Pack Detection] {} (SH2:EE Lossless: {}, PS2 Original: {}, SH2:EE Extra: {})",
+            detected_audio_packs.status_label(),
+            detected_audio_packs.sh2ee_lossless_present,
+            detected_audio_packs.ps2_original_present,
+            detected_audio_packs.sh2ee_extra_present
+        );
 
         let host_devices = AudioEngine::enumerate_output_devices();
         let config_candidates = ["config.json", "../config.json"];
@@ -351,10 +357,18 @@ impl ApplicationHandler for SilentHillApp {
             .iter()
             .find(|p| std::path::Path::new(p).exists())
             .unwrap_or(&"config.json");
-        let mut menu_ctrl = AppMenuController::new(chosen_config_path);
+        let mut menu_ctrl =
+            AppMenuController::new_with_audio_packs(chosen_config_path, detected_audio_packs);
         menu_ctrl
             .options_menu
             .set_audio_devices(host_devices.clone());
+
+        let initial_audio_pack = menu_ctrl.resolved_audio_pack_source();
+        let audio_bank = Some(MenuAudioBank::load_from_dirs_for_source(
+            &data_dir,
+            ee_dir.as_deref(),
+            initial_audio_pack,
+        ));
 
         let target_audio_device = menu_ctrl
             .options_menu
@@ -446,11 +460,6 @@ impl ApplicationHandler for SilentHillApp {
             }
         }
         let initial_fps_cap = menu_ctrl.options_menu.original_config.video.framerate_cap;
-        let initial_audio_pack = menu_ctrl
-            .options_menu
-            .original_config
-            .audio
-            .audio_pack_source;
         let mut audio_engine = audio_engine;
         let current_fmv_entry = fmv_viewer.current_entry();
         let source_pref = fmv_viewer.video_source;
@@ -471,7 +480,6 @@ impl ApplicationHandler for SilentHillApp {
         let loaded_fmv_movie_idx = fmv_viewer.selected_movie_index;
         let loaded_fmv_source = fmv_viewer.video_source;
 
-        let resolver = sh2_assets::AssetPathResolver::resolve();
         let bgm_manager = BgmManager::new(&resolver.game_root, initial_audio_pack);
 
         self.state = Some(AppState {
@@ -636,6 +644,31 @@ impl ApplicationHandler for SilentHillApp {
                                     _ => MenuSoundCue::None,
                                 },
                             };
+                            if let Some(ref cfg) = state.menu_ctrl.config_applied_pending {
+                                if let Some(ref mut audio) = state.audio_engine {
+                                    audio.set_master_volume(cfg.audio.master_volume);
+                                    audio.set_bgm_volume(cfg.audio.bgm_volume);
+                                    audio.set_sfx_volume(cfg.audio.sfx_volume);
+                                    audio.set_voice_volume(cfg.audio.dialogue_volume);
+                                }
+                                let resolved_pack = state
+                                    .menu_ctrl
+                                    .audio_pack_status
+                                    .resolve_source(cfg.audio.audio_pack_source);
+                                if state.bgm_manager.audio_pack_source != resolved_pack {
+                                    let _ = state.bgm_manager.set_audio_pack_source(
+                                        resolved_pack,
+                                        state.audio_engine.as_mut(),
+                                    );
+                                    let resolver = sh2_assets::AssetPathResolver::resolve();
+                                    state.audio_bank =
+                                        Some(MenuAudioBank::load_from_dirs_for_source(
+                                            &resolver.data_dir,
+                                            resolver.sh2e_dir.as_deref(),
+                                            resolved_pack,
+                                        ));
+                                }
+                            }
                             if sound != MenuSoundCue::None {
                                 tracing::info!("Menu sound emitted: {:?}", sound);
                                 if let Some(ref mut engine) = state.audio_engine {
@@ -701,6 +734,31 @@ impl ApplicationHandler for SilentHillApp {
                                 _ => (MenuSoundCue::None, PauseAction::None),
                             };
 
+                            if let Some(ref cfg) = state.menu_ctrl.config_applied_pending {
+                                if let Some(ref mut audio) = state.audio_engine {
+                                    audio.set_master_volume(cfg.audio.master_volume);
+                                    audio.set_bgm_volume(cfg.audio.bgm_volume);
+                                    audio.set_sfx_volume(cfg.audio.sfx_volume);
+                                    audio.set_voice_volume(cfg.audio.dialogue_volume);
+                                }
+                                let resolved_pack = state
+                                    .menu_ctrl
+                                    .audio_pack_status
+                                    .resolve_source(cfg.audio.audio_pack_source);
+                                if state.bgm_manager.audio_pack_source != resolved_pack {
+                                    let _ = state.bgm_manager.set_audio_pack_source(
+                                        resolved_pack,
+                                        state.audio_engine.as_mut(),
+                                    );
+                                    let resolver = sh2_assets::AssetPathResolver::resolve();
+                                    state.audio_bank =
+                                        Some(MenuAudioBank::load_from_dirs_for_source(
+                                            &resolver.data_dir,
+                                            resolver.sh2e_dir.as_deref(),
+                                            resolved_pack,
+                                        ));
+                                }
+                            }
                             if sound != MenuSoundCue::None {
                                 tracing::info!("Pause menu sound emitted: {:?}", sound);
                                 if let Some(ref mut engine) = state.audio_engine {
@@ -901,17 +959,28 @@ impl ApplicationHandler for SilentHillApp {
                     );
                     state.frame_pacer.set_cap(cfg.video.framerate_cap);
 
-                    // 1. Audio Engine volume updates and device re-binding
+                    // 1. Audio Engine volume updates, audio pack source hot-swap, and device re-binding
                     if let Some(ref mut audio) = state.audio_engine {
                         audio.set_master_volume(cfg.audio.master_volume);
                         audio.set_bgm_volume(cfg.audio.bgm_volume);
                         audio.set_sfx_volume(cfg.audio.sfx_volume);
                         audio.set_voice_volume(cfg.audio.dialogue_volume);
                     }
-                    let _ = state.bgm_manager.set_audio_pack_source(
-                        cfg.audio.audio_pack_source,
-                        state.audio_engine.as_mut(),
-                    );
+                    let resolved_pack = state
+                        .menu_ctrl
+                        .audio_pack_status
+                        .resolve_source(cfg.audio.audio_pack_source);
+                    if state.bgm_manager.audio_pack_source != resolved_pack {
+                        let _ = state
+                            .bgm_manager
+                            .set_audio_pack_source(resolved_pack, state.audio_engine.as_mut());
+                        let resolver = sh2_assets::AssetPathResolver::resolve();
+                        state.audio_bank = Some(MenuAudioBank::load_from_dirs_for_source(
+                            &resolver.data_dir,
+                            resolver.sh2e_dir.as_deref(),
+                            resolved_pack,
+                        ));
+                    }
 
                     // Check if audio device changed and live-migrate audio manager stream
                     if cfg.audio.selected_output_device != state.active_audio_device {

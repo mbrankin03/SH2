@@ -1020,8 +1020,8 @@ impl BgmManager {
             self.loaded_full_path = None;
             self.loaded_layer_count = if file_entry.is_adx { 1 } else { BGM_MAX_TRACKS };
             self.loaded_sample_rate = match self.audio_pack_source {
-                AudioPackSource::EnhancedLossless => 48000,
-                AudioPackSource::OriginalPs2 => 24000,
+                AudioPackSource::Auto | AudioPackSource::Sh2eeLossless => 48000,
+                AudioPackSource::Ps2Original => 24000,
             };
             return Ok(());
         };
@@ -1070,8 +1070,9 @@ impl BgmManager {
     pub fn hud_summary(&self) -> String {
         let file_label = self.loaded_rel_path.unwrap_or("None (Silence)");
         let pack_label = match self.audio_pack_source {
-            AudioPackSource::EnhancedLossless => "SH2:EE 48kHz",
-            AudioPackSource::OriginalPs2 => "PS2/PC Orig",
+            AudioPackSource::Auto => "Auto (SH2:EE 48kHz)",
+            AudioPackSource::Sh2eeLossless => "SH2:EE 48kHz",
+            AudioPackSource::Ps2Original => "PS2/PC Orig",
         };
         let sit_label = match self.situation_page {
             0 => "0:Calm",

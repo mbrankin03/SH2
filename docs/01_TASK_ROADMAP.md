@@ -129,6 +129,12 @@ To maintain a lean, modern, and memory-safe Rust codebase, the engine implements
   - Dynamic loop boundary evaluation from vanilla `.adx` / `.sddata` headers without pre-baked audio bloat.
   - Sample-accurate boundary crossfading eliminating pop/click artifacts.
   - Spatial reverberation based on active `.cam` room properties (`rd_type`).
+- [x] **SH2-59: Dual-Source Audio Pack Detection & Options Menu Toggle (Lossless vs PS2)** (`sh2-core`, `sh2-assets`, `sh2-audio`, `sh2-ui`, `sh2-app`)
+  - Filesystem detection (`AudioPackDetectionStatus::detect_from_root`) for SH2:EE 48 kHz lossless (`sh2e/sound/`) and original PS2/PC (`data/sound/`) audio packs.
+  - `AudioPackPreference` enum (`Auto`, `Sh2eeLossless`, `Ps2Original`) with automatic single-pack resolution and backwards-compatible serde aliases.
+  - Dynamic `Audio Pack` row exposed in the Audio Options tab when both packs are detected (`both_detected()`), with live hot-swapping across `BgmManager`, `MenuAudioBank`, and `AssetPathResolver::resolve_sound_file`.
+- [x] **SH2-60: 1:1 Music Track Streaming Engine & Multi-Channel AIX Room Area Mixing** (`sh2-audio`, `sh2-app`)
+  - Complete `SeBgmChange` (`0x515C20`), `BgmPageSet` (`0x515690`), `sndGetSoundAryByCharaPos` (`0x5187E0`), and `SeBgmManager` (`0x516080`) 7-layer `.aix` & `.adx` mixing engine with 879 extracted `_SOUND_DATA` bounding boxes.
 - [x] **SH2-56: Native High-Refresh Rate (60–240 Hz+) Animation Slerp & Deterministic Clock Pacing** (`sh2-core`)
   - Fixed 60 Hz deterministic physics, locomotion, and secondary springs decoupled from render clock.
   - Continuous quaternion bone interpolation (Slerp / Hermite-Slerp) delivering smooth 120/144/240 Hz motion.

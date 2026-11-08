@@ -3,6 +3,7 @@
 use crate::{AudioEngine, AudioError};
 use kira::sound::static_sound::StaticSoundHandle;
 use sh2_assets::formats::sound::WavEntry;
+use sh2_core::AudioPackPreference;
 use std::path::Path;
 
 /// Sound cue types for menu interactions matching authentic PS2 / PC Silent Hill 2 IDs.
@@ -30,9 +31,20 @@ pub struct MenuAudioBank {
 }
 
 impl MenuAudioBank {
-    /// Attempts to load authentic 1:1 WAV sounds from the game directories.
-    /// Falls back gracefully if assets are not present.
+    /// Attempts to load authentic 1:1 WAV sounds from the game directories,
+    /// prioritizing SH2:EE 48 kHz lossless (`sh2e/sound/`) by default.
     pub fn load_from_dirs(data_root: &Path, ee_root: Option<&Path>) -> Self {
+        Self::load_from_dirs_for_source(data_root, ee_root, AudioPackPreference::Auto)
+    }
+
+    /// Attempts to load authentic 1:1 WAV sounds from the game directories according to `source`:
+    /// - `Auto` / `Sh2eeLossless`: prefers `sh2e/sound/sddata.bin` and `sh2e/sound/extra/g_start.wav`, falling back to `data/sound/`.
+    /// - `Ps2Original`: prefers `data/sound/sddata.bin` and `data/sound/extra/g_start.wav`, falling back to `sh2e/sound/`.
+    pub fn load_from_dirs_for_source(
+        data_root: &Path,
+        ee_root: Option<&Path>,
+        source: AudioPackPreference,
+    ) -> Self {
         let mut sfx_bank = Self {
             cursor_move: None,
             confirm: None,
@@ -41,11 +53,23 @@ impl MenuAudioBank {
             footstep: None,
         };
 
-        // 1. Try loading sddata.bin (prefer SH2:EE high-definition 48kHz audio pack, fallback to data/sound/sddata.bin)
-        let sddata_candidates = [
-            ee_root.map(|p| p.join("sound/sddata.bin")),
-            Some(data_root.join("sound/sddata.bin")),
-        ];
+        let prefer_ee = matches!(
+            source,
+            AudioPackPreference::Auto | AudioPackPreference::Sh2eeLossless
+        );
+
+        // 1. Try loading sddata.bin according to source preference
+        let sddata_candidates = if prefer_ee {
+            [
+                ee_root.map(|p| p.join("sound/sddata.bin")),
+                Some(data_root.join("sound/sddata.bin")),
+            ]
+        } else {
+            [
+                Some(data_root.join("sound/sddata.bin")),
+                ee_root.map(|p| p.join("sound/sddata.bin")),
+            ]
+        };
 
         for candidate in sddata_candidates.into_iter().flatten() {
             if candidate.exists() {
@@ -62,7 +86,8 @@ impl MenuAudioBank {
                             sfx_bank.cursor_move = Some(bank.entries[293].clone());
                             sfx_bank.confirm = Some(bank.entries[297].clone());
                             tracing::info!(
-                                "Loaded authentic 1:1 menu navigation and footstep SFX from {:?}",
+                                "Loaded authentic 1:1 menu navigation and footstep SFX ({:?}) from {:?}",
+                                source,
                                 candidate
                             );
                             break;
@@ -73,10 +98,17 @@ impl MenuAudioBank {
         }
 
         // 2. Try loading game start sound (sh2e/sound/extra/g_start.wav or data/sound/extra/g_start.wav)
-        let gstart_candidates = [
-            ee_root.map(|p| p.join("sound/extra/g_start.wav")),
-            Some(data_root.join("sound/extra/g_start.wav")),
-        ];
+        let gstart_candidates = if prefer_ee {
+            [
+                ee_root.map(|p| p.join("sound/extra/g_start.wav")),
+                Some(data_root.join("sound/extra/g_start.wav")),
+            ]
+        } else {
+            [
+                Some(data_root.join("sound/extra/g_start.wav")),
+                ee_root.map(|p| p.join("sound/extra/g_start.wav")),
+            ]
+        };
 
         for candidate in gstart_candidates.into_iter().flatten() {
             if candidate.exists() {

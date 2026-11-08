@@ -1087,4 +1087,110 @@ mod tests {
         let mid_t = out.bones[0].as_ref().unwrap().translation.unwrap();
         assert!(mid_t[0] > 10.0 && mid_t[0] < 25.0);
     }
+
+    #[test]
+    fn test_sh2_61_dual_sddata_loop_flags_and_voice_afs_parsing() {
+        // 1. Synthetic AFS container test (always runs in headless CI)
+        let mut fake_wav = Vec::new();
+        fake_wav.extend_from_slice(b"RIFF");
+        fake_wav.extend_from_slice(&36u32.to_le_bytes());
+        fake_wav.extend_from_slice(b"WAVEfmt ");
+        fake_wav.extend_from_slice(&16u32.to_le_bytes());
+        fake_wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        fake_wav.extend_from_slice(&1u16.to_le_bytes()); // 1 channel
+        fake_wav.extend_from_slice(&48000u32.to_le_bytes()); // 48 kHz
+        fake_wav.extend_from_slice(&96000u32.to_le_bytes());
+        fake_wav.extend_from_slice(&2u16.to_le_bytes());
+        fake_wav.extend_from_slice(&16u16.to_le_bytes());
+        fake_wav.extend_from_slice(b"data");
+        fake_wav.extend_from_slice(&4u32.to_le_bytes());
+        fake_wav.extend_from_slice(&[0x10, 0x20, 0x30, 0x40]);
+
+        let mut fake_afs = Vec::new();
+        fake_afs.extend_from_slice(b"AFS\0");
+        fake_afs.extend_from_slice(&1u32.to_le_bytes()); // 1 entry
+        fake_afs.extend_from_slice(&16u32.to_le_bytes()); // offset 16
+        fake_afs.extend_from_slice(&(fake_wav.len() as u32).to_le_bytes());
+        fake_afs.extend_from_slice(&fake_wav);
+
+        let afs_idx = parse_afs_index(&fake_afs).expect("Failed to parse synthetic AFS");
+        assert_eq!(afs_idx.entries.len(), 1);
+        let decoded_wav =
+            decode_afs_entry_to_wav(&fake_afs, 0).expect("Failed to decode synthetic AFS entry");
+        assert_eq!(decoded_wav.sample_rate, 48000);
+        assert_eq!(decoded_wav.data.len(), 4);
+
+        // 2. Verify synthetic SH2:EE WAV with loop flag `[0x00, 0x01]` before `LIST....INFO` chunk
+        let mut ee_looped_wav = fake_wav.clone();
+        ee_looped_wav.extend_from_slice(&[0x00, 0x01]); // Konami loop flag immediately after `data` chunk
+        ee_looped_wav.extend_from_slice(b"LIST\x10\x00\x00\x00INFOICOP\x04\x00\x00\x00SH2\0");
+        let ee_bank = parse_sddata(&ee_looped_wav).expect("Failed to parse EE looped WAV");
+        assert_eq!(ee_bank.entries.len(), 1);
+        assert!(
+            ee_bank.entries[0].loops,
+            "SH2:EE WAV with loop flag before LIST/INFO chunk must be marked as looping"
+        );
+
+        // 3. On-disk retail (`data/sound/sddata.bin`) & SH2:EE (`sh2e/sound/sddata.bin`) full 417-entry verification
+        let data_sddata = format!("{ROOT_ASSETS}/data/sound/sddata.bin");
+        let sh2e_sddata = format!("{ROOT_ASSETS}/sh2e/sound/sddata.bin");
+        if Path::new(&data_sddata).exists() && Path::new(&sh2e_sddata).exists() {
+            let orig_bytes = fs::read(&data_sddata).expect("read data/sound/sddata.bin");
+            let orig_bank = parse_sddata(&orig_bytes).expect("parse data/sound/sddata.bin");
+            assert_eq!(orig_bank.entries.len(), 417);
+
+            let ee_bytes = fs::read(&sh2e_sddata).expect("read sh2e/sound/sddata.bin");
+            let ee_bank = parse_sddata(&ee_bytes).expect("parse sh2e/sound/sddata.bin");
+            assert_eq!(ee_bank.entries.len(), 417);
+            assert_eq!(ee_bank.entries[0].sample_rate, 48000);
+
+            // Both banks must mark entries 350..=366 and 416 as looping, and chainsaw (352) has loop_start > 0
+            for idx in (350..=366).chain(std::iter::once(416)) {
+                assert!(
+                    orig_bank.entries[idx].loops,
+                    "data/sound/sddata.bin[{idx}] must loop"
+                );
+                assert!(
+                    ee_bank.entries[idx].loops,
+                    "sh2e/sound/sddata.bin[{idx}] must loop"
+                );
+            }
+            assert!(orig_bank.entries[352].loop_start > 0);
+            assert!(ee_bank.entries[352].loop_start > 0);
+        }
+
+        // 4. Verify `voice.afs` index & entry decoding (e.g., Save Point chime `35` = `0x2743` and Game Start `24` = `0x3A9A`)
+        let data_afs = format!("{ROOT_ASSETS}/data/sound/adx/voice/voice.afs");
+        let sh2e_afs = format!("{ROOT_ASSETS}/sh2e/sound/adx/voice/voice.afs");
+        if Path::new(&data_afs).exists() && Path::new(&sh2e_afs).exists() {
+            let orig_afs = fs::read(&data_afs).expect("read data voice.afs");
+            let orig_idx = parse_afs_index(&orig_afs).expect("parse data voice.afs");
+            assert_eq!(orig_idx.entries.len(), 159);
+            let orig_save =
+                decode_afs_entry_to_wav(&orig_afs, 35).expect("decode data voice.afs[35]");
+            assert_eq!(orig_save.sample_rate, 22050);
+            assert!(!orig_save.data.is_empty());
+
+            let ee_afs = fs::read(&sh2e_afs).expect("read sh2e voice.afs");
+            let ee_idx = parse_afs_index(&ee_afs).expect("parse sh2e voice.afs");
+            assert_eq!(ee_idx.entries.len(), 159);
+            let ee_save = decode_afs_entry_to_wav(&ee_afs, 35).expect("decode sh2e voice.afs[35]");
+            assert!(
+                ee_save.sample_rate == 22050 || ee_save.sample_rate == 48000,
+                "Expected 22050 Hz (ADX) or 48000 Hz (WAV) for sh2e voice.afs[35], got {}",
+                ee_save.sample_rate
+            );
+            assert!(!ee_save.data.is_empty());
+
+            // Also verify SH2:EE standalone override WAV `sh2e/sound/extra/save_sound.wav` parses cleanly
+            let sh2e_extra_save = format!("{ROOT_ASSETS}/sh2e/sound/extra/save_sound.wav");
+            if Path::new(&sh2e_extra_save).exists() {
+                let extra_bytes = fs::read(&sh2e_extra_save).expect("read save_sound.wav");
+                let extra_bank = parse_sddata(&extra_bytes).expect("parse save_sound.wav");
+                assert_eq!(extra_bank.entries.len(), 1);
+                assert!(extra_bank.entries[0].sample_rate >= 22050);
+                assert!(!extra_bank.entries[0].data.is_empty());
+            }
+        }
+    }
 }

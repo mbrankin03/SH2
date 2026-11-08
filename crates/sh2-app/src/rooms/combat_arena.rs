@@ -53,6 +53,11 @@ impl RoomController for CombatArenaRoomController {
             }
             KeyCode::KeyF if pressed => {
                 state.sim_core.scenario.flashlight_on = !state.sim_core.scenario.flashlight_on;
+                if let (Some(eng), Some(bank)) =
+                    (state.audio_engine.as_mut(), state.audio_bank.as_ref())
+                {
+                    let _ = bank.play_flashlight_toggle(eng, state.sim_core.scenario.flashlight_on);
+                }
             }
             KeyCode::KeyC if pressed => {
                 state.active_maria = !state.active_maria;
@@ -192,7 +197,7 @@ impl RoomController for CombatArenaRoomController {
                     target_pos.z
                 );
             }
-            // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/adx/`) and Original PS2/PC (`data/sound/adx/`) BGM packs (`SH2-60`)
+            // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) BGM & SFX packs (`SH2-60` / `SH2-61`)
             KeyCode::KeyB if pressed && !repeat => {
                 let next_source = state
                     .bgm_manager
@@ -204,8 +209,14 @@ impl RoomController for CombatArenaRoomController {
                 {
                     tracing::warn!("[BGM] Failed to switch audio pack source: {:?}", e);
                 } else {
+                    let resolver = sh2_assets::AssetPathResolver::resolve();
+                    state.audio_bank = Some(sh2_audio::MenuAudioBank::load_from_dirs_for_source(
+                        &resolver.data_dir,
+                        resolver.sh2e_dir.as_deref(),
+                        next_source,
+                    ));
                     tracing::info!(
-                        "[BGM] Switched AudioPackSource -> {:?} ({})",
+                        "[Audio] Switched AudioPackSource -> {:?} ({})",
                         next_source,
                         state.bgm_manager.hud_summary()
                     );
@@ -291,6 +302,30 @@ impl RoomController for CombatArenaRoomController {
                 state.sim_core.input.state.left_stick_y = 0.0;
             }
             ticks_processed = state.sim_core.update(dt);
+
+            if ticks_processed > 0 {
+                // Update 3D audio listener transform (`SeCallPosDistanceF` `0x5155E0`) & material footsteps (`SH2-61`)
+                let p_pos = state.sim_core.scenario.player_position;
+                let p_yaw = state.sim_core.scenario.player_yaw;
+                let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+                if let Some(ref mut eng) = state.audio_engine {
+                    eng.set_listener_transform(p_pos, fwd);
+                }
+                if state.sim_core.footstep_triggered_since_last_poll {
+                    state.sim_core.footstep_triggered_since_last_poll = false;
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_footstep(
+                            eng,
+                            state.active_maria,
+                            state.sim_core.active_floor_material,
+                            state.sim_core.last_locomotion.state.is_running(),
+                            state.sim_core.last_locomotion.footstep_volume,
+                        );
+                    }
+                }
+            }
 
             if state.active_test_room == TestRoomKind::CombatArena && ticks_processed > 0 {
                 let tick_dt = 1.0 / 60.0;
@@ -432,8 +467,13 @@ impl RoomController for CombatArenaRoomController {
                     _ => {}
                 }
 
-                // Play any combat sound effects requested by the combat state machine
+                // Play any combat sound effects requested by the combat state machine (`SH2-61`)
                 if let Some(sfx_id) = state.combat_arena.player.pending_sfx.take() {
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_ref())
+                    {
+                        let _ = bank.play_se_id(eng, sfx_id, 0.95);
+                    }
                     tracing::info!("[Combat SFX] Triggered sound effect ID: {}", sfx_id);
                 }
             }

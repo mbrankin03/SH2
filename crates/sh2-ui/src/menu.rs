@@ -91,10 +91,12 @@ pub enum TestRoomKind {
     GrappleAnimationRoom,
     /// Interactive BGM Streaming, Multi-Channel AIX Spatial Mixing & SFX Sound Studio (`SH2-60`).
     AudioDebugRoom,
+    /// Interactive 8-Material Acoustic Surface Footstep & 3D SFX Attenuation Test Chamber (`SH2-61`).
+    SurfaceSfxTestRoom,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 11] = [
+    pub const ALL: [TestRoomKind; 12] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -106,6 +108,7 @@ impl TestRoomKind {
         TestRoomKind::CombatArena,
         TestRoomKind::GrappleAnimationRoom,
         TestRoomKind::AudioDebugRoom,
+        TestRoomKind::SurfaceSfxTestRoom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -121,6 +124,7 @@ impl TestRoomKind {
             Self::CombatArena => "Combat & Weapon Testing Arena",
             Self::GrappleAnimationRoom => "Grapple Animation Room",
             Self::AudioDebugRoom => "Audio & AIX Mixing Debug Room",
+            Self::SurfaceSfxTestRoom => "Surface Footstep & 3D SFX Room",
         }
     }
 
@@ -148,6 +152,9 @@ impl TestRoomKind {
             }
             Self::AudioDebugRoom => {
                 "Test SH2:EE 48kHz vs PS2 BGM, 7-layer AIX room areas, situations & SFX"
+            }
+            Self::SurfaceSfxTestRoom => {
+                "Walk across all 8 collision floor materials (Concrete/Wood/Metal/Carpet/Water/Grass/Gravel/Blood) & 3D SFX"
             }
         }
     }

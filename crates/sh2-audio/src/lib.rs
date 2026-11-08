@@ -5,6 +5,7 @@ pub mod bgm_manager;
 pub mod cutscene_bgm;
 pub mod engine;
 pub mod menu_sfx;
+pub mod sfx_bank;
 
 pub use bgm_data::{
     bgm_grid_cell, bgm_page_entry, bgm_room_id, find_bgm_file_by_load_id, stage_glb_crd,
@@ -25,3 +26,9 @@ pub use cutscene_bgm::{
 };
 pub use engine::{ActiveDialogue, AudioEngine, AudioError, EnvironmentalPreset};
 pub use menu_sfx::{play_menu_sound, MenuAudioBank, SoundCueKind};
+pub use sfx_bank::{
+    compute_ps2_sfx_attenuation_gain, compute_se_call_pos_distance_f, compute_sfx_distance_param_v,
+    footstep_sddata_indices, resolve_se_id_to_sddata_index, resolve_se_id_to_voice_afs_index,
+    SfxSpatialEval, SDDATA_ENTRY_COUNT, SE_ID_TO_SDDATA_INDEX, SE_ID_TO_VOICE_AFS_INDEX,
+    SFX_DISTANCE_SPAN, SFX_MAX_DISTANCE, SFX_MIN_DISTANCE,
+};

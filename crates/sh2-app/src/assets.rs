@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use sh2_app::synthetic_geometry::{
     create_fallback_room_geometry, create_model_viewer_pedestal_geometry,
+    create_surface_sfx_test_room_cld, create_surface_sfx_test_room_geometry,
     create_synthetic_fog_runway_geometry,
 };
 use sh2_assets::formats::anm::{compute_bind_locals, parse_anm, AnimationFile, AnimationFrame};
@@ -60,6 +61,16 @@ pub(crate) fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision:
                 }
             }
         }
+    }
+
+    if room == TestRoomKind::SurfaceSfxTestRoom {
+        let cld = create_surface_sfx_test_room_cld();
+        tracing::info!(
+            "Created 8-material SurfaceSfxTestRoom collision geometry ({} floor triangles, {} walls)",
+            cld.floors.len(),
+            cld.walls.len()
+        );
+        return sh2_core::collision::CollisionWorld::from_cld(&cld);
     }
 
     if room == TestRoomKind::CombatArena {
@@ -343,6 +354,29 @@ pub(crate) fn find_map_file_for_room(
                 // Spawn James at Z = -1500.0, facing North (0.0 rad) directly looking toward the enemies (Z = 1200..2000)
                 glam::Vec3::new(0.0, 0.0, -1500.0),
                 0.0,
+                fog,
+            )
+        }
+        TestRoomKind::SurfaceSfxTestRoom => {
+            tracing::info!(
+                "Generated 8-Material Surface Footstep & 3D SFX Attenuation Test Room (SH2-61)."
+            );
+            let fog = sh2_renderer::fog::FogUniforms {
+                fog_color: [0.09, 0.10, 0.13, 1.0],
+                fog_near: 4500.0,
+                fog_far: 26000.0,
+                density: 0.08,
+                time: 0.0,
+                step_count: 20,
+                curve_type: 0,
+                speed_mult: 0.5,
+                _padding: 0.0,
+            };
+            (
+                create_surface_sfx_test_room_geometry(),
+                // Spawn James on Pad 0 (Concrete, X = -4300, Z = -3200) facing East (+X) across the 8 material pads
+                glam::Vec3::new(-4300.0, 0.0, -3200.0),
+                std::f32::consts::FRAC_PI_2,
                 fog,
             )
         }

@@ -22,7 +22,9 @@ pub mod grid;
 pub mod raycast;
 
 pub use character::{CharacterCylinder, CharacterId};
-pub use controller::{CollisionConfig, CollisionController, CollisionWorld};
+pub use controller::{
+    CollisionConfig, CollisionController, CollisionWorld, FloorSample, SurfaceMaterial,
+};
 pub use dynamic::{DynamicFloor, DynamicWall};
 pub use grid::SpatialGrid;
 pub use raycast::{RayHit, RaycastFilter};

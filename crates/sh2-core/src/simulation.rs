@@ -9,7 +9,7 @@ use crate::animation::{
 };
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
-use crate::collision::{CollisionConfig, CollisionWorld};
+use crate::collision::{CollisionConfig, CollisionWorld, SurfaceMaterial};
 use crate::input::{ControlScheme, HapticFeedback, InputManager};
 use crate::locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
@@ -53,6 +53,10 @@ pub struct SimulationCore {
     pub tick_counter: u64,
     /// Last tick's locomotion output.
     pub last_locomotion: LocomotionOutput,
+    /// Active surface material sampled from the `.cld` floor triangle beneath the player's feet (`SH2-61`).
+    pub active_floor_material: SurfaceMaterial,
+    /// Whether at least one footstep was triggered during the most recent `update()` call (across any 60 Hz sub-ticks).
+    pub footstep_triggered_since_last_poll: bool,
     /// When true, locomotion state changes do not overwrite the active animation clip.
     pub animation_locked: bool,
 }
@@ -104,6 +108,8 @@ impl SimulationCore {
                 footstep_triggered: false,
                 footstep_volume: 0.5,
             },
+            active_floor_material: SurfaceMaterial::Concrete,
+            footstep_triggered_since_last_poll: false,
             animation_locked: false,
         }
     }
@@ -196,6 +202,18 @@ impl SimulationCore {
             desired_pos,
             &self.collision_config,
         );
+        if let Some(sample) = self.collision.sample_floor_surface(
+            self.scenario.player_position.x,
+            self.scenario.player_position.z,
+            self.scenario.player_position.y,
+            self.collision_config.max_step_up,
+            self.collision_config.max_step_down,
+        ) {
+            self.active_floor_material = sample.surface;
+        }
+        if out.footstep_triggered {
+            self.footstep_triggered_since_last_poll = true;
+        }
         self.last_locomotion = out;
 
         // 3b. Synchronize character animation playback rate and gait phase with locomotion output (SH2-26 / 0x531a00)

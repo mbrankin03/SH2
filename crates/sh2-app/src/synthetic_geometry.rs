@@ -538,3 +538,383 @@ pub fn create_model_viewer_pedestal_geometry() -> MapFile {
 
     map
 }
+
+/// Geometry descriptor for one of the 8 acoustic surface material test pads in [`TestRoomKind::SurfaceSfxTestRoom`] (`SH2-61`).
+#[derive(Debug, Clone, Copy)]
+pub struct SurfacePadZone {
+    /// 0-based [`sh2_core::SurfaceMaterial`] index (`0..=7`).
+    pub pad_index: u8,
+    /// Raw `.cld` floor material attribute (`0x80 | pad_index` so `SurfaceMaterial::from_cld_material` maps `1:1` to all 8 materials).
+    pub material_id: u32,
+    /// Minimum $X$ coordinate of the pad in world units (mm).
+    pub min_x: f32,
+    /// Maximum $X$ coordinate of the pad in world units (mm).
+    pub max_x: f32,
+    /// Minimum $Z$ coordinate of the pad in world units (mm).
+    pub min_z: f32,
+    /// Maximum $Z$ coordinate of the pad in world units (mm).
+    pub max_z: f32,
+    /// Distinct vertex RGBA color representing the surface material.
+    pub color_rgba: [u8; 4],
+}
+
+/// Returns the 8 color-coded acoustic surface pad zones arranged in a $4 \times 2$ grid
+/// across the central test hall ($X \in [-5600, 5600]$, $Z \in [-4600, 1400]$):
+/// - Row 0 ($Z \in [-4600, -1800]$): `0: Concrete`, `1: Wood`, `2: Metal`, `3: Carpet`
+/// - Row 1 ($Z \in [-1400, 1400]$): `4: Water`, `5: Grass`, `6: Gravel`, `7: Blood`
+pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
+    [
+        // Row 0 (North row, Z: -4600..-1800)
+        SurfacePadZone {
+            pad_index: 0,
+            material_id: 0x80, // Concrete / Stone (`se_id = 11001` -> `sddata[147]`)
+            min_x: -5600.0,
+            max_x: -3000.0,
+            min_z: -4600.0,
+            max_z: -1800.0,
+            color_rgba: [155, 160, 168, 255],
+        },
+        SurfacePadZone {
+            pad_index: 1,
+            material_id: 0x81, // Wood / Planks (`se_id = 11005` / `19907` -> `sddata[95, 151]`)
+            min_x: -2800.0,
+            max_x: -200.0,
+            min_z: -4600.0,
+            max_z: -1800.0,
+            color_rgba: [168, 118, 68, 255],
+        },
+        SurfacePadZone {
+            pad_index: 2,
+            material_id: 0x82, // Metal Grating (`se_id = 11000` -> `sddata[146]`)
+            min_x: 200.0,
+            max_x: 2800.0,
+            min_z: -4600.0,
+            max_z: -1800.0,
+            color_rgba: [95, 138, 168, 255],
+        },
+        SurfacePadZone {
+            pad_index: 3,
+            material_id: 0x83, // Carpet / Rug (`se_id = 11009` / `11054` -> `sddata[144, 145]`)
+            min_x: 3000.0,
+            max_x: 5600.0,
+            min_z: -4600.0,
+            max_z: -1800.0,
+            color_rgba: [148, 72, 112, 255],
+        },
+        // Row 1 (South row, Z: -1400..1400)
+        SurfacePadZone {
+            pad_index: 4,
+            material_id: 0x84, // Water / Puddle (`se_id = 11003` -> `sddata[148, 83, 84]`)
+            min_x: -5600.0,
+            max_x: -3000.0,
+            min_z: -1400.0,
+            max_z: 1400.0,
+            color_rgba: [52, 145, 215, 255],
+        },
+        SurfacePadZone {
+            pad_index: 5,
+            material_id: 0x85, // Grass / Foliage (`se_id = 11002` -> `sddata[142]`)
+            min_x: -2800.0,
+            max_x: -200.0,
+            min_z: -1400.0,
+            max_z: 1400.0,
+            color_rgba: [68, 152, 78, 255],
+        },
+        SurfacePadZone {
+            pad_index: 6,
+            material_id: 0x86, // Dirt / Gravel (`se_id = 11004` -> `sddata[150]`)
+            min_x: 200.0,
+            max_x: 2800.0,
+            min_z: -1400.0,
+            max_z: 1400.0,
+            color_rgba: [142, 132, 108, 255],
+        },
+        SurfacePadZone {
+            pad_index: 7,
+            material_id: 0x87, // Wet / Glass / Blood (`se_id = 11008` / `11003` -> `sddata[148, 141]`)
+            min_x: 3000.0,
+            max_x: 5600.0,
+            min_z: -1400.0,
+            max_z: 1400.0,
+            color_rgba: [165, 38, 42, 255],
+        },
+    ]
+}
+
+/// Generates the 3D visual geometry for [`TestRoomKind::SurfaceSfxTestRoom`] (`SH2-61`), featuring:
+/// - 8 color-coded floor material pads (`Concrete`, `Wood`, `Metal`, `Carpet`, `Water`, `Grass`, `Gravel`, `Blood`)
+///   with raised corner marker pylons matching each pad's color.
+/// - A calibrated 3D Sound Attenuation Runway along $+Z$ with distance marker arches at $d_{\min} = 1500$, $4000$,
+///   $6500$, $9000$, and $d_{\max} = 11500$ world units (`SeCallPosDistanceF` at `0x5155E0`).
+pub fn create_surface_sfx_test_room_geometry() -> MapFile {
+    let mut map = MapFile::default();
+    map.materials.push(MapMaterial {
+        mode: 1,
+        texture_id: 0,
+        color: 0xFF888888,
+        overlay: 0,
+        specularity: 0.35,
+    });
+
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
+    let mut indices = Vec::new();
+
+    let w = 6500.0;
+    let z_north = -6000.0;
+    let z_south = 13000.0;
+    let h = -3200.0;
+
+    // Base hall floor at Y = 2.0 (slightly below the Y = 0.0 material pads to prevent z-fighting)
+    append_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut colors,
+        &mut indices,
+        [-w, 2.0, z_north],
+        [w, 2.0, z_north],
+        [w, 2.0, z_south],
+        [-w, 2.0, z_south],
+        [0.0, -1.0, 0.0],
+        [52, 55, 62, 255],
+    );
+
+    // Ceiling & perimeter walls
+    append_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut colors,
+        &mut indices,
+        [-w, h, z_south],
+        [w, h, z_south],
+        [w, h, z_north],
+        [-w, h, z_north],
+        [0.0, 1.0, 0.0],
+        [38, 40, 46, 255],
+    );
+    append_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut colors,
+        &mut indices,
+        [-w, h, z_north],
+        [w, h, z_north],
+        [w, 0.0, z_north],
+        [-w, 0.0, z_north],
+        [0.0, 0.0, 1.0],
+        [85, 88, 96, 255],
+    );
+    append_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut colors,
+        &mut indices,
+        [w, h, z_south],
+        [-w, h, z_south],
+        [-w, 0.0, z_south],
+        [w, 0.0, z_south],
+        [0.0, 0.0, -1.0],
+        [85, 88, 96, 255],
+    );
+    append_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut colors,
+        &mut indices,
+        [-w, h, z_south],
+        [-w, h, z_north],
+        [-w, 0.0, z_north],
+        [-w, 0.0, z_south],
+        [1.0, 0.0, 0.0],
+        [78, 82, 90, 255],
+    );
+    append_quad(
+        &mut positions,
+        &mut normals,
+        &mut uvs,
+        &mut colors,
+        &mut indices,
+        [w, h, z_north],
+        [w, h, z_south],
+        [w, 0.0, z_south],
+        [w, 0.0, z_north],
+        [-1.0, 0.0, 0.0],
+        [78, 82, 90, 255],
+    );
+
+    // 8 Acoustic Surface Material Pads at Y = 0.0 with bright border strips and corner indicator totems
+    for pad in surface_sfx_test_pad_zones() {
+        append_quad(
+            &mut positions,
+            &mut normals,
+            &mut uvs,
+            &mut colors,
+            &mut indices,
+            [pad.min_x, 0.0, pad.min_z],
+            [pad.max_x, 0.0, pad.min_z],
+            [pad.max_x, 0.0, pad.max_z],
+            [pad.min_x, 0.0, pad.max_z],
+            [0.0, -1.0, 0.0],
+            pad.color_rgba,
+        );
+
+        // Inner contrasting stripe pattern so movement across each material pad is visually crisp
+        let stripe_col = [
+            pad.color_rgba[0].saturating_add(35),
+            pad.color_rgba[1].saturating_add(35),
+            pad.color_rgba[2].saturating_add(35),
+            255,
+        ];
+        let cx = (pad.min_x + pad.max_x) * 0.5;
+        let cz = (pad.min_z + pad.max_z) * 0.5;
+        append_quad(
+            &mut positions,
+            &mut normals,
+            &mut uvs,
+            &mut colors,
+            &mut indices,
+            [cx - 350.0, -1.0, cz - 350.0],
+            [cx + 350.0, -1.0, cz - 350.0],
+            [cx + 350.0, -1.0, cz + 350.0],
+            [cx - 350.0, -1.0, cz + 350.0],
+            [0.0, -1.0, 0.0],
+            stripe_col,
+        );
+
+        // Raised North-West corner pillar totem for each material zone
+        let px = pad.min_x + 120.0;
+        let pz = pad.min_z + 120.0;
+        let pw = 65.0;
+        let ph = -550.0;
+        append_quad(
+            &mut positions,
+            &mut normals,
+            &mut uvs,
+            &mut colors,
+            &mut indices,
+            [px - pw, ph, pz + pw],
+            [px + pw, ph, pz + pw],
+            [px + pw, 0.0, pz + pw],
+            [px - pw, 0.0, pz + pw],
+            [0.0, 0.0, 1.0],
+            stripe_col,
+        );
+    }
+
+    // 3D Sound Attenuation Distance Markers along Z = 1500, 4000, 6500, 9000, 11500 (`SeCallPosDistanceF` `0x5155E0`)
+    let sfx_radii = [1500.0f32, 4000.0, 6500.0, 9000.0, 11500.0];
+    for &dist in &sfx_radii {
+        let col = if (dist - 1500.0).abs() < 1.0 {
+            [90, 235, 130, 255] // Green inner full-volume boundary (d_min = 1500)
+        } else if (dist - 11500.0).abs() < 1.0 {
+            [235, 85, 85, 255] // Red outer cutoff boundary (d_max = 11500)
+        } else {
+            [105, 205, 240, 255] // Cyan intermediate attenuation steps
+        };
+        append_quad(
+            &mut positions,
+            &mut normals,
+            &mut uvs,
+            &mut colors,
+            &mut indices,
+            [-2200.0, -1.5, dist - 80.0],
+            [2200.0, -1.5, dist - 80.0],
+            [2200.0, -1.5, dist + 80.0],
+            [-2200.0, -1.5, dist + 80.0],
+            [0.0, -1.0, 0.0],
+            col,
+        );
+    }
+
+    map.batches.push(MapBatch {
+        group: BatchGroup::Opaque,
+        material_index: 0,
+        geo_id: 4,
+        positions,
+        uvs,
+        colors,
+        normals,
+        indices,
+    });
+
+    map
+}
+
+/// Builds a [`sh2_assets::formats::cld::CldFile`] matching [`create_surface_sfx_test_room_geometry`]
+/// where each of the 8 floor pads carries its authentic `FloorTriangle::material` (`0..=7`)
+/// so [`sh2_core::collision::CollisionWorld::sample_floor_surface`] automatically transitions footsteps
+/// as James or Maria walks across the pads.
+pub fn create_surface_sfx_test_room_cld() -> sh2_assets::formats::cld::CldFile {
+    use sh2_assets::formats::cld::{CldFile, FloorTriangle, WallSegment};
+
+    let w = 6500.0f32;
+    let z_north = -6000.0f32;
+    let z_south = 13000.0f32;
+    let y_top = -3200.0f32;
+    let y_bottom = 100.0f32;
+
+    let mut floors = Vec::new();
+
+    // 1. Add the 8 elevated surface material pads at Y = 0.0 (`material = 0..=7`)
+    // Because `sample_floor_surface` selects the highest walkable floor (`y <= best_y`),
+    // pads at `Y = 0.0` take priority over the surrounding walkway floor at `Y = 2.0`.
+    for pad in surface_sfx_test_pad_zones() {
+        floors.push(FloorTriangle::new(
+            [
+                [pad.min_x, 0.0, pad.min_z],
+                [pad.max_x, 0.0, pad.min_z],
+                [pad.max_x, 0.0, pad.max_z],
+            ],
+            pad.material_id,
+        ));
+        floors.push(FloorTriangle::new(
+            [
+                [pad.min_x, 0.0, pad.min_z],
+                [pad.max_x, 0.0, pad.max_z],
+                [pad.min_x, 0.0, pad.max_z],
+            ],
+            pad.material_id,
+        ));
+    }
+
+    // 2. Surrounding hall floor at Y = 2.0 (`material = 0` Concrete)
+    floors.push(FloorTriangle::new(
+        [[-w, 2.0, z_north], [w, 2.0, z_north], [w, 2.0, z_south]],
+        0,
+    ));
+    floors.push(FloorTriangle::new(
+        [[-w, 2.0, z_north], [w, 2.0, z_south], [-w, 2.0, z_south]],
+        0,
+    ));
+
+    let walls = vec![
+        WallSegment::new([-w, z_north], [w, z_north], y_top, y_bottom, 1, 0),
+        WallSegment::new([w, z_north], [w, z_south], y_top, y_bottom, 1, 0),
+        WallSegment::new([w, z_south], [-w, z_south], y_top, y_bottom, 1, 0),
+        WallSegment::new([-w, z_south], [-w, z_north], y_top, y_bottom, 1, 0),
+    ];
+
+    let mut b0_cells: [Vec<usize>; 16] = Default::default();
+    let mut b1_cells: [Vec<usize>; 16] = Default::default();
+    for i in 0..floors.len() {
+        b0_cells[0].push(i);
+    }
+    for i in 0..walls.len() {
+        b1_cells[0].push(i);
+    }
+
+    CldFile {
+        origin: [0.0, 0.0],
+        floors,
+        walls,
+        b0_cells,
+        b1_cells,
+    }
+}

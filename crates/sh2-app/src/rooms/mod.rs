@@ -5,6 +5,7 @@ pub(crate) mod combat_arena;
 pub(crate) mod fmv_room;
 pub(crate) mod grapple_room;
 pub(crate) mod model_viewer;
+pub(crate) mod surface_sfx_room;
 
 use std::time::Duration;
 use winit::keyboard::KeyCode;
@@ -60,6 +61,11 @@ pub(crate) fn dispatch_key_input(
                 state, key_code, pressed, repeat,
             );
         }
+        TestRoomKind::SurfaceSfxTestRoom => {
+            surface_sfx_room::SurfaceSfxRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
+        }
         _ => {
             combat_arena::CombatArenaRoomController::handle_key_input(
                 state, key_code, pressed, repeat,
@@ -104,6 +110,12 @@ pub(crate) fn dispatch_tick_and_render_3d(
                 );
                 return;
             }
+            TestRoomKind::SurfaceSfxTestRoom => {
+                surface_sfx_room::SurfaceSfxRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
             _ => {}
         }
     }
@@ -131,6 +143,9 @@ pub(crate) fn dispatch_render_hud(
         }
         TestRoomKind::AudioDebugRoom => {
             audio_room::AudioDebugRoomController::render_hud(state, encoder, surface_view);
+        }
+        TestRoomKind::SurfaceSfxTestRoom => {
+            surface_sfx_room::SurfaceSfxRoomController::render_hud(state, encoder, surface_view);
         }
         _ => {
             if state.debug_camera_hud {

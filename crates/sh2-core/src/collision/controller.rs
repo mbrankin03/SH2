@@ -18,6 +18,126 @@ use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
 use super::raycast::{clamp_camera_ray, RaycastFilter};
 
+/// Surface material category extracted from `.cld` / `.sfm` floor collision triangles (`FloorTriangle::material`),
+/// driving authentic material-dependent footstep sound selection (`0x54A9A0` / `0x5495C0` -> `0x5147E0` / `sddata.bin`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum SurfaceMaterial {
+    /// Asphalt, concrete, and stone surfaces (`.cld` material `0, 12` -> `11001` -> `sddata[147]`).
+    #[default]
+    Concrete = 0,
+    /// Wooden planks, bowling lanes, and floorboards (`.cld` material `7` -> `11005` -> `sddata[151, 95]`).
+    Wood = 1,
+    /// Metal grating, iron stairs, and boiler plates (`.cld` material `5, 9, 11` -> `11000` / `11006` -> `sddata[146, 143]`).
+    Metal = 2,
+    /// Carpet, rugs, and padded hotel/apartment hallways (`.cld` material `8` -> `11009` / `11054` -> `sddata[144, 145]`).
+    Carpet = 3,
+    /// Shallow water puddles, flooded basement, and sewers (`.cld` material `6` -> `11003` -> `sddata[148, 83, 84]`).
+    Water = 4,
+    /// Forest grass, brush, and foliage trails (`.cld` material `2` -> `11002` -> `sddata[142]`).
+    Grass = 5,
+    /// Dirt, gravel, loose rubble, and forest/cemetery paths (`.cld` material `1, 3, 4` -> `11004` / `11007` -> `sddata[150, 149]`).
+    Gravel = 6,
+    /// Viscous blood / broken glass / wet organic surfaces (`.cld` material `10` -> `11008` / `11003` -> `sddata[148, 141]`).
+    Blood = 7,
+}
+
+impl SurfaceMaterial {
+    /// Total number of distinct surface material categories.
+    pub const COUNT: usize = 8;
+
+    /// Ordered list of all surface material categories.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Concrete,
+        Self::Wood,
+        Self::Metal,
+        Self::Carpet,
+        Self::Water,
+        Self::Grass,
+        Self::Gravel,
+        Self::Blood,
+    ];
+
+    /// Maps a [`SurfaceMaterial`] directly from its 0-based index (`0..=7`), used by debug UI and synthetic test pads.
+    #[inline]
+    pub const fn from_index(idx: u8) -> Self {
+        match idx & 0x07 {
+            0 => Self::Concrete,
+            1 => Self::Wood,
+            2 => Self::Metal,
+            3 => Self::Carpet,
+            4 => Self::Water,
+            5 => Self::Grass,
+            6 => Self::Gravel,
+            _ => Self::Blood,
+        }
+    }
+
+    /// Maps a raw `.cld` `FloorTriangle::material` attribute (`u32`) to a [`SurfaceMaterial`].
+    ///
+    /// Matches `sh2pc.exe` `0x54A9A0` / `0x54AFC1` (James) and `0x5495C0` (Maria) switch table (`0..=12`)
+    /// verified against `.cld` room geometry across `ap`, `bw`, `ca..cd`, `hp`, `ps`, `rr`, `ru`, and `ma`:
+    /// - `0, 12` -> [`Self::Concrete`] (`11001` Concrete/Stone -> `sddata[147]`)
+    /// - `1, 3, 4` -> [`Self::Gravel`] (`11004` / `11007` Dirt/Gravel/Sand -> `sddata[150, 149]`)
+    /// - `2` -> [`Self::Grass`] (`11002` Grass -> `sddata[142]`)
+    /// - `5, 9, 11` -> [`Self::Metal`] (`11000` Metal Grating / `11006` Solid Metal -> `sddata[146, 143]`)
+    /// - `6` -> [`Self::Water`] (`11003` Water -> `sddata[148, 83, 84]`)
+    /// - `7` -> [`Self::Wood`] (`11005` Wood floorboards / Baldwin Mansion `ma` / Bowling `bw01` -> `sddata[151, 95]`)
+    /// - `8` -> [`Self::Carpet`] (`11009` / `11054` Carpeted Hotel `rr` & Apartment `ap` corridors -> `sddata[144, 145]`)
+    /// - `10` -> [`Self::Blood`] (`11008` Glass / Wet / Special -> `sddata[148, 141]`)
+    ///
+    /// Also supports synthetic test pad markers (`0x80..=0x87`) which map `1:1` to `SurfaceMaterial::from_index`.
+    #[inline]
+    pub const fn from_cld_material(raw: u32) -> Self {
+        if (raw & 0x80) != 0 {
+            return Self::from_index((raw & 0x07) as u8);
+        }
+        match raw & 0x0F {
+            0 | 12 => Self::Concrete,
+            1 | 3 | 4 => Self::Gravel,
+            2 => Self::Grass,
+            5 | 9 | 11 => Self::Metal,
+            6 => Self::Water,
+            7 => Self::Wood,
+            8 => Self::Carpet,
+            10 => Self::Blood,
+            _ => Self::from_index((raw & 0x07) as u8),
+        }
+    }
+
+    /// Cycles to the next surface material (useful for interactive audio debug testing).
+    #[inline]
+    pub const fn next(self) -> Self {
+        Self::from_index((self as u8).wrapping_add(1))
+    }
+
+    /// Human-readable label for debug HUD display.
+    #[inline]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Concrete => "Concrete / Stone",
+            Self::Wood => "Wood / Planks",
+            Self::Metal => "Metal Grating",
+            Self::Carpet => "Carpet / Rug",
+            Self::Water => "Water / Puddle",
+            Self::Grass => "Grass / Foliage",
+            Self::Gravel => "Dirt / Gravel",
+            Self::Blood => "Wet / Glass / Blood",
+        }
+    }
+}
+
+/// Result of sampling the walkable floor beneath a character at $(X, Z)$, including both height and surface material.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloorSample {
+    /// Walkable floor height $Y$ in world units ($+Y$ points downward).
+    pub height_y: f32,
+    /// Raw `.cld` floor triangle material attribute (`FloorTriangle::material`).
+    pub raw_material: u32,
+    /// Classified acoustic surface material for footstep SFX dispatch.
+    pub surface: SurfaceMaterial,
+}
+
 /// Configuration constants for character collision and kinematics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollisionConfig {
@@ -146,6 +266,112 @@ impl CollisionWorld {
         merged
     }
 
+    /// Sample the walkable floor height and surface material at $(x, z)$ closest to `y_ref` within step boundaries.
+    ///
+    /// Authentic PS2 `clCollectCharaHeightNormal`:
+    /// Because world $+Y$ points downward:
+    /// - `up` is above feet: $y \ge y_{\text{ref}} - \text{up}$
+    /// - `down` is below feet: $y \le y_{\text{ref}} + \text{down}$
+    ///
+    /// Returns the highest floor (minimum numeric $Y$) within range along with its `FloorTriangle::material`.
+    pub fn sample_floor_surface(
+        &self,
+        x: f32,
+        z: f32,
+        y_ref: f32,
+        up: f32,
+        down: f32,
+    ) -> Option<FloorSample> {
+        let mut best: Option<FloorSample> = None;
+
+        // 1. Broadphase: query floor triangles in the current grid cell
+        let cell = self.grid.point_to_cell(x, z);
+        let cell_tri_indices = &self.grid.floor_cells[cell];
+
+        if !cell_tri_indices.is_empty() {
+            for &idx in cell_tri_indices {
+                if let Some(tri) = self.floors.get(idx) {
+                    if let Some(y) = tri.sample_height(x, z) {
+                        if y >= y_ref - up && y <= y_ref + down {
+                            match best {
+                                None => {
+                                    best = Some(FloorSample {
+                                        height_y: y,
+                                        raw_material: tri.material,
+                                        surface: SurfaceMaterial::from_cld_material(tri.material),
+                                    });
+                                }
+                                Some(prev) if y < prev.height_y => {
+                                    best = Some(FloorSample {
+                                        height_y: y,
+                                        raw_material: tri.material,
+                                        surface: SurfaceMaterial::from_cld_material(tri.material),
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Broadphase cell empty or unindexed: fallback to all static floors
+            for tri in &self.floors {
+                if let Some(y) = tri.sample_height(x, z) {
+                    if y >= y_ref - up && y <= y_ref + down {
+                        match best {
+                            None => {
+                                best = Some(FloorSample {
+                                    height_y: y,
+                                    raw_material: tri.material,
+                                    surface: SurfaceMaterial::from_cld_material(tri.material),
+                                });
+                            }
+                            Some(prev) if y < prev.height_y => {
+                                best = Some(FloorSample {
+                                    height_y: y,
+                                    raw_material: tri.material,
+                                    surface: SurfaceMaterial::from_cld_material(tri.material),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Check dynamic floor obstacles
+        for df in &self.dynamic_floors {
+            if !df.active {
+                continue;
+            }
+            if let Some(y) = df.triangle.sample_height(x, z) {
+                if y >= y_ref - up && y <= y_ref + down {
+                    match best {
+                        None => {
+                            best = Some(FloorSample {
+                                height_y: y,
+                                raw_material: df.triangle.material,
+                                surface: SurfaceMaterial::from_cld_material(df.triangle.material),
+                            });
+                        }
+                        Some(prev) if y < prev.height_y => {
+                            best = Some(FloorSample {
+                                height_y: y,
+                                raw_material: df.triangle.material,
+                                surface: SurfaceMaterial::from_cld_material(df.triangle.material),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        best
+    }
+
     /// Sample the walkable floor height at $(x, z)$ closest to `y_ref` within step boundaries.
     ///
     /// Authentic PS2 `clCollectCharaHeightNormal`:
@@ -162,58 +388,8 @@ impl CollisionWorld {
         up: f32,
         down: f32,
     ) -> Option<f32> {
-        let mut best_y: Option<f32> = None;
-
-        // 1. Broadphase: query floor triangles in the current grid cell
-        let cell = self.grid.point_to_cell(x, z);
-        let cell_tri_indices = &self.grid.floor_cells[cell];
-
-        if !cell_tri_indices.is_empty() {
-            for &idx in cell_tri_indices {
-                if let Some(tri) = self.floors.get(idx) {
-                    if let Some(y) = tri.sample_height(x, z) {
-                        if y >= y_ref - up && y <= y_ref + down {
-                            match best_y {
-                                None => best_y = Some(y),
-                                Some(prev_y) if y < prev_y => best_y = Some(y),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Broadphase cell empty or unindexed: fallback to all static floors
-            for tri in &self.floors {
-                if let Some(y) = tri.sample_height(x, z) {
-                    if y >= y_ref - up && y <= y_ref + down {
-                        match best_y {
-                            None => best_y = Some(y),
-                            Some(prev_y) if y < prev_y => best_y = Some(y),
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Check dynamic floor obstacles
-        for df in &self.dynamic_floors {
-            if !df.active {
-                continue;
-            }
-            if let Some(y) = df.triangle.sample_height(x, z) {
-                if y >= y_ref - up && y <= y_ref + down {
-                    match best_y {
-                        None => best_y = Some(y),
-                        Some(prev_y) if y < prev_y => best_y = Some(y),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        best_y
+        self.sample_floor_surface(x, z, y_ref, up, down)
+            .map(|s| s.height_y)
     }
 
     /// Resolve lateral wall collisions for a vertical cylinder with radius `config.radius`.

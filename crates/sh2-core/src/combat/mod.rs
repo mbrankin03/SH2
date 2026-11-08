@@ -1126,7 +1126,9 @@ impl CombatHitbox {
 pub struct CombatTargetEnemy {
     pub id: u32,
     pub name: &'static str,
+    pub prev_position: Vec3,
     pub position: Vec3,
+    pub prev_yaw: f32,
     pub yaw: f32,
     pub spawn_origin: Vec3,
     pub aggro_radius: f32,
@@ -1156,7 +1158,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Lying Figure (scu)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 1800.0,
@@ -1186,7 +1190,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Mannequin (mkn)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 1800.0,
@@ -1216,7 +1222,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Bubble Head Nurse (nse)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 1800.0,
@@ -1246,7 +1254,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Pyramid Head (red)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 2000.0,
@@ -1276,7 +1286,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Abstract Daddy (pap)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 2000.0,
@@ -1306,7 +1318,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Flesh Lips (ike)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 2000.0,
@@ -1336,7 +1350,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Mandarin (arm)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 1800.0,
@@ -1366,7 +1382,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Creeper (tyu)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 1600.0,
@@ -1396,7 +1414,9 @@ impl CombatTargetEnemy {
         Self {
             id,
             name: "Mary Final Boss (bos)",
+            prev_position: position,
             position,
+            prev_yaw: 0.0,
             yaw: 0.0,
             spawn_origin: position,
             aggro_radius: 2200.0,
@@ -1418,6 +1438,24 @@ impl CombatTargetEnemy {
             hitbox_height: 2400.0,
             anim: CreatureAnimationController::new_mary_boss(),
         }
+    }
+
+    /// Snaps the enemy's previous and current tick transforms to `(position, yaw)`.
+    #[inline]
+    pub fn snap_pose(&mut self, position: Vec3, yaw: f32) {
+        self.prev_position = position;
+        self.position = position;
+        self.prev_yaw = yaw;
+        self.yaw = yaw;
+    }
+
+    /// Evaluates sub-frame interpolated enemy `(position, yaw)` for `alpha` in `[0.0, 1.0]`.
+    #[inline]
+    pub fn interpolated_pose(&self, alpha: f32) -> (Vec3, f32) {
+        let t = alpha.clamp(0.0, 1.0);
+        let pos = self.prev_position.lerp(self.position, t);
+        let yaw = crate::timing::lerp_angle_shortest(self.prev_yaw, self.yaw, t);
+        (pos, yaw)
     }
 
     /// Get current active collision hitbox.
@@ -1789,6 +1827,9 @@ impl CombatTargetEnemy {
 
     /// Update enemy timers, attack logic, and navigation towards player.
     pub fn update(&mut self, player_pos: Vec3, dt: f32) {
+        self.prev_position = self.position;
+        self.prev_yaw = self.yaw;
+
         if self.is_dead {
             self.sync_animation();
             self.anim.update(dt, self.yaw);

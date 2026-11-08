@@ -430,6 +430,223 @@ pub fn euler_to_matrix(angles: [f32; 3]) -> [[f32; 3]; 3] {
     ]
 }
 
+/// Converts ZYX Euler angles $(R_x, R_y, R_z)$ in radians ($R = R_z \cdot R_y \cdot R_x$)
+/// into a unit quaternion $[x, y, z, w]$.
+#[inline]
+pub fn euler_to_quat(angles: [f32; 3]) -> [f32; 4] {
+    let [rx, ry, rz] = angles;
+    let (sx, cx) = (0.5 * rx).sin_cos();
+    let (sy, cy) = (0.5 * ry).sin_cos();
+    let (sz, cz) = (0.5 * rz).sin_cos();
+
+    quat_normalize([
+        sx * cy * cz - cx * sy * sz,
+        cx * sy * cz + sx * cy * sz,
+        cx * cy * sz - sx * sy * cz,
+        cx * cy * cz + sx * sy * sz,
+    ])
+}
+
+/// Evaluates a $3 \times 3$ rotation matrix from a unit quaternion $[x, y, z, w]$.
+#[inline]
+pub fn quat_to_matrix(q: [f32; 4]) -> [[f32; 3]; 3] {
+    let [x, y, z, w] = quat_normalize(q);
+    let xx = x * x;
+    let yy = y * y;
+    let zz = z * z;
+    let xy = x * y;
+    let xz = x * z;
+    let yz = y * z;
+    let wx = w * x;
+    let wy = w * y;
+    let wz = w * z;
+
+    [
+        [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+        [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+        [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+    ]
+}
+
+/// Extracts ZYX Euler angles $(R_x, R_y, R_z)$ in radians from a unit quaternion $[x, y, z, w]$.
+#[inline]
+pub fn quat_to_euler(q: [f32; 4]) -> [f32; 3] {
+    let m = quat_to_matrix(q);
+    let sin_y = (-m[2][0]).clamp(-1.0, 1.0);
+    if sin_y.abs() < 0.999_999 {
+        let ry = sin_y.asin();
+        let rx = m[2][1].atan2(m[2][2]);
+        let rz = m[1][0].atan2(m[0][0]);
+        [rx, ry, rz]
+    } else {
+        let ry = std::f32::consts::FRAC_PI_2.copysign(sin_y);
+        let rx = (-m[1][2]).atan2(m[1][1]);
+        [rx, ry, 0.0]
+    }
+}
+
+/// Normalizes a quaternion $[x, y, z, w]$ to unit length.
+#[inline]
+pub fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
+    let len_sq = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    if len_sq > 1e-12 {
+        let inv = 1.0 / len_sq.sqrt();
+        [q[0] * inv, q[1] * inv, q[2] * inv, q[3] * inv]
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    }
+}
+
+/// Hamilton product $a \otimes b$ for quaternions $[x, y, z, w]$.
+#[inline]
+pub fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
+}
+
+/// Conjugate (inverse for unit quaternions) $[-x, -y, -z, w]$.
+#[inline]
+pub fn quat_conjugate(q: [f32; 4]) -> [f32; 4] {
+    [-q[0], -q[1], -q[2], q[3]]
+}
+
+/// Ensures `target` lies on the same $S^3$ hemisphere as `reference` ($\text{dot} \ge 0$).
+#[inline]
+pub fn quat_align_hemisphere(reference: [f32; 4], target: [f32; 4]) -> [f32; 4] {
+    let dot = reference[0] * target[0]
+        + reference[1] * target[1]
+        + reference[2] * target[2]
+        + reference[3] * target[3];
+    if dot < 0.0 {
+        [-target[0], -target[1], -target[2], -target[3]]
+    } else {
+        target
+    }
+}
+
+/// Spherical Linear Interpolation (Slerp) along the shortest geodesic arc on $SO(3)$.
+#[inline]
+pub fn quat_slerp(qa: [f32; 4], qb: [f32; 4], alpha: f32) -> [f32; 4] {
+    let t = alpha.clamp(0.0, 1.0);
+    let qb = quat_align_hemisphere(qa, qb);
+    let dot = (qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3]).clamp(-1.0, 1.0);
+
+    if dot > 0.9995 {
+        let inv_t = 1.0 - t;
+        return quat_normalize([
+            qa[0] * inv_t + qb[0] * t,
+            qa[1] * inv_t + qb[1] * t,
+            qa[2] * inv_t + qb[2] * t,
+            qa[3] * inv_t + qb[3] * t,
+        ]);
+    }
+
+    let theta_0 = dot.acos();
+    let theta = theta_0 * t;
+    let sin_theta = theta.sin();
+    let sin_theta_0 = theta_0.sin();
+
+    let s0 = theta.cos() - dot * sin_theta / sin_theta_0;
+    let s1 = sin_theta / sin_theta_0;
+
+    quat_normalize([
+        qa[0] * s0 + qb[0] * s1,
+        qa[1] * s0 + qb[1] * s1,
+        qa[2] * s0 + qb[2] * s1,
+        qa[3] * s0 + qb[3] * s1,
+    ])
+}
+
+#[inline]
+fn quat_ln(q: [f32; 4]) -> [f32; 3] {
+    let v_len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2]).sqrt();
+    let w = q[3].clamp(-1.0, 1.0);
+    if v_len > 1e-6 {
+        let scale = v_len.atan2(w) / v_len;
+        [q[0] * scale, q[1] * scale, q[2] * scale]
+    } else {
+        [q[0], q[1], q[2]]
+    }
+}
+
+#[inline]
+fn quat_exp(v: [f32; 3]) -> [f32; 4] {
+    let theta = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if theta > 1e-6 {
+        let scale = theta.sin() / theta;
+        [v[0] * scale, v[1] * scale, v[2] * scale, theta.cos()]
+    } else {
+        quat_normalize([v[0], v[1], v[2], 1.0])
+    }
+}
+
+#[inline]
+fn quat_squad_tangent(q_prev: [f32; 4], q_curr: [f32; 4], q_next: [f32; 4]) -> [f32; 4] {
+    let q_prev = quat_align_hemisphere(q_curr, q_prev);
+    let q_next = quat_align_hemisphere(q_curr, q_next);
+    let inv_curr = quat_conjugate(q_curr);
+    let log_prev = quat_ln(quat_mul(inv_curr, q_prev));
+    let log_next = quat_ln(quat_mul(inv_curr, q_next));
+    let avg = [
+        -0.25 * (log_prev[0] + log_next[0]),
+        -0.25 * (log_prev[1] + log_next[1]),
+        -0.25 * (log_prev[2] + log_next[2]),
+    ];
+    quat_normalize(quat_mul(q_curr, quat_exp(avg)))
+}
+
+/// Spherical Cubic Hermite / Squad quaternion interpolation across 4 consecutive keyframes
+/// $(q_0, q_1, q_2, q_3)$ for parameter $\alpha \in [0, 1]$ between $q_1$ and $q_2$.
+#[inline]
+pub fn quat_hermite_slerp(
+    q0: [f32; 4],
+    q1: [f32; 4],
+    q2: [f32; 4],
+    q3: [f32; 4],
+    alpha: f32,
+) -> [f32; 4] {
+    let t = alpha.clamp(0.0, 1.0);
+    let q1 = quat_normalize(q1);
+    let q2 = quat_align_hemisphere(q1, quat_normalize(q2));
+    let q0 = quat_align_hemisphere(q1, quat_normalize(q0));
+    let q3 = quat_align_hemisphere(q2, quat_normalize(q3));
+
+    let s1 = quat_squad_tangent(q0, q1, q2);
+    let s2 = quat_squad_tangent(q1, q2, q3);
+
+    let slerp_q = quat_slerp(q1, q2, t);
+    let slerp_s = quat_slerp(s1, s2, t);
+    quat_slerp(slerp_q, slerp_s, 2.0 * t * (1.0 - t))
+}
+
+/// Cubic Catmull-Rom / Hermite spline interpolation for 3D bone translations.
+#[inline]
+pub fn vec3_hermite_catmull_rom(
+    p0: [f32; 3],
+    p1: [f32; 3],
+    p2: [f32; 3],
+    p3: [f32; 3],
+    alpha: f32,
+) -> [f32; 3] {
+    let t = alpha.clamp(0.0, 1.0);
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let mut out = [0.0; 3];
+    for k in 0..3 {
+        let m1 = 0.5 * (p2[k] - p0[k]);
+        let m2 = 0.5 * (p3[k] - p1[k]);
+        out[k] = (2.0 * t3 - 3.0 * t2 + 1.0) * p1[k]
+            + (t3 - 2.0 * t2 + t) * m1
+            + (-2.0 * t3 + 3.0 * t2) * p2[k]
+            + (t3 - t2) * m2;
+    }
+    out
+}
+
 /// Computes local parent-relative 4x4 bind transform matrices for all bones from initial bind matrices.
 ///
 /// If bone `i` is a root bone (`parents[i] == 255`), `local[i] = initial[i]`.
@@ -550,20 +767,49 @@ pub fn compute_skin_matrices_with_inv(
     skin
 }
 
-/// Linearly interpolates an angular value along the shortest arc on the circle $[-\pi, \pi]$.
+/// Interpolates two ZYX Euler rotation triplets $(R_x, R_y, R_z)$ along the shortest
+/// $SO(3)$ geodesic arc using unit quaternion Spherical Linear Interpolation (Slerp).
 #[inline]
-fn lerp_angle(a: f32, b: f32, alpha: f32) -> f32 {
-    let two_pi = std::f32::consts::TAU;
-    let mut diff = (b - a) % two_pi;
-    if diff > std::f32::consts::PI {
-        diff -= two_pi;
-    } else if diff < -std::f32::consts::PI {
-        diff += two_pi;
+pub fn slerp_euler_zyx(ra: [f32; 3], rb: [f32; 3], alpha: f32) -> [f32; 3] {
+    if alpha <= 0.0 {
+        return ra;
     }
-    a + diff * alpha
+    if alpha >= 1.0 {
+        return rb;
+    }
+    let qa = euler_to_quat(ra);
+    let qb = euler_to_quat(rb);
+    quat_to_euler(quat_slerp(qa, qb, alpha))
+}
+
+/// Interpolates four consecutive ZYX Euler rotation triplets $(r_0, r_1, r_2, r_3)$
+/// using $C^1$ Spherical Cubic Hermite / Squad quaternion interpolation for $\alpha \in [0, 1]$
+/// between $r_1$ and $r_2$.
+#[inline]
+pub fn hermite_slerp_euler_zyx(
+    r0: [f32; 3],
+    r1: [f32; 3],
+    r2: [f32; 3],
+    r3: [f32; 3],
+    alpha: f32,
+) -> [f32; 3] {
+    if alpha <= 0.0 {
+        return r1;
+    }
+    if alpha >= 1.0 {
+        return r2;
+    }
+    let q0 = euler_to_quat(r0);
+    let q1 = euler_to_quat(r1);
+    let q2 = euler_to_quat(r2);
+    let q3 = euler_to_quat(r3);
+    quat_to_euler(quat_hermite_slerp(q0, q1, q2, q3, alpha))
 }
 
 /// Zero-allocation variant of [`interpolate_frames`] writing into a pre-allocated [`AnimationFrame`] buffer.
+///
+/// Uses unit quaternion Slerp (`slerp_euler_zyx`) for all bone rotations to prevent gimbal lock
+/// and preserve constant angular velocity across 120–240 Hz+ sub-frame steps.
 pub fn interpolate_frames_into(
     frame_a: &AnimationFrame,
     frame_b: &AnimationFrame,
@@ -586,11 +832,7 @@ pub fn interpolate_frames_into(
         match (b_a, b_b) {
             (Some(a), Some(b)) => {
                 let rot = match (a.rotation, b.rotation) {
-                    (Some(ra), Some(rb)) => Some([
-                        lerp_angle(ra[0], rb[0], alpha),
-                        lerp_angle(ra[1], rb[1], alpha),
-                        lerp_angle(ra[2], rb[2], alpha),
-                    ]),
+                    (Some(ra), Some(rb)) => Some(slerp_euler_zyx(ra, rb, alpha)),
                     (Some(ra), None) => Some(ra),
                     (None, Some(rb)) => Some(rb),
                     (None, None) => None,
@@ -618,8 +860,83 @@ pub fn interpolate_frames_into(
     }
 }
 
+/// Zero-allocation 4-keyframe $C^1$ Spherical Cubic Hermite / Squad bone interpolation
+/// between `frame_1` and `frame_2` using neighboring tangent frames `frame_0` and `frame_3`.
+pub fn interpolate_frames_hermite_into(
+    frame_0: &AnimationFrame,
+    frame_1: &AnimationFrame,
+    frame_2: &AnimationFrame,
+    frame_3: &AnimationFrame,
+    alpha: f32,
+    out: &mut AnimationFrame,
+) {
+    let bone_count = frame_1.bones.len().max(frame_2.bones.len());
+    out.bones.clear();
+    if out.bones.capacity() < bone_count {
+        out.bones.reserve(bone_count - out.bones.capacity());
+    }
+
+    let alpha = alpha.clamp(0.0, 1.0);
+
+    for i in 0..bone_count {
+        let b0 = frame_0.bones.get(i).and_then(|x| x.as_ref());
+        let b1 = frame_1.bones.get(i).and_then(|x| x.as_ref());
+        let b2 = frame_2.bones.get(i).and_then(|x| x.as_ref());
+        let b3 = frame_3.bones.get(i).and_then(|x| x.as_ref());
+
+        match (b1, b2) {
+            (Some(a), Some(b)) => {
+                let rot = match (a.rotation, b.rotation) {
+                    (Some(r1), Some(r2)) => {
+                        let r0 = b0.and_then(|x| x.rotation).unwrap_or(r1);
+                        let r3 = b3.and_then(|x| x.rotation).unwrap_or(r2);
+                        Some(hermite_slerp_euler_zyx(r0, r1, r2, r3, alpha))
+                    }
+                    (Some(r1), None) => Some(r1),
+                    (None, Some(r2)) => Some(r2),
+                    (None, None) => None,
+                };
+                let trans = match (a.translation, b.translation) {
+                    (Some(t1), Some(t2)) => {
+                        let t0 = b0.and_then(|x| x.translation).unwrap_or(t1);
+                        let t3 = b3.and_then(|x| x.translation).unwrap_or(t2);
+                        Some(vec3_hermite_catmull_rom(t0, t1, t2, t3, alpha))
+                    }
+                    (Some(t1), None) => Some(t1),
+                    (None, Some(t2)) => Some(t2),
+                    (None, None) => None,
+                };
+                out.bones.push(Some(BoneTransform {
+                    rotation: rot,
+                    translation: trans,
+                    track_type: a.track_type,
+                }));
+            }
+            (Some(a), None) => out.bones.push(Some(a.clone())),
+            (None, Some(b)) => out.bones.push(Some(b.clone())),
+            (None, None) => out.bones.push(None),
+        }
+    }
+}
+
+/// Evaluates 4-keyframe $C^1$ Spherical Cubic Hermite / Squad interpolation between `frame_1` and `frame_2`.
+pub fn interpolate_frames_hermite(
+    frame_0: &AnimationFrame,
+    frame_1: &AnimationFrame,
+    frame_2: &AnimationFrame,
+    frame_3: &AnimationFrame,
+    alpha: f32,
+) -> AnimationFrame {
+    let bone_count = frame_1.bones.len().max(frame_2.bones.len());
+    let mut out = AnimationFrame {
+        bones: Vec::with_capacity(bone_count),
+    };
+    interpolate_frames_hermite_into(frame_0, frame_1, frame_2, frame_3, alpha, &mut out);
+    out
+}
+
 /// Blends `prev_frame` (weight `1.0 - alpha`) into `target` (weight `alpha`) in-place
-/// with zero heap allocations.
+/// with zero heap allocations using unit quaternion Slerp for rotations.
 pub fn blend_frame_in_place(prev_frame: &AnimationFrame, alpha: f32, target: &mut AnimationFrame) {
     let alpha = alpha.clamp(0.0, 1.0);
     let inv_alpha = 1.0 - alpha;
@@ -629,11 +946,7 @@ pub fn blend_frame_in_place(prev_frame: &AnimationFrame, alpha: f32, target: &mu
         *target_bone = match (b_a, b_b) {
             (Some(a), Some(b)) => {
                 let rot = match (a.rotation, b.rotation) {
-                    (Some(ra), Some(rb)) => Some([
-                        lerp_angle(ra[0], rb[0], alpha),
-                        lerp_angle(ra[1], rb[1], alpha),
-                        lerp_angle(ra[2], rb[2], alpha),
-                    ]),
+                    (Some(ra), Some(rb)) => Some(slerp_euler_zyx(ra, rb, alpha)),
                     (Some(ra), None) => Some(ra),
                     (None, Some(rb)) => Some(rb),
                     (None, None) => None,
@@ -661,10 +974,8 @@ pub fn blend_frame_in_place(prev_frame: &AnimationFrame, alpha: f32, target: &mu
     }
 }
 
-/// Linearly interpolates (LERP / SLERP equivalent for Euler tracks) between two animation frames.
-///
-/// Rotation tracks interpolate along the shortest arc on $[-\pi, \pi]$ to prevent sudden
-/// 180-degree angular flips when angles wrap around boundary coordinates.
+/// Interpolates between two animation frames using unit quaternion Slerp for rotations
+/// and linear interpolation for translations.
 pub fn interpolate_frames(
     frame_a: &AnimationFrame,
     frame_b: &AnimationFrame,

@@ -16,10 +16,13 @@ pub mod texture;
 
 pub use adx::{decode_adx, parse_adx_header, AdxHeader, DecodedAdx};
 pub use anm::{
-    compute_bind_locals, compute_skin_matrices, compute_skin_matrices_with_inv,
-    compute_skin_matrices_with_inv_into, euler_to_matrix, evaluate_pose, evaluate_pose_into,
-    interpolate_frames, mat4_inverse, mat4_mul, parse_anm, AnimationFile, AnimationFrame,
-    BoneTransform,
+    blend_frame_in_place, compute_bind_locals, compute_skin_matrices,
+    compute_skin_matrices_with_inv, compute_skin_matrices_with_inv_into, euler_to_matrix,
+    euler_to_quat, evaluate_pose, evaluate_pose_into, hermite_slerp_euler_zyx, interpolate_frames,
+    interpolate_frames_hermite, interpolate_frames_hermite_into, interpolate_frames_into,
+    mat4_inverse, mat4_mul, parse_anm, quat_align_hemisphere, quat_conjugate, quat_hermite_slerp,
+    quat_mul, quat_normalize, quat_slerp, quat_to_euler, quat_to_matrix, slerp_euler_zyx,
+    vec3_hermite_catmull_rom, AnimationFile, AnimationFrame, BoneTransform,
 };
 pub use bink::{
     active_subtitle_for_frame, decode_bink_audio_pcm, fmv_subtitles_for_movie,

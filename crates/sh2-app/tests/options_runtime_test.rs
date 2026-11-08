@@ -129,3 +129,39 @@ fn test_options_reset_to_defaults_and_discard() {
         sh2_core::config::BulletMultiplier::One
     );
 }
+
+#[test]
+fn test_sh2_56_high_refresh_framerate_cap_options_and_pacer() {
+    use sh2_core::config::FrameRateCap;
+    use sh2_core::FramePacer;
+
+    let mut menu = OptionsMenu::new(AppConfig::default());
+    assert_eq!(menu.active_tab, OptionsTab::Video);
+
+    // Row 3 in Video tab is Frame Rate Cap
+    menu.selected_index = 3;
+    let (label, val) = menu.item_display(3).unwrap();
+    assert_eq!(label, "Frame Rate Cap");
+    assert_eq!(val, "60 FPS (Authentic)");
+
+    // Cycle Right through 120 -> 144 -> 240 -> Uncapped -> 30 -> 60
+    let expected = [
+        (FrameRateCap::Fps120, "120 FPS (High Refresh)", Some(120)),
+        (FrameRateCap::Fps144, "144 FPS (High Refresh)", Some(144)),
+        (FrameRateCap::Fps240, "240 FPS (OLED Ultra)", Some(240)),
+        (FrameRateCap::Uncapped, "Uncapped (VRR)", None),
+        (FrameRateCap::Fps30, "30 FPS (PS2 Cutscene Rate)", Some(30)),
+        (FrameRateCap::Fps60, "60 FPS (Authentic)", Some(60)),
+    ];
+
+    let mut pacer = FramePacer::default();
+    for (cap, exp_label, exp_fps) in expected {
+        menu.adjust_value(1);
+        assert_eq!(menu.draft_config.video.framerate_cap, cap);
+        assert_eq!(menu.item_display(3).unwrap().1, exp_label);
+        assert_eq!(cap.target_fps(), exp_fps);
+
+        pacer.set_cap(cap);
+        assert_eq!(pacer.cap, cap);
+    }
+}

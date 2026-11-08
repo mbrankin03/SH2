@@ -402,37 +402,68 @@ impl BulletMultiplier {
     }
 }
 
-/// Frame rate cap mode.
+/// Frame rate cap mode supporting 30 Hz, 60 Hz, high-refresh OLED (120/144/240 Hz), and Uncapped VRR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FrameRateCap {
+    Fps30,
     #[default]
     Fps60,
-    Fps30,
+    Fps120,
+    Fps144,
+    Fps240,
     Uncapped,
 }
 
 impl FrameRateCap {
     pub fn label(&self) -> &'static str {
         match self {
+            Self::Fps30 => "30 FPS (PS2 Cutscene Rate)",
             Self::Fps60 => "60 FPS (Authentic)",
-            Self::Fps30 => "30 FPS (Half-Rate)",
-            Self::Uncapped => "Uncapped",
+            Self::Fps120 => "120 FPS (High Refresh)",
+            Self::Fps144 => "144 FPS (High Refresh)",
+            Self::Fps240 => "240 FPS (OLED Ultra)",
+            Self::Uncapped => "Uncapped (VRR)",
         }
+    }
+
+    /// Returns the numeric target frames per second, or `None` when uncapped.
+    pub fn target_fps(&self) -> Option<u32> {
+        match self {
+            Self::Fps30 => Some(30),
+            Self::Fps60 => Some(60),
+            Self::Fps120 => Some(120),
+            Self::Fps144 => Some(144),
+            Self::Fps240 => Some(240),
+            Self::Uncapped => None,
+        }
+    }
+
+    /// Returns the exact target frame interval duration, or `None` when uncapped.
+    pub fn target_frame_duration(&self) -> Option<std::time::Duration> {
+        self.target_fps().map(|fps| {
+            std::time::Duration::from_nanos((1_000_000_000u64 + (fps as u64 / 2)) / fps as u64)
+        })
     }
 
     pub fn next(&self) -> Self {
         match self {
-            Self::Fps60 => Self::Fps30,
-            Self::Fps30 => Self::Uncapped,
-            Self::Uncapped => Self::Fps60,
+            Self::Fps30 => Self::Fps60,
+            Self::Fps60 => Self::Fps120,
+            Self::Fps120 => Self::Fps144,
+            Self::Fps144 => Self::Fps240,
+            Self::Fps240 => Self::Uncapped,
+            Self::Uncapped => Self::Fps30,
         }
     }
 
     pub fn prev(&self) -> Self {
         match self {
-            Self::Fps60 => Self::Uncapped,
-            Self::Fps30 => Self::Fps60,
-            Self::Uncapped => Self::Fps30,
+            Self::Fps30 => Self::Uncapped,
+            Self::Fps60 => Self::Fps30,
+            Self::Fps120 => Self::Fps60,
+            Self::Fps144 => Self::Fps120,
+            Self::Fps240 => Self::Fps144,
+            Self::Uncapped => Self::Fps240,
         }
     }
 }
@@ -656,6 +687,27 @@ mod tests {
         cfg.audio.sfx_volume = 0.75;
         assert_eq!(cfg.video.grain_intensity, 80);
         assert_eq!(cfg.audio.sfx_volume, 0.75);
+
+        // Verify SH2-56 FrameRateCap cycle: 60 -> 120 -> 144 -> 240 -> Uncapped -> 30 -> 60
+        let cap0 = FrameRateCap::default();
+        assert_eq!(cap0, FrameRateCap::Fps60);
+        assert_eq!(cap0.target_fps(), Some(60));
+        let cap1 = cap0.next();
+        assert_eq!(cap1, FrameRateCap::Fps120);
+        assert_eq!(cap1.target_fps(), Some(120));
+        let cap2 = cap1.next();
+        assert_eq!(cap2, FrameRateCap::Fps144);
+        assert_eq!(cap2.target_fps(), Some(144));
+        let cap3 = cap2.next();
+        assert_eq!(cap3, FrameRateCap::Fps240);
+        assert_eq!(cap3.target_fps(), Some(240));
+        let cap4 = cap3.next();
+        assert_eq!(cap4, FrameRateCap::Uncapped);
+        assert_eq!(cap4.target_fps(), None);
+        let cap5 = cap4.next();
+        assert_eq!(cap5, FrameRateCap::Fps30);
+        assert_eq!(cap5.target_fps(), Some(30));
+        assert_eq!(cap5.next(), FrameRateCap::Fps60);
     }
 
     #[test]

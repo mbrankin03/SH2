@@ -14,7 +14,9 @@ use crate::locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
 };
 use crate::scenario::{ScenarioKind, ScenarioState};
-use crate::timing::TimingConstants;
+use crate::timing::{
+    lerp_angle_shortest, FlashlightSweepState, RowboatController, TimingConstants,
+};
 
 /// Unified Silent Hill 2 simulation core.
 pub struct SimulationCore {
@@ -24,6 +26,14 @@ pub struct SimulationCore {
     pub camera: Ps2CameraController,
     /// Active scenario state (James / Maria).
     pub scenario: ScenarioState,
+    /// Previous 60 Hz tick player world position for sub-frame rendering interpolation.
+    pub prev_player_position: Vec3,
+    /// Previous 60 Hz tick player yaw angle in radians for sub-frame rendering interpolation.
+    pub prev_player_yaw: f32,
+    /// Deterministic 60 Hz pocket flashlight sweep and toggle state.
+    pub flashlight_sweep: FlashlightSweepState,
+    /// Deterministic 60 Hz Toluca Lake rowboat state.
+    pub rowboat: RowboatController,
     /// Controller and gamepad manager.
     pub input: InputManager,
     /// Collision detection and response environment.
@@ -56,8 +66,10 @@ impl SimulationCore {
     /// Create a new simulation core configured for 60 Hz fixed logic rate.
     pub fn new(scenario_kind: ScenarioKind) -> Self {
         let scenario = ScenarioState::new(scenario_kind);
+        let init_pos = scenario.player_position;
+        let init_yaw = scenario.player_yaw;
         let mut camera = Ps2CameraController::new();
-        camera.reset_to_player(scenario.player_position, scenario.player_yaw);
+        camera.reset_to_player(init_pos, init_yaw);
 
         let locomotion_clips = match scenario.character {
             crate::scenario::PlayableCharacter::James => CharacterLocomotionClips::JAMES,
@@ -68,6 +80,10 @@ impl SimulationCore {
             clock: EngineClock::new(60),
             camera,
             scenario,
+            prev_player_position: init_pos,
+            prev_player_yaw: init_yaw,
+            flashlight_sweep: FlashlightSweepState::new(init_pos, init_yaw),
+            rowboat: RowboatController::new(init_pos, init_yaw),
             input: InputManager::new(Default::default()),
             collision: CollisionWorld::new(),
             collision_config: CollisionConfig::default(),
@@ -101,8 +117,19 @@ impl SimulationCore {
     /// Change or restart game scenario.
     pub fn select_scenario(&mut self, scenario_kind: ScenarioKind) {
         self.scenario = ScenarioState::new(scenario_kind);
+        self.snap_player_transform(self.scenario.player_position, self.scenario.player_yaw);
         self.camera
             .reset_to_player(self.scenario.player_position, self.scenario.player_yaw);
+    }
+
+    /// Immediately teleports the player to `position` and `yaw`, resetting previous-tick
+    /// snapshots and flashlight sweep state so sub-frame interpolation does not smear across room cuts.
+    pub fn snap_player_transform(&mut self, position: Vec3, yaw: f32) {
+        self.scenario.player_position = position;
+        self.scenario.player_yaw = yaw;
+        self.prev_player_position = position;
+        self.prev_player_yaw = yaw;
+        self.flashlight_sweep.reset(position, yaw);
     }
 
     /// Advance real delta time and consume all ready 60 Hz simulation ticks.
@@ -123,6 +150,8 @@ impl SimulationCore {
     /// Execute a single fixed 60 Hz simulation tick.
     pub fn tick(&mut self) {
         self.tick_counter += 1;
+        self.prev_player_position = self.scenario.player_position;
+        self.prev_player_yaw = self.scenario.player_yaw;
 
         // 1. Poll and update gamepad state
         self.input.update();
@@ -211,6 +240,14 @@ impl SimulationCore {
         // Fixed tick dt is 1/60s (approx 16.666 ms)
         self.animation.update(Duration::from_nanos(16_666_667));
 
+        // 3c. Step pocket flashlight sweep at 60 Hz
+        self.flashlight_sweep.tick(
+            self.scenario.player_position,
+            self.scenario.player_yaw,
+            false,
+            &self.timing,
+        );
+
         // 4. Update authentic PS2 camera with raycast wall clamping (clCheckHitEyes)
         self.camera.tick(
             self.scenario.player_position,
@@ -243,6 +280,30 @@ impl SimulationCore {
     #[inline]
     pub fn interpolation_alpha(&self) -> f32 {
         self.clock.alpha()
+    }
+
+    /// Evaluates the sub-frame interpolated player `(position, yaw)` between the previous and
+    /// current 60 Hz simulation ticks for 120–240 Hz+ rendering.
+    #[inline]
+    pub fn interpolated_player_pose(&self, alpha: f32) -> (Vec3, f32) {
+        let t = alpha.clamp(0.0, 1.0);
+        let pos = self
+            .prev_player_position
+            .lerp(self.scenario.player_position, t);
+        let yaw = lerp_angle_shortest(self.prev_player_yaw, self.scenario.player_yaw, t);
+        (pos, yaw)
+    }
+
+    /// Evaluates the sub-frame Slerp-interpolated pocket flashlight `(origin, unit_direction)`.
+    #[inline]
+    pub fn interpolated_flashlight_ray(&self, alpha: f32) -> (Vec3, Vec3) {
+        self.flashlight_sweep.interpolated_ray(alpha)
+    }
+
+    /// Evaluates deterministic fog flow time in seconds from elapsed 60 Hz ticks and sub-frame `alpha`.
+    #[inline]
+    pub fn deterministic_fog_time(&self, alpha: f32) -> f32 {
+        self.timing.deterministic_fog_time(self.tick_counter, alpha)
     }
 }
 

@@ -23,7 +23,7 @@ pub use animation::{
     JamesBasicClips, JamesStageClips, MariaLocomotionClips,
 };
 pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
-pub use clock::EngineClock;
+pub use clock::{EngineClock, FramePacer, DEFAULT_MAX_ACCUMULATED};
 pub use combat::{
     AttackSpec, CombatArena, CombatController, CombatHitbox, CombatMode, CombatTargetEnemy,
     WeaponGrip, ATK_HANDGUN, ATK_HUNTING_RIFLE, ATK_KICKS, ATK_PIPE_COMBO, ATK_PIPE_LUNGE,
@@ -46,4 +46,4 @@ pub use locomotion::{
 pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
 pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};
 pub use simulation::SimulationCore;
-pub use timing::TimingConstants;
+pub use timing::{lerp_angle_shortest, FlashlightSweepState, RowboatController, TimingConstants};

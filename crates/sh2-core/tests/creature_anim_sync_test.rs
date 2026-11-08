@@ -333,6 +333,71 @@ fn test_sh2_34_npc_and_eddie_boss_retail_anm_conformance() {
 }
 
 #[test]
+fn test_sh2_26_james_and_maria_locomotion_anm_conformance() {
+    if !Path::new(RETAIL_CHR_ROOT).exists() {
+        println!("Skipping SH2-26 retail anm test: assets not present");
+        return;
+    }
+
+    let jms_mdl =
+        parse_mdl(&fs::read(format!("{RETAIL_CHR_ROOT}/jms/lll_jms.mdl")).expect("lll_jms.mdl"))
+            .expect("lll_jms mdl parse");
+    let jms_anm = parse_anm(
+        &fs::read(format!("{RETAIL_CHR_ROOT}/jms/jms_basic1.anm")).expect("jms_basic1.anm"),
+        jms_mdl.bone_count,
+        &jms_mdl.parents,
+    )
+    .expect("jms_basic1 anm parse");
+
+    let jms_frames = jms_anm.frames.len() as u32;
+    let clips = sh2_core::CharacterLocomotionClips::JAMES;
+    for clip in [
+        clips.idle,
+        clips.relax,
+        clips.alert,
+        clips.tired,
+        clips.turn_left,
+        clips.turn_right,
+        clips.walk,
+        clips.back,
+        clips.strafe_left_walk,
+        clips.strafe_right_walk,
+        clips.run,
+        clips.run2,
+        clips.run3,
+        clips.strafe_left_run,
+        clips.strafe_right_run,
+        clips.quick_turn_left,
+        clips.quick_turn_right,
+    ] {
+        assert!(
+            clip.end_frame < jms_frames,
+            "James clip {:?} exceeds jms_basic1.anm frame count {}",
+            clip,
+            jms_frames
+        );
+    }
+
+    // Playable Maria (Born From a Wish: chr2/mar/lxx_mar.mdl & xmar_wpnone.anm)
+    let chr2_mar_dir = "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/chr2/mar";
+    if Path::new(chr2_mar_dir).exists() {
+        let xmar_mdl =
+            parse_mdl(&fs::read(format!("{chr2_mar_dir}/lxx_mar.mdl")).expect("lxx_mar.mdl"))
+                .expect("lxx_mar mdl parse");
+        let xmar_anm = parse_anm(
+            &fs::read(format!("{chr2_mar_dir}/xmar_wpnone.anm")).expect("xmar_wpnone.anm"),
+            xmar_mdl.bone_count,
+            &xmar_mdl.parents,
+        )
+        .expect("xmar_wpnone anm parse");
+        let xmar_frames = xmar_anm.frames.len() as u32;
+        let m_clips = sh2_core::CharacterLocomotionClips::MARIA;
+        assert!(m_clips.strafe_left_run.end_frame < xmar_frames);
+        assert!(m_clips.run3.end_frame < xmar_frames);
+    }
+}
+
+#[test]
 fn test_sh2_34_npc_and_eddie_boss_state_synchronization() {
     // 1. Angela state transitions & root motion
     let mut agl = CreatureAnimationController::new_angela();

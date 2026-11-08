@@ -19,8 +19,9 @@ pub mod types;
 
 // Re-exports for convenience
 pub use animation::{
-    AnimationClip, AnimationStateKind, CharacterAnimationController, CharacterLocomotionClips,
-    JamesBasicClips, JamesStageClips, MariaLocomotionClips,
+    AnimationClip, AnimationStateKind, BlendMode, CharacterAnimationController,
+    CharacterLocomotionClips, JamesBasicClips, JamesStageClips, LocomotionAnimCommand,
+    LocomotionAnimationSync, MariaLocomotionClips,
 };
 pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
 pub use clock::{EngineClock, FramePacer, DEFAULT_MAX_ACCUMULATED};

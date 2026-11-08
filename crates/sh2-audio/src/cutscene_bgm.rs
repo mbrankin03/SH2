@@ -381,7 +381,7 @@ fn resolve_case_insensitive_in_dir(base_dir: &Path, rel_path: &str) -> Option<Pa
 }
 
 /// Resolves a BGM `.adx` or `.aix` stream path according to the requested [`AudioPackSource`]
-/// (`EnhancedLossless` prefers `sh2e/sound/adx` at 48 kHz; `OriginalPs2` prefers `data/sound/adx`).
+/// (`Auto` / `Sh2eeLossless` prefers `sh2e/sound/adx` at 48 kHz; `Ps2Original` prefers `data/sound/adx`).
 pub fn resolve_bgm_stream_path_for_source(
     game_root: impl AsRef<Path>,
     rel_bgm_path: &str,
@@ -393,8 +393,8 @@ pub fn resolve_bgm_stream_path_for_source(
     let direct_dir = root.join("sound").join("adx");
 
     let search_dirs = match source {
-        AudioPackSource::EnhancedLossless => [ee_dir, data_dir, direct_dir],
-        AudioPackSource::OriginalPs2 => [data_dir, ee_dir, direct_dir],
+        AudioPackSource::Auto | AudioPackSource::Sh2eeLossless => [ee_dir, data_dir, direct_dir],
+        AudioPackSource::Ps2Original => [data_dir, ee_dir, direct_dir],
     };
 
     for dir in &search_dirs {

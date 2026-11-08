@@ -499,36 +499,142 @@ impl Default for VideoOptions {
     }
 }
 
-/// Audio source pack preference for background music (`.adx` / `.aix`) and sound effects.
+/// Audio pack preference for background music (`.adx` / `.aix`) and sound effects (`sddata.bin` / `extra/`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum AudioPackSource {
-    /// Silent Hill 2: Enhanced Edition 48 kHz Lossless Audio Pack (`sh2e/sound/adx/`), falling back to retail (`data/sound/adx/`).
+pub enum AudioPackPreference {
+    /// Automatically select SH2:EE 48 kHz Lossless if present, otherwise Original PS2/PC.
     #[default]
-    EnhancedLossless,
-    /// Original PS2 / Retail PC 22.05 / 24 / 44.1 kHz Audio Pack (`data/sound/adx/`).
-    OriginalPs2,
+    Auto,
+    /// Silent Hill 2: Enhanced Edition 48 kHz Lossless Audio Pack (`sh2e/sound/`), falling back to retail (`data/sound/`).
+    #[serde(alias = "EnhancedLossless")]
+    Sh2eeLossless,
+    /// Original PS2 / Retail PC 22.05 / 24 / 44.1 kHz Audio Pack (`data/sound/`).
+    #[serde(alias = "OriginalPs2")]
+    Ps2Original,
 }
 
-impl AudioPackSource {
+impl AudioPackPreference {
+    /// Backwards-compatible constant alias for `Self::Sh2eeLossless`.
+    #[allow(non_upper_case_globals)]
+    pub const EnhancedLossless: Self = Self::Sh2eeLossless;
+
+    /// Backwards-compatible constant alias for `Self::Ps2Original`.
+    #[allow(non_upper_case_globals)]
+    pub const OriginalPs2: Self = Self::Ps2Original;
+
     /// User-facing label.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::EnhancedLossless => "SH2:EE Lossless (48 kHz)",
-            Self::OriginalPs2 => "Original PS2 / PC (24/44.1 kHz)",
+            Self::Auto => "Auto (Prefer SH2:EE Lossless)",
+            Self::Sh2eeLossless => "SH2:EE Lossless (48 kHz)",
+            Self::Ps2Original => "Original PS2 / PC (24/44.1 kHz)",
         }
     }
 
-    /// Cycle to next audio pack source.
+    /// Cycle to next audio pack preference (`Auto -> Sh2eeLossless -> Ps2Original -> Auto`).
     pub fn next(&self) -> Self {
         match self {
-            Self::EnhancedLossless => Self::OriginalPs2,
-            Self::OriginalPs2 => Self::EnhancedLossless,
+            Self::Auto => Self::Sh2eeLossless,
+            Self::Sh2eeLossless => Self::Ps2Original,
+            Self::Ps2Original => Self::Auto,
         }
     }
 
-    /// Cycle to previous audio pack source.
+    /// Cycle to previous audio pack preference (`Auto -> Ps2Original -> Sh2eeLossless -> Auto`).
     pub fn prev(&self) -> Self {
-        self.next()
+        match self {
+            Self::Auto => Self::Ps2Original,
+            Self::Sh2eeLossless => Self::Auto,
+            Self::Ps2Original => Self::Sh2eeLossless,
+        }
+    }
+
+    /// Toggles directly between `Sh2eeLossless` and `Ps2Original` (resolving `Auto` against `status` first).
+    pub fn toggle_concrete(&self, status: &AudioPackDetectionStatus) -> Self {
+        match status.resolve_source(*self) {
+            Self::Sh2eeLossless => Self::Ps2Original,
+            _ => Self::Sh2eeLossless,
+        }
+    }
+}
+
+/// Type alias preserving compatibility with existing `AudioPackSource` consumers (`SH2-60`).
+pub type AudioPackSource = AudioPackPreference;
+
+/// Filesystem detection summary for SH2:EE Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) audio packs (`SH2-59`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioPackDetectionStatus {
+    /// `true` when `sh2e/sound/adx/` or `sh2e/sound/sddata.bin` is detected on disk.
+    pub sh2ee_lossless_present: bool,
+    /// `true` when `data/sound/adx/` or `data/sound/sddata.bin` is detected on disk.
+    pub ps2_original_present: bool,
+    /// `true` when `sh2e/sound/extra/` is detected on disk.
+    pub sh2ee_extra_present: bool,
+}
+
+impl Default for AudioPackDetectionStatus {
+    fn default() -> Self {
+        Self {
+            sh2ee_lossless_present: true,
+            ps2_original_present: true,
+            sh2ee_extra_present: true,
+        }
+    }
+}
+
+impl AudioPackDetectionStatus {
+    /// Scans the given `game_root` directory (containing `sh2e/` and/or `data/`) for installed audio packs.
+    pub fn detect_from_root<P: AsRef<Path>>(game_root: P) -> Self {
+        let root = game_root.as_ref();
+        let sh2e_sound = root.join("sh2e").join("sound");
+        let data_sound = root.join("data").join("sound");
+
+        let sh2ee_lossless_present =
+            sh2e_sound.join("adx").is_dir() || sh2e_sound.join("sddata.bin").is_file();
+        let ps2_original_present =
+            data_sound.join("adx").is_dir() || data_sound.join("sddata.bin").is_file();
+        let sh2ee_extra_present = sh2e_sound.join("extra").is_dir();
+
+        Self {
+            sh2ee_lossless_present,
+            ps2_original_present,
+            sh2ee_extra_present,
+        }
+    }
+
+    /// Returns `true` when both SH2:EE Lossless and Original PS2/PC audio packs are installed.
+    pub fn both_detected(&self) -> bool {
+        self.sh2ee_lossless_present && self.ps2_original_present
+    }
+
+    /// Resolves a user [`AudioPackPreference`] (`Auto`, `Sh2eeLossless`, `Ps2Original`) into a concrete
+    /// active source (`Sh2eeLossless` or `Ps2Original`) based on detected filesystem assets:
+    /// - If only SH2:EE is present: returns `Sh2eeLossless`.
+    /// - If only PS2/PC is present: returns `Ps2Original`.
+    /// - If both (or neither) are present:
+    ///   - `Auto` or `Sh2eeLossless` -> `Sh2eeLossless`
+    ///   - `Ps2Original` -> `Ps2Original`
+    pub fn resolve_source(&self, preference: AudioPackPreference) -> AudioPackPreference {
+        match (self.sh2ee_lossless_present, self.ps2_original_present) {
+            (true, false) => AudioPackPreference::Sh2eeLossless,
+            (false, true) => AudioPackPreference::Ps2Original,
+            _ => match preference {
+                AudioPackPreference::Auto | AudioPackPreference::Sh2eeLossless => {
+                    AudioPackPreference::Sh2eeLossless
+                }
+                AudioPackPreference::Ps2Original => AudioPackPreference::Ps2Original,
+            },
+        }
+    }
+
+    /// User-facing status description for the Options Menu and HUD.
+    pub fn status_label(&self) -> &'static str {
+        match (self.sh2ee_lossless_present, self.ps2_original_present) {
+            (true, true) => "Dual Packs Detected (SH2:EE + PS2)",
+            (true, false) => "SH2:EE Lossless Only",
+            (false, true) => "Original PS2 / PC Only",
+            (false, false) => "No Audio Packs Detected",
+        }
     }
 }
 
@@ -549,9 +655,9 @@ pub struct AudioOptions {
     pub selected_output_device: Option<String>,
     /// Mute game audio when the window loses focus.
     pub mute_in_background: bool,
-    /// Preferred BGM & SFX audio asset source pack (SH2:EE 48 kHz Lossless vs Original PS2/PC).
-    #[serde(default)]
-    pub audio_pack_source: AudioPackSource,
+    /// Preferred BGM & SFX audio asset source pack (`Auto`, `Sh2eeLossless`, `Ps2Original`).
+    #[serde(default, alias = "audio_pack_preference")]
+    pub audio_pack_source: AudioPackPreference,
 }
 
 impl Default for AudioOptions {
@@ -745,6 +851,62 @@ mod tests {
         assert_eq!(cap5, FrameRateCap::Fps30);
         assert_eq!(cap5.target_fps(), Some(30));
         assert_eq!(cap5.next(), FrameRateCap::Fps60);
+
+        // Verify SH2-59 AudioPackPreference cycle: Auto -> Sh2eeLossless -> Ps2Original -> Auto
+        let ap0 = AudioPackPreference::default();
+        assert_eq!(ap0, AudioPackPreference::Auto);
+        let ap1 = ap0.next();
+        assert_eq!(ap1, AudioPackPreference::Sh2eeLossless);
+        let ap2 = ap1.next();
+        assert_eq!(ap2, AudioPackPreference::Ps2Original);
+        assert_eq!(ap2.next(), AudioPackPreference::Auto);
+        assert_eq!(ap0.prev(), AudioPackPreference::Ps2Original);
+
+        // Verify AudioPackDetectionStatus resolution logic
+        let both = AudioPackDetectionStatus {
+            sh2ee_lossless_present: true,
+            ps2_original_present: true,
+            sh2ee_extra_present: true,
+        };
+        assert!(both.both_detected());
+        assert_eq!(
+            both.resolve_source(AudioPackPreference::Auto),
+            AudioPackPreference::Sh2eeLossless
+        );
+        assert_eq!(
+            both.resolve_source(AudioPackPreference::Ps2Original),
+            AudioPackPreference::Ps2Original
+        );
+
+        let only_ps2 = AudioPackDetectionStatus {
+            sh2ee_lossless_present: false,
+            ps2_original_present: true,
+            sh2ee_extra_present: false,
+        };
+        assert!(!only_ps2.both_detected());
+        assert_eq!(
+            only_ps2.resolve_source(AudioPackPreference::Auto),
+            AudioPackPreference::Ps2Original
+        );
+        assert_eq!(
+            only_ps2.resolve_source(AudioPackPreference::Sh2eeLossless),
+            AudioPackPreference::Ps2Original
+        );
+
+        let only_ee = AudioPackDetectionStatus {
+            sh2ee_lossless_present: true,
+            ps2_original_present: false,
+            sh2ee_extra_present: true,
+        };
+        assert!(!only_ee.both_detected());
+        assert_eq!(
+            only_ee.resolve_source(AudioPackPreference::Auto),
+            AudioPackPreference::Sh2eeLossless
+        );
+        assert_eq!(
+            only_ee.resolve_source(AudioPackPreference::Ps2Original),
+            AudioPackPreference::Sh2eeLossless
+        );
     }
 
     #[test]

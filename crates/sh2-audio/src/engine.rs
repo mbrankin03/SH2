@@ -505,7 +505,7 @@ impl AudioEngine {
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
 
-        let frames = wav_entry_to_frames(wav);
+        let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
         let mut settings = StaticSoundSettings::new()
             .output_destination(sfx_track)
             .volume(Volume::Amplitude(
@@ -514,10 +514,12 @@ impl AudioEngine {
 
         if wav.loops {
             settings = settings.loop_region(Region {
-                start: PlaybackPosition::Seconds(wav.loop_start as f64 / wav.sample_rate as f64),
+                start: PlaybackPosition::Seconds(
+                    wav.loop_start as f64 / wav.sample_rate.max(1) as f64,
+                ),
                 end: if wav.loop_end > 0 {
                     EndPosition::Custom(PlaybackPosition::Seconds(
-                        wav.loop_end as f64 / wav.sample_rate as f64,
+                        wav.loop_end as f64 / wav.sample_rate.max(1) as f64,
                     ))
                 } else {
                     EndPosition::EndOfAudio
@@ -526,7 +528,7 @@ impl AudioEngine {
         }
 
         let sound_data = StaticSoundData {
-            sample_rate: wav.sample_rate,
+            sample_rate,
             frames: Arc::from(frames),
             settings,
             slice: None,
@@ -577,7 +579,7 @@ impl AudioEngine {
             )
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        let frames = wav_entry_to_frames(wav);
+        let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
         let mut settings = StaticSoundSettings::new()
             .output_destination(&emitter)
             .volume(Volume::Amplitude(
@@ -586,10 +588,12 @@ impl AudioEngine {
 
         if wav.loops {
             settings = settings.loop_region(Region {
-                start: PlaybackPosition::Seconds(wav.loop_start as f64 / wav.sample_rate as f64),
+                start: PlaybackPosition::Seconds(
+                    wav.loop_start as f64 / wav.sample_rate.max(1) as f64,
+                ),
                 end: if wav.loop_end > 0 {
                     EndPosition::Custom(PlaybackPosition::Seconds(
-                        wav.loop_end as f64 / wav.sample_rate as f64,
+                        wav.loop_end as f64 / wav.sample_rate.max(1) as f64,
                     ))
                 } else {
                     EndPosition::EndOfAudio
@@ -598,7 +602,7 @@ impl AudioEngine {
         }
 
         let sound_data = StaticSoundData {
-            sample_rate: wav.sample_rate,
+            sample_rate,
             frames: Arc::from(frames),
             settings,
             slice: None,
@@ -625,7 +629,7 @@ impl AudioEngine {
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
 
-        let frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
+        let (sample_rate, frames) = adx_to_frames_48k(adx);
         let mut settings = StaticSoundSettings::new()
             .output_destination(bgm_track)
             .volume(Volume::Amplitude(
@@ -638,8 +642,9 @@ impl AudioEngine {
             }));
 
         if adx.header.has_loop {
-            let start_sec = adx.header.loop_start_sample as f64 / adx.header.sample_rate as f64;
-            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate as f64;
+            let start_sec =
+                adx.header.loop_start_sample as f64 / adx.header.sample_rate.max(1) as f64;
+            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate.max(1) as f64;
             settings = settings.loop_region(Region {
                 start: PlaybackPosition::Seconds(start_sec),
                 end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
@@ -647,7 +652,7 @@ impl AudioEngine {
         }
 
         let sound_data = StaticSoundData {
-            sample_rate: adx.header.sample_rate,
+            sample_rate,
             frames: Arc::from(frames),
             settings,
             slice: None,
@@ -678,7 +683,7 @@ impl AudioEngine {
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
 
-        let frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
+        let (sample_rate, frames) = adx_to_frames_48k(adx);
         let target_vol = (master_volume_factor * self.bgm_volume * self.master_volume) as f64;
         let mut settings = StaticSoundSettings::new().output_destination(bgm_track);
 
@@ -689,8 +694,9 @@ impl AudioEngine {
         }
 
         if adx.header.has_loop {
-            let start_sec = adx.header.loop_start_sample as f64 / adx.header.sample_rate as f64;
-            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate as f64;
+            let start_sec =
+                adx.header.loop_start_sample as f64 / adx.header.sample_rate.max(1) as f64;
+            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate.max(1) as f64;
             settings = settings.loop_region(Region {
                 start: PlaybackPosition::Seconds(start_sec),
                 end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
@@ -698,7 +704,7 @@ impl AudioEngine {
         }
 
         let sound_data = StaticSoundData {
-            sample_rate: adx.header.sample_rate,
+            sample_rate,
             frames: Arc::from(frames),
             settings,
             slice: None,
@@ -749,11 +755,7 @@ impl AudioEngine {
 
         let mut handles = Vec::with_capacity(layers.len());
         for (idx, layer) in layers.iter().enumerate() {
-            let frames: Vec<Frame> = layer
-                .frames
-                .iter()
-                .map(|&(l, r)| Frame::new(l, r))
-                .collect();
+            let (sample_rate, frames) = adx_to_frames_48k(layer);
             let gain = initial_gains.get(idx).copied().unwrap_or(0.0).max(0.0);
             let mut settings = StaticSoundSettings::new()
                 .output_destination(bgm_track)
@@ -778,7 +780,7 @@ impl AudioEngine {
             }
 
             let sound_data = StaticSoundData {
-                sample_rate: layer.header.sample_rate,
+                sample_rate,
                 frames: Arc::from(frames),
                 settings,
                 slice: None,
@@ -956,11 +958,7 @@ impl AudioEngine {
             .voice_track
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No voice track".into()))?;
-        let frames: Vec<Frame> = voice_adx
-            .frames
-            .iter()
-            .map(|&(l, r)| Frame::new(l, r))
-            .collect();
+        let (play_rate, frames) = adx_to_frames_48k(voice_adx);
         let total_samples = voice_adx.frames.len();
         let duration_secs = total_samples as f64 / voice_adx.header.sample_rate as f64;
         let total_duration = Duration::from_secs_f64(duration_secs);
@@ -972,7 +970,7 @@ impl AudioEngine {
             ));
 
         let sound_data = StaticSoundData {
-            sample_rate: voice_adx.header.sample_rate,
+            sample_rate: play_rate,
             frames: Arc::from(frames),
             settings,
             slice: None,
@@ -1326,4 +1324,122 @@ fn wav_entry_to_frames(wav: &WavEntry) -> Vec<Frame> {
     }
 
     frames
+}
+
+/// Converts a `WavEntry` into Kira `Frame` samples and upsamples low-sample-rate
+/// original PS2/PC SFX (`< 44,100 Hz`, typically `13,000–16,000 Hz`) to `48,000 Hz`
+/// using 4-point Catmull-Rom cubic interpolation and a 2-stage Butterworth low-pass
+/// reconstruction filter to eliminate ultrasonic stair-step aliasing and harshness.
+pub fn wav_entry_to_frames_48k(wav: &WavEntry) -> (u32, Vec<Frame>) {
+    let raw_frames = wav_entry_to_frames(wav);
+    let src_rate = wav.sample_rate.max(8000);
+    // Original PC/PS2 `data/sound/sddata.bin` SFX are mastered ~3.5 dB hotter than `sh2e/sound/sddata.bin`
+    upsample_and_warm_filter_48k(raw_frames, src_rate, 0.65)
+}
+
+/// Converts a `DecodedAdx` stream into Kira `Frame` samples and upsamples low-sample-rate
+/// original PS2/PC ADX/AIX streams (`< 44,100 Hz`, typically `22,050–24,000 Hz`) to `48,000 Hz`
+/// with anti-imaging reconstruction filtering and level matching.
+pub fn adx_to_frames_48k(adx: &DecodedAdx) -> (u32, Vec<Frame>) {
+    let raw_frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
+    let src_rate = adx.header.sample_rate.max(8000);
+    upsample_and_warm_filter_48k(raw_frames, src_rate, 0.78)
+}
+
+/// Upsamples low-rate (`< 44,100 Hz`) audio buffers to `48,000 Hz` using 4-point Catmull-Rom
+/// cubic spline interpolation followed by a 2-stage cascaded 2nd-order Butterworth low-pass
+/// filter (`24 dB/oct` roll-off below Nyquist) to emulate the PS2 SPU2 Gaussian DAC and remove
+/// high-frequency linear interpolation imaging ("tinny" metallic harshness).
+fn upsample_and_warm_filter_48k(
+    frames: Vec<Frame>,
+    src_rate: u32,
+    gain_trim: f32,
+) -> (u32, Vec<Frame>) {
+    const TARGET_RATE: u32 = 48_000;
+    if src_rate >= 44_100 || frames.len() < 4 {
+        return (src_rate, frames);
+    }
+
+    let in_len = frames.len();
+    let ratio = src_rate as f64 / TARGET_RATE as f64;
+    let out_len = ((in_len as f64) / ratio).ceil() as usize;
+    let mut upsampled = Vec::with_capacity(out_len);
+
+    // 1. 4-point Catmull-Rom cubic interpolation to 48,000 Hz
+    for i in 0..out_len {
+        let src_pos = i as f64 * ratio;
+        let idx = src_pos.floor() as isize;
+        let t = (src_pos - idx as f64) as f32;
+
+        let p0 = frames[(idx - 1).clamp(0, in_len as isize - 1) as usize];
+        let p1 = frames[idx.clamp(0, in_len as isize - 1) as usize];
+        let p2 = frames[(idx + 1).clamp(0, in_len as isize - 1) as usize];
+        let p3 = frames[(idx + 2).clamp(0, in_len as isize - 1) as usize];
+
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let interp = |y0: f32, y1: f32, y2: f32, y3: f32| -> f32 {
+            0.5 * ((2.0 * y1)
+                + (-y0 + y2) * t
+                + (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2
+                + (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3)
+        };
+
+        let l = interp(p0.left, p1.left, p2.left, p3.left) * gain_trim;
+        let r = interp(p0.right, p1.right, p2.right, p3.right) * gain_trim;
+        upsampled.push(Frame::new(l, r));
+    }
+
+    // 2. 2-stage cascaded Butterworth low-pass reconstruction filter at 40% of source rate
+    // (clamped to 3,200..6,200 Hz) to strip ultrasonic stair-step images and ADPCM quantization fizz.
+    let cutoff_hz = (src_rate as f32 * 0.40).clamp(3200.0, 6200.0);
+    for _stage in 0..2 {
+        apply_stereo_lowpass_biquad(&mut upsampled, TARGET_RATE as f32, cutoff_hz, 0.70710677);
+    }
+
+    (TARGET_RATE, upsampled)
+}
+
+/// Applies an in-place 2nd-order Butterworth low-pass biquad filter to stereo `Frame` samples.
+fn apply_stereo_lowpass_biquad(frames: &mut [Frame], fs: f32, fc: f32, q: f32) {
+    let omega = 2.0 * std::f32::consts::PI * (fc / fs).clamp(0.001, 0.49);
+    let sin_w = omega.sin();
+    let cos_w = omega.cos();
+    let alpha = sin_w / (2.0 * q);
+
+    let b0 = (1.0 - cos_w) * 0.5;
+    let b1 = 1.0 - cos_w;
+    let b2 = (1.0 - cos_w) * 0.5;
+    let a0 = 1.0 + alpha;
+    let a1 = -2.0 * cos_w;
+    let a2 = 1.0 - alpha;
+
+    let b0_n = b0 / a0;
+    let b1_n = b1 / a0;
+    let b2_n = b2 / a0;
+    let a1_n = a1 / a0;
+    let a2_n = a2 / a0;
+
+    let (mut x1_l, mut x2_l, mut y1_l, mut y2_l) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let (mut x1_r, mut x2_r, mut y1_r, mut y2_r) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+
+    for frame in frames.iter_mut() {
+        let xl = frame.left;
+        let yl = b0_n * xl + b1_n * x1_l + b2_n * x2_l - a1_n * y1_l - a2_n * y2_l;
+        x2_l = x1_l;
+        x1_l = xl;
+        y2_l = y1_l;
+        y1_l = yl;
+
+        let xr = frame.right;
+        let yr = b0_n * xr + b1_n * x1_r + b2_n * x2_r - a1_n * y1_r - a2_n * y2_r;
+        x2_r = x1_r;
+        x1_r = xr;
+        y2_r = y1_r;
+        y1_r = yr;
+
+        frame.left = yl.clamp(-1.0, 1.0);
+        frame.right = yr.clamp(-1.0, 1.0);
+    }
 }

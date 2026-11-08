@@ -165,3 +165,112 @@ fn test_sh2_56_high_refresh_framerate_cap_options_and_pacer() {
         assert_eq!(pacer.cap, cap);
     }
 }
+
+#[test]
+fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
+    use sh2_core::config::{AudioPackDetectionStatus, AudioPackPreference};
+
+    let test_dir = std::env::temp_dir().join("sh2_59_audio_pack_detection_test");
+    let _ = fs::remove_dir_all(&test_dir);
+
+    // 1. Only PS2 / PC Retail audio directory present (`data/sound/adx/` and `data/sound/sddata.bin`)
+    let root_ps2_only = test_dir.join("ps2_only");
+    fs::create_dir_all(root_ps2_only.join("data/sound/adx")).unwrap();
+    fs::write(root_ps2_only.join("data/sound/sddata.bin"), b"RIFF").unwrap();
+
+    let status_ps2 = AudioPackDetectionStatus::detect_from_root(&root_ps2_only);
+    assert!(!status_ps2.sh2ee_lossless_present);
+    assert!(status_ps2.ps2_original_present);
+    assert!(!status_ps2.both_detected());
+    assert_eq!(
+        status_ps2.resolve_source(AudioPackPreference::Auto),
+        AudioPackPreference::Ps2Original
+    );
+
+    // When only one pack is present, Audio tab has 7 rows (Audio Pack row hidden)
+    let menu_single = OptionsMenu::new_with_audio_packs(AppConfig::default(), status_ps2);
+    let mut menu_single = menu_single;
+    menu_single.active_tab = OptionsTab::Audio;
+    assert_eq!(menu_single.item_count(), 7);
+    assert!(menu_single.item_display(7).is_none());
+
+    // 2. Only SH2:EE Lossless audio directory present (`sh2e/sound/adx/`)
+    let root_ee_only = test_dir.join("ee_only");
+    fs::create_dir_all(root_ee_only.join("sh2e/sound/adx")).unwrap();
+    fs::create_dir_all(root_ee_only.join("sh2e/sound/extra")).unwrap();
+
+    let status_ee = AudioPackDetectionStatus::detect_from_root(&root_ee_only);
+    assert!(status_ee.sh2ee_lossless_present);
+    assert!(!status_ee.ps2_original_present);
+    assert!(status_ee.sh2ee_extra_present);
+    assert!(!status_ee.both_detected());
+    assert_eq!(
+        status_ee.resolve_source(AudioPackPreference::Auto),
+        AudioPackPreference::Sh2eeLossless
+    );
+
+    // 3. Both SH2:EE (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) present
+    let root_dual = test_dir.join("dual_packs");
+    fs::create_dir_all(root_dual.join("sh2e/sound/adx")).unwrap();
+    fs::create_dir_all(root_dual.join("data/sound/adx")).unwrap();
+
+    let status_dual = AudioPackDetectionStatus::detect_from_root(&root_dual);
+    assert!(status_dual.sh2ee_lossless_present);
+    assert!(status_dual.ps2_original_present);
+    assert!(status_dual.both_detected());
+
+    let cfg_path = test_dir.join("dual_config.json");
+    let mut controller = AppMenuController::new_with_audio_packs(&cfg_path, status_dual);
+    controller.title_sm.phase = TitlePhase::OptionsMenu;
+    controller.switch_options_tab(true); // Audio tab
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
+    assert_eq!(controller.options_menu.item_count(), 8);
+
+    // Row 7 is "Audio Pack" defaulting to Auto
+    controller.options_menu.selected_index = 7;
+    let (label, val0) = controller.options_menu.item_display(7).unwrap();
+    assert_eq!(label, "Audio Pack");
+    assert_eq!(val0, "Auto (Prefer SH2:EE Lossless)");
+    assert_eq!(
+        controller.resolved_audio_pack_source(),
+        AudioPackPreference::Sh2eeLossless
+    );
+
+    // Cycle Right -> Sh2eeLossless
+    controller.handle_nav(MenuNavAction::Right);
+    assert_eq!(
+        controller.options_menu.draft_config.audio.audio_pack_source,
+        AudioPackPreference::Sh2eeLossless
+    );
+    assert_eq!(
+        controller.options_menu.item_display(7).unwrap().1,
+        "SH2:EE Lossless (48 kHz)"
+    );
+
+    // Cycle Right -> Ps2Original
+    controller.handle_nav(MenuNavAction::Right);
+    assert_eq!(
+        controller.options_menu.draft_config.audio.audio_pack_source,
+        AudioPackPreference::Ps2Original
+    );
+    assert_eq!(
+        controller.options_menu.item_display(7).unwrap().1,
+        "Original PS2 / PC (24/44.1 kHz)"
+    );
+
+    // Commit and verify resolved engine source & disk persistence
+    let cue = controller.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::Confirm);
+    assert_eq!(
+        controller.resolved_audio_pack_source(),
+        AudioPackPreference::Ps2Original
+    );
+
+    let reloaded = AppConfig::load_from_file(&cfg_path);
+    assert_eq!(
+        reloaded.audio.audio_pack_source,
+        AudioPackPreference::Ps2Original
+    );
+
+    let _ = fs::remove_dir_all(&test_dir);
+}

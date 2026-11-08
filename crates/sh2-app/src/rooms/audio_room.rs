@@ -225,20 +225,23 @@ impl RoomController for AudioDebugRoomController {
                 }
                 // [B]: Toggle SH2:EE 48kHz Lossless (`sh2e/sound/adx/`) vs Original PS2 (`data/sound/adx/`)
                 KeyCode::KeyB => {
-                    let next_source = match state.bgm_manager.audio_pack_source {
-                        sh2_core::AudioPackSource::EnhancedLossless => {
-                            sh2_core::AudioPackSource::OriginalPs2
-                        }
-                        sh2_core::AudioPackSource::OriginalPs2 => {
-                            sh2_core::AudioPackSource::EnhancedLossless
-                        }
-                    };
+                    let next_source = state
+                        .bgm_manager
+                        .audio_pack_source
+                        .toggle_concrete(&state.menu_ctrl.audio_pack_status);
                     if let Err(e) = state
                         .bgm_manager
                         .set_audio_pack_source(next_source, state.audio_engine.as_mut())
                     {
                         tracing::warn!("[Audio Debug] Failed to switch audio pack source: {:?}", e);
                     } else {
+                        let resolver = sh2_assets::AssetPathResolver::resolve();
+                        state.audio_bank =
+                            Some(sh2_audio::MenuAudioBank::load_from_dirs_for_source(
+                                &resolver.data_dir,
+                                resolver.sh2e_dir.as_deref(),
+                                next_source,
+                            ));
                         tracing::info!(
                             "[Audio Debug] Switched AudioPackSource -> {:?} ({})",
                             next_source,
@@ -609,10 +612,13 @@ impl RoomController for AudioDebugRoomController {
         let mgr = &state.bgm_manager;
 
         let pack_str = match mgr.audio_pack_source {
-            sh2_core::AudioPackSource::EnhancedLossless => {
+            sh2_core::AudioPackPreference::Auto => {
+                "AUTO -> SH2:EE LOSSLESS 48 kHz (sh2e/sound/adx/)"
+            }
+            sh2_core::AudioPackPreference::Sh2eeLossless => {
                 "SH2:EE LOSSLESS 48 kHz (sh2e/sound/adx/)"
             }
-            sh2_core::AudioPackSource::OriginalPs2 => {
+            sh2_core::AudioPackPreference::Ps2Original => {
                 "ORIGINAL PS2 / PC 24-44.1 kHz (data/sound/adx/)"
             }
         };

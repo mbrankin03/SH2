@@ -100,6 +100,60 @@ impl AssetPathResolver {
         }
     }
 
+    /// Returns `true` when the SH2:EE lossless audio pack (`sh2e/sound/adx/` or `sh2e/sound/sddata.bin`) is present.
+    pub fn has_sh2ee_sound_pack(&self) -> bool {
+        self.sh2e_dir.as_ref().is_some_and(|sh2e| {
+            let snd = sh2e.join("sound");
+            snd.join("adx").is_dir() || snd.join("sddata.bin").is_file()
+        })
+    }
+
+    /// Returns `true` when the original PS2/PC retail audio pack (`data/sound/adx/` or `data/sound/sddata.bin`) is present.
+    pub fn has_ps2_sound_pack(&self) -> bool {
+        let snd = self.data_dir.join("sound");
+        snd.join("adx").is_dir() || snd.join("sddata.bin").is_file()
+    }
+
+    /// Returns `true` when both SH2:EE lossless (`sh2e/sound/`) and original PS2/PC (`data/sound/`) audio packs are present.
+    pub fn has_dual_audio_packs(&self) -> bool {
+        self.has_sh2ee_sound_pack() && self.has_ps2_sound_pack()
+    }
+
+    /// Resolves a sound asset file (e.g. `sound/sddata.bin`, `sound/extra/g_start.wav`, `sound/adx/...`),
+    /// prioritizing `sh2e/` when `prefer_sh2ee` is `true`, or `data/` when `prefer_sh2ee` is `false`
+    /// (with graceful fallback to the other pack if a specific file only exists in one location).
+    pub fn resolve_sound_file(
+        &self,
+        rel_path: impl AsRef<Path>,
+        prefer_sh2ee: bool,
+    ) -> Option<PathBuf> {
+        let rel = rel_path.as_ref();
+        if prefer_sh2ee {
+            if let Some(ref sh2e) = self.sh2e_dir {
+                let cand = sh2e.join(rel);
+                if cand.exists() {
+                    return Some(cand);
+                }
+            }
+            let cand = self.data_dir.join(rel);
+            if cand.exists() {
+                return Some(cand);
+            }
+        } else {
+            let cand = self.data_dir.join(rel);
+            if cand.exists() {
+                return Some(cand);
+            }
+            if let Some(ref sh2e) = self.sh2e_dir {
+                let cand = sh2e.join(rel);
+                if cand.exists() {
+                    return Some(cand);
+                }
+            }
+        }
+        None
+    }
+
     /// Resolves the movie file path for FMVs, checking 4K VSR, OG HQ, or vanilla retail movies.
     pub fn resolve_movie_file(movie_name: &str) -> Option<PathBuf> {
         let resolver = Self::resolve();

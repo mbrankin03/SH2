@@ -181,15 +181,28 @@ impl AppState {
     /// and default [`BgmEventFlags`] so `SeBgmChange` and `SeBgmManager` stream and spatially mix
     /// the authentic stage BGM / AIX layers.
     pub fn active_bgm_stage_and_flags(&self) -> (u32, BgmEventFlags) {
+        let enable_restored_cut_audio = self
+            .menu_ctrl
+            .options_menu
+            .original_config
+            .audio
+            .enable_restored_cut_audio;
+
         if let Some(stage_override) = self.bgm_stage_override {
-            let mut flags = BgmEventFlags::default();
+            let mut flags = BgmEventFlags {
+                enable_restored_cut_audio,
+                ..Default::default()
+            };
             if stage_override == 2 {
                 flags.flag_5e4 = 0x02;
             }
             return (stage_override, flags);
         }
 
-        let mut flags = BgmEventFlags::default();
+        let mut flags = BgmEventFlags {
+            enable_restored_cut_audio,
+            ..Default::default()
+        };
         let stage_id = match self.active_test_room {
             TestRoomKind::RestroomStart => {
                 // Stage 2 (`Stg_toilet`, `er01`): set `flag_5e4 = 0x02` so `SeBgmChange` selects Page 47 (`forest/bgm_114_b.aix`, 6 layers)

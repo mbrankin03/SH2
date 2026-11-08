@@ -37,6 +37,22 @@ use crate::bgm_data::SoundDataRecord;
 /// containing Mary's unused voiceover reading her letter to Laura (`SCENE_45`, driver ID `0xEAD7` = `0xEA60 + 119`).
 pub const VOICE_AFS_LAURA_LETTER_INDEX: usize = 119;
 
+/// AFS entry index (`116`) inside `voice.afs` containing the standalone Room 312 VHS videotape
+/// audio stream (`satsugai`, driver ID `0xEAD4` = `0xEA60 + 116`).
+pub const VOICE_AFS_SATSUGAI_INDEX: usize = 116;
+
+/// AFS entry index (`97`) inside `voice.afs` containing Mary's full ending letter monologue
+/// (`mary_let_fix`, driver ID `0xEAC1` = `0xEA60 + 97`).
+pub const VOICE_AFS_MARY_LETTER_FULL_INDEX: usize = 97;
+
+/// AFS entry index (`83`) inside `voice.afs` containing the Rosewater Park Maria first meeting
+/// additional dialogue stream (`m_deai_tsuika`, driver ID `0xEAB3` = `0xEA60 + 83`).
+pub const VOICE_AFS_MARIA_DEAI_TSUIKA_INDEX: usize = 83;
+
+/// AFS entry index (`140`) inside `voice.afs` containing the *Born From A Wish* additional
+/// dialogue stream (`bp_mar_tsuika`, driver ID `0xEAEC` = `0xEA60 + 140`).
+pub const VOICE_AFS_BORN_FROM_A_WISH_TSUIKA_INDEX: usize = 140;
+
 /// Cutscene ID (`CS_HTL_LAURA_PIANO` = `0x3B` = `59`) for the Lakeview Hotel Restaurant piano/letter cutscene (`PlayUnusedAudio.cpp`).
 pub const CS_HTL_LAURA_PIANO_ID: u32 = 0x3B;
 
@@ -166,7 +182,7 @@ pub const UNREFERENCED_SDDATA_ENTRIES: [CutSfxCatalogEntry; 5] = [
 
 /// Curated catalog of all cut, unreferenced, rare 3D-only (`40000+`), and restored audio cues (`SH2-62`)
 /// available for instant auditioning in the Audio Debug Studio.
-pub const CUT_AND_RARE_AUDIO_CATALOG: [CutSfxCatalogEntry; 25] = [
+pub const CUT_AND_RARE_AUDIO_CATALOG: [CutSfxCatalogEntry; 29] = [
     // 1..5: The 5 completely unreferenced retail sddata.bin WAVs (internal IDs 5360..5364)
     UNREFERENCED_SDDATA_ENTRIES[0],
     UNREFERENCED_SDDATA_ENTRIES[1],
@@ -391,7 +407,55 @@ pub const CUT_AND_RARE_AUDIO_CATALOG: [CutSfxCatalogEntry; 25] = [
         loops: false,
         title: "voice.afs[134] (bort_2 / 0xEAE6): Hotel Boat Arrival Ambient (Text-Only Monologue, 64.7s)",
     },
-    // 24..25: SH2:EE Restored Cutscene Bonus WAVs (`sh2e/sound/extra/`)
+    CutSfxCatalogEntry {
+        category: CutSfxCategory::UnusedVoiceAfsStream,
+        sddata_index: None,
+        internal_driver_id: None,
+        primary_se_id: Some(0xEAD4),
+        voice_afs_index: Some(VOICE_AFS_SATSUGAI_INDEX),
+        extra_rel_path: None,
+        retail_byte_offset: 0,
+        retail_byte_length: 0,
+        loops: false,
+        title: "voice.afs[116] (satsugai / 0xEAD4): Room 312 Videotape Standalone Audio Stream",
+    },
+    CutSfxCatalogEntry {
+        category: CutSfxCategory::UnusedVoiceAfsStream,
+        sddata_index: None,
+        internal_driver_id: None,
+        primary_se_id: Some(0xEAC1),
+        voice_afs_index: Some(VOICE_AFS_MARY_LETTER_FULL_INDEX),
+        extra_rel_path: None,
+        retail_byte_offset: 0,
+        retail_byte_length: 0,
+        loops: false,
+        title: "voice.afs[97] (mary_let_fix / 0xEAC1): Mary's Full Ending Letter Monologue",
+    },
+    CutSfxCatalogEntry {
+        category: CutSfxCategory::UnusedVoiceAfsStream,
+        sddata_index: None,
+        internal_driver_id: None,
+        primary_se_id: Some(0xEAB3),
+        voice_afs_index: Some(VOICE_AFS_MARIA_DEAI_TSUIKA_INDEX),
+        extra_rel_path: None,
+        retail_byte_offset: 0,
+        retail_byte_length: 0,
+        loops: false,
+        title: "voice.afs[83] (m_deai_tsuika / 0xEAB3): Rosewater Park Maria Additional Stream",
+    },
+    CutSfxCatalogEntry {
+        category: CutSfxCategory::UnusedVoiceAfsStream,
+        sddata_index: None,
+        internal_driver_id: None,
+        primary_se_id: Some(0xEAEC),
+        voice_afs_index: Some(VOICE_AFS_BORN_FROM_A_WISH_TSUIKA_INDEX),
+        extra_rel_path: None,
+        retail_byte_offset: 0,
+        retail_byte_length: 0,
+        loops: false,
+        title: "voice.afs[140] (bp_mar_tsuika / 0xEAEC): Born From A Wish Additional Stream",
+    },
+    // 28..29: SH2:EE Restored Cutscene Bonus WAVs (`sh2e/sound/extra/`)
     CutSfxCatalogEntry {
         category: CutSfxCategory::RestoredExtraWav,
         sddata_index: None,

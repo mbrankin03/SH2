@@ -73,7 +73,11 @@ pub(crate) const AUDIO_DEBUG_STAGE_PRESETS: &[(u32, &str)] = &[
     ),
     (
         40,
-        "Stage 40: Lakeview Hotel 1F (bgm_112.aix, Music Box 6..13)",
+        "Stage 40: Lakeview Hotel 1F (bgm_112.aix, 7-Layer Music Box)",
+    ),
+    (
+        41,
+        "Stage 41: Lakeview Hotel 2F (bgm_112.aix 7th Layer / bgm_121.aix)",
     ),
     (
         43,
@@ -685,6 +689,7 @@ impl RoomController for AudioDebugRoomController {
                     1 => (0.10, None),        // LowHP (< 20%) -> Situation 2
                     2 => (1.0, Some(1500.0)), // EnemyNear (< 6000u) -> Situation 3
                     3 => {
+                        flags.flag_61b |= 0x01;
                         flags.ev_bgm_override = Some(4);
                         (1.0, None)
                     }

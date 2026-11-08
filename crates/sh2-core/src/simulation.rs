@@ -317,11 +317,12 @@ mod tests {
         let half_rate = sim.animation.effective_fps();
 
         // 2. Full analog stick tilt walking (`stick_y = 1.0` -> `1.0` tilt, `750.0` units/s)
+        // PS2 fixed-point walk speed: 512 + 896 * ty (960 @ ty=0.5 -> 14.0625 fps; 1408 @ ty=1.0 -> 20.625 fps)
         sim.input.state.left_stick_y = 1.0;
         sim.tick();
         assert_eq!(sim.animation.state(), AnimationStateKind::Walk);
         let full_rate = sim.animation.effective_fps();
-        assert!(full_rate > half_rate * 1.8);
+        assert!((half_rate - 14.0625).abs() < 1e-2);
         assert!((full_rate - 20.625).abs() < 1e-3);
 
         // Step 15 ticks in Walk to build up non-zero stride phase

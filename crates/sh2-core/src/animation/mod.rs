@@ -475,21 +475,23 @@ mod tests {
             &clips,
         ));
 
-        assert!((ctrl_half.playback_rate_scale() - 0.5).abs() < 1e-4);
+        // Half-tilt walk (ty = 0.5): PS2 fixed-point speed = 512 + 896 * 0.5 = 960 (14.0625 fps, scale = 960 / 1408)
+        // Full-tilt walk (ty = 1.0): PS2 fixed-point speed = 512 + 896 * 1.0 = 1408 (20.625 fps, scale = 1.0)
+        assert!((ctrl_half.playback_rate_scale() - (960.0 / 1408.0)).abs() < 1e-4);
         assert!((ctrl_full.playback_rate_scale() - 1.0).abs() < 1e-4);
-        assert!((ctrl_half.effective_fps() - 10.3125).abs() < 1e-4);
+        assert!((ctrl_half.effective_fps() - 14.0625).abs() < 1e-4);
         assert!((ctrl_full.effective_fps() - 20.625).abs() < 1e-4);
 
         // Advance both by 0.5 seconds
         ctrl_half.update(Duration::from_millis(500));
         ctrl_full.update(Duration::from_millis(500));
 
-        // Full tilt should have advanced exactly twice as many frames as half tilt
+        // Full tilt vs half tilt frame ratio matches 1408 / 960
         let rel_half = ctrl_half.relative_frame_offset();
         let rel_full = ctrl_full.relative_frame_offset();
-        assert!((rel_full - rel_half * 2.0).abs() < 1e-3);
+        assert!((rel_full - rel_half * (1408.0 / 960.0)).abs() < 1e-3);
 
-        // 2. Turn-on-spot scaling (Clip 102/103 @ 18.75 fps base, scaled by turn_speed / 2.4)
+        // 2. Turn-on-spot scaling (Clip 102/103 @ 1280 + (-384) = 896 fixed-point, boosted 1.5x with run)
         let out_turn_run = LocomotionOutput {
             delta_position: Vec3::ZERO,
             turn_speed_rad_per_sec: 3.6, // 2.4 * 1.5 with run held
@@ -502,7 +504,7 @@ mod tests {
             LocomotionAnimationSync::resolve(AnimationStateKind::Idle, &out_turn_run, &clips);
         assert_eq!(cmd_turn.state, AnimationStateKind::TurnLeft);
         assert_eq!(cmd_turn.clip, JamesBasicClips::TURN_LEFT);
-        assert!((cmd_turn.playback_rate_scale - 1.5).abs() < 1e-4);
+        assert!((cmd_turn.playback_rate_scale - (896.0 / 1280.0) * 1.5).abs() < 1e-4);
     }
 
     #[test]

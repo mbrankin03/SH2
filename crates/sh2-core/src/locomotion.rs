@@ -615,12 +615,13 @@ impl PlayerLocomotionController {
                     LocomotionState::Run2 => 1,
                     _ => 2,
                 };
-                let mut target = top_speeds[idx] * ty;
-                if self.state == LocomotionState::Run1 && target < 2.0 {
-                    target = 2.0;
-                }
-                // Accelerates at 3.0 m/s^2
+                let target = top_speeds[idx] * ty;
+                // Accelerates at 3.0 m/s^2 (0x54cf9f)
                 self.ramp_speed(target, 3.0, 3.0, dt);
+                // Authentic PS2/PC Run1 speed floor (0x54cfd0: if speed_mps < 2.0 { speed_mps = 2.0 })
+                if self.state == LocomotionState::Run1 && self.speed_mps < 2.0 {
+                    self.speed_mps = 2.0;
+                }
                 yaw_rate = 1.7 * tx;
                 self.stamina_frames += dt * 30.0;
 
@@ -852,10 +853,11 @@ mod tests {
             ..Default::default()
         };
 
-        // First tick enters Run1 at 1.5 m/s
+        // First tick enters Run1 and clamps speed to the 2.0 m/s PS2 floor (0x54cfd0)
         let out = controller.update(&input_run, &mut yaw, dt, true);
         assert_eq!(out.state, LocomotionState::Run1);
-        assert!(controller.speed_mps >= 1.5);
+        assert!((controller.speed_mps - 2.0).abs() < 1e-3);
+        assert!((out.linear_speed - 1000.0).abs() < 1e-3);
 
         // Advance 1 second (60 ticks): acceleration at 3.0 m/s^2 progresses through Run1 (3.5 m/s) and Run2 (4.0 m/s) to Run3
         for _ in 0..60 {

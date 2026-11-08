@@ -29,6 +29,21 @@ pub const MAX_BACK_LINEAR_SPEED: f32 = 1.2 * SH2_WORLD_UNIT_SCALE;
 /// Base angular turning velocity on the spot in radians/s (`2.4 rad/s`, `0x54bbb0`).
 pub const BASE_SPOT_TURN_RAD_PER_SEC: f32 = 2.4;
 
+/// Authentic PS2/PC forward walk fixed-point base speed (`1408` = `20.625 FPS`, `0x6ceac4[10]`).
+pub const PS2_WALK_BASE_SPEED_FP: f32 = 1408.0;
+/// Authentic PS2/PC forward walk analog tilt floor (`1408 - 896 = 512` = `7.5 FPS`, `0x54c186`):
+/// `effective_speed = 1408 - (1.0 - ty) * 896 = 512 + 896 * ty`.
+pub const PS2_WALK_MIN_SPEED_FP: f32 = 512.0;
+
+/// Authentic PS2/PC backward walk fixed-point base speed (`1536` = `22.5 FPS`, `0x6ceac4[11]`).
+pub const PS2_BACK_BASE_SPEED_FP: f32 = 1536.0;
+/// Authentic PS2/PC backward walk analog tilt floor (`1536 - 1024 = 512` = `7.5 FPS`, `0x54c508`):
+/// `effective_speed = 1536 - (1.0 - ty) * 1024 = 512 + 1024 * ty`.
+pub const PS2_BACK_MIN_SPEED_FP: f32 = 512.0;
+
+/// Authentic PS2/PC spot-turn fixed-point speed scale (`(1280 - 384) / 1280 = 896 / 1280 = 0.7`, `0x54bf90`).
+pub const PS2_TURN_EFFECTIVE_SCALE: f32 = 896.0 / 1280.0;
+
 /// Declarative animation synchronization command produced from a single locomotion tick.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LocomotionAnimCommand {
@@ -123,33 +138,50 @@ impl LocomotionAnimationSync {
             LocomotionState::Alert => (AnimationStateKind::Alert, clips.alert, 1.0),
             LocomotionState::Tired => (AnimationStateKind::Tired, clips.tired, 1.0),
             LocomotionState::TurnLeft => {
-                // Spot turn (0x54bbb0): base speed 1280 (18.75 fps) scaled by turning rate fraction (tx, up to 1.5x with run)
-                let turn_scale = if locomotion.turn_speed_rad_per_sec.abs() > 1e-4 {
-                    (locomotion.turn_speed_rad_per_sec.abs() / BASE_SPOT_TURN_RAD_PER_SEC)
-                        .clamp(0.05, 1.5)
-                } else {
-                    1.0
-                };
-                (AnimationStateKind::TurnLeft, clips.turn_left, turn_scale)
+                // Spot turn (0x54bf90): base speed 1280 + delta (-384 / 0xfffffe80) = 896 (13.125 fps),
+                // scaled by 1.5x when run is held (yaw_rate > 2.4 rad/s).
+                let run_boost =
+                    if locomotion.turn_speed_rad_per_sec.abs() > BASE_SPOT_TURN_RAD_PER_SEC + 0.1 {
+                        1.5
+                    } else {
+                        1.0
+                    };
+                (
+                    AnimationStateKind::TurnLeft,
+                    clips.turn_left,
+                    PS2_TURN_EFFECTIVE_SCALE * run_boost,
+                )
             }
             LocomotionState::TurnRight => {
-                let turn_scale = if locomotion.turn_speed_rad_per_sec.abs() > 1e-4 {
-                    (locomotion.turn_speed_rad_per_sec.abs() / BASE_SPOT_TURN_RAD_PER_SEC)
-                        .clamp(0.05, 1.5)
-                } else {
-                    1.0
-                };
-                (AnimationStateKind::TurnRight, clips.turn_right, turn_scale)
+                // Spot turn (0x54c070): base speed 1280 + delta (-384 / 0xfffffe80) = 896 (13.125 fps),
+                // scaled by 1.5x when run is held (yaw_rate > 2.4 rad/s).
+                let run_boost =
+                    if locomotion.turn_speed_rad_per_sec.abs() > BASE_SPOT_TURN_RAD_PER_SEC + 0.1 {
+                        1.5
+                    } else {
+                        1.0
+                    };
+                (
+                    AnimationStateKind::TurnRight,
+                    clips.turn_right,
+                    PS2_TURN_EFFECTIVE_SCALE * run_boost,
+                )
             }
             LocomotionState::Walk => {
-                // Forward walk (0x54bd70): base speed 1408 (20.625 fps) scales linearly with stick tilt (ty = speed / 750.0)
-                let tilt_scale = (locomotion.linear_speed / MAX_WALK_LINEAR_SPEED).clamp(0.0, 1.0);
-                (AnimationStateKind::Walk, clips.walk, tilt_scale)
+                // Forward walk (0x54c186): base speed 1408 + (1.0 - ty) * (-896) = 512 + 896 * ty (7.5..20.625 fps)
+                let ty = (locomotion.linear_speed / MAX_WALK_LINEAR_SPEED).clamp(0.0, 1.0);
+                let rate_scale = (PS2_WALK_MIN_SPEED_FP
+                    + (PS2_WALK_BASE_SPEED_FP - PS2_WALK_MIN_SPEED_FP) * ty)
+                    / PS2_WALK_BASE_SPEED_FP;
+                (AnimationStateKind::Walk, clips.walk, rate_scale)
             }
             LocomotionState::Back => {
-                // Backward walk (0x54c0e0): base speed 1536 (22.5 fps) scales linearly with stick tilt (ty = speed / 600.0)
-                let tilt_scale = (locomotion.linear_speed / MAX_BACK_LINEAR_SPEED).clamp(0.0, 1.0);
-                (AnimationStateKind::Back, clips.back, tilt_scale)
+                // Backward walk (0x54c508): base speed 1536 + (1.0 - ty) * (-1024) = 512 + 1024 * ty (7.5..22.5 fps)
+                let ty = (locomotion.linear_speed / MAX_BACK_LINEAR_SPEED).clamp(0.0, 1.0);
+                let rate_scale = (PS2_BACK_MIN_SPEED_FP
+                    + (PS2_BACK_BASE_SPEED_FP - PS2_BACK_MIN_SPEED_FP) * ty)
+                    / PS2_BACK_BASE_SPEED_FP;
+                (AnimationStateKind::Back, clips.back, rate_scale)
             }
             LocomotionState::StrafeLeftWalk => (
                 AnimationStateKind::StrafeLeftWalk,

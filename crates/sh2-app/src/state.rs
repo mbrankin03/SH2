@@ -6,6 +6,7 @@ use std::time::Instant;
 use winit::window::Window;
 
 use crate::assets::CharacterAsset;
+use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
@@ -36,6 +37,7 @@ pub(crate) struct AppState {
     pub audio_engine: Option<AudioEngine>,
     pub bgm_manager: BgmManager,
     pub bgm_stage_override: Option<u32>,
+    pub audio_debug: AudioDebugState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -192,7 +194,7 @@ impl AppState {
                 flags.flag_5e4 = 0x02;
                 2
             }
-            TestRoomKind::ObservationDeck => {
+            TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => {
                 // Stage 3 (`Stg_observation`, `ob01`): Page 47 (`forest/bgm_114_b.aix`, 6 layers with 5 spatial bounding boxes)
                 3
             }

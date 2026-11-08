@@ -40,7 +40,7 @@ pub(crate) fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision:
     let resolver = sh2_assets::AssetPathResolver::resolve();
 
     let cld_relative = match room {
-        TestRoomKind::ObservationDeck => Some("bg/ob/ob01.cld"),
+        TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => Some("bg/ob/ob01.cld"),
         TestRoomKind::RestroomStart => Some("bg/er/er01.cld"),
         TestRoomKind::HotelBoilerRoom => Some("bg/rr/rr21.cld"),
         _ => None,
@@ -120,7 +120,7 @@ pub(crate) fn find_map_file_for_room(
     ];
 
     match room {
-        TestRoomKind::ObservationDeck => {
+        TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => {
             for base in &base_roots {
                 let loader = TextureLoader::new(
                     PathBuf::from(base).join("data"),

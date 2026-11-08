@@ -1,3 +1,4 @@
+# Silent Hill 2: Mira's Edition
 # Silent Hill 2 Open Port (Rust)
 
 An open-source, memory-safe, modern game engine port of **Silent Hill 2 (Director's Cut / Restless Dreams)** written in **Rust**, targeting **Linux** and the **AYN Thor** dual-screen Android handheld.

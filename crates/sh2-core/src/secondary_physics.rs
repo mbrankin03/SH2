@@ -94,7 +94,9 @@ impl SecondaryJointConfig {
 /// Dynamic simulation state of an individual secondary joint.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SecondaryJointState {
-    /// Angular deflection $(\text{pitch}, \text{yaw}, \text{roll})$ in radians.
+    /// Previous 60 Hz tick angular deflection $(\text{pitch}, \text{yaw}, \text{roll})$ in radians.
+    pub prev_deflection: Vec3,
+    /// Current 60 Hz tick angular deflection $(\text{pitch}, \text{yaw}, \text{roll})$ in radians.
     pub deflection: Vec3,
     /// Angular velocity $(\dot{\text{pitch}}, \dot{\text{yaw}}, \dot{\text{roll}})$ in radians/sec.
     pub angular_velocity: Vec3,
@@ -223,6 +225,7 @@ impl SecondaryBonePhysics {
         // 3. Integrate spring-damper dynamics for each registered bone
         for (&bone, config) in &self.configs {
             let state = self.states.entry(bone).or_default();
+            state.prev_deflection = state.deflection;
 
             // Driving inertial forces:
             // Forward movement pitches flaps backward; turning rate causes lateral roll/sway
@@ -250,18 +253,39 @@ impl SecondaryBonePhysics {
 
     /// Applies secondary deflection transforms to the local bind matrices prior to forward kinematics.
     pub fn apply_to_locals(&self, locals: &mut [[[f32; 4]; 4]]) {
+        self.apply_to_locals_interpolated(locals, 1.0);
+    }
+
+    /// Applies sub-frame Slerp-interpolated secondary deflection transforms between the previous
+    /// and current 60 Hz simulation ticks (`alpha` in `[0.0, 1.0]`).
+    pub fn apply_to_locals_interpolated(&self, locals: &mut [[[f32; 4]; 4]], alpha: f32) {
+        let t = alpha.clamp(0.0, 1.0);
         for (&bone, state) in &self.states {
             if bone >= locals.len() {
                 continue;
             }
 
-            let defl = state.deflection;
-            if defl.length_squared() < 1e-6 {
+            if state.prev_deflection.length_squared() < 1e-6
+                && state.deflection.length_squared() < 1e-6
+            {
                 continue;
             }
 
-            // Convert Euler deflection (pitch X, yaw Y, roll Z) into rotation delta
-            let rot_delta = Quat::from_euler(glam::EulerRot::ZYX, defl.z, defl.y, defl.x);
+            // Convert previous and current Euler deflections (pitch X, yaw Y, roll Z) into unit quaternions
+            // and interpolate along the shortest geodesic arc via Slerp.
+            let q_prev = Quat::from_euler(
+                glam::EulerRot::ZYX,
+                state.prev_deflection.z,
+                state.prev_deflection.y,
+                state.prev_deflection.x,
+            );
+            let q_curr = Quat::from_euler(
+                glam::EulerRot::ZYX,
+                state.deflection.z,
+                state.deflection.y,
+                state.deflection.x,
+            );
+            let rot_delta = q_prev.slerp(q_curr, t);
             let rot_mat = Mat4::from_quat(rot_delta);
 
             let mut orig = Mat4::from_cols_array_2d(&locals[bone]);

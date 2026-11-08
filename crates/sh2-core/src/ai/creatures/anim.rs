@@ -507,6 +507,24 @@ impl CreatureAnimationController {
         Self::calc_cursor(&self.current_clip, self.clip_time)
     }
 
+    /// Evaluates continuous sub-tick sampling frame cursor `(frame_0, frame_1, alpha)`
+    /// interpolated by `sim_alpha` (`0.0..1.0`) between 60 Hz simulation ticks for 120–240 Hz+ rendering.
+    pub fn evaluate_sample_cursor_at_alpha(&self, sim_alpha: f32) -> FrameCursor {
+        let sub_dt = sim_alpha.clamp(0.0, 1.0) * (1.0 / 60.0);
+        let clip_dur = self.current_clip.duration_seconds();
+        let effective_time = if clip_dur > 0.0 {
+            let t = self.clip_time + sub_dt;
+            if self.current_clip.looping {
+                t % clip_dur
+            } else {
+                t.min(clip_dur)
+            }
+        } else {
+            self.clip_time
+        };
+        Self::calc_cursor(&self.current_clip, effective_time)
+    }
+
     /// Evaluates blended frame cursor `(previous_cursor, current_cursor, blend_factor)`.
     pub fn evaluate_blended_cursor(&self) -> BlendedFrameCursor {
         let cur = self.evaluate_sample_cursor();
@@ -515,6 +533,43 @@ impl CreatureAnimationController {
             .as_ref()
             .map(|(_, prev_clip, prev_time)| Self::calc_cursor(prev_clip, *prev_time));
         (prev, cur, self.blend_factor)
+    }
+
+    /// Evaluates continuous sub-tick blended frame cursor `(previous_cursor, current_cursor, blend_factor)`
+    /// interpolated by `sim_alpha` (`0.0..1.0`) between 60 Hz simulation ticks for 120–240 Hz+ rendering.
+    pub fn evaluate_blended_cursor_at_alpha(&self, sim_alpha: f32) -> BlendedFrameCursor {
+        let clamped_alpha = sim_alpha.clamp(0.0, 1.0);
+        if clamped_alpha <= 0.0 {
+            return self.evaluate_blended_cursor();
+        }
+        let sub_dt = clamped_alpha * (1.0 / 60.0);
+        let cur = self.evaluate_sample_cursor_at_alpha(clamped_alpha);
+        let effective_blend = if self.blend_factor < 1.0 {
+            (self.blend_factor + sub_dt / self.transition_duration).min(1.0)
+        } else {
+            1.0
+        };
+        let prev = if effective_blend < 1.0 {
+            self.previous_state
+                .as_ref()
+                .map(|(_, prev_clip, prev_time)| {
+                    let prev_dur = prev_clip.duration_seconds();
+                    let t = if prev_dur > 0.0 {
+                        let raw = *prev_time + sub_dt;
+                        if prev_clip.looping {
+                            raw % prev_dur
+                        } else {
+                            raw.min(prev_dur)
+                        }
+                    } else {
+                        *prev_time
+                    };
+                    Self::calc_cursor(prev_clip, t)
+                })
+        } else {
+            None
+        };
+        (prev, cur, effective_blend)
     }
 
     /// Current integer frame index in playback.

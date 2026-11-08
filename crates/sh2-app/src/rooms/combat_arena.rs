@@ -170,8 +170,7 @@ impl RoomController for CombatArenaRoomController {
                 let target_enemy = &mut state.combat_arena.enemies[state.combat_enemy_idx];
 
                 // Teleport selected enemy in front of player and engage
-                target_enemy.position = target_pos;
-                target_enemy.yaw = facing_yaw;
+                target_enemy.snap_pose(target_pos, facing_yaw);
                 target_enemy.is_aggroed = true;
                 target_enemy.flinch_timer = 0.0;
                 target_enemy.attack_cooldown = 0.2;
@@ -242,6 +241,7 @@ impl RoomController for CombatArenaRoomController {
         is_in_game: bool,
     ) {
         // 1. Advance simulation at fixed 60 Hz tick (runs animation controller update)
+        let mut ticks_processed = 0u32;
         if !is_paused {
             if state.active_test_room == TestRoomKind::CombatArena
                 && state.combat_arena.player.mode != sh2_core::combat::CombatMode::Free
@@ -249,42 +249,51 @@ impl RoomController for CombatArenaRoomController {
                 state.sim_core.input.state.left_stick_x = 0.0;
                 state.sim_core.input.state.left_stick_y = 0.0;
             }
-            state.sim_core.update(dt);
+            ticks_processed = state.sim_core.update(dt);
 
-            if state.active_test_room == TestRoomKind::CombatArena {
-                state.combat_arena.player_position = state.sim_core.scenario.player_position;
-                state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
-                let dt_sec = dt.as_secs_f32().min(0.05);
-                let atk_pressed = state.key_attack_pressed;
+            if state.active_test_room == TestRoomKind::CombatArena && ticks_processed > 0 {
+                let tick_dt = 1.0 / 60.0;
+                let mut atk_pressed = state.key_attack_pressed;
                 state.key_attack_pressed = false;
-
-                // Process struggle input if currently held by a creature (0x5565c0)
-                let struggle_presses = state.struggle_button_press_count;
+                let mut struggle_presses = state.struggle_button_press_count;
                 state.struggle_button_press_count = 0;
-                if state.combat_arena.grapple_session.is_some() {
-                    state
-                        .combat_arena
-                        .register_grapple_struggle_input(struggle_presses);
-                } else if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held {
-                    state.combat_arena.player.process_struggle_inputs(
-                        struggle_presses,
-                        dt_sec,
-                        false,
+
+                for _ in 0..ticks_processed {
+                    state.combat_arena.player_position = state.sim_core.scenario.player_position;
+                    state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
+
+                    // Process struggle input if currently held by a creature (0x5565c0)
+                    if struggle_presses > 0 {
+                        if state.combat_arena.grapple_session.is_some() {
+                            state
+                                .combat_arena
+                                .register_grapple_struggle_input(struggle_presses);
+                        } else if state.combat_arena.player.mode
+                            == sh2_core::combat::CombatMode::Held
+                        {
+                            state.combat_arena.player.process_struggle_inputs(
+                                struggle_presses,
+                                tick_dt,
+                                false,
+                            );
+                        }
+                        struggle_presses = 0;
+                    }
+
+                    state.combat_arena.tick_isolated(
+                        state.key_ready_held,
+                        atk_pressed,
+                        state.key_attack_held,
+                        tick_dt,
+                        state.combat_enemy_idx,
                     );
-                }
+                    atk_pressed = false;
 
-                state.combat_arena.tick_isolated(
-                    state.key_ready_held,
-                    atk_pressed,
-                    state.key_attack_held,
-                    dt_sec,
-                    state.combat_enemy_idx,
-                );
-
-                // Sync James player position and yaw back from arena (e.g. grapple turn/facing & enemy pushback)
-                state.sim_core.scenario.player_position = state.combat_arena.player_position;
-                if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held {
-                    state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;
+                    // Sync James player position and yaw back from arena (e.g. grapple turn/facing & enemy pushback)
+                    state.sim_core.scenario.player_position = state.combat_arena.player_position;
+                    if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held {
+                        state.sim_core.scenario.player_yaw = state.combat_arena.player_yaw;
+                    }
                 }
 
                 // Drive James's skeletal animation when in combat states (Aim, Attack, Held struggle loops, Hurt flinch, Fall)
@@ -389,7 +398,7 @@ impl RoomController for CombatArenaRoomController {
             }
         }
 
-        // 2. Compute smooth sub-frame interpolated view matrix for high refresh OLED
+        // 2. Compute smooth sub-frame interpolated view matrix for high refresh OLED (60–240 Hz+)
         let alpha = state.sim_core.interpolation_alpha();
         let view = state.sim_core.camera.interpolated_view_matrix(alpha);
         let fov = state.sim_core.camera.interpolated_fov(alpha);
@@ -397,18 +406,17 @@ impl RoomController for CombatArenaRoomController {
         let view_proj = proj * view;
         let inv_proj = proj.inverse();
 
-        let cam_pos = state.sim_core.camera.curr_snapshot.eye;
+        let cam_pos = state
+            .sim_core
+            .camera
+            .prev_snapshot
+            .eye
+            .lerp(state.sim_core.camera.curr_snapshot.eye, alpha);
         state.render_ctx.update_camera(view_proj, inv_proj, cam_pos);
 
-        // 3. Dynamic Flashlight tracking character position & facing angle
-        let player_pos = state.sim_core.scenario.player_position;
-        let player_yaw = state.sim_core.scenario.player_yaw;
-        let forward = glam::Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        let right = glam::Vec3::new(player_yaw.cos(), 0.0, -player_yaw.sin());
-        let light_dir =
-            glam::Vec3::new(player_yaw.sin(), 0.05, player_yaw.cos()).normalize_or_zero();
-        let spot_pos =
-            player_pos + glam::Vec3::new(0.0, -640.0, 0.0) + forward * 45.0 + right * (-12.0);
+        // 3. Dynamic Flashlight tracking sub-frame interpolated character position & sweep inertia
+        let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
+        let (spot_pos, light_dir) = state.sim_core.interpolated_flashlight_ray(alpha);
 
         let light_color = if state.sim_core.scenario.flashlight_on {
             [2.5, 2.3, 1.8, 1.0]
@@ -423,7 +431,7 @@ impl RoomController for CombatArenaRoomController {
         };
         state.render_ctx.update_spotlight(&spot_uniforms);
 
-        // 4. Sample skeletal animation and compute character skinning matrices
+        // 4. Sample skeletal animation at continuous sub-frame alpha and compute character skinning matrices
         let grappling_enemy_id =
             if !state.active_maria && state.active_test_room == TestRoomKind::CombatArena {
                 state
@@ -445,6 +453,9 @@ impl RoomController for CombatArenaRoomController {
             .james_anm_cache
             .contains_key(&sh2_debug::JamesAnmSource::ApartStair);
 
+        let auth_player_pos = state.sim_core.scenario.player_position;
+        let auth_player_yaw = state.sim_core.scenario.player_yaw;
+
         let mut active_char = if state.active_maria {
             state.maria.as_mut().or(state.character.as_mut())
         } else {
@@ -453,8 +464,10 @@ impl RoomController for CombatArenaRoomController {
 
         state.skin_matrices_scratch.clear();
         if let Some(ref mut c) = active_char {
-            let (prev_cursor, cur_cursor, blend) =
-                state.sim_core.animation.evaluate_blended_cursor();
+            let (prev_cursor, cur_cursor, blend) = state
+                .sim_core
+                .animation
+                .evaluate_blended_cursor_at_alpha(alpha);
 
             // When James is caught in a boss grapple in the Combat Arena, sample his
             // stage-specific overlay ANM file (`pjames_stage_anim`) if applicable.
@@ -488,12 +501,17 @@ impl RoomController for CombatArenaRoomController {
                     }
                 }
 
-                if !is_paused {
+                // Step secondary cloth/jacket spring physics strictly on 60 Hz simulation ticks
+                if !is_paused && ticks_processed > 0 {
                     let dt_physics = 1.0 / 60.0;
-                    c.secondary_physics.step(dt_physics, player_pos, player_yaw);
+                    for _ in 0..ticks_processed {
+                        c.secondary_physics
+                            .step(dt_physics, auth_player_pos, auth_player_yaw);
+                    }
                 }
                 c.dynamic_locals.copy_from_slice(&c.bind_locals);
-                c.secondary_physics.apply_to_locals(&mut c.dynamic_locals);
+                c.secondary_physics
+                    .apply_to_locals_interpolated(&mut c.dynamic_locals, alpha);
 
                 evaluate_pose_into(
                     &c.model.parents,
@@ -540,18 +558,19 @@ impl RoomController for CombatArenaRoomController {
             }
         }
 
-        // 5. Evaluate active enemy skeletal model in Combat Arena (zero per-frame heap allocation via ea.skin_scratch)
+        // 5. Evaluate active enemy skeletal model in Combat Arena with sub-frame alpha interpolation
         let active_enemy_snapshot = if state.active_test_room == TestRoomKind::CombatArena
             && !state.combat_arena.enemies.is_empty()
         {
             let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
             let enemy = &state.combat_arena.enemies[active_idx];
+            let (enemy_pos, enemy_yaw) = enemy.interpolated_pose(alpha);
             Some((
                 enemy.id,
-                enemy.position,
-                enemy.yaw,
+                enemy_pos,
+                enemy_yaw,
                 enemy.is_grappling_player,
-                enemy.anim.evaluate_blended_cursor(),
+                enemy.anim.evaluate_blended_cursor_at_alpha(alpha),
             ))
         } else {
             None

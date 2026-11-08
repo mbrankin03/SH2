@@ -986,4 +986,105 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_sh2_56_quaternion_slerp_and_hermite_bone_interpolation() {
+        use sh2_assets::formats::anm::AnimationTrackType;
+        use std::f32::consts::PI;
+
+        // 1. Verify Euler -> Quat -> Matrix matches euler_to_matrix to within 1e-5
+        let test_angles = [
+            [0.0, 0.0, 0.0],
+            [0.35, -0.72, 1.48],
+            [-1.15, 0.94, -2.51],
+            [PI * 0.49, 0.25, -PI * 0.85],
+            [1.2, PI * 0.5, 0.0], // Gimbal lock pitch = +90 deg
+        ];
+
+        for &ang in &test_angles {
+            let m_euler = euler_to_matrix(ang);
+            let q = euler_to_quat(ang);
+            let m_quat = quat_to_matrix(q);
+            let extracted = quat_to_euler(q);
+            let m_reconstructed = euler_to_matrix(extracted);
+
+            for r in 0..3 {
+                for c in 0..3 {
+                    assert!(
+                        (m_euler[r][c] - m_quat[r][c]).abs() < 1e-5,
+                        "Matrix mismatch at ({r},{c}) for angles {ang:?}: euler={} vs quat={}",
+                        m_euler[r][c],
+                        m_quat[r][c]
+                    );
+                    assert!(
+                        (m_euler[r][c] - m_reconstructed[r][c]).abs() < 1e-4,
+                        "Reconstructed matrix mismatch at ({r},{c}) for angles {ang:?}"
+                    );
+                }
+            }
+        }
+
+        // 2. Verify shortest-arc Slerp across +/- PI boundary and constant angular velocity at 240 Hz sub-steps
+        let r_start = [0.4, -0.6, PI - 0.15];
+        let r_end = [-0.5, 0.7, -PI + 0.15];
+        let q_start = euler_to_quat(r_start);
+        let q_end = quat_align_hemisphere(q_start, euler_to_quat(r_end));
+        let total_theta = (q_start[0] * q_end[0]
+            + q_start[1] * q_end[1]
+            + q_start[2] * q_end[2]
+            + q_start[3] * q_end[3])
+            .clamp(-1.0, 1.0)
+            .acos();
+
+        let steps = 8; // 8 sub-steps (e.g. 240 Hz over 30 Hz keyframe interval)
+        for s in 0..=steps {
+            let alpha = s as f32 / steps as f32;
+            let r_mid = slerp_euler_zyx(r_start, r_end, alpha);
+            let q_mid = quat_align_hemisphere(q_start, euler_to_quat(r_mid));
+            let theta_from_start = (q_start[0] * q_mid[0]
+                + q_start[1] * q_mid[1]
+                + q_start[2] * q_mid[2]
+                + q_start[3] * q_mid[3])
+                .clamp(-1.0, 1.0)
+                .acos();
+            let expected_theta = total_theta * alpha;
+            assert!(
+                (theta_from_start - expected_theta).abs() < 1e-3,
+                "Non-uniform Slerp angular progress at alpha={alpha}: got {theta_from_start}, expected {expected_theta}"
+            );
+        }
+
+        // 3. Verify 4-keyframe Hermite / Squad spline boundary exactness and C1 smoothness
+        let make_frame = |rot: [f32; 3], trans: [f32; 3]| AnimationFrame {
+            bones: vec![Some(BoneTransform {
+                rotation: Some(rot),
+                translation: Some(trans),
+                track_type: AnimationTrackType::TranslationAndRotation,
+            })],
+        };
+
+        let f0 = make_frame([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]);
+        let f1 = make_frame([0.2, 0.3, -0.1], [10.0, 5.0, -2.0]);
+        let f2 = make_frame([0.5, 0.7, -0.4], [25.0, 12.0, -6.0]);
+        let f3 = make_frame([0.8, 0.9, -0.6], [40.0, 18.0, -10.0]);
+
+        let mut out = AnimationFrame {
+            bones: Vec::with_capacity(1),
+        };
+        interpolate_frames_hermite_into(&f0, &f1, &f2, &f3, 0.0, &mut out);
+        assert_eq!(
+            out.bones[0].as_ref().unwrap().translation,
+            Some([10.0, 5.0, -2.0])
+        );
+
+        interpolate_frames_hermite_into(&f0, &f1, &f2, &f3, 1.0, &mut out);
+        assert_eq!(
+            out.bones[0].as_ref().unwrap().translation,
+            Some([25.0, 12.0, -6.0])
+        );
+
+        interpolate_frames_hermite_into(&f0, &f1, &f2, &f3, 0.5, &mut out);
+        let mid_t = out.bones[0].as_ref().unwrap().translation.unwrap();
+        assert!(mid_t[0] > 10.0 && mid_t[0] < 25.0);
+    }
 }

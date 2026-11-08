@@ -93,18 +93,45 @@ fn test_zero_allocation_simulation_tick() {
         );
     }
 
+    let mut secondary = sh2_core::SecondaryBonePhysics::for_james();
+    let mut locals_scratch = [[[0.0f32; 4]; 4]; 41];
+    for m in &mut locals_scratch {
+        m[0][0] = 1.0;
+        m[1][1] = 1.0;
+        m[2][2] = 1.0;
+        m[3][3] = 1.0;
+    }
+    secondary.step(
+        1.0 / 60.0,
+        sim.scenario.player_position,
+        sim.scenario.player_yaw,
+    );
+
     TRACKER.enable();
 
-    // Execute 60 simulated 60Hz ticks (1 full second of active gameplay + combat + grapple lifecycle)
-    for i in 0..60 {
-        sim.update(Duration::from_millis(16));
-        arena.tick_isolated(
-            true,
-            i % 20 == 0,
-            false,
-            1.0 / 60.0,
-            i % arena.enemies.len(),
-        );
+    // Execute 240 simulated 240Hz render frames (1 full second of 240 Hz OLED gameplay + 60 Hz deterministic ticks)
+    for i in 0..240 {
+        let ticks = sim.update(Duration::from_nanos(4_166_667));
+        for _ in 0..ticks {
+            arena.tick_isolated(
+                true,
+                i % 20 == 0,
+                false,
+                1.0 / 60.0,
+                i % arena.enemies.len(),
+            );
+            secondary.step(
+                1.0 / 60.0,
+                sim.scenario.player_position,
+                sim.scenario.player_yaw,
+            );
+        }
+        let alpha = sim.interpolation_alpha();
+        let _pose = sim.interpolated_player_pose(alpha);
+        let _ray = sim.interpolated_flashlight_ray(alpha);
+        let _fog_t = sim.deterministic_fog_time(alpha);
+        let _cursor = sim.animation.evaluate_blended_cursor_at_alpha(alpha);
+        secondary.apply_to_locals_interpolated(&mut locals_scratch, alpha);
     }
 
     let allocs = TRACKER.allocations();

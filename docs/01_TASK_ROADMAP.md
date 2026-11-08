@@ -129,10 +129,11 @@ To maintain a lean, modern, and memory-safe Rust codebase, the engine implements
   - Dynamic loop boundary evaluation from vanilla `.adx` / `.sddata` headers without pre-baked audio bloat.
   - Sample-accurate boundary crossfading eliminating pop/click artifacts.
   - Spatial reverberation based on active `.cam` room properties (`rd_type`).
-- [ ] **SH2-56: Native High-Refresh Rate (60–240 Hz+) Animation Slerp & Deterministic Clock Pacing** (`sh2-core`)
+- [x] **SH2-56: Native High-Refresh Rate (60–240 Hz+) Animation Slerp & Deterministic Clock Pacing** (`sh2-core`)
   - Fixed 60 Hz deterministic physics, locomotion, and secondary springs decoupled from render clock.
-  - Continuous quaternion bone interpolation (Slerp) delivering smooth 120/144/240 Hz motion.
-  - Native normalization of boat rowing, fog flow, and flashlight sweeping.
+  - Continuous quaternion bone interpolation (Slerp / Hermite-Slerp) delivering smooth 120/144/240 Hz motion.
+  - Native normalization of boat rowing (`RowboatAnimation.cpp`, `RowboatFix.cpp`), fog flow, and flashlight sweeping (`SixtyFPSPatch.cpp`).
+  - Zero-jitter `FramePacer` deadline scheduler and framerate cap options (`30`, `60`, `120`, `144`, `240` FPS, `Uncapped` VRR).
 
 ## High Priority / Urgent Optimization & Hardening
 

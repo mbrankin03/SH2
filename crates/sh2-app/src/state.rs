@@ -10,7 +10,7 @@ use crate::rooms::fmv_room::ActiveFmvSession;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
 use sh2_audio::{AudioEngine, MenuAudioBank};
-use sh2_core::SimulationCore;
+use sh2_core::{FramePacer, SimulationCore};
 use sh2_debug::{
     FmvVideoSource, FmvViewerState, GrappleViewerState, JamesAnmSource, ModelViewerState,
 };
@@ -87,6 +87,7 @@ pub(crate) struct AppState {
     pub debug_collision_overlay: bool,
     pub debug_camera_hud: bool,
     pub skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
+    pub frame_pacer: FramePacer,
     pub last_frame: Instant,
     pub frame_counter: u32,
     pub sim_time: f32,

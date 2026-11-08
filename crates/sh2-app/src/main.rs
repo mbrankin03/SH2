@@ -254,8 +254,7 @@ impl ApplicationHandler for SilentHillApp {
             .set_cam_file(find_cam_file_for_room(initial_room));
         sim_core.input.set_control_scheme(ControlScheme::Tank);
         sim_core.scenario.flashlight_on = true;
-        sim_core.scenario.player_position = player_pos;
-        sim_core.scenario.player_yaw = player_yaw;
+        sim_core.snap_player_transform(player_pos, player_yaw);
         sim_core.camera.reset_to_player(
             sim_core.scenario.player_position,
             sim_core.scenario.player_yaw,
@@ -465,6 +464,8 @@ impl ApplicationHandler for SilentHillApp {
         let loaded_fmv_movie_idx = fmv_viewer.selected_movie_index;
         let loaded_fmv_source = fmv_viewer.video_source;
 
+        let initial_fps_cap = menu_ctrl.options_menu.original_config.video.framerate_cap;
+
         self.state = Some(AppState {
             window,
             surface,
@@ -534,6 +535,7 @@ impl ApplicationHandler for SilentHillApp {
             debug_collision_overlay: false,
             debug_camera_hud: true,
             skin_matrices_scratch: Vec::with_capacity(128),
+            frame_pacer: sh2_core::FramePacer::new(initial_fps_cap),
             last_frame: Instant::now(),
             frame_counter: 0,
             sim_time: 0.0,
@@ -871,18 +873,21 @@ impl ApplicationHandler for SilentHillApp {
                 let now = Instant::now();
                 let dt = now.duration_since(state.last_frame);
                 state.last_frame = now;
+                state.frame_pacer.begin_frame(now);
 
                 // Check and apply committed options configuration
                 if let Some(cfg) = state.menu_ctrl.config_applied_pending.take() {
                     tracing::info!(
-                        "[Options] Applying engine configuration: Resolution: {:?}, DisplayMode: {:?}, VSync: {}, AudioDevice: {:?}, MasterVol: {:.0}%, BGMVol: {:.0}%",
+                        "[Options] Applying engine configuration: Resolution: {:?}, DisplayMode: {:?}, VSync: {}, FrameRateCap: {:?}, AudioDevice: {:?}, MasterVol: {:.0}%, BGMVol: {:.0}%",
                         cfg.video.resolution,
                         cfg.video.display_mode,
                         cfg.video.vsync,
+                        cfg.video.framerate_cap,
                         cfg.audio.selected_output_device.as_deref().unwrap_or("Default"),
                         cfg.audio.master_volume * 100.0,
                         cfg.audio.bgm_volume * 100.0,
                     );
+                    state.frame_pacer.set_cap(cfg.video.framerate_cap);
 
                     // 1. Audio Engine volume updates and device re-binding
                     if let Some(ref mut audio) = state.audio_engine {
@@ -1058,8 +1063,7 @@ impl ApplicationHandler for SilentHillApp {
                         .sim_core
                         .camera
                         .set_cam_file(find_cam_file_for_room(new_room));
-                    state.sim_core.scenario.player_position = new_pos;
-                    state.sim_core.scenario.player_yaw = new_yaw;
+                    state.sim_core.snap_player_transform(new_pos, new_yaw);
                     state.sim_core.camera.reset_to_player(new_pos, new_yaw);
                     state.active_test_room = new_room;
                     if new_room == TestRoomKind::CombatArena {
@@ -1156,10 +1160,6 @@ impl ApplicationHandler for SilentHillApp {
                     state.sim_time += dt_sec;
                 }
 
-                // Update fog animation time and drift
-                state.fog_uniforms.time = state.sim_time;
-                state.render_ctx.update_fog(&state.fog_uniforms);
-
                 // Retrieve active grain intensity percentage from options configuration
                 let grain_pct = state
                     .menu_ctrl
@@ -1173,22 +1173,29 @@ impl ApplicationHandler for SilentHillApp {
                     (grain_pct as f32) / 100.0
                 };
 
+                let aspect =
+                    state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
+
+                // Dispatch 3D scene or video pass to the active room controller (advances 60 Hz sim ticks)
+                rooms::dispatch_tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+
+                // Update fog flow velocity time deterministically from elapsed 60 Hz simulation ticks + sub-frame alpha
+                let det_fog_time = state
+                    .sim_core
+                    .deterministic_fog_time(state.sim_core.interpolation_alpha());
+                state.fog_uniforms.time = det_fog_time;
+                state.render_ctx.update_fog(&state.fog_uniforms);
+
                 state
                     .render_ctx
                     .update_post(&sh2_renderer::post::PostUniforms {
-                        time: state.sim_time,
+                        time: det_fog_time,
                         grain_intensity,
                         exposure: 1.0,
                         frame_count: state.frame_counter,
                     });
-
-                let aspect =
-                    state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
-
-                // Dispatch 3D scene or video pass to the active room controller
-                rooms::dispatch_tick_and_render_3d(
-                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
-                );
 
                 // Present to window surface swapchain
                 let surface_texture = match state.surface.get_current_texture() {
@@ -1366,14 +1373,21 @@ impl ApplicationHandler for SilentHillApp {
                     .submit(std::iter::once(encoder.finish()));
                 surface_texture.present();
 
+                // Enforce zero-jitter frame rate cap (30 / 60 / 120 / 144 / 240 FPS / Uncapped VRR)
+                state.frame_pacer.wait_for_deadline();
                 state.window.request_redraw();
             }
             _ => {}
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(ref state) = self.state {
+            if let Some(deadline) = state.frame_pacer.next_deadline() {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Poll);
+            }
             state.window.request_redraw();
         }
     }

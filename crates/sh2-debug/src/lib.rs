@@ -4,6 +4,7 @@ pub mod camera;
 pub mod fmv_viewer;
 pub mod grapple_viewer;
 pub mod model_viewer;
+pub mod subclips;
 pub mod visualizer;
 
 pub use fmv_viewer::{
@@ -14,6 +15,7 @@ pub use model_viewer::{
     ModelCategory, ModelViewerEntry, ModelViewerState, OrbitCamera, StageLightingRig,
     TextureSourceMode, ViewerRenderMode, BESTIARY_CATALOG,
 };
+pub use subclips::{sub_clips_for_anm, ViewerSubClip};
 pub use visualizer::{
     build_chara_collision_debug_lines, build_collision_debug_lines,
     build_collision_debug_lines_iter, build_skeleton_debug_lines, build_wireframe_lines,

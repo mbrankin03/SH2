@@ -7,6 +7,8 @@
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::subclips::{sub_clips_for_anm, ViewerSubClip};
+
 /// Category classification for entries in the 3D Model & Bestiary Viewer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelCategory {
@@ -653,6 +655,8 @@ pub struct ModelViewerState {
     pub selected_model_index: usize,
     /// Index into the active model's `anm_paths` list.
     pub selected_anm_index: usize,
+    /// Optional index into the active `.anm` file's named PS2 sub-clips (`None` = play entire `.anm` track).
+    pub selected_subclip_index: Option<usize>,
     /// Total animation frames in the currently loaded `.anm` file.
     pub total_frames: usize,
     /// Continuous animation playhead position in frames `[0.0, total_frames)`.
@@ -661,7 +665,7 @@ pub struct ModelViewerState {
     pub is_paused: bool,
     /// Playback speed multiplier (`-2.0` to `2.0`, default `1.0`).
     pub playback_speed: f32,
-    /// Base animation framerate (30.0 FPS standard PS2 animation rate).
+    /// Base animation framerate (30.0 FPS standard PS2 animation rate, or active sub-clip FPS).
     pub base_fps: f32,
     /// Whether the pedestal turntable auto-rotates the model continuously.
     pub turntable_enabled: bool,
@@ -698,6 +702,7 @@ impl ModelViewerState {
         Self {
             selected_model_index: 0,
             selected_anm_index: 0,
+            selected_subclip_index: None,
             total_frames: 1,
             current_frame: 0.0,
             is_paused: false,
@@ -718,6 +723,78 @@ impl ModelViewerState {
     /// Returns the currently selected [`ModelViewerEntry`].
     pub fn current_entry(&self) -> &'static ModelViewerEntry {
         &BESTIARY_CATALOG[self.selected_model_index % BESTIARY_CATALOG.len()]
+    }
+
+    /// Returns the relative path of the currently selected `.anm` file, if any.
+    pub fn current_anm_path(&self) -> Option<&'static str> {
+        let entry = self.current_entry();
+        if entry.anm_paths.is_empty() {
+            None
+        } else {
+            Some(entry.anm_paths[self.selected_anm_index % entry.anm_paths.len()])
+        }
+    }
+
+    /// Returns the slice of named PS2 sub-clips defined for the active `(model, anm)` pair.
+    pub fn available_subclips(&self) -> &'static [ViewerSubClip] {
+        let entry = self.current_entry();
+        if let Some(anm_path) = self.current_anm_path() {
+            sub_clips_for_anm(entry.id, anm_path)
+        } else {
+            &[]
+        }
+    }
+
+    /// Returns the currently selected [`ViewerSubClip`], if any.
+    pub fn active_subclip(&self) -> Option<ViewerSubClip> {
+        let idx = self.selected_subclip_index?;
+        let subclips = self.available_subclips();
+        subclips.get(idx).copied()
+    }
+
+    /// Cycles to the next named PS2 sub-clip within the active `.anm` file, wrapping back to
+    /// `None` ("ALL FRAMES") after the last sub-clip.
+    pub fn next_subclip(&mut self) {
+        let subclips = self.available_subclips();
+        if subclips.is_empty() {
+            self.selected_subclip_index = None;
+            self.base_fps = 30.0;
+            return;
+        }
+        self.selected_subclip_index = match self.selected_subclip_index {
+            None => Some(0),
+            Some(i) if i + 1 < subclips.len() => Some(i + 1),
+            Some(_) => None,
+        };
+        if let Some(sc) = self.active_subclip() {
+            self.current_frame = sc.clip.start_frame as f32;
+            self.base_fps = sc.clip.fps;
+        } else {
+            self.current_frame = 0.0;
+            self.base_fps = 30.0;
+        }
+    }
+
+    /// Cycles to the previous named PS2 sub-clip within the active `.anm` file.
+    pub fn prev_subclip(&mut self) {
+        let subclips = self.available_subclips();
+        if subclips.is_empty() {
+            self.selected_subclip_index = None;
+            self.base_fps = 30.0;
+            return;
+        }
+        self.selected_subclip_index = match self.selected_subclip_index {
+            None => Some(subclips.len() - 1),
+            Some(0) => None,
+            Some(i) => Some(i - 1),
+        };
+        if let Some(sc) = self.active_subclip() {
+            self.current_frame = sc.clip.start_frame as f32;
+            self.base_fps = sc.clip.fps;
+        } else {
+            self.current_frame = 0.0;
+            self.base_fps = 30.0;
+        }
     }
 
     /// Selects a model by matching its CLI name or substring (case-insensitive).
@@ -760,6 +837,8 @@ impl ModelViewerState {
     pub fn set_model_index(&mut self, index: usize) {
         self.selected_model_index = index % BESTIARY_CATALOG.len();
         self.selected_anm_index = 0;
+        self.selected_subclip_index = None;
+        self.base_fps = 30.0;
         self.current_frame = 0.0;
         self.camera.reset_for_entry(self.current_entry());
     }
@@ -784,6 +863,8 @@ impl ModelViewerState {
     pub fn next_animation_clip(&mut self) {
         let count = self.current_entry().anm_paths.len().max(1);
         self.selected_anm_index = (self.selected_anm_index + 1) % count;
+        self.selected_subclip_index = None;
+        self.base_fps = 30.0;
         self.current_frame = 0.0;
     }
 
@@ -795,6 +876,8 @@ impl ModelViewerState {
         } else {
             self.selected_anm_index -= 1;
         }
+        self.selected_subclip_index = None;
+        self.base_fps = 30.0;
         self.current_frame = 0.0;
     }
 
@@ -812,8 +895,18 @@ impl ModelViewerState {
     /// Steps animation playhead forward or backward by `delta_frames` (automatically pauses).
     pub fn step_frame(&mut self, delta_frames: i32) {
         self.is_paused = true;
-        let total = self.total_frames.max(1) as f32;
-        self.current_frame = (self.current_frame.floor() + delta_frames as f32).rem_euclid(total);
+        if let Some(sc) = self.active_subclip() {
+            let start = (sc.clip.start_frame as usize).min(self.total_frames.saturating_sub(1));
+            let end = (sc.clip.end_frame as usize).min(self.total_frames.saturating_sub(1));
+            let span = (end.saturating_sub(start) + 1).max(1) as f32;
+            let rel =
+                (self.current_frame.floor() - start as f32 + delta_frames as f32).rem_euclid(span);
+            self.current_frame = start as f32 + rel;
+        } else {
+            let total = self.total_frames.max(1) as f32;
+            self.current_frame =
+                (self.current_frame.floor() + delta_frames as f32).rem_euclid(total);
+        }
     }
 
     /// Adjusts playback speed multiplier within `[-2.0, 2.0]`.
@@ -835,9 +928,22 @@ impl ModelViewerState {
         }
 
         if !self.is_paused && self.total_frames > 1 {
-            let total = self.total_frames as f32;
-            let frame_delta = self.base_fps * self.playback_speed * dt;
-            self.current_frame = (self.current_frame + frame_delta).rem_euclid(total);
+            if let Some(sc) = self.active_subclip() {
+                let start = (sc.clip.start_frame as usize).min(self.total_frames - 1) as f32;
+                let end = (sc.clip.end_frame as usize).min(self.total_frames - 1) as f32;
+                let span = (end - start).max(0.0);
+                if span <= f32::EPSILON {
+                    self.current_frame = start;
+                } else {
+                    let frame_delta = sc.clip.fps * self.playback_speed * dt;
+                    let rel = (self.current_frame - start + frame_delta).rem_euclid(span);
+                    self.current_frame = start + rel;
+                }
+            } else {
+                let total = self.total_frames as f32;
+                let frame_delta = self.base_fps * self.playback_speed * dt;
+                self.current_frame = (self.current_frame + frame_delta).rem_euclid(total);
+            }
         }
     }
 
@@ -846,10 +952,27 @@ impl ModelViewerState {
         if self.total_frames <= 1 {
             return (0, 0, 0.0);
         }
-        let f0 = (self.current_frame.floor() as usize) % self.total_frames;
-        let f1 = (f0 + 1) % self.total_frames;
-        let alpha = (self.current_frame - self.current_frame.floor()).clamp(0.0, 1.0);
-        (f0, f1, alpha)
+        if let Some(sc) = self.active_subclip() {
+            let start = (sc.clip.start_frame as usize).min(self.total_frames - 1);
+            let end = (sc.clip.end_frame as usize).min(self.total_frames - 1);
+            let f0 = (self.current_frame.floor() as usize).clamp(start, end);
+            let f1 = if f0 >= end {
+                if sc.clip.looping {
+                    start
+                } else {
+                    end
+                }
+            } else {
+                f0 + 1
+            };
+            let alpha = (self.current_frame - self.current_frame.floor()).clamp(0.0, 1.0);
+            (f0, f1, alpha)
+        } else {
+            let f0 = (self.current_frame.floor() as usize) % self.total_frames;
+            let f1 = (f0 + 1) % self.total_frames;
+            let alpha = (self.current_frame - self.current_frame.floor()).clamp(0.0, 1.0);
+            (f0, f1, alpha)
+        }
     }
 }
 
@@ -928,6 +1051,41 @@ mod tests {
         viewer.render_mode = viewer.render_mode.next();
         assert_eq!(viewer.render_mode, ViewerRenderMode::UntexturedClay);
         assert_eq!(viewer.render_mode.shader_mode_code(), 1);
+    }
+
+    #[test]
+    fn test_sh2_34_npc_subclip_cycling_and_playback_bounds() {
+        let mut viewer = ModelViewerState::new();
+        assert!(viewer.select_by_name("agl"));
+        viewer.set_total_frames(298);
+        assert_eq!(viewer.available_subclips().len(), 4);
+        assert!(viewer.active_subclip().is_none());
+
+        // Cycle to first sub-clip (3904: Idle Breathe, 133..=206 @ 1.875 fps)
+        viewer.next_subclip();
+        let sc0 = viewer.active_subclip().expect("subclip 0 active");
+        assert_eq!(sc0.clip.start_frame, 133);
+        assert_eq!(sc0.clip.end_frame, 206);
+        assert!((viewer.base_fps - 1.875).abs() < 1e-4);
+
+        // Cycle to second sub-clip (3901: Walk Cycle A, 0..=63 @ 30.0 fps)
+        viewer.next_subclip();
+        let sc1 = viewer.active_subclip().expect("subclip 1 active");
+        assert_eq!(sc1.clip.start_frame, 0);
+        assert_eq!(sc1.clip.end_frame, 63);
+        assert!((viewer.current_frame - 0.0).abs() < 1e-4);
+
+        // Stepping backward from start_frame wraps to end_frame within the sub-clip
+        viewer.step_frame(-1);
+        assert_eq!(viewer.current_frame, 63.0);
+        let (f0, f1, _) = viewer.sample_cursor();
+        assert_eq!(f0, 63);
+        assert_eq!(f1, 0);
+
+        // Also verify Eddie Boss (`lll_edi`) exposes all 21 combat/damage PS2 sub-clips
+        assert!(viewer.select_by_name("lll_edi"));
+        viewer.set_total_frames(437);
+        assert_eq!(viewer.available_subclips().len(), 21);
     }
 
     #[test]

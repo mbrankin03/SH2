@@ -74,6 +74,23 @@ impl RoomController for ModelViewerRoomController {
                     state.model_viewer.selected_anm_index
                 );
             }
+            KeyCode::KeyC if pressed => {
+                state.model_viewer.next_subclip();
+                if let Some(sc) = state.model_viewer.active_subclip() {
+                    tracing::info!(
+                        "[Model Viewer] Selected PS2 Sub-Clip: {} (frames {}..={} @ {:.2} FPS)",
+                        sc.label,
+                        sc.clip.start_frame,
+                        sc.clip.end_frame,
+                        sc.clip.fps
+                    );
+                } else {
+                    tracing::info!(
+                        "[Model Viewer] Selected PS2 Sub-Clip: ALL FRAMES (0..{} @ 30.0 FPS)",
+                        state.model_viewer.total_frames
+                    );
+                }
+            }
             KeyCode::Space if pressed => {
                 state.model_viewer.toggle_pause();
                 tracing::info!(
@@ -466,6 +483,26 @@ impl RoomController for ModelViewerRoomController {
         } else {
             "PLAYING"
         };
+        let subclips = state.model_viewer.available_subclips();
+        let subclip_info = if let Some(sc) = state.model_viewer.active_subclip() {
+            let idx = state.model_viewer.selected_subclip_index.unwrap_or(0) + 1;
+            format!(
+                "SUB-CLIP [{}/{}] {} ({}..={} @ {:.2} FPS)",
+                idx,
+                subclips.len(),
+                sc.label,
+                sc.clip.start_frame,
+                sc.clip.end_frame,
+                sc.clip.fps
+            )
+        } else if !subclips.is_empty() {
+            format!(
+                "SUB-CLIP [ALL/{}] FULL TRACK (PRESS [C] FOR PS2 SUB-CLIPS)",
+                subclips.len()
+            )
+        } else {
+            "SUB-CLIP [FULL TRACK]".to_string()
+        };
         state.menu_rasterizer.draw_text(
             &format!(
                 "ANIM CLIP [{}/{}] : {} | {} | FRAME {:03.0}/{:03} | SPEED {:.1}X",
@@ -483,6 +520,9 @@ impl RoomController for ModelViewerRoomController {
             green,
             true,
         );
+        state
+            .menu_rasterizer
+            .draw_text(&subclip_info, 24, 110, 1, yellow, true);
 
         state.menu_rasterizer.draw_text(
             &format!(
@@ -500,7 +540,7 @@ impl RoomController for ModelViewerRoomController {
                 }
             ),
             24,
-            112,
+            128,
             1,
             white,
             true,
@@ -518,7 +558,7 @@ impl RoomController for ModelViewerRoomController {
                 }
             ),
             24,
-            132,
+            146,
             1,
             cyan,
             true,
@@ -526,7 +566,7 @@ impl RoomController for ModelViewerRoomController {
 
         // Bottom hotkey legend
         state.menu_rasterizer.draw_text(
-            "[N/P or PgDn/PgUp] Next/Prev Model  [M/Tab] Next .ANM Clip  [Space] Play/Pause  [[ / ]] Step Frame  [-/+] Speed  [R] Reverse",
+            "[N/P or PgDn/PgUp] Next/Prev Model  [M/Tab] Next .ANM File  [C] Next PS2 Sub-Clip  [Space] Play/Pause  [[ / ]] Step  [-/+] Speed  [R] Rev",
             24,
             666,
             1,

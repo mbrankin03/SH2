@@ -1,5 +1,6 @@
 //! sh2-audio: High-definition streaming sound engine using kira.
 
+pub mod beta_audio_catalog;
 pub mod bgm_data;
 pub mod bgm_manager;
 pub mod cutscene_bgm;
@@ -7,6 +8,14 @@ pub mod engine;
 pub mod menu_sfx;
 pub mod sfx_bank;
 
+pub use beta_audio_catalog::{
+    CutAudioRestoreAction, CutAudioRestorer, CutSfxCatalogEntry, CutSfxCategory,
+    LauraLetterVoiceSlice, Ps2PrototypeSdbSummary, Ps2PrototypeSfcEntry, CS_APT_RPT_CLOSET_ID,
+    CS_HSP_BOSS_FINISH_ID, CS_HTL_LAURA_PIANO_ID, CUT_AND_RARE_AUDIO_CATALOG,
+    E3_PROTOTYPE_SDB_CATALOG, E3_TGS_TRIAL_SDB_SAMPLE_RECORDS, LAURA_LETTER_VOICEOVER_SLICES,
+    PS2_PROTOTYPE_SFC_CATALOG, R_HTL_RESTAURANT_ID, UNREFERENCED_SDDATA_ENTRIES,
+    VOICE_AFS_LAURA_LETTER_INDEX,
+};
 pub use bgm_data::{
     bgm_grid_cell, bgm_page_entry, bgm_room_id, find_bgm_file_by_load_id, stage_glb_crd,
     BgmFileEntry, BgmPageEntry, SoundDataRecord, BGM_FILES, BGM_PAGES, STAGE_GLB_CRD,

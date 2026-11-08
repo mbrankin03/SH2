@@ -713,4 +713,181 @@ mod tests {
         assert!(bank_ps2.game_start.is_some());
         assert!(bank_ps2.resolve_se_id(11048).is_some());
     }
+
+    #[test]
+    fn test_sh2_62_unreferenced_sddata_catalog_and_cut_audio_restorer() {
+        // 1. Verify that `sddata[360..=364]` (`UNREFERENCED_SDDATA_ENTRIES`) are the exact 5 entries
+        // in `0..417` that have zero references in `SE_ID_TO_SDDATA_INDEX` (`0x8A1ED8` 666 pairs).
+        let mut referenced = [false; SDDATA_ENTRY_COUNT];
+        for &(_, sd_idx) in &SE_ID_TO_SDDATA_INDEX {
+            referenced[sd_idx as usize] = true;
+        }
+        let unreferenced_indices: Vec<usize> = (0..SDDATA_ENTRY_COUNT)
+            .filter(|&i| !referenced[i])
+            .collect();
+        assert_eq!(
+            unreferenced_indices,
+            vec![360, 361, 362, 363, 364],
+            "Expected exactly sddata[360..=364] (internal IDs 5360..=5364) to be unreferenced in SE_PAIRS"
+        );
+        for (i, entry) in UNREFERENCED_SDDATA_ENTRIES.iter().enumerate() {
+            assert_eq!(entry.sddata_index, Some(360 + i));
+            assert_eq!(entry.internal_driver_id, Some(5360 + i as u16));
+            assert_eq!(entry.primary_se_id, None);
+            assert!(entry.loops);
+        }
+
+        // 2. Verify `LAURA_LETTER_VOICEOVER_SLICES` (`PlayUnusedAudio.cpp` 11-page `SCENE_45` sequence)
+        assert_eq!(LAURA_LETTER_VOICEOVER_SLICES.len(), 11);
+        assert_eq!(LAURA_LETTER_VOICEOVER_SLICES[0].start_sec, 0.0);
+        assert!((LAURA_LETTER_VOICEOVER_SLICES[10].end_sec - 67.2).abs() < 1e-4);
+        for i in 0..10 {
+            assert!(
+                LAURA_LETTER_VOICEOVER_SLICES[i].end_sec
+                    <= LAURA_LETTER_VOICEOVER_SLICES[i + 1].start_sec + 1e-4,
+                "Expected non-overlapping slice boundary between page {i} and {}",
+                i + 1
+            );
+            assert!(LAURA_LETTER_VOICEOVER_SLICES[i].duration_sec() >= 1.8);
+        }
+
+        // 3. Verify `CutAudioRestorer` state machine (`CS_HTL_LAURA_PIANO`, `CS_APT_RPT_CLOSET`, `CS_HSP_BOSS_FINISH`)
+        let mut restorer = CutAudioRestorer::new();
+
+        // When `enable_restored_cut_audio == false`, nothing triggers
+        assert_eq!(
+            restorer.tick(
+                false,
+                CS_HTL_LAURA_PIANO_ID,
+                R_HTL_RESTAURANT_ID,
+                1650.0,
+                3,
+                0,
+                0.016
+            ),
+            CutAudioRestoreAction::None
+        );
+
+        // When `enable_restored_cut_audio == true`:
+        // - In `CS_APT_RPT_CLOSET` (`0x10`) at `timer = 1905.0`, triggers `PlayClosetCutsceneBonusAudio` once
+        assert_eq!(
+            restorer.tick(true, CS_APT_RPT_CLOSET_ID, 0x1A, 1905.0, 3, 0, 0.016),
+            CutAudioRestoreAction::PlayClosetCutsceneBonusAudio
+        );
+        assert_eq!(
+            restorer.tick(true, CS_APT_RPT_CLOSET_ID, 0x1A, 1910.0, 3, 0, 0.016),
+            CutAudioRestoreAction::None
+        );
+
+        // - In `CS_HTL_LAURA_PIANO` (`0x3B`) in `R_HTL_RESTAURANT` (`0x9E`):
+        //   Before `timer >= 1600.0` or `fade_state != 3` -> None
+        assert_eq!(
+            restorer.tick(
+                true,
+                CS_HTL_LAURA_PIANO_ID,
+                R_HTL_RESTAURANT_ID,
+                1500.0,
+                3,
+                0,
+                0.016
+            ),
+            CutAudioRestoreAction::None
+        );
+        //   At `timer = 1600.0, fade_state = 3` -> triggers slice 0 (`0.0s..7.0s`)
+        assert_eq!(
+            restorer.tick(
+                true,
+                CS_HTL_LAURA_PIANO_ID,
+                R_HTL_RESTAURANT_ID,
+                1600.0,
+                3,
+                0,
+                0.016
+            ),
+            CutAudioRestoreAction::PlayLauraLetterSlice(0)
+        );
+        //   After 7.1s elapses on slice 0, slice 1 (`7.2s..12.4s`) auto-chains (`PlayUnusedAudio.cpp` line 183)
+        assert_eq!(
+            restorer.tick(
+                true,
+                CS_HTL_LAURA_PIANO_ID,
+                R_HTL_RESTAURANT_ID,
+                1680.0,
+                3,
+                1,
+                7.1
+            ),
+            CutAudioRestoreAction::PlayLauraLetterSlice(1)
+        );
+        //   Advancing pages (`text_wait_status` transitions `1 -> 0`) triggers slices 2..=10
+        for expected_slice in 2..=10 {
+            let _ = restorer.tick(
+                true,
+                CS_HTL_LAURA_PIANO_ID,
+                R_HTL_RESTAURANT_ID,
+                1700.0 + expected_slice as f32 * 10.0,
+                3,
+                1,
+                0.1,
+            );
+            assert_eq!(
+                restorer.tick(
+                    true,
+                    CS_HTL_LAURA_PIANO_ID,
+                    R_HTL_RESTAURANT_ID,
+                    1705.0 + expected_slice as f32 * 10.0,
+                    3,
+                    0,
+                    0.1
+                ),
+                CutAudioRestoreAction::PlayLauraLetterSlice(expected_slice)
+            );
+        }
+        //   Exiting the letter (`timer = 2069.0`) emits `StopLauraLetterVoiceover`
+        assert_eq!(
+            restorer.tick(
+                true,
+                CS_HTL_LAURA_PIANO_ID,
+                R_HTL_RESTAURANT_ID,
+                2069.0,
+                3,
+                0,
+                0.016
+            ),
+            CutAudioRestoreAction::StopLauraLetterVoiceover
+        );
+
+        // 4. Verify on-disk decoding of `voice.afs[133]` (`SCENE_45`) and `sankaku_toujyou_2.wav` / `machi.wav` when assets exist
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        if !resolver.data_dir.join("sound/sddata.bin").exists() {
+            return;
+        }
+        let mut bank =
+            MenuAudioBank::load_from_dirs(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+        let laura_wav = bank
+            .load_voice_afs_entry(VOICE_AFS_LAURA_LETTER_INDEX)
+            .expect("Expected voice.afs[133] (SCENE_45) to decode cleanly");
+        assert!(laura_wav.sample_rate >= 22050);
+        let slice_0 = sh2_assets::slice_wav_time_range(
+            &laura_wav,
+            LAURA_LETTER_VOICEOVER_SLICES[0].start_sec,
+            LAURA_LETTER_VOICEOVER_SLICES[0].end_sec,
+        );
+        assert!(!slice_0.data.is_empty());
+
+        if resolver
+            .sh2e_dir
+            .as_ref()
+            .is_some_and(|p| p.join("sound/extra/sankaku_toujyou_2.wav").exists())
+        {
+            assert!(
+                bank.closet_bonus_audio.is_some(),
+                "Expected sankaku_toujyou_2.wav to be loaded into closet_bonus_audio"
+            );
+            assert!(
+                bank.machi_steps_audio.is_some(),
+                "Expected machi.wav to be loaded into machi_steps_audio"
+            );
+        }
+    }
 }

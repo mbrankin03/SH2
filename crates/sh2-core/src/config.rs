@@ -658,6 +658,12 @@ pub struct AudioOptions {
     /// Preferred BGM & SFX audio asset source pack (`Auto`, `Sh2eeLossless`, `Ps2Original`).
     #[serde(default, alias = "audio_pack_preference")]
     pub audio_pack_source: AudioPackPreference,
+    /// Restore cut / unused audio sequences (`SH2-62`), such as Mary's voiceover reading her letter
+    /// to Laura in the Lakeview Hotel restaurant (`SCENE_45` / `PlayUnusedAudio.cpp`), Apartment Closet
+    /// bonus audio (`sankaku_toujyou_2.wav`), and Lying Figure street footsteps (`machi.wav`).
+    /// Defaults to `false` for strict vanilla parity.
+    #[serde(default)]
+    pub enable_restored_cut_audio: bool,
 }
 
 impl Default for AudioOptions {
@@ -671,6 +677,7 @@ impl Default for AudioOptions {
             selected_output_device: None,
             mute_in_background: true,
             audio_pack_source: AudioPackSource::default(),
+            enable_restored_cut_audio: false,
         }
     }
 }

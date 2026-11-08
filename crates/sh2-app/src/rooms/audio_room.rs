@@ -17,7 +17,10 @@ use crate::rooms::RoomController;
 use crate::state::AppState;
 use sh2_audio::{
     bgm_page_entry, compute_se_call_pos_distance_f, find_bgm_file_by_load_id, play_menu_sound,
-    EnvironmentalPreset, SoundCueKind, BGM_MAX_TRACKS, BGM_PAGES, FADE_TIME_SECS, STAGE_SOUND_DATA,
+    CutAudioRestorer, EnvironmentalPreset, SoundCueKind, SoundDataRecord, BGM_MAX_TRACKS,
+    BGM_PAGES, CUT_AND_RARE_AUDIO_CATALOG, E3_PROTOTYPE_SDB_CATALOG,
+    E3_TGS_TRIAL_SDB_SAMPLE_RECORDS, FADE_TIME_SECS, LAURA_LETTER_VOICEOVER_SLICES,
+    STAGE_SOUND_DATA,
 };
 use sh2_core::SurfaceMaterial;
 use sh2_debug::DebugLineVertex;
@@ -106,6 +109,16 @@ pub(crate) struct AudioDebugState {
     pub test_surface_material: SurfaceMaterial,
     /// Simulated 3D SFX emitter distance (`1500.0..=11500.0`) for testing `SeCallPosDistanceF` (`0x5155E0`).
     pub test_emitter_distance: f32,
+    /// Selected index into [`CUT_AND_RARE_AUDIO_CATALOG`] (`SH2-62`).
+    pub cut_catalog_index: usize,
+    /// Selected slice index (`0..=10`) into [`LAURA_LETTER_VOICEOVER_SLICES`] (`voice.afs[133]` / `SCENE_45`) (`SH2-62`).
+    pub laura_slice_index: usize,
+    /// Selected index into [`E3_PROTOTYPE_SDB_CATALOG`] (`SH2-62`).
+    pub proto_sdb_index: usize,
+    /// Whether to overlay E3 2001 `tgs_trial.sdb` (`E3_TGS_TRIAL_SDB_SAMPLE_RECORDS`) 3D bounding boxes (`SH2-62`).
+    pub show_proto_tgs_sdb_boxes: bool,
+    /// Cutscene audio restorer state machine (`PlayUnusedAudio.cpp` & `ClosetCutsceneBonusAudio`) (`SH2-62`).
+    pub cut_audio_restorer: CutAudioRestorer,
 }
 
 impl Default for AudioDebugState {
@@ -120,6 +133,11 @@ impl Default for AudioDebugState {
             last_sfx_triggered: "None",
             test_surface_material: SurfaceMaterial::Concrete,
             test_emitter_distance: 3500.0,
+            cut_catalog_index: 0,
+            laura_slice_index: 0,
+            proto_sdb_index: 0,
+            show_proto_tgs_sdb_boxes: false,
+            cut_audio_restorer: CutAudioRestorer::new(),
         }
     }
 }
@@ -165,6 +183,24 @@ pub(crate) fn build_sound_data_debug_lines(
         .get(stage_id as usize)
         .copied()
         .unwrap_or(&[]);
+    build_sound_records_wireframe(
+        records,
+        matched_indices,
+        player_y,
+        [0.15, 1.0, 0.35, 1.0],
+        [0.20, 0.70, 0.95, 0.85],
+    )
+}
+
+/// Builds 3D wireframe bounding boxes (`DebugLineVertex` pairs) for an arbitrary slice of [`SoundDataRecord`]s
+/// (used for both retail `STAGE_SOUND_DATA` and prototype `.sdb` overlays like E3 `tgs_trial.sdb`) (`SH2-62`).
+pub(crate) fn build_sound_records_wireframe(
+    records: &[SoundDataRecord],
+    matched_indices: &[usize],
+    player_y: f32,
+    active_color: [f32; 4],
+    inactive_color: [f32; 4],
+) -> Vec<DebugLineVertex> {
     if records.len() <= 1 {
         return Vec::new();
     }
@@ -173,9 +209,9 @@ pub(crate) fn build_sound_data_debug_lines(
     for (idx, rec) in records.iter().enumerate().skip(1) {
         let is_matched = matched_indices.contains(&idx);
         let color = if is_matched {
-            [0.15, 1.0, 0.35, 1.0] // Bright green for active matched sound area(s)
+            active_color
         } else {
-            [0.20, 0.70, 0.95, 0.85] // Cyan for inactive sound areas
+            inactive_color
         };
 
         let min_x = rec.x0.min(rec.x2);
@@ -473,6 +509,129 @@ impl RoomController for AudioDebugRoomController {
                     state.audio_debug.last_sfx_triggered = "11048: 3D Handgun Shot (0x2B28)";
                     return;
                 }
+                // [BracketLeft] / [BracketRight]: Browse Cut, Unreferenced & Rare Audio Catalog (`SH2-62`) and audition
+                KeyCode::BracketRight => {
+                    state.audio_debug.cut_catalog_index = (state.audio_debug.cut_catalog_index + 1)
+                        % CUT_AND_RARE_AUDIO_CATALOG.len();
+                    let entry = CUT_AND_RARE_AUDIO_CATALOG[state.audio_debug.cut_catalog_index];
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_cut_catalog_entry(eng, &entry, 0.95);
+                    }
+                    state.audio_debug.last_sfx_triggered = entry.title;
+                    tracing::info!(
+                        "[Audio Debug SH2-62] Auditioning cut/rare cue [{}/{}]: {}",
+                        state.audio_debug.cut_catalog_index + 1,
+                        CUT_AND_RARE_AUDIO_CATALOG.len(),
+                        entry.title
+                    );
+                    return;
+                }
+                KeyCode::BracketLeft => {
+                    if state.audio_debug.cut_catalog_index == 0 {
+                        state.audio_debug.cut_catalog_index = CUT_AND_RARE_AUDIO_CATALOG.len() - 1;
+                    } else {
+                        state.audio_debug.cut_catalog_index -= 1;
+                    }
+                    let entry = CUT_AND_RARE_AUDIO_CATALOG[state.audio_debug.cut_catalog_index];
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_cut_catalog_entry(eng, &entry, 0.95);
+                    }
+                    state.audio_debug.last_sfx_triggered = entry.title;
+                    tracing::info!(
+                        "[Audio Debug SH2-62] Auditioning cut/rare cue [{}/{}]: {}",
+                        state.audio_debug.cut_catalog_index + 1,
+                        CUT_AND_RARE_AUDIO_CATALOG.len(),
+                        entry.title
+                    );
+                    return;
+                }
+                // [Enter]: Replay currently selected Cut/Rare catalog entry (`SH2-62`)
+                KeyCode::Enter => {
+                    let entry = CUT_AND_RARE_AUDIO_CATALOG[state.audio_debug.cut_catalog_index];
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_cut_catalog_entry(eng, &entry, 0.95);
+                    }
+                    state.audio_debug.last_sfx_triggered = entry.title;
+                    return;
+                }
+                // [KeyK]: Step through and play Mary's 11 restored letter slices (`voice.afs[133]` / `SCENE_45`, `PlayUnusedAudio.cpp`) (`SH2-62`)
+                KeyCode::KeyK => {
+                    let slice_idx = state.audio_debug.laura_slice_index;
+                    let slice = LAURA_LETTER_VOICEOVER_SLICES[slice_idx];
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.play_laura_letter_slice(eng, slice_idx, 1.0);
+                    }
+                    state.audio_debug.last_sfx_triggered = slice.subtitle_excerpt;
+                    tracing::info!(
+                        "[Audio Debug SH2-62] Playing SCENE_45 Mary Letter Slice #{}/11 ({:.2}s..{:.2}s): \"{}\"",
+                        slice_idx + 1,
+                        slice.start_sec,
+                        slice.end_sec,
+                        slice.subtitle_excerpt
+                    );
+                    state.audio_debug.laura_slice_index =
+                        (slice_idx + 1) % LAURA_LETTER_VOICEOVER_SLICES.len();
+                    return;
+                }
+                // [KeyR]: Toggle `AudioOptions::enable_restored_cut_audio` (`SH2-62`)
+                KeyCode::KeyR => {
+                    let next_val = !state
+                        .menu_ctrl
+                        .options_menu
+                        .original_config
+                        .audio
+                        .enable_restored_cut_audio;
+                    state
+                        .menu_ctrl
+                        .options_menu
+                        .original_config
+                        .audio
+                        .enable_restored_cut_audio = next_val;
+                    state
+                        .menu_ctrl
+                        .options_menu
+                        .draft_config
+                        .audio
+                        .enable_restored_cut_audio = next_val;
+                    if !next_val {
+                        if let Some(ref mut bank) = state.audio_bank {
+                            bank.stop_active_cut_audio();
+                        }
+                    }
+                    tracing::info!(
+                        "[Audio Debug SH2-62] Restored Cut Audio toggle -> {}",
+                        next_val
+                    );
+                    return;
+                }
+                // [KeyG]: Toggle E3 2001 `tgs_trial.sdb` 3D spatial bounding-box wireframe overlay & cycle E3 `.sdb` catalog (`SH2-62`)
+                KeyCode::KeyG => {
+                    if !state.audio_debug.show_proto_tgs_sdb_boxes {
+                        state.audio_debug.show_proto_tgs_sdb_boxes = true;
+                    } else {
+                        state.audio_debug.proto_sdb_index = (state.audio_debug.proto_sdb_index + 1)
+                            % E3_PROTOTYPE_SDB_CATALOG.len();
+                        if state.audio_debug.proto_sdb_index == 0 {
+                            state.audio_debug.show_proto_tgs_sdb_boxes = false;
+                        }
+                    }
+                    let sdb_meta = E3_PROTOTYPE_SDB_CATALOG[state.audio_debug.proto_sdb_index];
+                    tracing::info!(
+                        "[Audio Debug SH2-62] E3 Prototype .sdb overlay: {} ({} — {} records)",
+                        state.audio_debug.show_proto_tgs_sdb_boxes,
+                        sdb_meta.filename,
+                        sdb_meta.record_count
+                    );
+                    return;
+                }
                 _ => {}
             }
         }
@@ -561,6 +720,23 @@ impl RoomController for AudioDebugRoomController {
                 ) {
                     tracing::warn!("[Audio Debug] SeBgmManager tick warning: {:?}", e);
                 }
+
+                // Advance `CutAudioRestorer` (`PlayUnusedAudio.cpp` / `PlayWavSound.cpp`) (`SH2-62`)
+                let restored_enabled = state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .audio
+                    .enable_restored_cut_audio;
+                let _ = state.audio_debug.cut_audio_restorer.tick(
+                    restored_enabled,
+                    0,
+                    state.bgm_manager.room_id,
+                    0.0,
+                    3,
+                    0,
+                    dt.as_secs_f32(),
+                );
 
                 // Apply solo track override if active
                 if let Some(solo_idx) = state.audio_debug.solo_track {
@@ -653,12 +829,29 @@ impl RoomController for AudioDebugRoomController {
         }
 
         if is_in_game {
-            if state.audio_debug.show_sound_boxes_3d {
-                let mut debug_lines = build_sound_data_debug_lines(
-                    state.bgm_manager.stage_id,
-                    &state.bgm_manager.last_area_eval.matched_record_indices,
-                    player_pos.y,
-                );
+            if state.audio_debug.show_sound_boxes_3d || state.audio_debug.show_proto_tgs_sdb_boxes {
+                let mut debug_lines = if state.audio_debug.show_sound_boxes_3d {
+                    build_sound_data_debug_lines(
+                        state.bgm_manager.stage_id,
+                        &state.bgm_manager.last_area_eval.matched_record_indices,
+                        player_pos.y,
+                    )
+                } else {
+                    Vec::new()
+                };
+
+                // Overlay E3 2001 `tgs_trial.sdb` (`SLPM_123.45`) 3D spatial BGM bounding boxes in magenta/gold (`SH2-62`)
+                if state.audio_debug.show_proto_tgs_sdb_boxes {
+                    let proto_lines = build_sound_records_wireframe(
+                        &E3_TGS_TRIAL_SDB_SAMPLE_RECORDS,
+                        &[],
+                        player_pos.y - 120.0,
+                        [1.0, 0.75, 0.15, 1.0],
+                        [0.95, 0.30, 0.85, 0.90],
+                    );
+                    debug_lines.extend(proto_lines);
+                }
+
                 // Also draw a yellow ring around James representing his `SOUND_AREA_HALF_WIDTH = 50.0` probe
                 let probe_lines = sh2_debug::build_chara_collision_debug_lines(
                     player_pos.into(),
@@ -972,13 +1165,86 @@ impl RoomController for AudioDebugRoomController {
 
         state.menu_rasterizer.draw_text(
             &format!(
-                "3D SOUND AREA WIREFRAMES [V]: {} (Green = Active Box, Cyan = Inactive Box, Yellow = James 50u Probe)",
-                if state.audio_debug.show_sound_boxes_3d { "ON" } else { "OFF" }
+                "3D SOUND AREA WIREFRAMES [V]: {} | E3 PROTOTYPE .SDB OVERLAY [G]: {} ({} - {} boxes)",
+                if state.audio_debug.show_sound_boxes_3d { "ON" } else { "OFF" },
+                if state.audio_debug.show_proto_tgs_sdb_boxes { "ON (Magenta)" } else { "OFF" },
+                E3_PROTOTYPE_SDB_CATALOG[state.audio_debug.proto_sdb_index].filename,
+                E3_PROTOTYPE_SDB_CATALOG[state.audio_debug.proto_sdb_index].record_count
             ),
             20,
             392,
             1,
             white,
+            true,
+        );
+
+        // --- SH2-62: Cut / Beta Audio, Unreferenced sddata.bin & Restored Voiceover Panel ---
+        let cut_entry = CUT_AND_RARE_AUDIO_CATALOG[state.audio_debug.cut_catalog_index];
+        let laura_slice = LAURA_LETTER_VOICEOVER_SLICES[state.audio_debug.laura_slice_index];
+        let proto_sdb = E3_PROTOTYPE_SDB_CATALOG[state.audio_debug.proto_sdb_index];
+
+        state.menu_rasterizer.draw_text(
+            "--- CUT / UNUSED RETAIL AUDIO, RESTORED VOICEOVER & PS2 PROTOTYPE SOUNDBANKS [SH2-62] ---",
+            20,
+            418,
+            1,
+            yellow,
+            true,
+        );
+
+        state.menu_rasterizer.draw_text(
+            &format!(
+                "RESTORED CUT AUDIO [R]: {} | CUT CATALOG [[ / ], Enter] ({}/{} - {}): {}",
+                if state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .audio
+                    .enable_restored_cut_audio
+                {
+                    "ENABLED"
+                } else {
+                    "DISABLED (Vanilla)"
+                },
+                state.audio_debug.cut_catalog_index + 1,
+                CUT_AND_RARE_AUDIO_CATALOG.len(),
+                cut_entry.category.label(),
+                cut_entry.title
+            ),
+            20,
+            438,
+            1,
+            orange,
+            true,
+        );
+
+        state.menu_rasterizer.draw_text(
+            &format!(
+                "LAURA LETTER VOICEOVER [K] (voice.afs[133] / SCENE_45): Page {}/11 ({:.2}s..{:.2}s) \"{}\"",
+                laura_slice.page_index + 1,
+                laura_slice.start_sec,
+                laura_slice.end_sec,
+                laura_slice.subtitle_excerpt
+            ),
+            20,
+            458,
+            1,
+            cyan,
+            true,
+        );
+
+        state.menu_rasterizer.draw_text(
+            &format!(
+                "PS2 PROTOTYPE .SDB [G]: {} ({} B, {} recs) - {} | July 13 SOUND.DAT: 79 VAG banks (1,422 samples) + 33 .sfc",
+                proto_sdb.filename,
+                proto_sdb.byte_length,
+                proto_sdb.record_count,
+                proto_sdb.notes
+            ),
+            20,
+            478,
+            1,
+            green,
             true,
         );
 
@@ -992,7 +1258,7 @@ impl RoomController for AudioDebugRoomController {
             true,
         );
         state.menu_rasterizer.draw_text(
-            "[WASD + Shift] Walk Through Sound Areas  |  [M] Cycle Footstep Material  |  [T] Cycle Situation  |  [1-7, 0] Solo Layer",
+            "[[ / ] + Enter] Audition Cut/Rare SFX (sddata360..364 / 40000+)  |  [K] Play Mary Letter Slice  |  [R] Restored Toggle  |  [G] E3 .sdb",
             20,
             668,
             1,
@@ -1000,7 +1266,7 @@ impl RoomController for AudioDebugRoomController {
             true,
         );
         state.menu_rasterizer.draw_text(
-            "[U/I/O/L/J] SFX (Cursor/Confirm/Cancel/Start/Save)  |  [H] 3D Gun Shot  |  [F] Flashlight  |  [E] Reverb  |  [V] 3D Boxes",
+            "[WASD] Walk  |  [M] Footstep Surface  |  [T] Situation  |  [1-7, 0] Solo Layer  |  [U/I/O/L/J/H] SFX & 3D Shot  |  [E] Reverb  |  [V] Boxes",
             20,
             688,
             1,

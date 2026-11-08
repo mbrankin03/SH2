@@ -44,9 +44,11 @@ pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture}
 pub use mdls::{parse_mdl, ModelFile, ModelPrimitive, ModelTexture, ModelVertices};
 pub use mes::{parse_mes, DialogueMessage, MessageTable};
 pub use sound::{
-    decode_afs_entry_to_wav, decode_afs_slice_to_wav, parse_afs_index, parse_sddata,
-    parse_sdm_headers, parse_sdm_sdb, AfsArchiveIndex, AfsEntry, SdmEntryHeader, SoundBank,
-    WavEntry, AFS_MAGIC,
+    decode_afs_entry_to_wav, decode_afs_slice_to_wav, decode_spu2_vag_to_wav, parse_afs_index,
+    parse_ps2_sdb_sound_data, parse_ps2_sfc_pcm, parse_ps2_sound_dat_bank, parse_sddata,
+    parse_sdm_headers, parse_sdm_sdb, slice_wav_time_range, AfsArchiveIndex, AfsEntry,
+    Ps2SdbSoundDataRecord, Ps2VagSampleHeader, SdmEntryHeader, SoundBank, WavEntry, AFS_MAGIC,
+    PS2_VAG_HEAD_MAGIC, PS2_VAG_VAGI_MAGIC, PS2_VAG_VERS_MAGIC,
 };
 pub use texture::{
     decode_texture_bytes, generate_mipmap_chain_rgba, mip_level_count_for_size,

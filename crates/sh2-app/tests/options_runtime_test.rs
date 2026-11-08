@@ -187,12 +187,13 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Ps2Original
     );
 
-    // When only one pack is present, Audio tab has 7 rows (Audio Pack row hidden)
+    // When only one pack is present, Audio tab has 8 rows (Row 7 = Restored Cut Audio, Audio Pack row hidden)
     let menu_single = OptionsMenu::new_with_audio_packs(AppConfig::default(), status_ps2);
     let mut menu_single = menu_single;
     menu_single.active_tab = OptionsTab::Audio;
-    assert_eq!(menu_single.item_count(), 7);
-    assert!(menu_single.item_display(7).is_none());
+    assert_eq!(menu_single.item_count(), 8);
+    assert_eq!(menu_single.item_display(7).unwrap().0, "Restored Cut Audio");
+    assert!(menu_single.item_display(8).is_none());
 
     // 2. Only SH2:EE Lossless audio directory present (`sh2e/sound/adx/`)
     let root_ee_only = test_dir.join("ee_only");
@@ -224,11 +225,16 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
     controller.title_sm.phase = TitlePhase::OptionsMenu;
     controller.switch_options_tab(true); // Audio tab
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
-    assert_eq!(controller.options_menu.item_count(), 8);
+    assert_eq!(controller.options_menu.item_count(), 9);
 
-    // Row 7 is "Audio Pack" defaulting to Auto
-    controller.options_menu.selected_index = 7;
-    let (label, val0) = controller.options_menu.item_display(7).unwrap();
+    // Row 7 is "Restored Cut Audio" defaulting to OFF (Vanilla) (`SH2-62`)
+    let (cut_label, cut_val) = controller.options_menu.item_display(7).unwrap();
+    assert_eq!(cut_label, "Restored Cut Audio");
+    assert_eq!(cut_val, "OFF (Vanilla)");
+
+    // Row 8 is "Audio Pack" defaulting to Auto
+    controller.options_menu.selected_index = 8;
+    let (label, val0) = controller.options_menu.item_display(8).unwrap();
     assert_eq!(label, "Audio Pack");
     assert_eq!(val0, "Auto (Prefer SH2:EE Lossless)");
     assert_eq!(
@@ -243,7 +249,7 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Sh2eeLossless
     );
     assert_eq!(
-        controller.options_menu.item_display(7).unwrap().1,
+        controller.options_menu.item_display(8).unwrap().1,
         "SH2:EE Lossless (48 kHz)"
     );
 
@@ -254,7 +260,7 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Ps2Original
     );
     assert_eq!(
-        controller.options_menu.item_display(7).unwrap().1,
+        controller.options_menu.item_display(8).unwrap().1,
         "Original PS2 / PC (24/44.1 kHz)"
     );
 

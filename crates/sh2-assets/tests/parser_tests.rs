@@ -1193,4 +1193,120 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_sh2_62_ps2_prototype_sdb_sfc_vag_and_wav_slicing() {
+        // 1. Test `parse_ps2_sdb_sound_data` on synthetic 64-byte `_SOUND_DATA` records + `-0x8000_0000` terminator
+        let mut sdb_bytes = Vec::new();
+        // Record 0 (sentinel 9900000256.0_f32 = 0x50138581)
+        for _ in 0..8 {
+            sdb_bytes.extend_from_slice(&9900000256.0f32.to_le_bytes());
+        }
+        sdb_bytes.extend_from_slice(&0i32.to_le_bytes()); // flags = 0
+        for ch in 0..7u32 {
+            sdb_bytes.extend_from_slice(&(0x21 + ch).to_le_bytes());
+        }
+        // Record 1 (valid room bounding box)
+        let coords = [
+            -25400.0f32,
+            -17550.0,
+            -25400.0,
+            -22950.0,
+            -9050.0,
+            -22950.0,
+            0.0,
+            -3000.0,
+        ];
+        for c in coords {
+            sdb_bytes.extend_from_slice(&c.to_le_bytes());
+        }
+        sdb_bytes.extend_from_slice(&0i32.to_le_bytes()); // flags = 0
+        for _ in 0..7 {
+            sdb_bytes.extend_from_slice(&0x15u32.to_le_bytes());
+        }
+        // Record 2 (terminator record with flags = -2147483648 / 0x80000000)
+        for _ in 0..8 {
+            sdb_bytes.extend_from_slice(&0.0f32.to_le_bytes());
+        }
+        sdb_bytes.extend_from_slice(&0x8000_0000u32.to_le_bytes());
+        for _ in 0..7 {
+            sdb_bytes.extend_from_slice(&0u32.to_le_bytes());
+        }
+
+        let parsed_sdb =
+            parse_ps2_sdb_sound_data(&sdb_bytes).expect("Failed to parse PS2 .sdb records");
+        assert_eq!(parsed_sdb.len(), 2);
+        assert_eq!(parsed_sdb[0].x0, 9900000256.0);
+        assert_eq!(parsed_sdb[0].chanstat[0], 0x21);
+        assert_eq!(parsed_sdb[1].x0, -25400.0);
+        assert_eq!(parsed_sdb[1].x2, -9050.0);
+        assert_eq!(parsed_sdb[1].min_y, -3000.0);
+        assert_eq!(parsed_sdb[1].chanstat[0], 0x15);
+
+        // 2. Test `parse_ps2_sfc_pcm` for PS2 S-Force 3D positional audio `.sfc` banks
+        let raw_sfc = vec![0x34u8, 0x12, 0xCD, 0xAB, 0x00, 0x01, 0xFF];
+        let sfc_wav = parse_ps2_sfc_pcm(&raw_sfc, 15, 22050).expect("Failed to parse .sfc PCM");
+        assert_eq!(sfc_wav.id, 15);
+        assert_eq!(sfc_wav.channels, 1);
+        assert_eq!(sfc_wav.sample_rate, 22050);
+        assert_eq!(sfc_wav.data.len(), 6); // 2-byte aligned
+
+        // 3. Test `decode_spu2_vag_to_wav` and `parse_ps2_sound_dat_bank` (`IECSsreV` / `IECSdaeH` / `IECSigaV`)
+        let mut bank_buf = vec![0u8; 0x80];
+        bank_buf[0..8].copy_from_slice(&PS2_VAG_VERS_MAGIC);
+        bank_buf[0x10..0x18].copy_from_slice(&PS2_VAG_HEAD_MAGIC);
+        bank_buf[0x18..0x1C].copy_from_slice(&0x60u32.to_le_bytes()); // hd_size = 0x60
+        bank_buf[0x1C..0x20].copy_from_slice(&0x20u32.to_le_bytes()); // bd_size = 0x20 (2 SPU2 blocks)
+        bank_buf[0x24..0x28].copy_from_slice(&0x38u32.to_le_bytes()); // vagi_offset = 0x38
+
+        // IECSigaV at 0x38: 1 sample (max_idx = 0), descriptor at +0x18 (`0x50`)
+        bank_buf[0x38..0x40].copy_from_slice(&PS2_VAG_VAGI_MAGIC);
+        bank_buf[0x40..0x44].copy_from_slice(&0x20u32.to_le_bytes()); // chunk_size
+        bank_buf[0x44..0x48].copy_from_slice(&0u32.to_le_bytes()); // max_idx = 0 (count = 1)
+        bank_buf[0x48..0x4C].copy_from_slice(&0x18u32.to_le_bytes()); // rel_ofs to descriptor -> 0x38 + 0x18 = 0x50
+        bank_buf[0x50..0x54].copy_from_slice(&0u32.to_le_bytes()); // bd_offset = 0
+        bank_buf[0x54..0x56].copy_from_slice(&22050u16.to_le_bytes()); // sample_rate = 22050 Hz
+
+        // BD at 0x60..0x80: Block 0 = loop start (`flags = 0x04`), Block 1 = loop end + repeat (`flags = 0x03`)
+        bank_buf[0x60] = 0x12; // filter 1, shift 2
+        bank_buf[0x61] = 0x04; // loop start
+        for b in &mut bank_buf[0x62..0x70] {
+            *b = 0x21;
+        }
+        bank_buf[0x70] = 0x12;
+        bank_buf[0x71] = 0x03; // loop end + sustain
+        for b in &mut bank_buf[0x72..0x80] {
+            *b = 0x12;
+        }
+
+        let vag_bank =
+            parse_ps2_sound_dat_bank(&bank_buf).expect("Failed to parse PS2 SOUND.DAT VAG bank");
+        assert_eq!(vag_bank.entries.len(), 1);
+        let vag_wav = &vag_bank.entries[0];
+        assert_eq!(vag_wav.sample_rate, 22050);
+        assert_eq!(vag_wav.channels, 1);
+        assert_eq!(vag_wav.data.len(), 2 * 28 * 2); // 2 blocks * 28 samples * 2 bytes
+        assert!(vag_wav.loops);
+        assert_eq!(vag_wav.loop_start, 0);
+        assert_eq!(vag_wav.loop_end, 56);
+
+        // 4. Test `slice_wav_time_range` for slicing `SCENE_45` voiceovers
+        let mut full_pcm = Vec::with_capacity(1000 * 2);
+        for i in 0..1000i16 {
+            full_pcm.extend_from_slice(&(i * 10).to_le_bytes());
+        }
+        let test_wav = WavEntry {
+            id: 133,
+            channels: 1,
+            sample_rate: 100, // 100 Hz -> 10.0 seconds total
+            bits_per_sample: 16,
+            data: full_pcm,
+            loops: false,
+            loop_start: 0,
+            loop_end: 0,
+        };
+        let sliced = slice_wav_time_range(&test_wav, 2.5, 5.5); // 3.0s = 300 samples = 600 bytes
+        assert_eq!(sliced.data.len(), 600);
+        assert_eq!(sliced.sample_rate, 100);
+    }
 }

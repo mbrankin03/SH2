@@ -33,7 +33,7 @@ pub enum SoundCueKind {
     FlashlightOn,
     /// SH2:EE Flashlight Turn Off click (`sh2e/sound/extra/flashlight_off.wav` or `sddata[292]`).
     FlashlightOff,
-    /// Authentic footstep loading sound (`sddata[280]` / `footstep_a`).
+    /// Authentic footstep loading sound (`sddata[147]` / `11001` Concrete footstep).
     Footstep,
 }
 
@@ -64,10 +64,12 @@ pub struct MenuAudioBank {
     pub flashlight_on: Option<WavEntry>,
     /// Flashlight turn off (`sh2e/sound/extra/flashlight_off.wav` or `sddata[292]`).
     pub flashlight_off: Option<WavEntry>,
-    /// Default footstep (`sddata[280]`).
+    /// Default footstep (`sddata[147]` / `11001`).
     pub footstep: Option<WavEntry>,
     /// Alternating left/right footstep parity toggle so consecutive steps alternate between `(left, right)` samples.
     pub step_parity: bool,
+    /// Active footstep sound handle (`0x518270`: repeating a footstep stops the previous footstep tail so steps never stack).
+    pub last_footstep_handle: Option<StaticSoundHandle>,
 }
 
 impl MenuAudioBank {
@@ -100,6 +102,7 @@ impl MenuAudioBank {
             flashlight_off: None,
             footstep: None,
             step_parity: false,
+            last_footstep_handle: None,
         };
 
         let prefer_ee = matches!(
@@ -125,7 +128,7 @@ impl MenuAudioBank {
                 if let Ok(bytes) = std::fs::read(&candidate) {
                     if let Ok(bank) = parse_sddata(&bytes) {
                         if bank.entries.len() > 297 {
-                            sfx_bank.footstep = Some(bank.entries[280].clone());
+                            sfx_bank.footstep = Some(bank.entries[147].clone());
                             sfx_bank.cancel = Some(bank.entries[291].clone());
                             sfx_bank.flashlight_off = Some(bank.entries[292].clone());
                             sfx_bank.cursor_move = Some(bank.entries[293].clone());
@@ -382,6 +385,9 @@ impl MenuAudioBank {
 
     /// Plays a surface-material-specific footstep for James or Maria, alternating left/right step samples (`SH2-61`).
     ///
+    /// Also enforces `sh2pc.exe` `0x518270` voice-replacement behavior: if the previous footstep is still
+    /// ringing, its tail is faded out (`25 ms`) before the new step triggers so footsteps never stack.
+    ///
     /// Returns the `sddata.bin` index that was triggered.
     pub fn play_footstep(
         &mut self,
@@ -399,12 +405,23 @@ impl MenuAudioBank {
         };
         self.step_parity = !self.step_parity;
 
+        // `0x518270`: Stop previous footstep instance if still playing so tails do not overlap
+        if let Some(mut prev_handle) = self.last_footstep_handle.take() {
+            prev_handle.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(25),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+
         if let Some(wav) = self.get_sddata_entry(chosen_idx).or(self.footstep.as_ref()) {
             let handle = engine.play_sfx_2d(wav, volume)?;
-            Ok((chosen_idx, Some(handle)))
+            self.last_footstep_handle = Some(handle);
+            Ok((chosen_idx, None))
         } else {
             let handle = synthesize_fallback_cue(engine, SoundCueKind::Footstep)?;
-            Ok((chosen_idx, handle))
+            self.last_footstep_handle = handle;
+            Ok((chosen_idx, None))
         }
     }
 

@@ -19,26 +19,26 @@ use super::grid::SpatialGrid;
 use super::raycast::{clamp_camera_ray, RaycastFilter};
 
 /// Surface material category extracted from `.cld` / `.sfm` floor collision triangles (`FloorTriangle::material`),
-/// driving authentic material-dependent footstep sound selection (`0x5147E0` / `sddata.bin`).
+/// driving authentic material-dependent footstep sound selection (`0x54A9A0` / `0x5495C0` -> `0x5147E0` / `sddata.bin`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum SurfaceMaterial {
-    /// Asphalt, concrete, stone, and tile surfaces (`sddata[146, 151, 280]`).
+    /// Asphalt, concrete, stone, and tile surfaces (`.cld` material `0, 8, 12` -> `11001` / `11009` -> `sddata[147, 144]`).
     #[default]
     Concrete = 0,
-    /// Wooden planks, floorboards, and stairs (`sddata[148, 150, 145]`).
+    /// Wooden planks, floorboards, and stairs (`.cld` material `3` -> `11007` -> `sddata[149, 95]`).
     Wood = 1,
-    /// Metal grating, iron stairs, and boiler plates (`sddata[147, 141, 143]`).
+    /// Metal grating, iron stairs, and boiler plates (`.cld` material `5, 9, 11` -> `11000` / `11006` -> `sddata[146, 143]`).
     Metal = 2,
-    /// Carpet, rugs, and padded hospital/hotel hallways (`sddata[142, 130]`).
+    /// Carpet, rugs, and padded hospital/hotel hallways (`.cld` material `7` -> `11005` -> `sddata[151, 145]`).
     Carpet = 3,
-    /// Shallow water puddles, flooded basement, and sewers (`sddata[149, 83, 84, 371]`).
+    /// Shallow water puddles, flooded basement, and sewers (`.cld` material `6` -> `11003` -> `sddata[148, 83, 84]`).
     Water = 4,
-    /// Forest dirt, grass, and foliage trails (`sddata[144, 131]`).
+    /// Forest grass, brush, and foliage trails (`.cld` material `2` -> `11002` -> `sddata[142]`).
     Grass = 5,
-    /// Gravel, loose rubble, and cemetery paths (`sddata[132, 144]`).
+    /// Dirt, gravel, loose rubble, and forest/cemetery paths (`.cld` material `1, 4` -> `11004` -> `sddata[150]`).
     Gravel = 6,
-    /// Viscous blood / otherworld organic surfaces (`sddata[95, 367]`).
+    /// Viscous blood / broken glass / wet organic surfaces (`.cld` material `10` -> `11008` / `11003` -> `sddata[148, 141]`).
     Blood = 7,
 }
 
@@ -58,12 +58,10 @@ impl SurfaceMaterial {
         Self::Blood,
     ];
 
-    /// Maps a raw `.cld` `FloorTriangle::material` attribute (`u32`) to a [`SurfaceMaterial`].
-    ///
-    /// In `.cld` floor records (`FloorTriangle`), the low bits encode the surface acoustic attribute.
+    /// Maps a [`SurfaceMaterial`] directly from its 0-based index (`0..=7`), used by debug UI and synthetic test pads.
     #[inline]
-    pub const fn from_cld_material(raw: u32) -> Self {
-        match raw & 0x07 {
+    pub const fn from_index(idx: u8) -> Self {
+        match idx & 0x07 {
             0 => Self::Concrete,
             1 => Self::Wood,
             2 => Self::Metal,
@@ -75,10 +73,41 @@ impl SurfaceMaterial {
         }
     }
 
+    /// Maps a raw `.cld` `FloorTriangle::material` attribute (`u32`) to a [`SurfaceMaterial`].
+    ///
+    /// Matches `sh2pc.exe` `0x54A9A0` / `0x54AFC1` (James) and `0x5495C0` (Maria) switch table (`0..=12`):
+    /// - `0, 8, 12` -> [`Self::Concrete`] (`11001` / `11009`)
+    /// - `1, 4` -> [`Self::Gravel`] (`11004` Dirt/Gravel)
+    /// - `2` -> [`Self::Grass`] (`11002` Grass)
+    /// - `3` -> [`Self::Wood`] (`11007` Wood)
+    /// - `5, 9, 11` -> [`Self::Metal`] (`11000` Metal Grating / `11006` Solid Metal)
+    /// - `6` -> [`Self::Water`] (`11003` Water)
+    /// - `7` -> [`Self::Carpet`] (`11005` Carpet)
+    /// - `10` -> [`Self::Blood`] (`11008` Glass / Wet / Special)
+    ///
+    /// Also supports synthetic test pad markers (`0x80..=0x87`) which map `1:1` to `SurfaceMaterial::from_index`.
+    #[inline]
+    pub const fn from_cld_material(raw: u32) -> Self {
+        if (raw & 0x80) != 0 {
+            return Self::from_index((raw & 0x07) as u8);
+        }
+        match raw & 0x0F {
+            0 | 8 | 12 => Self::Concrete,
+            1 | 4 => Self::Gravel,
+            2 => Self::Grass,
+            3 => Self::Wood,
+            5 | 9 | 11 => Self::Metal,
+            6 => Self::Water,
+            7 => Self::Carpet,
+            10 => Self::Blood,
+            _ => Self::from_index((raw & 0x07) as u8),
+        }
+    }
+
     /// Cycles to the next surface material (useful for interactive audio debug testing).
     #[inline]
     pub const fn next(self) -> Self {
-        Self::from_cld_material((self as u32) + 1)
+        Self::from_index((self as u8).wrapping_add(1))
     }
 
     /// Human-readable label for debug HUD display.
@@ -90,9 +119,9 @@ impl SurfaceMaterial {
             Self::Metal => "Metal Grating",
             Self::Carpet => "Carpet / Rug",
             Self::Water => "Water / Puddle",
-            Self::Grass => "Grass / Forest Dirt",
-            Self::Gravel => "Gravel / Rubble",
-            Self::Blood => "Blood / Organic",
+            Self::Grass => "Grass / Foliage",
+            Self::Gravel => "Dirt / Gravel",
+            Self::Blood => "Wet / Glass / Blood",
         }
     }
 }

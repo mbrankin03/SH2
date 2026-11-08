@@ -542,7 +542,9 @@ pub fn create_model_viewer_pedestal_geometry() -> MapFile {
 /// Geometry descriptor for one of the 8 acoustic surface material test pads in [`TestRoomKind::SurfaceSfxTestRoom`] (`SH2-61`).
 #[derive(Debug, Clone, Copy)]
 pub struct SurfacePadZone {
-    /// Raw `.cld` floor material index (`0..=7`).
+    /// 0-based [`sh2_core::SurfaceMaterial`] index (`0..=7`).
+    pub pad_index: u8,
+    /// Raw `.cld` floor material attribute (`0x80 | pad_index` so `SurfaceMaterial::from_cld_material` maps `1:1` to all 8 materials).
     pub material_id: u32,
     /// Minimum $X$ coordinate of the pad in world units (mm).
     pub min_x: f32,
@@ -564,7 +566,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
     [
         // Row 0 (North row, Z: -4600..-1800)
         SurfacePadZone {
-            material_id: 0, // Concrete / Stone
+            pad_index: 0,
+            material_id: 0x80, // Concrete / Stone (`se_id = 11001` -> `sddata[147]`)
             min_x: -5600.0,
             max_x: -3000.0,
             min_z: -4600.0,
@@ -572,7 +575,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
             color_rgba: [155, 160, 168, 255],
         },
         SurfacePadZone {
-            material_id: 1, // Wood / Planks
+            pad_index: 1,
+            material_id: 0x81, // Wood / Planks (`se_id = 11007` -> `sddata[149]`)
             min_x: -2800.0,
             max_x: -200.0,
             min_z: -4600.0,
@@ -580,7 +584,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
             color_rgba: [168, 118, 68, 255],
         },
         SurfacePadZone {
-            material_id: 2, // Metal Grating
+            pad_index: 2,
+            material_id: 0x82, // Metal Grating (`se_id = 11000` -> `sddata[146]`)
             min_x: 200.0,
             max_x: 2800.0,
             min_z: -4600.0,
@@ -588,7 +593,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
             color_rgba: [95, 138, 168, 255],
         },
         SurfacePadZone {
-            material_id: 3, // Carpet / Rug
+            pad_index: 3,
+            material_id: 0x83, // Carpet / Rug (`se_id = 11005` -> `sddata[151]`)
             min_x: 3000.0,
             max_x: 5600.0,
             min_z: -4600.0,
@@ -597,7 +603,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
         },
         // Row 1 (South row, Z: -1400..1400)
         SurfacePadZone {
-            material_id: 4, // Water / Puddle
+            pad_index: 4,
+            material_id: 0x84, // Water / Puddle (`se_id = 11003` -> `sddata[148, 83, 84]`)
             min_x: -5600.0,
             max_x: -3000.0,
             min_z: -1400.0,
@@ -605,7 +612,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
             color_rgba: [52, 145, 215, 255],
         },
         SurfacePadZone {
-            material_id: 5, // Grass / Forest Dirt
+            pad_index: 5,
+            material_id: 0x85, // Grass / Foliage (`se_id = 11002` -> `sddata[142]`)
             min_x: -2800.0,
             max_x: -200.0,
             min_z: -1400.0,
@@ -613,7 +621,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
             color_rgba: [68, 152, 78, 255],
         },
         SurfacePadZone {
-            material_id: 6, // Gravel / Rubble
+            pad_index: 6,
+            material_id: 0x86, // Dirt / Gravel (`se_id = 11004` -> `sddata[150]`)
             min_x: 200.0,
             max_x: 2800.0,
             min_z: -1400.0,
@@ -621,7 +630,8 @@ pub const fn surface_sfx_test_pad_zones() -> [SurfacePadZone; 8] {
             color_rgba: [142, 132, 108, 255],
         },
         SurfacePadZone {
-            material_id: 7, // Blood / Organic
+            pad_index: 7,
+            material_id: 0x87, // Wet / Glass / Blood (`se_id = 11008` / `11003` -> `sddata[148, 141]`)
             min_x: 3000.0,
             max_x: 5600.0,
             min_z: -1400.0,

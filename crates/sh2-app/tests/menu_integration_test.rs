@@ -495,11 +495,8 @@ fn test_sh2_61_surface_sfx_test_room_8_material_pads_and_collision() {
         let sample = world
             .sample_floor_surface(cx, cz, 0.0, 250.0, 350.0)
             .expect("Pad must have walkable floor triangle");
-        assert_eq!(sample.raw_material, idx as u32);
-        assert_eq!(
-            sample.surface,
-            SurfaceMaterial::from_cld_material(idx as u32)
-        );
+        assert_eq!(sample.raw_material, pad.material_id);
+        assert_eq!(sample.surface, SurfaceMaterial::from_index(idx as u8));
         assert!((sample.height_y - 0.0).abs() < 1e-3);
     }
 }

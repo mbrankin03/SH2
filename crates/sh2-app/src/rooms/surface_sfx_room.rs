@@ -34,14 +34,14 @@ use sh2_ui::menu::TitlePhase;
 
 /// Curated 3D spatial SFX cues (`se_id`, label) from the 666-entry `0x8A1ED8` table.
 pub(crate) const SPATIAL_SFX_PRESETS: &[(u32, &str)] = &[
-    (11048, "11048 (0x2B28): Handgun Fire (sddata[307])"),
-    (11051, "11051 (0x2B2B): Shotgun Blast (sddata[311])"),
-    (11056, "11056 (0x2B30): Hunting Rifle Shot (sddata[316])"),
-    (11032, "11032 (0x2B18): Wooden Plank Swing (sddata[339])"),
-    (11040, "11040 (0x2B20): Steel Pipe Swing (sddata[334])"),
-    (11061, "11061 (0x2B35): Great Knife Cleave (sddata[319])"),
+    (11048, "11048 (0x2B28): Handgun Fire (sddata[274])"),
+    (11051, "11051 (0x2B2B): Shotgun Blast (sddata[279])"),
+    (11056, "11056 (0x2B30): Hunting Rifle Shot (sddata[26])"),
+    (11032, "11032 (0x2B18): Wooden Plank Hit (sddata[346])"),
+    (11040, "11040 (0x2B20): Steel Pipe Hit (sddata[348])"),
+    (11007, "11007 (0x2AFF): James Wood Footstep (sddata[149])"),
     (5698, "5698 (0x1642): Chainsaw Loop (sddata[352], Looped)"),
-    (4000, "4000 (0x0FA0): James Concrete Step L (sddata[0])"),
+    (11001, "11001 (0x2AF9): James Concrete Step (sddata[147])"),
 ];
 
 /// Interactive runtime state for [`TestRoomKind::SurfaceSfxTestRoom`] (`SH2-61`).
@@ -68,8 +68,8 @@ impl Default for SurfaceSfxRoomState {
         Self {
             emitter_pos: glam::Vec3::new(0.0, 0.0, 4000.0),
             spatial_preset_idx: 0,
-            browse_sddata_idx: 307, // Handgun fire
-            last_footstep_sddata_idx: 0,
+            browse_sddata_idx: 147, // James concrete footstep (`11001`)
+            last_footstep_sddata_idx: 147,
             footstep_counter: 0,
             last_triggered_desc: "Walk across the 8 colored floor pads or press [1-8] to teleport"
                 .to_string(),
@@ -97,7 +97,7 @@ pub(crate) fn build_surface_sfx_debug_lines(
 
     // 1. Outline the 8 material pads; highlight the currently occupied pad in bright gold/green
     for pad in surface_sfx_test_pad_zones() {
-        let is_active = pad.material_id == (active_material as u32);
+        let is_active = pad.pad_index == (active_material as u8);
         let y = if is_active { -8.0 } else { -3.0 };
         let color = if is_active {
             [0.20, 1.0, 0.35, 1.0]

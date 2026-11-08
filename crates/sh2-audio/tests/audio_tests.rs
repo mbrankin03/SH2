@@ -621,18 +621,66 @@ mod tests {
         assert_eq!(resolve_se_id_to_voice_afs_index(15002), Some(24)); // Game start transition
 
         // 2. Verify all 8 surface materials resolve valid < 417 footstep indices for both James and Maria
+        // and never map to non-footstep sound effects (such as 280 Shotgun Empty or 367 multi-step burst)
         for mat in sh2_core::SurfaceMaterial::ALL {
             for is_maria in [false, true] {
                 for is_running in [false, true] {
                     let (l, r) = footstep_sddata_indices(is_maria, mat, is_running);
                     assert!(l < SDDATA_ENTRY_COUNT && r < SDDATA_ENTRY_COUNT);
+                    assert_ne!(l, 280, "{mat:?} must not use sddata[280] (Shotgun Empty)");
+                    assert_ne!(r, 280, "{mat:?} must not use sddata[280] (Shotgun Empty)");
                     assert_ne!(
-                        l, r,
-                        "Left/Right footstep samples should alternate for {mat:?}"
+                        l, 367,
+                        "{mat:?} must not use sddata[367] (Feet running fast burst)"
+                    );
+                    assert_ne!(
+                        r, 367,
+                        "{mat:?} must not use sddata[367] (Feet running fast burst)"
                     );
                 }
             }
         }
+        // Verify authentic sh2pc.exe (0x54AFC1) James footstep mappings:
+        // - Concrete (0): 11001 -> sddata[147]
+        // - Wood (1): 11007 -> sddata[149]
+        // - Metal (2): 11000 -> sddata[146]
+        // - Carpet (3): 11005 -> sddata[151]
+        // - Water (4): 11003 -> sddata[148] / 83, 84
+        // - Grass (5): 11002 -> sddata[142]
+        // - Gravel (6): 11004 -> sddata[150]
+        // - Blood/Glass (7): 11003/11008 -> sddata[148, 141]
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Concrete, false).0,
+            147
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Wood, false).0,
+            149
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Metal, false).0,
+            146
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Carpet, false).0,
+            151
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Water, false).0,
+            148
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Grass, false).0,
+            142
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Gravel, false).0,
+            150
+        );
+        assert_eq!(
+            footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Blood, false),
+            (148, 141)
+        );
 
         // 3. Verify dual-source loading of `MenuAudioBank` (`Sh2eeLossless` 48 kHz vs `Ps2Original`) when retail assets exist
         let resolver = sh2_assets::AssetPathResolver::resolve();

@@ -602,11 +602,9 @@ pub fn apply_music_box_volume_patch(
                 rec.chanstat[4] = 0x0000_0000;
             }
         }
-        41 => {
-            if (3..=9).contains(&rec_idx) || rec_idx == 12 {
-                rec.flags = 0x4000_0010;
-                rec.chanstat[6] = 0x0010_0000;
-            }
+        41 if (3..=9).contains(&rec_idx) || rec_idx == 12 => {
+            rec.flags = 0x4000_0010;
+            rec.chanstat[6] = 0x0010_0000;
         }
         _ => {}
     }

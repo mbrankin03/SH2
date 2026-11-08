@@ -899,18 +899,15 @@ mod tests {
             .iter()
             .any(|e| e.voice_afs_index == Some(VOICE_AFS_SATSUGAI_INDEX)
                 && e.primary_se_id == Some(0xEAD4)));
-        assert!(CUT_AND_RARE_AUDIO_CATALOG
-            .iter()
-            .any(|e| e.voice_afs_index == Some(VOICE_AFS_MARY_LETTER_FULL_INDEX)
-                && e.primary_se_id == Some(0xEAC1)));
-        assert!(CUT_AND_RARE_AUDIO_CATALOG
-            .iter()
-            .any(|e| e.voice_afs_index == Some(VOICE_AFS_MARIA_DEAI_TSUIKA_INDEX)
-                && e.primary_se_id == Some(0xEAB3)));
-        assert!(CUT_AND_RARE_AUDIO_CATALOG
-            .iter()
-            .any(|e| e.voice_afs_index == Some(VOICE_AFS_BORN_FROM_A_WISH_TSUIKA_INDEX)
-                && e.primary_se_id == Some(0xEAEC)));
+        assert!(CUT_AND_RARE_AUDIO_CATALOG.iter().any(|e| e.voice_afs_index
+            == Some(VOICE_AFS_MARY_LETTER_FULL_INDEX)
+            && e.primary_se_id == Some(0xEAC1)));
+        assert!(CUT_AND_RARE_AUDIO_CATALOG.iter().any(|e| e.voice_afs_index
+            == Some(VOICE_AFS_MARIA_DEAI_TSUIKA_INDEX)
+            && e.primary_se_id == Some(0xEAB3)));
+        assert!(CUT_AND_RARE_AUDIO_CATALOG.iter().any(|e| e.voice_afs_index
+            == Some(VOICE_AFS_BORN_FROM_A_WISH_TSUIKA_INDEX)
+            && e.primary_se_id == Some(0xEAEC)));
 
         // 2. Verify `MusicBoxVolume.cpp` Stage 41 (`Stg_hotel_2f_f`) BGM page & situation page restoration
         let mut flags_vanilla = BgmEventFlags {
@@ -928,14 +925,12 @@ mod tests {
         // 3. Verify `evaluate_sound_areas_with_restoration` on Stage 40 (Hotel 1F) and Stage 41 (Hotel 2F)
         // Stage 40 Record 6 (1F West hallway): `x in [-66800, -55600], z in [19200, 20800], y in [-2200, 50]`
         let hall_1f_pos = glam::Vec3::new(-60000.0, -500.0, 20000.0);
-        let eval_40_vanilla =
-            evaluate_sound_areas_with_restoration(40, hall_1f_pos, 4, false);
+        let eval_40_vanilla = evaluate_sound_areas_with_restoration(40, hall_1f_pos, 4, false);
         assert!(eval_40_vanilla.matched_record_indices.contains(&6));
         assert_eq!(eval_40_vanilla.track_fades[4], (1, 1)); // Vanilla: loud Track 4 active in 1F hallway
         assert_eq!(eval_40_vanilla.track_fades[6], (0, 0)); // Vanilla: Track 6 silent
 
-        let eval_40_restored =
-            evaluate_sound_areas_with_restoration(40, hall_1f_pos, 4, true);
+        let eval_40_restored = evaluate_sound_areas_with_restoration(40, hall_1f_pos, 4, true);
         assert_eq!(eval_40_restored.track_fades[4], (0, 0)); // Restored: loud Track 4 muted in 1F hallway
         assert_eq!(eval_40_restored.track_fades[6], (1, 1)); // Restored: quieter Track 6 (7th layer) active!
 
@@ -946,20 +941,17 @@ mod tests {
             (rec19.min_y + rec19.max_y) * 0.5,
             (rec19.z0 + rec19.z2) * 0.5,
         );
-        let eval_40_lobby =
-            evaluate_sound_areas_with_restoration(40, lobby_1f_pos, 4, true);
+        let eval_40_lobby = evaluate_sound_areas_with_restoration(40, lobby_1f_pos, 4, true);
         assert!(eval_40_lobby.matched_record_indices.contains(&19));
         assert_eq!(eval_40_lobby.track_fades[4], (1, 1)); // Full-volume Track 4 remains active in the 1F Lobby
 
         // Stage 41 Record 3 (2F hallway connected to lobby): `x in [57600, 62000], z in [-20600, -19400], y in [-1800, 50]`
         let hall_2f_pos = glam::Vec3::new(60000.0, -500.0, -20000.0);
-        let eval_41_vanilla =
-            evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, false);
+        let eval_41_vanilla = evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, false);
         assert!(eval_41_vanilla.matched_record_indices.contains(&3));
         assert_eq!(eval_41_vanilla.track_fades[6], (0, 0)); // Vanilla: silent in 2F hallway
 
-        let eval_41_restored =
-            evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, true);
+        let eval_41_restored = evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, true);
         assert_eq!(eval_41_restored.track_fades[6], (1, 1)); // Restored: quieter Track 6 plays in 2F lobby-connected hallway!
     }
 }

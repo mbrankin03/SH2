@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::animation::{
     AnimationStateKind, CharacterAnimationController, CharacterLocomotionClips,
+    LocomotionAnimationSync,
 };
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
@@ -197,44 +198,16 @@ impl SimulationCore {
         );
         self.last_locomotion = out;
 
-        // 3b. Update animation locomotion state machine based on calibrated locomotion state
+        // 3b. Synchronize character animation playback rate and gait phase with locomotion output (SH2-26 / 0x531a00)
         if !self.animation_locked {
-            match out.state {
-                LocomotionState::Stand | LocomotionState::Relax | LocomotionState::Alert => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
-                }
-                LocomotionState::Walk
-                | LocomotionState::StrafeLeftWalk
-                | LocomotionState::StrafeRightWalk => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
-                }
-                LocomotionState::Back => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Back, self.locomotion_clips.back);
-                }
-                LocomotionState::Run1
-                | LocomotionState::Run2
-                | LocomotionState::Run3
-                | LocomotionState::StrafeLeftRun
-                | LocomotionState::StrafeRightRun => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Run, self.locomotion_clips.run);
-                }
-                LocomotionState::TurnLeft | LocomotionState::TurnRight => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
-                }
-                LocomotionState::QuickTurnLeft | LocomotionState::QuickTurnRight => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Walk, self.locomotion_clips.walk);
-                }
-                LocomotionState::Tired => {
-                    self.animation
-                        .transition_to(AnimationStateKind::Idle, self.locomotion_clips.idle);
-                }
-            }
+            let cmd = LocomotionAnimationSync::resolve(
+                self.animation.state(),
+                &out,
+                &self.locomotion_clips,
+            );
+            self.animation.apply_locomotion_command(cmd);
+        } else {
+            self.animation.set_playback_rate_scale(1.0);
         }
 
         // Fixed tick dt is 1/60s (approx 16.666 ms)
@@ -331,5 +304,52 @@ mod tests {
             crate::scenario::PlayableCharacter::Maria
         );
         assert_eq!(sim.scenario.current_stage, 53);
+    }
+
+    #[test]
+    fn test_sh2_26_simulation_locomotion_animation_sync() {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+
+        // 1. Half analog stick tilt walking (`stick_y = 0.595` -> after 0x52e110 deadzone filter `/ 0.79`, ~0.75 tilt)
+        sim.input.state.left_stick_y = 0.395; // ~0.5 tilt after `/ 0.79`
+        sim.tick();
+        assert_eq!(sim.animation.state(), AnimationStateKind::Walk);
+        let half_rate = sim.animation.effective_fps();
+
+        // 2. Full analog stick tilt walking (`stick_y = 1.0` -> `1.0` tilt, `750.0` units/s)
+        sim.input.state.left_stick_y = 1.0;
+        sim.tick();
+        assert_eq!(sim.animation.state(), AnimationStateKind::Walk);
+        let full_rate = sim.animation.effective_fps();
+        assert!(full_rate > half_rate * 1.8);
+        assert!((full_rate - 20.625).abs() < 1e-3);
+
+        // Step 15 ticks in Walk to build up non-zero stride phase
+        for _ in 0..15 {
+            sim.tick();
+        }
+        let walk_rel_phase = sim.animation.relative_frame_offset();
+        assert!(walk_rel_phase > 2.0);
+
+        // 3. Engage Run (`is_running = true`) -> transitions to Run 1 with Mode 10 gait phase sync
+        sim.input.state.is_running = true;
+        sim.tick();
+        assert_eq!(sim.animation.state(), AnimationStateKind::Run);
+        assert!(sim.animation.is_gait_phase_synced_blend());
+        assert!((sim.animation.effective_fps() - 22.5).abs() < 1e-3);
+        // Relative frame offset advances smoothly from `walk_rel_phase` rather than resetting to 0.0
+        assert!(sim.animation.relative_frame_offset() > walk_rel_phase);
+
+        // 4. Accelerate through Run 1 -> Run 2 (26.25 fps) -> Run 3 (30.0 fps)
+        for _ in 0..90 {
+            sim.tick();
+        }
+        assert!(matches!(
+            sim.animation.state(),
+            AnimationStateKind::Run2 | AnimationStateKind::Run3
+        ));
+        if sim.animation.state() == AnimationStateKind::Run3 {
+            assert!((sim.animation.effective_fps() - 30.0).abs() < 1e-3);
+        }
     }
 }

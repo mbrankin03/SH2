@@ -144,7 +144,6 @@ const fn get_allowed_transitions(state: LocomotionState) -> u32 {
                 | state_bit(LocomotionState::StrafeLeftWalk)
                 | state_bit(LocomotionState::StrafeRightWalk)
                 | state_bit(LocomotionState::Run1)
-                | state_bit(LocomotionState::Run2)
                 | state_bit(LocomotionState::StrafeLeftRun)
                 | state_bit(LocomotionState::StrafeRightRun)
                 | state_bit(LocomotionState::QuickTurnLeft)

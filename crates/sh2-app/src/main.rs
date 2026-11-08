@@ -21,7 +21,7 @@ use crate::rooms::fmv_room::open_fmv_session;
 use crate::state::AppState;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::TextureLoader;
-use sh2_audio::{play_menu_sound, AudioEngine, MenuAudioBank, SoundCueKind};
+use sh2_audio::{play_menu_sound, AudioEngine, BgmManager, MenuAudioBank, SoundCueKind};
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_debug::{FmvViewerState, GrappleViewerState, ModelViewerState};
 use sh2_renderer::{FmvVideoPipeline, GpuMap, RenderContext, RendererConfig, SurfaceBlitter};
@@ -445,6 +445,12 @@ impl ApplicationHandler for SilentHillApp {
                 );
             }
         }
+        let initial_fps_cap = menu_ctrl.options_menu.original_config.video.framerate_cap;
+        let initial_audio_pack = menu_ctrl
+            .options_menu
+            .original_config
+            .audio
+            .audio_pack_source;
         let mut audio_engine = audio_engine;
         let current_fmv_entry = fmv_viewer.current_entry();
         let source_pref = fmv_viewer.video_source;
@@ -457,6 +463,7 @@ impl ApplicationHandler for SilentHillApp {
                 &mut fmv_viewer,
                 current_fmv_entry,
                 source_pref,
+                initial_audio_pack,
             )
         } else {
             None
@@ -464,7 +471,8 @@ impl ApplicationHandler for SilentHillApp {
         let loaded_fmv_movie_idx = fmv_viewer.selected_movie_index;
         let loaded_fmv_source = fmv_viewer.video_source;
 
-        let initial_fps_cap = menu_ctrl.options_menu.original_config.video.framerate_cap;
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let bgm_manager = BgmManager::new(&resolver.game_root, initial_audio_pack);
 
         self.state = Some(AppState {
             window,
@@ -482,6 +490,8 @@ impl ApplicationHandler for SilentHillApp {
             button_sprites,
             audio_bank,
             audio_engine,
+            bgm_manager,
+            bgm_stage_override: None,
             sim_core,
             gpu_map,
             map_texture_bind_groups,
@@ -718,6 +728,7 @@ impl ApplicationHandler for SilentHillApp {
                                 }
                                 tracing::info!("Pause Menu: Resumed active gameplay.");
                             } else if action == PauseAction::QuitToTitle {
+                                state.bgm_manager.stop_all(state.audio_engine.as_mut());
                                 if let Some(ref mut engine) = state.audio_engine {
                                     engine.stop_bgm(std::time::Duration::from_millis(150));
                                     engine.set_bgm_paused(false);
@@ -896,6 +907,10 @@ impl ApplicationHandler for SilentHillApp {
                         audio.set_sfx_volume(cfg.audio.sfx_volume);
                         audio.set_voice_volume(cfg.audio.dialogue_volume);
                     }
+                    let _ = state.bgm_manager.set_audio_pack_source(
+                        cfg.audio.audio_pack_source,
+                        state.audio_engine.as_mut(),
+                    );
 
                     // Check if audio device changed and live-migrate audio manager stream
                     if cfg.audio.selected_output_device != state.active_audio_device {
@@ -1066,6 +1081,8 @@ impl ApplicationHandler for SilentHillApp {
                     state.sim_core.snap_player_transform(new_pos, new_yaw);
                     state.sim_core.camera.reset_to_player(new_pos, new_yaw);
                     state.active_test_room = new_room;
+                    state.bgm_stage_override = None;
+                    state.bgm_manager.stop_all(state.audio_engine.as_mut());
                     if new_room == TestRoomKind::CombatArena {
                         state.combat_arena = sh2_core::combat::CombatArena::new();
                         state.combat_arena.player.weapon =
@@ -1120,6 +1137,7 @@ impl ApplicationHandler for SilentHillApp {
                 {
                     let entry = state.fmv_viewer.current_entry();
                     let source_pref = state.fmv_viewer.video_source;
+                    let audio_pack = state.bgm_manager.audio_pack_source;
                     state.fmv_session = open_fmv_session(
                         &state.render_ctx.device,
                         &state.render_ctx.queue,
@@ -1128,6 +1146,7 @@ impl ApplicationHandler for SilentHillApp {
                         &mut state.fmv_viewer,
                         entry,
                         source_pref,
+                        audio_pack,
                     );
                     state.loaded_fmv_movie_idx = state.fmv_viewer.selected_movie_index;
                     state.loaded_fmv_source = state.fmv_viewer.video_source;

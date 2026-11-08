@@ -192,6 +192,51 @@ impl RoomController for CombatArenaRoomController {
                     target_pos.z
                 );
             }
+            // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/adx/`) and Original PS2/PC (`data/sound/adx/`) BGM packs (`SH2-60`)
+            KeyCode::KeyB if pressed && !repeat => {
+                let next_source = match state.bgm_manager.audio_pack_source {
+                    sh2_core::AudioPackSource::EnhancedLossless => {
+                        sh2_core::AudioPackSource::OriginalPs2
+                    }
+                    sh2_core::AudioPackSource::OriginalPs2 => {
+                        sh2_core::AudioPackSource::EnhancedLossless
+                    }
+                };
+                if let Err(e) = state
+                    .bgm_manager
+                    .set_audio_pack_source(next_source, state.audio_engine.as_mut())
+                {
+                    tracing::warn!("[BGM] Failed to switch audio pack source: {:?}", e);
+                } else {
+                    tracing::info!(
+                        "[BGM] Switched AudioPackSource -> {:?} ({})",
+                        next_source,
+                        state.bgm_manager.hud_summary()
+                    );
+                }
+            }
+            // Cycle BGM stage presets (`SeBgmChange` / `SeBgmManager` multi-channel AIX & ADX verification)
+            KeyCode::KeyN if pressed && !repeat => {
+                const STAGE_PRESETS: &[u32] = &[3, 2, 18, 24, 45, 7, 14, 32, 47, 48];
+                let current_stage = state.active_bgm_stage_and_flags().0;
+                let next_idx = STAGE_PRESETS
+                    .iter()
+                    .position(|&s| s == current_stage)
+                    .map(|i| (i + 1) % STAGE_PRESETS.len())
+                    .unwrap_or(0);
+                let next_stage = STAGE_PRESETS[next_idx];
+                state.bgm_stage_override = Some(next_stage);
+                let (stg, flags) = state.active_bgm_stage_and_flags();
+                state.bgm_manager.event_flags = flags;
+                let page = state
+                    .bgm_manager
+                    .update_stage_and_position(stg, state.sim_core.scenario.player_position);
+                tracing::info!(
+                    "[BGM] Cycled BGM stage preset -> Stage {} (BGM Page {})",
+                    stg,
+                    page
+                );
+            }
             _ => {}
         }
 
@@ -394,6 +439,43 @@ impl RoomController for CombatArenaRoomController {
                 // Play any combat sound effects requested by the combat state machine
                 if let Some(sfx_id) = state.combat_arena.player.pending_sfx.take() {
                     tracing::info!("[Combat SFX] Triggered sound effect ID: {}", sfx_id);
+                }
+            }
+
+            // Advance `SeBgmManager` (`0x516080`) streaming BGM & multi-channel AIX spatial mixing when in-game
+            if is_in_game {
+                let (bgm_stage_id, bgm_flags) = state.active_bgm_stage_and_flags();
+                state.bgm_manager.event_flags = bgm_flags;
+                let (hp_ratio, min_enemy_dist_xz) =
+                    if state.active_test_room == TestRoomKind::CombatArena {
+                        let p_hp = (state.combat_arena.player.health
+                            / state.combat_arena.player.max_health.max(1.0))
+                        .clamp(0.0, 1.0);
+                        let p_pos = state.sim_core.scenario.player_position;
+                        let min_dist = state
+                            .combat_arena
+                            .enemies
+                            .iter()
+                            .filter(|e| !e.is_dead && e.is_aggroed)
+                            .map(|e| {
+                                let dx = e.position.x - p_pos.x;
+                                let dz = e.position.z - p_pos.z;
+                                (dx * dx + dz * dz).sqrt()
+                            })
+                            .fold(None::<f32>, |acc, d| Some(acc.map_or(d, |a| a.min(d))));
+                        (p_hp, min_dist)
+                    } else {
+                        (1.0, None)
+                    };
+                if let Err(e) = state.bgm_manager.tick(
+                    bgm_stage_id,
+                    state.sim_core.scenario.player_position,
+                    hp_ratio,
+                    min_enemy_dist_xz,
+                    dt.as_secs_f32(),
+                    state.audio_engine.as_mut(),
+                ) {
+                    tracing::warn!("[BGM] SeBgmManager tick warning: {:?}", e);
                 }
             }
         }
@@ -845,6 +927,14 @@ impl RoomController for CombatArenaRoomController {
             muted,
             true,
         );
+        state.menu_rasterizer.draw_text(
+            &format!("{} [B: Pack | N: Stage]", state.bgm_manager.hud_summary()),
+            20,
+            116,
+            1,
+            cyan,
+            true,
+        );
 
         if state.active_test_room == TestRoomKind::CombatArena {
             let p = &state.combat_arena.player;
@@ -869,7 +959,7 @@ impl RoomController for CombatArenaRoomController {
                     weapon_str, ammo_str, mode_str, atk_str
                 ),
                 20,
-                122,
+                138,
                 1,
                 yellow,
                 true,
@@ -918,7 +1008,7 @@ impl RoomController for CombatArenaRoomController {
                         status_str
                     ),
                     20,
-                    142,
+                    158,
                     1,
                     color,
                     true,
@@ -927,7 +1017,7 @@ impl RoomController for CombatArenaRoomController {
                 state.menu_rasterizer.draw_text(
                     "[Press TAB to Cycle Active Test Creature]",
                     20,
-                    162,
+                    178,
                     1,
                     yellow,
                     true,

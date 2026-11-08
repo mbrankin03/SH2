@@ -150,8 +150,10 @@ pub struct AudioEngine {
     /// Current environmental reverb preset.
     current_preset: EnvironmentalPreset,
 
-    /// Handle for currently playing background ambient/music stream.
+    /// Handle for currently playing background ambient/music stream (single-stream ADX).
     active_bgm_handle: Option<StaticSoundHandle>,
+    /// Handles for currently playing multi-layer AIX background music streams (up to 7 synchronized stereo layers).
+    active_bgm_layers: Vec<StaticSoundHandle>,
     /// Handle for currently playing FMV movie audio stream.
     active_fmv_handle: Option<StaticSoundHandle>,
     /// Currently playing voice clip handle.
@@ -383,6 +385,7 @@ impl AudioEngine {
             reverb_handle: Some(reverb_handle),
             current_preset: EnvironmentalPreset::Off,
             active_bgm_handle: None,
+            active_bgm_layers: Vec::new(),
             active_fmv_handle: None,
             active_voice_handle: None,
             active_dialogue: None,
@@ -610,6 +613,9 @@ impl AudioEngine {
     ///
     /// Automatically applies seamless looping if specified in the ADX metadata header.
     pub fn play_bgm(&mut self, adx: &DecodedAdx, volume: f32) -> Result<(), AudioError> {
+        // Stop any existing BGM or multi-layer AIX streams with smooth fade
+        self.stop_bgm(Duration::from_millis(300));
+
         let manager = self
             .manager
             .as_mut()
@@ -618,15 +624,6 @@ impl AudioEngine {
             .bgm_track
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
-
-        // Stop existing BGM stream with smooth fade
-        if let Some(mut old_handle) = self.active_bgm_handle.take() {
-            old_handle.stop(Tween {
-                duration: Duration::from_millis(300),
-                easing: Easing::Linear,
-                ..Default::default()
-            });
-        }
 
         let frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
         let mut settings = StaticSoundSettings::new()
@@ -670,6 +667,8 @@ impl AudioEngine {
         master_volume_factor: f32,
         fade_in: Duration,
     ) -> Result<(), AudioError> {
+        self.stop_bgm(Duration::from_millis(50));
+
         let manager = self
             .manager
             .as_mut()
@@ -678,14 +677,6 @@ impl AudioEngine {
             .bgm_track
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
-
-        if let Some(mut old_handle) = self.active_bgm_handle.take() {
-            old_handle.stop(Tween {
-                duration: Duration::from_millis(50),
-                easing: Easing::Linear,
-                ..Default::default()
-            });
-        }
 
         let frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
         let target_vol = (master_volume_factor * self.bgm_volume * self.master_volume) as f64;
@@ -732,19 +723,122 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Returns whether background music is currently actively playing.
-    pub fn is_bgm_playing(&self) -> bool {
-        self.active_bgm_handle.is_some()
+    /// Starts synchronized playback of a multi-layer AIX stream (or single-layer ADX stream)
+    /// with independent per-layer volume controls (`active_bgm_layers`).
+    ///
+    /// - `layers`: Decoded stereo layers (1 for `.adx`, up to 7 for `.aix`).
+    /// - `initial_gains`: Initial linear gain (`0.0..=1.0`, including file master volume) for each layer.
+    /// - `loop_whole_stream`: If `true`, layers without explicit ADX header loop markers loop seamlessly
+    ///   from sample `0` to `EndOfAudio` (matching CRI AIX multi-track loop semantics in `SeBgmManager`).
+    pub fn play_bgm_layers(
+        &mut self,
+        layers: &[DecodedAdx],
+        initial_gains: &[f32],
+        loop_whole_stream: bool,
+    ) -> Result<(), AudioError> {
+        self.stop_bgm(Duration::from_millis(40));
+
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let bgm_track = self
+            .bgm_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
+
+        let mut handles = Vec::with_capacity(layers.len());
+        for (idx, layer) in layers.iter().enumerate() {
+            let frames: Vec<Frame> = layer
+                .frames
+                .iter()
+                .map(|&(l, r)| Frame::new(l, r))
+                .collect();
+            let gain = initial_gains.get(idx).copied().unwrap_or(0.0).max(0.0);
+            let mut settings = StaticSoundSettings::new()
+                .output_destination(bgm_track)
+                .volume(Volume::Amplitude(gain as f64));
+
+            if layer.header.has_loop
+                && layer.header.loop_end_sample > layer.header.loop_start_sample
+            {
+                let start_sec =
+                    layer.header.loop_start_sample as f64 / layer.header.sample_rate.max(1) as f64;
+                let end_sec =
+                    layer.header.loop_end_sample as f64 / layer.header.sample_rate.max(1) as f64;
+                settings = settings.loop_region(Region {
+                    start: PlaybackPosition::Seconds(start_sec),
+                    end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
+                });
+            } else if loop_whole_stream {
+                settings = settings.loop_region(Region {
+                    start: PlaybackPosition::Seconds(0.0),
+                    end: EndPosition::EndOfAudio,
+                });
+            }
+
+            let sound_data = StaticSoundData {
+                sample_rate: layer.header.sample_rate,
+                frames: Arc::from(frames),
+                settings,
+                slice: None,
+            };
+
+            let handle = manager
+                .play(sound_data)
+                .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+            handles.push(handle);
+        }
+
+        self.active_bgm_layers = handles;
+        Ok(())
     }
 
-    /// Stops currently playing background music with a fade out.
+    /// Updates the linear amplitude gain (`0.0..=1.0`, relative to the BGM sub-track) of a single
+    /// active BGM layer (`layer_idx` in `0..active_bgm_layer_count()`).
+    pub fn set_bgm_layer_gain(&mut self, layer_idx: usize, gain: f32, fade_duration: Duration) {
+        let tween = Tween {
+            duration: fade_duration,
+            easing: Easing::Linear,
+            ..Default::default()
+        };
+        if let Some(handle) = self.active_bgm_layers.get_mut(layer_idx) {
+            handle.set_volume(Volume::Amplitude(gain.max(0.0) as f64), tween);
+        } else if layer_idx == 0 {
+            if let Some(ref mut handle) = self.active_bgm_handle {
+                handle.set_volume(Volume::Amplitude(gain.max(0.0) as f64), tween);
+            }
+        }
+    }
+
+    /// Returns the number of currently active multi-layer BGM tracks.
+    pub fn active_bgm_layer_count(&self) -> usize {
+        if !self.active_bgm_layers.is_empty() {
+            self.active_bgm_layers.len()
+        } else if self.active_bgm_handle.is_some() {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Returns whether background music is currently actively playing.
+    pub fn is_bgm_playing(&self) -> bool {
+        self.active_bgm_handle.is_some() || !self.active_bgm_layers.is_empty()
+    }
+
+    /// Stops currently playing background music (both single-stream ADX and multi-layer AIX) with a fade out.
     pub fn stop_bgm(&mut self, fade_out: Duration) {
+        let tween = Tween {
+            duration: fade_out,
+            easing: Easing::Linear,
+            ..Default::default()
+        };
         if let Some(mut handle) = self.active_bgm_handle.take() {
-            handle.stop(Tween {
-                duration: fade_out,
-                easing: Easing::Linear,
-                ..Default::default()
-            });
+            handle.stop(tween);
+        }
+        for mut handle in self.active_bgm_layers.drain(..) {
+            handle.stop(tween);
         }
     }
 
@@ -823,6 +917,13 @@ impl AudioEngine {
             ..Default::default()
         };
         if let Some(ref mut handle) = self.active_bgm_handle {
+            if paused {
+                handle.pause(tween);
+            } else {
+                handle.resume(tween);
+            }
+        }
+        for handle in &mut self.active_bgm_layers {
             if paused {
                 handle.pause(tween);
             } else {

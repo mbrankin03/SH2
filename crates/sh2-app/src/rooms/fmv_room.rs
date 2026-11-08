@@ -28,6 +28,7 @@ pub(crate) struct ActiveFmvSession {
 }
 
 /// Locate and open a `.bik` movie stream for the requested [`FmvCatalogEntry`] and source preference.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn open_fmv_session(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -36,6 +37,7 @@ pub(crate) fn open_fmv_session(
     fmv_viewer: &mut FmvViewerState,
     entry: &'static FmvCatalogEntry,
     source_pref: FmvVideoSource,
+    audio_pack_source: sh2_core::AudioPackSource,
 ) -> Option<ActiveFmvSession> {
     let upscaled_mp4_roots = ["tools/vsr_pipeline/output", "movie", "sh2e/movie"];
 
@@ -208,8 +210,10 @@ pub(crate) fn open_fmv_session(
                                     let mut resolved_bgm: Option<PathBuf> = None;
                                     for base in &base_roots {
                                         if let Some(p) =
-                                            sh2_audio::cutscene_bgm::resolve_bgm_stream_path(
-                                                base, rel_bgm,
+                                            sh2_audio::cutscene_bgm::resolve_bgm_stream_path_for_source(
+                                                base,
+                                                rel_bgm,
+                                                audio_pack_source,
                                             )
                                         {
                                             resolved_bgm = Some(p);
@@ -403,6 +407,7 @@ impl RoomController for FmvRoomController {
                 state.fmv_viewer.is_paused = false;
                 let entry = state.fmv_viewer.current_entry();
                 let source_pref = state.fmv_viewer.video_source;
+                let audio_pack = state.bgm_manager.audio_pack_source;
                 state.fmv_session = open_fmv_session(
                     &state.render_ctx.device,
                     &state.render_ctx.queue,
@@ -411,6 +416,7 @@ impl RoomController for FmvRoomController {
                     &mut state.fmv_viewer,
                     entry,
                     source_pref,
+                    audio_pack,
                 );
             }
             KeyCode::KeyU => {
@@ -424,6 +430,7 @@ impl RoomController for FmvRoomController {
                 state.fmv_viewer.is_paused = false;
                 let entry = state.fmv_viewer.current_entry();
                 let source_pref = state.fmv_viewer.video_source;
+                let audio_pack = state.bgm_manager.audio_pack_source;
                 state.fmv_session = open_fmv_session(
                     &state.render_ctx.device,
                     &state.render_ctx.queue,
@@ -432,6 +439,7 @@ impl RoomController for FmvRoomController {
                     &mut state.fmv_viewer,
                     entry,
                     source_pref,
+                    audio_pack,
                 );
                 tracing::info!(
                     "[FMV Player] Restarted cutscene: {}",

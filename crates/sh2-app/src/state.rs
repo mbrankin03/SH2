@@ -8,6 +8,7 @@ use winit::window::Window;
 use crate::assets::CharacterAsset;
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
+use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
 use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank};
@@ -38,6 +39,7 @@ pub(crate) struct AppState {
     pub bgm_manager: BgmManager,
     pub bgm_stage_override: Option<u32>,
     pub audio_debug: AudioDebugState,
+    pub surface_sfx_room: SurfaceSfxRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -213,7 +215,8 @@ impl AppState {
             TestRoomKind::ModelAndTextureViewer
             | TestRoomKind::FmvCutsceneViewer
             | TestRoomKind::GrappleAnimationRoom
-            | TestRoomKind::LoadingScreenTest => 0,
+            | TestRoomKind::LoadingScreenTest
+            | TestRoomKind::SurfaceSfxTestRoom => 0,
         };
         (stage_id, flags)
     }

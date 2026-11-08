@@ -501,6 +501,7 @@ impl ApplicationHandler for SilentHillApp {
             bgm_manager,
             bgm_stage_override: None,
             audio_debug: rooms::audio_room::AudioDebugState::default(),
+            surface_sfx_room: rooms::surface_sfx_room::SurfaceSfxRoomState::default(),
             sim_core,
             gpu_map,
             map_texture_bind_groups,
@@ -1164,6 +1165,10 @@ impl ApplicationHandler for SilentHillApp {
                     if new_room == TestRoomKind::AudioDebugRoom {
                         state.audio_debug = rooms::audio_room::AudioDebugState::default();
                     }
+                    if new_room == TestRoomKind::SurfaceSfxTestRoom {
+                        state.surface_sfx_room =
+                            rooms::surface_sfx_room::SurfaceSfxRoomState::default();
+                    }
                     if new_room == TestRoomKind::ModelAndTextureViewer
                         && state.viewer_asset.is_none()
                     {
@@ -1532,6 +1537,8 @@ fn main() {
             initial_test_room = Some(TestRoomKind::GrappleAnimationRoom);
         } else if arg == "--audio" || arg == "--audio-debug" || arg == "--bgm" {
             initial_test_room = Some(TestRoomKind::AudioDebugRoom);
+        } else if arg == "--sfx" || arg == "--surface-sfx" || arg == "--footsteps" {
+            initial_test_room = Some(TestRoomKind::SurfaceSfxTestRoom);
         } else if let Some(room_str) = arg
             .strip_prefix("--test-room=")
             .or_else(|| arg.strip_prefix("--room="))
@@ -1553,6 +1560,9 @@ fn main() {
                     Some(TestRoomKind::GrappleAnimationRoom)
                 }
                 "audio" | "audio-debug" | "bgm" | "sound" => Some(TestRoomKind::AudioDebugRoom),
+                "sfx" | "surface-sfx" | "footsteps" | "materials" => {
+                    Some(TestRoomKind::SurfaceSfxTestRoom)
+                }
                 _ => {
                     tracing::warn!(
                         "Unknown test room: '{}', defaulting to Observation Deck",
@@ -1580,6 +1590,9 @@ fn main() {
                     Some(TestRoomKind::GrappleAnimationRoom)
                 }
                 "audio" | "audio-debug" | "bgm" | "sound" => Some(TestRoomKind::AudioDebugRoom),
+                "sfx" | "surface-sfx" | "footsteps" | "materials" => {
+                    Some(TestRoomKind::SurfaceSfxTestRoom)
+                }
                 _ => Some(TestRoomKind::ObservationDeck),
             };
             i += 1;

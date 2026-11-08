@@ -241,9 +241,20 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("AUDIO & AIX MIXING DEBUG ROOM", SH2-60),
-    // then up to "GRAPPLE ANIMATION ROOM" (SH2-57), "COMBAT & WEAPON TESTING ARENA" (SH2-13),
-    // and "LOADING SCREEN PREVIEW" (SH2-44)
+    // Navigate up to wrap to the last entry ("SURFACE FOOTSTEP & 3D SFX ROOM", SH2-61),
+    // then up to "AUDIO & AIX MIXING DEBUG ROOM" (SH2-60), "GRAPPLE ANIMATION ROOM" (SH2-57),
+    // "COMBAT & WEAPON TESTING ARENA" (SH2-13), and "LOADING SCREEN PREVIEW" (SH2-44)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::SurfaceSfxTestRoom
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Surface Footstep & 3D SFX Room"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(
@@ -456,4 +467,39 @@ fn test_options_debug_tab_and_loading_screen_selection() {
     );
 
     let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_sh2_61_surface_sfx_test_room_8_material_pads_and_collision() {
+    use sh2_app::synthetic_geometry::{
+        create_surface_sfx_test_room_cld, create_surface_sfx_test_room_geometry,
+        surface_sfx_test_pad_zones,
+    };
+    use sh2_core::collision::CollisionWorld;
+    use sh2_core::SurfaceMaterial;
+
+    let map = create_surface_sfx_test_room_geometry();
+    assert_eq!(map.batches.len(), 1);
+    assert!(!map.batches[0].positions.is_empty());
+
+    let cld = create_surface_sfx_test_room_cld();
+    let world = CollisionWorld::from_cld(&cld);
+
+    let pads = surface_sfx_test_pad_zones();
+    assert_eq!(pads.len(), 8);
+
+    // Verify that standing on the center of each of the 8 pads resolves its exact `SurfaceMaterial` (0..=7)
+    for (idx, pad) in pads.iter().enumerate() {
+        let cx = (pad.min_x + pad.max_x) * 0.5;
+        let cz = (pad.min_z + pad.max_z) * 0.5;
+        let sample = world
+            .sample_floor_surface(cx, cz, 0.0, 250.0, 350.0)
+            .expect("Pad must have walkable floor triangle");
+        assert_eq!(sample.raw_material, idx as u32);
+        assert_eq!(
+            sample.surface,
+            SurfaceMaterial::from_cld_material(idx as u32)
+        );
+        assert!((sample.height_y - 0.0).abs() < 1e-3);
+    }
 }

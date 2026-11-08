@@ -499,6 +499,39 @@ impl Default for VideoOptions {
     }
 }
 
+/// Audio source pack preference for background music (`.adx` / `.aix`) and sound effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AudioPackSource {
+    /// Silent Hill 2: Enhanced Edition 48 kHz Lossless Audio Pack (`sh2e/sound/adx/`), falling back to retail (`data/sound/adx/`).
+    #[default]
+    EnhancedLossless,
+    /// Original PS2 / Retail PC 22.05 / 24 / 44.1 kHz Audio Pack (`data/sound/adx/`).
+    OriginalPs2,
+}
+
+impl AudioPackSource {
+    /// User-facing label.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::EnhancedLossless => "SH2:EE Lossless (48 kHz)",
+            Self::OriginalPs2 => "Original PS2 / PC (24/44.1 kHz)",
+        }
+    }
+
+    /// Cycle to next audio pack source.
+    pub fn next(&self) -> Self {
+        match self {
+            Self::EnhancedLossless => Self::OriginalPs2,
+            Self::OriginalPs2 => Self::EnhancedLossless,
+        }
+    }
+
+    /// Cycle to previous audio pack source.
+    pub fn prev(&self) -> Self {
+        self.next()
+    }
+}
+
 /// Audio volume and routing options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioOptions {
@@ -516,6 +549,9 @@ pub struct AudioOptions {
     pub selected_output_device: Option<String>,
     /// Mute game audio when the window loses focus.
     pub mute_in_background: bool,
+    /// Preferred BGM & SFX audio asset source pack (SH2:EE 48 kHz Lossless vs Original PS2/PC).
+    #[serde(default)]
+    pub audio_pack_source: AudioPackSource,
 }
 
 impl Default for AudioOptions {
@@ -528,6 +564,7 @@ impl Default for AudioOptions {
             speaker_config: SpeakerConfiguration::default(),
             selected_output_device: None,
             mute_in_background: true,
+            audio_pack_source: AudioPackSource::default(),
         }
     }
 }

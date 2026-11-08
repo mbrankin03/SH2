@@ -6,10 +6,11 @@ use std::time::Instant;
 use winit::window::Window;
 
 use crate::assets::CharacterAsset;
+use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
-use sh2_audio::{AudioEngine, MenuAudioBank};
+use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank};
 use sh2_core::{FramePacer, SimulationCore};
 use sh2_debug::{
     FmvVideoSource, FmvViewerState, GrappleViewerState, JamesAnmSource, ModelViewerState,
@@ -34,6 +35,9 @@ pub(crate) struct AppState {
     pub button_sprites: Option<ButtonSpriteSheet>,
     pub audio_bank: Option<MenuAudioBank>,
     pub audio_engine: Option<AudioEngine>,
+    pub bgm_manager: BgmManager,
+    pub bgm_stage_override: Option<u32>,
+    pub audio_debug: AudioDebugState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -169,5 +173,48 @@ impl AppState {
             surface_view,
             wgpu::LoadOp::Load,
         );
+    }
+
+    /// Maps the active [`TestRoomKind`] (or user stage override) to a retail Silent Hill 2 stage ID
+    /// and default [`BgmEventFlags`] so `SeBgmChange` and `SeBgmManager` stream and spatially mix
+    /// the authentic stage BGM / AIX layers.
+    pub fn active_bgm_stage_and_flags(&self) -> (u32, BgmEventFlags) {
+        if let Some(stage_override) = self.bgm_stage_override {
+            let mut flags = BgmEventFlags::default();
+            if stage_override == 2 {
+                flags.flag_5e4 = 0x02;
+            }
+            return (stage_override, flags);
+        }
+
+        let mut flags = BgmEventFlags::default();
+        let stage_id = match self.active_test_room {
+            TestRoomKind::RestroomStart => {
+                // Stage 2 (`Stg_toilet`, `er01`): set `flag_5e4 = 0x02` so `SeBgmChange` selects Page 47 (`forest/bgm_114_b.aix`, 6 layers)
+                flags.flag_5e4 = 0x02;
+                2
+            }
+            TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => {
+                // Stage 3 (`Stg_observation`, `ob01`): Page 47 (`forest/bgm_114_b.aix`, 6 layers with 5 spatial bounding boxes)
+                3
+            }
+            TestRoomKind::HotelBoilerRoom => {
+                // Stage 45 (`Stg_hotel_2f_b`, `ru`): Page 40 (`hotel/bgm_122.aix`, 5 layers) with active multi-channel spatial mixing
+                45
+            }
+            TestRoomKind::CombatArena => {
+                // Stage 24 (`Stg_hospital_3f_b`): Page 20 (`hospital/bgm_105.aix`, 5 layers) with dynamic Calm (0), LowHP (2) & EnemyNear (3) mixing
+                24
+            }
+            TestRoomKind::SyntheticFogRunway | TestRoomKind::FallbackSandbox => {
+                // Stage 4 (`Stg_forest`): Page 47 (`forest/bgm_114_b.aix`)
+                4
+            }
+            TestRoomKind::ModelAndTextureViewer
+            | TestRoomKind::FmvCutsceneViewer
+            | TestRoomKind::GrappleAnimationRoom
+            | TestRoomKind::LoadingScreenTest => 0,
+        };
+        (stage_id, flags)
     }
 }

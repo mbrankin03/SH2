@@ -1,3 +1,4 @@
+use sh2_core::AudioPackSource;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -345,20 +346,67 @@ pub fn find_cutscene_audio_mapping(id_or_filename: &str) -> Option<&'static Cuts
     })
 }
 
-pub fn resolve_bgm_stream_path(game_root: impl AsRef<Path>, rel_bgm_path: &str) -> Option<PathBuf> {
+fn resolve_case_insensitive_in_dir(base_dir: &Path, rel_path: &str) -> Option<PathBuf> {
+    let clean = rel_path.trim_start_matches(['/', '\\']).replace('\\', "/");
+    let direct = base_dir.join(&clean);
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    // Fallback: case-insensitive directory and filename traversal for Linux filesystems
+    let mut current = base_dir.to_path_buf();
+    for part in clean.split('/').filter(|s| !s.is_empty()) {
+        let next = current.join(part);
+        if next.exists() {
+            current = next;
+            continue;
+        }
+        let entries = std::fs::read_dir(&current).ok()?;
+        let mut matched = None;
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            if file_name.to_string_lossy().eq_ignore_ascii_case(part) {
+                matched = Some(entry.path());
+                break;
+            }
+        }
+        current = matched?;
+    }
+
+    if current.exists() {
+        Some(current)
+    } else {
+        None
+    }
+}
+
+/// Resolves a BGM `.adx` or `.aix` stream path according to the requested [`AudioPackSource`]
+/// (`EnhancedLossless` prefers `sh2e/sound/adx` at 48 kHz; `OriginalPs2` prefers `data/sound/adx`).
+pub fn resolve_bgm_stream_path_for_source(
+    game_root: impl AsRef<Path>,
+    rel_bgm_path: &str,
+    source: AudioPackSource,
+) -> Option<PathBuf> {
     let root = game_root.as_ref();
-    let candidates = [
-        root.join("sh2e")
-            .join("sound")
-            .join("adx")
-            .join(rel_bgm_path),
-        root.join("data")
-            .join("sound")
-            .join("adx")
-            .join(rel_bgm_path),
-        root.join("sound").join("adx").join(rel_bgm_path),
-    ];
-    candidates.into_iter().find(|p| p.exists())
+    let ee_dir = root.join("sh2e").join("sound").join("adx");
+    let data_dir = root.join("data").join("sound").join("adx");
+    let direct_dir = root.join("sound").join("adx");
+
+    let search_dirs = match source {
+        AudioPackSource::EnhancedLossless => [ee_dir, data_dir, direct_dir],
+        AudioPackSource::OriginalPs2 => [data_dir, ee_dir, direct_dir],
+    };
+
+    for dir in &search_dirs {
+        if let Some(found) = resolve_case_insensitive_in_dir(dir, rel_bgm_path) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+pub fn resolve_bgm_stream_path(game_root: impl AsRef<Path>, rel_bgm_path: &str) -> Option<PathBuf> {
+    resolve_bgm_stream_path_for_source(game_root, rel_bgm_path, AudioPackSource::EnhancedLossless)
 }
 
 #[cfg(test)]

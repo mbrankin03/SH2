@@ -1,5 +1,6 @@
-//! Modular per-room controllers (`combat_arena`, `grapple_room`, `model_viewer`, `fmv_room`).
+//! Modular per-room controllers (`audio_room`, `combat_arena`, `grapple_room`, `model_viewer`, `fmv_room`).
 
+pub(crate) mod audio_room;
 pub(crate) mod combat_arena;
 pub(crate) mod fmv_room;
 pub(crate) mod grapple_room;
@@ -54,6 +55,11 @@ pub(crate) fn dispatch_key_input(
         TestRoomKind::GrappleAnimationRoom => {
             grapple_room::GrappleRoomController::handle_key_input(state, key_code, pressed, repeat);
         }
+        TestRoomKind::AudioDebugRoom => {
+            audio_room::AudioDebugRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
+        }
         _ => {
             combat_arena::CombatArenaRoomController::handle_key_input(
                 state, key_code, pressed, repeat,
@@ -92,6 +98,12 @@ pub(crate) fn dispatch_tick_and_render_3d(
                 );
                 return;
             }
+            TestRoomKind::AudioDebugRoom => {
+                audio_room::AudioDebugRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
             _ => {}
         }
     }
@@ -116,6 +128,9 @@ pub(crate) fn dispatch_render_hud(
         }
         TestRoomKind::GrappleAnimationRoom => {
             grapple_room::GrappleRoomController::render_hud(state, encoder, surface_view);
+        }
+        TestRoomKind::AudioDebugRoom => {
+            audio_room::AudioDebugRoomController::render_hud(state, encoder, surface_view);
         }
         _ => {
             if state.debug_camera_hud {

@@ -241,8 +241,20 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("GRAPPLE ANIMATION ROOM", SH2-57),
-    // and up once more to "COMBAT & WEAPON TESTING ARENA" (SH2-13), then "LOADING SCREEN PREVIEW" (SH2-44)
+    // Navigate up to wrap to the last entry ("AUDIO & AIX MIXING DEBUG ROOM", SH2-60),
+    // then up to "GRAPPLE ANIMATION ROOM" (SH2-57), "COMBAT & WEAPON TESTING ARENA" (SH2-13),
+    // and "LOADING SCREEN PREVIEW" (SH2-44)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::AudioDebugRoom
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Audio & AIX Mixing Debug Room"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(

@@ -89,10 +89,12 @@ pub enum TestRoomKind {
     CombatArena,
     /// Interactive Creature Grapple Animation & Elevation Debug Room (`SH2-57`).
     GrappleAnimationRoom,
+    /// Interactive BGM Streaming, Multi-Channel AIX Spatial Mixing & SFX Sound Studio (`SH2-60`).
+    AudioDebugRoom,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 10] = [
+    pub const ALL: [TestRoomKind; 11] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -103,6 +105,7 @@ impl TestRoomKind {
         TestRoomKind::LoadingScreenTest,
         TestRoomKind::CombatArena,
         TestRoomKind::GrappleAnimationRoom,
+        TestRoomKind::AudioDebugRoom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -117,6 +120,7 @@ impl TestRoomKind {
             Self::LoadingScreenTest => "Loading Screen Preview",
             Self::CombatArena => "Combat & Weapon Testing Arena",
             Self::GrappleAnimationRoom => "Grapple Animation Room",
+            Self::AudioDebugRoom => "Audio & AIX Mixing Debug Room",
         }
     }
 
@@ -141,6 +145,9 @@ impl TestRoomKind {
             }
             Self::GrappleAnimationRoom => {
                 "Pairwise creature grapple animation viewer with free orbit/flight camera"
+            }
+            Self::AudioDebugRoom => {
+                "Test SH2:EE 48kHz vs PS2 BGM, 7-layer AIX room areas, situations & SFX"
             }
         }
     }

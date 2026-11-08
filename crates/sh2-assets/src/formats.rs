@@ -15,6 +15,7 @@ pub mod sound;
 pub mod texture;
 
 pub use adx::{decode_adx, parse_adx_header, AdxHeader, DecodedAdx};
+pub use aix::{decode_aix, decode_aix_mixed, demux_aix};
 pub use anm::{
     blend_frame_in_place, compute_bind_locals, compute_skin_matrices,
     compute_skin_matrices_with_inv, compute_skin_matrices_with_inv_into, euler_to_matrix,

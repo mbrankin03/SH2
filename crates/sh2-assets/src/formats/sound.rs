@@ -651,11 +651,12 @@ pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
                 entry.loops = true;
             }
 
+            let bytes_per_sample =
+                (entry.channels.max(1) as u32) * ((entry.bits_per_sample.max(8) as u32) / 8);
+
             // Chainsaw idle loop (`sddata[352]`, internal ID `0x1642`) skips its startup rev transient
             // when looping (`ChainsawSoundFix.cpp`: `0x4796` bytes at 16 kHz or `0x12180` bytes at 48 kHz).
             if idx == 352 && entry.loops && entry.loop_start == 0 {
-                let bytes_per_sample =
-                    (entry.channels.max(1) as u32) * ((entry.bits_per_sample.max(8) as u32) / 8);
                 let skip_bytes: u32 = if entry.sample_rate >= 44100 {
                     0x12180
                 } else {
@@ -664,6 +665,10 @@ pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
                 if (skip_bytes as usize) < entry.data.len() && bytes_per_sample > 0 {
                     entry.loop_start = skip_bytes / bytes_per_sample;
                 }
+            }
+
+            if entry.loops && entry.loop_end <= entry.loop_start && bytes_per_sample > 0 {
+                entry.loop_end = (entry.data.len() as u32) / bytes_per_sample;
             }
             entries.push(entry);
         }
@@ -770,7 +775,33 @@ pub fn parse_sdm_headers(data: &[u8]) -> Result<Vec<SdmEntryHeader>, AssetError>
     Ok(headers)
 }
 
-/// Parses a single RIFF WAVE container and extracts channel, rate, depth, and PCM data.
+/// Extracts `(loop_start_sample, loop_end_sample)` from a RIFF WAVE `smpl` (Sampler) chunk payload (`SH2-55`).
+///
+/// Standard RIFF `smpl` chunk layout:
+/// - `[0..28]`: 7 `u32` header fields (`manufacturer`, `product`, `sample_period`, `midi_unity_note`,
+///   `midi_pitch_fraction`, `smpte_format`, `smpte_offset`).
+/// - `[28..32]`: `num_sample_loops: u32`.
+/// - `[32..36]`: `sampler_data: u32`.
+/// - `[36..60]`: First `SampleLoop` descriptor (`cue_point_id: u32`, `loop_type: u32`,
+///   `start_sample: u32` at `+44`, `end_sample: u32` at `+48`, `fraction: u32`, `play_count: u32`).
+pub fn parse_wav_smpl_loop(smpl_chunk: &[u8]) -> Option<(u32, u32)> {
+    if smpl_chunk.len() < 52 {
+        return None;
+    }
+    let num_loops = read_u32(smpl_chunk, 28).ok()?;
+    if num_loops == 0 {
+        return None;
+    }
+    let loop_start = read_u32(smpl_chunk, 44).ok()?;
+    let loop_end = read_u32(smpl_chunk, 48).ok()?;
+    if loop_end > loop_start {
+        Some((loop_start, loop_end))
+    } else {
+        None
+    }
+}
+
+/// Parses a single RIFF WAVE container and extracts channel, rate, depth, loop points, and PCM data.
 fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
     let mut p = 12usize;
     let mut channels = 1u16;
@@ -778,6 +809,8 @@ fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
     let mut bits_per_sample = 16u16;
     let mut pcm_data = Vec::new();
     let mut loops = false;
+    let mut loop_start = 0u32;
+    let mut loop_end = 0u32;
 
     while p + 8 <= data.len() {
         let chunk_id = &data[p..p + 4];
@@ -793,6 +826,14 @@ fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
             sample_rate = read_u32(data, chunk_data + 4)?;
             if chunk_len >= 16 {
                 bits_per_sample = read_u16(data, chunk_data + 14)?;
+            }
+        } else if chunk_id == b"smpl" {
+            if let Some((start_s, end_s)) =
+                parse_wav_smpl_loop(&data[chunk_data..chunk_data + chunk_len])
+            {
+                loops = true;
+                loop_start = start_s;
+                loop_end = end_s;
             }
         } else if chunk_id == b"data" {
             pcm_data = data[chunk_data..chunk_data + chunk_len].to_vec();
@@ -811,6 +852,14 @@ fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
         }
     }
 
+    let bytes_per_frame = (channels.max(1) as u32) * ((bits_per_sample.max(8) as u32) / 8);
+    let total_frames = (pcm_data.len() as u32)
+        .checked_div(bytes_per_frame)
+        .unwrap_or(0);
+    if loops && (loop_end == 0 || loop_end > total_frames) {
+        loop_end = total_frames;
+    }
+
     Ok(WavEntry {
         id,
         channels,
@@ -818,7 +867,7 @@ fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
         bits_per_sample,
         data: pcm_data,
         loops,
-        loop_start: 0,
-        loop_end: 0,
+        loop_start,
+        loop_end,
     })
 }

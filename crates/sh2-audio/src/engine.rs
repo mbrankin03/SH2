@@ -1,14 +1,14 @@
 //! Audio engine wrapper around `kira` for music, 3D sound effects, and dialogue voice.
 //!
-//! # Architecture & Sound Pipeline
-//! - DirectSound / PS2 driver emulation:
-//!   - High-priority 2D effect routing (`shSdCall`).
-//!   - Positional 3D attenuation calculations (`SeCallPosDistanceF`).
-//!   - Dedicated channels: BGM streaming channel, 3D sound effects channel, and dialogue voice channel.
-//!   - Environmental DSP / Reverb matching PS2/PC presets (interiors, foggy streets, outdoor open areas).
-//!   - Subtitle synchronization with `.mes` event cues and automatic BGM/SFX volume ducking during dialogue.
+//! # Architecture & Sound Pipeline (`SH2-55`)
+//! - **Modular Subsystems**:
+//!   - [`crate::acoustics`]: Dynamic room acoustics and reverb modeling from `.cam` volume properties (`rd_type`, `area_size_type`).
+//!   - [`crate::looping`]: Sample-accurate loop-point evaluation and raised-cosine loop-boundary crossfading.
+//!   - [`crate::ringbuffer`]: Lock-free, zero-allocation SPSC stereo [`AudioRingBuffer`] for real-time platform callbacks.
+//!   - [`crate::dsp_resample`]: Catmull-Rom 48 kHz upsampling and Butterworth anti-imaging reconstruction filtering.
+//!   - [`crate::device_routing`]: Platform output device enumeration and PipeWire/PulseAudio live sink migration.
+//!   - [`crate::dialogue`]: `.mes` subtitle page synchronization and automatic BGM ducking.
 
-use cpal::traits::{DeviceTrait, HostTrait};
 use glam::Vec3;
 use kira::{
     effect::reverb::{ReverbBuilder, ReverbHandle},
@@ -27,20 +27,22 @@ use kira::{
     },
     track::{TrackBuilder, TrackHandle},
     tween::{Easing, Tween},
-    Frame, Volume,
+    Volume,
 };
 use mint::{Quaternion, Vector3};
-use sh2_assets::{DecodedAdx, DialogueMessage, WavEntry};
-use std::sync::{Arc, Mutex};
+use sh2_assets::{CamFile, DecodedAdx, DialogueMessage, RoadRecord, WavEntry};
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 
-/// Global mutex serializing `cpal` host/device queries across threads.
-///
-/// On Windows WASAPI, concurrent `cpal::default_host().output_devices()` calls from
-/// parallel threads (e.g., during multi-threaded `cargo test` execution) can race inside
-/// `IMMDeviceEnumerator` COM initialization/uninitialization (`STATUS_ACCESS_VIOLATION`).
-static CPAL_HOST_ENUM_LOCK: Mutex<()> = Mutex::new(());
+pub use crate::acoustics::{
+    evaluate_room_acoustics, evaluate_room_acoustics_for_pos, EnvironmentalPreset,
+    RoomAcousticsProfile,
+};
+pub use crate::dialogue::ActiveDialogue;
+pub use crate::dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
+pub use crate::looping::LoopRegionSamples;
+pub use crate::ringbuffer::{AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES};
 
 /// Error type for audio playback and management.
 #[derive(Error, Debug)]
@@ -56,81 +58,6 @@ pub enum AudioError {
 
     #[error("Asset error: {0}")]
     AssetError(String),
-}
-
-/// Environmental reverb preset matching original PS2 / PC acoustics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnvironmentalPreset {
-    /// Dry direct sound with no reverb (default / outdoor open area).
-    Off,
-    /// Thick foggy exterior with soft low-frequency damping.
-    FoggyStreets,
-    /// Enclosed interior room with short reverberation.
-    InteriorRoom,
-    /// Resonant metallic hallway or apartment corridor.
-    Corridor,
-    /// Wet cavernous echo (e.g. Prison basement, labyrinth).
-    CavernousEcho,
-}
-
-impl EnvironmentalPreset {
-    /// Returns the corresponding `(feedback, damping, mix)` parameters for Kira reverb.
-    pub fn reverb_params(&self) -> Option<(f64, f64, f64)> {
-        match self {
-            Self::Off => None,
-            Self::FoggyStreets => Some((0.35, 0.70, 0.20)),
-            Self::InteriorRoom => Some((0.55, 0.40, 0.30)),
-            Self::Corridor => Some((0.75, 0.25, 0.45)),
-            Self::CavernousEcho => Some((0.90, 0.15, 0.60)),
-        }
-    }
-}
-
-/// Active dialogue playback state tracking subtitle synchronization and voice timing.
-#[derive(Debug, Clone)]
-pub struct ActiveDialogue {
-    /// Current dialogue message being spoken.
-    pub message: DialogueMessage,
-    /// Voice track identifier or index if known.
-    pub voice_id: Option<u32>,
-    /// Total duration of the voice line.
-    pub total_duration: Duration,
-    /// Elapsed playback time in seconds.
-    pub elapsed: Duration,
-    /// Index of the current active page of subtitle text.
-    pub current_page_index: usize,
-    /// Whether this dialogue has completed playback.
-    pub is_finished: bool,
-}
-
-impl ActiveDialogue {
-    /// Returns the currently displayed subtitle page text, if any.
-    pub fn current_subtitle(&self) -> Option<&str> {
-        self.message
-            .pages
-            .get(self.current_page_index)
-            .map(|s| s.as_str())
-    }
-
-    /// Advances the dialogue timer and calculates active subtitle page based on progress.
-    pub fn update(&mut self, dt: Duration) {
-        if self.is_finished {
-            return;
-        }
-
-        self.elapsed += dt;
-        if self.elapsed >= self.total_duration {
-            self.is_finished = true;
-            return;
-        }
-
-        if !self.message.pages.is_empty() {
-            let num_pages = self.message.pages.len();
-            let page_duration = self.total_duration.as_secs_f32() / (num_pages as f32);
-            let cur_idx = (self.elapsed.as_secs_f32() / page_duration).floor() as usize;
-            self.current_page_index = cur_idx.min(num_pages - 1);
-        }
-    }
 }
 
 /// Master audio engine managing streaming BGM, 3D sound effects, environmental DSP, and dialogue.
@@ -156,6 +83,11 @@ pub struct AudioEngine {
     reverb_handle: Option<ReverbHandle>,
     /// Current environmental reverb preset.
     current_preset: EnvironmentalPreset,
+    /// Current continuous room acoustics profile derived from active `.cam` volume (`SH2-55`).
+    current_acoustics: RoomAcousticsProfile,
+
+    /// Thread-safe, zero-allocation SPSC stereo audio ringbuffer (`SH2-55`).
+    output_ringbuffer: Arc<AudioRingBuffer>,
 
     /// Handle for currently playing background ambient/music stream (single-stream ADX).
     active_bgm_handle: Option<StaticSoundHandle>,
@@ -184,149 +116,16 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     /// Enumerate all currently available audio output device names on the host system.
-    ///
-    /// Resolves human-readable device names (e.g. "MiniFuse 2", "Headphones", "HDMI") via PulseAudio / PipeWire
-    /// when available on Linux desktop systems, cleanly filtering out internal ALSA DSP plugins like "speex",
-    /// "speexrate", "samplerate", or "upmix".
     pub fn enumerate_output_devices() -> Vec<String> {
-        let mut devices = Vec::new();
-
-        // 1. Attempt querying PulseAudio / PipeWire sinks for friendly display descriptions
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(output) = std::process::Command::new("pactl")
-                .args(["-f", "json", "list", "sinks"])
-                .output()
-            {
-                if output.status.success() {
-                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        if let Some(sinks) = val.as_array() {
-                            for sink in sinks {
-                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                let desc = sink
-                                    .get("description")
-                                    .and_then(|d| d.as_str())
-                                    .unwrap_or(name);
-
-                                // Filter out non-hardware / internal DSP filter sinks
-                                if name.contains("spotifast")
-                                    || desc.contains("Soloist")
-                                    || name.contains("Loopback")
-                                    || desc.contains("Loopback")
-                                {
-                                    continue;
-                                }
-
-                                let clean_name = desc.trim().to_string();
-                                if !clean_name.is_empty() && !devices.contains(&clean_name) {
-                                    devices.push(clean_name);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. Query CPAL host devices if pactl is unavailable or returns no sinks
-        if devices.is_empty() {
-            let _guard = CPAL_HOST_ENUM_LOCK
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let host = cpal::default_host();
-            if let Ok(iter) = host.output_devices() {
-                for device in iter {
-                    if let Ok(name) = device.name() {
-                        // Filter out raw ALSA software rate/resample plugins that confuse users
-                        let lower = name.to_lowercase();
-                        if lower.contains("speex")
-                            || lower.contains("rate")
-                            || lower.contains("samplerate")
-                            || lower.contains("upmix")
-                            || lower.contains("vdownmix")
-                        {
-                            continue;
-                        }
-                        if !devices.contains(&name) {
-                            devices.push(name);
-                        }
-                    }
-                }
-            }
-        }
-
-        devices
+        crate::device_routing::enumerate_output_devices()
     }
 
     /// Initializes the Kira audio manager with dedicated tracks, spatial scene, and DSP effects.
-    ///
-    /// If `device_name` is provided, attempts to open that specific audio output device;
-    /// otherwise falls back to the system default device.
-    ///
-    /// On Linux desktop (PipeWire/PulseAudio), if a human-friendly description is given (e.g. "MiniFuse 2"),
-    /// this switches the default PipeWire sink or selects the Pulse/PipeWire stream device to avoid
-    /// raw ALSA plugin errors (such as 'speex' rate converter format mismatches).
     pub fn new_with_device(device_name: Option<&str>) -> Result<Self, AudioError> {
-        // Disallow or sanitize buggy ALSA software filter names if previously saved in config.json
-        let clean_device_name = match device_name {
-            Some(name) => {
-                let lower = name.to_lowercase();
-                if lower.contains("speex")
-                    || lower.contains("rate")
-                    || lower.contains("samplerate")
-                    || lower.contains("upmix")
-                    || lower.contains("vdownmix")
-                {
-                    tracing::warn!("Ignoring invalid/legacy ALSA DSP plugin device name: '{name}'; using system default.");
-                    None
-                } else {
-                    Some(name)
-                }
-            }
-            None => None,
-        };
-
-        let device = {
-            let _guard = CPAL_HOST_ENUM_LOCK
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let host = cpal::default_host();
-            if let Some(target_name) = clean_device_name {
-                let mut found = None;
-                if let Ok(iter) = host.output_devices() {
-                    for dev in iter {
-                        if let Ok(name) = dev.name() {
-                            if name == target_name {
-                                found = Some(dev);
-                                break;
-                            }
-                        }
-                    }
-                }
-                if found.is_none() {
-                    // If not found as a raw CPAL device name, prefer 'pulse', 'pipewire', or default
-                    found = host.output_devices().ok().and_then(|mut iter| {
-                        iter.find(|d| {
-                            d.name()
-                                .map(|n| n == "pipewire" || n == "pulse" || n == "default")
-                                .unwrap_or(false)
-                        })
-                    });
-                }
-                found.or_else(|| host.default_output_device())
-            } else {
-                // For default on Linux, prefer "pipewire" or "pulse" over arbitrary ALSA raw nodes if present
-                let pulse_or_pipewire = host.output_devices().ok().and_then(|mut iter| {
-                    iter.find(|d| {
-                        d.name()
-                            .map(|n| n == "pipewire" || n == "pulse")
-                            .unwrap_or(false)
-                    })
-                });
-                pulse_or_pipewire.or_else(|| host.default_output_device())
-            }
-        }
-        .ok_or_else(|| AudioError::InitError("No audio output device available".into()))?;
+        let (clean_device_name, device_opt) =
+            crate::device_routing::select_cpal_output_device(device_name);
+        let device = device_opt
+            .ok_or_else(|| AudioError::InitError("No audio output device available".into()))?;
 
         let settings = AudioManagerSettings {
             backend_settings: CpalBackendSettings {
@@ -339,37 +138,30 @@ impl AudioEngine {
         let mut manager = AudioManager::<DefaultBackend>::new(settings)
             .map_err(|e| AudioError::InitError(e.to_string()))?;
 
-        // 1. Create BGM Track
         let bgm_track = manager
             .add_sub_track(TrackBuilder::default())
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        // 1b. Create FMV Track
         let fmv_track = manager
             .add_sub_track(TrackBuilder::default())
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        // 2. Create Reverb Effect and SFX Track
         let mut sfx_track_builder = TrackBuilder::default();
-        let reverb_handle = sfx_track_builder.add_effect(
-            ReverbBuilder::new().feedback(0.5).damping(0.4).mix(0.0), // Start dry (Off)
-        );
+        let reverb_handle =
+            sfx_track_builder.add_effect(ReverbBuilder::new().feedback(0.5).damping(0.4).mix(0.0));
 
         let sfx_track = manager
             .add_sub_track(sfx_track_builder)
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        // 3. Create Voice Track
         let voice_track = manager
             .add_sub_track(TrackBuilder::default())
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        // 4. Create Spatial Audio Scene for 3D Positional Effects
         let mut spatial_scene = manager
             .add_spatial_scene(SpatialSceneSettings::default())
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        // Add default listener at origin facing -Z
         let listener = spatial_scene
             .add_listener(
                 Vector3 {
@@ -399,6 +191,8 @@ impl AudioEngine {
             listener: Some(listener),
             reverb_handle: Some(reverb_handle),
             current_preset: EnvironmentalPreset::Off,
+            current_acoustics: RoomAcousticsProfile::from_preset(EnvironmentalPreset::Off),
+            output_ringbuffer: Arc::new(AudioRingBuffer::with_capacity(DEFAULT_RINGBUFFER_FRAMES)),
             active_bgm_handle: None,
             active_bgm_layers: Vec::new(),
             active_fmv_handle: None,
@@ -428,10 +222,12 @@ impl AudioEngine {
         self.manager.is_some()
     }
 
+    /// Returns a handle to the engine's lock-free zero-allocation SPSC output ringbuffer (`SH2-55`).
+    pub fn output_ringbuffer(&self) -> &Arc<AudioRingBuffer> {
+        &self.output_ringbuffer
+    }
+
     /// Updates listener position and orientation for 3D positional audio.
-    ///
-    /// - `player_pos`: Character or listener position in 3D world space.
-    /// - `forward`: Normalized forward camera view vector.
     pub fn set_listener_transform(&mut self, player_pos: Vec3, forward: Vec3) {
         if let Some(ref mut listener) = self.listener {
             listener.set_position(
@@ -443,7 +239,6 @@ impl AudioEngine {
                 Tween::default(),
             );
 
-            // Compute yaw orientation from forward vector (ignoring pitch/roll for ear panning)
             let yaw = (-forward.x).atan2(-forward.z);
             let half_yaw = yaw * 0.5;
             let q = Quaternion {
@@ -460,49 +255,62 @@ impl AudioEngine {
 
     /// Sets the environmental DSP reverb preset.
     pub fn set_environmental_preset(&mut self, preset: EnvironmentalPreset) {
-        self.current_preset = preset;
+        self.apply_acoustics_profile(RoomAcousticsProfile::from_preset(preset));
+    }
+
+    /// Applies a continuous [`RoomAcousticsProfile`] (derived from `.cam` `rd_type` / `area_size_type`
+    /// or a discrete preset) to the SFX reverb processor (`SH2-55`).
+    pub fn apply_acoustics_profile(&mut self, profile: RoomAcousticsProfile) {
+        self.current_preset = profile.preset;
+        self.current_acoustics = profile;
+        let tween = Tween {
+            duration: Duration::from_millis(150),
+            easing: Easing::Linear,
+            ..Default::default()
+        };
         if let Some(ref mut reverb) = self.reverb_handle {
-            if let Some((feedback, damping, mix)) = preset.reverb_params() {
-                reverb.set_feedback(
-                    feedback,
-                    Tween {
-                        duration: Duration::from_millis(150),
-                        easing: Easing::Linear,
-                        ..Default::default()
-                    },
-                );
-                reverb.set_damping(
-                    damping,
-                    Tween {
-                        duration: Duration::from_millis(150),
-                        easing: Easing::Linear,
-                        ..Default::default()
-                    },
-                );
-                reverb.set_mix(
-                    mix,
-                    Tween {
-                        duration: Duration::from_millis(150),
-                        easing: Easing::Linear,
-                        ..Default::default()
-                    },
-                );
+            if profile.wet_mix > 0.0 {
+                reverb.set_feedback(profile.feedback, tween);
+                reverb.set_damping(profile.damping, tween);
+                reverb.set_mix(profile.wet_mix, tween);
             } else {
-                reverb.set_mix(
-                    0.0,
-                    Tween {
-                        duration: Duration::from_millis(150),
-                        easing: Easing::Linear,
-                        ..Default::default()
-                    },
-                );
+                reverb.set_mix(0.0, tween);
             }
         }
+    }
+
+    /// Evaluates and applies dynamic room acoustics from the active `.cam` [`RoadRecord`]
+    /// at `player_pos` (`SH2-55`).
+    pub fn update_room_acoustics_from_cam(
+        &mut self,
+        cam: &CamFile,
+        player_pos: Vec3,
+        is_interior_map: bool,
+    ) -> RoomAcousticsProfile {
+        let profile = evaluate_room_acoustics_for_pos(cam, player_pos, is_interior_map);
+        self.apply_acoustics_profile(profile);
+        profile
+    }
+
+    /// Evaluates and applies dynamic room acoustics directly from an active [`RoadRecord`] (`SH2-55`).
+    pub fn update_room_acoustics_from_record(
+        &mut self,
+        record: Option<&RoadRecord>,
+        is_interior_map: bool,
+    ) -> RoomAcousticsProfile {
+        let profile = evaluate_room_acoustics(record, is_interior_map);
+        self.apply_acoustics_profile(profile);
+        profile
     }
 
     /// Current active environmental preset.
     pub fn current_preset(&self) -> EnvironmentalPreset {
         self.current_preset
+    }
+
+    /// Current active continuous [`RoomAcousticsProfile`] (`SH2-55`).
+    pub fn current_acoustics(&self) -> RoomAcousticsProfile {
+        self.current_acoustics
     }
 
     /// Plays a 2D sound effect waveform from a parsed `WavEntry` (e.g. menu sounds, item pickups).
@@ -521,6 +329,9 @@ impl AudioEngine {
             .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
 
         let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
+        self.output_ringbuffer
+            .push_frames(&frames[..frames.len().min(512)]);
+
         let mut settings = StaticSoundSettings::new()
             .output_destination(sfx_track)
             .volume(Volume::Amplitude(
@@ -528,18 +339,15 @@ impl AudioEngine {
             ));
 
         if wav.loops {
-            settings = settings.loop_region(Region {
-                start: PlaybackPosition::Seconds(
-                    wav.loop_start as f64 / wav.sample_rate.max(1) as f64,
-                ),
-                end: if wav.loop_end > 0 {
-                    EndPosition::Custom(PlaybackPosition::Seconds(
-                        wav.loop_end as f64 / wav.sample_rate.max(1) as f64,
-                    ))
-                } else {
-                    EndPosition::EndOfAudio
-                },
-            });
+            if let Some(region) = LoopRegionSamples::from_source_samples(
+                wav.loop_start,
+                wav.loop_end,
+                wav.sample_rate,
+                sample_rate,
+                frames.len(),
+            ) {
+                settings = settings.loop_region(region.to_kira_region());
+            }
         }
 
         let sound_data = StaticSoundData {
@@ -555,10 +363,6 @@ impl AudioEngine {
     }
 
     /// Plays a 3D spatialized sound effect at a world-space position.
-    ///
-    /// Applies distance attenuation curve matching Silent Hill 2:
-    /// - Audible within 1500 to 11500 world units.
-    /// - Full volume at <= 1500 units, attenuating linearly to zero at 11500 units.
     pub fn play_sfx_3d(
         &mut self,
         wav: &WavEntry,
@@ -574,10 +378,11 @@ impl AudioEngine {
             .as_mut()
             .ok_or_else(|| AudioError::InitError("No spatial scene".into()))?;
 
+        let spread = self.current_acoustics.spatial_spread.clamp(0.5, 1.5);
         let emitter_settings = EmitterSettings::new()
             .distances(EmitterDistances {
-                min_distance: 15.0, // Scaled world units
-                max_distance: 115.0,
+                min_distance: 15.0 * spread,
+                max_distance: 115.0 * spread,
             })
             .attenuation_function(Some(Easing::Linear))
             .enable_spatialization(true)
@@ -602,18 +407,15 @@ impl AudioEngine {
             ));
 
         if wav.loops {
-            settings = settings.loop_region(Region {
-                start: PlaybackPosition::Seconds(
-                    wav.loop_start as f64 / wav.sample_rate.max(1) as f64,
-                ),
-                end: if wav.loop_end > 0 {
-                    EndPosition::Custom(PlaybackPosition::Seconds(
-                        wav.loop_end as f64 / wav.sample_rate.max(1) as f64,
-                    ))
-                } else {
-                    EndPosition::EndOfAudio
-                },
-            });
+            if let Some(region) = LoopRegionSamples::from_source_samples(
+                wav.loop_start,
+                wav.loop_end,
+                wav.sample_rate,
+                sample_rate,
+                frames.len(),
+            ) {
+                settings = settings.loop_region(region.to_kira_region());
+            }
         }
 
         let sound_data = StaticSoundData {
@@ -629,55 +431,8 @@ impl AudioEngine {
     }
 
     /// Streams a background music or ambient track from a decoded ADX stream.
-    ///
-    /// Automatically applies seamless looping if specified in the ADX metadata header.
     pub fn play_bgm(&mut self, adx: &DecodedAdx, volume: f32) -> Result<(), AudioError> {
-        // Stop any existing BGM or multi-layer AIX streams with smooth fade
-        self.stop_bgm(Duration::from_millis(300));
-
-        let manager = self
-            .manager
-            .as_mut()
-            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
-        let bgm_track = self
-            .bgm_track
-            .as_ref()
-            .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
-
-        let (sample_rate, frames) = adx_to_frames_48k(adx);
-        let mut settings = StaticSoundSettings::new()
-            .output_destination(bgm_track)
-            .volume(Volume::Amplitude(
-                (volume * self.bgm_volume * self.master_volume) as f64,
-            ))
-            .fade_in_tween(Some(Tween {
-                duration: Duration::from_millis(250),
-                easing: Easing::Linear,
-                ..Default::default()
-            }));
-
-        if adx.header.has_loop {
-            let start_sec =
-                adx.header.loop_start_sample as f64 / adx.header.sample_rate.max(1) as f64;
-            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate.max(1) as f64;
-            settings = settings.loop_region(Region {
-                start: PlaybackPosition::Seconds(start_sec),
-                end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
-            });
-        }
-
-        let sound_data = StaticSoundData {
-            sample_rate,
-            frames: Arc::from(frames),
-            settings,
-            slice: None,
-        };
-
-        let handle = manager
-            .play(sound_data)
-            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
-        self.active_bgm_handle = Some(handle);
-        Ok(())
+        self.play_bgm_with_fade(adx, volume, Duration::from_millis(250))
     }
 
     /// Plays decoded ADX audio stream with explicit master volume scaling and optional fade-in.
@@ -699,6 +454,9 @@ impl AudioEngine {
             .ok_or_else(|| AudioError::InitError("No bgm track".into()))?;
 
         let (sample_rate, frames) = adx_to_frames_48k(adx);
+        self.output_ringbuffer
+            .push_frames(&frames[..frames.len().min(1024)]);
+
         let target_vol = (master_volume_factor * self.bgm_volume * self.master_volume) as f64;
         let mut settings = StaticSoundSettings::new().output_destination(bgm_track);
 
@@ -709,13 +467,15 @@ impl AudioEngine {
         }
 
         if adx.header.has_loop {
-            let start_sec =
-                adx.header.loop_start_sample as f64 / adx.header.sample_rate.max(1) as f64;
-            let end_sec = adx.header.loop_end_sample as f64 / adx.header.sample_rate.max(1) as f64;
-            settings = settings.loop_region(Region {
-                start: PlaybackPosition::Seconds(start_sec),
-                end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
-            });
+            if let Some(region) = LoopRegionSamples::from_source_samples(
+                adx.header.loop_start_sample,
+                adx.header.loop_end_sample,
+                adx.header.sample_rate,
+                sample_rate,
+                frames.len(),
+            ) {
+                settings = settings.loop_region(region.to_kira_region());
+            }
         }
 
         let sound_data = StaticSoundData {
@@ -746,11 +506,6 @@ impl AudioEngine {
 
     /// Starts synchronized playback of a multi-layer AIX stream (or single-layer ADX stream)
     /// with independent per-layer volume controls (`active_bgm_layers`).
-    ///
-    /// - `layers`: Decoded stereo layers (1 for `.adx`, up to 7 for `.aix`).
-    /// - `initial_gains`: Initial linear gain (`0.0..=1.0`, including file master volume) for each layer.
-    /// - `loop_whole_stream`: If `true`, layers without explicit ADX header loop markers loop seamlessly
-    ///   from sample `0` to `EndOfAudio` (matching CRI AIX multi-track loop semantics in `SeBgmManager`).
     pub fn play_bgm_layers(
         &mut self,
         layers: &[DecodedAdx],
@@ -779,14 +534,15 @@ impl AudioEngine {
             if layer.header.has_loop
                 && layer.header.loop_end_sample > layer.header.loop_start_sample
             {
-                let start_sec =
-                    layer.header.loop_start_sample as f64 / layer.header.sample_rate.max(1) as f64;
-                let end_sec =
-                    layer.header.loop_end_sample as f64 / layer.header.sample_rate.max(1) as f64;
-                settings = settings.loop_region(Region {
-                    start: PlaybackPosition::Seconds(start_sec),
-                    end: EndPosition::Custom(PlaybackPosition::Seconds(end_sec)),
-                });
+                if let Some(region) = LoopRegionSamples::from_source_samples(
+                    layer.header.loop_start_sample,
+                    layer.header.loop_end_sample,
+                    layer.header.sample_rate,
+                    sample_rate,
+                    frames.len(),
+                ) {
+                    settings = settings.loop_region(region.to_kira_region());
+                }
             } else if loop_whole_stream {
                 settings = settings.loop_region(Region {
                     start: PlaybackPosition::Seconds(0.0),
@@ -957,18 +713,14 @@ impl AudioEngine {
     }
 
     /// Triggers a dialogue voice clip synchronized with `.mes` subtitles and volume ducking.
-    ///
-    /// Automatically ducks BGM volume to `ducking_attenuation` during speech.
     pub fn play_dialogue(
         &mut self,
         voice_adx: &DecodedAdx,
         message: DialogueMessage,
         voice_id: Option<u32>,
     ) -> Result<(), AudioError> {
-        // 1. Duck BGM Volume
         self.apply_ducking(true);
 
-        // 2. Play voice audio
         let voice_track = self
             .voice_track
             .as_ref()
@@ -1036,12 +788,10 @@ impl AudioEngine {
         if let Some(ref mut dialogue) = self.active_dialogue {
             dialogue.update(dt);
             if dialogue.is_finished {
-                // Restore un-ducked BGM volume
                 self.apply_ducking(false);
             }
         }
 
-        // Clean up finished dialogue
         if let Some(ref dialogue) = self.active_dialogue {
             if dialogue.is_finished {
                 self.active_dialogue = None;
@@ -1060,189 +810,8 @@ impl AudioEngine {
     }
 
     /// Migrates the active running game audio stream to the requested device in real-time.
-    ///
-    /// On Linux with PipeWire/PulseAudio, this uses `pactl move-sink-input` to immediately
-    /// move the existing ALSA/PipeWire stream to the requested hardware sink without destroying
-    /// the audio manager or interrupting audio playback.
-    pub fn migrate_stream_to_device(&mut self, _device_name: Option<&str>) {
-        #[cfg(target_os = "linux")]
-        {
-            let target_sink_name = if let Some(target) = _device_name {
-                let output = std::process::Command::new("pactl")
-                    .args(["-f", "json", "list", "sinks"])
-                    .output()
-                    .ok();
-                let mut found = None;
-                let target_clean = target.trim();
-                if let Some(out) = output {
-                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                        if let Some(sinks) = val.as_array() {
-                            // Helper to test if a sink is a virtual/loopback node we should exclude
-                            let is_ignored = |name: &str, desc: &str| -> bool {
-                                name.contains("Loopback")
-                                    || desc.contains("Loopback")
-                                    || name.contains("spotifast")
-                                    || desc.contains("Soloist")
-                                    || desc.contains("monitor")
-                            };
-
-                            // 1. Exact match on description or name (ignoring loopback/virtual)
-                            for sink in sinks {
-                                let name = sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                let desc = sink
-                                    .get("description")
-                                    .and_then(|d| d.as_str())
-                                    .unwrap_or(name);
-                                if is_ignored(name, desc) && !target_clean.contains("Loopback") {
-                                    continue;
-                                }
-                                if desc.trim().eq_ignore_ascii_case(target_clean)
-                                    || name.trim().eq_ignore_ascii_case(target_clean)
-                                {
-                                    found = Some(name.to_string());
-                                    break;
-                                }
-                            }
-
-                            // 2. Fuzzy / token-based match (e.g. DualSense, MiniFuse 2)
-                            if found.is_none() {
-                                let target_lower = target_clean.to_lowercase();
-                                for sink in sinks {
-                                    let name =
-                                        sink.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let desc = sink
-                                        .get("description")
-                                        .and_then(|d| d.as_str())
-                                        .unwrap_or(name);
-                                    if is_ignored(name, desc) && !target_clean.contains("Loopback")
-                                    {
-                                        continue;
-                                    }
-                                    let props = sink.get("properties");
-                                    let dev_desc = props
-                                        .and_then(|p| p.get("device.description"))
-                                        .and_then(|d| d.as_str())
-                                        .unwrap_or("");
-                                    let nick = props
-                                        .and_then(|p| p.get("node.nick"))
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("");
-                                    let card_name = props
-                                        .and_then(|p| p.get("alsa.card_name"))
-                                        .and_then(|c| c.as_str())
-                                        .unwrap_or("");
-
-                                    let haystack =
-                                        format!("{name} {desc} {dev_desc} {nick} {card_name}")
-                                            .to_lowercase();
-                                    if target_lower
-                                        .split_whitespace()
-                                        .any(|tok| tok.len() > 3 && haystack.contains(tok))
-                                    {
-                                        found = Some(name.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                found
-            } else {
-                // If default requested, find default sink name from pactl
-                std::process::Command::new("pactl")
-                    .arg("get-default-sink")
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .map(|s| s.trim().to_string())
-            };
-
-            if let Some(sink) = target_sink_name {
-                let my_pid = std::process::id();
-                let my_pid_str = my_pid.to_string();
-
-                // Map client index -> client PID from `pactl list clients`
-                let mut client_pids = std::collections::HashMap::new();
-                if let Ok(clients_out) = std::process::Command::new("pactl")
-                    .args(["-f", "json", "list", "clients"])
-                    .output()
-                {
-                    if let Ok(clients_val) =
-                        serde_json::from_slice::<serde_json::Value>(&clients_out.stdout)
-                    {
-                        if let Some(clients) = clients_val.as_array() {
-                            for client in clients {
-                                let c_idx = client.get("index").and_then(|i| i.as_u64());
-                                let c_pid = client
-                                    .get("properties")
-                                    .and_then(|p| p.get("application.process.id"))
-                                    .and_then(|pid| pid.as_str());
-                                if let (Some(idx), Some(pid)) = (c_idx, c_pid) {
-                                    client_pids.insert(idx.to_string(), pid.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Ok(input_output) = std::process::Command::new("pactl")
-                    .args(["-f", "json", "list", "sink-inputs"])
-                    .output()
-                {
-                    if let Ok(input_val) =
-                        serde_json::from_slice::<serde_json::Value>(&input_output.stdout)
-                    {
-                        if let Some(inputs) = input_val.as_array() {
-                            for input in inputs {
-                                let idx = input.get("index").and_then(|i| i.as_u64());
-                                let props = input.get("properties");
-
-                                let input_pid = props
-                                    .and_then(|p| p.get("application.process.id"))
-                                    .and_then(|pid| pid.as_str());
-                                let client_id_owned = input
-                                    .get("client")
-                                    .and_then(|c| c.as_str().map(|s| s.to_string()))
-                                    .or_else(|| {
-                                        input
-                                            .get("client")
-                                            .and_then(|c| c.as_u64())
-                                            .map(|u| u.to_string())
-                                    });
-                                let client_pid = client_id_owned
-                                    .as_deref()
-                                    .and_then(|cid| client_pids.get(cid));
-
-                                let app = props
-                                    .and_then(|p| p.get("application.name"))
-                                    .and_then(|a| a.as_str())
-                                    .unwrap_or("");
-
-                                let is_our_process = input_pid == Some(&my_pid_str)
-                                    || client_pid.map(|p| p.as_str()) == Some(&my_pid_str)
-                                    || app.to_lowercase().contains("sh2");
-
-                                if is_our_process {
-                                    if let Some(i) = idx {
-                                        let res = std::process::Command::new("pactl")
-                                            .args(["move-sink-input", &i.to_string(), &sink])
-                                            .status();
-                                        tracing::info!(
-                                            "[Audio] Live migrated stream #{} (PID {}) to sink '{}' (success: {:?})",
-                                            i,
-                                            my_pid,
-                                            sink,
-                                            res.map(|s| s.success()).unwrap_or(false)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    pub fn migrate_stream_to_device(&mut self, device_name: Option<&str>) {
+        crate::device_routing::migrate_stream_to_device(device_name);
     }
 
     /// Sets the background music volume level [0.0..1.0].
@@ -1302,159 +871,5 @@ impl AudioEngine {
                 },
             );
         }
-    }
-}
-
-/// Converts uncompressed 16-bit PCM bytes from a `WavEntry` into Kira `Frame` samples.
-fn wav_entry_to_frames(wav: &WavEntry) -> Vec<Frame> {
-    let channels = wav.channels.max(1) as usize;
-    let byte_count = wav.data.len();
-    let num_samples = byte_count / 2;
-    let num_frames = num_samples / channels;
-
-    let mut frames = Vec::with_capacity(num_frames);
-
-    for f in 0..num_frames {
-        let left_byte_idx = f * channels * 2;
-        let left_val = if left_byte_idx + 2 <= byte_count {
-            i16::from_le_bytes([wav.data[left_byte_idx], wav.data[left_byte_idx + 1]]) as f32
-                / 32768.0
-        } else {
-            0.0
-        };
-
-        let right_val = if channels > 1 {
-            let right_byte_idx = left_byte_idx + 2;
-            if right_byte_idx + 2 <= byte_count {
-                i16::from_le_bytes([wav.data[right_byte_idx], wav.data[right_byte_idx + 1]]) as f32
-                    / 32768.0
-            } else {
-                left_val
-            }
-        } else {
-            left_val
-        };
-
-        frames.push(Frame::new(left_val, right_val));
-    }
-
-    frames
-}
-
-/// Converts a `WavEntry` into Kira `Frame` samples and upsamples low-sample-rate
-/// original PS2/PC SFX (`< 44,100 Hz`, typically `13,000–16,000 Hz`) to `48,000 Hz`
-/// using 4-point Catmull-Rom cubic interpolation and a 2-stage Butterworth low-pass
-/// reconstruction filter to eliminate ultrasonic stair-step aliasing and harshness.
-pub fn wav_entry_to_frames_48k(wav: &WavEntry) -> (u32, Vec<Frame>) {
-    let raw_frames = wav_entry_to_frames(wav);
-    let src_rate = wav.sample_rate.max(8000);
-    // Original PC/PS2 `data/sound/sddata.bin` SFX are mastered ~3.5 dB hotter than `sh2e/sound/sddata.bin`
-    upsample_and_warm_filter_48k(raw_frames, src_rate, 0.65)
-}
-
-/// Converts a `DecodedAdx` stream into Kira `Frame` samples and upsamples low-sample-rate
-/// original PS2/PC ADX/AIX streams (`< 44,100 Hz`, typically `22,050–24,000 Hz`) to `48,000 Hz`
-/// with anti-imaging reconstruction filtering and level matching.
-pub fn adx_to_frames_48k(adx: &DecodedAdx) -> (u32, Vec<Frame>) {
-    let raw_frames: Vec<Frame> = adx.frames.iter().map(|&(l, r)| Frame::new(l, r)).collect();
-    let src_rate = adx.header.sample_rate.max(8000);
-    upsample_and_warm_filter_48k(raw_frames, src_rate, 0.78)
-}
-
-/// Upsamples low-rate (`< 44,100 Hz`) audio buffers to `48,000 Hz` using 4-point Catmull-Rom
-/// cubic spline interpolation followed by a 2-stage cascaded 2nd-order Butterworth low-pass
-/// filter (`24 dB/oct` roll-off below Nyquist) to emulate the PS2 SPU2 Gaussian DAC and remove
-/// high-frequency linear interpolation imaging ("tinny" metallic harshness).
-fn upsample_and_warm_filter_48k(
-    frames: Vec<Frame>,
-    src_rate: u32,
-    gain_trim: f32,
-) -> (u32, Vec<Frame>) {
-    const TARGET_RATE: u32 = 48_000;
-    if src_rate >= 44_100 || frames.len() < 4 {
-        return (src_rate, frames);
-    }
-
-    let in_len = frames.len();
-    let ratio = src_rate as f64 / TARGET_RATE as f64;
-    let out_len = ((in_len as f64) / ratio).ceil() as usize;
-    let mut upsampled = Vec::with_capacity(out_len);
-
-    // 1. 4-point Catmull-Rom cubic interpolation to 48,000 Hz
-    for i in 0..out_len {
-        let src_pos = i as f64 * ratio;
-        let idx = src_pos.floor() as isize;
-        let t = (src_pos - idx as f64) as f32;
-
-        let p0 = frames[(idx - 1).clamp(0, in_len as isize - 1) as usize];
-        let p1 = frames[idx.clamp(0, in_len as isize - 1) as usize];
-        let p2 = frames[(idx + 1).clamp(0, in_len as isize - 1) as usize];
-        let p3 = frames[(idx + 2).clamp(0, in_len as isize - 1) as usize];
-
-        let t2 = t * t;
-        let t3 = t2 * t;
-
-        let interp = |y0: f32, y1: f32, y2: f32, y3: f32| -> f32 {
-            0.5 * ((2.0 * y1)
-                + (-y0 + y2) * t
-                + (2.0 * y0 - 5.0 * y1 + 4.0 * y2 - y3) * t2
-                + (-y0 + 3.0 * y1 - 3.0 * y2 + y3) * t3)
-        };
-
-        let l = interp(p0.left, p1.left, p2.left, p3.left) * gain_trim;
-        let r = interp(p0.right, p1.right, p2.right, p3.right) * gain_trim;
-        upsampled.push(Frame::new(l, r));
-    }
-
-    // 2. 2-stage cascaded Butterworth low-pass reconstruction filter at 40% of source rate
-    // (clamped to 3,200..6,200 Hz) to strip ultrasonic stair-step images and ADPCM quantization fizz.
-    let cutoff_hz = (src_rate as f32 * 0.40).clamp(3200.0, 6200.0);
-    for _stage in 0..2 {
-        apply_stereo_lowpass_biquad(&mut upsampled, TARGET_RATE as f32, cutoff_hz, 0.70710677);
-    }
-
-    (TARGET_RATE, upsampled)
-}
-
-/// Applies an in-place 2nd-order Butterworth low-pass biquad filter to stereo `Frame` samples.
-fn apply_stereo_lowpass_biquad(frames: &mut [Frame], fs: f32, fc: f32, q: f32) {
-    let omega = 2.0 * std::f32::consts::PI * (fc / fs).clamp(0.001, 0.49);
-    let sin_w = omega.sin();
-    let cos_w = omega.cos();
-    let alpha = sin_w / (2.0 * q);
-
-    let b0 = (1.0 - cos_w) * 0.5;
-    let b1 = 1.0 - cos_w;
-    let b2 = (1.0 - cos_w) * 0.5;
-    let a0 = 1.0 + alpha;
-    let a1 = -2.0 * cos_w;
-    let a2 = 1.0 - alpha;
-
-    let b0_n = b0 / a0;
-    let b1_n = b1 / a0;
-    let b2_n = b2 / a0;
-    let a1_n = a1 / a0;
-    let a2_n = a2 / a0;
-
-    let (mut x1_l, mut x2_l, mut y1_l, mut y2_l) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-    let (mut x1_r, mut x2_r, mut y1_r, mut y2_r) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-
-    for frame in frames.iter_mut() {
-        let xl = frame.left;
-        let yl = b0_n * xl + b1_n * x1_l + b2_n * x2_l - a1_n * y1_l - a2_n * y2_l;
-        x2_l = x1_l;
-        x1_l = xl;
-        y2_l = y1_l;
-        y1_l = yl;
-
-        let xr = frame.right;
-        let yr = b0_n * xr + b1_n * x1_r + b2_n * x2_r - a1_n * y1_r - a2_n * y2_r;
-        x2_r = x1_r;
-        x1_r = xr;
-        y2_r = y1_r;
-        y1_r = yr;
-
-        frame.left = yl.clamp(-1.0, 1.0);
-        frame.right = yr.clamp(-1.0, 1.0);
     }
 }

@@ -304,12 +304,27 @@ impl RoomController for CombatArenaRoomController {
             ticks_processed = state.sim_core.update(dt);
 
             if ticks_processed > 0 {
-                // Update 3D audio listener transform (`SeCallPosDistanceF` `0x5155E0`) & material footsteps (`SH2-61`)
+                // Update 3D audio listener transform (`SeCallPosDistanceF` `0x5155E0`), dynamic `.cam` room acoustics (`SH2-55`), & material footsteps (`SH2-61`)
                 let p_pos = state.sim_core.scenario.player_position;
                 let p_yaw = state.sim_core.scenario.player_yaw;
                 let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+                let is_interior_map = !matches!(
+                    state.active_test_room,
+                    TestRoomKind::ObservationDeck | TestRoomKind::SurfaceSfxTestRoom
+                );
+                let active_cam_record = state.sim_core.camera.cam_file.as_ref().and_then(|cam| {
+                    state
+                        .sim_core
+                        .camera
+                        .active_road_index
+                        .and_then(|idx| cam.records.get(idx))
+                        .or_else(|| cam.find_active_record([p_pos.x, p_pos.y, p_pos.z], 50.0))
+                });
                 if let Some(ref mut eng) = state.audio_engine {
                     eng.set_listener_transform(p_pos, fwd);
+                    if active_cam_record.is_some() {
+                        eng.update_room_acoustics_from_record(active_cam_record, is_interior_map);
+                    }
                 }
                 if state.sim_core.footstep_triggered_since_last_poll {
                     state.sim_core.footstep_triggered_since_last_poll = false;

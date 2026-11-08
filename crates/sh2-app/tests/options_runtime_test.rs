@@ -222,6 +222,9 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
 
     let cfg_path = test_dir.join("dual_config.json");
     let mut controller = AppMenuController::new_with_audio_packs(&cfg_path, status_dual);
+    controller
+        .options_menu
+        .set_audio_devices(vec!["Default (System)".into(), "Stereo Out".into()]);
     controller.title_sm.phase = TitlePhase::OptionsMenu;
     controller.switch_options_tab(true); // Audio tab
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);

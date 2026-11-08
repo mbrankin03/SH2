@@ -224,9 +224,10 @@ impl AppMenuController {
             || (self.pause_menu.is_open
                 && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu)
         {
-            // If switching into Audio tab, merge live discovered devices into options menu
-            if (!forward && self.options_menu.active_tab == sh2_ui::options::OptionsTab::Controls)
-                || (forward && self.options_menu.active_tab == sh2_ui::options::OptionsTab::Video)
+            // If switching into Audio tab and no audio devices have been populated yet, merge live discovered devices
+            if ((!forward && self.options_menu.active_tab == sh2_ui::options::OptionsTab::Controls)
+                || (forward && self.options_menu.active_tab == sh2_ui::options::OptionsTab::Video))
+                && self.options_menu.audio_devices.len() <= 1
             {
                 let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
                 for dev in fresh_devices {

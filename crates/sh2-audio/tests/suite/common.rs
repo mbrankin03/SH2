@@ -1,6 +1,8 @@
 //! Shared synthetic WAV and ADX generators for `sh2-audio` integration tests.
 
-use sh2_assets::{AdxHeader, DecodedAdx, WavEntry};
+use sh2_assets::WavEntry;
+#[cfg(not(target_os = "windows"))]
+use sh2_assets::{AdxHeader, DecodedAdx};
 
 pub fn make_test_wav(sample_rate: u32, channels: u16, loops: bool) -> WavEntry {
     // Generate 0.1s test tone (440Hz sine wave)
@@ -28,6 +30,7 @@ pub fn make_test_wav(sample_rate: u32, channels: u16, loops: bool) -> WavEntry {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn make_test_adx(sample_rate: u32, has_loop: bool) -> DecodedAdx {
     let total_samples = (sample_rate as f32 * 0.1) as usize;
     let mut frames = Vec::with_capacity(total_samples);

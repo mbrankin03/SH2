@@ -4,8 +4,6 @@
 //! On headless Windows CI runners where physical audio endpoints are absent, only these hardware-device tests
 //! are skipped while all pure DSP, looping, acoustics, BGM, and SFX tests execute across all platforms.
 
-#![cfg(not(target_os = "windows"))]
-
 use super::common::{make_test_adx, make_test_wav};
 use glam::Vec3;
 use sh2_assets::DialogueMessage;

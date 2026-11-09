@@ -19,6 +19,7 @@ mod beta_cut_audio;
 mod bgm_parity;
 #[path = "suite/dsp_and_looping.rs"]
 mod dsp_and_looping;
+#[cfg(not(target_os = "windows"))]
 #[path = "suite/engine_hardware.rs"]
 mod engine_hardware;
 #[path = "suite/sfx_and_footsteps.rs"]

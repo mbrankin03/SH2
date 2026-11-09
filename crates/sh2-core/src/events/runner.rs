@@ -216,6 +216,34 @@ impl StageProgramRunner {
                 }
                 _ => true,
             },
+            // Stage 7 #1: Wood Side E 2F scream jumpscare (EvProgAnyoneCry, 0x59b1f0)
+            // Locks player, starts stage anim 0x4e22, plays SE 0x9c49 at (-99400, -500, 26400),
+            // waits 2.0s, shows stage message 0 ("What was that!?"), and unlocks on dismissal.
+            (7, 1) => match p.sub {
+                0 => {
+                    p.locked = true;
+                    p.timer = 0.0;
+                    self.sound_effects.push(0x9c49);
+                    p.sub = 0x1b;
+                    false
+                }
+                0x1b => {
+                    p.timer += dt;
+                    if p.timer >= 2.0 {
+                        self.active_message_id = Some(0);
+                        if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
+                            self.active_message_id = None;
+                            p.sub = 0x0d;
+                        }
+                    }
+                    false
+                }
+                0x0d => {
+                    p.locked = false;
+                    true
+                }
+                _ => true,
+            },
             // Stage 7 #4: Room 208 closed clock inspection (s07_clock_time)
             (7, 4) => match p.step {
                 0 => {
@@ -276,6 +304,13 @@ impl StageProgramRunner {
                 }
                 _ => true,
             },
+            // Stage 7 #17: Wood Side E 2F Room 206 thud (EvProgMonkeyKick206, 0x59b980)
+            (7, 17) => {
+                if !flags.get(69) {
+                    self.sound_effects.push(0x9c47);
+                }
+                true
+            }
             // Stage 19 #4: Hospital 3F carbon paper memo (s19_carbon_number)
             (19, 4) => match p.step {
                 0 => {

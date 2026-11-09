@@ -1,15 +1,23 @@
-//! Stage Event Engine (`ev_prog` / `EventExecProgram`), Condition Flags (`16384`),
-//! `FlagInit` Randomization, and Interactive Puzzle State Machines (`SH2-15`).
+//! Stage Event Engine (`EventMain`, `EventCheck`, `ev_prog` / `EventExecProgram`), Spatial
+//! Trigger Volumes (`ev_pos`), Scripted Environmental Horror Triggers (`SH2-47`), Condition Flags
+//! (`16384`), `FlagInit` Randomization, and Interactive Puzzle State Machines (`SH2-15`).
 //!
-//! Grounded in `sh23ds/port/source/prog.c`, `prog_town.c`, `prog_apart.c`, `prog_hospital.c`,
-//! `prog_wish.c`, and `events.c`.
+//! Verified 1:1 against the PS2 prototype (`SLUS_202.28`, `src/Event/event.c`) and retail PC
+//! binary (`sh2pc.exe`).
 
 use crate::config::{ActionDifficulty, RiddleDifficulty};
 
+pub mod engine;
+pub mod horror_triggers;
 mod puzzles;
 mod runner;
+pub mod triggers;
+
+pub use engine::*;
+pub use horror_triggers::*;
 pub use puzzles::*;
 pub use runner::*;
+pub use triggers::*;
 
 /// Maximum number of event condition flags (`0..16384`, 2048 bytes at `0x1f7d5e0`).
 pub const EV_MAX_FLAGS: usize = 16384;

@@ -371,8 +371,8 @@ fn test_sh2_18_full_menu_and_options_flow() {
     // 6. Verify launching the FMV Cutscene Viewer directly from Options -> Video tab (SH2-10)
     let mut fmv_opt_controller = AppMenuController::new(&config_path);
     fmv_opt_controller.title_sm.phase = TitlePhase::OptionsMenu;
-    // Video tab is index 0; FMV Cutscene Viewer is row index 9
-    fmv_opt_controller.options_menu.selected_index = 9;
+    // Video tab is index 0; World & Character Textures is row 9 (SH2-92); FMV Cutscene Viewer is row index 10
+    fmv_opt_controller.options_menu.selected_index = 10;
     let cue = fmv_opt_controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(cue, MenuSoundCue::GameStartTransition);
     assert_eq!(

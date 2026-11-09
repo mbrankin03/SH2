@@ -37,6 +37,23 @@ impl AssetPathResolver {
     pub const DEFAULT_VSR_OUTPUT_PATHS: [&'static str; 2] =
         ["tools/vsr_pipeline/output", "../tools/vsr_pipeline/output"];
 
+    /// Candidate paths for the 4K AI Super-Resolution World & Character Texture Pack (`SH2-92`).
+    ///
+    /// Supports both extracted modular directories (`mods/sh2_4k_textures/`)
+    /// and direct zero-compression `.zip` archives (`mods/sh2_4k_textures.zip` or `mods/sh2_4k_textures/sh2_4k_textures.zip`).
+    pub const DEFAULT_4K_TEXTURE_PACK_PATHS: [&'static str; 10] = [
+        "mods/sh2_4k_textures.zip",
+        "../mods/sh2_4k_textures.zip",
+        "mods/sh2_4k_textures/sh2_4k_textures.zip",
+        "../mods/sh2_4k_textures/sh2_4k_textures.zip",
+        "mods/sh2_4k_textures",
+        "../mods/sh2_4k_textures",
+        "/home/matthewb/Documents/SH2-Port/mods/sh2_4k_textures/sh2_4k_textures.zip",
+        "/home/matthewb/Documents/SH2-Port/mods/sh2_4k_textures",
+        "tools/texture_pipeline/output",
+        "/home/matthewb/Documents/SH2-Port/tools/texture_pipeline/output",
+    ];
+
     /// Resolves the active asset directories, prioritizing `SH2_DATA_DIR` environment variable,
     /// then checking standard local workspace candidates.
     pub fn resolve() -> Self {
@@ -129,6 +146,46 @@ impl AssetPathResolver {
     /// Returns `true` when the original PS2/PC picture pack (`data/pic/`) is present.
     pub fn has_ps2_pic_pack(&self) -> bool {
         self.data_dir.join("pic").is_dir()
+    }
+
+    /// Resolves the active 4K AI Super-Resolution Texture Pack directory or `.zip` archive (`SH2-92`),
+    /// prioritizing `SH2_4K_TEX_DIR` environment variable, then checking `<game_root>/sh2e_4k`,
+    /// `<game_root>/mods/sh2_4k_textures(.zip)`, and workspace candidates.
+    pub fn resolve_4k_texture_pack_dir(&self) -> Option<PathBuf> {
+        if let Ok(env_dir) = std::env::var("SH2_4K_TEX_DIR") {
+            let p = PathBuf::from(env_dir);
+            if p.is_dir() || (p.is_file() && p.extension().is_some_and(|e| e == "zip")) {
+                return Some(p);
+            }
+        }
+        for rel in [
+            "mods/sh2_4k_textures.zip",
+            "mods/sh2_4k_textures/sh2_4k_textures.zip",
+            "mods/sh2_4k_textures",
+            "sh2e_4k",
+        ] {
+            let cand = self.game_root.join(rel);
+            if cand.is_dir() || (cand.is_file() && cand.extension().is_some_and(|e| e == "zip")) {
+                return Some(cand);
+            }
+        }
+        for cand in Self::DEFAULT_4K_TEXTURE_PACK_PATHS {
+            let p = PathBuf::from(cand);
+            if p.is_dir() || (p.is_file() && p.extension().is_some_and(|e| e == "zip")) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Returns `true` when the 4K AI Super-Resolution Texture Pack (`map/` or `chr/` folder, or `.zip` archive) is present on disk.
+    pub fn has_4k_texture_pack(&self) -> bool {
+        self.resolve_4k_texture_pack_dir().is_some_and(|dir| {
+            (dir.is_file() && dir.extension().is_some_and(|e| e == "zip"))
+                || dir.join("map").is_dir()
+                || dir.join("chr").is_dir()
+                || dir.join("sh2_4k_textures.zip").is_file()
+        })
     }
 
     /// Resolves a cutaway still or overlay sprite sheet (e.g. `"out_p_incar"`, `"apt_clock_close"`,

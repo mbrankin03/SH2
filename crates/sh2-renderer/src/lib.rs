@@ -121,10 +121,19 @@ impl RenderContext {
             }))
         })?;
 
+        let adapter_features = adapter.features();
+        let mut required_features = wgpu::Features::empty();
+        if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+        }
+        if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+            required_features |= wgpu::Features::TEXTURE_COMPRESSION_ASTC;
+        }
+
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("SH2 Render Device"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
             },
@@ -605,7 +614,10 @@ impl RenderContext {
         self.create_mipmapped_texture_bind_group(width, height, rgba, label)
     }
 
-    /// Creates a GPU diffuse texture bind group generating a full box-filtered mipmap chain and 16x anisotropic sampler.
+    /// Creates a GPU diffuse texture bind group generating a full alpha-coverage-preserving mipmap chain
+    /// and 16x anisotropic sampler. Uses hardware BC1/BC3 (`DXT1`/`DXT5`) block compression when
+    /// `wgpu::Features::TEXTURE_COMPRESSION_BC` is enabled and the dimensions are multiples of 4
+    /// (`>= 16x16`), reducing GPU VRAM usage by 4x–8x (`SH2-92`).
     pub fn create_mipmapped_texture_bind_group(
         &self,
         width: u32,
@@ -613,13 +625,89 @@ impl RenderContext {
         rgba: &[u8],
         label: Option<&str>,
     ) -> Arc<wgpu::BindGroup> {
-        let mips = generate_mipmap_chain_rgba(rgba, width.max(1), height.max(1));
+        let w0 = width.max(1);
+        let h0 = height.max(1);
+        let mips = generate_mipmap_chain_rgba(rgba, w0, h0);
+
+        let supports_bc = self
+            .device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let can_use_bc =
+            supports_bc && w0 >= 16 && h0 >= 16 && w0.is_multiple_of(4) && h0.is_multiple_of(4);
+
+        if can_use_bc {
+            let valid_bc_mips: Vec<&(u32, u32, Vec<u8>)> = mips
+                .iter()
+                .take_while(|(mw, mh, _)| {
+                    *mw >= 4 && *mh >= 4 && mw.is_multiple_of(4) && mh.is_multiple_of(4)
+                })
+                .collect();
+
+            if !valid_bc_mips.is_empty() {
+                let has_alpha = rgba.as_chunks::<4>().0.iter().any(|px| px[3] < 255);
+                let (bc_format, dxt_kind, block_bytes) = if has_alpha {
+                    (wgpu::TextureFormat::Bc3RgbaUnorm, 5u8, 16u32)
+                } else {
+                    (wgpu::TextureFormat::Bc1RgbaUnorm, 1u8, 8u32)
+                };
+
+                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label,
+                    size: wgpu::Extent3d {
+                        width: w0,
+                        height: h0,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: valid_bc_mips.len() as u32,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: bc_format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+
+                for (level, (mip_w, mip_h, mip_rgba)) in valid_bc_mips.iter().enumerate() {
+                    let bc_bytes = sh2_assets::formats::dxt::encode_dxt_rgba(
+                        mip_rgba,
+                        *mip_w as usize,
+                        *mip_h as usize,
+                        dxt_kind,
+                    );
+                    let blocks_x = mip_w / 4;
+                    let blocks_y = mip_h / 4;
+                    self.queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &texture,
+                            mip_level: level as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &bc_bytes,
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some(blocks_x * block_bytes),
+                            rows_per_image: Some(blocks_y),
+                        },
+                        wgpu::Extent3d {
+                            width: *mip_w,
+                            height: *mip_h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                return self.create_texture_bind_group_from_view(&view, label);
+            }
+        }
+
         let mip_level_count = (mips.len() as u32).max(1);
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label,
             size: wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
+                width: w0,
+                height: h0,
                 depth_or_array_layers: 1,
             },
             mip_level_count,

@@ -125,7 +125,7 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 10,
+            OptionsTab::Video => 11,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     9
@@ -141,7 +141,7 @@ impl OptionsMenu {
 
     /// Returns true if the currently selected row is the interactive FMV Cutscene Viewer launcher.
     pub fn is_fmv_viewer_selected(&self) -> bool {
-        self.active_tab == OptionsTab::Video && self.selected_index == 9
+        self.active_tab == OptionsTab::Video && self.selected_index == 10
     }
 
     /// Returns true if the currently selected row is the Test Rooms launcher.
@@ -212,6 +212,10 @@ impl OptionsMenu {
                     },
                 )),
                 9 => Some((
+                    "World & Character Textures",
+                    self.draft_config.video.texture_quality.label().to_string(),
+                )),
+                10 => Some((
                     "FMV Cutscene Viewer",
                     "[Press Enter / Right to Launch]".into(),
                 )),
@@ -456,7 +460,14 @@ impl OptionsMenu {
                     self.draft_config.video.depth_of_field =
                         !self.draft_config.video.depth_of_field;
                 }
-                9 => return OptionsSoundCue::LaunchFmvViewer,
+                9 => {
+                    self.draft_config.video.texture_quality = if forward {
+                        self.draft_config.video.texture_quality.next()
+                    } else {
+                        self.draft_config.video.texture_quality.prev()
+                    };
+                }
+                10 => return OptionsSoundCue::LaunchFmvViewer,
                 _ => return OptionsSoundCue::None,
             },
             OptionsTab::Audio => match self.selected_index {
@@ -871,6 +882,9 @@ fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Video, "Depth of Field") => {
             "Cinematic camera focal blur and distance depth of field"
         }
+        (OptionsTab::Video, "World & Character Textures") => {
+            "3-tier 3D world (.map) & character (.mdl) texture quality (4K AI / SH2:EE / PS2)"
+        }
         (OptionsTab::Video, "FMV Cutscene Viewer") => {
             "Launch the interactive 1080p60 cutscene theater"
         }
@@ -1187,7 +1201,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 10);
+        assert_eq!(menu.item_count(), 11);
 
         // Adjust Resolution
         menu.adjust_value(1);

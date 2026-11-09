@@ -48,6 +48,8 @@ pub(crate) struct AppState {
     pub horror_triggers_room: HorrorTriggersRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
+    pub map_hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    pub map_vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub character: Option<CharacterAsset>,
     pub maria: Option<CharacterAsset>,
@@ -210,6 +212,54 @@ impl AppState {
             surface_view,
             wgpu::LoadOp::Load,
         );
+    }
+
+    /// Synchronizes all active map, character, enemy, and cutscene texture bind groups with
+    /// the given [`sh2_core::config::WorldTextureQuality`] (`Ai4kMaster` vs `OriginalPs2`).
+    pub fn apply_texture_quality(&mut self, quality: sh2_core::config::WorldTextureQuality) {
+        let use_hd = quality == sh2_core::config::WorldTextureQuality::Ai4kMaster;
+        self.map_texture_bind_groups = if use_hd || self.map_vanilla_texture_bind_groups.is_empty()
+        {
+            self.map_hd_texture_bind_groups.clone()
+        } else {
+            self.map_vanilla_texture_bind_groups.clone()
+        };
+
+        let sync_char = |c: &mut Option<CharacterAsset>| {
+            if let Some(asset) = c.as_mut() {
+                asset.texture_bind_groups = if use_hd {
+                    asset.hd_texture_bind_groups.clone()
+                } else {
+                    asset.vanilla_texture_bind_groups.clone()
+                };
+            }
+        };
+
+        sync_char(&mut self.character);
+        sync_char(&mut self.maria);
+        sync_char(&mut self.enemy_scu_asset);
+        sync_char(&mut self.enemy_mkn_asset);
+        sync_char(&mut self.enemy_nse_asset);
+        sync_char(&mut self.enemy_red_asset);
+        sync_char(&mut self.enemy_pap_asset);
+        sync_char(&mut self.enemy_ike_asset);
+        sync_char(&mut self.enemy_arm_asset);
+        sync_char(&mut self.enemy_tyu_asset);
+        sync_char(&mut self.enemy_bos_asset);
+        sync_char(&mut self.viewer_asset);
+
+        if let Some(ref mut session) = self.drama_demo_session {
+            for actor_asset in &mut session.actor_assets {
+                sync_char(actor_asset);
+            }
+            if use_hd {
+                if let Some(ref hd) = session.stage_hd_texture_bind_groups {
+                    session.stage_texture_bind_groups = Some(hd.clone());
+                }
+            } else if let Some(ref van) = session.stage_vanilla_texture_bind_groups {
+                session.stage_texture_bind_groups = Some(van.clone());
+            }
+        }
     }
 
     /// Maps the active [`TestRoomKind`] (or user stage override) to a retail Silent Hill 2 stage ID

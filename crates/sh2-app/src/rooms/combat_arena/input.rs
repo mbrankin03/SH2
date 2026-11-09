@@ -149,6 +149,34 @@ pub(super) fn handle_combat_arena_key_input(
         KeyCode::Tab if pressed && !state.combat_arena.enemies.is_empty() => {
             cycle_and_teleport_active_enemy(state);
         }
+        // Toggle between 4K AI Master (2048x2048) and Original PS2 (512x512) world & character textures (`SH2-92`)
+        KeyCode::KeyT if pressed && !repeat => {
+            let next_quality = state
+                .menu_ctrl
+                .options_menu
+                .draft_config
+                .video
+                .texture_quality
+                .next();
+            state
+                .menu_ctrl
+                .options_menu
+                .draft_config
+                .video
+                .texture_quality = next_quality;
+            state
+                .menu_ctrl
+                .options_menu
+                .original_config
+                .video
+                .texture_quality = next_quality;
+            state.apply_texture_quality(next_quality);
+            tracing::info!(
+                "[4K Textures] Switched World & Character Textures -> {:?} ({})",
+                next_quality,
+                next_quality.label()
+            );
+        }
         // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) BGM & SFX packs (`SH2-60` / `SH2-61`)
         KeyCode::KeyB if pressed && !repeat => {
             toggle_audio_pack_source(state);
@@ -164,6 +192,13 @@ pub(super) fn handle_combat_arena_key_input(
             }
             state.drama_demo_session =
                 open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false);
+            let active_tex_quality = state
+                .menu_ctrl
+                .options_menu
+                .draft_config
+                .video
+                .texture_quality;
+            state.apply_texture_quality(active_tex_quality);
         }
         KeyCode::Period if pressed && !repeat => {
             state.selected_drama_demo_idx =
@@ -244,6 +279,13 @@ fn handle_cutscene_locked_input(
                     state.selected_drama_demo_idx,
                     false,
                 );
+                let active_tex_quality = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality;
+                state.apply_texture_quality(active_tex_quality);
             }
             KeyCode::Comma if !repeat => {
                 state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
@@ -258,6 +300,40 @@ fn handle_cutscene_locked_input(
                     &state.render_ctx,
                     state.selected_drama_demo_idx,
                     false,
+                );
+                let active_tex_quality = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality;
+                state.apply_texture_quality(active_tex_quality);
+            }
+            KeyCode::KeyT if !repeat => {
+                let next_quality = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality
+                    .next();
+                state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality = next_quality;
+                state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .video
+                    .texture_quality = next_quality;
+                state.apply_texture_quality(next_quality);
+                tracing::info!(
+                    "[4K Textures] Switched Cutscene & World Textures -> {:?} ({})",
+                    next_quality,
+                    next_quality.label()
                 );
             }
             KeyCode::KeyV if !repeat => {

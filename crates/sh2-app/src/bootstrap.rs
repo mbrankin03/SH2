@@ -8,7 +8,8 @@ use winit::window::Window;
 
 use crate::assets::{
     build_map_texture_bind_groups, find_cam_file_for_room, find_cld_file_for_room,
-    find_map_file_for_room, load_anm_file, load_character_asset, load_viewer_entry_asset,
+    find_map_file_for_room, find_vanilla_map_file_for_room, load_anm_file, load_character_asset,
+    load_viewer_entry_asset,
 };
 use crate::cli::CliArgs;
 use crate::rooms;
@@ -52,10 +53,19 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     }))
     .expect("Failed to find suitable Vulkan GPU adapter compatible with window surface");
 
+    let adapter_features = adapter.features();
+    let mut required_features = wgpu::Features::empty();
+    if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    if adapter_features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+        required_features |= wgpu::Features::TEXTURE_COMPRESSION_ASTC;
+    }
+
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("SH2 Render Device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             memory_hints: Default::default(),
         },
@@ -112,7 +122,11 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
 
     // Build level diffuse texture bind groups per material (cached by texture_id to avoid redundant VRAM allocations)
-    let map_texture_bind_groups = build_map_texture_bind_groups(&render_ctx, &map_file);
+    let map_hd_texture_bind_groups = build_map_texture_bind_groups(&render_ctx, &map_file);
+    let map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(initial_room)
+        .map(|van_map| build_map_texture_bind_groups(&render_ctx, &van_map))
+        .unwrap_or_else(|| map_hd_texture_bind_groups.clone());
+    let map_texture_bind_groups = map_hd_texture_bind_groups.clone();
 
     // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
     let character = load_character_asset(
@@ -474,6 +488,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         horror_triggers_room: rooms::horror_triggers_room::HorrorTriggersRoomState::default(),
         sim_core,
         gpu_map,
+        map_hd_texture_bind_groups,
+        map_vanilla_texture_bind_groups,
         map_texture_bind_groups,
         character,
         maria,

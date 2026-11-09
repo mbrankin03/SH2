@@ -340,6 +340,192 @@ pub fn decode_dds_file(data: &[u8]) -> Result<(usize, usize, Vec<u8>), AssetErro
     Ok((width, height, rgba))
 }
 
+/// Encodes an uncompressed 32-bit RGBA8 buffer (`width * height * 4` bytes) into a standard
+/// DirectDraw Surface (`.dds`) file byte stream using DXT5 (BC3) if any pixel has `alpha < 255`,
+/// or DXT1 (BC1) when all pixels are opaque (`alpha == 255`).
+pub fn encode_dds_rgba(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let has_alpha = rgba.as_chunks::<4>().0.iter().any(|px| px[3] < 255);
+    let kind = if has_alpha { 5 } else { 1 };
+    let dxt_payload = encode_dxt_rgba(rgba, width, height, kind);
+    let fourcc = if kind == 5 { b"DXT5" } else { b"DXT1" };
+
+    let mut out = Vec::with_capacity(128 + dxt_payload.len());
+    out.extend_from_slice(b"DDS ");
+    let mut hdr = [0u8; 124];
+    hdr[0..4].copy_from_slice(&124u32.to_le_bytes());
+    hdr[4..8].copy_from_slice(&0x0008_1007u32.to_le_bytes());
+    hdr[8..12].copy_from_slice(&(height as u32).to_le_bytes());
+    hdr[12..16].copy_from_slice(&(width as u32).to_le_bytes());
+    hdr[16..20].copy_from_slice(&(dxt_payload.len() as u32).to_le_bytes());
+    hdr[72..76].copy_from_slice(&32u32.to_le_bytes());
+    hdr[76..80].copy_from_slice(&0x4u32.to_le_bytes());
+    hdr[80..84].copy_from_slice(fourcc);
+    hdr[104..108].copy_from_slice(&0x1000u32.to_le_bytes());
+
+    out.extend_from_slice(&hdr);
+    out.extend_from_slice(&dxt_payload);
+    out
+}
+
+/// Encodes an uncompressed 32-bit RGBA8 buffer (`width * height * 4` bytes) into DXT1 (`kind == 1`)
+/// or DXT5 (`kind == 5`) 4x4 block-compressed bytes.
+pub fn encode_dxt_rgba(rgba: &[u8], width: usize, height: usize, kind: u8) -> Vec<u8> {
+    if width == 0 || height == 0 || rgba.len() < width * height * 4 {
+        return Vec::new();
+    }
+    let bw = width.div_ceil(4);
+    let bh = height.div_ceil(4);
+    let block_size = if kind == 1 { 8 } else { 16 };
+    let mut out = vec![0u8; bw * bh * block_size];
+
+    for by in 0..bh {
+        for bx in 0..bw {
+            let mut block_px = [[0u8; 4]; 16];
+            for py in 0..4 {
+                let y = (by * 4 + py).min(height - 1);
+                for px in 0..4 {
+                    let x = (bx * 4 + px).min(width - 1);
+                    let ofs = (y * width + x) * 4;
+                    block_px[py * 4 + px] =
+                        [rgba[ofs], rgba[ofs + 1], rgba[ofs + 2], rgba[ofs + 3]];
+                }
+            }
+
+            let dst_ofs = (by * bw + bx) * block_size;
+            if kind == 1 {
+                let cblock = encode_bc1_color_block(&block_px);
+                out[dst_ofs..dst_ofs + 8].copy_from_slice(&cblock);
+            } else {
+                let ablock = encode_bc3_alpha_block(&block_px);
+                let cblock = encode_bc1_color_block(&block_px);
+                out[dst_ofs..dst_ofs + 8].copy_from_slice(&ablock);
+                out[dst_ofs + 8..dst_ofs + 16].copy_from_slice(&cblock);
+            }
+        }
+    }
+    out
+}
+
+fn rgb8_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
+    let r5 = ((r as u16 * 31 + 127) / 255) & 31;
+    let g6 = ((g as u16 * 63 + 127) / 255) & 63;
+    let b5 = ((b as u16 * 31 + 127) / 255) & 31;
+    (r5 << 11) | (g6 << 5) | b5
+}
+
+fn encode_bc1_color_block(pixels: &[[u8; 4]; 16]) -> [u8; 8] {
+    let mut min_rgb = [255u8; 3];
+    let mut max_rgb = [0u8; 3];
+    for px in pixels {
+        for c in 0..3 {
+            min_rgb[c] = min_rgb[c].min(px[c]);
+            max_rgb[c] = max_rgb[c].max(px[c]);
+        }
+    }
+
+    let mut c0 = rgb8_to_rgb565(max_rgb[0], max_rgb[1], max_rgb[2]);
+    let mut c1 = rgb8_to_rgb565(min_rgb[0], min_rgb[1], min_rgb[2]);
+
+    if c0 < c1 {
+        std::mem::swap(&mut c0, &mut c1);
+    } else if c0 == c1 {
+        let mut out = [0u8; 8];
+        out[0..2].copy_from_slice(&c0.to_le_bytes());
+        out[2..4].copy_from_slice(&c1.to_le_bytes());
+        return out;
+    }
+
+    let p0 = rgb565_to_rgb8(c0);
+    let p1 = rgb565_to_rgb8(c1);
+    let pal = [
+        p0,
+        p1,
+        [
+            ((2 * p0[0] as u32 + p1[0] as u32) / 3) as u8,
+            ((2 * p0[1] as u32 + p1[1] as u32) / 3) as u8,
+            ((2 * p0[2] as u32 + p1[2] as u32) / 3) as u8,
+        ],
+        [
+            ((p0[0] as u32 + 2 * p1[0] as u32) / 3) as u8,
+            ((p0[1] as u32 + 2 * p1[1] as u32) / 3) as u8,
+            ((p0[2] as u32 + 2 * p1[2] as u32) / 3) as u8,
+        ],
+    ];
+
+    let mut indices = 0u32;
+    for (i, px) in pixels.iter().enumerate() {
+        let mut best_idx = 0u32;
+        let mut best_err = u32::MAX;
+        for (p_idx, p_col) in pal.iter().enumerate() {
+            let dr = px[0] as i32 - p_col[0] as i32;
+            let dg = px[1] as i32 - p_col[1] as i32;
+            let db = px[2] as i32 - p_col[2] as i32;
+            let err = (dr * dr + dg * dg + db * db) as u32;
+            if err < best_err {
+                best_err = err;
+                best_idx = p_idx as u32;
+            }
+        }
+        indices |= best_idx << (2 * i);
+    }
+
+    let mut out = [0u8; 8];
+    out[0..2].copy_from_slice(&c0.to_le_bytes());
+    out[2..4].copy_from_slice(&c1.to_le_bytes());
+    out[4..8].copy_from_slice(&indices.to_le_bytes());
+    out
+}
+
+fn encode_bc3_alpha_block(pixels: &[[u8; 4]; 16]) -> [u8; 8] {
+    let mut min_a = 255u8;
+    let mut max_a = 0u8;
+    for px in pixels {
+        min_a = min_a.min(px[3]);
+        max_a = max_a.max(px[3]);
+    }
+
+    let a0 = max_a;
+    let a1 = min_a;
+    let mut pal = [0u8; 8];
+    pal[0] = a0;
+    pal[1] = a1;
+
+    if a0 > a1 {
+        for i in 1..7 {
+            pal[i + 1] = (((7 - i as u32) * a0 as u32 + i as u32 * a1 as u32 + 3) / 7) as u8;
+        }
+    } else {
+        for i in 1..5 {
+            pal[i + 1] = (((5 - i as u32) * a0 as u32 + i as u32 * a1 as u32 + 2) / 5) as u8;
+        }
+        pal[6] = 0;
+        pal[7] = 255;
+    }
+
+    let mut bits = 0u64;
+    for (i, px) in pixels.iter().enumerate() {
+        let a = px[3];
+        let mut best_idx = 0u64;
+        let mut best_err = u32::MAX;
+        for (p_idx, &pa) in pal.iter().enumerate() {
+            let err = (a as i32 - pa as i32).unsigned_abs();
+            if err < best_err {
+                best_err = err;
+                best_idx = p_idx as u64;
+            }
+        }
+        bits |= best_idx << (3 * i);
+    }
+
+    let mut out = [0u8; 8];
+    out[0] = a0;
+    out[1] = a1;
+    for i in 0..6 {
+        out[2 + i] = ((bits >> (8 * i)) & 0xFF) as u8;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,5 +577,27 @@ mod tests {
             "Cutout alpha==0 pixel should have dilated RGB from neighbor, got {:?}",
             px8
         );
+    }
+
+    #[test]
+    fn test_encode_and_decode_dds_rgba_roundtrip() {
+        let width = 16usize;
+        let height = 16usize;
+        let mut rgba = vec![0u8; width * height * 4];
+        for i in 0..(width * height) {
+            rgba[i * 4] = 120;
+            rgba[i * 4 + 1] = 160;
+            rgba[i * 4 + 2] = 200;
+            rgba[i * 4 + 3] = if i % 2 == 0 { 255 } else { 64 };
+        }
+        let dds = encode_dds_rgba(&rgba, width, height);
+        assert_eq!(&dds[0..4], b"DDS ");
+        assert_eq!(&dds[84..88], b"DXT5");
+        let (dec_w, dec_h, dec_rgba) = decode_dds_file(&dds).expect("decode encoded DDS");
+        assert_eq!((dec_w, dec_h), (width, height));
+        assert_eq!(dec_rgba.len(), rgba.len());
+        assert!((dec_rgba[0] as i32 - 120).abs() <= 8);
+        assert_eq!(dec_rgba[3], 255);
+        assert_eq!(dec_rgba[7], 64);
     }
 }

@@ -253,6 +253,8 @@ pub(crate) fn apply_pending_engine_config(state: &mut AppState) {
             .configure(&state.render_ctx.device, &state.surface_config);
     }
 
+    state.apply_texture_quality(cfg.video.texture_quality);
+
     // 3. Control settings dispatch
     state.sim_core.input.config.stick_deadzone = cfg.controls.stick_deadzone;
     state.sim_core.input.config.vibration_intensity = cfg.controls.vibration_intensity;

@@ -515,28 +515,41 @@ impl ViewerRenderMode {
     }
 }
 
-/// Texture source comparison toggle (Vanilla PS2/PC vs SH2:EE High-Definition pack).
+/// Texture source comparison selector (4K AI Master 2048x2048 vs SH2:EE HD vs Vanilla PS2/PC).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TextureSourceMode {
-    /// Prefer SH2:EE HD replacement textures when available.
+    /// Prefer 4K AI Master (2048x2048) replacement textures from `mods/sh2_4k_textures`.
     #[default]
+    Ai4kMaster,
+    /// Prefer SH2:EE HD (`sh2e/chr/`) or 2x enhanced replacement textures.
     EnhancedHd,
-    /// Force original Vanilla PS2/PC embedded model textures.
+    /// Force original Vanilla PS2/PC (`data/chr/`, 512x512) embedded model textures.
     VanillaPs2,
 }
 
 impl TextureSourceMode {
+    /// Cycles through `Ai4kMaster ->VanillaPs2 ->EnhancedHd ->Ai4kMaster`.
     pub const fn toggle(self) -> Self {
         match self {
-            Self::EnhancedHd => Self::VanillaPs2,
+            Self::Ai4kMaster => Self::VanillaPs2,
             Self::VanillaPs2 => Self::EnhancedHd,
+            Self::EnhancedHd => Self::Ai4kMaster,
+        }
+    }
+
+    /// Toggles directly between `4K AI Master (2048x2048)` and `Vanilla PS2 (512x512)`.
+    pub const fn toggle_4k_vanilla(self) -> Self {
+        match self {
+            Self::Ai4kMaster => Self::VanillaPs2,
+            Self::VanillaPs2 | Self::EnhancedHd => Self::Ai4kMaster,
         }
     }
 
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::Ai4kMaster => "4K AI MASTER (2048x2048 MOD PACK)",
             Self::EnhancedHd => "SH2:EE HD TEXTURES (ENHANCED)",
-            Self::VanillaPs2 => "VANILLA PS2/PC TEXTURES (ORIGINAL)",
+            Self::VanillaPs2 => "VANILLA PS2/PC TEXTURES (512x512 ORIGINAL)",
         }
     }
 }
@@ -714,7 +727,7 @@ impl ModelViewerState {
             render_mode: ViewerRenderMode::Textured,
             wireframe_overlay: false,
             skeleton_overlay: false,
-            texture_source: TextureSourceMode::EnhancedHd,
+            texture_source: TextureSourceMode::Ai4kMaster,
             lighting_rig: StageLightingRig::StudioNeutral,
             camera,
         }

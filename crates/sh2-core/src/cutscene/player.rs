@@ -732,12 +732,23 @@ impl DramaDemoPlayer {
         for actor in &mut self.actors {
             let idx = actor.slot_index;
             if idx < DEMO_MAX_CHARS {
-                let script_vis = self.current_state.char_visible[idx];
+                let raw_last = Vec3::from_array(self.evaluator.last.char_positions[idx]);
+                let raw_next = Vec3::from_array(self.evaluator.next.char_positions[idx]);
+                let clean_name = actor.actor_name.trim_matches('\0').trim();
+                let is_handheld_item = clean_name.starts_with("i_")
+                    || clean_name.starts_with("I_")
+                    || clean_name.eq_ignore_ascii_case("bdcard_pos");
+                let raw_at_origin =
+                    raw_last.length_squared() < 1e-4 && raw_next.length_squared() < 1e-4;
+                let despawned_to_origin = raw_at_origin
+                    && (is_handheld_item
+                        || clean_name.eq_ignore_ascii_case("dmr_pos")
+                        || clean_name.eq_ignore_ascii_case("b_cha_pos")
+                        || clean_name.eq_ignore_ascii_case("b_hul_pos"));
+                let script_vis = self.current_state.char_visible[idx] && !despawned_to_origin;
                 let pos = Vec3::from_array(self.current_state.char_positions[idx]);
-                let last_pos =
-                    Vec3::from_array(self.evaluator.last.char_positions[idx]) + offset_vec;
-                let next_pos =
-                    Vec3::from_array(self.evaluator.next.char_positions[idx]) + offset_vec;
+                let last_pos = raw_last + offset_vec;
+                let next_pos = raw_next + offset_vec;
 
                 let hei_lau_entry = evaluate_hei_lau_widescreen_entry(
                     self.info.demo_no,

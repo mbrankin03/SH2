@@ -67,5 +67,6 @@ pub use sound::{
 };
 pub use texture::{
     decode_texture_bytes, generate_mipmap_chain_rgba, mip_level_count_for_size,
-    parse_texture_container, ContainerTexture, DecodedTexture, TextureLoader,
+    parse_texture_container, probe_tex_dimensions, ContainerTexture, CutawayTextureAsset,
+    CutawayViewportTransform, DecodedTexture, TextureLoader, TEX_MAGIC, TEX_MAGIC_BYTES,
 };

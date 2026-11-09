@@ -7,8 +7,11 @@ pub mod clock;
 pub mod collision;
 pub mod combat;
 pub mod config;
+pub mod cutaway;
 pub mod cutscene;
+pub mod events;
 pub mod input;
+pub mod inventory;
 pub mod locomotion;
 pub mod math;
 pub mod scenario;
@@ -39,6 +42,11 @@ pub use config::{
     GameLanguage, GameOptions, InternalResolution, RiddleDifficulty, SpeakerConfiguration,
     VideoOptions, WindowDisplayMode,
 };
+pub use cutaway::{
+    original_sheet_dimensions, CutawayOverlayEngine, OverlayKind, OverlaySpriteQuad, OV_BOX,
+    OV_CLOCK_UV, OV_COIN, OV_DRUM_ABC, OV_DRUM_POS, OV_ELEVATOR, OV_ELEVATOR2, OV_MARKER,
+    OV_TEIEN, OV_VIDEO, OV_WALL, SHEET_ORIGINAL_DIMENSIONS,
+};
 pub use cutscene::{
     demo_fov_scale_for_demo_no, demo_light_decay_bounds, derive_demo_actor_anm_and_cls_paths,
     find_drama_demo_anim_info, find_drama_demo_by_id, find_drama_demo_by_no, CutsceneActorRuntime,
@@ -46,9 +54,26 @@ pub use cutscene::{
     DramaDemoPlayer, DramaDemoStep, SubtitleWindow, CUTSCENE_NATIVE_FPS, DRAMA_DEMO_ANIM_INFO,
     DRAMA_DEMO_CATALOG, VOICE_AFS_STREAM_BASE,
 };
+pub use events::{
+    evaluate_baldwin_tombstone_boards, format_carbon_box_code, format_wallet_safe_code,
+    init_new_game, init_new_game_wish, is_clock_solved, is_coin_desk_solved, place_baldwin_board,
+    place_coin_in_desk, riddle_level_index, step_clock_needles, step_safe_dial,
+    try_complete_hospital_box, try_open_safe, use_key_on_hospital_box, verify_hospital_box_keypad,
+    verify_hospital_box_wheels, verify_hospital_corridor_keypad, ClearData, EventFlags,
+    MessageInsertState, ProgContext, PuzzleState, Sh2Rng, StageProgramRunner, EV_FLAG_BYTES,
+    EV_MAX_FLAGS, PROG_KEY_A, PROG_KEY_B, PROG_KEY_DOWN, PROG_KEY_LEFT, PROG_KEY_RIGHT,
+    PROG_KEY_UP, PZ_BOX_CODE, PZ_CLOCK, PZ_HANGMAN, PZ_PANEL, PZ_SAFE_CODE, PZ_SAFE_PROG,
+    PZ_WHEEL, PZ_WHEEL_GOAL,
+};
 pub use input::{
     ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,
     InputManager,
+};
+pub use inventory::{
+    combine_items, item_metadata, HealResult, InventoryManager, ItemCategory, ItemCombination,
+    ItemExamineView, ItemMetadata, AMPOULE_STAMINA_DURATION_SECS, CATALOG_ITEM_COUNT,
+    FIRST_COMBO_ITEM_ID, ITEM_CATALOG, ITEM_COMBOS, ITEM_SYSTEM_MESSAGES, LAST_COMBO_ITEM_ID,
+    MAX_ITEM_STACK,
 };
 pub use locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,

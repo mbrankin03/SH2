@@ -119,6 +119,28 @@ impl AssetPathResolver {
         self.has_sh2ee_sound_pack() && self.has_ps2_sound_pack()
     }
 
+    /// Returns `true` when the SH2:EE Image Enhancement Pack (`sh2e/pic/`) is present.
+    pub fn has_sh2ee_pic_pack(&self) -> bool {
+        self.sh2e_dir
+            .as_ref()
+            .is_some_and(|sh2e| sh2e.join("pic").is_dir())
+    }
+
+    /// Returns `true` when the original PS2/PC picture pack (`data/pic/`) is present.
+    pub fn has_ps2_pic_pack(&self) -> bool {
+        self.data_dir.join("pic").is_dir()
+    }
+
+    /// Resolves a cutaway still or overlay sprite sheet (e.g. `"out_p_incar"`, `"apt_clock_close"`,
+    /// or `"out/p_incar_map"`), honoring `prefer_sh2ee` with graceful fallback.
+    pub fn resolve_cutaway_file(&self, pic_or_sheet_name: &str, prefer_sh2ee: bool) -> Option<PathBuf> {
+        let loader = crate::formats::texture::TextureLoader::new(&self.data_dir, self.sh2e_dir.as_ref());
+        let rel = crate::formats::texture::TextureLoader::normalize_cutaway_rel_path(pic_or_sheet_name);
+        loader
+            .resolve_path_with_preference(&rel, prefer_sh2ee)
+            .map(|(p, _)| p)
+    }
+
     /// Resolves a sound asset file (e.g. `sound/sddata.bin`, `sound/extra/g_start.wav`, `sound/adx/...`),
     /// prioritizing `sh2e/` when `prefer_sh2ee` is `true`, or `data/` when `prefer_sh2ee` is `false`
     /// (with graceful fallback to the other pack if a specific file only exists in one location).

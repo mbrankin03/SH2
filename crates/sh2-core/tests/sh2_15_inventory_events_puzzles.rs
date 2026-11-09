@@ -200,11 +200,28 @@ fn test_flag_init_randomization_and_extra_riddle_unlock() {
         );
     }
 
-    // Extra riddle unlocks when Leave, In Water, and Maria have all been cleared
+    // Extra riddle unlocks once Easy, Normal, and Hard riddle levels have all been cleared (`0x48aed0`)
     let mut clear = ClearData::default();
-    clear.record_ending(0x01, RiddleDifficulty::Easy, ActionDifficulty::Normal);
-    clear.record_ending(0x02, RiddleDifficulty::Normal, ActionDifficulty::Normal);
-    clear.record_ending(0x04, RiddleDifficulty::Hard, ActionDifficulty::Normal);
+    clear.record_ending(
+        ClearData::ENDING_LEAVE,
+        RiddleDifficulty::Easy,
+        ActionDifficulty::Normal,
+    );
+    clear.record_ending(
+        ClearData::ENDING_IN_WATER,
+        RiddleDifficulty::Normal,
+        ActionDifficulty::Normal,
+    );
+    assert!(!clear.is_extra_riddle_unlocked());
+    clear.record_ending(
+        ClearData::ENDING_MARIA,
+        RiddleDifficulty::Hard,
+        ActionDifficulty::Normal,
+    );
+    assert_eq!(
+        clear.cleared_levels & ClearData::ALL_BASE_RIDDLES_CLEARED,
+        ClearData::ALL_BASE_RIDDLES_CLEARED
+    );
     assert!(clear.is_extra_riddle_unlocked());
 
     let eff_extra = init_new_game(
@@ -216,6 +233,23 @@ fn test_flag_init_randomization_and_extra_riddle_unlock() {
         clear,
     );
     assert_eq!(eff_extra, RiddleDifficulty::Extra);
+
+    // Once Extra riddle itself has been cleared (`RIDDLE_EXTRA_CLEARED`), `is_extra_riddle_unlocked`
+    // alternates with `clear_count` parity so the player can still play standard Hard riddle.
+    clear.record_ending(
+        ClearData::ENDING_REBIRTH,
+        RiddleDifficulty::Extra,
+        ActionDifficulty::Normal,
+    );
+    assert_eq!(clear.clear_count, 4);
+    assert!(clear.is_extra_riddle_unlocked()); // even clear_count -> Extra
+    clear.record_ending(
+        ClearData::ENDING_LEAVE,
+        RiddleDifficulty::Extra,
+        ActionDifficulty::Normal,
+    );
+    assert_eq!(clear.clear_count, 5);
+    assert!(!clear.is_extra_riddle_unlocked()); // odd clear_count -> standard Hard
 
     // Born from a Wish initialization sets flags 5 and 24
     init_new_game_wish(&mut flags, &mut puzzle);

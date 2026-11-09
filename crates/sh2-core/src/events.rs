@@ -187,7 +187,9 @@ impl Sh2Rng {
 /// Clear-data persistence across playthroughs (`prog_clear_get` / `prog_clear_set`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ClearData {
-    /// Cleared action/riddle difficulty bitmask.
+    /// Cleared action/riddle difficulty bitmask:
+    /// - Bits `0..=3`: Riddle difficulty clears (`Easy = 0x01`, `Normal = 0x02`, `Hard = 0x04`, `Extra = 0x08`).
+    /// - Bits `5..=7`: Action difficulty clears (`Easy = 0x20`, `Normal = 0x40`, `Hard = 0x80`).
     pub cleared_levels: u8,
     /// Seen endings bitmask (`0x01` Leave, `0x02` In Water, `0x04` Maria, `0x08` Rebirth,
     /// `0x10` UFO, `0x20` Dog, `0x40` Born from a Wish).
@@ -197,11 +199,51 @@ pub struct ClearData {
 }
 
 impl ClearData {
-    /// Returns `true` if Hard riddle difficulty is replaced by Extra riddle difficulty (`riddle 3`)
-    /// (`0x48aed0`: once Leave, In Water, and Maria have all been seen, unless the last clear was on Extra).
+    /// Riddle difficulty clear bit: Easy (`1 << 0`).
+    pub const RIDDLE_EASY_CLEARED: u8 = 1 << 0;
+    /// Riddle difficulty clear bit: Normal (`1 << 1`).
+    pub const RIDDLE_NORMAL_CLEARED: u8 = 1 << 1;
+    /// Riddle difficulty clear bit: Hard (`1 << 2`).
+    pub const RIDDLE_HARD_CLEARED: u8 = 1 << 2;
+    /// Riddle difficulty clear bit: Extra (`1 << 3`).
+    pub const RIDDLE_EXTRA_CLEARED: u8 = 1 << 3;
+    /// Combined mask of Easy, Normal, and Hard riddle difficulty clears (`0x07`).
+    pub const ALL_BASE_RIDDLES_CLEARED: u8 =
+        Self::RIDDLE_EASY_CLEARED | Self::RIDDLE_NORMAL_CLEARED | Self::RIDDLE_HARD_CLEARED;
+
+    /// Action difficulty clear bit: Easy (`0x20`).
+    pub const ACTION_EASY_CLEARED: u8 = 0x20;
+    /// Action difficulty clear bit: Normal (`0x40`).
+    pub const ACTION_NORMAL_CLEARED: u8 = 0x40;
+    /// Action difficulty clear bit: Hard (`0x80`).
+    pub const ACTION_HARD_CLEARED: u8 = 0x80;
+
+    /// Seen ending bit: Leave (`0x01`).
+    pub const ENDING_LEAVE: u8 = 0x01;
+    /// Seen ending bit: In Water (`0x02`).
+    pub const ENDING_IN_WATER: u8 = 0x02;
+    /// Seen ending bit: Maria (`0x04`).
+    pub const ENDING_MARIA: u8 = 0x04;
+    /// Seen ending bit: Rebirth (`0x08`).
+    pub const ENDING_REBIRTH: u8 = 0x08;
+    /// Seen ending bit: UFO (`0x10`).
+    pub const ENDING_UFO: u8 = 0x10;
+    /// Seen ending bit: Dog (`0x20`).
+    pub const ENDING_DOG: u8 = 0x20;
+    /// Seen ending bit: *Born from a Wish* (`0x40`).
+    pub const ENDING_BORN_FROM_A_WISH: u8 = 0x40;
+
+    /// Returns `true` if selecting `RiddleDifficulty::Hard` is promoted to
+    /// `RiddleDifficulty::Extra` (`riddle 3`) during `FlagInit` (`0x48aed0`).
+    ///
+    /// Per `0x48aed0`, Extra Riddle is unlocked once Easy, Normal, and Hard riddle levels have
+    /// all been cleared (`(self.cleared_levels & Self::ALL_BASE_RIDDLES_CLEARED) == Self::ALL_BASE_RIDDLES_CLEARED`,
+    /// recorded by [`Self::record_ending`]), and alternates between Extra and Hard on subsequent
+    /// playthroughs once Extra itself has been cleared (`(self.cleared_levels & Self::RIDDLE_EXTRA_CLEARED) == 0 || (self.clear_count & 1) == 0`).
     pub fn is_extra_riddle_unlocked(&self) -> bool {
-        (self.cleared_levels & 7) == 7
-            && ((self.cleared_levels & 8) == 0 || (self.clear_count & 1) == 0)
+        (self.cleared_levels & Self::ALL_BASE_RIDDLES_CLEARED) == Self::ALL_BASE_RIDDLES_CLEARED
+            && ((self.cleared_levels & Self::RIDDLE_EXTRA_CLEARED) == 0
+                || (self.clear_count & 1) == 0)
     }
 
     /// Records a completed ending into the clear data (`0x48d7e0`).
@@ -212,20 +254,15 @@ impl ClearData {
         action: ActionDifficulty,
     ) {
         self.endings_seen |= ending_bit;
-        if ending_bit == 0x40 {
+        if ending_bit == Self::ENDING_BORN_FROM_A_WISH {
             return;
         }
         let action_bit = match action {
-            ActionDifficulty::Easy => 0x20,
-            ActionDifficulty::Normal => 0x40,
-            ActionDifficulty::Hard => 0x80,
+            ActionDifficulty::Easy => Self::ACTION_EASY_CLEARED,
+            ActionDifficulty::Normal => Self::ACTION_NORMAL_CLEARED,
+            ActionDifficulty::Hard => Self::ACTION_HARD_CLEARED,
         };
-        let riddle_idx = match riddle {
-            RiddleDifficulty::Easy => 0u8,
-            RiddleDifficulty::Normal => 1u8,
-            RiddleDifficulty::Hard => 2u8,
-            RiddleDifficulty::Extra => 3u8,
-        };
+        let riddle_idx = riddle_level_index(riddle);
         self.cleared_levels |= action_bit;
         self.cleared_levels |= 1 << riddle_idx;
         self.clear_count = (self.clear_count + 1).min(99);

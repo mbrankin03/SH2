@@ -140,10 +140,35 @@ pub(crate) struct PuzzleCutawayRoomState {
     pub baldwin_rotations: [u8; 3],
     pub elevator_floor_mask: i32,
     pub egg_putting: i32,
+    /// Edge-triggered `PROG_KEY_*` button mask queued since the last simulation frame.
+    pub pending_prog_down: u32,
+    /// Currently held `PROG_KEY_*` button mask.
+    pub held_prog_keys: u32,
     pub loaded_base_key: Option<(usize, bool)>,
     pub base_tex: Option<CutawayTextureAsset>,
     pub sheet_cache: HashMap<(&'static str, bool), CutawayTextureAsset>,
     pub last_event_desc: String,
+}
+
+impl PuzzleCutawayRoomState {
+    /// Updates the held `PROG_KEY_*` bitmask and queues non-repeat key-down transitions for
+    /// deterministic single-tick consumption in [`PuzzleCutawayRoomController::tick_and_render_3d`].
+    pub fn queue_prog_key(&mut self, mask: u32, pressed: bool, repeat: bool) {
+        if pressed {
+            self.held_prog_keys |= mask;
+            if !repeat {
+                self.pending_prog_down |= mask;
+            }
+        } else {
+            self.held_prog_keys &= !mask;
+        }
+    }
+
+    /// Atomically drains the queued edge-triggered `down` mask and returns `(down, held)`.
+    pub fn take_frame_prog_input(&mut self) -> (u32, u32) {
+        let down = std::mem::take(&mut self.pending_prog_down);
+        (down, self.held_prog_keys)
+    }
 }
 
 impl Default for PuzzleCutawayRoomState {
@@ -160,6 +185,8 @@ impl Default for PuzzleCutawayRoomState {
             baldwin_rotations: [0, 0, 0],
             elevator_floor_mask: 0b0101,
             egg_putting: 1,
+            pending_prog_down: 0,
+            held_prog_keys: 0,
             loaded_base_key: None,
             base_tex: None,
             sheet_cache: HashMap::new(),
@@ -196,12 +223,14 @@ impl RoomController for PuzzleCutawayRoomController {
         }
 
         if !is_paused {
+            let (prog_down, prog_held) = state.puzzle_cutaway_room.take_frame_prog_input();
+
             // Advance StageProgramRunner if active, else tick CutawayOverlayEngine directly
             if state.sim_core.scenario.prog_runner.is_running() {
                 let s = &mut state.sim_core.scenario;
                 s.prog_runner.tick(
-                    0,
-                    0,
+                    prog_down,
+                    prog_held,
                     dt_sec,
                     &mut s.flags,
                     &mut s.puzzle_state,
@@ -209,6 +238,10 @@ impl RoomController for PuzzleCutawayRoomController {
                     &mut s.cutaway_overlay,
                     s.riddle_difficulty,
                 );
+                if let Some(&se_id) = s.prog_runner.sound_effects().first() {
+                    state.puzzle_cutaway_room.last_event_desc =
+                        format!("ev_prog triggered SE 0x{se_id:04X} ({se_id})");
+                }
             } else {
                 // Continuous clock needle turning when holding Left/Right on clock presets
                 if matches!(preset_pic, "apt_clock_close" | "apt_clock_open") {

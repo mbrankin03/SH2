@@ -9,7 +9,8 @@ use sh2_core::{
     place_coin_in_desk, step_safe_dial, try_open_safe, use_key_on_hospital_box,
     verify_hospital_box_keypad, verify_hospital_box_wheels, verify_hospital_corridor_keypad,
     ActionDifficulty, ClearData, MessageInsertState, RiddleDifficulty, Sh2Rng, PROG_KEY_A,
-    PZ_CLOCK, PZ_DRUM, PZ_SAFE_CODE, PZ_SAFE_PROG, PZ_WHEEL, PZ_WHEEL_GOAL,
+    PROG_KEY_DOWN, PROG_KEY_LEFT, PROG_KEY_RIGHT, PROG_KEY_UP, PZ_CLOCK, PZ_DRUM, PZ_SAFE_CODE,
+    PZ_SAFE_PROG, PZ_WHEEL, PZ_WHEEL_GOAL,
 };
 use sh2_ui::menu::TitlePhase;
 
@@ -22,9 +23,30 @@ pub(super) fn handle_puzzle_cutaway_key_input(
     match key_code {
         KeyCode::ArrowLeft | KeyCode::KeyA => {
             state.key_left = pressed;
+            state
+                .puzzle_cutaway_room
+                .queue_prog_key(PROG_KEY_LEFT, pressed, repeat);
         }
         KeyCode::ArrowRight | KeyCode::KeyD => {
             state.key_right = pressed;
+            state
+                .puzzle_cutaway_room
+                .queue_prog_key(PROG_KEY_RIGHT, pressed, repeat);
+        }
+        KeyCode::ArrowUp | KeyCode::KeyW => {
+            state
+                .puzzle_cutaway_room
+                .queue_prog_key(PROG_KEY_UP, pressed, repeat);
+        }
+        KeyCode::ArrowDown => {
+            state
+                .puzzle_cutaway_room
+                .queue_prog_key(PROG_KEY_DOWN, pressed, repeat);
+        }
+        KeyCode::Enter => {
+            state
+                .puzzle_cutaway_room
+                .queue_prog_key(PROG_KEY_A, pressed, repeat);
         }
         _ => {}
     }
@@ -78,29 +100,35 @@ pub(super) fn handle_puzzle_cutaway_key_input(
                 RiddleDifficulty::Hard => RiddleDifficulty::Extra,
                 RiddleDifficulty::Extra => RiddleDifficulty::Easy,
             };
-            state.sim_core.scenario.riddle_difficulty = next_riddle;
             state.puzzle_cutaway_room.seed_counter =
                 state.puzzle_cutaway_room.seed_counter.wrapping_add(1);
             state.puzzle_cutaway_room.rng = Sh2Rng::new(
                 0x2001_0924u32.wrapping_add(state.puzzle_cutaway_room.seed_counter * 7919),
             );
             let mut clear = ClearData::default();
-            if next_riddle == RiddleDifficulty::Extra {
-                clear.cleared_levels = 0x07;
-                clear.endings_seen = 0x07;
-            }
-            init_new_game(
+            let requested_riddle = if next_riddle == RiddleDifficulty::Extra {
+                clear.cleared_levels = ClearData::ALL_BASE_RIDDLES_CLEARED;
+                clear.endings_seen =
+                    ClearData::ENDING_LEAVE | ClearData::ENDING_IN_WATER | ClearData::ENDING_MARIA;
+                // Pass Hard so `init_new_game` exercises the canonical `is_extra_riddle_unlocked()`
+                // promotion path (`0x48aed0`: Hard + cleared_levels & 7 == 7 -> Extra).
+                RiddleDifficulty::Hard
+            } else {
+                next_riddle
+            };
+            let effective_riddle = init_new_game(
                 &mut state.sim_core.scenario.flags,
                 &mut state.sim_core.scenario.puzzle_state,
                 &mut state.puzzle_cutaway_room.rng,
-                next_riddle,
+                requested_riddle,
                 ActionDifficulty::Normal,
                 clear,
             );
+            state.sim_core.scenario.riddle_difficulty = effective_riddle;
             sync_overlay_to_preset(state);
             state.puzzle_cutaway_room.last_event_desc = format!(
                 "Re-initialized FlagInit with RiddleDifficulty::{:?} (Seed #{})",
-                next_riddle, state.puzzle_cutaway_room.seed_counter
+                effective_riddle, state.puzzle_cutaway_room.seed_counter
             );
             play_confirm_sound(state);
             return;
@@ -123,23 +151,11 @@ pub(super) fn handle_puzzle_cutaway_key_input(
             play_confirm_sound(state);
             return;
         }
-        // [Enter]: Send PROG_KEY_A to StageProgramRunner if running
+        // [Enter]: Queued into `pending_prog_down` (`PROG_KEY_A`) for deterministic single-tick
+        // consumption on the next simulation frame in `PuzzleCutawayRoomController::tick_and_render_3d`.
         KeyCode::Enter if !repeat && state.sim_core.scenario.prog_runner.is_running() => {
-            let s = &mut state.sim_core.scenario;
-            s.prog_runner.tick(
-                PROG_KEY_A,
-                0,
-                0.016,
-                &mut s.flags,
-                &mut s.puzzle_state,
-                &mut s.inventory_mgr,
-                &mut s.cutaway_overlay,
-                s.riddle_difficulty,
-            );
-            if let Some(&se_id) = s.prog_runner.sound_effects().first() {
-                state.puzzle_cutaway_room.last_event_desc =
-                    format!("ev_prog triggered SE 0x{se_id:04X} ({se_id})");
-            }
+            state.puzzle_cutaway_room.last_event_desc =
+                "Queued PROG_KEY_A for active StageProgramRunner frame tick.".to_string();
             play_confirm_sound(state);
             return;
         }

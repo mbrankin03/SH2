@@ -14,7 +14,8 @@ use crate::state::AppState;
 use sh2_ui::menu::TestRoomKind;
 
 /// Default perspective camera near clip plane in Silent Hill 2 world units.
-pub(crate) const DEFAULT_CAMERA_Z_NEAR: f32 = 10.0;
+/// Calibrated to `25.0` (~2.5 cm) to maximize 32-bit float depth precision for thin corrugated geometry.
+pub(crate) const DEFAULT_CAMERA_Z_NEAR: f32 = 25.0;
 /// Default perspective camera far clip plane in Silent Hill 2 world units, calibrated
 /// to encompass the full Toluca Lake / Observation Deck (`ob01.map`) vista (~68,000 units).
 pub(crate) const DEFAULT_CAMERA_Z_FAR: f32 = 150_000.0;

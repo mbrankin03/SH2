@@ -100,6 +100,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Ambient term (with pre-lit skybox/vista boost when vertex normal is zero-length, stride == 0x14)
     let n_len = length(in.normal);
     let has_normal = n_len > 1e-4;
+    // Discard back-facing lit opaque surfaces (e.g. interior dumpster walls coplanar with exterior panels)
+    // while keeping pre-lit/normal-less cards (stride == 0x14 skybox & foliage cards) double-sided.
+    if (has_normal && dot(in.normal, camera.cam_pos.xyz - in.world_pos) < -0.05 * n_len) {
+        discard;
+    }
     let base_ambient = select(vec3<f32>(0.18, 0.19, 0.21), vec3<f32>(0.07, 0.075, 0.085), has_normal);
 
     // Dynamic Spotlight calculation matching dbg_spotL_ctl

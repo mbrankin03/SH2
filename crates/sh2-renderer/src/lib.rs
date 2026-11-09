@@ -1,14 +1,18 @@
 //! sh2-renderer: Modern wgpu/Vulkan pipeline, 32-bit float depth, volumetric compute fog.
 
+pub mod blitter;
 pub mod fmv;
 pub mod fog;
+pub mod gpu_map;
 pub mod light;
 pub mod pipeline;
 pub mod post;
+pub mod scene;
 pub mod skeletal;
 
+pub use blitter::SurfaceBlitter;
 pub use fmv::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
-use sh2_assets::formats::map::MapFile;
+pub use gpu_map::{GpuMap, GpuMapBatch};
 use sh2_assets::formats::mdls::ModelFile;
 use sh2_assets::formats::texture::generate_mipmap_chain_rgba;
 pub use skeletal::{
@@ -39,60 +43,12 @@ impl Default for RendererConfig {
     }
 }
 
-/// GPU-resident static mesh buffers compiled once during map loading to avoid per-frame allocations.
-pub struct GpuMapBatch {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub num_indices: u32,
-    pub group: sh2_assets::formats::map::BatchGroup,
-    pub is_transparent: bool,
-    pub material_index: usize,
-}
-
 /// Tuple representing a skeletal mesh draw call: (mesh, bone_skin_matrices, optional_texture_bind_groups)
 pub type SkeletalDrawItem<'a> = (
     &'a GpuSkeletalMesh,
     &'a [[[f32; 4]; 4]],
     Option<&'a [Arc<wgpu::BindGroup>]>,
 );
-
-pub struct GpuMap {
-    pub batches: Vec<GpuMapBatch>,
-}
-
-impl GpuMap {
-    pub fn from_map(device: &wgpu::Device, map: &MapFile) -> Self {
-        let mut batches = Vec::with_capacity(map.batches.len());
-        for batch in &map.batches {
-            let interleaved = batch.interleaved_vertices();
-            if batch.indices.is_empty() || interleaved.is_empty() {
-                continue;
-            }
-            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("GpuMap Batch Vertex Buffer"),
-                contents: bytemuck::cast_slice(&interleaved),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("GpuMap Batch Index Buffer"),
-                contents: bytemuck::cast_slice(&batch.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-            batches.push(GpuMapBatch {
-                vertex_buffer,
-                index_buffer,
-                num_indices: batch.indices.len() as u32,
-                group: batch.group,
-                is_transparent: matches!(
-                    batch.group,
-                    sh2_assets::formats::map::BatchGroup::Transparent
-                ),
-                material_index: batch.material_index,
-            });
-        }
-        Self { batches }
-    }
-}
 
 pub struct RenderContext {
     pub instance: wgpu::Instance,
@@ -179,13 +135,29 @@ impl RenderContext {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
 
+        Some(Self::from_device(instance, adapter, device, queue, config))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn create_offscreen_targets(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (
+        (wgpu::Texture, wgpu::TextureView),
+        (wgpu::Texture, wgpu::TextureView),
+        (wgpu::Texture, wgpu::TextureView),
+        (wgpu::Texture, wgpu::TextureView),
+    ) {
+        let extent = wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        };
+
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("32-bit Float Depth Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -197,11 +169,7 @@ impl RenderContext {
 
         let hdr_color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("HDR Color Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -213,11 +181,7 @@ impl RenderContext {
 
         let fog_color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Fog Output Color Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -229,11 +193,7 @@ impl RenderContext {
 
         let ldr_output_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("LDR Output Color Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
+            size: extent,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -247,76 +207,27 @@ impl RenderContext {
         let ldr_output_view =
             ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let geometry_pipeline =
-            pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
-        let skeletal_pipeline = skeletal::SkeletalPipeline::new(
-            &device,
-            Self::HDR_FORMAT,
-            Self::DEPTH_FORMAT,
-            &geometry_pipeline.bind_group_layout,
-            &geometry_pipeline.texture_bind_group_layout,
-        );
-        let debug_line_pipeline = pipeline::DebugLinePipeline::new(
-            &device,
-            Self::HDR_FORMAT,
-            Self::DEPTH_FORMAT,
-            &geometry_pipeline.bind_group_layout,
-        );
-        let fog_pipeline = fog::FogComputePipeline::new(&device);
-        let post_pipeline = post::PostProcessPipeline::new(&device);
+        (
+            (depth_texture, depth_view),
+            (hdr_color_texture, hdr_color_view),
+            (fog_color_texture, fog_color_view),
+            (ldr_output_texture, ldr_output_view),
+        )
+    }
 
-        let camera_uniforms = pipeline::CameraUniforms::default();
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Uniform Buffer"),
-            contents: bytemuck::bytes_of(&camera_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let spotlight_uniforms = light::SpotlightUniforms::default();
-        let spotlight_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Spotlight Uniform Buffer"),
-            contents: bytemuck::bytes_of(&spotlight_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let fog_uniforms = fog::FogUniforms::default();
-        let fog_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Fog Uniform Buffer"),
-            contents: bytemuck::bytes_of(&fog_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let post_uniforms = post::PostUniforms::default();
-        let post_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Post Uniform Buffer"),
-            contents: bytemuck::bytes_of(&post_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let debug_line_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Persistent Debug Line Vertex Buffer"),
-            size: (Self::MAX_DEBUG_LINE_VERTICES
-                * std::mem::size_of::<sh2_debug::DebugLineVertex>())
-                as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Geometry Bind Group"),
-            layout: &geometry_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: spotlight_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
+    #[allow(clippy::too_many_arguments)]
+    fn create_compute_bind_groups(
+        device: &wgpu::Device,
+        fog_pipeline: &fog::FogComputePipeline,
+        post_pipeline: &post::PostProcessPipeline,
+        fog_buffer: &wgpu::Buffer,
+        camera_buffer: &wgpu::Buffer,
+        post_buffer: &wgpu::Buffer,
+        depth_view: &wgpu::TextureView,
+        hdr_color_view: &wgpu::TextureView,
+        fog_color_view: &wgpu::TextureView,
+        ldr_output_view: &wgpu::TextureView,
+    ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
         let fog_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Fog Bind Group"),
             layout: &fog_pipeline.bind_group_layout,
@@ -331,20 +242,19 @@ impl RenderContext {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&depth_view),
+                    resource: wgpu::BindingResource::TextureView(depth_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
+                    resource: wgpu::BindingResource::TextureView(hdr_color_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                    resource: wgpu::BindingResource::TextureView(fog_color_view),
                 },
             ],
         });
 
-        // Bind group 1: Samples fog_color_view when fog is enabled
         let post_bind_group_fog = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Post Bind Group (With Fog)"),
             layout: &post_pipeline.bind_group_layout,
@@ -355,16 +265,15 @@ impl RenderContext {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
+                    resource: wgpu::BindingResource::TextureView(fog_color_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                    resource: wgpu::BindingResource::TextureView(ldr_output_view),
                 },
             ],
         });
 
-        // Bind group 2: Directly samples hdr_color_view when fog is disabled
         let post_bind_group_direct = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Post Bind Group (Direct HDR)"),
             layout: &post_pipeline.bind_group_layout,
@@ -375,114 +284,16 @@ impl RenderContext {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
+                    resource: wgpu::BindingResource::TextureView(hdr_color_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
+                    resource: wgpu::BindingResource::TextureView(ldr_output_view),
                 },
             ],
         });
 
-        // Default 1x1 white texture for untextured geometry fallback
-        let default_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Default 1x1 White Texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &default_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &[255, 255, 255, 255],
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        let default_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Default Anisotropic 16x Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
-
-        let default_texture_bind_group =
-            Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Default Diffuse Texture Bind Group"),
-                layout: &geometry_pipeline.texture_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&default_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&default_sampler),
-                    },
-                ],
-            }));
-
-        Some(Self {
-            instance,
-            adapter,
-            device,
-            queue,
-            config,
-            depth_format: Self::DEPTH_FORMAT,
-            hdr_format: Self::HDR_FORMAT,
-            output_format: Self::OUTPUT_FORMAT,
-            depth_texture,
-            depth_view,
-            hdr_color_texture,
-            hdr_color_view,
-            fog_color_texture,
-            fog_color_view,
-            ldr_output_texture,
-            ldr_output_view,
-            geometry_pipeline,
-            skeletal_pipeline,
-            debug_line_pipeline,
-            fog_pipeline,
-            post_pipeline,
-            camera_buffer,
-            spotlight_buffer,
-            fog_buffer,
-            post_buffer,
-            debug_line_buffer,
-            geometry_bind_group,
-            fog_bind_group,
-            post_bind_group_fog,
-            post_bind_group_direct,
-            default_sampler,
-            default_view,
-            default_texture_bind_group,
-        })
+        (fog_bind_group, post_bind_group_fog, post_bind_group_direct)
     }
 
     pub fn from_device(
@@ -492,73 +303,12 @@ impl RenderContext {
         queue: Arc<wgpu::Queue>,
         config: RendererConfig,
     ) -> Self {
-        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("32-bit Float Depth Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let hdr_color_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("HDR Color Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::HDR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let hdr_color_view = hdr_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let fog_color_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Fog Output Color Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::HDR_FORMAT,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let fog_color_view = fog_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let ldr_output_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("LDR Output Color Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: Self::OUTPUT_FORMAT,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let ldr_output_view =
-            ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (
+            (depth_texture, depth_view),
+            (hdr_color_texture, hdr_color_view),
+            (fog_color_texture, fog_color_view),
+            (ldr_output_texture, ldr_output_view),
+        ) = Self::create_offscreen_targets(&device, config.width, config.height);
 
         let geometry_pipeline =
             pipeline::GeometryPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
@@ -630,70 +380,19 @@ impl RenderContext {
             ],
         });
 
-        let fog_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Fog Bind Group"),
-            layout: &fog_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: fog_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
-                },
-            ],
-        });
-
-        let post_bind_group_fog = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Post Bind Group (With Fog)"),
-            layout: &post_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: post_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&fog_color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
-                },
-            ],
-        });
-
-        let post_bind_group_direct = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Post Bind Group (Direct HDR)"),
-            layout: &post_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: post_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&hdr_color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&ldr_output_view),
-                },
-            ],
-        });
+        let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
+            Self::create_compute_bind_groups(
+                &device,
+                &fog_pipeline,
+                &post_pipeline,
+                &fog_buffer,
+                &camera_buffer,
+                &post_buffer,
+                &depth_view,
+                &hdr_color_view,
+                &fog_color_view,
+                &ldr_output_view,
+            );
 
         // Default 1x1 white texture for untextured geometry fallback
         let default_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -838,151 +537,39 @@ impl RenderContext {
         self.config.width = width;
         self.config.height = height;
 
-        // 1. Recreate depth texture & view
-        self.depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("32-bit Float Depth Texture (Resized)"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.depth_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        self.depth_view = self
-            .depth_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let (
+            (depth_texture, depth_view),
+            (hdr_color_texture, hdr_color_view),
+            (fog_color_texture, fog_color_view),
+            (ldr_output_texture, ldr_output_view),
+        ) = Self::create_offscreen_targets(&self.device, width, height);
 
-        // 2. Recreate HDR color texture & view
-        self.hdr_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("RGBA16 Float HDR Color Texture (Resized)"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.hdr_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        self.hdr_color_view = self
-            .hdr_color_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.depth_texture = depth_texture;
+        self.depth_view = depth_view;
+        self.hdr_color_texture = hdr_color_texture;
+        self.hdr_color_view = hdr_color_view;
+        self.fog_color_texture = fog_color_texture;
+        self.fog_color_view = fog_color_view;
+        self.ldr_output_texture = ldr_output_texture;
+        self.ldr_output_view = ldr_output_view;
 
-        // 3. Recreate fog color texture & view
-        self.fog_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("RGBA16 Float Fog Color Texture (Resized)"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.hdr_format,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        self.fog_color_view = self
-            .fog_color_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
+            Self::create_compute_bind_groups(
+                &self.device,
+                &self.fog_pipeline,
+                &self.post_pipeline,
+                &self.fog_buffer,
+                &self.camera_buffer,
+                &self.post_buffer,
+                &self.depth_view,
+                &self.hdr_color_view,
+                &self.fog_color_view,
+                &self.ldr_output_view,
+            );
 
-        // 4. Recreate LDR output texture & view
-        self.ldr_output_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("RGBA8 Unorm Post-Processed LDR Output Texture (Resized)"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.output_format,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        self.ldr_output_view = self
-            .ldr_output_texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        // 5. Recreate fog bind group
-        self.fog_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Fog Bind Group (Resized)"),
-            layout: &self.fog_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.fog_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&self.hdr_color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&self.fog_color_view),
-                },
-            ],
-        });
-
-        // 6. Recreate post bind groups
-        self.post_bind_group_fog = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Post Bind Group (With Fog Resized)"),
-            layout: &self.post_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.post_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.fog_color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.ldr_output_view),
-                },
-            ],
-        });
-
-        self.post_bind_group_direct = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Post Bind Group (Direct HDR Resized)"),
-            layout: &self.post_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.post_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.hdr_color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&self.ldr_output_view),
-                },
-            ],
-        });
+        self.fog_bind_group = fog_bind_group;
+        self.post_bind_group_fog = post_bind_group_fog;
+        self.post_bind_group_direct = post_bind_group_direct;
     }
 
     /// Creates a GPU diffuse texture bind group with bilinear filtering using a specific texture view.
@@ -1122,356 +709,6 @@ impl RenderContext {
             .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
-    /// Render a pre-compiled GpuMap room into the framebuffers and run the compute passes.
-    pub fn render_gpu_map(&self, gpu_map: &GpuMap) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Frame Command Encoder"),
-            });
-
-        // 1. Geometry Pass: Render into HDR buffer with Depth32Float
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Geometry Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.hdr_color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.01,
-                            g: 0.01,
-                            b: 0.015,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            self.draw_map_batches_for_group(
-                &mut rpass,
-                gpu_map,
-                None,
-                sh2_assets::formats::map::BatchGroup::Opaque,
-                &self.geometry_pipeline.pipeline,
-            );
-            self.draw_map_batches_for_group(
-                &mut rpass,
-                gpu_map,
-                None,
-                sh2_assets::formats::map::BatchGroup::Decal,
-                &self.geometry_pipeline.decal_pipeline,
-            );
-            self.draw_map_batches_for_group(
-                &mut rpass,
-                gpu_map,
-                None,
-                sh2_assets::formats::map::BatchGroup::Transparent,
-                &self.geometry_pipeline.transparent_pipeline,
-            );
-        }
-
-        // 2. Volumetric Fog Compute Pass
-        if self.config.enable_fog {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Volumetric Fog Compute Pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.fog_pipeline.pipeline);
-            cpass.set_bind_group(0, &self.fog_bind_group, &[]);
-            let workgroups_x = self.config.width.div_ceil(16);
-            let workgroups_y = self.config.height.div_ceil(16);
-            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        // 3. Post-Processing Compute Pass (ACES tonemapping & film grain)
-        if self.config.enable_post {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Post Process Compute Pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.post_pipeline.pipeline);
-            let post_bind_group = if self.config.enable_fog {
-                &self.post_bind_group_fog
-            } else {
-                &self.post_bind_group_direct
-            };
-            cpass.set_bind_group(0, post_bind_group, &[]);
-            let workgroups_x = self.config.width.div_ceil(16);
-            let workgroups_y = self.config.height.div_ceil(16);
-            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    /// Convenience method for rendering directly from MapFile, compiling to GpuMap.
-    pub fn render_map(&self, map: &MapFile) {
-        let gpu_map = GpuMap::from_map(&self.device, map);
-        self.render_gpu_map(&gpu_map);
-    }
-
-    /// Renders static world level map batches and dynamic animated skeletal meshes in a unified pass.
-    pub fn render_scene(
-        &self,
-        gpu_map: Option<&GpuMap>,
-        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
-        skeletal_meshes: &[SkeletalDrawItem],
-    ) {
-        self.render_scene_with_debug_lines(gpu_map, map_texture_bind_groups, skeletal_meshes, &[]);
-    }
-
-    /// Renders static world level map batches, dynamic animated skeletal meshes, and 3D debug lines
-    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass.
-    pub fn render_scene_with_debug_lines(
-        &self,
-        gpu_map: Option<&GpuMap>,
-        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
-        skeletal_meshes: &[SkeletalDrawItem],
-        debug_lines: &[sh2_debug::DebugLineVertex],
-    ) {
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Scene Render Encoder"),
-            });
-
-        // Upload debug lines into the persistent buffer (or allocate an overflow buffer if exceeding capacity)
-        let overflow_debug_line_buffer = if debug_lines.len() > Self::MAX_DEBUG_LINE_VERTICES {
-            Some(
-                self.device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Overflow Debug Line Vertex Buffer"),
-                        contents: bytemuck::cast_slice(debug_lines),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    }),
-            )
-        } else {
-            if !debug_lines.is_empty() {
-                self.queue.write_buffer(
-                    &self.debug_line_buffer,
-                    0,
-                    bytemuck::cast_slice(debug_lines),
-                );
-            }
-            None
-        };
-
-        // 1. Geometry & Skeletal Meshes Render Pass
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Geometry & Skeletal Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.hdr_color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.01,
-                            g: 0.01,
-                            b: 0.015,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            // 1a. Render static level batches (Opaque + Alpha-Cutout, then Coplanar Decals)
-            if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    sh2_assets::formats::map::BatchGroup::Opaque,
-                    &self.geometry_pipeline.pipeline,
-                );
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    sh2_assets::formats::map::BatchGroup::Decal,
-                    &self.geometry_pipeline.decal_pipeline,
-                );
-            }
-
-            // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass)
-            if !skeletal_meshes.is_empty() {
-                for (mesh, matrices, _) in skeletal_meshes {
-                    mesh.update_bone_matrices(&self.queue, matrices);
-                }
-
-                for transparent_pass in [false, true] {
-                    let has_any = skeletal_meshes.iter().any(|(mesh, _, _)| {
-                        mesh.primitives.iter().any(|p| {
-                            p.index_count > 0 && p.is_active && p.is_transparent == transparent_pass
-                        })
-                    });
-                    if !has_any {
-                        continue;
-                    }
-
-                    if transparent_pass {
-                        rpass.set_pipeline(&self.skeletal_pipeline.transparent_pipeline);
-                    } else {
-                        rpass.set_pipeline(&self.skeletal_pipeline.pipeline);
-                    }
-                    rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-
-                    for (mesh, _matrices, texture_groups) in skeletal_meshes {
-                        rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
-                        rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        rpass.set_index_buffer(
-                            mesh.index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-
-                        let mut current_tex: Option<u16> = None;
-                        for prim in &mesh.primitives {
-                            if prim.index_count > 0
-                                && prim.is_active
-                                && prim.is_transparent == transparent_pass
-                            {
-                                let tex_idx = prim.texture_index;
-                                if current_tex != Some(tex_idx) {
-                                    let bg = match texture_groups {
-                                        Some(groups) if (tex_idx as usize) < groups.len() => {
-                                            &groups[tex_idx as usize]
-                                        }
-                                        _ => &self.default_texture_bind_group,
-                                    };
-                                    rpass.set_bind_group(2, &**bg, &[]);
-                                    current_tex = Some(tex_idx);
-                                }
-
-                                rpass.draw_indexed(
-                                    prim.first_index..prim.first_index + prim.index_count,
-                                    0,
-                                    0..1,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 1c. Render static level semi-transparent batches (glass, water, transparent foliage fringes)
-            if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    sh2_assets::formats::map::BatchGroup::Transparent,
-                    &self.geometry_pipeline.transparent_pipeline,
-                );
-            }
-
-            // 1c. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
-            if !debug_lines.is_empty() {
-                let line_buf = overflow_debug_line_buffer
-                    .as_ref()
-                    .unwrap_or(&self.debug_line_buffer);
-                let byte_len = std::mem::size_of_val(debug_lines) as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.debug_line_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                rpass.set_vertex_buffer(0, line_buf.slice(0..byte_len));
-                rpass.draw(0..(debug_lines.len() as u32), 0..1);
-            }
-        }
-
-        // 2. Volumetric Fog Compute Pass
-        if self.config.enable_fog {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Volumetric Fog Compute Pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.fog_pipeline.pipeline);
-            cpass.set_bind_group(0, &self.fog_bind_group, &[]);
-            let workgroups_x = self.config.width.div_ceil(16);
-            let workgroups_y = self.config.height.div_ceil(16);
-            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        // 3. Post-Processing Compute Pass (ACES tonemapping & film grain)
-        if self.config.enable_post {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Post Process Compute Pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.post_pipeline.pipeline);
-            let post_bind_group = if self.config.enable_fog {
-                &self.post_bind_group_fog
-            } else {
-                &self.post_bind_group_direct
-            };
-            cpass.set_bind_group(0, post_bind_group, &[]);
-            let workgroups_x = self.config.width.div_ceil(16);
-            let workgroups_y = self.config.height.div_ceil(16);
-            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    /// Helper to draw all `GpuMapBatch` items belonging to a specific [`sh2_assets::formats::map::BatchGroup`]
-    /// using the designated pipeline (`pipeline`, `decal_pipeline`, or `transparent_pipeline`).
-    fn draw_map_batches_for_group<'a>(
-        &'a self,
-        rpass: &mut wgpu::RenderPass<'a>,
-        map: &'a GpuMap,
-        map_texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
-        target_group: sh2_assets::formats::map::BatchGroup,
-        pipeline: &'a wgpu::RenderPipeline,
-    ) {
-        if !map.batches.iter().any(|b| b.group == target_group) {
-            return;
-        }
-
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-        let mut current_bg: Option<usize> = None;
-
-        for batch in &map.batches {
-            if batch.group != target_group {
-                continue;
-            }
-            let bg_idx = batch.material_index;
-            let bind_group = match map_texture_bind_groups {
-                Some(groups) if bg_idx < groups.len() => &groups[bg_idx],
-                _ => &self.default_texture_bind_group,
-            };
-
-            if current_bg != Some(bg_idx) {
-                rpass.set_bind_group(1, &**bind_group, &[]);
-                current_bg = Some(bg_idx);
-            }
-
-            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-            rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
-        }
-    }
-
     /// Compiles a ModelFile into a GpuSkeletalMesh.
     pub fn compile_skeletal_mesh(&self, model: &ModelFile) -> GpuSkeletalMesh {
         GpuSkeletalMesh::from_model(
@@ -1479,204 +716,5 @@ impl RenderContext {
             &self.skeletal_pipeline.bone_bind_group_layout,
             model,
         )
-    }
-}
-
-/// Window surface presentation blitter
-pub struct SurfaceBlitter {
-    pub pipeline: wgpu::RenderPipeline,
-    pub bind_group_layout: wgpu::BindGroupLayout,
-    pub sampler: wgpu::Sampler,
-    pub default_uniform_buffer: wgpu::Buffer,
-}
-
-impl SurfaceBlitter {
-    pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Surface Blit Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into()),
-        });
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Surface Blit Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Surface Blit Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Surface Blit Render Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Surface Blit Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        let default_tint = [1.0f32, 1.0, 1.0, 1.0];
-        let default_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Surface Blit Default Uniform Buffer"),
-            contents: bytemuck::cast_slice(&default_tint),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        Self {
-            pipeline,
-            bind_group_layout,
-            sampler,
-            default_uniform_buffer,
-        }
-    }
-
-    /// Creates a cached bind group for the given source texture view.
-    pub fn create_bind_group(
-        &self,
-        device: &wgpu::Device,
-        src_view: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
-        self.create_bind_group_with_uniform_buffer(device, src_view, &self.default_uniform_buffer)
-    }
-
-    /// Creates a cached bind group for the given source texture view and a specific tint uniform buffer.
-    pub fn create_bind_group_with_uniform_buffer(
-        &self,
-        device: &wgpu::Device,
-        src_view: &wgpu::TextureView,
-        uniform_buffer: &wgpu::Buffer,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Surface Blit Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(src_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: uniform_buffer.as_entire_binding(),
-                },
-            ],
-        })
-    }
-
-    /// Renders using a pre-cached bind group to eliminate per-frame descriptor allocations.
-    pub fn render_with_bind_group(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        bind_group: &wgpu::BindGroup,
-        dst_view: &wgpu::TextureView,
-    ) {
-        self.render_with_bind_group_and_load_op(
-            encoder,
-            bind_group,
-            dst_view,
-            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-        );
-    }
-
-    /// Renders using a pre-cached bind group with configurable LoadOp (e.g. LoadOp::Load for overlays).
-    pub fn render_with_bind_group_and_load_op(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        bind_group: &wgpu::BindGroup,
-        dst_view: &wgpu::TextureView,
-        load_op: wgpu::LoadOp<wgpu::Color>,
-    ) {
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Surface Blit Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: dst_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: load_op,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        rpass.set_pipeline(&self.pipeline);
-        rpass.set_bind_group(0, bind_group, &[]);
-        rpass.draw(0..3, 0..1);
-    }
-
-    /// Convenience render method that generates a bind group on demand.
-    pub fn render(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        src_view: &wgpu::TextureView,
-        dst_view: &wgpu::TextureView,
-    ) {
-        let bind_group = self.create_bind_group(device, src_view);
-        self.render_with_bind_group(encoder, &bind_group, dst_view);
     }
 }

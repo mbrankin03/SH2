@@ -213,9 +213,9 @@ fn handle_cutscene_locked_input(
     state.sim_core.input.state.left_stick_x = 0.0;
     state.sim_core.input.state.left_stick_y = 0.0;
 
-    if pressed && !repeat {
+    if pressed {
         match key_code {
-            KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter | KeyCode::KeyG => {
+            KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter | KeyCode::KeyG if !repeat => {
                 if let Some(mut session) = state.drama_demo_session.take() {
                     session.player.skip();
                     if let Some((final_pos, final_yaw)) = session.player.player_handoff_transform()
@@ -233,7 +233,7 @@ fn handle_cutscene_locked_input(
                     );
                 }
             }
-            KeyCode::Period => {
+            KeyCode::Period if !repeat => {
                 state.selected_drama_demo_idx =
                     (state.selected_drama_demo_idx + 1) % DRAMA_DEMO_CATALOG.len();
                 if let Some(ref mut eng) = state.audio_engine {
@@ -245,7 +245,7 @@ fn handle_cutscene_locked_input(
                     false,
                 );
             }
-            KeyCode::Comma => {
+            KeyCode::Comma if !repeat => {
                 state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
                     DRAMA_DEMO_CATALOG.len() - 1
                 } else {
@@ -260,7 +260,7 @@ fn handle_cutscene_locked_input(
                     false,
                 );
             }
-            KeyCode::KeyV => {
+            KeyCode::KeyV if !repeat => {
                 if let Some(ref mut session) = state.drama_demo_session {
                     let next_mode = session.player.widescreen_mode.next();
                     let aspect = session.player.viewport_aspect;
@@ -270,6 +270,21 @@ fn handle_cutscene_locked_input(
                         next_mode,
                         next_mode.label()
                     );
+                }
+            }
+            KeyCode::ArrowRight | KeyCode::BracketRight => {
+                let subs = state.menu_ctrl.options_menu.draft_config.game.subtitles;
+                if let Some(ref mut session) = state.drama_demo_session {
+                    let target = (session.player.scene_frame + 150.0)
+                        .min(session.player.total_frames() as f32 - 1.0);
+                    session.player.seek_to_frame(target, subs);
+                }
+            }
+            KeyCode::ArrowLeft | KeyCode::BracketLeft => {
+                let subs = state.menu_ctrl.options_menu.draft_config.game.subtitles;
+                if let Some(ref mut session) = state.drama_demo_session {
+                    let target = (session.player.scene_frame - 150.0).max(0.0);
+                    session.player.seek_to_frame(target, subs);
                 }
             }
             _ => {}

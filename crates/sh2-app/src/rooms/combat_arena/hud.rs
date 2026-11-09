@@ -308,7 +308,7 @@ fn render_cutscene_telemetry_and_subtitles(
             .collect();
         state.menu_rasterizer.draw_text(
             &format!(
-                "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [V] Aspect Mode  [Esc/G] Skip  [,/.] Prev/Next",
+                "[3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [←/→] Scrub ±5s  [V] Aspect  [,/.] Prev/Next  [Esc/G] Skip",
                 p.info.demo_no,
                 p.info.title,
                 p.scene_frame.floor(),

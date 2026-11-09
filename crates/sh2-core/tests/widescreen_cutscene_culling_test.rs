@@ -632,8 +632,14 @@ fn test_maria_and_eddie_softimage_locator_visibility_and_model_anm_cls_evaluatio
     // throughout `deai_c` (`mar_deai_c.dds`), `deai` (`mar_deai_e.dds`, including frame 78),
     // `mar_deai_full` (`mar_deai.dds`), and `mar_saikai` (`mar_saikai.dds`).
     for (id, frames) in [
-        ("deai_c", &[0.0f32, 78.0, 200.0, 500.0, 730.0, 966.0, 1500.0][..]),
-        ("deai", &[0.0f32, 78.0, 200.0, 500.0, 730.0, 966.0, 1500.0][..]),
+        (
+            "deai_c",
+            &[0.0f32, 78.0, 200.0, 500.0, 730.0, 966.0, 1500.0][..],
+        ),
+        (
+            "deai",
+            &[0.0f32, 78.0, 200.0, 500.0, 730.0, 966.0, 1500.0][..],
+        ),
         ("mar_saikai", &[100.0f32, 500.0, 1000.0][..]),
     ] {
         let info = find_drama_demo_by_id(id).expect("Maria cutscene in catalog");
@@ -723,12 +729,9 @@ fn test_maria_and_eddie_softimage_locator_visibility_and_model_anm_cls_evaluatio
     let mar_mdl = sh2_assets::formats::parse_mdl(&mar_mdl_bytes).expect("parse hhh_mar.mdl");
     let mar_anm_bytes = std::fs::read(format!("{base}/data/demo/mar_deai/hhh_mar.anm"))
         .expect("read mar_deai/hhh_mar.anm");
-    let mar_anm = sh2_assets::formats::parse_anm(
-        &mar_anm_bytes,
-        mar_mdl.bone_count,
-        &mar_mdl.parents,
-    )
-    .expect("parse mar_deai/hhh_mar.anm");
+    let mar_anm =
+        sh2_assets::formats::parse_anm(&mar_anm_bytes, mar_mdl.bone_count, &mar_mdl.parents)
+            .expect("parse mar_deai/hhh_mar.anm");
     let mar_cls_bytes = std::fs::read(format!("{base}/data/demo/mar_deai/hhh_mar.cls"))
         .expect("read mar_deai/hhh_mar.cls");
     let mar_cls =

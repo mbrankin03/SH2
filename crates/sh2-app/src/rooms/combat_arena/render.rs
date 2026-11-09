@@ -3,14 +3,14 @@
 
 use std::time::Duration;
 
-use crate::assets::load_cutscene_voice_wav;
+use crate::assets::{load_cutscene_voice_wav, open_drama_demo_session};
 use crate::state::AppState;
 use sh2_assets::formats::anm::{
     blend_frame_in_place, compute_skin_matrices_with_inv_into, evaluate_pose_into,
     interpolate_frames_into,
 };
 use sh2_assets::formats::demo::{DemoLightKind, DemoLightState};
-use sh2_core::CutsceneCameraSnapshot;
+use sh2_core::{CutsceneCameraSnapshot, CutsceneSequenceStep, DRAMA_DEMO_CATALOG};
 use sh2_ui::menu::TestRoomKind;
 
 type EnemySkinSnapshot = (
@@ -356,7 +356,33 @@ fn step_cutscene_player(
         if let Some((final_pos, final_yaw)) = finished_handoff {
             state.sim_core.snap_player_transform(final_pos, final_yaw);
             state.sim_core.camera.reset_to_player(final_pos, final_yaw);
-            state.drama_demo_session = None;
+            // If this cutscene is part of a multi-segment `.dds` sequence chain (e.g. `papa_agl_a` -> `papa_agl`,
+            // `piano_lau_b` -> `piano_lau_e`, `bp_edi_1` -> `bp_edi_2`), automatically chain into the next in-engine step!
+            let next_catalog_idx = state.drama_demo_session.as_ref().and_then(|s| {
+                let cur_no = s.player.info.demo_no;
+                let chain = s.player.info.sequence_chain;
+                let pos_in_chain = chain.iter().position(|step| {
+                    matches!(step, CutsceneSequenceStep::InEngineDemo { demo_no } if *demo_no == cur_no)
+                })?;
+                if let Some(CutsceneSequenceStep::InEngineDemo { demo_no: next_no }) =
+                    chain.get(pos_in_chain + 1)
+                {
+                    DRAMA_DEMO_CATALOG.iter().position(|d| d.demo_no == *next_no)
+                } else {
+                    None
+                }
+            });
+            if let Some(next_idx) = next_catalog_idx {
+                state.selected_drama_demo_idx = next_idx;
+                state.drama_demo_session =
+                    open_drama_demo_session(&state.render_ctx, next_idx, false);
+                if let Some(ref s) = state.drama_demo_session {
+                    cutscene_camera_override = Some(s.player.camera);
+                    cutscene_light_override = s.player.primary_active_light().copied();
+                }
+            } else {
+                state.drama_demo_session = None;
+            }
         } else if state
             .drama_demo_session
             .as_ref()
@@ -415,44 +441,95 @@ fn update_spotlight_uniforms(
     let spot_uniforms = if let Some(cs_light) = cutscene_light_override {
         let l_pos = glam::Vec3::from_array(cs_light.position);
         let l_tgt = glam::Vec3::from_array(cs_light.interest);
-        let dir = match cs_light.kind {
-            DemoLightKind::Spot => (l_tgt - l_pos).normalize_or_zero(),
-            DemoLightKind::Directional => (-l_pos).normalize_or_zero(),
-            DemoLightKind::Point => (player_pos - l_pos).normalize_or_zero(),
+        // Evaluate authentic PS2/PC 9-bucket linear distance decay ramp (`DEMO_LIGHT_DECAY_RAMP` at `0x50cff0`)
+        let (_near_decay, far_decay) = match cs_light.kind {
+            DemoLightKind::Point | DemoLightKind::Spot => {
+                sh2_core::demo_light_decay_bounds(cs_light.decay[1])
+            }
+            DemoLightKind::Directional => (3000.0, 7500.0),
         };
-        let safe_dir = if dir.length_squared() > 1e-5 {
-            dir
-        } else {
-            glam::Vec3::new(0.0, 0.0, 1.0)
-        };
-        let (inner_cos, outer_cos) = if cs_light.kind == DemoLightKind::Spot {
-            (
-                cs_light.cone[0].cos().clamp(0.1, 0.99),
-                cs_light.cone[1].cos().clamp(0.05, 0.95),
-            )
-        } else {
-            (-1.0, -1.0)
+        let range_boost = (far_decay / 3500.0).clamp(0.8, 2.2);
+        let (pos, dir, inner_cos, outer_cos) = match cs_light.kind {
+            DemoLightKind::Spot => {
+                let d = (l_tgt - l_pos).normalize_or_zero();
+                let safe_d = if d.length_squared() > 1e-5 {
+                    d
+                } else {
+                    glam::Vec3::new(0.0, 0.0, 1.0)
+                };
+                (
+                    l_pos,
+                    safe_d,
+                    cs_light.cone[0].cos().clamp(0.1, 0.99),
+                    cs_light.cone[1].cos().clamp(0.05, 0.95),
+                )
+            }
+            DemoLightKind::Point => {
+                let d = (player_pos - l_pos).normalize_or_zero();
+                let safe_d = if d.length_squared() > 1e-5 {
+                    d
+                } else {
+                    glam::Vec3::new(0.0, 1.0, 0.0)
+                };
+                (l_pos, safe_d, 0.25, -0.65)
+            }
+            DemoLightKind::Directional => {
+                // `DdsPlay` (`0x4a1bf5..0x4a1c8a`) interprets `light.position` as the light vector
+                // and normalizes `-pos` as the incoming ray direction.
+                let d = (-l_pos).normalize_or_zero();
+                let safe_d = if d.length_squared() > 1e-5 {
+                    d
+                } else {
+                    glam::Vec3::new(0.0, 1.0, 0.0)
+                };
+                (player_pos - safe_d * 1800.0, safe_d, 0.25, -0.65)
+            }
         };
         sh2_renderer::light::SpotlightUniforms {
-            position: [l_pos.x, l_pos.y, l_pos.z, 1.0],
-            direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, inner_cos],
+            position: [pos.x, pos.y, pos.z, 1.0],
+            direction_inner: [dir.x, dir.y, dir.z, inner_cos],
             color_outer: [
-                cs_light.color[0].max(0.2) * 2.0,
-                cs_light.color[1].max(0.2) * 2.0,
-                cs_light.color[2].max(0.2) * 2.0,
+                cs_light.color[0].max(0.25) * 1.8 * range_boost,
+                cs_light.color[1].max(0.25) * 1.8 * range_boost,
+                cs_light.color[2].max(0.25) * 1.8 * range_boost,
                 outer_cos,
             ],
         }
-    } else if state.active_test_room == TestRoomKind::RestroomStart
-        && !state.sim_core.scenario.flashlight_on
+    } else if state
+        .drama_demo_session
+        .as_ref()
+        .is_some_and(|s| s.player.locks_gameplay_input() && s.player.info.stage_name == "er01")
+        || (state.active_test_room == TestRoomKind::RestroomStart
+            && !state.sim_core.scenario.flashlight_on)
     {
-        // In `RestroomStart` (`er01.map`), James has not found the flashlight in Room 205 yet;
+        // In `RestroomStart` (`er01.map` / `first_toilet`), James has not found the flashlight in Room 205 yet;
         // provide the overhead sink fluorescent fixture illumination above the mirror (`X = -20000.0, Z = 20429.5`)
         // so both James and his planar mirror reflection are clearly visible.
         sh2_renderer::light::SpotlightUniforms {
             position: [-19200.0, -1950.0, 20429.5, 1.0],
             direction_inner: [-0.65, 0.76, 0.0, 0.35],
             color_outer: [1.85, 1.90, 1.80, -0.25],
+        }
+    } else if let Some(session) = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+    {
+        // Cutscene with `0` dynamic `.dds` lights outside `er01`: place a wide ambient stage key light
+        // above the active camera/actor focus so characters and level geometry are clearly illuminated.
+        let cam_eye = session.player.camera.eye;
+        let cam_tgt = session.player.camera.interest;
+        let key_pos = cam_eye + glam::Vec3::new(0.0, -600.0, 0.0);
+        let key_dir = (cam_tgt - key_pos).normalize_or_zero();
+        let safe_dir = if key_dir.length_squared() > 1e-5 {
+            key_dir
+        } else {
+            glam::Vec3::new(0.0, 0.5, 0.86)
+        };
+        sh2_renderer::light::SpotlightUniforms {
+            position: [key_pos.x, key_pos.y, key_pos.z, 1.0],
+            direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
+            color_outer: [1.75, 1.72, 1.68, -0.50],
         }
     } else {
         let light_color = if state.sim_core.scenario.flashlight_on {
@@ -614,13 +691,14 @@ fn evaluate_player_skinning(
 }
 
 fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
-    let build_mirror = state.active_test_room == TestRoomKind::RestroomStart;
     let Some(ref mut session) = state.drama_demo_session else {
         return;
     };
     if !session.player.locks_gameplay_input() {
         return;
     }
+    let build_mirror = state.active_test_room == TestRoomKind::RestroomStart
+        || session.player.info.stage_name == "er01";
 
     let scene_frame = session.player.scene_frame.max(0.0);
     for (idx, (actor, asset_opt)) in session
@@ -638,8 +716,9 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
         }
 
         // 1. Evaluate `.cls` facial morph cluster weights & upload morphed vertices if present (`clani.c`)
+        let actor_frame = actor.global_anm_frame(scene_frame);
         if let Some(ref cls) = asset.cls {
-            cls.evaluate_global_frame_into(scene_frame, false, &mut asset.cluster_weights_scratch);
+            cls.evaluate_global_frame_into(actor_frame, false, &mut asset.cluster_weights_scratch);
             asset.model.apply_cluster_weights_into(
                 &asset.cluster_weights_scratch,
                 &mut asset.morphed_positions_scratch,
@@ -652,14 +731,14 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
             );
         }
 
-        // 2. Evaluate `.anm` skeletal bone transforms at `scene_frame`
+        // 2. Evaluate `.anm` skeletal bone transforms at `actor_frame` (`scene_frame + anm_frame_offset`)
         let frame_count = asset.anm.frames.len();
         if frame_count == 0 {
             continue;
         }
-        let f0 = (scene_frame.floor() as usize).min(frame_count - 1);
+        let f0 = (actor_frame.floor() as usize).min(frame_count - 1);
         let f1 = (f0 + 1).min(frame_count - 1);
-        let frac = scene_frame.fract();
+        let frac = actor_frame.fract();
 
         interpolate_frames_into(
             &asset.anm.frames[f0],
@@ -810,7 +889,11 @@ fn submit_scene_draw(
     active_enemy_snapshot: Option<EnemySkinSnapshot>,
 ) {
     let mut skeletal_draw = Vec::new();
-    let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart;
+    let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart
+        || state
+            .drama_demo_session
+            .as_ref()
+            .is_some_and(|s| s.player.locks_gameplay_input() && s.player.info.stage_name == "er01");
     let cutscene_active = state.drama_demo_session.as_ref().is_some_and(|s| {
         s.player.locks_gameplay_input() && s.actor_assets.iter().any(|a| a.is_some())
     });
@@ -889,6 +972,17 @@ fn submit_scene_draw(
         return;
     }
 
+    let (active_gpu_map, active_map_tex_bgs) = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+        .and_then(|s| {
+            s.stage_gpu_map
+                .as_ref()
+                .zip(s.stage_texture_bind_groups.as_ref())
+        })
+        .unwrap_or((&state.gpu_map, &state.map_texture_bind_groups));
+
     if state.debug_collision_overlay {
         let floors_iter = state.sim_core.collision.floors.iter().map(|f| f.v);
         let walls_iter = state
@@ -941,15 +1035,15 @@ fn submit_scene_draw(
         }
 
         state.render_ctx.render_scene_with_debug_lines(
-            Some(&state.gpu_map),
-            Some(&state.map_texture_bind_groups),
+            Some(active_gpu_map),
+            Some(active_map_tex_bgs),
             &skeletal_draw,
             &debug_lines,
         );
     } else {
         state.render_ctx.render_scene(
-            Some(&state.gpu_map),
-            Some(&state.map_texture_bind_groups),
+            Some(active_gpu_map),
+            Some(active_map_tex_bgs),
             &skeletal_draw,
         );
     }

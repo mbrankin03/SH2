@@ -16,11 +16,12 @@ pub use anim_info::{
 pub use catalog::{
     find_drama_demo_by_id, find_drama_demo_by_no, CutsceneSequenceStep, DramaDemoPlayInfo,
     SubtitleWindow, DRAMA_DEMO_CATALOG, SUBTITLES_BP_EDI_1, SUBTITLES_BP_EDI_2, SUBTITLES_DEAI,
-    SUBTITLES_FIRE_AGL, SUBTITLES_FIRST_BATTLE, SUBTITLES_FIRST_TOILET, SUBTITLES_FUKATSU_A,
-    SUBTITLES_GEKIJOU_A, SUBTITLES_GERO_EDI, SUBTITLES_HAKA_AGL, SUBTITLES_HEI_LAU,
-    SUBTITLES_KAGIKERI, SUBTITLES_KILLER_EDI, SUBTITLES_KNIFE_AGL, SUBTITLES_MAR_SAIKAI,
-    SUBTITLES_MRY_YARINAOSHI_A, SUBTITLES_PAPA_AGL, SUBTITLES_PIANO_LAU, SUBTITLES_RADIO_GERO,
-    SUBTITLES_TENBOU, SUBTITLES_TOMATTA, SUBTITLES_VTR,
+    SUBTITLES_DEAI_C, SUBTITLES_FIRE_AGL, SUBTITLES_FIRST_BATTLE, SUBTITLES_FIRST_TOILET,
+    SUBTITLES_FUKATSU_A, SUBTITLES_GEKIJOU_A, SUBTITLES_GERO_EDI, SUBTITLES_HAKA_AGL,
+    SUBTITLES_HEI_LAU, SUBTITLES_KAGIKERI, SUBTITLES_KILLER_EDI, SUBTITLES_KNIFE_AGL,
+    SUBTITLES_MAR_DEAI_FULL, SUBTITLES_MAR_SAIKAI, SUBTITLES_MRY_YARINAOSHI_A, SUBTITLES_PAPA_AGL,
+    SUBTITLES_PIANO_LAU, SUBTITLES_PIANO_LAU_E, SUBTITLES_RADIO_GERO, SUBTITLES_TENBOU,
+    SUBTITLES_TOMATTA, SUBTITLES_VTR,
 };
 pub use player::{CutsceneActorRuntime, CutsceneCameraSnapshot, DramaDemoPlayer, DramaDemoStep};
 
@@ -131,6 +132,58 @@ mod tests {
             let mes = sh2_assets::formats::mes::parse_mes(&mes_bytes)
                 .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", entry.mes_path));
             assert!(!mes.messages.is_empty(), "{} has empty .mes", entry.id);
+
+            let map_full = format!("{root}/data/{}", entry.stage_map_path);
+            assert!(
+                std::path::Path::new(&map_full).exists(),
+                "Missing stage .map for {}: {}",
+                entry.id,
+                map_full
+            );
         }
+
+        // Verify multi-segment `.anm`/`.cls` frame offsets (`mar_deai_e` = 1546, `papa_agl` = 438,
+        // `piano_lau` Laura = 226, `piano_lau_e` James = 1679 & Laura = 1905)
+        let deai_e = find_drama_demo_by_id("deai").expect("deai in catalog");
+        assert_eq!(deai_e.anm_frame_offset, 1546);
+
+        let papa_b = find_drama_demo_by_id("papa_agl").expect("papa_agl in catalog");
+        assert_eq!(papa_b.anm_frame_offset, 438);
+
+        let piano_b = find_drama_demo_by_id("piano_lau").expect("piano_lau in catalog");
+        let piano_b_dds =
+            parse_demo_dds(&std::fs::read(format!("{root}/{}", piano_b.dds_path)).unwrap())
+                .unwrap();
+        let piano_b_player = DramaDemoPlayer::new(*piano_b, piano_b_dds, false);
+        let jms_b = piano_b_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "hhh_jms_pos")
+            .unwrap();
+        let lau_b = piano_b_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "lau_pos")
+            .unwrap();
+        assert_eq!(jms_b.anm_frame_offset, 0);
+        assert_eq!(lau_b.anm_frame_offset, 226);
+
+        let piano_e = find_drama_demo_by_id("piano_lau_e").expect("piano_lau_e in catalog");
+        let piano_e_dds =
+            parse_demo_dds(&std::fs::read(format!("{root}/{}", piano_e.dds_path)).unwrap())
+                .unwrap();
+        let piano_e_player = DramaDemoPlayer::new(*piano_e, piano_e_dds, false);
+        let jms_e = piano_e_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "hhh_jms_pos")
+            .unwrap();
+        let lau_e = piano_e_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "lau_pos")
+            .unwrap();
+        assert_eq!(jms_e.anm_frame_offset, 1679);
+        assert_eq!(lau_e.anm_frame_offset, 1905);
     }
 }

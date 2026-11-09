@@ -38,9 +38,19 @@ pub struct CutsceneActorRuntime {
     pub subclip_index: usize,
     /// Continuous 30 FPS animation frame within the current sub-clip (`scene_frame - subclip_start_frame`).
     pub local_anm_frame: f32,
+    /// Starting 30 FPS frame offset inside the actor's `.anm` and `.cls` files (accounts for multi-part
+    /// cutscenes such as `mar_deai_e`, `papa_agl`, `piano_lau_e`, and Laura's 226-frame `piano_lau_a` prefix).
+    pub anm_frame_offset: u16,
 }
 
 impl CutsceneActorRuntime {
+    /// Returns the continuous global 30 FPS frame index inside the actor's `.anm` and `.cls` files
+    /// (`scene_frame + anm_frame_offset`).
+    #[inline]
+    pub fn global_anm_frame(&self, scene_frame: f32) -> f32 {
+        scene_frame.max(0.0) + (self.anm_frame_offset as f32)
+    }
+
     /// Computes the 4x4 row-major world transformation matrix for this cutscene actor (`rot_y = PI`, `pos = position`).
     pub fn world_matrix_row_major(&self) -> [[f32; 4]; 4] {
         let (s, c) = self.yaw_radians.sin_cos();
@@ -145,6 +155,22 @@ impl DramaDemoPlayer {
             let anim_info = find_drama_demo_anim_info(name);
             let (anm_path, cls_path) = derive_demo_actor_anm_and_cls_paths(info.dds_path, name);
             let start_aid = anim_info.map(|a| a.start_aid).unwrap_or(0);
+            // In `data/demo/piano_lau/`, `lau.anm` and `lau.cls` prepend the 226-frame `piano_lau_a`
+            // sub-clip before the 3,221-frame `piano_lau_b` + `piano_lau_e` tracks (`[226, 243, 720, 716, 781, 761]`),
+            // whereas `hhh_jms.anm`/`.cls` starts directly at `piano_lau_b` (`[243, 720, 716, 781, 761]`).
+            let extra_actor_offset = if (info.dds_path.ends_with("piano_lau_b.dds")
+                || info.dds_path.ends_with("piano_lau_e.dds")
+                || info.dds_path.ends_with("piano_lau.dds"))
+                && name
+                    .trim_matches('\0')
+                    .trim()
+                    .eq_ignore_ascii_case("lau_pos")
+            {
+                226u16
+            } else {
+                0u16
+            };
+            let anm_frame_offset = info.anm_frame_offset.saturating_add(extra_actor_offset);
             actors.push(CutsceneActorRuntime {
                 slot_index: idx,
                 actor_name: name.clone(),
@@ -157,6 +183,7 @@ impl DramaDemoPlayer {
                 current_aid: start_aid,
                 subclip_index: 0,
                 local_anm_frame: 0.0,
+                anm_frame_offset,
             });
         }
 

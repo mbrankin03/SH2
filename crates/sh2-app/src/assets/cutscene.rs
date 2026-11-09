@@ -1,11 +1,13 @@
 //! Cutscene session loader (`ActiveDramaDemoSession`, `open_drama_demo_session`, `load_cutscene_voice_wav`) (`SH2-63`).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::assets::{load_character_asset, CharacterAsset};
-use sh2_renderer::RenderContext;
+use crate::assets::{build_map_texture_bind_groups, load_character_asset, CharacterAsset};
+use sh2_assets::formats::TextureLoader;
+use sh2_renderer::{GpuMap, RenderContext};
 
-/// Active in-engine real-time 3D cutscene session (`DramaDemoPlayer` + loaded `.mes` table + actor models/animations).
+/// Active in-engine real-time 3D cutscene session (`DramaDemoPlayer` + loaded `.mes` table + actor models/animations + stage `.map`).
 pub(crate) struct ActiveDramaDemoSession {
     pub player: sh2_core::DramaDemoPlayer,
     pub messages: Option<sh2_assets::formats::mes::MessageTable>,
@@ -13,6 +15,9 @@ pub(crate) struct ActiveDramaDemoSession {
     pub actor_assets: Vec<Option<CharacterAsset>>,
     /// Per-actor planar mirror reflection skinning scratch buffers (`0..player.actors.len()`).
     pub actor_mirror_skin_scratch: Vec<Vec<[[f32; 4]; 4]>>,
+    /// Authentic stage `.map` geometry and textures loaded for this cutscene (`info.stage_map_path`).
+    pub stage_gpu_map: Option<GpuMap>,
+    pub stage_texture_bind_groups: Option<Vec<Arc<wgpu::BindGroup>>>,
     #[allow(dead_code)]
     pub catalog_index: usize,
 }
@@ -96,11 +101,32 @@ pub(crate) fn open_drama_demo_session(
     }
 
     let loaded_actor_count = actor_assets.iter().filter(|a| a.is_some()).count();
+
+    let mut stage_gpu_map = None;
+    let mut stage_texture_bind_groups = None;
+    if !info.stage_map_path.is_empty() {
+        for base in &base_roots {
+            let loader = TextureLoader::new(
+                PathBuf::from(base).join("data"),
+                Some(PathBuf::from(base).join("sh2e")),
+            );
+            if let Ok(map) = loader.load_map_with_hd_overrides(info.stage_map_path, info.stage_name)
+            {
+                let gpu_map = GpuMap::from_map(&render_ctx.device, &map);
+                let tex_bgs = build_map_texture_bind_groups(render_ctx, &map);
+                stage_gpu_map = Some(gpu_map);
+                stage_texture_bind_groups = Some(tex_bgs);
+                break;
+            }
+        }
+    }
+
     tracing::info!(
-        "[Cutscene Player] Opened DramaDemo #{}: '{}' ({}) -> {} frames, {}/{} actors loaded, {} lights",
+        "[Cutscene Player] Opened DramaDemo #{}: '{}' ({}, stage={}) -> {} frames, {}/{} actors loaded, {} lights",
         info.demo_no,
         info.title,
         info.dds_path,
+        info.stage_map_path,
         player.total_frames(),
         loaded_actor_count,
         player.actors.len(),
@@ -112,6 +138,8 @@ pub(crate) fn open_drama_demo_session(
         messages,
         actor_assets,
         actor_mirror_skin_scratch,
+        stage_gpu_map,
+        stage_texture_bind_groups,
         catalog_index: idx,
     })
 }

@@ -239,23 +239,53 @@ impl DramaDemoPlayer {
     /// Advances the cutscene by `dt_sec` seconds, evaluating `.dds` keyframes, `Key 0x11` animation
     /// triggers, voice stream pre-roll (`stream_start`), and `adr_msg_time` subtitle windows.
     pub fn tick(&mut self, dt_sec: f32, subtitles_enabled: bool) {
+        self.tick_with_voice_sync(dt_sec, subtitles_enabled, None);
+    }
+
+    /// Advances the cutscene by `dt_sec` seconds while locking `scene_frame` and `msg_frame` to the
+    /// hardware audio clock `voice_pos_secs` (`DramaDemoMain` in `Event/demoview.c`, `SH2-63`).
+    pub fn tick_with_voice_sync(
+        &mut self,
+        dt_sec: f32,
+        subtitles_enabled: bool,
+        voice_pos_secs: Option<f32>,
+    ) {
         if self.step == DramaDemoStep::Finished {
             return;
         }
 
         let delta_frames = (dt_sec.max(0.0)) * CUTSCENE_NATIVE_FPS;
-        self.scene_frame += delta_frames;
-        self.msg_frame += delta_frames;
-
         let total_f = self.total_frames() as f32;
 
-        // Check voice stream pre-roll trigger (`scene_frame >= stream_start`)
+        // Check voice stream pre-roll trigger (`scene_frame - 1 >= stream_start`)
+        let stream_start_f = self.info.stream_start.max(0) as f32;
         if !self.voice_started
             && self.info.stream_no > 0
-            && self.scene_frame >= (self.info.stream_start.max(0) as f32)
+            && (self.scene_frame + delta_frames) >= stream_start_f
         {
             self.voice_started = true;
             self.pending_voice_trigger = true;
+        }
+
+        // Advance scene_frame and msg_frame, resynchronizing to the active voice stream hardware clock
+        // if drift exceeds 2 frames (66 ms), matching `DramaDemoMain`.
+        if self.voice_started {
+            if let Some(pos_sec) = voice_pos_secs {
+                let want = stream_start_f + 1.0 + pos_sec * CUTSCENE_NATIVE_FPS;
+                if (self.msg_frame + delta_frames - want).abs() > 2.0 {
+                    self.msg_frame = want;
+                    self.scene_frame = want.min(total_f);
+                } else {
+                    self.msg_frame += delta_frames;
+                    self.scene_frame = (self.scene_frame + delta_frames).min(total_f);
+                }
+            } else {
+                self.msg_frame += delta_frames;
+                self.scene_frame += delta_frames;
+            }
+        } else {
+            self.msg_frame += delta_frames;
+            self.scene_frame += delta_frames;
         }
 
         // Evaluate active subtitle window (`DramaDemoMessage` at `0x1b1f80`)
@@ -271,9 +301,25 @@ impl DramaDemoPlayer {
             self.active_subtitle_msg_id = None;
         }
 
+        let last_subtitle_end = self
+            .info
+            .subtitle_windows
+            .iter()
+            .map(|w| w.end_frame as f32)
+            .fold(0.0f32, f32::max);
+
         if self.scene_frame >= total_f {
-            self.skip();
-            return;
+            self.scene_frame = total_f;
+            // In cutscenes where the voiceover outlasts the `.dds` camera track (e.g. Mary's letter
+            // narration at the end of `tenbou`, where `.dds` ends at frame 1927 while `voice.afs[118]`
+            // and subtitles continue up to frame 3954), hold the final `.dds` frame until the voice
+            // stream finishes!
+            let voice_still_active = voice_pos_secs.is_some()
+                || (self.voice_started && self.msg_frame < last_subtitle_end);
+            if !voice_still_active {
+                self.skip();
+                return;
+            }
         }
 
         let (mut sampled, _triggers) =
@@ -341,14 +387,14 @@ impl DramaDemoPlayer {
             .find(|l| l.visible)
     }
 
-    /// Returns the final player (`hhh_jms_pos` / `hhl_jms_pos` / `lll_jms_pos` / `hhh_mar_pos`)
+    /// Returns the final player (`hhh_jms_pos` / `hhl_jms_pos` / `hll_jms_pos` / `lll_jms_pos` / `hhh_mar_pos` / `lll_mar_pos`)
     /// world position and yaw (`CharaSetPos` hand-off at cutscene completion).
     pub fn player_handoff_transform(&self) -> Option<(Vec3, f32)> {
         self.actors
             .iter()
             .find(|a| {
                 a.anim_info
-                    .map(|info| info.kind_id == 0x0100 || info.kind_id == 0x0200)
+                    .map(|info| matches!(info.kind_id, 0x0100..=0x0103 | 0x0105..=0x0106))
                     .unwrap_or(false)
             })
             .map(|a| (a.position, a.yaw_radians))

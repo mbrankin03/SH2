@@ -159,8 +159,11 @@ pub(super) fn handle_combat_arena_key_input(
         }
         // Launch or cycle in-engine real-time 3D cutscene (`DramaDemoPlayer`, `SH2-63`)
         KeyCode::KeyG if pressed && !repeat => {
+            if let Some(ref mut eng) = state.audio_engine {
+                eng.stop_voice(Duration::from_millis(30));
+            }
             state.drama_demo_session =
-                open_drama_demo_session(state.selected_drama_demo_idx, false);
+                open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false);
         }
         KeyCode::Period if pressed && !repeat => {
             state.selected_drama_demo_idx =
@@ -236,8 +239,11 @@ fn handle_cutscene_locked_input(
                 if let Some(ref mut eng) = state.audio_engine {
                     eng.stop_voice(Duration::from_millis(30));
                 }
-                state.drama_demo_session =
-                    open_drama_demo_session(state.selected_drama_demo_idx, false);
+                state.drama_demo_session = open_drama_demo_session(
+                    &state.render_ctx,
+                    state.selected_drama_demo_idx,
+                    false,
+                );
             }
             KeyCode::Comma => {
                 state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
@@ -248,8 +254,11 @@ fn handle_cutscene_locked_input(
                 if let Some(ref mut eng) = state.audio_engine {
                     eng.stop_voice(Duration::from_millis(30));
                 }
-                state.drama_demo_session =
-                    open_drama_demo_session(state.selected_drama_demo_idx, false);
+                state.drama_demo_session = open_drama_demo_session(
+                    &state.render_ctx,
+                    state.selected_drama_demo_idx,
+                    false,
+                );
             }
             _ => {}
         }

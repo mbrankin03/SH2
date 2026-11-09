@@ -522,6 +522,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         debug_collision_overlay: false,
         debug_camera_hud: true,
         skin_matrices_scratch: Vec::with_capacity(128),
+        mirror_skin_matrices_scratch: Vec::with_capacity(128),
         frame_pacer: sh2_core::FramePacer::new(initial_fps_cap),
         last_frame: Instant::now(),
         frame_counter: 0,

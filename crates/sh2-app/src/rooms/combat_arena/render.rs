@@ -46,7 +46,7 @@ pub(super) fn tick_and_render_combat_arena_3d(
     let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
     update_spotlight_uniforms(state, alpha, player_pos, cutscene_light_override);
 
-    // 4. Sample player & enemy skeletal animations at sub-frame alpha
+    // 4. Sample player, cutscene actor, & enemy skeletal animations at sub-frame alpha
     evaluate_player_skinning(
         state,
         alpha,
@@ -55,9 +55,10 @@ pub(super) fn tick_and_render_combat_arena_3d(
         player_pos,
         player_yaw,
     );
+    evaluate_cutscene_actors_skinning(state);
     let active_enemy_snapshot = evaluate_enemy_skinning(state, alpha);
 
-    // 5. Submit 3D map, skeletal meshes, and optional collision wireframe overlay
+    // 5. Submit 3D map, skeletal meshes (plus planar mirror reflections in RestroomStart), and optional collision wireframe overlay
     submit_scene_draw(state, is_in_game, player_pos, active_enemy_snapshot);
 }
 
@@ -285,6 +286,20 @@ fn step_bgm_manager(state: &mut AppState, dt: Duration) {
     }
 }
 
+/// Mirror reflection plane coordinate along X in `er01.map` (`PlayerSetReverseMode` at `0x24c190`: `mirror_mode = 0`, `wall_pos = -20000.0`).
+const ER01_MIRROR_WALL_X: f32 = -20000.0;
+
+/// Reflects a 4x4 row-major skinning matrix across the vertical mirror plane `X = wall_x`.
+#[inline]
+fn reflect_skin_matrix_across_x(m: [[f32; 4]; 4], wall_x: f32) -> [[f32; 4]; 4] {
+    let mut refl = m;
+    refl[0][0] = -m[0][0];
+    refl[0][1] = -m[0][1];
+    refl[0][2] = -m[0][2];
+    refl[0][3] = 2.0 * wall_x - m[0][3];
+    refl
+}
+
 fn step_cutscene_player(
     state: &mut AppState,
     dt: Duration,
@@ -295,12 +310,18 @@ fn step_cutscene_player(
 
     if !is_paused {
         let subs_enabled = state.menu_ctrl.options_menu.draft_config.game.subtitles;
+        let voice_pos_secs = state
+            .audio_engine
+            .as_ref()
+            .and_then(|eng| eng.voice_playback_position_secs());
         let mut voice_afs_to_play = None;
         let mut stop_voice_now = false;
         let mut finished_handoff = None;
 
         if let Some(ref mut session) = state.drama_demo_session {
-            session.player.tick(dt.as_secs_f32(), subs_enabled);
+            session
+                .player
+                .tick_with_voice_sync(dt.as_secs_f32(), subs_enabled, voice_pos_secs);
             if session.player.pending_voice_trigger {
                 session.player.pending_voice_trigger = false;
                 voice_afs_to_play = session.player.info.voice_afs_index();
@@ -421,6 +442,17 @@ fn update_spotlight_uniforms(
                 cs_light.color[2].max(0.2) * 2.0,
                 outer_cos,
             ],
+        }
+    } else if state.active_test_room == TestRoomKind::RestroomStart
+        && !state.sim_core.scenario.flashlight_on
+    {
+        // In `RestroomStart` (`er01.map`), James has not found the flashlight in Room 205 yet;
+        // provide the overhead sink fluorescent fixture illumination above the mirror (`X = -20000.0, Z = 20429.5`)
+        // so both James and his planar mirror reflection are clearly visible.
+        sh2_renderer::light::SpotlightUniforms {
+            position: [-19200.0, -1950.0, 20429.5, 1.0],
+            direction_inner: [-0.65, 0.76, 0.0, 0.35],
+            color_outer: [1.85, 1.90, 1.80, -0.25],
         }
     } else {
         let light_color = if state.sim_core.scenario.flashlight_on {
@@ -553,6 +585,13 @@ fn evaluate_player_skinning(
             ];
 
             state.skin_matrices_scratch.reserve(c.skin_scratch.len());
+            state.mirror_skin_matrices_scratch.clear();
+            let build_mirror = state.active_test_room == TestRoomKind::RestroomStart;
+            if build_mirror {
+                state
+                    .mirror_skin_matrices_scratch
+                    .reserve(c.skin_scratch.len());
+            }
             for m_skin in &c.skin_scratch {
                 let mut combined = [[0.0; 4]; 4];
                 for r in 0..4 {
@@ -564,6 +603,103 @@ fn evaluate_player_skinning(
                     }
                 }
                 state.skin_matrices_scratch.push(combined);
+                if build_mirror {
+                    state
+                        .mirror_skin_matrices_scratch
+                        .push(reflect_skin_matrix_across_x(combined, ER01_MIRROR_WALL_X));
+                }
+            }
+        }
+    }
+}
+
+fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
+    let build_mirror = state.active_test_room == TestRoomKind::RestroomStart;
+    let Some(ref mut session) = state.drama_demo_session else {
+        return;
+    };
+    if !session.player.locks_gameplay_input() {
+        return;
+    }
+
+    let scene_frame = session.player.scene_frame.max(0.0);
+    for (idx, (actor, asset_opt)) in session
+        .player
+        .actors
+        .iter()
+        .zip(session.actor_assets.iter_mut())
+        .enumerate()
+    {
+        let Some(ref mut asset) = asset_opt else {
+            continue;
+        };
+        if !actor.visible {
+            continue;
+        }
+
+        // 1. Evaluate `.cls` facial morph cluster weights & upload morphed vertices if present (`clani.c`)
+        if let Some(ref cls) = asset.cls {
+            cls.evaluate_global_frame_into(scene_frame, false, &mut asset.cluster_weights_scratch);
+            asset.model.apply_cluster_weights_into(
+                &asset.cluster_weights_scratch,
+                &mut asset.morphed_positions_scratch,
+            );
+            asset.gpu_mesh.update_morphed_positions(
+                &state.render_ctx.queue,
+                &asset.model,
+                &asset.morphed_positions_scratch,
+                &mut asset.gpu_vertex_scratch,
+            );
+        }
+
+        // 2. Evaluate `.anm` skeletal bone transforms at `scene_frame`
+        let frame_count = asset.anm.frames.len();
+        if frame_count == 0 {
+            continue;
+        }
+        let f0 = (scene_frame.floor() as usize).min(frame_count - 1);
+        let f1 = (f0 + 1).min(frame_count - 1);
+        let frac = scene_frame.fract();
+
+        interpolate_frames_into(
+            &asset.anm.frames[f0],
+            &asset.anm.frames[f1],
+            frac,
+            &mut asset.frame_scratch_a,
+        );
+        evaluate_pose_into(
+            &asset.model.parents,
+            &asset.bind_locals,
+            &asset.frame_scratch_a,
+            &mut asset.pose_scratch,
+        );
+        compute_skin_matrices_with_inv_into(
+            &asset.pose_scratch,
+            &asset.model.inv_initial_matrices,
+            &mut asset.skin_scratch,
+        );
+
+        let world_mat = actor.world_matrix_row_major();
+        if let Some(mirror_buf) = session.actor_mirror_skin_scratch.get_mut(idx) {
+            mirror_buf.clear();
+            if build_mirror {
+                mirror_buf.reserve(asset.skin_scratch.len());
+            }
+        }
+        for m_skin in &mut asset.skin_scratch {
+            let orig = *m_skin;
+            for r in 0..4 {
+                for col in 0..4 {
+                    m_skin[r][col] = world_mat[r][0] * orig[0][col]
+                        + world_mat[r][1] * orig[1][col]
+                        + world_mat[r][2] * orig[2][col]
+                        + world_mat[r][3] * orig[3][col];
+                }
+            }
+            if build_mirror {
+                if let Some(mirror_buf) = session.actor_mirror_skin_scratch.get_mut(idx) {
+                    mirror_buf.push(reflect_skin_matrix_across_x(*m_skin, ER01_MIRROR_WALL_X));
+                }
             }
         }
     }
@@ -674,29 +810,77 @@ fn submit_scene_draw(
     active_enemy_snapshot: Option<EnemySkinSnapshot>,
 ) {
     let mut skeletal_draw = Vec::new();
-    let active_char_ref = if state.active_maria {
-        state.maria.as_ref().or(state.character.as_ref())
-    } else {
-        state.character.as_ref().or(state.maria.as_ref())
-    };
-    if let Some(c) = active_char_ref {
-        if !state.skin_matrices_scratch.is_empty() {
-            skeletal_draw.push((
-                &c.gpu_mesh,
-                state.skin_matrices_scratch.as_slice(),
-                Some(c.texture_bind_groups.as_slice()),
-            ));
-        }
-    }
+    let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart;
+    let cutscene_active = state.drama_demo_session.as_ref().is_some_and(|s| {
+        s.player.locks_gameplay_input() && s.actor_assets.iter().any(|a| a.is_some())
+    });
 
-    if let Some((enemy_id, _, _, _, _)) = active_enemy_snapshot {
-        if let Some(ea) = state.enemy_asset(enemy_id) {
-            if !ea.skin_scratch.is_empty() {
+    if cutscene_active {
+        if let Some(ref session) = state.drama_demo_session {
+            for (idx, (actor, asset_opt)) in session
+                .player
+                .actors
+                .iter()
+                .zip(session.actor_assets.iter())
+                .enumerate()
+            {
+                if !actor.visible {
+                    continue;
+                }
+                if let Some(ref asset) = asset_opt {
+                    if !asset.skin_scratch.is_empty() {
+                        skeletal_draw.push((
+                            &asset.gpu_mesh,
+                            asset.skin_scratch.as_slice(),
+                            Some(asset.texture_bind_groups.as_slice()),
+                        ));
+                        if is_restroom_mirror {
+                            if let Some(mirror_buf) = session.actor_mirror_skin_scratch.get(idx) {
+                                if !mirror_buf.is_empty() {
+                                    skeletal_draw.push((
+                                        &asset.gpu_mesh,
+                                        mirror_buf.as_slice(),
+                                        Some(asset.texture_bind_groups.as_slice()),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        let active_char_ref = if state.active_maria {
+            state.maria.as_ref().or(state.character.as_ref())
+        } else {
+            state.character.as_ref().or(state.maria.as_ref())
+        };
+        if let Some(c) = active_char_ref {
+            if !state.skin_matrices_scratch.is_empty() {
                 skeletal_draw.push((
-                    &ea.gpu_mesh,
-                    ea.skin_scratch.as_slice(),
-                    Some(ea.texture_bind_groups.as_slice()),
+                    &c.gpu_mesh,
+                    state.skin_matrices_scratch.as_slice(),
+                    Some(c.texture_bind_groups.as_slice()),
                 ));
+                if is_restroom_mirror && !state.mirror_skin_matrices_scratch.is_empty() {
+                    skeletal_draw.push((
+                        &c.gpu_mesh,
+                        state.mirror_skin_matrices_scratch.as_slice(),
+                        Some(c.texture_bind_groups.as_slice()),
+                    ));
+                }
+            }
+        }
+
+        if let Some((enemy_id, _, _, _, _)) = active_enemy_snapshot {
+            if let Some(ea) = state.enemy_asset(enemy_id) {
+                if !ea.skin_scratch.is_empty() {
+                    skeletal_draw.push((
+                        &ea.gpu_mesh,
+                        ea.skin_scratch.as_slice(),
+                        Some(ea.texture_bind_groups.as_slice()),
+                    ));
+                }
             }
         }
     }

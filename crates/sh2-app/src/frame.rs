@@ -161,6 +161,15 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         state.active_test_room = new_room;
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());
+        state.drama_demo_session = None;
+        if let Some(ref mut eng) = state.audio_engine {
+            eng.stop_voice(std::time::Duration::from_millis(30));
+        }
+        state.selected_drama_demo_idx = match new_room {
+            TestRoomKind::RestroomStart => 0,   // `first_toilet` (demo_no = 1)
+            TestRoomKind::ObservationDeck => 1, // `tenbou` (demo_no = 2)
+            _ => state.selected_drama_demo_idx,
+        };
         if new_room == TestRoomKind::CombatArena {
             state.combat_arena = sh2_core::combat::CombatArena::new();
             state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;

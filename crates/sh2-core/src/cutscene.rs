@@ -15,18 +15,19 @@ pub use anim_info::{
 };
 pub use catalog::{
     find_drama_demo_by_id, find_drama_demo_by_no, CutsceneSequenceStep, DramaDemoPlayInfo,
-    SubtitleWindow, DRAMA_DEMO_CATALOG, SUBTITLES_BP_EDI_2, SUBTITLES_DEAI, SUBTITLES_FIRE_AGL,
-    SUBTITLES_FIRST_BATTLE, SUBTITLES_FUKATSU_A, SUBTITLES_GEKIJOU_A, SUBTITLES_GERO_EDI,
-    SUBTITLES_HAKA_AGL, SUBTITLES_HEI_LAU, SUBTITLES_KILLER_EDI, SUBTITLES_KNIFE_AGL,
-    SUBTITLES_MAR_SAIKAI, SUBTITLES_MRY_YARINAOSHI_A, SUBTITLES_PAPA_AGL, SUBTITLES_PIANO_LAU,
-    SUBTITLES_RADIO_GERO, SUBTITLES_TENBOU, SUBTITLES_VTR,
+    SubtitleWindow, DRAMA_DEMO_CATALOG, SUBTITLES_BP_EDI_1, SUBTITLES_BP_EDI_2, SUBTITLES_DEAI,
+    SUBTITLES_FIRE_AGL, SUBTITLES_FIRST_BATTLE, SUBTITLES_FIRST_TOILET, SUBTITLES_FUKATSU_A,
+    SUBTITLES_GEKIJOU_A, SUBTITLES_GERO_EDI, SUBTITLES_HAKA_AGL, SUBTITLES_HEI_LAU,
+    SUBTITLES_KAGIKERI, SUBTITLES_KILLER_EDI, SUBTITLES_KNIFE_AGL, SUBTITLES_MAR_SAIKAI,
+    SUBTITLES_MRY_YARINAOSHI_A, SUBTITLES_PAPA_AGL, SUBTITLES_PIANO_LAU, SUBTITLES_RADIO_GERO,
+    SUBTITLES_TENBOU, SUBTITLES_TOMATTA, SUBTITLES_VTR,
 };
 pub use player::{CutsceneActorRuntime, CutsceneCameraSnapshot, DramaDemoPlayer, DramaDemoStep};
 
 /// Native keyframe rate of Silent Hill 2 `.dds`, `.anm`, and `.cls` cutscene data (30.0 FPS).
 pub const CUTSCENE_NATIVE_FPS: f32 = 30.0;
 
-/// Base stream number offset for `data/sound/adx/voice/voice.afs` (`stream_no = 60001 + afs_index` in 0-based AFS indexing).
+/// Base stream number offset for `data/sound/adx/voice/voice.afs` (`stream_no = 60000 + afs_index` in 0-based AFS indexing).
 pub const VOICE_AFS_STREAM_BASE: i32 = 60000;
 
 #[cfg(test)]
@@ -38,14 +39,14 @@ mod tests {
     fn test_drama_demo_anim_info_table_integrity() {
         assert_eq!(DRAMA_DEMO_ANIM_INFO.len(), 84);
         let jms = find_drama_demo_anim_info("hhh_jms_pos").expect("hhh_jms_pos must exist");
-        assert_eq!(jms.kind_id, 0x0100);
-        assert_eq!(jms.model_id, 2);
-        assert_eq!(jms.start_aid, 1501);
-        assert_eq!(jms.end_aid, 1859);
+        assert_eq!(jms.kind_id, 0x0103);
+        assert_eq!(jms.model_id, 0);
+        assert_eq!(jms.start_aid, 1000);
+        assert_eq!(jms.end_aid, 1165);
 
         let agl = find_drama_demo_anim_info("agl_pos").expect("agl_pos must exist");
-        assert_eq!(agl.kind_id, 0x0D00);
-        assert_eq!(agl.start_aid, 3501);
+        assert_eq!(agl.kind_id, 0x0107);
+        assert_eq!(agl.start_aid, 3500);
         assert_eq!(agl.end_aid, 3531);
 
         let (anm, cls) =
@@ -53,10 +54,10 @@ mod tests {
         assert_eq!(anm, "data/demo/haka_agl/agl.anm");
         assert_eq!(cls.as_deref(), Some("data/demo/haka_agl/agl.cls"));
 
-        let (vtr_anm, vtr_cls) =
-            derive_demo_actor_anm_and_cls_paths("data/demo/vtr/vtr.dds", "hhl_jms_pos");
-        assert_eq!(vtr_anm, "data/demo/vtr/hhh_jms.anm");
-        assert_eq!(vtr_cls.as_deref(), Some("data/demo/vtr/hhh_jms.cls"));
+        let (hei_anm, hei_cls) =
+            derive_demo_actor_anm_and_cls_paths("data/demo/hei_lau/hei_lau_a.dds", "hhl_jms_pos");
+        assert_eq!(hei_anm, "data/demo/hei_lau/hhl_jms.anm");
+        assert_eq!(hei_cls.as_deref(), Some("data/demo/hei_lau/hhl_jms.cls"));
     }
 
     #[test]
@@ -80,7 +81,7 @@ mod tests {
         }
 
         let info = find_drama_demo_by_id("tenbou").expect("tenbou in catalog");
-        assert_eq!(info.voice_afs_index(), Some(0));
+        assert_eq!(info.voice_afs_index(), Some(118));
         let dds_bytes = std::fs::read(&tenbou_path).expect("read tenbou.dds");
         let dds = parse_demo_dds(&dds_bytes).expect("parse tenbou.dds");
 
@@ -93,7 +94,7 @@ mod tests {
         player.tick(750.0 / 30.0, true);
         assert!(player.voice_started);
         assert!(player.pending_voice_trigger);
-        assert_eq!(player.active_subtitle_msg_id, Some(15));
+        assert_eq!(player.active_subtitle_msg_id, Some(7));
         assert!(player.camera.fov_y_radians > 0.1 && player.camera.fov_y_radians < 2.5);
         let view = player.camera.view_matrix();
         assert!(!view.is_nan());

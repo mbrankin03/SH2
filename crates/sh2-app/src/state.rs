@@ -95,6 +95,7 @@ pub(crate) struct AppState {
     pub debug_collision_overlay: bool,
     pub debug_camera_hud: bool,
     pub skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
+    pub mirror_skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
     pub frame_pacer: FramePacer,
     pub last_frame: Instant,
     pub frame_counter: u32,

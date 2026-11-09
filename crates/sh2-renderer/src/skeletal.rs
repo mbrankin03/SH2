@@ -135,6 +135,10 @@ pub struct GpuSkeletalMesh {
     pub index_buffer: wgpu::Buffer,
     pub bone_buffer: wgpu::Buffer,
     pub bone_bind_group: wgpu::BindGroup,
+    /// Secondary bone uniform buffer & bind group used when rendering a planar mirror reflection
+    /// of this skeletal mesh in the same render pass (e.g., `er01.map` Opening Restroom mirror at `X = -20000.0`).
+    pub mirror_bone_buffer: wgpu::Buffer,
+    pub mirror_bone_bind_group: wgpu::BindGroup,
     pub primitives: Vec<GpuSkeletalPrimitive>,
     pub total_indices: u32,
 }
@@ -248,6 +252,21 @@ impl GpuSkeletalMesh {
             }],
         });
 
+        let mirror_bone_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Skeletal Mesh Mirror Bone Uniform Buffer"),
+            contents: bytemuck::bytes_of(&bone_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let mirror_bone_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Skeletal Mesh Mirror Bone Bind Group"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: mirror_bone_buffer.as_entire_binding(),
+            }],
+        });
+
         let total_indices = indices.len() as u32;
 
         Self {
@@ -255,6 +274,8 @@ impl GpuSkeletalMesh {
             index_buffer,
             bone_buffer,
             bone_bind_group,
+            mirror_bone_buffer,
+            mirror_bone_bind_group,
             primitives: prim_batches,
             total_indices,
         }
@@ -264,6 +285,12 @@ impl GpuSkeletalMesh {
     pub fn update_bone_matrices(&self, queue: &wgpu::Queue, matrices: &[[[f32; 4]; 4]]) {
         let uniforms = SkeletonBoneUniforms::from_matrices(matrices);
         queue.write_buffer(&self.bone_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Uploads planar-reflected skinning matrices to the secondary mirror GPU bone uniform buffer.
+    pub fn update_mirror_bone_matrices(&self, queue: &wgpu::Queue, matrices: &[[[f32; 4]; 4]]) {
+        let uniforms = SkeletonBoneUniforms::from_matrices(matrices);
+        queue.write_buffer(&self.mirror_bone_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
     /// Uploads morphed vertex positions (from `.cls` facial cluster weights via

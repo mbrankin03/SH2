@@ -37,255 +37,528 @@ macro_rules! anim_info {
 pub const DRAMA_DEMO_ANIM_INFO: &[DramaDemoAnimInfo; 84] = &[
     anim_info!(
         "hhh_jms_pos",
-        0x0100,
-        2,
-        1501,
-        1859,
+        0x0103,
+        0,
+        1000,
+        1165,
         "data/chr/jms/hhh_jms.mdl"
     ),
     anim_info!(
         "hhl_jms_pos",
-        0x0100,
-        3,
-        1501,
-        1859,
+        0x0102,
+        0,
+        1166,
+        1187,
         "data/chr/jms/hhl_jms.mdl"
     ),
     anim_info!(
         "hll_jms_pos",
-        0x0100,
-        4,
-        1501,
-        1859,
+        0x0101,
+        0,
+        952,
+        972,
         "data/chr/jms/hll_jms.mdl"
     ),
     anim_info!(
         "lll_jms_pos",
         0x0100,
-        5,
-        1501,
-        1859,
+        0,
+        973,
+        979,
         "data/chr/jms/lll_jms.mdl"
     ),
     anim_info!(
-        "rhhh_jms_pos",
-        0x0100,
-        6,
-        1501,
-        1859,
-        "data/chr/jms/rhhh_jms.mdl"
-    ),
-    anim_info!(
-        "rhll_jms_pos",
-        0x0100,
-        7,
-        1501,
-        1859,
-        "data/chr/jms/rhll_jms.mdl"
-    ),
-    anim_info!(
-        "rlll_jms_pos",
-        0x0100,
-        8,
-        1501,
-        1859,
-        "data/chr/jms/rlll_jms.mdl"
-    ),
-    anim_info!("DJ_pos", 0x0700, 82, 7872, 7875, "data/chr/item/dj.mdl"),
-    anim_info!("scu_pos", 0x0300, 9, 2501, 2515, "data/chr/scu/scu.mdl"),
-    anim_info!("lau_pos", 0x0E00, 23, 4001, 4050, "data/chr/lau/lau.mdl"),
-    anim_info!("rlau_pos", 0x0700, 77, 7864, 7865, "data/chr/item/rlau.mdl"),
-    anim_info!("agl_pos", 0x0D00, 21, 3501, 3531, "data/chr/agl/agl.mdl"),
-    anim_info!("ragl_pos", 0x0D00, 22, 3501, 3531, "data/chr/agl/ragl.mdl"),
-    anim_info!(
         "hhh_mar_pos",
-        0x0200,
-        19,
-        2001,
-        2092,
+        0x0106,
+        0,
+        3000,
+        3052,
         "data/chr/mar/hhh_mar.mdl"
     ),
-    anim_info!(
-        "lll_mar_pos",
-        0x0200,
-        20,
-        2001,
-        2092,
-        "data/chr/mar/lll_mar.mdl"
-    ),
-    anim_info!(
-        "rhhh_mar_pos",
-        0x0700,
-        80,
-        7869,
-        7870,
-        "data/chr/item/rhhh_mar.mdl"
-    ),
+    anim_info!("lll_mar_pos", 0x0105, 0, 42, 46, "data/chr/mar/lll_mar.mdl"),
+    anim_info!("lau_pos", 0x0104, 0, 2500, 2540, "data/chr/lau/lau.mdl"),
     anim_info!(
         "hhh_edi_pos",
-        0x0F00,
-        24,
-        4501,
+        0x0108,
+        0,
+        4503,
         4527,
         "data/chr/edi/hhh_edi.mdl"
     ),
     anim_info!(
         "lll_edi_pos",
-        0x0F00,
-        25,
-        4501,
-        4527,
+        0x0205,
+        0,
+        6801,
+        6801,
         "data/chr/edi/lll_edi.mdl"
     ),
+    anim_info!("agl_pos", 0x0107, 0, 3500, 3531, "data/chr/agl/agl.mdl"),
+    anim_info!("mry_pos", 0x0109, 0, 4002, 4020, "data/chr/mry/mry.mdl"),
+    anim_info!("mxx_pos", 0x010A, 0, 4102, 4110, "data/chr/mxx/mxx.mdl"),
+    anim_info!("inu_pos", 0x010D, 0, 4901, 4902, "data/chr/item/inu.mdl"),
+    anim_info!("boat_pos", 0x010B, 0, 56, 58, "data/chr/boat/boat.mdl"),
+    anim_info!("scu_pos", 0x0200, 0, 6003, 6009, "data/chr/scu/scu.mdl"),
+    anim_info!("pap_pos", 0x0204, 0, 6602, 6607, "data/chr/pap/pap.mdl"),
+    anim_info!("red_pos", 0x0208, 0, 6300, 6349, "data/chr/red/red.mdl"),
+    anim_info!("mkn_1_pos", 0x0201, 0, 6102, 6104, "data/chr/mkn/mkn.mdl"),
+    anim_info!("mkn_2_pos", 0x0201, 1, 6105, 6107, "data/chr/mkn/mkn.mdl"),
+    anim_info!("ike_1_pos", 0x0203, 0, 6502, 6506, "data/chr/ike/ike.mdl"),
+    anim_info!("ike_2_pos", 0x0203, 1, 6507, 6511, "data/chr/ike/ike.mdl"),
+    anim_info!("oni_pos", 0x0209, 0, 6352, 6353, "data/chr/oni/oni.mdl"),
+    anim_info!("oni_1_pos", 0x0209, 0, 6354, 6356, "data/chr/oni/oni.mdl"),
+    anim_info!("oni_2_pos", 0x0209, 1, 6357, 6359, "data/chr/oni/oni.mdl"),
+    anim_info!("bos_pos", 0x0206, 0, 6701, 6720, "data/chr/bos/bos.mdl"),
+    anim_info!("dmr_pos", 0x0425, 0, 10163, 10164, "data/chr/item/dmr.mdl"),
+    anim_info!("dm2_pos", 0x042B, 0, 10165, 10166, "data/chr/item/dm2.mdl"),
     anim_info!(
-        "rhhh_edi_pos",
-        0x0F00,
-        26,
-        4501,
-        4527,
-        "data/chr/edi/rhhh_edi.mdl"
+        "i_keycou_pos",
+        0x0402,
+        0,
+        10001,
+        10001,
+        "data/chr/item/i_keycou.mdl"
     ),
-    anim_info!("mry_pos", 0x1000, 27, 5001, 5055, "data/chr/mry/mry.mdl"),
-    anim_info!("rmry_pos", 0x0700, 78, 7866, 7866, "data/chr/item/rmry.mdl"),
-    anim_info!("oni_pos", 0x0300, 13, 3001, 3003, "data/chr/oni/oni.mdl"),
-    anim_info!("red_pos", 0x0A00, 12, 3001, 3022, "data/chr/red/red.mdl"),
-    anim_info!("pap_pos", 0x0C00, 17, 3301, 3307, "data/chr/pap/pap.mdl"),
-    anim_info!("bos_pos", 0x1100, 18, 3401, 3403, "data/chr/bos/bos.mdl"),
-    anim_info!("tyu_pos", 0x0600, 15, 3101, 3106, "data/chr/tyu/tyu.mdl"),
-    anim_info!("mkn_pos", 0x0500, 11, 2901, 2909, "data/chr/mkn/mkn.mdl"),
-    anim_info!("ike_pos", 0x0B00, 16, 3201, 3202, "data/chr/ike/ike.mdl"),
     anim_info!(
-        "p_light_pos",
-        0x0700,
-        28,
-        7501,
-        7516,
-        "data/chr/item/p_light.mdl"
+        "i_radio_pos",
+        0x0403,
+        0,
+        10002,
+        10018,
+        "data/chr/item/i_radio.mdl"
+    ),
+    anim_info!(
+        "i_kakuzai_pos",
+        0x0404,
+        0,
+        10019,
+        10024,
+        "data/chr/item/i_kakuzai.mdl"
+    ),
+    anim_info!(
+        "i_flight_pos",
+        0x0407,
+        0,
+        10035,
+        10040,
+        "data/chr/item/i_flight.mdl"
+    ),
+    anim_info!(
+        "i_bear_pos",
+        0x0405,
+        0,
+        10025,
+        10030,
+        "data/chr/item/i_bear.mdl"
+    ),
+    anim_info!(
+        "i_bear2_pos",
+        0x0406,
+        0,
+        10031,
+        10034,
+        "data/chr/item/i_bear2.mdl"
+    ),
+    anim_info!(
+        "i_letter_pos",
+        0x0408,
+        0,
+        10041,
+        10048,
+        "data/chr/item/i_letter.mdl"
+    ),
+    anim_info!(
+        "i_handgun_pos",
+        0x040D,
+        0,
+        10064,
+        10066,
+        "data/chr/item/i_handgun.mdl"
+    ),
+    anim_info!(
+        "i_magazine_pos",
+        0x040E,
+        0,
+        10067,
+        10069,
+        "data/chr/item/i_magazine.mdl"
+    ),
+    anim_info!(
+        "i_lring_pos",
+        0x040F,
+        0,
+        10075,
+        10076,
+        "data/chr/item/i_lring.mdl"
+    ),
+    anim_info!(
+        "i_purse_pos",
+        0x0416,
+        0,
+        10096,
+        10096,
+        "data/chr/item/i_purse.mdl"
+    ),
+    anim_info!(
+        "i_j_light_pos",
+        0x0418,
+        0,
+        10100,
+        10112,
+        "data/chr/item/i_j_light.mdl"
+    ),
+    anim_info!(
+        "i_keyspe_pos",
+        0x0417,
+        0,
+        10097,
+        10099,
+        "data/chr/item/i_keyspe.mdl"
+    ),
+    anim_info!(
+        "i_mtablet_1_pos",
+        0x041B,
+        0,
+        10122,
+        10123,
+        "data/chr/item/i_mtablet.mdl"
+    ),
+    anim_info!(
+        "i_mtablet_2_pos",
+        0x041B,
+        1,
+        10124,
+        10125,
+        "data/chr/item/i_mtablet.mdl"
+    ),
+    anim_info!(
+        "i_mdrug_pos",
+        0x041A,
+        0,
+        10120,
+        10121,
+        "data/chr/item/i_mdrug.mdl"
+    ),
+    anim_info!(
+        "i_needle_pos",
+        0x041D,
+        0,
+        10126,
+        10126,
+        "data/chr/item/i_needle.mdl"
+    ),
+    anim_info!(
+        "i_keyelevator_p",
+        0x041E,
+        0,
+        10127,
+        10127,
+        "data/chr/item/i_keyelevator.mdl"
+    ),
+    anim_info!(
+        "i_key_clock_pos",
+        0x041F,
+        0,
+        10129,
+        10131,
+        "data/chr/item/i_key_clock.mdl"
+    ),
+    anim_info!(
+        "i_photo_pos",
+        0x0424,
+        0,
+        10150,
+        10159,
+        "data/chr/item/i_photo.mdl"
+    ),
+    anim_info!(
+        "i_knife_pos",
+        0x0423,
+        0,
+        10140,
+        10149,
+        "data/chr/item/i_knife.mdl"
+    ),
+    anim_info!(
+        "i_juice_pos",
+        0x042D,
+        0,
+        10188,
+        10188,
+        "data/chr/item/i_juice.mdl"
+    ),
+    anim_info!(
+        "i_video_pos",
+        0x0432,
+        0,
+        10220,
+        10220,
+        "data/chr/item/i_video.mdl"
+    ),
+    anim_info!(
+        "i_colt_pos",
+        0x042A,
+        0,
+        10175,
+        10187,
+        "data/chr/item/i_colt.mdl"
+    ),
+    anim_info!(
+        "i_hari_pos",
+        0x0430,
+        0,
+        10213,
+        10214,
+        "data/chr/item/i_hari.mdl"
+    ),
+    anim_info!(
+        "i_letterm_pos",
+        0x0433,
+        0,
+        10228,
+        10240,
+        "data/chr/item/i_letterm.mdl"
+    ),
+    anim_info!(
+        "i_headphone_pos",
+        0x0434,
+        0,
+        10246,
+        10246,
+        "data/chr/item/i_headphone.mdl"
+    ),
+    anim_info!(
+        "b_tel_pos",
+        0x0409,
+        0,
+        10049,
+        10054,
+        "data/chr/item/b_tel.mdl"
     ),
     anim_info!(
         "b_d00_pos",
-        0x0700,
-        29,
-        7517,
-        7541,
+        0x040A,
+        0,
+        10055,
+        10060,
         "data/chr/item/b_d00.mdl"
     ),
     anim_info!(
-        "b_s07_pos",
-        0x0700,
-        30,
-        7542,
-        7544,
-        "data/chr/item/b_s07.mdl"
+        "b_d01_pos",
+        0x0419,
+        0,
+        10113,
+        10119,
+        "data/chr/item/b_d01.mdl"
+    ),
+    anim_info!(
+        "b_d02_pos",
+        0x0412,
+        0,
+        10085,
+        10094,
+        "data/chr/item/b_d02.mdl"
+    ),
+    anim_info!(
+        "b_d03_pos",
+        0x0410,
+        0,
+        10077,
+        10078,
+        "data/chr/item/b_d03.mdl"
+    ),
+    anim_info!(
+        "b_d05_pos",
+        0x0420,
+        0,
+        10132,
+        10134,
+        "data/chr/item/b_d05.mdl"
+    ),
+    anim_info!(
+        "b_rei_pos",
+        0x040B,
+        0,
+        10070,
+        10072,
+        "data/chr/item/b_rei.mdl"
+    ),
+    anim_info!(
+        "b_doo_pos",
+        0x040C,
+        0,
+        10061,
+        10063,
+        "data/chr/item/b_doo.mdl"
+    ),
+    anim_info!(
+        "b_pia_pos",
+        0x0411,
+        0,
+        10079,
+        10084,
+        "data/chr/item/b_pia.mdl"
+    ),
+    anim_info!(
+        "b_ami_pos",
+        0x0414,
+        0,
+        10095,
+        10095,
+        "data/chr/item/b_ami.mdl"
+    ),
+    anim_info!(
+        "b_rop_pos",
+        0x041C,
+        6,
+        10128,
+        10128,
+        "data/chr/item/b_rop.mdl"
+    ),
+    anim_info!(
+        "b_clo_pos",
+        0x0422,
+        0,
+        10136,
+        10139,
+        "data/chr/item/b_clo.mdl"
+    ),
+    anim_info!(
+        "b_tan_pos",
+        0x0427,
+        0,
+        10215,
+        10216,
+        "data/chr/item/b_tan.mdl"
+    ),
+    anim_info!(
+        "b_dor_pos",
+        0x042C,
+        0,
+        10217,
+        10219,
+        "data/chr/item/b_dor.mdl"
+    ),
+    anim_info!(
+        "b_d08_pos",
+        0x0431,
+        0,
+        10189,
+        10196,
+        "data/chr/item/b_d08.mdl"
+    ),
+    anim_info!(
+        "b_piz_pos",
+        0x042E,
+        0,
+        10197,
+        10204,
+        "data/chr/item/b_piz.mdl"
+    ),
+    anim_info!(
+        "b_bol_pos",
+        0x042F,
+        0,
+        10205,
+        10212,
+        "data/chr/item/b_bol.mdl"
+    ),
+    anim_info!(
+        "b_ori_pos",
+        0x043A,
+        0,
+        10221,
+        10221,
+        "data/chr/item/b_ori.mdl"
+    ),
+    anim_info!(
+        "b_d06_pos",
+        0x0429,
+        0,
+        10167,
+        10170,
+        "data/chr/item/b_d06.mdl"
+    ),
+    anim_info!(
+        "b_sti_pos",
+        0x0437,
+        0,
+        10171,
+        10174,
+        "data/chr/item/b_sti.mdl"
     ),
     anim_info!(
         "b_d10_pos",
-        0x0700,
-        31,
-        7545,
-        7550,
+        0x0438,
+        0,
+        10222,
+        10227,
         "data/chr/item/b_d10.mdl"
     ),
-    anim_info!("nad_pos", 0x0700, 32, 7551, 7554, "data/chr/item/nad.mdl"),
     anim_info!(
-        "b_c01_pos",
-        0x0700,
-        33,
-        7555,
-        7561,
-        "data/chr/item/b_c01.mdl"
-    ),
-    anim_info!("c12_pos", 0x0700, 34, 7562, 7565, "data/chr/item/c12.mdl"),
-    anim_info!("d22_pos", 0x0700, 35, 7566, 7582, "data/chr/item/d22.mdl"),
-    anim_info!("e02_pos", 0x0700, 36, 7583, 7589, "data/chr/item/e02.mdl"),
-    anim_info!("f09_pos", 0x0700, 37, 7590, 7595, "data/chr/item/f09.mdl"),
-    anim_info!("g05_pos", 0x0700, 38, 7596, 7606, "data/chr/item/g05.mdl"),
-    anim_info!("h03_pos", 0x0700, 39, 7607, 7609, "data/chr/item/h03.mdl"),
-    anim_info!("i02_pos", 0x0700, 40, 7610, 7617, "data/chr/item/i02.mdl"),
-    anim_info!("j00_pos", 0x0700, 41, 7618, 7620, "data/chr/item/j00.mdl"),
-    anim_info!("k00_pos", 0x0700, 42, 7621, 7627, "data/chr/item/k00.mdl"),
-    anim_info!("l08_pos", 0x0700, 43, 7628, 7632, "data/chr/item/l08.mdl"),
-    anim_info!("m02_pos", 0x0700, 44, 7633, 7651, "data/chr/item/m02.mdl"),
-    anim_info!("n02_pos", 0x0700, 45, 7652, 7660, "data/chr/item/n02.mdl"),
-    anim_info!("o00_pos", 0x0700, 46, 7661, 7679, "data/chr/item/o00.mdl"),
-    anim_info!("p06_pos", 0x0700, 47, 7680, 7681, "data/chr/item/p06.mdl"),
-    anim_info!("q09_pos", 0x0700, 48, 7682, 7687, "data/chr/item/q09.mdl"),
-    anim_info!("r01_pos", 0x0700, 49, 7688, 7697, "data/chr/item/r01.mdl"),
-    anim_info!("s00_pos", 0x0700, 50, 7698, 7707, "data/chr/item/s00.mdl"),
-    anim_info!("t05_pos", 0x0700, 51, 7708, 7716, "data/chr/item/t05.mdl"),
-    anim_info!("u04_pos", 0x0700, 52, 7717, 7724, "data/chr/item/u04.mdl"),
-    anim_info!("v09_pos", 0x0700, 53, 7725, 7734, "data/chr/item/v09.mdl"),
-    anim_info!("w03_pos", 0x0700, 54, 7735, 7742, "data/chr/item/w03.mdl"),
-    anim_info!("x02_pos", 0x0700, 55, 7743, 7755, "data/chr/item/x02.mdl"),
-    anim_info!("y08_pos", 0x0700, 56, 7756, 7760, "data/chr/item/y08.mdl"),
-    anim_info!("z00_pos", 0x0700, 57, 7761, 7764, "data/chr/item/z00.mdl"),
-    anim_info!("z06_pos", 0x0700, 58, 7765, 7774, "data/chr/item/z06.mdl"),
-    anim_info!("ed2_pos", 0x0700, 59, 7775, 7777, "data/chr/item/ed2.mdl"),
-    anim_info!("org_pos", 0x0700, 60, 7778, 7786, "data/chr/item/org.mdl"),
-    anim_info!("piz_pos", 0x0700, 61, 7787, 7792, "data/chr/item/piz.mdl"),
-    anim_info!("x13_pos", 0x0700, 62, 7793, 7802, "data/chr/item/x13.mdl"),
-    anim_info!("c06_pos", 0x0700, 63, 7803, 7804, "data/chr/item/c06.mdl"),
-    anim_info!("m03_pos", 0x0700, 64, 7805, 7811, "data/chr/item/m03.mdl"),
-    anim_info!("fg_pos", 0x0700, 65, 7812, 7816, "data/chr/item/fg.mdl"),
-    anim_info!("l06_pos", 0x0700, 66, 7817, 7824, "data/chr/item/l06.mdl"),
-    anim_info!(
-        "b_a04_pos",
-        0x0700,
-        67,
-        7825,
-        7826,
-        "data/chr/item/b_a04.mdl"
-    ),
-    anim_info!("tl_pos", 0x0700, 68, 7827, 7830, "data/chr/item/tl.mdl"),
-    anim_info!(
-        "b_bol_pos",
-        0x0700,
-        69,
-        7831,
-        7835,
-        "data/chr/item/b_bol.mdl"
-    ),
-    anim_info!("kum_pos", 0x0700, 70, 7836, 7843, "data/chr/item/kum.mdl"),
-    anim_info!("ls_pos", 0x0700, 71, 7844, 7847, "data/chr/item/ls.mdl"),
-    anim_info!("v08_pos", 0x0700, 72, 7848, 7850, "data/chr/item/v08.mdl"),
-    anim_info!("n01_pos", 0x0700, 73, 7851, 7853, "data/chr/item/n01.mdl"),
-    anim_info!("c54_pos", 0x0700, 74, 7854, 7857, "data/chr/item/c54.mdl"),
-    anim_info!("r99_pos", 0x0700, 75, 7858, 7860, "data/chr/item/r99.mdl"),
-    anim_info!("x22_pos", 0x0700, 76, 7861, 7863, "data/chr/item/x22.mdl"),
-    anim_info!(
-        "b_dt0_pos",
-        0x0700,
-        79,
-        7867,
-        7868,
-        "data/chr/item/b_dt0.mdl"
-    ),
-    anim_info!("c16_pos", 0x0700, 81, 7871, 7871, "data/chr/item/c16.mdl"),
-    anim_info!(
-        "rlll_mar_pos",
-        0x0700,
-        83,
-        7876,
-        7878,
-        "data/chr/item/rlll_mar.mdl"
-    ),
-    anim_info!("mxx_pos", 0x1000, 84, 5001, 5055, "data/chr/mxx/mxx.mdl"),
-    anim_info!("c91_pos", 0x0700, 85, 7879, 7886, "data/chr/item/c91.mdl"),
-    anim_info!(
-        "wp_wall_pos",
-        0x0700,
-        86,
-        7887,
-        7892,
-        "data/chr2/item/wp_wall.mdl"
+        "b_hul_pos",
+        0x0435,
+        0,
+        10242,
+        10243,
+        "data/chr/item/b_hul.mdl"
     ),
     anim_info!(
-        "ri02_pos",
-        0x0700,
-        87,
-        7893,
-        7898,
-        "data/chr2/item/ri02.mdl"
+        "b_cha_pos",
+        0x0436,
+        0,
+        10244,
+        10245,
+        "data/chr/item/b_cha.mdl"
+    ),
+    anim_info!("mx2_pos", 0x0439, 0, 10241, 10241, "data/chr/item/mx2.mdl"),
+    anim_info!(
+        "b_do4_pos",
+        0x0426,
+        0,
+        10160,
+        10162,
+        "data/chr/item/b_do4.mdl"
+    ),
+    anim_info!(
+        "b_d1x_pos",
+        0x043B,
+        0,
+        10253,
+        10265,
+        "data/chr2/item/b_d1x.mdl"
+    ),
+    anim_info!(
+        "b_d8x_pos",
+        0x043D,
+        0,
+        10276,
+        10281,
+        "data/chr2/item/b_d8x.mdl"
+    ),
+    anim_info!(
+        "bdcard_pos",
+        0x043F,
+        0,
+        10247,
+        10252,
+        "data/chr2/item/bdcard.mdl"
+    ),
+    anim_info!(
+        "i_oil_pos",
+        0x043E,
+        0,
+        10266,
+        10271,
+        "data/chr2/item/i_oil.mdl"
+    ),
+    anim_info!(
+        "i_revo_pos",
+        0x0440,
+        0,
+        10272,
+        10275,
+        "data/chr2/item/i_revo.mdl"
     ),
 ];
 
@@ -310,21 +583,29 @@ pub fn derive_demo_actor_anm_and_cls_paths(
         .rsplit_once('/')
         .map(|(d, _)| d)
         .unwrap_or("data/demo");
-    let stem = actor_name
-        .trim_matches('\0')
-        .trim()
+    let trimmed = actor_name.trim_matches('\0').trim();
+    let stem_raw = trimmed
         .strip_suffix("_pos")
-        .unwrap_or(actor_name);
-    // High-LOD cutscene `.anm`/`.cls` files for `hhl_jms_pos` are named `hhh_jms.anm`/`hhh_jms.cls` inside demo folders
-    let file_stem = if stem.eq_ignore_ascii_case("hhl_jms") {
-        "hhh_jms"
-    } else {
-        stem
-    };
+        .or_else(|| trimmed.strip_suffix("_p"))
+        .unwrap_or(trimmed);
+    // Multi-instance actors (`mkn_1_pos`, `ike_2_pos`, `oni_1_pos`, `i_mtablet_1_pos`) share a single `.anm` stem
+    let file_stem = stem_raw
+        .strip_suffix("_1")
+        .or_else(|| stem_raw.strip_suffix("_2"))
+        .unwrap_or(stem_raw);
     let anm_path = format!("{dir}/{file_stem}.anm");
     let has_cls = matches!(
         file_stem,
-        "hhh_jms" | "hhh_mar" | "agl" | "ragl" | "hhh_edi" | "rhhh_edi" | "lau" | "mry" | "mxx"
+        "hhh_jms"
+            | "hhl_jms"
+            | "hhh_mar"
+            | "agl"
+            | "ragl"
+            | "hhh_edi"
+            | "rhhh_edi"
+            | "lau"
+            | "mry"
+            | "mxx"
     );
     let cls_path = has_cls.then(|| format!("{dir}/{file_stem}.cls"));
     (anm_path, cls_path)

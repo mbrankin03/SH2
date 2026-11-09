@@ -823,6 +823,14 @@ impl AudioEngine {
             .is_some_and(|h| h.state() == kira::sound::PlaybackState::Playing)
     }
 
+    /// Returns the current playback position in seconds of the active cutscene voice stream, if playing (`SH2-63`).
+    pub fn voice_playback_position_secs(&self) -> Option<f32> {
+        self.active_voice_handle
+            .as_ref()
+            .filter(|h| h.state() == kira::sound::PlaybackState::Playing)
+            .map(|h| h.position() as f32)
+    }
+
     /// Applies or releases volume ducking on the BGM track.
     fn apply_ducking(&mut self, ducked: bool) {
         if let Some(ref mut track) = self.bgm_track {

@@ -283,13 +283,13 @@ fn render_cutscene_telemetry_and_subtitles(
             .collect();
         state.menu_rasterizer.draw_text(
             &format!(
-                "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° | ROLL {:.2} rad | [Esc/Enter/G] Skip  [,/.] Prev/Next",
+                "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} (MSG {:04.0}) | FOV {:.1}° | [Esc/Enter/G] Skip  [,/.] Prev/Next",
                 p.info.demo_no,
                 p.info.title,
                 p.scene_frame.floor(),
                 p.total_frames(),
+                p.msg_frame.floor(),
                 p.camera.fov_y_radians.to_degrees(),
-                p.camera.roll_radians
             ),
             20,
             575,

@@ -35,10 +35,10 @@ pub(super) fn tick_and_render_combat_arena_3d(
         0
     };
 
-    // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63`) or sub-frame gameplay camera
+    // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63` / `SH2-77`) or sub-frame gameplay camera
     let alpha = state.sim_core.interpolation_alpha();
     let (cutscene_camera_override, cutscene_light_override) =
-        step_cutscene_player(state, dt, is_paused);
+        step_cutscene_player(state, dt, aspect, is_paused);
 
     update_camera_uniforms(state, aspect, alpha, cutscene_camera_override);
 
@@ -303,6 +303,7 @@ fn reflect_skin_matrix_across_x(m: [[f32; 4]; 4], wall_x: f32) -> [[f32; 4]; 4] 
 fn step_cutscene_player(
     state: &mut AppState,
     dt: Duration,
+    aspect: f32,
     is_paused: bool,
 ) -> (Option<CutsceneCameraSnapshot>, Option<DemoLightState>) {
     let mut cutscene_camera_override = None;
@@ -319,6 +320,8 @@ fn step_cutscene_player(
         let mut finished_handoff = None;
 
         if let Some(ref mut session) = state.drama_demo_session {
+            let mode = session.player.widescreen_mode;
+            session.player.set_widescreen_config(aspect, mode);
             session
                 .player
                 .tick_with_voice_sync(dt.as_secs_f32(), subs_enabled, voice_pos_secs);
@@ -438,7 +441,16 @@ fn update_spotlight_uniforms(
 ) {
     let (spot_pos, light_dir) = state.sim_core.interpolated_flashlight_ray(alpha);
 
-    let spot_uniforms = if let Some(cs_light) = cutscene_light_override {
+    let spot_uniforms = if state.drama_demo_session.as_ref().is_some_and(|s| {
+        s.player.locks_gameplay_input() && s.player.closet_fix.flashlight_suppressed
+    }) {
+        // SH2:EE ClosetCutscene.cpp:164: suppress flashlight inside Room 307 closet when camera X == -22256.61133f
+        sh2_renderer::light::SpotlightUniforms {
+            position: [spot_pos.x, spot_pos.y, spot_pos.z, 0.0],
+            direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+            color_outer: [0.0, 0.0, 0.0, 0.0],
+        }
+    } else if let Some(cs_light) = cutscene_light_override {
         let l_pos = glam::Vec3::from_array(cs_light.position);
         let l_tgt = glam::Vec3::from_array(cs_light.interest);
         // Evaluate authentic PS2/PC 9-bucket linear distance decay ramp (`DEMO_LIGHT_DECAY_RAMP` at `0x50cff0`)

@@ -14,6 +14,7 @@ pub use atlas_font::{draw_subtitle, AtlasFont, Sh2TextColor};
 pub use button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
 pub use font::TextRasterizer;
 pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
+pub use map::{MapCanvasClipper, MapDescriptor, MapPlayerMarker};
 pub use menu::{
     draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
     MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,

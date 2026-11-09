@@ -269,27 +269,52 @@ fn render_cutscene_telemetry_and_subtitles(
 ) {
     if let Some(ref session) = state.drama_demo_session {
         let p = &session.player;
+        // Render authentic 4:3 pillarbox / letterbox borders (`DisableCutsceneBorders` & `SetBlackPillarBoxes`, `SH2-77`)
+        let border_bars = sh2_core::CutsceneBorderBars::evaluate(
+            state.menu_rasterizer.width as f32,
+            state.menu_rasterizer.height as f32,
+            p.widescreen_mode,
+            p.border_mode,
+        );
+        for bar in border_bars
+            .letterbox_bars
+            .iter()
+            .chain(border_bars.pillarbox_bars.iter())
+        {
+            if bar.is_non_empty() {
+                state.menu_rasterizer.fill_rect(
+                    bar.x0.floor().max(0.0) as usize,
+                    bar.y0.floor().max(0.0) as usize,
+                    bar.width().ceil() as usize,
+                    bar.height().ceil() as usize,
+                    [0, 0, 0, 255],
+                );
+            }
+        }
+
         let actors_str: Vec<String> = p
             .actors
             .iter()
             .map(|a| {
-                format!(
-                    "{}(aid={},vis={})",
-                    a.actor_name,
-                    a.current_aid,
-                    if a.visible { "Y" } else { "N" }
-                )
+                let vis_tag = if a.culled_offscreen_4x3 {
+                    "CULL-4:3"
+                } else if a.visible {
+                    "Y"
+                } else {
+                    "N"
+                };
+                format!("{}(aid={},vis={})", a.actor_name, a.current_aid, vis_tag)
             })
             .collect();
         state.menu_rasterizer.draw_text(
             &format!(
-                "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} (MSG {:04.0}) | FOV {:.1}° | [Esc/Enter/G] Skip  [,/.] Prev/Next",
+                "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [V] Aspect Mode  [Esc/G] Skip  [,/.] Prev/Next",
                 p.info.demo_no,
                 p.info.title,
                 p.scene_frame.floor(),
                 p.total_frames(),
-                p.msg_frame.floor(),
                 p.camera.fov_y_radians.to_degrees(),
+                p.widescreen_mode.label(),
             ),
             20,
             575,

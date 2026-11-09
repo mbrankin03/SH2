@@ -30,13 +30,17 @@
 //!      and `MeetingMariaCutsceneFogCounterTwo` (`1463.0 -> 1460.0`, `0x44B68000`) during `demo_no == 22` (`0x16`, `mar_deai_e`)
 //!      so fog spans `21:9` and `32:9` ultrawide viewports without early cut-off.
 
-use sh2_assets::formats::demo::AUTHORED_4X3_ASPECT;
+use glam::Vec3;
+use sh2_assets::formats::demo::{CutsceneWidescreenMode, AUTHORED_4X3_ASPECT};
 
 /// `demo_no == 2` (`tenbou` / `ob01` Observation Deck monologue).
 pub const CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO: u16 = 2;
 
 /// `demo_no == 14` (`0x0E`, `CS_APT_RPT_CLOSET`, `sankaku1` / `wp_closet` Wood Side Room 307 Closet Cutscene).
 pub const CS_APT_RPT_CLOSET_DEMO_NO: u16 = 14;
+
+/// `demo_no == 20` (`0x14`, `hei_lau` Outdoors: Laura on the Wall).
+pub const CS_OUT_LAURA_ON_WALL_DEMO_NO: u16 = 20;
 
 /// `demo_no == 22` (`0x16`, `mar_deai_e` / `deai` Rosewater Park Meeting Maria Part 2).
 pub const CS_TOWN_WEST_MARIA_MEET_DEMO_NO: u16 = 22;
@@ -350,4 +354,94 @@ pub fn evaluate_meeting_maria_fog_counters(demo_no: u16, scene_frame: f32) -> (b
         scene_frame >= MEETING_MARIA_FOG_COUNTER_ONE_FIXED,
         scene_frame >= MEETING_MARIA_FOG_COUNTER_TWO_FIXED,
     )
+}
+
+// ---------------------------------------------------------------------------
+// 5. Outdoors: Laura on the Wall (`hei_lau`, `demo_no = 20`) Widescreen Entry Walk
+// ---------------------------------------------------------------------------
+
+/// Scene frame (`172.0`) at which James (`hhl_jms_pos`) begins walking in from off-screen left
+/// on widescreen (`16:9`) and ultrawide (`21:9` / `32:9`) viewports in `hei_lau` (`demo_no = 20`).
+pub const HEI_LAU_JAMES_PREROLL_START_FRAME: f32 = 172.0;
+
+/// Scene frame (`240.0`) at which the retail `hei_lau_a.dds` script starts moving James (`hhl_jms_pos`)
+/// from his `4:3` off-screen parking spot `(21835.10, 1393.03, 46492.07)`.
+pub const HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME: f32 = 240.0;
+
+/// Per-frame world velocity (`(-1.54, 0.0, 12.82)` mm/frame) of James (`hhl_jms_pos`) at frame `240.0`
+/// in `hei_lau_a.dds`, used to extrapolate his pre-roll entry walk from `Z = 45620.3` (`x_cam / z_cam = -1.238`,
+/// off-screen left on `16:9` and `21:9`) smoothly into `Z = 46492.07` at frame `240.0` with $C^1$ continuity.
+pub const HEI_LAU_JAMES_WALK_VELOCITY_PER_FRAME: Vec3 = Vec3::new(-1.54, 0.0, 12.82);
+
+/// Evaluated state for James's smooth widescreen entry walk in `hei_lau` (`demo_no == 20`, `SH2-77`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct HeiLauWidescreenEntryState {
+    /// Whether this override applies to the actor (`demo_no == 20` and `hhl_jms_pos` in smart-cull widescreen).
+    pub active: bool,
+    /// When `true` (`scene_frame < 172.0`), James is still off-screen left and should be culled.
+    pub hidden_before_entry: bool,
+    /// Extrapolated world position during the `172.0..240.0` pre-roll walk window.
+    pub position_override: Option<Vec3>,
+    /// Continuous walk-cycle `.anm` frame override (`240.0..257.0`) during the `172.0..240.0` pre-roll walk window.
+    pub anm_frame_override: Option<f32>,
+}
+
+/// Evaluates James's (`hhl_jms_pos`) smooth pre-roll entry walk for `hei_lau` (`demo_no == 20`).
+///
+/// In retail `hei_lau_a.dds`, James is parked stationary at `(21835.10, 1393.03, 46492.07)` (`x_cam / z_cam = -0.844`)
+/// for frames `0..239` and starts walking rightward at frame `240.0`. Because `-0.844` lies inside the
+/// `16:9` (`-0.862`) and `21:9` (`-1.150`) left margin, simply un-culling him at frame `240.0` makes him pop
+/// into thin air inside the frame. Instead, we hide him for `0..172` and walk him smoothly across the left
+/// margin from `Z = 45620.3` (`172.0`) to `Z = 46492.07` (`240.0`) with a continuous walk cycle.
+#[inline]
+pub fn evaluate_hei_lau_widescreen_entry(
+    demo_no: u16,
+    actor_name: &str,
+    scene_frame: f32,
+    widescreen_mode: CutsceneWidescreenMode,
+    viewport_aspect: f32,
+    authored_pos: Vec3,
+) -> HeiLauWidescreenEntryState {
+    if demo_no != CS_OUT_LAURA_ON_WALL_DEMO_NO
+        || !widescreen_mode.uses_smart_offscreen_culling()
+        || viewport_aspect <= AUTHORED_4X3_ASPECT + 1e-3
+    {
+        return HeiLauWidescreenEntryState::default();
+    }
+    let clean = actor_name.trim_matches('\0').trim();
+    if !clean.eq_ignore_ascii_case("hhl_jms_pos") {
+        return HeiLauWidescreenEntryState::default();
+    }
+
+    if scene_frame < HEI_LAU_JAMES_PREROLL_START_FRAME {
+        return HeiLauWidescreenEntryState {
+            active: true,
+            hidden_before_entry: true,
+            position_override: None,
+            anm_frame_override: None,
+        };
+    }
+
+    if scene_frame < HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME {
+        let frames_before = (HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME - scene_frame).max(0.0);
+        let pos = authored_pos - HEI_LAU_JAMES_WALK_VELOCITY_PER_FRAME * frames_before;
+        // Smooth triangle-wave oscillation across the walk step span [240.0 .. 257.0] that lands
+        // at exactly 240.0 when `frames_before == 0.0` (`scene_frame == 240.0`):
+        let cycle_phase = frames_before.rem_euclid(34.0);
+        let walk_frame =
+            HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME + 17.0 - (cycle_phase - 17.0).abs();
+        return HeiLauWidescreenEntryState {
+            active: true,
+            hidden_before_entry: false,
+            position_override: Some(pos),
+            anm_frame_override: Some(walk_frame),
+        };
+    }
+
+    HeiLauWidescreenEntryState {
+        active: true,
+        hidden_before_entry: false,
+        position_override: None,
+        anm_frame_override: None,
+    }
 }

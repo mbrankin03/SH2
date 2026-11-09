@@ -13,7 +13,8 @@ use super::anim_info::{
 use super::catalog::DramaDemoPlayInfo;
 use super::culling::{should_cull_parked_offscreen_actor, ActorBoundingSphere};
 use super::stage_fixes::{
-    evaluate_meeting_maria_fog_counters, ClosetCutsceneFixState, PistonRoomFixState,
+    evaluate_hei_lau_widescreen_entry, evaluate_meeting_maria_fog_counters, ClosetCutsceneFixState,
+    PistonRoomFixState,
 };
 use super::CUTSCENE_NATIVE_FPS;
 
@@ -49,6 +50,9 @@ pub struct CutsceneActorRuntime {
     pub subclip_index: usize,
     /// Continuous 30 FPS animation frame within the current sub-clip (`scene_frame - subclip_start_frame`).
     pub local_anm_frame: f32,
+    /// Optional scene-specific animation frame override (e.g. James's smooth widescreen pre-roll walk cycle
+    /// in `hei_lau` during frames `172.0..240.0`, `SH2-77`).
+    pub anm_frame_override: Option<f32>,
     /// Starting 30 FPS frame offset inside the actor's `.anm` file (accounts for multi-part
     /// cutscenes such as `mar_deai_e`, `papa_agl`, `piano_lau_e`, Laura's 226-frame `piano_lau_a` prefix,
     /// and NPC gameplay base clips prepended to `agl.anm`, `hhh_edi.anm`, `hhh_mar.anm`, `mry.anm`, `bos.anm`).
@@ -61,17 +65,19 @@ pub struct CutsceneActorRuntime {
 
 impl CutsceneActorRuntime {
     /// Returns the continuous global 30 FPS frame index inside the actor's `.anm` file
-    /// (`scene_frame + anm_frame_offset`).
+    /// (`base_frame + anm_frame_offset`).
     #[inline]
     pub fn global_anm_frame(&self, scene_frame: f32) -> f32 {
-        scene_frame.max(0.0) + (self.anm_frame_offset as f32)
+        let base_frame = self.anm_frame_override.unwrap_or(scene_frame.max(0.0));
+        base_frame + (self.anm_frame_offset as f32)
     }
 
     /// Returns the continuous global 30 FPS frame index inside the actor's `.cls` facial morph file
-    /// (`scene_frame + cls_frame_offset`).
+    /// (`base_frame + cls_frame_offset`).
     #[inline]
     pub fn global_cls_frame(&self, scene_frame: f32) -> f32 {
-        scene_frame.max(0.0) + (self.cls_frame_offset as f32)
+        let base_frame = self.anm_frame_override.unwrap_or(scene_frame.max(0.0));
+        base_frame + (self.cls_frame_offset as f32)
     }
 
     /// Computes the 4x4 row-major world transformation matrix for this cutscene actor (`rot_y = PI`, `pos = position`).
@@ -217,6 +223,12 @@ impl DramaDemoPlayer {
                     || clean_actor.eq_ignore_ascii_case("i_letter_pos"))
             {
                 226u16
+            } else if info.dds_path.contains("/sankaku1/")
+                && clean_actor.eq_ignore_ascii_case("mkn_2_pos")
+            {
+                // In `data/demo/sankaku1/mkn.anm` (5,152 frames = 2,576 * 2), `mkn_1_pos` uses
+                // frames [0..2576) and `mkn_2_pos` uses frames [2576..5152).
+                2576u16
             } else {
                 0u16
             };
@@ -309,6 +321,7 @@ impl DramaDemoPlayer {
                 current_aid: start_aid,
                 subclip_index: 0,
                 local_anm_frame: 0.0,
+                anm_frame_override: None,
                 anm_frame_offset,
                 cls_frame_offset,
             });
@@ -648,30 +661,48 @@ impl DramaDemoPlayer {
                 let next_pos =
                     Vec3::from_array(self.evaluator.next.char_positions[idx]) + offset_vec;
 
-                let hidden_by_scene_fix = self.closet_fix.should_hide_actor(&actor.actor_name);
-                let culled_by_frustum = should_cull_parked_offscreen_actor(
+                let hei_lau_entry = evaluate_hei_lau_widescreen_entry(
+                    self.info.demo_no,
+                    &actor.actor_name,
+                    self.scene_frame,
                     self.widescreen_mode,
                     self.viewport_aspect,
-                    script_vis,
-                    self.camera.eye,
-                    self.camera.interest,
-                    self.camera.roll_radians,
-                    fov_y_4x3,
-                    fov_x_4x3,
                     pos,
-                    last_pos,
-                    next_pos,
-                    actor.bounding_sphere,
                 );
+
+                let hidden_by_scene_fix = self.closet_fix.should_hide_actor(&actor.actor_name)
+                    || hei_lau_entry.hidden_before_entry;
+                let culled_by_frustum =
+                    if hei_lau_entry.active && !hei_lau_entry.hidden_before_entry {
+                        // During the smooth widescreen pre-roll entry walk (`172.0..240.0`) and authored
+                        // walk (`240.0..292.0`) in `hei_lau`, keep James visible so he walks seamlessly in.
+                        false
+                    } else {
+                        should_cull_parked_offscreen_actor(
+                            self.widescreen_mode,
+                            self.viewport_aspect,
+                            script_vis,
+                            self.camera.eye,
+                            self.camera.interest,
+                            self.camera.roll_radians,
+                            fov_y_4x3,
+                            fov_x_4x3,
+                            pos,
+                            last_pos,
+                            next_pos,
+                            actor.bounding_sphere,
+                        )
+                    };
 
                 actor.script_visible = script_vis;
                 actor.culled_offscreen_4x3 =
                     script_vis && (hidden_by_scene_fix || culled_by_frustum);
                 actor.visible = script_vis && !actor.culled_offscreen_4x3;
-                actor.position = pos;
+                actor.position = hei_lau_entry.position_override.unwrap_or(pos);
                 actor.yaw_radians = std::f32::consts::PI;
                 actor.subclip_index = subclip_idx;
-                actor.local_anm_frame = local_frame;
+                actor.anm_frame_override = hei_lau_entry.anm_frame_override;
+                actor.local_anm_frame = hei_lau_entry.anm_frame_override.unwrap_or(local_frame);
                 if let Some(info) = actor.anim_info {
                     actor.current_aid = (info.start_aid + (subclip_idx as u16)).min(info.end_aid);
                 }

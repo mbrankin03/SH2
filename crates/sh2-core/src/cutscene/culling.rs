@@ -36,13 +36,28 @@ use super::anim_info::DramaDemoAnimInfo;
 /// an off-screen actor outside the `4:3` frustum is classified as stationary ("parked").
 pub const PARKED_ACTOR_VELOCITY_EPSILON: f32 = 1.5;
 
+/// Default horizontal bounding radius for humanoid cutscene actors (`480.0` mm),
+/// covering outstretched arms, leaning shoulders, and sitting/lying poses near the `4:3` border.
+pub const DEFAULT_HUMANOID_BOUNDING_RADIUS: f32 = 480.0;
+
+/// Default horizontal bounding radius for large boss actors (`520.0` mm).
+pub const DEFAULT_BOSS_BOUNDING_RADIUS: f32 = 520.0;
+
+/// Default horizontal bounding radius for doors, furniture, and room props (`460.0` mm).
+pub const DEFAULT_PROP_BOUNDING_RADIUS: f32 = 460.0;
+
+/// Default horizontal bounding radius for hand-held cutscene items (`250.0` mm).
+pub const DEFAULT_ITEM_BOUNDING_RADIUS: f32 = 250.0;
+
 /// Approximate world-space bounding sphere for a cutscene character or prop model (`SH2-77`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ActorBoundingSphere {
     /// Bounding sphere radius in PS2 world units (mm).
     pub radius: f32,
-    /// Vertical offset in PS2 Y-down world units (mm) from the `.dds` root position to the sphere center
-    /// (e.g. `-850.0` mm for standing humanoids whose root is at floor level `Y = 0`).
+    /// Vertical offset in PS2 Y-down world units (mm) from the `.dds` root position to the sphere center.
+    /// Note: `.dds` `char_positions` are already authored at the character's pelvis/torso elevation
+    /// (`y ≈ -550` mm for standing adults, `-309` mm for sitting Eddie, `-75` mm for lying Angela),
+    /// so `center_y_offset` is `0.0`.
     pub center_y_offset: f32,
 }
 
@@ -56,43 +71,43 @@ impl ActorBoundingSphere {
         {
             // Tall boss / Pyramid Head / Abstract Daddy / Mary Boss
             return Self {
-                radius: 360.0,
-                center_y_offset: -950.0,
+                radius: DEFAULT_BOSS_BOUNDING_RADIUS,
+                center_y_offset: 0.0,
             };
         }
         if clean.eq_ignore_ascii_case("boat_pos") {
             return Self {
-                radius: 600.0,
-                center_y_offset: -300.0,
+                radius: 750.0,
+                center_y_offset: 0.0,
             };
         }
         if let Some(info) = anim_info {
             match info.kind_id {
                 // Humanoid protagonists, NPCs, and monsters (`0x0100..=0x0209`)
                 0x0100..=0x0209 => Self {
-                    radius: 260.0,
-                    center_y_offset: -850.0,
+                    radius: DEFAULT_HUMANOID_BOUNDING_RADIUS,
+                    center_y_offset: 0.0,
                 },
                 // Doors, furniture, and large room props (`b_*`)
                 _ if clean.starts_with("b_") || clean.starts_with("B_") => Self {
-                    radius: 300.0,
-                    center_y_offset: -600.0,
+                    radius: DEFAULT_PROP_BOUNDING_RADIUS,
+                    center_y_offset: 0.0,
                 },
                 // Hand-held items (`i_*`)
                 _ => Self {
-                    radius: 120.0,
-                    center_y_offset: -100.0,
+                    radius: DEFAULT_ITEM_BOUNDING_RADIUS,
+                    center_y_offset: 0.0,
                 },
             }
         } else if clean.starts_with("i_") || clean.starts_with("I_") {
             Self {
-                radius: 120.0,
-                center_y_offset: -100.0,
+                radius: DEFAULT_ITEM_BOUNDING_RADIUS,
+                center_y_offset: 0.0,
             }
         } else {
             Self {
-                radius: 260.0,
-                center_y_offset: -850.0,
+                radius: DEFAULT_HUMANOID_BOUNDING_RADIUS,
+                center_y_offset: 0.0,
             }
         }
     }
@@ -137,46 +152,48 @@ pub fn camera_basis_vectors(eye: Vec3, interest: Vec3, roll_radians: f32) -> (Ve
 }
 
 /// Returns `true` if a world-space bounding sphere `(sphere_center, sphere_radius)` intersects or
-/// lies inside the authored `4:3` camera frustum cone defined by `(eye, interest, roll_radians, fov_y_4x3, fov_x_4x3)`.
+/// lies inside the authored `4:3` horizontal camera frustum cone defined by
+/// `(eye, interest, roll_radians, fov_y_4x3, fov_x_4x3)`.
+///
+/// # Why Only Horizontal `4:3` Planes Are Tested
+/// Widescreen (`16:9`) and ultrawide (`21:9` / `32:9`) Hor+ projection ONLY widens the **horizontal**
+/// field of view (`fov_x > fov_x_4x3`), while preserving the exact `4:3` vertical field of view (`fov_y`).
+/// Furthermore, in close-up or over-the-shoulder shots (`gero_edi`, `knife_agl`, `bp_edi_2`, `papa_agl_a`,
+/// `papa_agl`, `killer_edi`, `piano_lau_e`, `kokuchi`, `mry_yarinaoshi_a`), the camera is placed right next
+/// to an actor's head or shoulder (`|rel| <= 850` mm), where the pelvis root is below or slightly behind
+/// the camera eye while the upper body and head are visible in frame.
 #[inline]
 pub fn is_sphere_inside_4x3_frustum(
     eye: Vec3,
     interest: Vec3,
     roll_radians: f32,
-    fov_y_4x3: f32,
+    _fov_y_4x3: f32,
     fov_x_4x3: f32,
     sphere_center: Vec3,
     sphere_radius: f32,
 ) -> bool {
-    let (right, up, forward) = camera_basis_vectors(eye, interest, roll_radians);
+    let (right, _up, forward) = camera_basis_vectors(eye, interest, roll_radians);
     let rel = sphere_center - eye;
     let z_cam = rel.dot(forward);
+
+    // Never cull immediate foreground / close-up / over-the-shoulder actors within 1,250 mm of the lens,
+    // whose hands, knees, shoulders, or head are in-frame even when their pelvis root is off-axis.
+    if rel.length_squared() <= 1250.0 * 1250.0 && z_cam >= -550.0 {
+        return true;
+    }
+
     if z_cam + sphere_radius <= 0.0 {
         return false;
     }
 
     let x_cam = rel.dot(right).abs();
-    let y_cam = rel.dot(up).abs();
-
     let half_x = (fov_x_4x3 * 0.5).clamp(0.01, std::f32::consts::FRAC_PI_2 - 0.01);
-    let half_y = (fov_y_4x3 * 0.5).clamp(0.01, std::f32::consts::FRAC_PI_2 - 0.01);
-
     let (sin_x, cos_x) = half_x.sin_cos();
-    let (sin_y, cos_y) = half_y.sin_cos();
 
-    // Signed distance outside the left/right 4:3 frustum planes:
-    let dist_outside_x = x_cam * cos_x - z_cam * sin_x;
-    if dist_outside_x > sphere_radius {
-        return false;
-    }
-
-    // Signed distance outside the top/bottom 4:3 frustum planes:
-    let dist_outside_y = y_cam * cos_y - z_cam * sin_y;
-    if dist_outside_y > sphere_radius {
-        return false;
-    }
-
-    true
+    // Signed distance outside the left/right 4:3 horizontal frustum planes:
+    let eff_z = z_cam.max(0.0);
+    let dist_outside_x = x_cam * cos_x - eff_z * sin_x;
+    dist_outside_x <= sphere_radius
 }
 
 /// Evaluates whether a `.dds` cutscene actor should be culled on a widescreen (`16:9`) or ultrawide

@@ -146,7 +146,7 @@ fn test_smart_offscreen_4x3_parked_actor_frustum_culling_at_16x9_21x9_32x9() {
                     (
                         1,
                         DemoCharOp::Position {
-                            values: [2350.0, -150.0, 2000.0],
+                            values: [2650.0, -550.0, 2000.0],
                             is_raw: true,
                         },
                     ),
@@ -154,7 +154,7 @@ fn test_smart_offscreen_4x3_parked_actor_frustum_culling_at_16x9_21x9_32x9() {
                     (
                         2,
                         DemoCharOp::Position {
-                            values: [2120.0, -150.0, 2000.0],
+                            values: [2500.0, -550.0, 2000.0],
                             is_raw: true,
                         },
                     ),
@@ -473,5 +473,146 @@ fn test_disable_cutscene_borders_auto_and_set_black_pillarboxes_21x9_32x9() {
         assert!(vx >= layout_32_9.canvas_left - 1e-3 && vx <= layout_32_9.canvas_right + 1e-3);
         assert!((0.0..=1.0).contains(&u));
     }
+}
+
+#[test]
+fn test_hei_lau_smooth_widescreen_entry_and_catalog_onscreen_actors_preserved() {
+    // 1. Verify `sankaku1` (`demo_no == 14`) uses Wood Side Apt Room 307 (`bg/ap/ap18.map`)
+    let sankaku_info = find_drama_demo_by_id("sankaku1").expect("sankaku1 in catalog");
+    assert_eq!(sankaku_info.stage_map_path, "bg/ap/ap18.map");
+    assert_eq!(sankaku_info.stage_name, "ap18");
+
+    let base = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+    let hei_path = format!("{base}/data/demo/hei_lau/hei_lau_a.dds");
+    if !std::path::Path::new(&hei_path).exists() {
+        return;
+    }
+
+    // 2. Verify `sankaku1` second mannequin (`mkn_2_pos`) has 2576-frame subclip offset in `mkn.anm`
+    let sankaku_dds =
+        parse_demo_dds(&std::fs::read(format!("{base}/{}", sankaku_info.dds_path)).unwrap())
+            .unwrap();
+    let sankaku_player = DramaDemoPlayer::new(*sankaku_info, sankaku_dds, false);
+    let mkn1 = sankaku_player
+        .actors
+        .iter()
+        .find(|a| a.actor_name == "mkn_1_pos")
+        .unwrap();
+    let mkn2 = sankaku_player
+        .actors
+        .iter()
+        .find(|a| a.actor_name == "mkn_2_pos")
+        .unwrap();
+    assert_eq!(mkn1.anm_frame_offset, 0);
+    assert_eq!(mkn2.anm_frame_offset, 2576);
+
+    // 3. Verify `hei_lau` (`demo_no == 20`) smooth widescreen entry walk for James (`hhl_jms_pos`)
+    let hei_info = find_drama_demo_by_id("hei_lau").expect("hei_lau in catalog");
+    let hei_dds = parse_demo_dds(&std::fs::read(&hei_path).unwrap()).unwrap();
+    let mut hei_player = DramaDemoPlayer::new_with_widescreen(
+        *hei_info,
+        hei_dds,
+        ULTRAWIDE_21X9_ASPECT,
+        CutsceneWidescreenMode::UltrawideHorPlusSmartCull,
+    );
+
+    // Before frame 172.0, James is parked off-screen left and hidden, while Laura on the wall is visible
+    hei_player.seek_to_frame(100.0, false);
+    assert!(!hei_player.actors[0].visible);
+    assert!(hei_player.actors[0].culled_offscreen_4x3);
+    assert!(hei_player.actors[1].visible);
+
+    // During frames 172.0..240.0, James is visible and walking smoothly from Z = 45620.3 to Z = 46492.07
+    hei_player.seek_to_frame(172.0, false);
+    assert!(hei_player.actors[0].visible);
+    assert!((hei_player.actors[0].position.z - 45_620.31).abs() < 1.0);
+
+    hei_player.seek_to_frame(206.0, false);
+    assert!(hei_player.actors[0].visible);
+    assert!((hei_player.actors[0].position.z - 46_056.19).abs() < 1.0);
+    let walk_f = hei_player.actors[0].global_anm_frame(206.0);
+    assert!(
+        (240.0..=257.0).contains(&walk_f),
+        "Pre-roll walk frame {walk_f} must oscillate within [240..257]"
+    );
+
+    // C^0 position and animation pose continuity across the 239.9 -> 240.0 hand-off
+    hei_player.seek_to_frame(239.9, false);
+    let pos_239_9 = hei_player.actors[0].position;
+    let anm_239_9 = hei_player.actors[0].global_anm_frame(239.9);
+    hei_player.seek_to_frame(240.0, false);
+    let pos_240_0 = hei_player.actors[0].position;
+    let anm_240_0 = hei_player.actors[0].global_anm_frame(240.0);
+    assert!((pos_240_0 - pos_239_9).length() < 2.0);
+    assert!((anm_240_0 - anm_239_9).abs() < 0.2);
+
+    // 4. Verify on-screen main characters are never falsely culled in close-up / over-the-shoulder shots
+    for (id, frame) in [
+        ("gero_edi", 300.0),
+        ("knife_agl", 200.0),
+        ("bp_edi_1", 100.0),
+        ("mar_saikai", 500.0),
+        ("papa_agl_a", 50.0),
+        ("papa_agl_a", 350.0),
+        ("killer_edi", 400.0),
+        ("radio_gero", 200.0),
+        ("haka_agl", 2300.0),
+    ] {
+        let info = find_drama_demo_by_id(id).unwrap();
+        let dds =
+            parse_demo_dds(&std::fs::read(format!("{base}/{}", info.dds_path)).unwrap()).unwrap();
+        let mut player = DramaDemoPlayer::new_with_widescreen(
+            *info,
+            dds,
+            ULTRAWIDE_21X9_ASPECT,
+            CutsceneWidescreenMode::UltrawideHorPlusSmartCull,
+        );
+        player.seek_to_frame(frame, false);
+        for actor in &player.actors {
+            if actor.script_visible
+                && !actor.actor_name.starts_with("i_")
+                && !actor.actor_name.starts_with("b_")
+                && !actor.actor_name.starts_with("pap_")
+            {
+                assert!(
+                    actor.visible && !actor.culled_offscreen_4x3,
+                    "On-screen actor {} in {id} at frame {frame} must not be culled (pos={:?}, eye={:?}, interest={:?})",
+                    actor.actor_name,
+                    actor.position,
+                    player.camera.eye,
+                    player.camera.interest,
+                );
+            }
+        }
+    }
+
+    // 5. Verify genuinely parked off-screen actors (e.g. Laura in `bp_edi_2` & `vtr`, Boss Mary in `mry_yarinaoshi_a`) ARE culled
+    for (id, frame, parked_offscreen_actor) in [
+        ("bp_edi_2", 200.0, "lau_pos"),
+        ("vtr_s", 100.0, "lau_pos"),
+        ("piano_lau", 10.0, "hhh_jms_pos"),
+        ("mry_yarinaoshi_a", 100.0, "bos_pos"),
+    ] {
+        let info = find_drama_demo_by_id(id).unwrap();
+        let dds =
+            parse_demo_dds(&std::fs::read(format!("{base}/{}", info.dds_path)).unwrap()).unwrap();
+        let mut player = DramaDemoPlayer::new_with_widescreen(
+            *info,
+            dds,
+            ULTRAWIDE_21X9_ASPECT,
+            CutsceneWidescreenMode::UltrawideHorPlusSmartCull,
+        );
+        player.seek_to_frame(frame, false);
+        let actor = player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == parked_offscreen_actor)
+            .unwrap();
+        assert!(
+            actor.culled_offscreen_4x3 && !actor.visible,
+            "Parked off-screen actor {parked_offscreen_actor} in {id} at frame {frame} must be culled"
+        );
+    }
+
     let _ = Vec3::ZERO;
 }

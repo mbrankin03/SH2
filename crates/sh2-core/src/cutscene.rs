@@ -27,7 +27,8 @@ pub use catalog::{
 };
 pub use culling::{
     camera_basis_vectors, is_sphere_inside_4x3_frustum, should_cull_parked_offscreen_actor,
-    ActorBoundingSphere, PARKED_ACTOR_VELOCITY_EPSILON,
+    ActorBoundingSphere, DEFAULT_BOSS_BOUNDING_RADIUS, DEFAULT_HUMANOID_BOUNDING_RADIUS,
+    DEFAULT_ITEM_BOUNDING_RADIUS, DEFAULT_PROP_BOUNDING_RADIUS, PARKED_ACTOR_VELOCITY_EPSILON,
 };
 pub use player::{CutsceneActorRuntime, CutsceneCameraSnapshot, DramaDemoPlayer, DramaDemoStep};
 pub use sh2_assets::formats::demo::{
@@ -36,15 +37,18 @@ pub use sh2_assets::formats::demo::{
     ULTRAWIDE_21X9_ASPECT,
 };
 pub use stage_fixes::{
-    evaluate_meeting_maria_fog_counters, observation_deck_border_alpha_factor,
-    observation_deck_fog_bounds_x, observation_deck_wrap_particle_x, ClosetCutsceneFixState,
-    FinalBossRoomFixState, PistonRoomFixState, CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME,
+    evaluate_hei_lau_widescreen_entry, evaluate_meeting_maria_fog_counters,
+    observation_deck_border_alpha_factor, observation_deck_fog_bounds_x,
+    observation_deck_wrap_particle_x, ClosetCutsceneFixState, FinalBossRoomFixState,
+    HeiLauWidescreenEntryState, PistonRoomFixState, CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME,
     CLOSET_BLURRED_BARS_HIDE_CAM_X, CLOSET_BLURRED_BARS_ORIG_DESPAWN_FRAME,
     CLOSET_DISABLE_FLASHLIGHT_CAM_X, CLOSET_DISABLE_SHADOW_CAM_X,
     CLOSET_MANNEQUIN_FIXED_DESPAWN_FRAME, CLOSET_MANNEQUIN_ORIG_DESPAWN_FRAME,
-    CS_APT_RPT_CLOSET_DEMO_NO, CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO, CS_PS_ANGELA_BOSS_FINISH_DEMO_NO,
-    CS_TOWN_WEST_MARIA_MEET_DEMO_NO, FINAL_BOSS_EXTENDED_DRAW_DISTANCE,
-    FINAL_BOSS_JAMES_ELEVATION_THRESHOLD_Y, FINAL_BOSS_LOWERED_SPAWN_Y,
+    CS_APT_RPT_CLOSET_DEMO_NO, CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO, CS_OUT_LAURA_ON_WALL_DEMO_NO,
+    CS_PS_ANGELA_BOSS_FINISH_DEMO_NO, CS_TOWN_WEST_MARIA_MEET_DEMO_NO,
+    FINAL_BOSS_EXTENDED_DRAW_DISTANCE, FINAL_BOSS_JAMES_ELEVATION_THRESHOLD_Y,
+    FINAL_BOSS_LOWERED_SPAWN_Y, HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME,
+    HEI_LAU_JAMES_PREROLL_START_FRAME, HEI_LAU_JAMES_WALK_VELOCITY_PER_FRAME,
     MEETING_MARIA_FOG_COUNTER_ONE_FIXED, MEETING_MARIA_FOG_COUNTER_ONE_ORIG,
     MEETING_MARIA_FOG_COUNTER_TWO_FIXED, MEETING_MARIA_FOG_COUNTER_TWO_ORIG,
     OBSERVATION_DECK_FOG_BORDER_WIDTH, OBSERVATION_DECK_FOG_PARTICLE_MAX,

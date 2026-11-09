@@ -10,10 +10,12 @@ use crate::animation::{
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
 use crate::collision::{CollisionConfig, CollisionWorld, SurfaceMaterial};
+use crate::events::StageTransitionCommand;
 use crate::input::{ControlScheme, HapticFeedback, InputManager};
 use crate::locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
 };
+use crate::room_loader::{resolve_room_id_for_stage_or_override, stage_room_descriptor};
 use crate::scenario::{ScenarioKind, ScenarioState};
 use crate::timing::{
     lerp_angle_shortest, FlashlightSweepState, RowboatController, TimingConstants,
@@ -74,6 +76,7 @@ impl SimulationCore {
         let init_pos = scenario.player_position;
         let init_yaw = scenario.player_yaw;
         let mut camera = Ps2CameraController::new();
+        camera.load_room_cam(&scenario.current_room, true);
         camera.reset_to_player(init_pos, init_yaw);
 
         let locomotion_clips = match scenario.character {
@@ -125,8 +128,93 @@ impl SimulationCore {
     pub fn select_scenario(&mut self, scenario_kind: ScenarioKind) {
         self.scenario = ScenarioState::new(scenario_kind);
         self.snap_player_transform(self.scenario.player_position, self.scenario.player_yaw);
+        self.camera.load_room_cam(&self.scenario.current_room, true);
         self.camera
             .reset_to_player(self.scenario.player_position, self.scenario.player_yaw);
+    }
+
+    /// Transitions the simulation into `room_or_rel_path` (e.g. `"er01"`, `"ob01"`, `"rr21"`, `"ap01"`, `"ma61"`),
+    /// automatically resolving and ingesting the room's `.cam` trigger volume file (prioritizing SH2:EE
+    /// overrides when `prefer_sh2ee` is `true`), snapping the player transform, and calling
+    /// `camera.reset_to_player(spawn_pos, spawn_yaw)` (`SH2-50`).
+    ///
+    /// Returns `true` if a valid `.cam` file was found and loaded for the destination room.
+    pub fn transition_to_room(
+        &mut self,
+        room_or_rel_path: &str,
+        spawn_pos: Vec3,
+        spawn_yaw: f32,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        self.scenario.set_current_room(room_or_rel_path);
+        self.snap_player_transform(spawn_pos, spawn_yaw);
+        let loaded = self
+            .camera
+            .load_room_cam(&self.scenario.current_room, prefer_sh2ee);
+        self.camera.reset_to_player(spawn_pos, spawn_yaw);
+        loaded
+    }
+
+    /// Transitions to a retail `stage_id` (`1..=58`), updating `ScenarioState`, resolving the
+    /// stage's default (or overridden) `.cam` file, snapping the player transform, and calling
+    /// `camera.reset_to_player(spawn_pos, spawn_yaw)` (`SH2-50`).
+    pub fn transition_stage_with_camera(
+        &mut self,
+        stage_id: u16,
+        stage_name: &'static str,
+        room_override: Option<&str>,
+        spawn_pos: Vec3,
+        spawn_yaw: f32,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        self.scenario
+            .transition_stage(stage_id, stage_name, spawn_pos, spawn_yaw);
+        if let Some(room_id) = resolve_room_id_for_stage_or_override(stage_id, room_override) {
+            self.scenario.current_room = room_id;
+        }
+        self.snap_player_transform(spawn_pos, spawn_yaw);
+        let loaded = self
+            .camera
+            .load_room_cam(&self.scenario.current_room, prefer_sh2ee);
+        self.camera.reset_to_player(spawn_pos, spawn_yaw);
+        loaded
+    }
+
+    /// Applies an `EventExecMove` door/stage transition command (`StageTransitionCommand`),
+    /// updating the active stage and room `.cam` file, snapping player coordinates, and
+    /// immediately resetting the camera to the destination player pose (`SH2-50`).
+    pub fn apply_stage_transition(
+        &mut self,
+        cmd: &StageTransitionCommand,
+        dest_room_override: Option<&str>,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        let spawn_pos = Vec3::from_array(cmd.dest_pos);
+        let spawn_yaw = cmd.dest_rot_y;
+        let target_stage = if cmd.dest_stage != 0 {
+            cmd.dest_stage as u16
+        } else {
+            self.scenario.current_stage
+        };
+        let stage_name = stage_room_descriptor(target_stage)
+            .map(|d| d.stage_name)
+            .unwrap_or(self.scenario.stage_name);
+
+        if cmd.dest_stage != 0 || dest_room_override.is_some() {
+            self.transition_stage_with_camera(
+                target_stage,
+                stage_name,
+                dest_room_override,
+                spawn_pos,
+                spawn_yaw,
+                prefer_sh2ee,
+            )
+        } else {
+            // Intra-room coordinate warp or door cut within the currently loaded room `.cam`
+            self.snap_player_transform(spawn_pos, spawn_yaw);
+            self.camera.reset_to_player(spawn_pos, spawn_yaw);
+            self.camera.cam_file.is_some()
+        }
     }
 
     /// Immediately teleports the player to `position` and `yaw`, resetting previous-tick
@@ -369,6 +457,82 @@ mod tests {
         ));
         if sim.animation.state() == AnimationStateKind::Run3 {
             assert!((sim.animation.effective_fps() - 30.0).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn test_sh2_50_automated_room_cam_switching_and_door_transitions() {
+        use sh2_assets::formats::cam::CamSourceKind;
+
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        if !resolver.data_dir.join("bg/er/er01.cam").exists() {
+            return;
+        }
+
+        // 1. Initial spawn in James's scenario (`er01`) automatically loads `sh2e/bg/er/er01.cam`
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        assert_eq!(sim.scenario.current_room, "er01");
+        assert_eq!(sim.camera.active_room_id.as_deref(), Some("er01"));
+        assert!(sim.camera.cam_file.is_some());
+        if resolver
+            .sh2e_dir
+            .as_ref()
+            .is_some_and(|d| d.join("bg/er/er01.cam").exists())
+        {
+            assert_eq!(
+                sim.camera.active_cam_source,
+                Some(CamSourceKind::Sh2eeOverride)
+            );
+        }
+
+        // 2. Door transition into Observation Deck (`ob01` via `EventExecMove` stage transition)
+        let ob_req = StageTransitionCommand {
+            dest_stage: 3, // Observation Deck (`ob01`)
+            stage_change_mode: 0,
+            is_connected_stage: true,
+            observation_mode: false,
+            dest_pos: [-18000.0, 0.0, 20000.0],
+            dest_rot_y: 1.57,
+        };
+        assert!(sim.apply_stage_transition(&ob_req, None, true));
+        assert_eq!(sim.scenario.current_stage, 3);
+        assert_eq!(sim.scenario.current_room, "ob01");
+        assert_eq!(sim.camera.active_room_id.as_deref(), Some("ob01"));
+        assert_eq!(
+            sim.camera.curr_snapshot.eye,
+            sim.camera.prev_snapshot.eye,
+            "camera.reset_to_player() must snap prev_snapshot == curr_snapshot on room transition"
+        );
+
+        // 3. Direct room transition within an area (`ap01` -> `rr21` -> Maria `ma61`)
+        assert!(sim.transition_to_room("ap01", Vec3::new(0.0, 0.0, 0.0), 0.0, true));
+        assert_eq!(sim.camera.active_room_id.as_deref(), Some("ap01"));
+
+        assert!(sim.transition_to_room(
+            "rr21",
+            Vec3::new(-100850.0, 0.0, -59400.0),
+            2.0,
+            true
+        ));
+        assert_eq!(sim.camera.active_room_id.as_deref(), Some("rr21"));
+        assert_eq!(
+            sim.camera.active_cam_source,
+            Some(CamSourceKind::VanillaRetail)
+        );
+        assert_eq!(sim.camera.curr_snapshot.eye, sim.camera.prev_snapshot.eye);
+
+        // 4. Maria's Born From a Wish Baldwin Mansion (`bg2/ma/ma61.cam` with SH2:EE override)
+        assert!(sim.transition_to_room("ma61", Vec3::new(0.0, 0.0, 0.0), 0.0, true));
+        assert_eq!(sim.camera.active_room_id.as_deref(), Some("ma61"));
+        if resolver
+            .sh2e_dir
+            .as_ref()
+            .is_some_and(|d| d.join("bg2/ma/ma61.cam").exists())
+        {
+            assert_eq!(
+                sim.camera.active_cam_source,
+                Some(CamSourceKind::Sh2eeOverride)
+            );
         }
     }
 }

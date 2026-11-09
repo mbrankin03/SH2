@@ -10,13 +10,15 @@
 use crate::types::camera::CameraState;
 use glam::{Mat4, Quat, Vec3};
 use sh2_assets::formats::cam::{
-    AreaSizeType, CamFile, CamMovementParams, RoadRecord, VC_RD_CAM_LIKE_SETTLE_F, VC_RD_WARP_IN_F,
-    VC_RD_WARP_OUT_F,
+    AreaSizeType, CamFile, CamMovementParams, CamSourceKind, RoadRecord, VC_RD_CAM_LIKE_SETTLE_F,
+    VC_RD_WARP_IN_F, VC_RD_WARP_OUT_F,
 };
+use sh2_assets::AssetPathResolver;
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI};
 
 /// Re-export authentic camera movement types from assets for engine consumers.
 pub use sh2_assets::formats::cam::CamMovementType as CameraMovementType;
+pub use sh2_assets::formats::cam::CamSourceKind as CameraSourceKind;
 
 /// Snapshot of camera transforms for sub-frame alpha interpolation between 60 Hz ticks.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,6 +54,10 @@ pub struct Ps2CameraController {
     pub active_road_index: Option<usize>,
     /// Loaded `.cam` trigger volume definition file for the active room.
     pub cam_file: Option<CamFile>,
+    /// Canonical lowercase room identifier of the currently loaded `.cam` file (e.g. `"er01"`, `"ob01"`, `"rr21"`).
+    pub active_room_id: Option<String>,
+    /// Source pack (`Sh2eeOverride` vs `VanillaRetail`) of the currently loaded `.cam` file (`SH2-50`).
+    pub active_cam_source: Option<CamSourceKind>,
     /// Previous tick snapshot for interpolation.
     pub prev_snapshot: CameraSnapshot,
     /// Current tick snapshot.
@@ -81,6 +87,8 @@ impl Ps2CameraController {
             mv_type: CameraMovementType::Chase,
             active_road_index: None,
             cam_file: None,
+            active_room_id: None,
+            active_cam_source: None,
             prev_snapshot: initial,
             curr_snapshot: initial,
             search_yaw_offset: 0.0,
@@ -92,8 +100,61 @@ impl Ps2CameraController {
 
     /// Load or swap the active room's `.cam` trigger volume definitions.
     pub fn set_cam_file(&mut self, cam_file: Option<CamFile>) {
+        if cam_file.is_none() {
+            self.active_room_id = None;
+            self.active_cam_source = None;
+        }
         self.cam_file = cam_file;
         self.active_road_index = None;
+    }
+
+    /// Load or swap the active room's `.cam` trigger volume definitions along with its room ID and source pack (`SH2-50`).
+    pub fn set_cam_file_with_metadata(
+        &mut self,
+        cam_file: Option<CamFile>,
+        room_id: Option<String>,
+        source: Option<CamSourceKind>,
+    ) {
+        self.cam_file = cam_file;
+        self.active_room_id = room_id;
+        self.active_cam_source = source;
+        self.active_road_index = None;
+    }
+
+    /// Automatically resolves and ingests the `.cam` trigger volume file for `room_or_rel_path`
+    /// (`"er01"`, `"ob01"`, `"rr21"`, `"ap01"`, `"ma61"`, or `"bg/er/er01.cam"`), prioritizing
+    /// SH2:EE widescreen/high-framerate overrides (`sh2e/bg/<area>/<room>.cam` and
+    /// `sh2e/bg2/<area>/<room>.cam`) when `prefer_sh2ee` is `true` before falling back to
+    /// vanilla retail `data/bg/...` (`SH2-50`).
+    ///
+    /// Returns `true` if a valid `.cam` file was found and loaded.
+    pub fn load_room_cam_with_resolver(
+        &mut self,
+        resolver: &AssetPathResolver,
+        room_or_rel_path: &str,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        match resolver.load_cam_for_room(room_or_rel_path, prefer_sh2ee) {
+            Ok(Some(asset)) => {
+                self.set_cam_file_with_metadata(
+                    Some(asset.cam_file),
+                    Some(asset.room_id),
+                    Some(asset.source),
+                );
+                true
+            }
+            _ => {
+                self.set_cam_file_with_metadata(None, None, None);
+                false
+            }
+        }
+    }
+
+    /// Resolves and ingests the `.cam` trigger volume file for `room_or_rel_path` using the
+    /// default [`AssetPathResolver`] and `prefer_sh2ee` preference (`SH2-50`).
+    pub fn load_room_cam(&mut self, room_or_rel_path: &str, prefer_sh2ee: bool) -> bool {
+        let resolver = AssetPathResolver::resolve();
+        self.load_room_cam_with_resolver(&resolver, room_or_rel_path, prefer_sh2ee)
     }
 
     /// Clamps position `pos` within a `_VC_ROAD_AREA` rail using PS2 `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST`.
@@ -479,6 +540,13 @@ impl Ps2CameraController {
             up: Vec3::new(0.0, -1.0, 0.0),
             fov_y: target_fov,
         };
+
+        // On an instant camera cut (`VC_RD_WARP_IN_F` / `VC_RD_WARP_OUT_F`), snap `prev_snapshot`
+        // to `curr_snapshot` as well so 120–240 Hz sub-frame interpolation (`interpolated_view_matrix`)
+        // does not smear between the old camera volume and the new cut angle (`SH2-50`).
+        if warp_cut {
+            self.prev_snapshot = self.curr_snapshot;
+        }
     }
 
     /// Compute sub-frame interpolated view matrix between previous and current simulation ticks.
@@ -521,21 +589,15 @@ mod tests {
 
     #[test]
     fn test_camera_er01_ps2_parity_framing() {
-        use sh2_assets::formats::cam::parse_cam;
-        use std::fs;
-        use std::path::Path;
-
-        let er01_path =
-            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg/er/er01.cam";
-        if !Path::new(er01_path).exists() {
+        let mut controller = Ps2CameraController::new();
+        if !controller.load_room_cam("er01", false) {
             return;
         }
-
-        let data = fs::read(er01_path).expect("Failed to read er01.cam");
-        let cam_file = parse_cam(&data).expect("Failed to parse er01.cam");
-
-        let mut controller = Ps2CameraController::new();
-        controller.set_cam_file(Some(cam_file));
+        assert_eq!(controller.active_room_id.as_deref(), Some("er01"));
+        assert_eq!(
+            controller.active_cam_source,
+            Some(CamSourceKind::VanillaRetail)
+        );
 
         // Exact player coordinates from screenshot at opening restroom:
         // PLAYER POS: X: -19390.1, Y: 0.0, Z: 20317.8, YAW: -2.23 rad (-127.6 deg)
@@ -555,5 +617,85 @@ mod tests {
         assert!(controller.curr_snapshot.target.y > controller.curr_snapshot.eye.y);
         assert!(controller.curr_snapshot.target.x < controller.curr_snapshot.eye.x);
         assert!(controller.curr_snapshot.fov_y < 0.6);
+    }
+
+    #[test]
+    fn test_sh2_50_warp_in_out_flags_snap_prev_and_curr_snapshots() {
+        use sh2_assets::formats::cam::{
+            AreaSizeType, CamMovementParams, CamMovementType as AssetCamMovementType,
+            ChaseCamParam, RoadArea, RoadRecord, RoadType, VC_RD_END_DATA_F,
+        };
+
+        let make_area = |min_x: f32, max_x: f32| RoadArea {
+            x0: min_x,
+            z0: -1000.0,
+            x1: max_x,
+            z1: 1000.0,
+            x2: max_x,
+            z2: 1000.0,
+            min_hy: -2000.0,
+            max_hy: 2000.0,
+        };
+
+        let make_fixed_record = |min_x: f32, max_x: f32, eye: Vec3, flags: u16| RoadRecord {
+            lim_sw: make_area(min_x, max_x),
+            lim_rd: RoadArea {
+                x0: eye.x,
+                z0: eye.z,
+                x1: eye.x,
+                z1: eye.z,
+                x2: eye.x,
+                z2: eye.z,
+                min_hy: eye.y,
+                max_hy: eye.y,
+            },
+            kind_id: 0,
+            flags,
+            area_size_type: AreaSizeType::Wide,
+            rd_type: RoadType::Event,
+            mv_y_type: 0,
+            ofs_watch_hy: -300.0,
+            trace_btm_hy: 0.0,
+            rd_dir_type: 0,
+            projection: 448.0,
+            proj_volume: 0.0,
+            proj_sec: 1.0,
+            cam_mv_type: AssetCamMovementType::Settle,
+            params: CamMovementParams::Chase(ChaseCamParam::default()),
+        };
+
+        let cam_file = CamFile {
+            records: vec![
+                make_fixed_record(
+                    -1000.0,
+                    0.0,
+                    Vec3::new(-500.0, -1400.0, -800.0),
+                    VC_RD_WARP_OUT_F,
+                ),
+                make_fixed_record(
+                    0.0,
+                    1000.0,
+                    Vec3::new(500.0, -2200.0, 800.0),
+                    VC_RD_WARP_IN_F | VC_RD_END_DATA_F,
+                ),
+            ],
+        };
+
+        let mut controller = Ps2CameraController::new();
+        controller.set_cam_file(Some(cam_file));
+
+        // Spawn inside Road #0
+        controller.reset_to_player(Vec3::new(-250.0, 0.0, 0.0), 0.0);
+        assert_eq!(controller.active_road_index, Some(0));
+        assert!((controller.curr_snapshot.eye.x - (-500.0)).abs() < 1e-3);
+
+        // Cross boundary into Road #1 (`VC_RD_WARP_IN_F` / `VC_RD_WARP_OUT_F` active):
+        // Both `curr_snapshot` and `prev_snapshot` must snap immediately with zero lerp smear.
+        controller.tick(Vec3::new(250.0, 0.0, 0.0), 0.0, 0.0, 0.0);
+        assert_eq!(controller.active_road_index, Some(1));
+        assert!((controller.curr_snapshot.eye.x - 500.0).abs() < 1e-3);
+        assert!((controller.prev_snapshot.eye.x - 500.0).abs() < 1e-3);
+        assert!((controller.curr_snapshot.eye.y - (-2200.0)).abs() < 1e-3);
+        assert!((controller.prev_snapshot.eye.y - (-2200.0)).abs() < 1e-3);
     }
 }

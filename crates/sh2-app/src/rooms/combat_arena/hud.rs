@@ -97,10 +97,18 @@ fn render_camera_and_player_telemetry(
         Some(idx) => format!("Record #{}", idx),
         None => "Fallback (None)".to_string(),
     };
+    let cam_src_str = match (
+        state.sim_core.camera.active_room_id.as_deref(),
+        state.sim_core.camera.active_cam_source,
+    ) {
+        (Some(room), Some(src)) => format!("{}.cam ({})", room, src.label()),
+        (Some(room), None) => format!("{}.cam", room),
+        _ => "Synthetic".to_string(),
+    };
     state.menu_rasterizer.draw_text(
         &format!(
-            "CAM MODE: {:?} | ACTIVE ROAD: {} | FOV: {:.1}°",
-            mv_type, rec_str, cam_fov
+            "CAM: {} | MODE: {:?} | ROAD: {} | FOV: {:.1}°",
+            cam_src_str, mv_type, rec_str, cam_fov
         ),
         20,
         98,

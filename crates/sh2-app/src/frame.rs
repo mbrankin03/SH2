@@ -3,8 +3,8 @@
 use std::time::Instant;
 
 use crate::assets::{
-    build_map_texture_bind_groups, find_cam_file_for_room, find_cld_file_for_room,
-    find_map_file_for_room, load_viewer_entry_asset,
+    build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
+    load_viewer_entry_asset, room_cam_id_for_test_room,
 };
 use crate::menu_events::apply_pending_engine_config;
 use crate::rooms;
@@ -183,12 +183,15 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         state.fog_uniforms = new_fog;
         state.render_ctx.update_fog(&state.fog_uniforms);
         state.sim_core.collision = find_cld_file_for_room(new_room);
-        state
-            .sim_core
-            .camera
-            .set_cam_file(find_cam_file_for_room(new_room));
-        state.sim_core.snap_player_transform(new_pos, new_yaw);
-        state.sim_core.camera.reset_to_player(new_pos, new_yaw);
+        if let Some(room_id) = room_cam_id_for_test_room(new_room) {
+            state
+                .sim_core
+                .transition_to_room(room_id, new_pos, new_yaw, true);
+        } else {
+            state.sim_core.camera.set_cam_file(None);
+            state.sim_core.snap_player_transform(new_pos, new_yaw);
+            state.sim_core.camera.reset_to_player(new_pos, new_yaw);
+        }
         state.active_test_room = new_room;
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());

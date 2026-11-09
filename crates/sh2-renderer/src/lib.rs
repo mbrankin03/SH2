@@ -44,6 +44,7 @@ pub struct GpuMapBatch {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub num_indices: u32,
+    pub group: sh2_assets::formats::map::BatchGroup,
     pub is_transparent: bool,
     pub material_index: usize,
 }
@@ -81,6 +82,7 @@ impl GpuMap {
                 vertex_buffer,
                 index_buffer,
                 num_indices: batch.indices.len() as u32,
+                group: batch.group,
                 is_transparent: matches!(
                     batch.group,
                     sh2_assets::formats::map::BatchGroup::Transparent
@@ -1157,15 +1159,27 @@ impl RenderContext {
                 occlusion_query_set: None,
             });
 
-            rpass.set_pipeline(&self.geometry_pipeline.pipeline);
-            rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-            rpass.set_bind_group(1, &*self.default_texture_bind_group, &[]);
-
-            for batch in &gpu_map.batches {
-                rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
-            }
+            self.draw_map_batches_for_group(
+                &mut rpass,
+                gpu_map,
+                None,
+                sh2_assets::formats::map::BatchGroup::Opaque,
+                &self.geometry_pipeline.pipeline,
+            );
+            self.draw_map_batches_for_group(
+                &mut rpass,
+                gpu_map,
+                None,
+                sh2_assets::formats::map::BatchGroup::Decal,
+                &self.geometry_pipeline.decal_pipeline,
+            );
+            self.draw_map_batches_for_group(
+                &mut rpass,
+                gpu_map,
+                None,
+                sh2_assets::formats::map::BatchGroup::Transparent,
+                &self.geometry_pipeline.transparent_pipeline,
+            );
         }
 
         // 2. Volumetric Fog Compute Pass
@@ -1283,28 +1297,22 @@ impl RenderContext {
                 occlusion_query_set: None,
             });
 
-            // 1a. Render static level batches if provided
+            // 1a. Render static level batches (Opaque + Alpha-Cutout, then Coplanar Decals)
             if let Some(map) = gpu_map {
-                rpass.set_pipeline(&self.geometry_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                let mut current_bg: Option<usize> = None;
-
-                for batch in &map.batches {
-                    let bg_idx = batch.material_index;
-                    let bind_group = match map_texture_bind_groups {
-                        Some(groups) if bg_idx < groups.len() => &groups[bg_idx],
-                        _ => &self.default_texture_bind_group,
-                    };
-
-                    if current_bg != Some(bg_idx) {
-                        rpass.set_bind_group(1, &**bind_group, &[]);
-                        current_bg = Some(bg_idx);
-                    }
-
-                    rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
-                }
+                self.draw_map_batches_for_group(
+                    &mut rpass,
+                    map,
+                    map_texture_bind_groups,
+                    sh2_assets::formats::map::BatchGroup::Opaque,
+                    &self.geometry_pipeline.pipeline,
+                );
+                self.draw_map_batches_for_group(
+                    &mut rpass,
+                    map,
+                    map_texture_bind_groups,
+                    sh2_assets::formats::map::BatchGroup::Decal,
+                    &self.geometry_pipeline.decal_pipeline,
+                );
             }
 
             // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass)
@@ -1367,6 +1375,17 @@ impl RenderContext {
                 }
             }
 
+            // 1c. Render static level semi-transparent batches (glass, water, transparent foliage fringes)
+            if let Some(map) = gpu_map {
+                self.draw_map_batches_for_group(
+                    &mut rpass,
+                    map,
+                    map_texture_bind_groups,
+                    sh2_assets::formats::map::BatchGroup::Transparent,
+                    &self.geometry_pipeline.transparent_pipeline,
+                );
+            }
+
             // 1c. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
             if !debug_lines.is_empty() {
                 let line_buf = overflow_debug_line_buffer
@@ -1412,6 +1431,45 @@ impl RenderContext {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Helper to draw all `GpuMapBatch` items belonging to a specific [`sh2_assets::formats::map::BatchGroup`]
+    /// using the designated pipeline (`pipeline`, `decal_pipeline`, or `transparent_pipeline`).
+    fn draw_map_batches_for_group<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        map: &'a GpuMap,
+        map_texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
+        target_group: sh2_assets::formats::map::BatchGroup,
+        pipeline: &'a wgpu::RenderPipeline,
+    ) {
+        if !map.batches.iter().any(|b| b.group == target_group) {
+            return;
+        }
+
+        rpass.set_pipeline(pipeline);
+        rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+        let mut current_bg: Option<usize> = None;
+
+        for batch in &map.batches {
+            if batch.group != target_group {
+                continue;
+            }
+            let bg_idx = batch.material_index;
+            let bind_group = match map_texture_bind_groups {
+                Some(groups) if bg_idx < groups.len() => &groups[bg_idx],
+                _ => &self.default_texture_bind_group,
+            };
+
+            if current_bg != Some(bg_idx) {
+                rpass.set_bind_group(1, &**bind_group, &[]);
+                current_bg = Some(bg_idx);
+            }
+
+            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+            rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
+        }
     }
 
     /// Compiles a ModelFile into a GpuSkeletalMesh.

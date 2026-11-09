@@ -535,7 +535,12 @@ impl RoomController for CombatArenaRoomController {
         let alpha = state.sim_core.interpolation_alpha();
         let view = state.sim_core.camera.interpolated_view_matrix(alpha);
         let fov = state.sim_core.camera.interpolated_fov(alpha);
-        let proj = glam::Mat4::perspective_rh(fov, aspect, 10.0, 30000.0);
+        let proj = glam::Mat4::perspective_rh(
+            fov,
+            aspect,
+            super::DEFAULT_CAMERA_Z_NEAR,
+            super::DEFAULT_CAMERA_Z_FAR,
+        );
         let view_proj = proj * view;
         let inv_proj = proj.inverse();
 

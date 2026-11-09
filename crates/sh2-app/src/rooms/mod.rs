@@ -13,6 +13,12 @@ use winit::keyboard::KeyCode;
 use crate::state::AppState;
 use sh2_ui::menu::TestRoomKind;
 
+/// Default perspective camera near clip plane in Silent Hill 2 world units.
+pub(crate) const DEFAULT_CAMERA_Z_NEAR: f32 = 10.0;
+/// Default perspective camera far clip plane in Silent Hill 2 world units, calibrated
+/// to encompass the full Toluca Lake / Observation Deck (`ob01.map`) vista (~68,000 units).
+pub(crate) const DEFAULT_CAMERA_Z_FAR: f32 = 150_000.0;
+
 /// Common controller interface for interactive rooms and inspection environments.
 pub(crate) trait RoomController {
     /// Handles keyboard input while this room is active in-game.

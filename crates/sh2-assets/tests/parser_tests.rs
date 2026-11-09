@@ -1309,4 +1309,62 @@ mod tests {
         assert_eq!(sliced.data.len(), 600);
         assert_eq!(sliced.sample_rate, 100);
     }
+
+    #[test]
+    fn test_sh2_73_shared_area_map_texture_bank_resolution_and_bgra8_decoding() {
+        // 1. Verify MapTexture::to_rgba() supports uncompressed 32-bit BGRA8 (kind == 0)
+        let bgra_tex = formats::map::MapTexture {
+            id: 9999,
+            width: 2,
+            height: 1,
+            kind: 0,
+            data: vec![
+                10, 20, 30,
+                255, // Pixel 0: B=10, G=20, R=30, A=255 -> RGBA = [30, 20, 10, 255]
+                40, 50, 60,
+                128, // Pixel 1: B=40, G=50, R=60, A=128 -> RGBA = [60, 50, 40, 128]
+            ],
+        };
+        let rgba = bgra_tex
+            .to_rgba()
+            .expect("Failed to decode uncompressed BGRA8 MapTexture");
+        assert_eq!(rgba, vec![30, 20, 10, 255, 60, 50, 40, 128]);
+
+        // 2. Verify TextureLoader::load_map_with_hd_overrides merges shared stage bank `bg/ob/ob.map` into `ob01.map`
+        let data_dir = Path::new(ROOT_ASSETS).join("data");
+        if !data_dir.join("bg/ob/ob01.map").exists() {
+            println!("Skipping shared area map texture resolution test: retail assets not found");
+            return;
+        }
+        let sh2e_dir = Path::new(ROOT_ASSETS).join("sh2e");
+        let loader = formats::TextureLoader::new(
+            &data_dir,
+            if sh2e_dir.exists() {
+                Some(sh2e_dir)
+            } else {
+                None
+            },
+        );
+
+        let ob01 = loader
+            .load_map_with_hd_overrides("bg/ob/ob01.map", "ob01")
+            .expect("Failed to load ob01.map with shared ob.map textures");
+
+        // Material 20 in ob01.map references shared pine foliage texture 4656 from `bg/ob/ob.map`
+        assert!(
+            ob01.textures.contains_key(&4656),
+            "ob01.map must contain shared pine foliage texture 4656 merged from bg/ob/ob.map"
+        );
+
+        for (idx, mat) in ob01.materials.iter().enumerate() {
+            let tid = mat.texture_id as u32;
+            if tid != 0 {
+                let tex = ob01.textures.get(&tid).unwrap_or_else(|| {
+                    panic!("Material {idx} texture_id {tid} missing in loaded ob01.map")
+                });
+                let decoded = tex.to_rgba().expect("Failed to decode ob01 texture");
+                assert_eq!(decoded.len(), tex.width * tex.height * 4);
+            }
+        }
+    }
 }

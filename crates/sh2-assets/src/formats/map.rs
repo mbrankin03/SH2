@@ -65,15 +65,34 @@ pub struct MapTexture {
     pub width: usize,
     /// Texture height in pixels.
     pub height: usize,
-    /// Compression kind: 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
+    /// Compression kind: 0 = Uncompressed 32-bit BGRA8, 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
     pub kind: u8,
-    /// Compressed texture payload data.
+    /// Raw or compressed texture payload data.
     pub data: Vec<u8>,
 }
 
 impl MapTexture {
-    /// Decodes the compressed texture payload into an uncompressed RGBA8 byte buffer.
+    /// Decodes the texture payload into an uncompressed RGBA8 byte buffer.
     pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
+        if self.kind == 0 {
+            let exp_len = self.width * self.height * 4;
+            if self.data.len() < exp_len {
+                return Err(AssetError::BufferUnderflow {
+                    required: exp_len,
+                    available: self.data.len(),
+                });
+            }
+            let mut rgba = vec![0u8; exp_len];
+            let (src_chunks, _) = self.data[..exp_len].as_chunks::<4>();
+            let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+            for (src, dst) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
+                dst[0] = src[2]; // R
+                dst[1] = src[1]; // G
+                dst[2] = src[0]; // B
+                dst[3] = src[3]; // A
+            }
+            return Ok(rgba);
+        }
         decode_dxt(&self.data, self.width, self.height, self.kind)
     }
 }
@@ -655,9 +674,14 @@ fn collect_batch(
 /// Parses sub-file type 2: embedded textures, headers, sprite declarations, and DXT byte streams.
 fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Result<(), AssetError> {
     p += 16;
-    while p + 32 <= data.len() {
+    while data.len().saturating_sub(p) >= 16 {
         let tex_id = read_u32(data, p)?;
         if tex_id == 0 {
+            p += 16;
+            continue;
+        }
+
+        if data.len().saturating_sub(p) < 32 {
             break;
         }
 
@@ -665,22 +689,27 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
         p += 32;
 
         for _ in 0..sprite_count {
-            if p + 32 > data.len() {
+            if data.len().saturating_sub(p) < 32 {
                 return Ok(());
             }
 
             let w = read_u16(data, p + 8)? as usize;
             let h = read_u16(data, p + 10)? as usize;
-            let fmt = read_u16(data, p + 12)?;
+            let fmt = data[p + 12];
+            let comp = data[p + 13];
             let length = read_u32(data, p + 16)? as usize;
             p += 32;
 
-            if length != 0 && p + length <= data.len() {
-                let kind = match fmt {
-                    0x100 => 1,         // BC1 / DXT1
-                    0x101 | 0x102 => 3, // BC2 / DXT3
-                    0x103 | 0x104 => 5, // BC3 / DXT5
-                    _ => 3,
+            if w > 0 && h > 0 && length != 0 && p + length <= data.len() {
+                let kind = if comp == 0 {
+                    0 // Uncompressed 32-bit BGRA8
+                } else {
+                    match fmt {
+                        0 => 1,     // BC1 / DXT1
+                        1 | 2 => 3, // BC2 / DXT3
+                        3 | 4 => 5, // BC3 / DXT5
+                        _ => 3,
+                    }
                 };
 
                 let tex_data = data[p..p + length].to_vec();

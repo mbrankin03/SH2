@@ -354,7 +354,36 @@ mod renderer_tests {
             &rgba_64,
             Some("Test 64x64 Mipmapped Anisotropic Texture"),
         );
-        ctx.render_scene(Some(&gpu_map), Some(&[mip_bg]), &[]);
+        ctx.render_scene(Some(&gpu_map), Some(std::slice::from_ref(&mip_bg)), &[]);
+        let _ = ctx.device.poll(wgpu::Maintain::wait());
+
+        // Test SH2-70 & SH2-72: Multi-pass Opaque/Cutout, Coplanar Decal (depth-biased), and Transparent pipelines
+        let mut multi_group_map = create_synthetic_cube_map();
+        let base_batch = multi_group_map.batches[0].clone();
+        multi_group_map.batches.push(MapBatch {
+            group: BatchGroup::Decal,
+            material_index: 0,
+            geo_id: 2,
+            ..base_batch.clone()
+        });
+        multi_group_map.batches.push(MapBatch {
+            group: BatchGroup::Transparent,
+            material_index: 0,
+            geo_id: 3,
+            ..base_batch
+        });
+
+        let gpu_multi = GpuMap::from_map(&ctx.device, &multi_group_map);
+        assert_eq!(gpu_multi.batches.len(), 3);
+        assert_eq!(gpu_multi.batches[0].group, BatchGroup::Opaque);
+        assert!(!gpu_multi.batches[0].is_transparent);
+        assert_eq!(gpu_multi.batches[1].group, BatchGroup::Decal);
+        assert!(!gpu_multi.batches[1].is_transparent);
+        assert_eq!(gpu_multi.batches[2].group, BatchGroup::Transparent);
+        assert!(gpu_multi.batches[2].is_transparent);
+
+        ctx.render_gpu_map(&gpu_multi);
+        ctx.render_scene(Some(&gpu_multi), Some(&[mip_bg]), &[]);
         let _ = ctx.device.poll(wgpu::Maintain::wait());
     }
 }

@@ -142,12 +142,12 @@ pub(crate) fn find_map_file_for_room(
                         "Loaded authentic Observation Deck level geometry (ob01.map with SH2:EE HD overrides): base={}",
                         base
                     );
-                    // Toluca Lake vista outdoor fog parameters
+                    // Toluca Lake vista outdoor fog parameters calibrated for full ob01 draw distance
                     let fog = sh2_renderer::fog::FogUniforms {
                         fog_color: [0.65, 0.68, 0.72, 1.0], // Daylight Toluca Lake mist
-                        fog_near: 1500.0,
-                        fog_far: 18000.0,
-                        density: 0.85,
+                        fog_near: 2000.0,
+                        fog_far: 32000.0,
+                        density: 0.90,
                         time: 0.0,
                         step_count: 32,
                         curve_type: 1, // Exponential curve
@@ -714,6 +714,42 @@ pub(crate) fn load_anm_file(
         }
     }
     None
+}
+
+/// Builds GPU diffuse texture bind groups for every material in a [`MapFile`], caching by `texture_id`
+/// to avoid redundant VRAM allocations and falling back to [`RenderContext::default_texture_bind_group`].
+pub(crate) fn build_map_texture_bind_groups(
+    render_ctx: &RenderContext,
+    map_file: &MapFile,
+) -> Vec<Arc<wgpu::BindGroup>> {
+    let mut map_texture_bind_groups = Vec::with_capacity(map_file.materials.len());
+    let mut tex_bg_cache: std::collections::HashMap<u32, Arc<wgpu::BindGroup>> =
+        std::collections::HashMap::new();
+
+    for (m_idx, mat) in map_file.materials.iter().enumerate() {
+        let tex_id = mat.texture_id as u32;
+        if let Some(bg) = tex_bg_cache.get(&tex_id) {
+            map_texture_bind_groups.push(Arc::clone(bg));
+            continue;
+        }
+
+        if let Some(tex) = map_file.textures.get(&tex_id) {
+            if let Ok(rgba) = tex.to_rgba() {
+                let bg = render_ctx.create_texture_bind_group(
+                    tex.width as u32,
+                    tex.height as u32,
+                    &rgba,
+                    Some(&format!("Map Material {m_idx} Texture {tex_id}")),
+                );
+                tex_bg_cache.insert(tex_id, Arc::clone(&bg));
+                map_texture_bind_groups.push(bg);
+                continue;
+            }
+        }
+        map_texture_bind_groups.push(Arc::clone(&render_ctx.default_texture_bind_group));
+    }
+
+    map_texture_bind_groups
 }
 
 /// Loads a specific [`ModelViewerEntry`] and its selected `.anm` track index from disk.

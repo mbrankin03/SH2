@@ -32,7 +32,12 @@ impl Default for CameraUniforms {
 }
 
 pub struct GeometryPipeline {
+    /// Primary opaque + alpha-cutout level geometry pipeline (`depth_write_enabled: true`).
     pub pipeline: wgpu::RenderPipeline,
+    /// Coplanar decal pipeline (`ALPHA_BLENDING`, `depth_write_enabled: false`, negative depth bias).
+    pub decal_pipeline: wgpu::RenderPipeline,
+    /// Semi-transparent glass/water/foliage fringe pipeline (`ALPHA_BLENDING`, `depth_write_enabled: false`).
+    pub transparent_pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
 }
@@ -85,8 +90,17 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Ambient term
-    let ambient = vec3<f32>(0.05, 0.05, 0.06);
+    // Sample diffuse texture in uniform control flow before alpha-test discard
+    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    let out_alpha = in.color.a * tex_color.a;
+    if (out_alpha < 0.05) {
+        discard;
+    }
+
+    // Ambient term (with pre-lit skybox/vista boost when vertex normal is zero-length, stride == 0x14)
+    let n_len = length(in.normal);
+    let has_normal = n_len > 1e-4;
+    let base_ambient = select(vec3<f32>(0.18, 0.19, 0.21), vec3<f32>(0.07, 0.075, 0.085), has_normal);
 
     // Dynamic Spotlight calculation matching dbg_spotL_ctl
     let light_to_frag = in.world_pos - spotlight.position.xyz;
@@ -101,16 +115,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Inverse square distance attenuation
     let atten = 1.0 / max(1.0, 0.00001 * dist * dist);
-    let n_len = length(in.normal);
-    let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, n_len > 1e-4);
+    let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, has_normal);
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten);
 
-    let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let shade_mode = i32(round(camera.cam_pos.w));
-    let studio_ambient = select(ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
+    let studio_ambient = select(base_ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
     let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient + diffuse);
-    return vec4<f32>(lit_color, in.color.a * tex_color.a);
+    return vec4<f32>(lit_color, out_alpha);
 }
 "#;
 
@@ -179,42 +191,56 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             push_constant_ranges: &[],
         });
 
+        let vertex_attributes = [
+            // position
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            // normal
+            wgpu::VertexAttribute {
+                offset: 12,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            // uv
+            wgpu::VertexAttribute {
+                offset: 24,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            // color
+            wgpu::VertexAttribute {
+                offset: 32,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+        ];
+
+        let vertex_buffer_layout = [wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<sh2_assets::formats::map::MapVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vertex_attributes,
+        }];
+
+        let primitive_state = wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None, // Don't cull PS2 double-sided geometry prematurely
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        };
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Geometry Render Pipeline"),
+            label: Some("Geometry Opaque & Cutout Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<sh2_assets::formats::map::MapVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        // position
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x3,
-                        },
-                        // normal
-                        wgpu::VertexAttribute {
-                            offset: 12,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x3,
-                        },
-                        // uv
-                        wgpu::VertexAttribute {
-                            offset: 24,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        // color
-                        wgpu::VertexAttribute {
-                            offset: 32,
-                            shader_location: 3,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                    ],
-                }],
+                buffers: &vertex_buffer_layout,
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -227,15 +253,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 })],
                 compilation_options: Default::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // Don't cull PS2 double-sided geometry prematurely
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
+            primitive: primitive_state,
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
                 depth_write_enabled: true,
@@ -248,8 +266,82 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             cache: None,
         });
 
+        let decal_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Geometry Coplanar Decal Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_buffer_layout,
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: primitive_state,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: -2,
+                    slope_scale: -2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let transparent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Geometry Transparent Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_buffer_layout,
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: primitive_state,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: -1,
+                    slope_scale: -1.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             pipeline,
+            decal_pipeline,
+            transparent_pipeline,
             bind_group_layout,
             texture_bind_group_layout,
         }

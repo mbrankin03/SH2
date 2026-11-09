@@ -13,8 +13,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::assets::{
-    find_cam_file_for_room, find_cld_file_for_room, find_map_file_for_room, load_anm_file,
-    load_character_asset, load_viewer_entry_asset,
+    build_map_texture_bind_groups, find_cam_file_for_room, find_cld_file_for_room,
+    find_map_file_for_room, load_anm_file, load_character_asset, load_viewer_entry_asset,
 };
 use crate::rooms::fmv_room::open_fmv_session;
 use crate::state::AppState;
@@ -129,32 +129,7 @@ impl ApplicationHandler for SilentHillApp {
         let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
 
         // Build level diffuse texture bind groups per material (cached by texture_id to avoid redundant VRAM allocations)
-        let mut map_texture_bind_groups = Vec::with_capacity(map_file.materials.len());
-        let mut tex_bg_cache: std::collections::HashMap<u32, std::sync::Arc<wgpu::BindGroup>> =
-            std::collections::HashMap::new();
-
-        for (m_idx, mat) in map_file.materials.iter().enumerate() {
-            let tex_id = mat.texture_id as u32;
-            if let Some(bg) = tex_bg_cache.get(&tex_id) {
-                map_texture_bind_groups.push(Arc::clone(bg));
-                continue;
-            }
-
-            if let Some(tex) = map_file.textures.get(&tex_id) {
-                if let Ok(rgba) = tex.to_rgba() {
-                    let bg = render_ctx.create_texture_bind_group(
-                        tex.width as u32,
-                        tex.height as u32,
-                        &rgba,
-                        Some(&format!("Map Material {m_idx} Texture {tex_id}")),
-                    );
-                    tex_bg_cache.insert(tex_id, Arc::clone(&bg));
-                    map_texture_bind_groups.push(bg);
-                    continue;
-                }
-            }
-            map_texture_bind_groups.push(Arc::clone(&render_ctx.default_texture_bind_group));
-        }
+        let map_texture_bind_groups = build_map_texture_bind_groups(&render_ctx, &map_file);
 
         // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
         let character = load_character_asset(
@@ -1164,6 +1139,8 @@ impl ApplicationHandler for SilentHillApp {
                     tracing::info!("Switching test environment to: {:?}", new_room);
                     let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
                     state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
+                    state.map_texture_bind_groups =
+                        build_map_texture_bind_groups(&state.render_ctx, &new_map);
                     state.fog_uniforms = new_fog;
                     state.render_ctx.update_fog(&state.fog_uniforms);
                     state.sim_core.collision = find_cld_file_for_room(new_room);

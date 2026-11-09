@@ -122,6 +122,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     fog_factor = clamp(fog_factor * fog.density, 0.0, 1.0);
 
+    // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into the mist color
+    // when outdoor fog is active, preventing the dark HDR clear color from bleeding at the horizon.
+    if (depth_val >= 0.99999 && fog.density > 0.5) {
+        fog_factor = 1.0;
+    }
+
     let final_color = mix(original_color, fog.fog_color, fog_factor);
     textureStore(color_out, pixel_coords, final_color);
 }

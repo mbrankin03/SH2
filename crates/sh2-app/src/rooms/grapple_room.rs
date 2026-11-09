@@ -17,9 +17,7 @@ impl RoomController for GrappleRoomController {
     fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed: bool, _repeat: bool) {
         match key_code {
             KeyCode::Escape | KeyCode::Backspace if pressed => {
-                state.menu_ctrl.in_game_active = false;
-                state.menu_ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
-                state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                state.exit_room_to_menu(TitlePhase::TestRoomsSelect);
                 tracing::info!("Returned from Grapple Animation Room to Test Rooms menu.");
             }
             KeyCode::Tab | KeyCode::KeyN if pressed => {

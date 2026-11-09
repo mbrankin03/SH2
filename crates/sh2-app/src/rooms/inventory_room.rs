@@ -88,9 +88,7 @@ impl RoomController for InventoryRoomController {
         }
         match key_code {
             KeyCode::Escape | KeyCode::Backspace if !repeat => {
-                state.menu_ctrl.in_game_active = false;
-                state.menu_ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
-                state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                state.exit_room_to_menu(TitlePhase::TestRoomsSelect);
                 tracing::info!("Returned from Inventory & Item Inspect Room to Test Rooms menu.");
             }
             KeyCode::ArrowUp | KeyCode::KeyW => {

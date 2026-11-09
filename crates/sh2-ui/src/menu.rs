@@ -264,6 +264,11 @@ impl TitleStateMachine {
                 self.is_fading_out = false;
                 self.on_fade_out_complete();
             }
+        } else if !matches!(
+            self.phase,
+            TitlePhase::SplashIntro | TitlePhase::TransitionToGame
+        ) {
+            self.fade_alpha = 1.0;
         }
 
         // Auto progression from splash screen
@@ -443,6 +448,14 @@ impl TitleStateMachine {
         self.fade_alpha = 0.0;
     }
 
+    /// Transitions immediately to `phase` at full opacity (`fade_alpha = 1.0`), clearing any active fade flags.
+    pub fn show_phase_immediately(&mut self, phase: TitlePhase) {
+        self.phase = phase;
+        self.fade_alpha = 1.0;
+        self.is_fading_in = false;
+        self.is_fading_out = false;
+    }
+
     fn on_fade_out_complete(&mut self) {
         match self.phase {
             TitlePhase::SplashIntro => {
@@ -453,7 +466,9 @@ impl TitleStateMachine {
                 // Keep faded out at 0.0 for seamless game world start
                 self.fade_alpha = 0.0;
             }
-            _ => {}
+            _ => {
+                self.fade_alpha = 1.0;
+            }
         }
     }
 }

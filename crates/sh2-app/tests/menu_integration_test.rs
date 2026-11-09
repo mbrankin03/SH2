@@ -586,5 +586,35 @@ fn test_sh2_15_inventory_and_puzzle_cutaway_debug_rooms_and_rasterizer() {
     assert_eq!(rast.pixels[sprite_ofs], 255);
     assert_eq!(rast.pixels[sprite_ofs + 3], 255);
 
+    // 3. Regression test: Entering a debug room and pressing Escape (`return_to_menu`)
+    // must clear `is_fading_out` so `fade_alpha` remains 1.0 across subsequent menu ticks.
+    ctrl.title_sm.show_phase_immediately(TitlePhase::TestRoomsSelect);
+    ctrl.title_sm.test_room_index = TestRoomKind::ALL
+        .iter()
+        .position(|&r| r == TestRoomKind::PuzzleAndCutawayRoom)
+        .unwrap();
+    ctrl.handle_nav(MenuNavAction::Confirm);
+    while !ctrl.in_game_active {
+        ctrl.tick(0.016);
+    }
+    assert!(ctrl.in_game_active);
+    assert!(!ctrl.title_sm.is_fading_out);
+    assert!(!ctrl.title_sm.is_fading_in);
+
+    // Simulate pressing Escape inside the debug room
+    ctrl.return_to_menu(TitlePhase::TestRoomsSelect);
+    assert!(!ctrl.in_game_active);
+    assert_eq!(ctrl.title_sm.phase, TitlePhase::TestRoomsSelect);
+    assert!((ctrl.title_sm.fade_alpha - 1.0).abs() < 1e-5);
+    assert!(!ctrl.title_sm.is_fading_out);
+    assert!(!ctrl.title_sm.is_fading_in);
+
+    // Tick 120 frames (2 seconds) on TestRoomsSelect and ensure fade_alpha never decays to 0.0
+    for _ in 0..120 {
+        ctrl.tick(0.016);
+    }
+    assert_eq!(ctrl.title_sm.phase, TitlePhase::TestRoomsSelect);
+    assert!((ctrl.title_sm.fade_alpha - 1.0).abs() < 1e-5);
+
     let _ = fs::remove_dir_all(&test_dir);
 }

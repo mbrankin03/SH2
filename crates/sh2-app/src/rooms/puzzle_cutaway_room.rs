@@ -196,9 +196,7 @@ impl RoomController for PuzzleCutawayRoomController {
 
         match key_code {
             KeyCode::Escape | KeyCode::Backspace if !repeat => {
-                state.menu_ctrl.in_game_active = false;
-                state.menu_ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
-                state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                state.exit_room_to_menu(TitlePhase::TestRoomsSelect);
                 tracing::info!("Returned from Puzzle & Cutaway Overlays Room to Test Rooms menu.");
                 return;
             }
@@ -249,6 +247,7 @@ impl RoomController for PuzzleCutawayRoomController {
                 );
                 let mut clear = ClearData::default();
                 if next_riddle == RiddleDifficulty::Extra {
+                    clear.cleared_levels = 0x07;
                     clear.endings_seen = 0x07;
                 }
                 init_new_game(

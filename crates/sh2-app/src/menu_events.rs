@@ -146,17 +146,7 @@ pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCod
         }
         tracing::info!("Pause Menu: Resumed active gameplay.");
     } else if action == PauseAction::QuitToTitle {
-        state.bgm_manager.stop_all(state.audio_engine.as_mut());
-        if let Some(ref mut engine) = state.audio_engine {
-            engine.stop_bgm(std::time::Duration::from_millis(150));
-            engine.set_bgm_paused(false);
-        }
-        state.menu_ctrl.in_game_active = false;
-        state.menu_ctrl.pause_menu.close();
-        state.menu_ctrl.title_sm.phase = TitlePhase::MainMenu;
-        state.menu_ctrl.title_sm.fade_alpha = 1.0;
-        state.menu_ctrl.title_sm.is_fading_out = false;
-        state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+        state.exit_room_to_menu(TitlePhase::MainMenu);
         tracing::info!("Pause Menu: Exited to Main Menu.");
     }
 }

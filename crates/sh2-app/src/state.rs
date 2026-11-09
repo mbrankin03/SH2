@@ -150,6 +150,32 @@ impl AppState {
         self.menu_rasterizer.clear();
     }
 
+    /// Exits the current in-game test room and returns to `target_phase` (e.g. `TitlePhase::TestRoomsSelect`)
+    /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
+    pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
+        self.key_forward = false;
+        self.key_backward = false;
+        self.key_left = false;
+        self.key_right = false;
+        self.key_zoom_in = false;
+        self.key_zoom_out = false;
+        self.key_pan_up = false;
+        self.key_pan_down = false;
+        self.bgm_manager.stop_all(self.audio_engine.as_mut());
+        if let Some(ref mut engine) = self.audio_engine {
+            engine.stop_bgm(std::time::Duration::from_millis(120));
+            engine.stop_fmv_audio(std::time::Duration::from_millis(120));
+            engine.stop_voice(std::time::Duration::from_millis(50));
+            engine.set_bgm_paused(false);
+            let _ = sh2_audio::play_menu_sound(
+                engine,
+                self.audio_bank.as_ref(),
+                sh2_audio::SoundCueKind::Cancel,
+            );
+        }
+        self.menu_ctrl.return_to_menu(target_phase);
+    }
+
     /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
     pub fn finish_hud_overlay(
         &self,

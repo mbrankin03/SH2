@@ -87,6 +87,9 @@ impl AppMenuController {
                 && (self.title_sm.fade_alpha <= 0.05 || !self.title_sm.is_fading_out)
             {
                 self.in_game_active = true;
+                self.title_sm.fade_alpha = 0.0;
+                self.title_sm.is_fading_out = false;
+                self.title_sm.is_fading_in = false;
                 self.revision = self.revision.wrapping_add(1);
                 tracing::info!(
                     "Title sequence complete. Launching scenario: {:?}, Action: {:?}, Riddle: {:?}",
@@ -96,6 +99,21 @@ impl AppMenuController {
                 );
             }
         }
+    }
+
+    /// Cleanly exits an active in-game session or debug room and returns to `target_phase`
+    /// with full menu opacity (`fade_alpha = 1.0`) and cleared fade state.
+    pub fn return_to_menu(&mut self, target_phase: TitlePhase) {
+        self.in_game_active = false;
+        self.pause_menu.close();
+        self.title_sm.show_phase_immediately(target_phase);
+        if let Some(idx) = sh2_ui::menu::TestRoomKind::ALL
+            .iter()
+            .position(|&r| r == self.title_sm.selected_test_room)
+        {
+            self.title_sm.test_room_index = idx;
+        }
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Handle unified navigation input across Title and Options screens.

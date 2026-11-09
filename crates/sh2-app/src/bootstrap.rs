@@ -362,6 +362,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         menu_ctrl.in_game_active = true;
         menu_ctrl.title_sm.phase = TitlePhase::TransitionToGame;
         menu_ctrl.title_sm.fade_alpha = 0.0;
+        menu_ctrl.title_sm.is_fading_in = false;
+        menu_ctrl.title_sm.is_fading_out = false;
     }
 
     let mut model_viewer = ModelViewerState::new();

@@ -10,8 +10,14 @@ use sh2_assets::formats::demo::{
 use super::anim_info::{
     derive_demo_actor_anm_and_cls_paths, find_drama_demo_anim_info, DramaDemoAnimInfo,
 };
+use super::atmosphere::{
+    resolve_cutscene_room_id, AtmosphereEvalInput, AtmosphereGradingEvaluation,
+    ScreenTransitionState,
+};
 use super::catalog::DramaDemoPlayInfo;
 use super::culling::{should_cull_parked_offscreen_actor, ActorBoundingSphere};
+use super::piston_kinematics::{ClosetDoorReplacementState, PistonArrayRuntime};
+use super::special_fx::{SpecialFxEvalInput, SpecialFxEvaluation, SPECIAL_FX_REFERENCE_HEIGHT};
 use super::stage_fixes::{
     evaluate_hei_lau_widescreen_entry, evaluate_meeting_maria_fog_counters, ClosetCutsceneFixState,
     PistonRoomFixState,
@@ -170,6 +176,8 @@ pub struct DramaDemoPlayer {
     pub reduce_widescreen_fov: bool,
     /// Current viewport aspect ratio (`width / height`, e.g. `16.0/9.0`, `64.0/27.0`, `32.0/9.0`) (`SH2-77`).
     pub viewport_aspect: f32,
+    /// Current viewport height in pixels (used to compute `display_ratio = height / 1080.0` in `SH2-105`).
+    pub viewport_height: f32,
     /// Active widescreen framing and off-screen actor culling mode (`SH2-77`).
     pub widescreen_mode: CutsceneWidescreenMode,
     /// Policy for top/bottom cutscene letterbox bars (`DisableCutsceneBorders` in `SH2-77`).
@@ -180,6 +188,14 @@ pub struct DramaDemoPlayer {
     pub piston_fix: PistonRoomFixState,
     /// Scene-specific widescreen fog counter triggers `(counter_one, counter_two)` for Rosewater Park (`deai`, `demo_no == 22`).
     pub maria_fog_counters: (bool, bool),
+    /// Resolved PS2 room/cutscene atmospheric grading (`TimeOfDay = 15/11`, Room 312 sunset, Leave/Maria tree lighting) (`SH2-105`).
+    pub atmosphere: AtmosphereGradingEvaluation,
+    /// Resolved PS2 screen-space DoF (`Kari_hisyakai`) and GS motion blur (`enSetBlur`) state (`SH2-105`).
+    pub special_fx: SpecialFxEvaluation,
+    /// Stateful 24-piston array kinematics for the Abstract Daddy boss room (`SH2-105`).
+    pub piston_array: PistonArrayRuntime,
+    /// Wood Side Room 307 `b_doo` closet door replacement transform and bonus audio trigger (`SH2-105`).
+    pub closet_door: ClosetDoorReplacementState,
     /// Evaluated camera snapshot for the current frame.
     pub camera: CutsceneCameraSnapshot,
     /// Evaluated keyframe state for the current frame.
@@ -353,11 +369,16 @@ impl DramaDemoPlayer {
             fade_alpha: 0.0,
             reduce_widescreen_fov,
             viewport_aspect,
+            viewport_height: SPECIAL_FX_REFERENCE_HEIGHT,
             widescreen_mode,
             border_mode: CutsceneBorderMode::Auto,
             closet_fix: ClosetCutsceneFixState::default(),
             piston_fix: PistonRoomFixState::default(),
             maria_fog_counters: (false, false),
+            atmosphere: AtmosphereGradingEvaluation::default(),
+            special_fx: SpecialFxEvaluation::default(),
+            piston_array: PistonArrayRuntime::new(),
+            closet_door: ClosetDoorReplacementState::default(),
             camera,
             current_state: init_state,
             actors,
@@ -366,7 +387,7 @@ impl DramaDemoPlayer {
         player
     }
 
-    /// Updates the active viewport aspect ratio (`width / height`) andwidescreen mode,
+    /// Updates the active viewport aspect ratio (`width / height`) and widescreen mode,
     /// re-evaluating camera FOV, scene fixes, and off-screen 4:3 actor culling immediately.
     pub fn set_widescreen_config(
         &mut self,
@@ -374,6 +395,22 @@ impl DramaDemoPlayer {
         widescreen_mode: CutsceneWidescreenMode,
     ) {
         self.viewport_aspect = viewport_aspect.max(0.5);
+        self.widescreen_mode = widescreen_mode;
+        self.reduce_widescreen_fov = widescreen_mode == CutsceneWidescreenMode::Sh2eeZoom16x9;
+        self.sync_camera_and_actors();
+    }
+
+    /// Updates the active viewport dimensions `(width, height)` and widescreen mode, re-evaluating
+    /// resolution-scaled PS2 DoF offsets (`display_ratio = height / 1080.0`) and camera framing (`SH2-105`).
+    pub fn set_viewport_dimensions(
+        &mut self,
+        viewport_width: f32,
+        viewport_height: f32,
+        widescreen_mode: CutsceneWidescreenMode,
+    ) {
+        let safe_h = viewport_height.max(1.0);
+        self.viewport_height = safe_h;
+        self.viewport_aspect = (viewport_width / safe_h).max(0.5);
         self.widescreen_mode = widescreen_mode;
         self.reduce_widescreen_fov = widescreen_mode == CutsceneWidescreenMode::Sh2eeZoom16x9;
         self.sync_camera_and_actors();
@@ -537,6 +574,10 @@ impl DramaDemoPlayer {
         }
 
         self.current_state = sampled;
+        if PistonArrayRuntime::is_piston_room_active(0, self.info.demo_no) {
+            self.piston_array
+                .step(dt_sec, self.info.demo_no, self.current_state.camera_pos[0]);
+        }
         self.sync_camera_and_actors();
     }
 
@@ -564,6 +605,7 @@ impl DramaDemoPlayer {
                 .sample_at(self.scene_frame, self.info.offset_x, self.info.offset_z);
         self.current_state = sampled;
         self.piston_fix = PistonRoomFixState::default();
+        self.piston_array = PistonArrayRuntime::new();
         self.sync_camera_and_actors();
     }
 
@@ -637,6 +679,42 @@ impl DramaDemoPlayer {
         }
         self.maria_fog_counters =
             evaluate_meeting_maria_fog_counters(self.info.demo_no, self.scene_frame);
+
+        if self.piston_fix.doorway_piston_culled
+            && !self.piston_array.fix_state.doorway_piston_culled
+        {
+            self.piston_array.fix_state = self.piston_fix;
+            self.piston_array
+                .step(0.0, self.info.demo_no, self.current_state.camera_pos[0]);
+        }
+
+        let resolved_room_id = resolve_cutscene_room_id(self.info.demo_no, self.info.stage_name);
+        self.atmosphere = AtmosphereGradingEvaluation::evaluate(AtmosphereEvalInput {
+            room_id: resolved_room_id,
+            demo_no: self.info.demo_no,
+            scene_frame: self.scene_frame,
+            camera_pos_x: self.current_state.camera_pos[0],
+            james_pos_y: self.current_state.char_positions[0][1],
+            viewport_aspect: self.viewport_aspect,
+            event_index: 1,
+            transition_state: ScreenTransitionState::Normal,
+        });
+        self.special_fx = SpecialFxEvaluation::evaluate(SpecialFxEvalInput {
+            room_id: resolved_room_id,
+            demo_no: self.info.demo_no,
+            scene_frame: self.scene_frame,
+            camera_pos_x: self.current_state.camera_pos[0],
+            viewport_height: self.viewport_height,
+            viewport_aspect: self.viewport_aspect,
+            enemies_remaining: 1,
+            flesh_lips_death_substate: None,
+        });
+        self.closet_door = ClosetDoorReplacementState::evaluate(
+            resolved_room_id,
+            self.info.demo_no,
+            self.scene_frame,
+            true,
+        );
 
         self.sync_actors_from_state();
     }

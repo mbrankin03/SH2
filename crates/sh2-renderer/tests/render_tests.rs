@@ -112,6 +112,7 @@ mod renderer_tests {
             grain_intensity: 0.65,
             exposure: 1.0,
             frame_count: 1,
+            ..post::PostUniforms::default()
         });
 
         // Test with synthetic cube geometry (always available in CI)
@@ -323,6 +324,7 @@ mod renderer_tests {
                 grain_intensity: 0.8,
                 exposure: 1.0,
                 frame_count: frame,
+                ..post::PostUniforms::default()
             });
             ctx.render_gpu_map(&gpu_map);
             let _ = ctx.device.poll(wgpu::Maintain::wait());

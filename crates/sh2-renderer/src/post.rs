@@ -5,7 +5,9 @@
 //! - Authentic warm tint `0xde99` (`RGB(222, 210, 206)`).
 //! - Animated pseudo-random seed advancement per frame.
 
-/// Uniform buffer payload passed to the post-processing shader.
+/// Uniform buffer payload passed to the post-processing shader (`SH2-105`).
+///
+/// Layout is 32 bytes (`2 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct PostUniforms {
@@ -17,6 +19,12 @@ pub struct PostUniforms {
     pub exposure: f32,
     /// Frame counter to guarantee animated pseudo-randomness across frames.
     pub frame_count: u32,
+    /// PS2 `Kari_hisyakai` screen-space DoF / closet slat blur 2-tap offset in pixels `(val1, val2)` (`SH2-105`).
+    pub dof_tap_offset_px: [f32; 2],
+    /// Normalized PS2 DoF / closet bar blur blend weight `[0.0, 1.0]` (`SH2-105`).
+    pub dof_strength: f32,
+    /// Normalized PS2 `enSetBlur` motion blur strength `[0.0, 1.0]` (`SH2-105`).
+    pub motion_blur_strength: f32,
 }
 
 impl Default for PostUniforms {
@@ -26,6 +34,9 @@ impl Default for PostUniforms {
             grain_intensity: 0.65,
             exposure: 1.0,
             frame_count: 0,
+            dof_tap_offset_px: [1.0 / 3.0, 2.0 / 3.0],
+            dof_strength: 0.0,
+            motion_blur_strength: 0.0,
         }
     }
 }
@@ -42,6 +53,9 @@ struct PostUniforms {
     grain_intensity: f32,
     exposure: f32,
     frame_count: u32,
+    dof_tap_offset_px: vec2<f32>,
+    dof_strength: f32,
+    motion_blur_strength: f32,
 };
 
 @group(0) @binding(0) var<uniform> post: PostUniforms;
@@ -80,7 +94,35 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     let pixel_coords = vec2<i32>(global_id.xy);
-    let hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
+    let max_coord = vec2<i32>(dims) - vec2<i32>(1, 1);
+    var hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
+
+    // 0a. PS2 `Kari_hisyakai` Screen-Space DoF / Closet Slat Blur (`SpecialFX.cpp` & `ClosetCutscene.cpp` `SH2-105`)
+    // Executed BEFORE the film grain pass so the PS2 noise filter cleanly overlaps the blurred closet bars (`ClosetCutscene.cpp:209`).
+    if (post.dof_strength > 0.001) {
+        let tap_delta = vec2<i32>(round(post.dof_tap_offset_px));
+        let tap_double = vec2<i32>(round(post.dof_tap_offset_px * 2.0));
+        let c1 = textureLoad(hdr_in, clamp(pixel_coords + tap_delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+        let c2 = textureLoad(hdr_in, clamp(pixel_coords - tap_delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+        let c3 = textureLoad(hdr_in, clamp(pixel_coords + tap_double, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+        let c4 = textureLoad(hdr_in, clamp(pixel_coords - tap_double, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+        let dof_avg = (c1 + c2) * 0.30 + (c3 + c4) * 0.20;
+        let w_dof = clamp(post.dof_strength, 0.0, 0.90);
+        hdr_color = mix(hdr_color, dof_avg, w_dof);
+    }
+
+    // 0b. PS2 `enSetBlur` Motion Blur Pass (`PistonRoom.cpp` & `SpecialFX.cpp` `SH2-105`)
+    if (post.motion_blur_strength > 0.001) {
+        let center = vec2<f32>(dims) * 0.5;
+        let radial = (vec2<f32>(global_id.xy) - center) * (0.015 * post.motion_blur_strength);
+        let step1 = vec2<i32>(round(radial));
+        let step2 = vec2<i32>(round(radial * 2.0));
+        let m1 = textureLoad(hdr_in, clamp(pixel_coords - step1, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+        let m2 = textureLoad(hdr_in, clamp(pixel_coords - step2, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+        let blur_rgb = (hdr_color + m1 + m2) * (1.0 / 3.0);
+        let w_mb = clamp(post.motion_blur_strength, 0.0, 0.85);
+        hdr_color = mix(hdr_color, blur_rgb, w_mb);
+    }
 
     // 1. Apply ACES tonemapping
     var ldr = aces_tonemap(hdr_color);
@@ -198,11 +240,13 @@ mod tests {
 
     #[test]
     fn test_post_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<PostUniforms>(), 16);
+        assert_eq!(std::mem::size_of::<PostUniforms>(), 32);
         let default = PostUniforms::default();
         assert_eq!(default.frame_count, 0);
         assert_eq!(default.exposure, 1.0);
         assert_eq!(default.grain_intensity, 0.65);
+        assert_eq!(default.dof_strength, 0.0);
+        assert_eq!(default.motion_blur_strength, 0.0);
     }
 
     #[test]
@@ -212,6 +256,9 @@ mod tests {
             grain_intensity: 0.8,
             exposure: 1.25,
             frame_count: 742,
+            dof_tap_offset_px: [1.5, -1.5],
+            dof_strength: 0.85,
+            motion_blur_strength: 0.45,
         };
 
         let bytes = bytemuck::bytes_of(&uniforms);

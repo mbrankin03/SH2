@@ -403,6 +403,7 @@ impl RoomController for InventoryRoomController {
                 position: [eye_pos.x, eye_pos.y - 250.0, eye_pos.z, 1.0],
                 direction_inner: [to_target.x, to_target.y, to_target.z, 0.75],
                 color_outer: [2.2, 2.15, 2.0, 0.45],
+                ambient_tint: [1.0, 1.0, 1.0, 1.0],
             });
 
         state.skin_matrices_scratch.clear();

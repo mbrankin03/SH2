@@ -283,21 +283,25 @@ impl RoomController for ModelViewerRoomController {
                 position: [eye_pos.x, eye_pos.y - 300.0, eye_pos.z, 1.0],
                 direction_inner: [to_target.x, to_target.y, to_target.z, 0.70],
                 color_outer: [1.3, 1.28, 1.22, 0.35],
+                ambient_tint: [1.0, 1.0, 1.0, 1.0],
             },
             StageLightingRig::HighContrastRim => sh2_renderer::light::SpotlightUniforms {
                 position: [eye_pos.x, eye_pos.y - 500.0, eye_pos.z, 1.0],
                 direction_inner: [to_target.x, to_target.y, to_target.z, 0.85],
                 color_outer: [2.8, 2.5, 2.1, 0.60],
+                ambient_tint: [1.0, 1.0, 1.0, 1.0],
             },
             StageLightingRig::FlashlightCone => sh2_renderer::light::SpotlightUniforms {
                 position: [eye_pos.x, eye_pos.y, eye_pos.z, 1.0],
                 direction_inner: [to_target.x, to_target.y, to_target.z, 0.92],
                 color_outer: [2.6, 2.35, 1.85, 0.75],
+                ambient_tint: [1.0, 1.0, 1.0, 1.0],
             },
             StageLightingRig::FullBright => sh2_renderer::light::SpotlightUniforms {
                 position: [eye_pos.x, eye_pos.y, eye_pos.z, 1.0],
                 direction_inner: [to_target.x, to_target.y, to_target.z, -1.0],
                 color_outer: [2.0, 2.0, 2.0, -1.0],
+                ambient_tint: [1.0, 1.0, 1.0, 1.0],
             },
         };
         state.render_ctx.update_spotlight(&spot_uniforms);

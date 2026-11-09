@@ -324,11 +324,16 @@ fn render_cutscene_telemetry_and_subtitles(
         );
         state.menu_rasterizer.draw_text(
             &format!(
-                "ACTORS ({}) : {} | VOICE STREAM: {} (START @ {})",
+                "ACTORS ({}) : {} | VOICE: {} (@ {}) | ToD: {} | DoF: ({:.2},{:.2}) w={:.2} | Blur: {:.0}",
                 p.actors.len(),
                 actors_str.join(", "),
                 p.info.stream_no,
-                p.info.stream_start
+                p.info.stream_start,
+                p.atmosphere.time_of_day_preset,
+                p.special_fx.dof_tap_offset_px[0],
+                p.special_fx.dof_tap_offset_px[1],
+                p.special_fx.dof_strength,
+                p.special_fx.raw_motion_blur_factor,
             ),
             20,
             595,

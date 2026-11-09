@@ -9,15 +9,16 @@ use sh2_app::synthetic_geometry::{
     create_synthetic_fog_runway_geometry,
 };
 use sh2_assets::formats::anm::{compute_bind_locals, parse_anm, AnimationFile, AnimationFrame};
+use sh2_assets::formats::cls::{parse_cls, ClsFile};
 use sh2_assets::formats::map::MapFile;
 use sh2_assets::formats::mdls::{companion_texture_mdl_path, parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
 use sh2_core::SecondaryBonePhysics;
 use sh2_debug::ModelViewerEntry;
-use sh2_renderer::{GpuSkeletalMesh, RenderContext};
+use sh2_renderer::{GpuSkeletalMesh, RenderContext, SkeletalVertex};
 use sh2_ui::menu::TestRoomKind;
 
-/// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
+/// Loaded character asset representation (model hierarchy, bind locals, animation tracks, and facial clusters).
 pub(crate) struct CharacterAsset {
     #[allow(dead_code)]
     pub name: &'static str,
@@ -30,6 +31,14 @@ pub(crate) struct CharacterAsset {
     pub frame_scratch_a: AnimationFrame,
     pub frame_scratch_b: AnimationFrame,
     pub anm: AnimationFile,
+    /// Optional companion `.cls` facial morph cluster animation file (`SH2-63`).
+    pub cls: Option<ClsFile>,
+    /// Reusable scratch buffer for evaluated `.cls` facial cluster weights (`0..n_clusters`).
+    pub cluster_weights_scratch: Vec<f32>,
+    /// Reusable scratch buffer for morphed model-bind-space vertex positions.
+    pub morphed_positions_scratch: Vec<[f32; 3]>,
+    /// Reusable scratch buffer for GPU `SkeletalVertex` upload.
+    pub gpu_vertex_scratch: Vec<SkeletalVertex>,
     pub vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -474,6 +483,7 @@ pub(crate) fn load_character_asset(
     let mut loaded_mdl_rel = None;
     let mut loaded_base_root = None;
     let mut anm_bytes = None;
+    let mut cls_bytes = None;
 
     for base in &base_roots {
         for &mdl_sub in mdl_rel_paths {
@@ -512,6 +522,16 @@ pub(crate) fn load_character_asset(
                 if !bytes.is_empty() {
                     tracing::info!("Found animation asset: {:?}", p);
                     anm_bytes = Some(bytes);
+                    if let Some(cls_rel) = anm_sub.strip_suffix(".anm").map(|s| format!("{s}.cls"))
+                    {
+                        let cls_p = PathBuf::from(base).join(&cls_rel);
+                        if let Ok(c_bytes) = std::fs::read(&cls_p) {
+                            if !c_bytes.is_empty() {
+                                tracing::info!("Found companion facial cluster asset: {:?}", cls_p);
+                                cls_bytes = Some(c_bytes);
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -567,6 +587,11 @@ pub(crate) fn load_character_asset(
                 bones: vec![None; model.bone_count],
             }],
         });
+
+    let cls = cls_bytes
+        .as_deref()
+        .and_then(|bytes| parse_cls(bytes).ok())
+        .filter(|c| !c.blocks.is_empty());
 
     let bind_locals = compute_bind_locals(&model.parents, &model.initial_matrices);
     let gpu_mesh = ctx.compile_skeletal_mesh(&model);
@@ -663,6 +688,9 @@ pub(crate) fn load_character_asset(
     let frame_scratch_b = AnimationFrame {
         bones: Vec::with_capacity(model.bone_count),
     };
+    let cluster_weights_scratch = Vec::with_capacity(model.clusters.len());
+    let morphed_positions_scratch = model.vertices.positions.clone();
+    let gpu_vertex_scratch = Vec::with_capacity(model.vertices.positions.len());
 
     Some(CharacterAsset {
         name: character_name,
@@ -675,6 +703,10 @@ pub(crate) fn load_character_asset(
         frame_scratch_a,
         frame_scratch_b,
         anm,
+        cls,
+        cluster_weights_scratch,
+        morphed_positions_scratch,
+        gpu_vertex_scratch,
         vanilla_texture_bind_groups,
         hd_texture_bind_groups,
         texture_bind_groups,
@@ -771,4 +803,95 @@ pub(crate) fn load_viewer_entry_asset(
         list
     };
     load_character_asset(ctx, entry.display_name, entry.mdl_paths, &anm_slice)
+}
+
+/// Active in-engine real-time 3D cutscene session (`DramaDemoPlayer` + loaded `.mes` table).
+pub(crate) struct ActiveDramaDemoSession {
+    pub player: sh2_core::DramaDemoPlayer,
+    pub messages: Option<sh2_assets::formats::mes::MessageTable>,
+    #[allow(dead_code)]
+    pub catalog_index: usize,
+}
+
+/// Loads a [`sh2_core::DramaDemoPlayInfo`] cutscene script (`.dds`) and its stage `.mes` dialogue table from disk.
+pub(crate) fn open_drama_demo_session(
+    catalog_index: usize,
+    reduce_widescreen_fov: bool,
+) -> Option<ActiveDramaDemoSession> {
+    let catalog = sh2_core::DRAMA_DEMO_CATALOG;
+    if catalog.is_empty() {
+        return None;
+    }
+    let idx = catalog_index % catalog.len();
+    let info = catalog[idx];
+
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let base_roots = [
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
+    ];
+
+    let mut dds_bytes = None;
+    for base in &base_roots {
+        let p = PathBuf::from(base).join(info.dds_path);
+        if let Ok(bytes) = std::fs::read(&p) {
+            dds_bytes = Some(bytes);
+            break;
+        }
+    }
+
+    let dds_bytes = dds_bytes?;
+    let script = sh2_assets::formats::demo::parse_demo_dds(&dds_bytes).ok()?;
+
+    let mut messages = None;
+    for base in &base_roots {
+        let p = PathBuf::from(base).join(info.mes_path);
+        if let Ok(bytes) = std::fs::read(&p) {
+            if let Ok(tbl) = sh2_assets::formats::mes::parse_mes(&bytes) {
+                messages = Some(tbl);
+                break;
+            }
+        }
+    }
+
+    tracing::info!(
+        "[Cutscene Player] Opened DramaDemo #{}: '{}' ({}) -> {} frames, {} actors, {} lights",
+        info.demo_no,
+        info.title,
+        info.dds_path,
+        script.header.total_frames,
+        script.header.character_names.len(),
+        script.header.total_lights()
+    );
+
+    let player = sh2_core::DramaDemoPlayer::new(info, script, reduce_widescreen_fov);
+    Some(ActiveDramaDemoSession {
+        player,
+        messages,
+        catalog_index: idx,
+    })
+}
+
+/// Decodes a cutscene voice track (`voice.afs` entry `afs_index`) from disk into a [`sh2_assets::WavEntry`].
+pub(crate) fn load_cutscene_voice_wav(afs_index: usize) -> Option<sh2_assets::WavEntry> {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let base_roots = [
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
+    ];
+    let rel_candidates = [
+        "sh2e/sound/adx/voice/voice.afs",
+        "data/sound/adx/voice/voice.afs",
+    ];
+    for base in &base_roots {
+        for rel in &rel_candidates {
+            let p = PathBuf::from(base).join(rel);
+            if let Ok(bytes) = std::fs::read(&p) {
+                if let Ok(wav) = sh2_assets::decode_afs_entry_to_wav(&bytes, afs_index) {
+                    return Some(wav);
+                }
+            }
+        }
+    }
+    None
 }

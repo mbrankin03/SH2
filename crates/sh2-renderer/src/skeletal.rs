@@ -223,7 +223,7 @@ impl GpuSkeletalMesh {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Skeletal Mesh Vertex Buffer"),
             contents: bytemuck::cast_slice(&skeletal_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -264,6 +264,51 @@ impl GpuSkeletalMesh {
     pub fn update_bone_matrices(&self, queue: &wgpu::Queue, matrices: &[[[f32; 4]; 4]]) {
         let uniforms = SkeletonBoneUniforms::from_matrices(matrices);
         queue.write_buffer(&self.bone_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Uploads morphed vertex positions (from `.cls` facial cluster weights via
+    /// [`ModelFile::apply_cluster_weights_into`]) into the GPU skeletal vertex buffer
+    /// using the caller-provided `scratch_vertices` buffer with zero heap allocations.
+    pub fn update_morphed_positions(
+        &self,
+        queue: &wgpu::Queue,
+        model: &ModelFile,
+        morphed_positions: &[[f32; 3]],
+        scratch_vertices: &mut Vec<SkeletalVertex>,
+    ) {
+        let v_count = model.vertices.positions.len().min(morphed_positions.len());
+        scratch_vertices.clear();
+        if scratch_vertices.capacity() < v_count {
+            scratch_vertices.reserve(v_count - scratch_vertices.capacity());
+        }
+
+        for (i, &pos) in morphed_positions.iter().take(v_count).enumerate() {
+            let nrm = model.vertices.normals[i];
+            let uv = model.vertices.uvs[i];
+            let bones = model.vertices.bone_indices[i];
+            let weights = model.vertices.weights[i];
+
+            scratch_vertices.push(SkeletalVertex {
+                position: pos,
+                _pad0: 0.0,
+                normal: nrm,
+                _pad1: 0.0,
+                uv,
+                bone_indices: [
+                    bones[0] as u32,
+                    bones[1] as u32,
+                    bones[2] as u32,
+                    bones[3] as u32,
+                ],
+                weights,
+            });
+        }
+
+        queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(scratch_vertices.as_slice()),
+        );
     }
 
     /// Sets the active state for a given pose variation index.

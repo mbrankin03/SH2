@@ -502,6 +502,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         fmv_session,
         loaded_fmv_movie_idx,
         loaded_fmv_source,
+        drama_demo_session: None,
+        selected_drama_demo_idx: 0,
         mouse_left_pressed: false,
         mouse_right_pressed: false,
         last_cursor_pos: None,

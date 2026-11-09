@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use winit::window::Window;
 
-use crate::assets::CharacterAsset;
+use crate::assets::{ActiveDramaDemoSession, CharacterAsset};
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
@@ -75,6 +75,8 @@ pub(crate) struct AppState {
     pub fmv_session: Option<ActiveFmvSession>,
     pub loaded_fmv_movie_idx: usize,
     pub loaded_fmv_source: FmvVideoSource,
+    pub drama_demo_session: Option<ActiveDramaDemoSession>,
+    pub selected_drama_demo_idx: usize,
     pub mouse_left_pressed: bool,
     pub mouse_right_pressed: bool,
     pub last_cursor_pos: Option<(f64, f64)>,

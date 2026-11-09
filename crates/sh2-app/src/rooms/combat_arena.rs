@@ -3,19 +3,85 @@
 use std::time::Duration;
 use winit::keyboard::KeyCode;
 
+use crate::assets::{load_cutscene_voice_wav, open_drama_demo_session};
 use crate::rooms::RoomController;
 use crate::state::AppState;
 use sh2_assets::formats::anm::{
     blend_frame_in_place, compute_skin_matrices_with_inv_into, evaluate_pose_into,
     interpolate_frames_into,
 };
+use sh2_assets::formats::demo::DemoLightKind;
 use sh2_audio::{play_menu_sound, SoundCueKind};
+use sh2_core::DRAMA_DEMO_CATALOG;
 use sh2_ui::menu::TestRoomKind;
 
 pub(crate) struct CombatArenaRoomController;
 
 impl RoomController for CombatArenaRoomController {
     fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed: bool, repeat: bool) {
+        // When an in-engine real-time 3D cutscene (`DramaDemoPlayer`) is active, lock gameplay
+        // locomotion and pause menu (`SH2-63`); allow `Escape` / `Enter` to skip (`DramaDemoSkipLast`)
+        // or `[` / `]` to cycle the cutscene catalog.
+        if state
+            .drama_demo_session
+            .as_ref()
+            .is_some_and(|s| s.player.locks_gameplay_input())
+        {
+            state.key_forward = false;
+            state.key_backward = false;
+            state.key_left = false;
+            state.key_right = false;
+            state.sim_core.input.state.left_stick_x = 0.0;
+            state.sim_core.input.state.left_stick_y = 0.0;
+
+            if pressed && !repeat {
+                match key_code {
+                    KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter | KeyCode::KeyG => {
+                        if let Some(mut session) = state.drama_demo_session.take() {
+                            session.player.skip();
+                            if let Some((final_pos, final_yaw)) =
+                                session.player.player_handoff_transform()
+                            {
+                                state.sim_core.snap_player_transform(final_pos, final_yaw);
+                                state.sim_core.camera.reset_to_player(final_pos, final_yaw);
+                            }
+                            if let Some(ref mut eng) = state.audio_engine {
+                                eng.stop_voice(Duration::from_millis(40));
+                            }
+                            tracing::info!(
+                                "[Cutscene Player] Skipped DramaDemo #{}: '{}' -> returned control to gameplay.",
+                                session.player.info.demo_no,
+                                session.player.info.title
+                            );
+                        }
+                    }
+                    KeyCode::Period => {
+                        state.selected_drama_demo_idx =
+                            (state.selected_drama_demo_idx + 1) % DRAMA_DEMO_CATALOG.len();
+                        if let Some(ref mut eng) = state.audio_engine {
+                            eng.stop_voice(Duration::from_millis(30));
+                        }
+                        state.drama_demo_session =
+                            open_drama_demo_session(state.selected_drama_demo_idx, false);
+                    }
+                    KeyCode::Comma => {
+                        state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
+                            DRAMA_DEMO_CATALOG.len() - 1
+                        } else {
+                            state.selected_drama_demo_idx - 1
+                        };
+                        if let Some(ref mut eng) = state.audio_engine {
+                            eng.stop_voice(Duration::from_millis(30));
+                        }
+                        state.drama_demo_session =
+                            open_drama_demo_session(state.selected_drama_demo_idx, false);
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+
         match key_code {
             KeyCode::Escape | KeyCode::Backspace if pressed => {
                 let stage_name = state.active_test_room.label();
@@ -242,6 +308,34 @@ impl RoomController for CombatArenaRoomController {
                     "[BGM] Cycled BGM stage preset -> Stage {} (BGM Page {})",
                     stg,
                     page
+                );
+            }
+            // Launch or cycle in-engine real-time 3D cutscene (`DramaDemoPlayer`, `SH2-63`)
+            KeyCode::KeyG if pressed && !repeat => {
+                state.drama_demo_session =
+                    open_drama_demo_session(state.selected_drama_demo_idx, false);
+            }
+            KeyCode::Period if pressed && !repeat => {
+                state.selected_drama_demo_idx =
+                    (state.selected_drama_demo_idx + 1) % DRAMA_DEMO_CATALOG.len();
+                tracing::info!(
+                    "[Cutscene Player] Selected DramaDemo [{}/{}]: {} (Press [G] to Play)",
+                    state.selected_drama_demo_idx + 1,
+                    DRAMA_DEMO_CATALOG.len(),
+                    DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx].title
+                );
+            }
+            KeyCode::Comma if pressed && !repeat => {
+                state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
+                    DRAMA_DEMO_CATALOG.len() - 1
+                } else {
+                    state.selected_drama_demo_idx - 1
+                };
+                tracing::info!(
+                    "[Cutscene Player] Selected DramaDemo [{}/{}]: {} (Press [G] to Play)",
+                    state.selected_drama_demo_idx + 1,
+                    DRAMA_DEMO_CATALOG.len(),
+                    DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx].title
                 );
             }
             _ => {}
@@ -531,10 +625,78 @@ impl RoomController for CombatArenaRoomController {
             }
         }
 
-        // 2. Compute smooth sub-frame interpolated view matrix for high refresh OLED (60–240 Hz+)
+        // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63`) if running,
+        // or compute smooth sub-frame interpolated gameplay camera for high refresh OLED (60–240 Hz+).
         let alpha = state.sim_core.interpolation_alpha();
-        let view = state.sim_core.camera.interpolated_view_matrix(alpha);
-        let fov = state.sim_core.camera.interpolated_fov(alpha);
+        let mut cutscene_camera_override = None;
+        let mut cutscene_light_override = None;
+
+        if !is_paused {
+            let subs_enabled = state.menu_ctrl.options_menu.draft_config.game.subtitles;
+            let mut voice_afs_to_play = None;
+            let mut stop_voice_now = false;
+            let mut finished_handoff = None;
+
+            if let Some(ref mut session) = state.drama_demo_session {
+                session.player.tick(dt.as_secs_f32(), subs_enabled);
+                if session.player.pending_voice_trigger {
+                    session.player.pending_voice_trigger = false;
+                    voice_afs_to_play = session.player.info.voice_afs_index();
+                }
+                if session.player.pending_voice_stop {
+                    session.player.pending_voice_stop = false;
+                    stop_voice_now = true;
+                }
+                if let Some((actor_pos, actor_yaw)) = session.player.player_handoff_transform() {
+                    state.sim_core.snap_player_transform(actor_pos, actor_yaw);
+                }
+                if !session.player.locks_gameplay_input() {
+                    finished_handoff = session.player.player_handoff_transform();
+                } else {
+                    cutscene_camera_override = Some(session.player.camera);
+                    cutscene_light_override = session.player.primary_active_light().copied();
+                }
+            }
+
+            if let Some(afs_idx) = voice_afs_to_play {
+                if let Some(wav) = load_cutscene_voice_wav(afs_idx) {
+                    if let Some(ref mut eng) = state.audio_engine {
+                        let _ = eng.play_cutscene_voice(&wav);
+                    }
+                }
+            }
+            if stop_voice_now {
+                if let Some(ref mut eng) = state.audio_engine {
+                    eng.stop_voice(Duration::from_millis(50));
+                }
+            }
+            if finished_handoff.is_some() {
+                if let Some((final_pos, final_yaw)) = finished_handoff {
+                    state.sim_core.snap_player_transform(final_pos, final_yaw);
+                    state.sim_core.camera.reset_to_player(final_pos, final_yaw);
+                }
+                state.drama_demo_session = None;
+            }
+        } else if let Some(ref session) = state.drama_demo_session {
+            if session.player.locks_gameplay_input() {
+                cutscene_camera_override = Some(session.player.camera);
+                cutscene_light_override = session.player.primary_active_light().copied();
+            }
+        }
+
+        let (view, fov, cam_pos) = if let Some(cs_cam) = cutscene_camera_override {
+            (cs_cam.view_matrix(), cs_cam.fov_y_radians, cs_cam.eye)
+        } else {
+            let v = state.sim_core.camera.interpolated_view_matrix(alpha);
+            let f = state.sim_core.camera.interpolated_fov(alpha);
+            let cp = state
+                .sim_core
+                .camera
+                .prev_snapshot
+                .eye
+                .lerp(state.sim_core.camera.curr_snapshot.eye, alpha);
+            (v, f, cp)
+        };
         let proj = glam::Mat4::perspective_rh(
             fov,
             aspect,
@@ -543,29 +705,54 @@ impl RoomController for CombatArenaRoomController {
         );
         let view_proj = proj * view;
         let inv_proj = proj.inverse();
-
-        let cam_pos = state
-            .sim_core
-            .camera
-            .prev_snapshot
-            .eye
-            .lerp(state.sim_core.camera.curr_snapshot.eye, alpha);
         state.render_ctx.update_camera(view_proj, inv_proj, cam_pos);
 
-        // 3. Dynamic Flashlight tracking sub-frame interpolated character position & sweep inertia
+        // 3. Dynamic Flashlight or `.dds` Cutscene Scene Light (`DdsPlayLight`)
         let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
         let (spot_pos, light_dir) = state.sim_core.interpolated_flashlight_ray(alpha);
 
-        let light_color = if state.sim_core.scenario.flashlight_on {
-            [2.5, 2.3, 1.8, 1.0]
+        let spot_uniforms = if let Some(cs_light) = cutscene_light_override {
+            let l_pos = glam::Vec3::from_array(cs_light.position);
+            let l_tgt = glam::Vec3::from_array(cs_light.interest);
+            let dir = match cs_light.kind {
+                DemoLightKind::Spot => (l_tgt - l_pos).normalize_or_zero(),
+                DemoLightKind::Directional => (-l_pos).normalize_or_zero(),
+                DemoLightKind::Point => (player_pos - l_pos).normalize_or_zero(),
+            };
+            let safe_dir = if dir.length_squared() > 1e-5 {
+                dir
+            } else {
+                glam::Vec3::new(0.0, 0.0, 1.0)
+            };
+            let (inner_cos, outer_cos) = if cs_light.kind == DemoLightKind::Spot {
+                (
+                    cs_light.cone[0].cos().clamp(0.1, 0.99),
+                    cs_light.cone[1].cos().clamp(0.05, 0.95),
+                )
+            } else {
+                (-1.0, -1.0)
+            };
+            sh2_renderer::light::SpotlightUniforms {
+                position: [l_pos.x, l_pos.y, l_pos.z, 1.0],
+                direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, inner_cos],
+                color_outer: [
+                    cs_light.color[0].max(0.2) * 2.0,
+                    cs_light.color[1].max(0.2) * 2.0,
+                    cs_light.color[2].max(0.2) * 2.0,
+                    outer_cos,
+                ],
+            }
         } else {
-            [0.0, 0.0, 0.0, 0.0]
-        };
-
-        let spot_uniforms = sh2_renderer::light::SpotlightUniforms {
-            position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
-            direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-            color_outer: [light_color[0], light_color[1], light_color[2], 0.70],
+            let light_color = if state.sim_core.scenario.flashlight_on {
+                [2.5, 2.3, 1.8, 1.0]
+            } else {
+                [0.0, 0.0, 0.0, 0.0]
+            };
+            sh2_renderer::light::SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+                color_outer: [light_color[0], light_color[1], light_color[2], 0.70],
+            }
         };
         state.render_ctx.update_spotlight(&spot_uniforms);
 
@@ -1124,6 +1311,90 @@ impl RoomController for CombatArenaRoomController {
                 "[Controls: Right-Click/R: Ready | Space: Attack | 1..6: Weapons | Tab: Cycle Enemy | WASD: Move]",
                 20,
                 670,
+                1,
+                muted,
+                true,
+            );
+        }
+
+        // Render active `.dds` In-Engine 3D Cutscene (`DramaDemoPlayer`) telemetry & `.mes` subtitles (`SH2-63`)
+        if let Some(ref session) = state.drama_demo_session {
+            let p = &session.player;
+            let actors_str: Vec<String> = p
+                .actors
+                .iter()
+                .map(|a| {
+                    format!(
+                        "{}(aid={},vis={})",
+                        a.actor_name,
+                        a.current_aid,
+                        if a.visible { "Y" } else { "N" }
+                    )
+                })
+                .collect();
+            state.menu_rasterizer.draw_text(
+                &format!(
+                    "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° | ROLL {:.2} rad | [Esc/Enter/G] Skip  [,/.] Prev/Next",
+                    p.info.demo_no,
+                    p.info.title,
+                    p.scene_frame.floor(),
+                    p.total_frames(),
+                    p.camera.fov_y_radians.to_degrees(),
+                    p.camera.roll_radians
+                ),
+                20,
+                575,
+                1,
+                yellow,
+                true,
+            );
+            state.menu_rasterizer.draw_text(
+                &format!(
+                    "ACTORS ({}) : {} | VOICE STREAM: {} (START @ {})",
+                    p.actors.len(),
+                    actors_str.join(", "),
+                    p.info.stream_no,
+                    p.info.stream_start
+                ),
+                20,
+                595,
+                1,
+                cyan,
+                true,
+            );
+
+            if let Some(msg_id) = p.active_subtitle_msg_id {
+                let sub_text = session
+                    .messages
+                    .as_ref()
+                    .and_then(|m| m.get_text(msg_id as usize))
+                    .map(|s| s.replace('\x0C', "\n"))
+                    .unwrap_or_else(|| format!("[Subtitle #{}]", msg_id));
+                let cx = state.menu_rasterizer.width / 2;
+                let by = state.menu_rasterizer.height.saturating_sub(56);
+                sh2_ui::draw_subtitle(
+                    &mut state.menu_rasterizer,
+                    None,
+                    &sub_text,
+                    cx,
+                    by,
+                    28,
+                    [240, 240, 240, 255],
+                );
+            }
+        } else {
+            let demo_entry =
+                &DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx % DRAMA_DEMO_CATALOG.len()];
+            state.menu_rasterizer.draw_text(
+                &format!(
+                    "[3D CUTSCENE READY [{}/{}]: {} (demo_no={}) — Press [G] to Play, [, / .] to Cycle]",
+                    state.selected_drama_demo_idx + 1,
+                    DRAMA_DEMO_CATALOG.len(),
+                    demo_entry.title,
+                    demo_entry.demo_no
+                ),
+                20,
+                692,
                 1,
                 muted,
                 true,

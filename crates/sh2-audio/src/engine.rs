@@ -767,6 +767,62 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Plays a decoded cutscene voice stream (`WavEntry` from `voice.afs` entry `stream_no - 60001`)
+    /// on the dedicated voice track with automatic BGM ducking (`SH2-63`).
+    pub fn play_cutscene_voice(&mut self, wav: &WavEntry) -> Result<(), AudioError> {
+        self.stop_voice(Duration::from_millis(20));
+        self.apply_ducking(true);
+
+        let voice_track = self
+            .voice_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No voice track".into()))?;
+        let (play_rate, frames) = wav_entry_to_frames_48k(wav);
+
+        let settings = StaticSoundSettings::new()
+            .output_destination(voice_track)
+            .volume(Volume::Amplitude(
+                (self.voice_volume * self.master_volume) as f64,
+            ));
+
+        let sound_data = StaticSoundData {
+            sample_rate: play_rate,
+            frames: Arc::from(frames),
+            settings,
+            slice: None,
+        };
+
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let handle = manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+        self.active_voice_handle = Some(handle);
+        Ok(())
+    }
+
+    /// Stops any currently playing voice stream (`SeCall(0x3F4)` on cutscene skip) and releases BGM ducking.
+    pub fn stop_voice(&mut self, fade_out: Duration) {
+        if let Some(mut handle) = self.active_voice_handle.take() {
+            handle.stop(Tween {
+                duration: fade_out,
+                easing: Easing::Linear,
+                ..Default::default()
+            });
+        }
+        self.active_dialogue = None;
+        self.apply_ducking(false);
+    }
+
+    /// Returns whether a voice stream is currently active on the voice track.
+    pub fn is_voice_playing(&self) -> bool {
+        self.active_voice_handle
+            .as_ref()
+            .is_some_and(|h| h.state() == kira::sound::PlaybackState::Playing)
+    }
+
     /// Applies or releases volume ducking on the BGM track.
     fn apply_ducking(&mut self, ducked: bool) {
         if let Some(ref mut track) = self.bgm_track {

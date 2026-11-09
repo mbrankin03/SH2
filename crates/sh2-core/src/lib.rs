@@ -7,6 +7,7 @@ pub mod clock;
 pub mod collision;
 pub mod combat;
 pub mod config;
+pub mod cutscene;
 pub mod input;
 pub mod locomotion;
 pub mod math;
@@ -37,6 +38,13 @@ pub use config::{
     AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, FogQuality, FrameRateCap,
     GameLanguage, GameOptions, InternalResolution, RiddleDifficulty, SpeakerConfiguration,
     VideoOptions, WindowDisplayMode,
+};
+pub use cutscene::{
+    demo_fov_scale_for_demo_no, demo_light_decay_bounds, derive_demo_actor_anm_and_cls_paths,
+    find_drama_demo_anim_info, find_drama_demo_by_id, find_drama_demo_by_no, CutsceneActorRuntime,
+    CutsceneCameraSnapshot, CutsceneSequenceStep, DramaDemoAnimInfo, DramaDemoPlayInfo,
+    DramaDemoPlayer, DramaDemoStep, SubtitleWindow, CUTSCENE_NATIVE_FPS, DRAMA_DEMO_ANIM_INFO,
+    DRAMA_DEMO_CATALOG, VOICE_AFS_STREAM_BASE,
 };
 pub use input::{
     ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,

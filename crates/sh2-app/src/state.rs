@@ -8,6 +8,7 @@ use winit::window::Window;
 use crate::assets::{ActiveDramaDemoSession, CharacterAsset};
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
+use crate::rooms::horror_triggers_room::HorrorTriggersRoomState;
 use crate::rooms::inventory_room::InventoryDebugRoomState;
 use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
@@ -44,6 +45,7 @@ pub(crate) struct AppState {
     pub surface_sfx_room: SurfaceSfxRoomState,
     pub inventory_room: InventoryDebugRoomState,
     pub puzzle_cutaway_room: PuzzleCutawayRoomState,
+    pub horror_triggers_room: HorrorTriggersRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -264,7 +266,8 @@ impl AppState {
             | TestRoomKind::LoadingScreenTest
             | TestRoomKind::SurfaceSfxTestRoom
             | TestRoomKind::InventoryAndItemsRoom
-            | TestRoomKind::PuzzleAndCutawayRoom => 0,
+            | TestRoomKind::PuzzleAndCutawayRoom
+            | TestRoomKind::HorrorTriggersRoom => 0,
         };
         (stage_id, flags)
     }

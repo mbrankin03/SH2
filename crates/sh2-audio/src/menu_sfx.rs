@@ -189,8 +189,9 @@ impl MenuAudioBank {
                         header_buf.truncate(n);
                         if let Ok(afs_idx) = parse_afs_index(&header_buf) {
                             sfx_bank.voice_afs_path = Some(candidate.clone());
-                            // Preload key streamed SFX entries (`17` = chainsaw afs, `24` = g_start, `35` = save_sound, `36` = menu transition)
-                            for &entry_idx in &[17usize, 24, 35, 36] {
+                            // Preload key streamed SFX entries (`17` = chainsaw afs, `24` = g_start, `27` = 0x4682 Prison South Ritual,
+                            // `35` = save_sound, `36` = menu transition, `42` = 0x4982 Society 0x5c, `44` = 0x3E80 TV static)
+                            for &entry_idx in &[17usize, 24, 27, 35, 36, 42, 44] {
                                 if let Some(desc) = afs_idx.get(entry_idx) {
                                     if desc.length > 0 && desc.length <= 4 * 1024 * 1024 {
                                         let mut slice = vec![0u8; desc.length as usize];

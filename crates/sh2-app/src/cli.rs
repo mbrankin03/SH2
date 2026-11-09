@@ -56,8 +56,15 @@ impl CliArgs {
                 initial_test_room = Some(TestRoomKind::SurfaceSfxTestRoom);
             } else if arg == "--inventory" || arg == "--items" {
                 initial_test_room = Some(TestRoomKind::InventoryAndItemsRoom);
-            } else if arg == "--puzzles" || arg == "--cutaway" || arg == "--events" {
+            } else if arg == "--puzzles" || arg == "--cutaway" {
                 initial_test_room = Some(TestRoomKind::PuzzleAndCutawayRoom);
+            } else if arg == "--horror"
+                || arg == "--horror-triggers"
+                || arg == "--events"
+                || arg == "--jumpscare"
+                || arg == "--whispers"
+            {
+                initial_test_room = Some(TestRoomKind::HorrorTriggersRoom);
             } else if let Some(room_str) = arg
                 .strip_prefix("--test-room=")
                 .or_else(|| arg.strip_prefix("--room="))
@@ -106,8 +113,9 @@ impl CliArgs {
             "audio" | "audio-debug" | "bgm" | "sound" => TestRoomKind::AudioDebugRoom,
             "sfx" | "surface-sfx" | "footsteps" | "materials" => TestRoomKind::SurfaceSfxTestRoom,
             "inventory" | "items" | "item-viewer" => TestRoomKind::InventoryAndItemsRoom,
-            "puzzles" | "puzzle" | "cutaway" | "events" | "overlays" => {
-                TestRoomKind::PuzzleAndCutawayRoom
+            "puzzles" | "puzzle" | "cutaway" | "overlays" => TestRoomKind::PuzzleAndCutawayRoom,
+            "horror" | "horror-triggers" | "events" | "jumpscare" | "whispers" => {
+                TestRoomKind::HorrorTriggersRoom
             }
             _ => {
                 if warn_unknown {

@@ -97,10 +97,12 @@ pub enum TestRoomKind {
     InventoryAndItemsRoom,
     /// Interactive Puzzle State Machines, Stage Event (`ev_prog`) & Cutaway Sprite Overlay Debug Room (`SH2-15`).
     PuzzleAndCutawayRoom,
+    /// Interactive Scripted Sequence System, `ev_pos` Trigger Zones & Environmental Horror Triggers Chamber (`SH2-47`).
+    HorrorTriggersRoom,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 14] = [
+    pub const ALL: [TestRoomKind; 15] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -115,6 +117,7 @@ impl TestRoomKind {
         TestRoomKind::SurfaceSfxTestRoom,
         TestRoomKind::InventoryAndItemsRoom,
         TestRoomKind::PuzzleAndCutawayRoom,
+        TestRoomKind::HorrorTriggersRoom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -133,6 +136,7 @@ impl TestRoomKind {
             Self::SurfaceSfxTestRoom => "Surface Footstep & 3D SFX Room",
             Self::InventoryAndItemsRoom => "Inventory & 3D/2D Item Inspect Room",
             Self::PuzzleAndCutawayRoom => "Puzzle Logic & Cutaway Overlays Room",
+            Self::HorrorTriggersRoom => "Stage Events & Horror Triggers Room",
         }
     }
 
@@ -169,6 +173,9 @@ impl TestRoomKind {
             }
             Self::PuzzleAndCutawayRoom => {
                 "Interactive Clock, Safe, Coin Desk, Hospital Box, Hotel Drum & Baldwin Board cutaway overlays"
+            }
+            Self::HorrorTriggersRoom => {
+                "Prison bathroom stall jumpscare (0x427D), Room 209 orbiting whisper (0x9C70), 3F footsteps & ev_pos zones"
             }
         }
     }

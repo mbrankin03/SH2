@@ -88,8 +88,11 @@ pub(crate) fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision:
         return sh2_core::collision::CollisionWorld::from_cld(&cld);
     }
 
-    if room == TestRoomKind::CombatArena {
-        tracing::info!("Using open unobstructed arena collision bounds for CombatArena");
+    if room == TestRoomKind::CombatArena || room == TestRoomKind::HorrorTriggersRoom {
+        tracing::info!(
+            "Using open unobstructed arena collision bounds for {:?}",
+            room
+        );
         // Wide 12000x16000 room with 3500 height and NO center pillar (pw=0, pl=0)
         // so the camera raycast is never blocked or clamped near the center.
         return sh2_core::collision::CollisionWorld::create_synthetic_room(
@@ -353,8 +356,11 @@ pub(crate) fn find_map_file_for_room(
                 fog,
             )
         }
-        TestRoomKind::CombatArena => {
-            tracing::info!("Generated Combat Testing Arena Stage (SH2-13).");
+        TestRoomKind::CombatArena | TestRoomKind::HorrorTriggersRoom => {
+            tracing::info!(
+                "Generated Combat / Horror Testing Arena Stage ({:?}).",
+                room
+            );
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.12, 0.13, 0.16, 1.0],
                 fog_near: 2500.0,

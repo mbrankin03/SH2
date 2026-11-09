@@ -42,9 +42,10 @@ pub(super) fn tick_and_render_combat_arena_3d(
 
     update_camera_uniforms(state, aspect, alpha, cutscene_camera_override);
 
-    // 3. Dynamic Flashlight or `.dds` Cutscene Scene Light (`DdsPlayLight`)
+    // 3. Dynamic Flashlight or `.dds` Cutscene Scene Light (`DdsPlayLight`) + Atmosphere Fog
     let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
     update_spotlight_uniforms(state, alpha, player_pos, cutscene_light_override);
+    update_atmosphere_fog_uniforms(state, alpha);
 
     // 4. Sample player, cutscene actor, & enemy skeletal animations at sub-frame alpha
     evaluate_player_skinning(
@@ -570,6 +571,23 @@ fn update_spotlight_uniforms(
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);
+}
+
+fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
+    let det_fog_time = state.sim_core.deterministic_fog_time(alpha);
+    state.fog_uniforms.time = det_fog_time;
+    let mut effective_fog = state.fog_uniforms;
+    if let Some(ref session) = state.drama_demo_session {
+        if session.player.locks_gameplay_input() {
+            if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {
+                effective_fog.fog_color[0] = rgb[0];
+                effective_fog.fog_color[1] = rgb[1];
+                effective_fog.fog_color[2] = rgb[2];
+            }
+            effective_fog.fog_color[3] *= session.player.atmosphere.fog_density_scale;
+        }
+    }
+    state.render_ctx.update_fog(&effective_fog);
 }
 
 fn evaluate_player_skinning(

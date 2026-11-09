@@ -261,6 +261,9 @@ impl AudioEngine {
     /// Applies a continuous [`RoomAcousticsProfile`] (derived from `.cam` `rd_type` / `area_size_type`
     /// or a discrete preset) to the SFX reverb processor (`SH2-55`).
     pub fn apply_acoustics_profile(&mut self, profile: RoomAcousticsProfile) {
+        if profile == self.current_acoustics {
+            return;
+        }
         self.current_preset = profile.preset;
         self.current_acoustics = profile;
         let tween = Tween {

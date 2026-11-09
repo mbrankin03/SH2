@@ -716,9 +716,9 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
         }
 
         // 1. Evaluate `.cls` facial morph cluster weights & upload morphed vertices if present (`clani.c`)
-        let actor_frame = actor.global_anm_frame(scene_frame);
+        let cls_frame = actor.global_cls_frame(scene_frame);
         if let Some(ref cls) = asset.cls {
-            cls.evaluate_global_frame_into(actor_frame, false, &mut asset.cluster_weights_scratch);
+            cls.evaluate_global_frame_into(cls_frame, false, &mut asset.cluster_weights_scratch);
             asset.model.apply_cluster_weights_into(
                 &asset.cluster_weights_scratch,
                 &mut asset.morphed_positions_scratch,
@@ -731,14 +731,14 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
             );
         }
 
-        // 2. Evaluate `.anm` skeletal bone transforms at `actor_frame` (`scene_frame + anm_frame_offset`)
-        let frame_count = asset.anm.frames.len();
-        if frame_count == 0 {
+        // 2. Evaluate `.anm` skeletal bone transforms at `actor_frame` (`scene_frame + anm_frame_offset`),
+        // bridging sparse 10 Hz / 15 Hz hold frames (`t == 0`) via `sample_span_at` so motion plays
+        // smoothly at full 30/60+ FPS instead of stepping 1 frame and freezing for 2 hold frames.
+        if asset.anm.frames.is_empty() {
             continue;
         }
-        let f0 = (actor_frame.floor() as usize).min(frame_count - 1);
-        let f1 = (f0 + 1).min(frame_count - 1);
-        let frac = actor_frame.fract();
+        let actor_frame = actor.global_anm_frame(scene_frame);
+        let (f0, f1, frac) = asset.anm.sample_span_at(actor_frame);
 
         interpolate_frames_into(
             &asset.anm.frames[f0],

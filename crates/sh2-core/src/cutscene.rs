@@ -185,5 +185,34 @@ mod tests {
             .unwrap();
         assert_eq!(jms_e.anm_frame_offset, 1679);
         assert_eq!(lau_e.anm_frame_offset, 1905);
+        assert_eq!(lau_e.cls_frame_offset, 1905);
+
+        // Verify NPC `.anm` gameplay base-clip prefix vs `.cls` facial morph offset separation:
+        // In `haka_agl`, Angela's `agl.anm` prepends 156 gameplay frames (`4169 - 4013 = 156`),
+        // whereas `agl.cls` starts at frame 0 (`4013` frames).
+        let haka = find_drama_demo_by_id("haka_agl").expect("haka_agl in catalog");
+        let haka_dds =
+            parse_demo_dds(&std::fs::read(format!("{root}/{}", haka.dds_path)).unwrap()).unwrap();
+        let haka_player = DramaDemoPlayer::new(*haka, haka_dds, false);
+        let agl_haka = haka_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "agl_pos")
+            .unwrap();
+        assert_eq!(agl_haka.anm_frame_offset, 156);
+        assert_eq!(agl_haka.cls_frame_offset, 0);
+
+        // In `papa_agl` (Part 2, starting after 438-frame `papa_agl_a`), Angela's `agl.anm` has
+        // `438 + 69 = 507` offset, while `agl.cls` has `438` offset.
+        let papa_dds =
+            parse_demo_dds(&std::fs::read(format!("{root}/{}", papa_b.dds_path)).unwrap()).unwrap();
+        let papa_player = DramaDemoPlayer::new(*papa_b, papa_dds, false);
+        let agl_papa = papa_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "agl_pos")
+            .unwrap();
+        assert_eq!(agl_papa.anm_frame_offset, 507);
+        assert_eq!(agl_papa.cls_frame_offset, 438);
     }
 }

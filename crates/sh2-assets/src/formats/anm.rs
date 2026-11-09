@@ -82,28 +82,75 @@ pub struct AnimationFile {
     pub bone_count: usize,
     /// Ordered sequence of decoded animation frames.
     pub frames: Vec<AnimationFrame>,
+    /// For each decoded frame `i` (`0..frames.len()`), the span `[prev_keyframe, next_keyframe]`
+    /// enclosing `i` across sparse hold frames (`t == 0` for all bones in the frame).
+    ///
+    /// In Silent Hill 2 cutscene `.anm` files (`haka_agl`, `knife_agl`, `papa_agl`, `mar_deai`,
+    /// `gero_edi`, `piano_lau`, `room312`, `fire_agl`, `mry_yarinaoshi_a`, `fukatsu_a`), the 30 FPS
+    /// frame stream stores explicit bone keyframes every 3 frames (10 Hz) separated by 2 hold frames
+    /// (`t == 0` for all bones). On PS2/PC (`shAnime3d` / `shExec`), the engine interpolates smoothly
+    /// across the 3-frame span `[prev_keyframe, next_keyframe]` at 30/60 Hz rather than stepping in
+    /// a staircase of 1-frame lerps followed by 2 frozen hold frames.
+    pub keyframe_spans: Vec<(usize, usize)>,
+}
+
+impl AnimationFile {
+    /// Evaluates the continuous keyframe interpolation pair `(f0, f1, frac)` for a continuous 30 FPS
+    /// `actor_frame`, automatically bridging sparse hold frames (`t == 0`) so 10/15 Hz keyframed
+    /// cutscene tracks interpolate smoothly at full 30/60+ FPS instead of freezing for 2 out of every 3 frames.
+    #[inline]
+    pub fn sample_span_at(&self, actor_frame: f32) -> (usize, usize, f32) {
+        let n = self.frames.len();
+        if n == 0 {
+            return (0, 0, 0.0);
+        }
+        let clamped = actor_frame.clamp(0.0, (n - 1) as f32);
+        let idx = (clamped.floor() as usize).min(n - 1);
+        if let Some(&(k0, k1)) = self.keyframe_spans.get(idx) {
+            if k1 > k0 && k1 < n {
+                let span = (k1 - k0) as f32;
+                let frac = ((clamped - (k0 as f32)) / span).clamp(0.0, 1.0);
+                return (k0, k1, frac);
+            }
+        }
+        let f1 = (idx + 1).min(n - 1);
+        (idx, f1, clamped.fract())
+    }
 }
 
 /// Checks whether `p` sits on a 2-byte `0x0000` 4-byte alignment pad at a frame boundary
 /// (either at EOF or between concatenated sub-clips in a multi-clip `d*_anime_adr_list` drama `.anm`).
 ///
 /// In PS2 `SLUS_202.28` (`dangela_anime_adr_list`, `deddie_anime_adr_list`, `dlaura_anime_adr_list`,
-/// `dmary_anime_adr_list`), concatenated cutscene sub-clips are 4-byte aligned so MIPS `lw` can read
-/// the initial block header. Every sub-clip begins at frame 0 with all 8 bones in its first block
-/// initialized (`0x22222222` or `0xaaaaaaaa`), so the low and high 16-bit halves of the next clip's
-/// first block header are non-zero and identical.
+/// `dmary_anime_adr_list`, and prop/weapon `d*_anime_adr_list`), concatenated cutscene sub-clips are
+/// 4-byte aligned so MIPS `lw` can read the initial block header. Every sub-clip begins at frame 0
+/// with all `min(bone_count, 8)` bones in its first block initialized with translation+rotation
+/// (`t & 7 == 2`, e.g. `0x22222222`/`0xaaaaaaaa` for $\ge 8$ bones, `0x0aaaaaaa` for 7-bone `i_letter`,
+/// `0x00000aaa` for 3-bone `b_d1x`, or `0x00000002`/`0x0000000a` for 1-bone props).
 #[inline]
-fn is_interclip_or_eof_alignment_pad(data: &[u8], p: usize) -> bool {
+fn is_interclip_or_eof_alignment_pad(data: &[u8], p: usize, bone_count: usize) -> bool {
     if p + 2 > data.len() || data[p] != 0 || data[p + 1] != 0 {
         return false;
     }
     if p + 2 == data.len() {
         return true;
     }
-    p + 6 <= data.len()
-        && (data[p + 2] != 0 || data[p + 3] != 0)
-        && data[p + 2] == data[p + 4]
-        && data[p + 3] == data[p + 5]
+    if p + 6 > data.len() {
+        return false;
+    }
+    if bone_count >= 8 {
+        (data[p + 2] != 0 || data[p + 3] != 0)
+            && data[p + 2] == data[p + 4]
+            && data[p + 3] == data[p + 5]
+    } else {
+        let next_hdr = u32::from_le_bytes([data[p + 2], data[p + 3], data[p + 4], data[p + 5]]);
+        let first_blk_bones = bone_count.min(8);
+        let mut expected_mask = 0u32;
+        for j in 0..first_blk_bones {
+            expected_mask |= 2u32 << (4 * j);
+        }
+        (next_hdr & 0x7777_7777) == expected_mask
+    }
 }
 
 /// Tests if the animation byte stream can be validly and completely decoded with the given bone count stride.
@@ -116,7 +163,9 @@ fn is_valid_anm_stride(data: &[u8], bone_count: usize, parents: &[u8]) -> bool {
     let mut block = 0usize;
 
     while p < data.len() {
-        if (block * 8).is_multiple_of(per_frame) && is_interclip_or_eof_alignment_pad(data, p) {
+        if (block * 8).is_multiple_of(per_frame)
+            && is_interclip_or_eof_alignment_pad(data, p, bone_count)
+        {
             p += 2;
             if p == data.len() {
                 break;
@@ -201,6 +250,7 @@ pub fn parse_anm(
         return Ok(AnimationFile {
             bone_count: 0,
             frames: Vec::new(),
+            keyframe_spans: Vec::new(),
         });
     }
 
@@ -229,6 +279,7 @@ pub fn parse_anm(
         return Ok(AnimationFile {
             bone_count,
             frames: Vec::new(),
+            keyframe_spans: Vec::new(),
         });
     }
 
@@ -253,13 +304,17 @@ fn parse_anm_with_stride(
 ) -> Result<AnimationFile, AssetError> {
     let per_frame = (bone_count + 7) & !7;
     let mut frames = Vec::new();
+    let mut is_keyframe_flags: Vec<bool> = Vec::new();
     let mut cur_frame: Vec<Option<BoneTransform>> = vec![None; bone_count];
+    let mut cur_frame_has_delta = false;
 
     let mut p = 0usize;
     let mut block = 0usize;
 
     while p < data.len() {
-        if (block * 8).is_multiple_of(per_frame) && is_interclip_or_eof_alignment_pad(data, p) {
+        if (block * 8).is_multiple_of(per_frame)
+            && is_interclip_or_eof_alignment_pad(data, p, bone_count)
+        {
             p += 2;
         }
         if p + 4 > data.len() {
@@ -394,6 +449,7 @@ fn parse_anm_with_stride(
             }
 
             if bone_idx < bone_count && t != 0 {
+                cur_frame_has_delta = true;
                 let prev_rot = cur_frame[bone_idx].as_ref().and_then(|b| b.rotation);
                 let prev_trans = cur_frame[bone_idx].as_ref().and_then(|b| b.translation);
                 cur_frame[bone_idx] = Some(BoneTransform {
@@ -409,10 +465,45 @@ fn parse_anm_with_stride(
             frames.push(AnimationFrame {
                 bones: cur_frame.clone(),
             });
+            is_keyframe_flags.push(cur_frame_has_delta || is_keyframe_flags.is_empty());
+            cur_frame_has_delta = false;
         }
     }
 
-    Ok(AnimationFile { bone_count, frames })
+    let n_frames = frames.len();
+    let mut keyframe_spans = vec![(0usize, 0usize); n_frames];
+    if n_frames > 0 {
+        let mut prev_kf = 0usize;
+        let mut prev_kfs = vec![0usize; n_frames];
+        for (i, &is_kf) in is_keyframe_flags.iter().enumerate() {
+            if is_kf {
+                prev_kf = i;
+            }
+            prev_kfs[i] = prev_kf;
+        }
+        let mut next_kf = n_frames - 1;
+        for i in (0..n_frames).rev() {
+            let k0 = prev_kfs[i];
+            let k1 = if i + 1 < n_frames { next_kf } else { i };
+            // Only bridge sparse hold intervals up to 6 frames (e.g. 10 Hz / 15 Hz cutscene sampling);
+            // if a prop is stationary for longer than 6 frames, hold its pose rather than drifting.
+            if k1 > k0 && (k1 - k0) <= 6 {
+                keyframe_spans[i] = (k0, k1);
+            } else {
+                let adj = (i + 1).min(n_frames - 1);
+                keyframe_spans[i] = (i, adj);
+            }
+            if is_keyframe_flags[i] {
+                next_kf = i;
+            }
+        }
+    }
+
+    Ok(AnimationFile {
+        bone_count,
+        frames,
+        keyframe_spans,
+    })
 }
 
 /// Evaluates a 3x3 rotation matrix from ZYX Euler angles $(R_x, R_y, R_z)$ in radians:

@@ -592,6 +592,7 @@ pub(crate) fn load_character_asset(
             frames: vec![AnimationFrame {
                 bones: vec![None; model.bone_count],
             }],
+            keyframe_spans: vec![(0, 0)],
         });
 
     let cls = cls_bytes

@@ -38,17 +38,29 @@ pub struct CutsceneActorRuntime {
     pub subclip_index: usize,
     /// Continuous 30 FPS animation frame within the current sub-clip (`scene_frame - subclip_start_frame`).
     pub local_anm_frame: f32,
-    /// Starting 30 FPS frame offset inside the actor's `.anm` and `.cls` files (accounts for multi-part
-    /// cutscenes such as `mar_deai_e`, `papa_agl`, `piano_lau_e`, and Laura's 226-frame `piano_lau_a` prefix).
+    /// Starting 30 FPS frame offset inside the actor's `.anm` file (accounts for multi-part
+    /// cutscenes such as `mar_deai_e`, `papa_agl`, `piano_lau_e`, Laura's 226-frame `piano_lau_a` prefix,
+    /// and NPC gameplay base clips prepended to `agl.anm`, `hhh_edi.anm`, `hhh_mar.anm`, `mry.anm`, `bos.anm`).
     pub anm_frame_offset: u16,
+    /// Starting 30 FPS frame offset inside the actor's `.cls` facial morph cluster file.
+    /// Unlike `.anm` files (which prepend NPC gameplay clips), `.cls` files only contain facial
+    /// cutscene sub-clips (`clani_adr_list`).
+    pub cls_frame_offset: u16,
 }
 
 impl CutsceneActorRuntime {
-    /// Returns the continuous global 30 FPS frame index inside the actor's `.anm` and `.cls` files
+    /// Returns the continuous global 30 FPS frame index inside the actor's `.anm` file
     /// (`scene_frame + anm_frame_offset`).
     #[inline]
     pub fn global_anm_frame(&self, scene_frame: f32) -> f32 {
         scene_frame.max(0.0) + (self.anm_frame_offset as f32)
+    }
+
+    /// Returns the continuous global 30 FPS frame index inside the actor's `.cls` facial morph file
+    /// (`scene_frame + cls_frame_offset`).
+    #[inline]
+    pub fn global_cls_frame(&self, scene_frame: f32) -> f32 {
+        scene_frame.max(0.0) + (self.cls_frame_offset as f32)
     }
 
     /// Computes the 4x4 row-major world transformation matrix for this cutscene actor (`rot_y = PI`, `pos = position`).
@@ -155,22 +167,93 @@ impl DramaDemoPlayer {
             let anim_info = find_drama_demo_anim_info(name);
             let (anm_path, cls_path) = derive_demo_actor_anm_and_cls_paths(info.dds_path, name);
             let start_aid = anim_info.map(|a| a.start_aid).unwrap_or(0);
-            // In `data/demo/piano_lau/`, `lau.anm` and `lau.cls` prepend the 226-frame `piano_lau_a`
-            // sub-clip before the 3,221-frame `piano_lau_b` + `piano_lau_e` tracks (`[226, 243, 720, 716, 781, 761]`),
-            // whereas `hhh_jms.anm`/`.cls` starts directly at `piano_lau_b` (`[243, 720, 716, 781, 761]`).
-            let extra_actor_offset = if (info.dds_path.ends_with("piano_lau_b.dds")
+            let clean_actor = name.trim_matches('\0').trim();
+            // 1. Sub-clip prefix shared by BOTH `.anm` and `.cls` (e.g. in `data/demo/piano_lau/`,
+            // `lau.anm`, `lau.cls`, and `i_letter.anm` prepend the 226-frame `piano_lau_a` sub-clip
+            // before the 3,221-frame `piano_lau_b` + `piano_lau_e` tracks `[226, 243, 720, 716, 781, 761]`).
+            let extra_subclip_offset = if (info.dds_path.ends_with("piano_lau_b.dds")
                 || info.dds_path.ends_with("piano_lau_e.dds")
                 || info.dds_path.ends_with("piano_lau.dds"))
-                && name
-                    .trim_matches('\0')
-                    .trim()
-                    .eq_ignore_ascii_case("lau_pos")
+                && (clean_actor.eq_ignore_ascii_case("lau_pos")
+                    || clean_actor.eq_ignore_ascii_case("i_letter_pos"))
             {
                 226u16
             } else {
                 0u16
             };
-            let anm_frame_offset = info.anm_frame_offset.saturating_add(extra_actor_offset);
+
+            // 2. Gameplay base-clip prefix stored ONLY at the start of NPC/boss `.anm` files
+            // (`dangela_anime_adr_list`, `deddie_anime_adr_list`, `dlaura_anime_adr_list`,
+            // `dmaria_anime_adr_list`, `dmary_anime_adr_list`, `dboss_anime_adr_list`), which is
+            // absent from `.cls` facial morph files (`clani_adr_list`).
+            let anm_gameplay_prefix = if clean_actor.eq_ignore_ascii_case("agl_pos") {
+                if info.dds_path.contains("/haka_agl/") {
+                    156u16
+                } else if info.dds_path.contains("/papa_agl/") {
+                    69u16
+                } else if info.dds_path.contains("/fire_agl/") {
+                    165u16
+                } else {
+                    0u16
+                }
+            } else if clean_actor.eq_ignore_ascii_case("hhh_edi_pos") {
+                if info.dds_path.contains("/gero_edi/") {
+                    72u16
+                } else if info.dds_path.contains("/bp_edi_2/") {
+                    71u16
+                } else {
+                    0u16
+                }
+            } else if clean_actor.eq_ignore_ascii_case("b_piz_pos")
+                && info.dds_path.contains("/bp_edi_2/")
+            {
+                71u16
+            } else if clean_actor.eq_ignore_ascii_case("hhh_mar_pos") {
+                if info.dds_path.contains("/mar_deai/") {
+                    15u16
+                } else if info.dds_path.contains("/mar_hagureru/") {
+                    72u16
+                } else if info.dds_path.contains("/mar_ikiteruka/") {
+                    168u16
+                } else if info.dds_path.contains("/reizouko/") {
+                    20u16
+                } else {
+                    0u16
+                }
+            } else if clean_actor.eq_ignore_ascii_case("lau_pos")
+                || clean_actor.eq_ignore_ascii_case("i_letter_pos")
+            {
+                if info.dds_path.contains("/hei_lau/") {
+                    73u16
+                } else if info.dds_path.contains("/lau_damasu/") {
+                    91u16
+                } else {
+                    0u16
+                }
+            } else if clean_actor.eq_ignore_ascii_case("mry_pos") {
+                if info.dds_path.contains("/mry_yarinaoshi_a/")
+                    || info.dds_path.contains("/fukatsu_a/")
+                    || info.dds_path.contains("/jisatsu_a/")
+                {
+                    67u16
+                } else if info.dds_path.contains("/mar_isho_a/") {
+                    68u16
+                } else {
+                    0u16
+                }
+            } else if clean_actor.eq_ignore_ascii_case("bos_pos")
+                && (info.dds_path.contains("/mry_yarinaoshi_a/")
+                    || info.dds_path.contains("/fukatsu_a/")
+                    || info.dds_path.contains("/jisatsu_a/")
+                    || info.dds_path.contains("/mar_isho_a/"))
+            {
+                627u16
+            } else {
+                0u16
+            };
+
+            let cls_frame_offset = info.anm_frame_offset.saturating_add(extra_subclip_offset);
+            let anm_frame_offset = cls_frame_offset.saturating_add(anm_gameplay_prefix);
             actors.push(CutsceneActorRuntime {
                 slot_index: idx,
                 actor_name: name.clone(),
@@ -184,6 +267,7 @@ impl DramaDemoPlayer {
                 subclip_index: 0,
                 local_anm_frame: 0.0,
                 anm_frame_offset,
+                cls_frame_offset,
             });
         }
 

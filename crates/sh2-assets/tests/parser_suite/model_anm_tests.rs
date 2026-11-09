@@ -416,6 +416,24 @@ fn test_sh2_34_primary_npc_models_reflection_fallbacks_and_animations() {
     let knife_anm = parse_anm(&knife_bytes, agl_mdl.bone_count, &agl_mdl.parents)
         .expect("parse knife_agl/agl.anm");
     assert_eq!(knife_anm.frames.len(), 6371);
+    assert_eq!(knife_anm.keyframe_spans.len(), 6371);
+    // In `knife_agl/agl.anm`, frame 3 is an explicit keyframe, frames 4 and 5 are hold frames (`t == 0`),
+    // and frame 6 is the next explicit keyframe. Verify `sample_span_at` bridges `[3, 6]` smoothly!
+    let (k0, k1, frac) = knife_anm.sample_span_at(4.5);
+    assert_eq!((k0, k1), (3, 6));
+    assert!((frac - 0.5).abs() < 1e-5);
+
+    // Also verify 1-bone prop (`knife_agl/i_knife.anm`) inter-clip alignment pads decode all 6,371 frames
+    let knife_prop_mdl =
+        parse_mdl(&fs::read(format!("{ROOT_ASSETS}/data/chr/item/i_knife.mdl")).unwrap()).unwrap();
+    let knife_prop_anm = parse_anm(
+        &fs::read(format!("{ROOT_ASSETS}/data/demo/knife_agl/i_knife.anm")).unwrap(),
+        knife_prop_mdl.bone_count,
+        &knife_prop_mdl.parents,
+    )
+    .unwrap();
+    assert_eq!(knife_prop_anm.frames.len(), 6371);
+
     for f_idx in 217..=390 {
         let frame = &knife_anm.frames[f_idx];
         for b_idx in 0..agl_mdl.bone_count {

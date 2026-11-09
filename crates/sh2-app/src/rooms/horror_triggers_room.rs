@@ -62,7 +62,7 @@ pub(crate) const HORROR_SCENARIOS: &[(
         [-138_700.0, 0.0, -20_000.0],
         [0.0, 0.0, -850.0],
         std::f32::consts::PI,
-        "[E] Knock/Inspect Stall (Set Flag 648) | [Space / Walk North] Cross Z > s_thr (60% Jumpscare 0x427D / 40% Dud) | [R] Re-seed Room",
+        "[E] Knock Stall (0x2EF3 + Flag 648) | [Space] Trigger Jumpscare (0x427D) | [K] Test 60%/40% RNG Walk-Out | [R] Re-seed",
     ),
     (
         "2. Blue Creek Apt 2F: Room 209 Orbiting Whisper (Room 0x28, r=2500u @ PI/8 rad/s)",
@@ -77,19 +77,19 @@ pub(crate) const HORROR_SCENARIOS: &[(
         "3. Wood Side Apt 3F: Moving Corridor Footsteps (Room 0x1F, -700 u/s along -X)",
         Some(StageId::ApartE3fe),
         0x1F,
-        [58_500.0, 0.0, 16_000.0],
-        [0.0, 0.0, 1450.0],
+        [60_000.0, 0.0, 12_500.0],
+        [0.0, 0.0, 0.0],
         std::f32::consts::PI,
-        "[Space / Walk South] Cross Z < 17000 -> Starts Footsteps 0x9C51 (Flag 552) Translating at -700 u/s | [R] Reset",
+        "[Space / Walk South] Trigger Footsteps 0x9C51 (Flag 552) Translating at -700 u/s | [R] Reset",
     ),
     (
         "4. Toluca Prison South: Invisible Prisoner 'Ritual...' (Room 0x72, Randomized 3D Cell Block)",
         Some(StageId::PrisonS),
         0x72,
-        [-140_000.0, 0.0, 21_200.0],
-        [0.0, 0.0, 0.0],
+        [-140_000.0, 0.0, 20_000.0],
+        [0.0, 0.0, 1200.0],
         0.0,
-        "[Space] Force Immediate 'Ritual...' (0x4682 / voice.afs[27]) at Random Cell Pos | [K] Start 4.0s Oppressor Cell Timer (Flag 288)",
+        "[Space] Force Immediate 'Ritual...' (0x4682 / voice.afs[27]) at Random Cell Pos | [K] Start Oppressor Cell Timer + SFX",
     ),
     (
         "5. Blue Creek 2F Corridor: Two-Stage Hysteresis Scare (Room 0x26, Arm Z>-6500 -> Fire Z<-6800)",
@@ -104,16 +104,16 @@ pub(crate) const HORROR_SCENARIOS: &[(
         "6. Wood Side Apt 2F: Distant Scream (EvProgAnyoneCry), Room 206 Kick & Room 205 TV Static",
         Some(StageId::ApartE2f),
         0x18,
-        [-58_082.0, 0.0, 19_011.0],
-        [0.0, 0.0, 800.0],
-        std::f32::consts::PI,
+        [-99_400.0, 0.0, 25_200.0],
+        [0.0, 0.0, 0.0],
+        0.0,
         "[Space] Run EvProgAnyoneCry (0x9C49 Scream + 2.0s Msg) | [K] Room 206 Kick (0x9C47) | [T] Room 205 TV Static (0x3E80)",
     ),
     (
         "7. Historical Society: Long Descending Staircase (Room 0x5D, 0x9C73) & Room 0x5C (0x4982)",
         Some(StageId::Society),
         0x5D,
-        [0.0, 0.0, 40_000.0],
+        [-11_520.0, 41_500.0, 40_150.0],
         [0.0, 0.0, 0.0],
         0.0,
         "[Space] Trigger Staircase Ambient (0x9C73) | [K] Trigger Room 0x5C Horror Cue (0x4982 / voice.afs[42], Flag 551)",
@@ -136,6 +136,9 @@ pub(crate) struct HorrorTriggersRoomState {
     pub event_engine: EventEngine,
     pub rng: Sh2Rng,
     pub seed_counter: u32,
+    /// Optional dynamic stage anchor override so multi-room scenarios (e.g. `ApartE2f` / `PrisonS` / `Society`)
+    /// keep the listener within `SeCallPosDistanceF` audible range (`< 11,500u`) of the active emitter.
+    pub stage_anchor_override: Option<[f32; 3]>,
     /// Active sound effect timers `(se_id, remaining_secs)` so `StageEventDispatcher::on_all_time`
     /// knows while `0x9C70` (orbiting whisper) or `0x9C51` (moving footsteps) is still playing.
     pub active_se_timers: Vec<(u32, f32)>,
@@ -165,6 +168,7 @@ impl Default for HorrorTriggersRoomState {
             event_engine: EventEngine::new(),
             rng: Sh2Rng::new(0x2001_0924),
             seed_counter: 1,
+            stage_anchor_override: None,
             active_se_timers: Vec::new(),
             active_emitter_world_pos: [-138_700.0, -50.0, -21_000.0],
             last_se_id: 0x427D,
@@ -210,6 +214,15 @@ impl HorrorTriggersRoomState {
     }
 }
 
+#[inline]
+fn active_scenario_anchor(state: &AppState) -> [f32; 3] {
+    let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
+    state
+        .horror_triggers_room
+        .stage_anchor_override
+        .unwrap_or(HORROR_SCENARIOS[idx].3)
+}
+
 /// Initializes or resets the currently selected horror scenario (`0..8`), snapping James to the
 /// calibrated starting pose and invoking `StageEventDispatcher::on_stage_init` + `on_room_init`.
 pub(crate) fn init_horror_scenario(state: &mut AppState, reseed: bool) {
@@ -228,7 +241,11 @@ pub(crate) fn init_horror_scenario(state: &mut AppState, reseed: bool) {
         state.horror_triggers_room.rng = Sh2Rng::new(seed);
     }
 
+    state.horror_triggers_room.stage_anchor_override = None;
     state.horror_triggers_room.active_se_timers.clear();
+    if let Some(bank) = state.audio_bank.as_mut() {
+        bank.stop_all_spatial_handles();
+    }
     state.horror_triggers_room.event_engine.reset();
     {
         let s = &mut state.sim_core.scenario;
@@ -268,7 +285,7 @@ pub(crate) fn init_horror_scenario(state: &mut AppState, reseed: bool) {
         3 => state.horror_triggers_room.dispatcher.prison_s_prisoner_pos,
         4 => [100_807.1, -500.0, -6_053.485_4],
         5 => [-99_400.0, -500.0, 26_400.0],
-        6 => [0.0, 0.0, 40_000.0],
+        6 => [-11_520.0, 42_670.0, 40_151.7],
         _ => [0.0, 0.0, 2_200.0],
     };
 
@@ -281,13 +298,7 @@ pub(crate) fn init_horror_scenario(state: &mut AppState, reseed: bool) {
 
 fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoundCommand) {
     let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
-    let anchor = HORROR_SCENARIOS[idx].3;
     let p_local = state.sim_core.scenario.player_position;
-    let p_world = glam::Vec3::new(
-        anchor[0] + p_local.x,
-        anchor[1] + p_local.y,
-        anchor[2] + p_local.z,
-    );
     let p_yaw = state.sim_core.scenario.player_yaw;
 
     match cmd {
@@ -311,6 +322,22 @@ fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoundCommand) {
         } => {
             state.horror_triggers_room.last_se_id = se_id;
             state.horror_triggers_room.last_se_vol = volume;
+
+            // For Scenario 4 (`PrisonS` Room `0x72` random cell block `[-146000..-134000, 10400..32000]`),
+            // keep the stage anchor within `~1600u` of the newly spawned cell so `"Ritual..."` (`0x4682`)
+            // is always clearly audible with authentic directional stereo panning.
+            if idx == 3 && se_id == 0x4682 {
+                state.horror_triggers_room.stage_anchor_override =
+                    Some([pos[0] + 900.0 - p_local.x, 0.0, pos[2] - 1200.0 - p_local.z]);
+            }
+
+            let anchor = active_scenario_anchor(state);
+            let p_world = glam::Vec3::new(
+                anchor[0] + p_local.x,
+                anchor[1] + p_local.y,
+                anchor[2] + p_local.z,
+            );
+
             // For Room 209 whisper (`0x9C70`), `SeCallPos` passes `[0,0,0]` and `SePosMove` immediately sets the 2500u orbit pos
             let emit_world = if se_id == 0x9C70 && pos == [0.0, 0.0, 0.0] {
                 let ang = state
@@ -332,12 +359,10 @@ fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoundCommand) {
 
             let emit_vec = glam::Vec3::from_array(emit_world);
             if let (Some(eng), Some(bank)) =
-                (state.audio_engine.as_mut(), state.audio_bank.as_ref())
+                (state.audio_engine.as_mut(), state.audio_bank.as_mut())
             {
-                let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
-                eng.set_listener_transform(p_world, fwd);
-                if let Ok((eval, _)) =
-                    bank.play_se_id_3d(eng, se_id, p_world, p_yaw, emit_vec, volume)
+                if let Ok(eval) =
+                    bank.play_se_id_3d_tracked(eng, se_id, p_world, p_yaw, emit_vec, volume)
                 {
                     state.horror_triggers_room.last_event_log = format!(
                         "SeCallPos(0x{:04X}, ch={}) @ [{:.0}, {:.0}, {:.0}] -> dist={:.0}u, gain={:.0}%, pan={:+.2}",
@@ -363,10 +388,41 @@ fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoundCommand) {
             state.horror_triggers_room.last_se_id = se_id;
             state.horror_triggers_room.last_se_vol = volume;
             state.horror_triggers_room.active_emitter_world_pos = pos;
+            let anchor = active_scenario_anchor(state);
+            let p_world = glam::Vec3::new(
+                anchor[0] + p_local.x,
+                anchor[1] + p_local.y,
+                anchor[2] + p_local.z,
+            );
+            if let (Some(eng), Some(bank)) =
+                (state.audio_engine.as_ref(), state.audio_bank.as_mut())
+            {
+                let _ = bank.update_se_id_3d(
+                    eng,
+                    se_id,
+                    p_world,
+                    p_yaw,
+                    glam::Vec3::from_array(pos),
+                    volume,
+                );
+            }
         }
         SpatialSoundCommand::SetVolume { se_id, volume } => {
             state.horror_triggers_room.last_se_id = se_id;
             state.horror_triggers_room.last_se_vol = volume;
+            let anchor = active_scenario_anchor(state);
+            let p_world = glam::Vec3::new(
+                anchor[0] + p_local.x,
+                anchor[1] + p_local.y,
+                anchor[2] + p_local.z,
+            );
+            let emit_pos =
+                glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos);
+            if let (Some(eng), Some(bank)) =
+                (state.audio_engine.as_ref(), state.audio_bank.as_mut())
+            {
+                let _ = bank.update_se_id_3d(eng, se_id, p_world, p_yaw, emit_pos, volume);
+            }
         }
     }
 }
@@ -539,7 +595,7 @@ fn build_scenario_event_tables(
 pub(crate) fn build_horror_debug_lines(state: &AppState) -> Vec<DebugLineVertex> {
     let mut lines = Vec::with_capacity(512);
     let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
-    let anchor = HORROR_SCENARIOS[idx].3;
+    let anchor = active_scenario_anchor(state);
     let p_local = state.sim_core.scenario.player_position;
 
     let cyan = [0.25, 0.90, 1.0, 0.95];
@@ -782,6 +838,10 @@ impl RoomController for HorrorTriggersRoomController {
                     let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
                     if idx == 5 {
                         // Scenario 6 (`ApartE2f` Room `0x18` TV Static `0x3E80` requires `flag(69)`)
+                        // Place stage anchor right inside Room 205 (`800u` from TV at `[-58082.375, -356.5, 19011.39]`)
+                        let p_loc = state.sim_core.scenario.player_position;
+                        state.horror_triggers_room.stage_anchor_override =
+                            Some([-58_082.0 - p_loc.x, 0.0, 19_800.0 - p_loc.z]);
                         state.sim_core.scenario.flags.set(69, true);
                         let out = state
                             .horror_triggers_room
@@ -799,6 +859,22 @@ impl RoomController for HorrorTriggersRoomController {
                             (state.horror_triggers_room.door_se_idx + 1) % DOOR_SE_TABLE.len();
                         let d_idx = state.horror_triggers_room.door_se_idx;
                         let ds = DOOR_SE_TABLE[d_idx];
+                        let preview_se = if state.horror_triggers_room.sandbox_has_key {
+                            ds.unlock
+                        } else {
+                            ds.lock
+                        } as u16 as u32;
+                        if preview_se != 0 {
+                            apply_spatial_sound_command(
+                                state,
+                                SpatialSoundCommand::CallPos {
+                                    se_id: preview_se,
+                                    volume: 1.0,
+                                    pos: [0.0, -500.0, 2200.0],
+                                    channel: 0,
+                                },
+                            );
+                        }
                         state.horror_triggers_room.last_event_log = format!(
                             "Selected DOOR_SE_TABLE[{}]: open=0x{:04X}, close=0x{:04X}, lock=0x{:04X}, unlock=0x{:04X}",
                             d_idx, ds.open, ds.close, ds.lock, ds.unlock
@@ -836,7 +912,8 @@ impl RoomController for HorrorTriggersRoomController {
             state.horror_triggers_room.tick_se_timers(dt_sec);
 
             let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
-            let (_, stage_id_opt, room_id, anchor, _, _, _) = HORROR_SCENARIOS[idx];
+            let (_, stage_id_opt, room_id, _, _, _, _) = HORROR_SCENARIOS[idx];
+            let anchor = active_scenario_anchor(state);
             let p_local = state.sim_core.scenario.player_position;
             let p_yaw = state.sim_core.scenario.player_yaw;
             let p_world = [
@@ -873,15 +950,22 @@ impl RoomController for HorrorTriggersRoomController {
                     &mut state.sim_core.scenario.flags,
                     &mut inv,
                 );
-                if idx == 0 && state.sim_core.scenario.flags.get(648) && action_down {
+                if idx == 0 && action_down {
+                    // Always arm `flag(648)` and play the bathroom stall knock (`0x2EF3`) when `[E]` is pressed in Scenario 1
+                    state.sim_core.scenario.flags.set(648, true);
+                    state.sim_core.scenario.flags.set(649, false);
                     state.horror_triggers_room.event_engine.reset();
-                    if let (Some(eng), Some(bank)) =
-                        (state.audio_engine.as_mut(), state.audio_bank.as_ref())
-                    {
-                        let _ = bank.play_se_id(eng, 0x2EF3, 0.85);
-                    }
+                    apply_spatial_sound_command(
+                        state,
+                        SpatialSoundCommand::CallPos {
+                            se_id: 0x2EF3,
+                            volume: 0.95,
+                            pos: [-138_700.0, -200.0, -21_000.0],
+                            channel: 0,
+                        },
+                    );
                     state.horror_triggers_room.last_event_log = format!(
-                        "Knocked on Bathroom Stall Door -> Flag 648 ON! Walk North across Z > {:.0} (or press [Space])",
+                        "Knocked on Bathroom Stall Door (0x2EF3) -> Flag 648 ON! Walk North across Z > {:.0} (or press [Space])",
                         state
                             .horror_triggers_room
                             .dispatcher
@@ -977,8 +1061,23 @@ impl RoomController for HorrorTriggersRoomController {
                     && !state.sim_core.scenario.flags.get(649)
                 {
                     state.horror_triggers_room.last_event_log =
-                        "Crossed Z > s_thr: 40% RNG roll disarmed Flag 648 (No Jumpscare)! Press [R] + [Space] to re-test"
+                        "Crossed Z > s_thr: 40% RNG roll disarmed Flag 648 (No Jumpscare)! Press [Space] for guaranteed Jumpscare or [K] to re-roll"
                             .to_string();
+                }
+            }
+
+            // 4. Continuously update stereo panning & distance attenuation of any active 3D emitter as James walks/turns
+            if !state.horror_triggers_room.active_se_timers.is_empty() {
+                let last_se = state.horror_triggers_room.last_se_id;
+                let last_vol = state.horror_triggers_room.last_se_vol;
+                let emit_pos =
+                    glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos);
+                let p_world_vec = glam::Vec3::from_array(p_world);
+                if let (Some(eng), Some(bank)) =
+                    (state.audio_engine.as_ref(), state.audio_bank.as_mut())
+                {
+                    let _ =
+                        bank.update_se_id_3d(eng, last_se, p_world_vec, p_yaw, emit_pos, last_vol);
                 }
             }
         }
@@ -1050,7 +1149,8 @@ impl RoomController for HorrorTriggersRoomController {
         let muted = [165, 165, 175, 255];
 
         let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
-        let (title, stage_id_opt, room_id, anchor, _, _, controls_hint) = HORROR_SCENARIOS[idx];
+        let (title, stage_id_opt, room_id, _, _, _, controls_hint) = HORROR_SCENARIOS[idx];
+        let anchor = active_scenario_anchor(state);
         let p_local = state.sim_core.scenario.player_position;
         let p_yaw = state.sim_core.scenario.player_yaw;
         let p_world = glam::Vec3::new(
@@ -1237,14 +1337,14 @@ impl RoomController for HorrorTriggersRoomController {
 
 fn trigger_scenario_quick_step(state: &mut AppState) {
     let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
-    let anchor = HORROR_SCENARIOS[idx].3;
+    let anchor = active_scenario_anchor(state);
 
     match idx {
         0 => {
-            // Scenario 1 (`PrisonN` Room `0x73`): Ensure `flag(648)` is armed, then step North across `Z > s_thr`
-            if !state.sim_core.scenario.flags.get(648) {
-                state.sim_core.scenario.flags.set(648, true);
-            }
+            // Scenario 1 (`PrisonN` Room `0x73`): Arm `flag(648)`, clear `flag(649)`, step North across `Z > s_thr`,
+            // and immediately trigger the bathroom stall bang jumpscare (`0x427D` / `sddata[316]`)
+            state.sim_core.scenario.flags.set(648, true);
+            state.sim_core.scenario.flags.set(649, true);
             let z_local = (state
                 .horror_triggers_room
                 .dispatcher
@@ -1254,9 +1354,19 @@ fn trigger_scenario_quick_step(state: &mut AppState) {
             state
                 .sim_core
                 .snap_player_transform(glam::Vec3::new(0.0, 0.0, z_local), 0.0);
+            apply_spatial_sound_command(
+                state,
+                SpatialSoundCommand::CallPos {
+                    se_id: 0x427D,
+                    volume: 1.0,
+                    pos: [-138_700.0, -50.0, -21_000.0],
+                    channel: 0,
+                },
+            );
         }
         1 => {
-            // Scenario 2 (`ApartW2f` Room `0x28` / Room 209): Step West across `X < s_thr`
+            // Scenario 2 (`ApartW2f` Room `0x28` / Room 209): Reset `flag(547)` and step West across `X < s_thr`
+            state.sim_core.scenario.flags.set(547, false);
             let x_local = (state
                 .horror_triggers_room
                 .dispatcher
@@ -1269,11 +1379,15 @@ fn trigger_scenario_quick_step(state: &mut AppState) {
             );
         }
         2 => {
-            // Scenario 3 (`ApartE3fe` Room `0x1F`): Step South across `Z < 17000.0`
-            let z_local = (17_000.0 - anchor[2]) - 200.0;
+            // Scenario 3 (`ApartE3fe` Room `0x1F`): Reset `flag(552)` and step South near the footstep emitter (`[60000, 0, 11350]`)
+            state.sim_core.scenario.flags.set(552, false);
+            state
+                .horror_triggers_room
+                .dispatcher
+                .apart_e3fe_footstep_timer = 0.0;
             state
                 .sim_core
-                .snap_player_transform(glam::Vec3::new(0.0, 0.0, z_local), std::f32::consts::PI);
+                .snap_player_transform(glam::Vec3::new(0.0, 0.0, 0.0), std::f32::consts::PI);
         }
         3 => {
             // Scenario 4 (`PrisonS` Room `0x72`): Expire `prisoner_timer` to immediately fire `0x4682` (`"Ritual..."`)
@@ -1283,7 +1397,7 @@ fn trigger_scenario_quick_step(state: &mut AppState) {
                 .prison_s_prisoner_timer = 0.0;
         }
         4 => {
-            // Scenario 5 (`ApartW2f` Room `0x26`): Step 1 arms at `Z > -6500`, Step 2 fires at `Z < -6800`
+            // Scenario 5 (`ApartW2f` Room `0x26`): Step 1 arms at `Z > -6500`, Step 2 fires `0x9C6C` at `Z < -6800`
             if !state
                 .horror_triggers_room
                 .dispatcher
@@ -1293,10 +1407,14 @@ fn trigger_scenario_quick_step(state: &mut AppState) {
                 state
                     .sim_core
                     .snap_player_transform(glam::Vec3::new(0.0, 0.0, z_arm), 0.0);
+                if let Some(eng) = state.audio_engine.as_mut() {
+                    let _ = play_menu_sound(eng, state.audio_bank.as_ref(), SoundCueKind::Confirm);
+                }
                 state.horror_triggers_room.last_event_log =
                     "Step 1: Crossed Z > -6500 -> apart_w2f_corridor_armed = true! Press [Space] again to back below Z < -6800"
                         .to_string();
             } else {
+                state.sim_core.scenario.flags.set(553, false);
                 let z_fire = (-6800.0 - anchor[2]) - 150.0;
                 state
                     .sim_core
@@ -1304,21 +1422,29 @@ fn trigger_scenario_quick_step(state: &mut AppState) {
             }
         }
         5 => {
-            // Scenario 6 (`ApartE2f`): Start `StageProgramRunner` `(7, 1)` (`EvProgAnyoneCry`)
+            // Scenario 6 (`ApartE2f`): Place stage anchor 1200u from `EvProgAnyoneCry` emitter `[-99400, -500, 26400]`
+            let p_loc = state.sim_core.scenario.player_position;
+            state.horror_triggers_room.stage_anchor_override =
+                Some([-99_400.0 - p_loc.x, 0.0, 25_200.0 - p_loc.z]);
             state.sim_core.scenario.prog_runner.start(7, 1, 71);
             state.horror_triggers_room.last_event_log =
                 "Started StageProgramRunner (7, 1) EvProgAnyoneCry -> SE 0x9C49 Scream + 2.0s Message!"
                     .to_string();
         }
         6 => {
-            // Scenario 7 (`Society` Room `0x5D`): Expire `society_staircase_timer` to fire `0x9C73` immediately
+            // Scenario 7 (`Society` Room `0x5D`): Reset staircase anchor and expire `society_staircase_timer` to fire `0x9C73`
+            state.horror_triggers_room.stage_anchor_override = None;
             state
                 .horror_triggers_room
                 .dispatcher
                 .society_staircase_timer = 0.0;
         }
         _ => {
-            // Scenario 8 (`EventEngine` Sandbox): Queue `action_pressed`
+            // Scenario 8 (`EventEngine` Sandbox): Snap in front of North Door (`[0, 0, 1850]`, yaw=0) and queue `action_pressed`
+            state
+                .sim_core
+                .snap_player_transform(glam::Vec3::new(0.0, 0.0, 1850.0), 0.0);
+            state.horror_triggers_room.event_engine.reset();
             state.horror_triggers_room.pending_action_down = true;
         }
     }
@@ -1327,25 +1453,57 @@ fn trigger_scenario_quick_step(state: &mut AppState) {
 fn trigger_scenario_secondary_action(state: &mut AppState) {
     let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
     match idx {
+        0 => {
+            // Scenario 1 (`PrisonN` Room `0x73`): Test authentic 60% Jumpscare / 40% Fake-out RNG roll across `Z > s_thr`
+            let anchor = active_scenario_anchor(state);
+            state.sim_core.scenario.flags.set(648, true);
+            state.sim_core.scenario.flags.set(649, false);
+            let z_local = (state
+                .horror_triggers_room
+                .dispatcher
+                .prison_n_bathroom_z_threshold
+                - anchor[2])
+                + 150.0;
+            state
+                .sim_core
+                .snap_player_transform(glam::Vec3::new(0.0, 0.0, z_local), 0.0);
+        }
         3 => {
-            // Scenario 4 (`PrisonS` Room `0x72`): Set `flag(288)` to start the 4.0s Oppressor cell timer (`289` -> `290`)
+            // Scenario 4 (`PrisonS` Room `0x72`): Set `flag(288)` & `flag(289)` to start Oppressor cell timer + play Room `0x68` mechanism SFX (`0x427B`)
             state.sim_core.scenario.flags.set(288, true);
-            state.sim_core.scenario.flags.set(289, false);
+            state.sim_core.scenario.flags.set(289, true);
             state.sim_core.scenario.flags.set(290, false);
             state.horror_triggers_room.dispatcher.prison_s_bars_timer = 0.0;
+            let p_world = active_scenario_anchor(state);
+            apply_spatial_sound_command(
+                state,
+                SpatialSoundCommand::CallPos {
+                    se_id: 0x427B,
+                    volume: 0.9,
+                    pos: [p_world[0], -300.0, p_world[2] + 800.0],
+                    channel: 0,
+                },
+            );
             state.horror_triggers_room.last_event_log =
-                "Set Flag 288 ON -> Started 4.0s Prison South Oppressor Cell Door Timer (289 -> 290)"
+                "Set Flags 288 & 289 ON -> Started Prison South Oppressor Cell Door Timer + SFX 0x427B"
                     .to_string();
         }
         5 => {
-            // Scenario 6 (`ApartE2f` Room 206): Run `(7, 17)` `EvProgMonkeyKick206`
+            // Scenario 6 (`ApartE2f` Room 206): Place stage anchor 1000u from Room 206 `[-99000, -500, 13600]` and run `(7, 17)` `EvProgMonkeyKick206`
+            let p_loc = state.sim_core.scenario.player_position;
+            state.horror_triggers_room.stage_anchor_override =
+                Some([-99_000.0 - p_loc.x, 0.0, 14_600.0 - p_loc.z]);
+            state.sim_core.scenario.flags.set(69, false);
             state.sim_core.scenario.prog_runner.start(7, 17, 91);
             state.horror_triggers_room.last_event_log =
                 "Started StageProgramRunner (7, 17) EvProgMonkeyKick206 -> SE 0x9C47 Room 206 Kick!"
                     .to_string();
         }
         6 => {
-            // Scenario 7 (`Society` Room `0x5C`): Evaluate Room `0x5C` horror trigger (`!flag(551) && px > -19600.0` -> `0x4982`)
+            // Scenario 7 (`Society` Room `0x5C`): Place stage anchor 1500u from Room `0x5C` emitter `[-22000, -500, -18900]` and evaluate `on_all_time`
+            let p_loc = state.sim_core.scenario.player_position;
+            state.horror_triggers_room.stage_anchor_override =
+                Some([-20_500.0 - p_loc.x, 0.0, -18_900.0 - p_loc.z]);
             state.sim_core.scenario.flags.set(551, false);
             let ctx = StageHookContext {
                 stage: StageId::Society,
@@ -1365,11 +1523,14 @@ fn trigger_scenario_secondary_action(state: &mut AppState) {
             }
         }
         _ => {
-            // Scenario 8: Toggle Key Item #1
+            // Scenario 8: Toggle Key Item #1 and play feedback cue
             state.horror_triggers_room.sandbox_has_key =
                 !state.horror_triggers_room.sandbox_has_key;
+            if let Some(eng) = state.audio_engine.as_mut() {
+                let _ = play_menu_sound(eng, state.audio_bank.as_ref(), SoundCueKind::Confirm);
+            }
             state.horror_triggers_room.last_event_log = format!(
-                "Toggled Key Item #1 possession: {} (Press [E] at North Door to test lock vs unlock SE)",
+                "Toggled Key Item #1 possession: {} (Press [Space / E] to test lock vs unlock SE)",
                 state.horror_triggers_room.sandbox_has_key
             );
         }
@@ -1427,5 +1588,50 @@ mod tests {
         let (ev7, pos7) = build_scenario_event_tables(7, 2, true);
         assert_eq!(ev7.len(), 4);
         assert_eq!(pos7.len(), 36);
+
+        // Verify all horror scenario SE IDs map to `sddata.bin` or `voice.afs` indices
+        for &se_id in &[
+            0x427Du32, 0x2EF3, 0x9C70, 0x9C51, 0x4682, 0x9C6C, 0x9C49, 0x9C47, 0x3E80, 0x9C73,
+            0x4982, 0x427B,
+        ] {
+            let mapped = sh2_audio::resolve_se_id_to_sddata_index(se_id).is_some()
+                || sh2_audio::resolve_se_id_to_voice_afs_index(se_id).is_some();
+            assert!(
+                mapped,
+                "Horror SE 0x{se_id:04X} must resolve in sddata.bin or voice.afs"
+            );
+        }
+
+        // Verify every scenario's default anchor + initial local pos is within audible 3D range of its emitter
+        let preview_emitters: [[f32; 3]; 8] = [
+            [-138_700.0, -50.0, -21_000.0],
+            [20_600.0, 0.0, -28_950.0],
+            [60_000.0, 0.0, 11_350.0],
+            [-140_000.0, -500.0, 20_000.0],
+            [100_807.1, -500.0, -6_053.485_4],
+            [-99_400.0, -500.0, 26_400.0],
+            [-11_520.0, 42_670.0, 40_151.7],
+            [0.0, 0.0, 2_200.0],
+        ];
+        for (i, &(_, _, _, anchor, init_local, yaw, _)) in HORROR_SCENARIOS.iter().enumerate() {
+            let p_world = glam::Vec3::new(
+                anchor[0] + init_local[0],
+                anchor[1] + init_local[1],
+                anchor[2] + init_local[2],
+            );
+            let eval = compute_se_call_pos_distance_f(
+                p_world,
+                yaw,
+                glam::Vec3::from_array(preview_emitters[i]),
+                1.0,
+            );
+            assert!(
+                eval.effective_gain > 0.20,
+                "Scenario {} initial distance {:.0}u produced silent gain {:.3}",
+                i + 1,
+                eval.distance,
+                eval.effective_gain
+            );
+        }
     }
 }

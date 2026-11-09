@@ -83,6 +83,8 @@ pub struct MenuAudioBank {
     pub last_footstep_handle: Option<StaticSoundHandle>,
     /// Active voiceover/cut-audio audition handle so starting a new slice cleanly fades out the previous slice (`SH2-62`).
     pub active_cut_audio_handle: Option<StaticSoundHandle>,
+    /// Active 3D spatial sound handles keyed by `se_id` (`0x515910` `SePosMove` / `0x515740` `SePosSet`).
+    pub active_spatial_handles: HashMap<u32, StaticSoundHandle>,
 }
 
 impl MenuAudioBank {
@@ -121,6 +123,7 @@ impl MenuAudioBank {
             step_parity: false,
             last_footstep_handle: None,
             active_cut_audio_handle: None,
+            active_spatial_handles: HashMap::new(),
         };
 
         let prefer_ee = matches!(
@@ -190,10 +193,10 @@ impl MenuAudioBank {
                         if let Ok(afs_idx) = parse_afs_index(&header_buf) {
                             sfx_bank.voice_afs_path = Some(candidate.clone());
                             // Preload key streamed SFX entries (`17` = chainsaw afs, `24` = g_start, `27` = 0x4682 Prison South Ritual,
-                            // `35` = save_sound, `36` = menu transition, `42` = 0x4982 Society 0x5c, `44` = 0x3E80 TV static)
-                            for &entry_idx in &[17usize, 24, 27, 35, 36, 42, 44] {
+                            // `35` = save_sound, `36` = menu transition, `38` = 0x427B Prison 0x68, `42` = 0x4982 Society 0x5c, `44` = 0x3E80 TV static)
+                            for &entry_idx in &[17usize, 24, 27, 35, 36, 38, 42, 44] {
                                 if let Some(desc) = afs_idx.get(entry_idx) {
-                                    if desc.length > 0 && desc.length <= 4 * 1024 * 1024 {
+                                    if desc.length > 0 && desc.length <= 16 * 1024 * 1024 {
                                         let mut slice = vec![0u8; desc.length as usize];
                                         if file.seek(SeekFrom::Start(desc.offset as u64)).is_ok()
                                             && file.read_exact(&mut slice).is_ok()
@@ -408,11 +411,82 @@ impl MenuAudioBank {
         }
 
         if let Some(wav) = self.resolve_se_id(se_id) {
-            let handle = engine.play_sfx_3d(wav, source_pos, eval.effective_gain)?;
+            let handle = engine.play_sfx_panned(wav, eval.effective_gain, eval.stereo_pan)?;
             Ok((eval, Some(handle)))
         } else {
             let handle = synthesize_fallback_cue(engine, SoundCueKind::Footstep)?;
             Ok((eval, handle))
+        }
+    }
+
+    /// Plays a 3D positional sound effect by `se_id` (lazily loading `voice.afs` streams if needed),
+    /// replacing any previous instance of the same `se_id` and storing its handle so `SePosMove` / `SePosSet`
+    /// can update its stereo pan and distance gain every frame (`SH2-47`).
+    pub fn play_se_id_3d_tracked(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        source_pos: Vec3,
+        base_volume: f32,
+    ) -> Result<SfxSpatialEval, AudioError> {
+        // Lazily populate `voice_afs_sfx` if `se_id` maps to a `voice.afs` index not yet cached
+        if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
+            if !self.voice_afs_sfx.contains_key(&afs_idx) {
+                let _ = self.load_voice_afs_entry(afs_idx);
+            }
+        }
+
+        // Stop previous handle for this `se_id` so re-triggers don't stack
+        if let Some(mut prev) = self.active_spatial_handles.remove(&se_id) {
+            prev.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(25),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+
+        let (eval, handle_opt) = self.play_se_id_3d(
+            engine,
+            se_id,
+            listener_pos,
+            listener_yaw,
+            source_pos,
+            base_volume,
+        )?;
+        if let Some(handle) = handle_opt {
+            self.active_spatial_handles.insert(se_id, handle);
+        }
+        Ok(eval)
+    }
+
+    /// Updates the live stereo panning and distance-attenuated volume of a tracked `se_id` handle (`SePosMove` / `SePosSet`).
+    pub fn update_se_id_3d(
+        &mut self,
+        engine: &AudioEngine,
+        se_id: u32,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        source_pos: Vec3,
+        base_volume: f32,
+    ) -> SfxSpatialEval {
+        let eval =
+            compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
+        if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
+            engine.update_sound_spatial(handle, eval.effective_gain, eval.stereo_pan);
+        }
+        eval
+    }
+
+    /// Stops all tracked 3D spatial sound handles (`SH2-47`).
+    pub fn stop_all_spatial_handles(&mut self) {
+        for (_, mut handle) in self.active_spatial_handles.drain() {
+            handle.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(40),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
         }
     }
 

@@ -8,6 +8,8 @@ use winit::window::Window;
 use crate::assets::{ActiveDramaDemoSession, CharacterAsset};
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
+use crate::rooms::inventory_room::InventoryDebugRoomState;
+use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
@@ -40,6 +42,8 @@ pub(crate) struct AppState {
     pub bgm_stage_override: Option<u32>,
     pub audio_debug: AudioDebugState,
     pub surface_sfx_room: SurfaceSfxRoomState,
+    pub inventory_room: InventoryDebugRoomState,
+    pub puzzle_cutaway_room: PuzzleCutawayRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -232,7 +236,9 @@ impl AppState {
             | TestRoomKind::FmvCutsceneViewer
             | TestRoomKind::GrappleAnimationRoom
             | TestRoomKind::LoadingScreenTest
-            | TestRoomKind::SurfaceSfxTestRoom => 0,
+            | TestRoomKind::SurfaceSfxTestRoom
+            | TestRoomKind::InventoryAndItemsRoom
+            | TestRoomKind::PuzzleAndCutawayRoom => 0,
         };
         (stage_id, flags)
     }

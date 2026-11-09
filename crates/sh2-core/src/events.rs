@@ -30,6 +30,8 @@ pub const PZ_BOX_CODE: usize = 0x12;
 pub const PZ_PANEL: usize = 0x14;
 /// Puzzle state offset (`0x18`): Labyrinth hangman permutation (`u16`, `(v / 6^k) % 6`).
 pub const PZ_HANGMAN: usize = 0x18;
+/// Puzzle state offset (`0x1c`): Hotel briefcase 4 drum positions (`u8[4]`, `0..7`).
+pub const PZ_DRUM: usize = 0x1c;
 
 /// Input button bit: Confirm / Action (`KEY_A`).
 pub const PROG_KEY_A: u32 = 1 << 0;

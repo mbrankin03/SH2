@@ -231,6 +231,26 @@ impl ScenarioState {
         }
     }
 
+    /// Synchronizes the legacy `inventory: Vec<GameItem>` view from `inventory_mgr`.
+    pub fn sync_legacy_views(&mut self) {
+        self.inventory = self
+            .inventory_mgr
+            .owned_items()
+            .into_iter()
+            .map(|(id, qty)| {
+                let name = crate::inventory::item_metadata(id)
+                    .map(|m| m.name)
+                    .unwrap_or("Unknown")
+                    .to_string();
+                GameItem {
+                    id: id as u16,
+                    name,
+                    quantity: qty,
+                }
+            })
+            .collect();
+    }
+
     /// Transition to a new stage/room cleanly.
     pub fn transition_stage(
         &mut self,

@@ -357,6 +357,35 @@ impl CutawayOverlayEngine {
         self.incar_alpha
     }
 
+    /// Returns the current open manacles overlay alpha (`0.0..=1.0`).
+    pub fn manacles_alpha(&self) -> f32 {
+        self.manacles_alpha
+    }
+
+    /// Advances active overlay alpha transitions (`out_p_incar` map fade and `dls_p_manacles_on` fade).
+    pub fn tick(&mut self, dt: f32, flags: &EventFlags) {
+        if dt <= 0.0 {
+            return;
+        }
+        match self.kind {
+            OverlayKind::InCar => {
+                if flags.get(28) {
+                    self.incar_alpha = (self.incar_alpha - dt).max(0.0);
+                } else {
+                    self.incar_alpha = 1.0;
+                }
+            }
+            OverlayKind::Manacles => {
+                if flags.get(277) || flags.get(304) {
+                    self.manacles_alpha = (self.manacles_alpha + dt).min(1.0);
+                } else {
+                    self.manacles_alpha = 0.0;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Activates a cutaway still (`prog_overlay_picture`), automatically binding the matching
     /// interactive puzzle sprite sheet (`SHEETS`) when applicable. Pass `None` to hide the still.
     pub fn set_picture(&mut self, pic: Option<&str>, flags: &EventFlags) {

@@ -467,6 +467,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         bgm_stage_override: None,
         audio_debug: rooms::audio_room::AudioDebugState::default(),
         surface_sfx_room: rooms::surface_sfx_room::SurfaceSfxRoomState::default(),
+        inventory_room: rooms::inventory_room::InventoryDebugRoomState::default(),
+        puzzle_cutaway_room: rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default(),
         sim_core,
         gpu_map,
         map_texture_bind_groups,

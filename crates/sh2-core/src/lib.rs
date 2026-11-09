@@ -62,7 +62,7 @@ pub use events::{
     verify_hospital_box_wheels, verify_hospital_corridor_keypad, ClearData, EventFlags,
     MessageInsertState, ProgContext, PuzzleState, Sh2Rng, StageProgramRunner, EV_FLAG_BYTES,
     EV_MAX_FLAGS, PROG_KEY_A, PROG_KEY_B, PROG_KEY_DOWN, PROG_KEY_LEFT, PROG_KEY_RIGHT,
-    PROG_KEY_UP, PZ_BOX_CODE, PZ_CLOCK, PZ_HANGMAN, PZ_PANEL, PZ_SAFE_CODE, PZ_SAFE_PROG,
+    PROG_KEY_UP, PZ_BOX_CODE, PZ_CLOCK, PZ_DRUM, PZ_HANGMAN, PZ_PANEL, PZ_SAFE_CODE, PZ_SAFE_PROG,
     PZ_WHEEL, PZ_WHEEL_GOAL,
 };
 pub use input::{

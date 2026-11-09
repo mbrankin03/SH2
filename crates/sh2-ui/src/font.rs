@@ -199,4 +199,183 @@ impl TextRasterizer {
             cx += 8 * scale;
         }
     }
+
+    /// Fills a solid or semi-transparent axis-aligned rectangle `(x0, y0, w, h)`.
+    pub fn fill_rect(&mut self, x0: usize, y0: usize, w: usize, h: usize, color: [u8; 4]) {
+        let x1 = (x0 + w).min(self.width);
+        let y1 = (y0 + h).min(self.height);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                self.blend_pixel(x, y, color);
+            }
+        }
+    }
+
+    /// Draws a rectangular outline `(x0, y0, w, h)` with the given `thickness`.
+    pub fn draw_rect_outline(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        w: usize,
+        h: usize,
+        thickness: usize,
+        color: [u8; 4],
+    ) {
+        if w == 0 || h == 0 || thickness == 0 {
+            return;
+        }
+        let t = thickness.min(w).min(h);
+        self.fill_rect(x0, y0, w, t, color);
+        self.fill_rect(x0, y0 + h - t, w, t, color);
+        self.fill_rect(x0, y0 + t, t, h.saturating_sub(2 * t), color);
+        self.fill_rect(x0 + w - t, y0 + t, t, h.saturating_sub(2 * t), color);
+    }
+
+    /// Blits an RGBA8 texture (`src_rgba`, `src_w x src_h`) scaled into `(dst_x, dst_y, dst_w, dst_h)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blit_rgba_scaled(
+        &mut self,
+        dst_x: usize,
+        dst_y: usize,
+        dst_w: usize,
+        dst_h: usize,
+        src_rgba: &[u8],
+        src_w: usize,
+        src_h: usize,
+        alpha_mul: f32,
+    ) {
+        if dst_w == 0
+            || dst_h == 0
+            || src_w == 0
+            || src_h == 0
+            || src_rgba.len() < src_w * src_h * 4
+            || alpha_mul <= 0.0
+        {
+            return;
+        }
+        let a_scale = alpha_mul.clamp(0.0, 1.0);
+        let x_end = (dst_x + dst_w).min(self.width);
+        let y_end = (dst_y + dst_h).min(self.height);
+
+        for y in dst_y..y_end {
+            let v = ((y - dst_y) as f32 + 0.5) / (dst_h as f32);
+            let sy = ((v * (src_h as f32)).floor() as usize).min(src_h - 1);
+            for x in dst_x..x_end {
+                let u = ((x - dst_x) as f32 + 0.5) / (dst_w as f32);
+                let sx = ((u * (src_w as f32)).floor() as usize).min(src_w - 1);
+                let s_ofs = (sy * src_w + sx) * 4;
+                let sa = ((src_rgba[s_ofs + 3] as f32) * a_scale).round() as u8;
+                if sa > 0 {
+                    self.blend_pixel(
+                        x,
+                        y,
+                        [
+                            src_rgba[s_ofs],
+                            src_rgba[s_ofs + 1],
+                            src_rgba[s_ofs + 2],
+                            sa,
+                        ],
+                    );
+                }
+            }
+        }
+    }
+
+    /// Rasterizes a 6-vertex triangle pair `[(x, y, u, v); 6]` (such as produced by
+    /// `OverlaySpriteQuad::to_viewport_triangles`) sampling from `src_rgba` (`src_w x src_h`).
+    pub fn blit_overlay_triangles(
+        &mut self,
+        tris: &[(f32, f32, f32, f32); 6],
+        src_rgba: &[u8],
+        src_w: usize,
+        src_h: usize,
+        alpha_mul: f32,
+    ) {
+        self.rasterize_textured_triangle(
+            tris[0], tris[1], tris[2], src_rgba, src_w, src_h, alpha_mul,
+        );
+        self.rasterize_textured_triangle(
+            tris[3], tris[4], tris[5], src_rgba, src_w, src_h, alpha_mul,
+        );
+    }
+
+    /// Rasterizes a single textured 2D triangle `p0, p1, p2` where each vertex is `(x, y, u, v)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rasterize_textured_triangle(
+        &mut self,
+        p0: (f32, f32, f32, f32),
+        p1: (f32, f32, f32, f32),
+        p2: (f32, f32, f32, f32),
+        src_rgba: &[u8],
+        src_w: usize,
+        src_h: usize,
+        alpha_mul: f32,
+    ) {
+        if src_w == 0
+            || src_h == 0
+            || src_rgba.len() < src_w * src_h * 4
+            || alpha_mul <= 0.0
+        {
+            return;
+        }
+        let min_x = p0
+            .0
+            .min(p1.0)
+            .min(p2.0)
+            .floor()
+            .max(0.0) as usize;
+        let max_x = (p0.0.max(p1.0).max(p2.0).ceil().max(0.0) as usize).min(self.width);
+        let min_y = p0
+            .1
+            .min(p1.1)
+            .min(p2.1)
+            .floor()
+            .max(0.0) as usize;
+        let max_y = (p0.1.max(p1.1).max(p2.1).ceil().max(0.0) as usize).min(self.height);
+
+        if min_x >= max_x || min_y >= max_y {
+            return;
+        }
+
+        let edge = |ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32| -> f32 {
+            (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+        };
+
+        let area = edge(p0.0, p0.1, p1.0, p1.1, p2.0, p2.1);
+        if area.abs() < 1e-4 {
+            return;
+        }
+        let inv_area = 1.0 / area;
+        let a_scale = alpha_mul.clamp(0.0, 1.0);
+
+        for y in min_y..max_y {
+            let py = (y as f32) + 0.5;
+            for x in min_x..max_x {
+                let px = (x as f32) + 0.5;
+                let w0 = edge(p1.0, p1.1, p2.0, p2.1, px, py) * inv_area;
+                let w1 = edge(p2.0, p2.1, p0.0, p0.1, px, py) * inv_area;
+                let w2 = 1.0 - w0 - w1;
+                if w0 >= -1e-4 && w1 >= -1e-4 && w2 >= -1e-4 {
+                    let u = (w0 * p0.2 + w1 * p1.2 + w2 * p2.2).clamp(0.0, 1.0);
+                    let v = (w0 * p0.3 + w1 * p1.3 + w2 * p2.3).clamp(0.0, 1.0);
+                    let sx = ((u * (src_w as f32)).floor() as usize).min(src_w - 1);
+                    let sy = ((v * (src_h as f32)).floor() as usize).min(src_h - 1);
+                    let s_ofs = (sy * src_w + sx) * 4;
+                    let sa = ((src_rgba[s_ofs + 3] as f32) * a_scale).round() as u8;
+                    if sa > 0 {
+                        self.blend_pixel(
+                            x,
+                            y,
+                            [
+                                src_rgba[s_ofs],
+                                src_rgba[s_ofs + 1],
+                                src_rgba[s_ofs + 2],
+                                sa,
+                            ],
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

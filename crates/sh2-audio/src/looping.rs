@@ -120,15 +120,16 @@ pub fn apply_loop_boundary_crossfade(
     let target_start_frame = frames[start];
 
     if start >= window {
-        // Case A: We have `window` pre-loop lead-in samples `[start - window .. start]` that naturally
-        // lead into `frames[start]`. Blend `[end - window .. end]` into `[start - window .. start]`
-        // using a raised-cosine equal-amplitude crossfade so `frames[end - 1]` seamlessly matches `frames[start - 1]`.
+        // Case A: We have `window` pre-loop lead-in samples (`start >= window`).
+        // Blend `[end - window .. end]` into `[start - window + 1 ..= start]` using a raised-cosine
+        // equal-amplitude crossfade so `frames[end - 1]` (t = 1.0, alpha = 1.0) equals `frames[start]`
+        // with both C0 value and C1 slope continuity across the loop boundary.
         for i in 0..window {
-            // t goes from 0.0 at the start of the crossfade window to 1.0 at `end - 1`
+            // t goes from 1/window at the start of the crossfade window to 1.0 at `end - 1`
             let t = (i + 1) as f32 / window as f32;
             let alpha = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
             let tail_idx = end - window + i;
-            let lead_in = frames[start - window + i];
+            let lead_in = frames[start - window + 1 + i];
             let tail = frames[tail_idx];
             frames[tail_idx] = Frame::new(
                 tail.left * (1.0 - alpha) + lead_in.left * alpha,

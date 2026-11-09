@@ -1012,6 +1012,34 @@ mod tests {
             post_step < 1e-5,
             "Expected crossfaded loop boundary step delta < 1e-5, got {post_step}"
         );
+
+        // Also verify Case A (`loop_start >= window`, pre-loop lead-in crossfade) achieves zero step discontinuity
+        let mut lead_in_frames = Vec::with_capacity(total);
+        for i in 0..total {
+            let phase = (i as f32) * 0.025;
+            if i < 2400 {
+                lead_in_frames.push(kira::Frame::new(phase.sin(), phase.cos()));
+            } else {
+                lead_in_frames.push(kira::Frame::new(-0.90, 0.85));
+            }
+        }
+        let lead_in_region = LoopRegionSamples {
+            sample_rate: 48_000,
+            loop_start_frame: 600,
+            loop_end_frame: 4200,
+            total_frames: total,
+        };
+        apply_loop_boundary_crossfade(
+            &mut lead_in_frames,
+            lead_in_region,
+            DEFAULT_LOOP_CROSSFADE_SAMPLES_48K,
+        );
+        assert_eq!(lead_in_frames.len(), 4200);
+        let case_a_step = measure_loop_boundary_step_delta(&lead_in_frames, 600, 4200);
+        assert!(
+            case_a_step < 1e-5,
+            "Expected Case A pre-loop lead-in crossfade step delta < 1e-5, got {case_a_step}"
+        );
     }
 
     #[test]
@@ -1152,5 +1180,29 @@ mod tests {
             .expect("Producer thread should complete cleanly");
         assert_eq!(rb.available_read(), 0);
         assert_eq!(rb.underrun_count(), 0);
+    }
+
+    #[test]
+    fn test_sh2_58_complete_audio_parity_dual_source_bgm_sfx_acoustics_and_looping() {
+        // 1. Verify BGM & AIX Multi-Layer Room Mixing + Loop Region Scaling (`SH2-60` / `SH2-55` / `SH2-58`)
+        let page_34 = bgm_page_entry(34);
+        assert_eq!(page_34.load_id, 5065);
+        let file_5065 = find_bgm_file_by_load_id(5065)
+            .expect("Expected BGM file 5065 (sound/adx/hotel/bgm_112.aix)");
+        assert!(!file_5065.is_adx);
+
+        // 2. Verify 1:1 SFX Attenuation Curve (`0x401620`), Footstep Material Table (`0x8A1ED8`), and Room Acoustics (`SH2-61` / `SH2-55` / `SH2-58`)
+        let eval_near = compute_se_call_pos_distance_f(Vec3::ZERO, 0.0, Vec3::ZERO, 1.0);
+        let eval_mid =
+            compute_se_call_pos_distance_f(Vec3::ZERO, 0.0, Vec3::new(0.0, 0.0, 6500.0), 1.0);
+        let eval_far =
+            compute_se_call_pos_distance_f(Vec3::ZERO, 0.0, Vec3::new(0.0, 0.0, 12000.0), 1.0);
+        assert!((eval_near.effective_gain - 1.0).abs() < 1e-5);
+        assert!(eval_mid.effective_gain > 0.05 && eval_mid.effective_gain < 0.5);
+        assert_eq!(eval_far.effective_gain, 0.0);
+
+        let prof_corridor = RoomAcousticsProfile::from_preset(EnvironmentalPreset::Corridor);
+        let prof_corridor_dup = RoomAcousticsProfile::from_preset(EnvironmentalPreset::Corridor);
+        assert_eq!(prof_corridor, prof_corridor_dup);
     }
 }

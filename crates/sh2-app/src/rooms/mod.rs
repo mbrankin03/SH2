@@ -4,6 +4,7 @@ pub(crate) mod audio_room;
 pub(crate) mod combat_arena;
 pub(crate) mod fmv_room;
 pub(crate) mod grapple_room;
+pub(crate) mod horror_triggers_room;
 pub(crate) mod inventory_room;
 pub(crate) mod model_viewer;
 pub(crate) mod puzzle_cutaway_room;
@@ -85,6 +86,11 @@ pub(crate) fn dispatch_key_input(
                 state, key_code, pressed, repeat,
             );
         }
+        TestRoomKind::HorrorTriggersRoom => {
+            horror_triggers_room::HorrorTriggersRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
+        }
         _ => {
             combat_arena::CombatArenaRoomController::handle_key_input(
                 state, key_code, pressed, repeat,
@@ -147,6 +153,12 @@ pub(crate) fn dispatch_tick_and_render_3d(
                 );
                 return;
             }
+            TestRoomKind::HorrorTriggersRoom => {
+                horror_triggers_room::HorrorTriggersRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
             _ => {}
         }
     }
@@ -183,6 +195,13 @@ pub(crate) fn dispatch_render_hud(
         }
         TestRoomKind::PuzzleAndCutawayRoom => {
             puzzle_cutaway_room::PuzzleCutawayRoomController::render_hud(
+                state,
+                encoder,
+                surface_view,
+            );
+        }
+        TestRoomKind::HorrorTriggersRoom => {
+            horror_triggers_room::HorrorTriggersRoomController::render_hud(
                 state,
                 encoder,
                 surface_view,

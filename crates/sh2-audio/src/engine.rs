@@ -232,9 +232,9 @@ impl AudioEngine {
         if let Some(ref mut listener) = self.listener {
             listener.set_position(
                 Vector3 {
-                    x: player_pos.x,
-                    y: player_pos.y,
-                    z: player_pos.z,
+                    x: player_pos.x * 0.01,
+                    y: player_pos.y * 0.01,
+                    z: player_pos.z * 0.01,
                 },
                 Tween::default(),
             );
@@ -431,6 +431,77 @@ impl AudioEngine {
         manager
             .play(sound_data)
             .map_err(|e| AudioError::PlaybackError(e.to_string()))
+    }
+
+    /// Plays a sound effect on the SFX sub-track (with room reverb DSP) using explicit PS2
+    /// `SeCallPosDistanceF` linear amplitude `volume` (`0.0..=1.0`) and `stereo_pan` (`-1.0..=1.0`).
+    pub fn play_sfx_panned(
+        &mut self,
+        wav: &WavEntry,
+        volume: f32,
+        stereo_pan: f32,
+    ) -> Result<StaticSoundHandle, AudioError> {
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let sfx_track = self
+            .sfx_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
+
+        let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
+        self.output_ringbuffer
+            .push_frames(&frames[..frames.len().min(512)]);
+
+        let pan_01 = ((stereo_pan.clamp(-1.0, 1.0) + 1.0) * 0.5) as f64;
+        let mut settings = StaticSoundSettings::new()
+            .output_destination(sfx_track)
+            .volume(Volume::Amplitude(
+                (volume * self.sfx_volume * self.master_volume) as f64,
+            ))
+            .panning(pan_01);
+
+        if wav.loops {
+            if let Some(region) = LoopRegionSamples::from_source_samples(
+                wav.loop_start,
+                wav.loop_end,
+                wav.sample_rate,
+                sample_rate,
+                frames.len(),
+            ) {
+                settings = settings.loop_region(region.to_kira_region());
+            }
+        }
+
+        let sound_data = StaticSoundData {
+            sample_rate,
+            frames: Arc::from(frames),
+            settings,
+            slice: None,
+        };
+
+        manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))
+    }
+
+    /// Updates the live volume and stereo panning of an active sound effect handle (`SePosMove` / `SePosSet`).
+    pub fn update_sound_spatial(
+        &self,
+        handle: &mut StaticSoundHandle,
+        volume: f32,
+        stereo_pan: f32,
+    ) {
+        let tween = Tween {
+            duration: Duration::from_millis(16),
+            easing: Easing::Linear,
+            ..Default::default()
+        };
+        let target_vol = (volume.max(0.0) * self.sfx_volume * self.master_volume) as f64;
+        let pan_01 = ((stereo_pan.clamp(-1.0, 1.0) + 1.0) * 0.5) as f64;
+        handle.set_volume(Volume::Amplitude(target_vol), tween);
+        handle.set_panning(pan_01, tween);
     }
 
     /// Streams a background music or ambient track from a decoded ADX stream.

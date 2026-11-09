@@ -190,6 +190,10 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             state.puzzle_cutaway_room =
                 rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default();
         }
+        if new_room == TestRoomKind::HorrorTriggersRoom {
+            state.horror_triggers_room =
+                rooms::horror_triggers_room::HorrorTriggersRoomState::default();
+        }
         if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
             let asset = load_viewer_entry_asset(
                 &state.render_ctx,

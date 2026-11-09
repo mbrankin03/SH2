@@ -241,11 +241,23 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("PUZZLE LOGIC & CUTAWAY OVERLAYS ROOM", SH2-15),
-    // then up through "INVENTORY & 3D/2D ITEM INSPECT ROOM" (SH2-15),
+    // Navigate up to wrap to the last entry ("STAGE EVENTS & HORROR TRIGGERS ROOM", SH2-47),
+    // then up through "PUZZLE LOGIC & CUTAWAY OVERLAYS ROOM" (SH2-15),
+    // "INVENTORY & 3D/2D ITEM INSPECT ROOM" (SH2-15),
     // "SURFACE FOOTSTEP & 3D SFX ROOM" (SH2-61), "AUDIO & AIX MIXING DEBUG ROOM" (SH2-60),
     // "GRAPPLE ANIMATION ROOM" (SH2-57), "COMBAT & WEAPON TESTING ARENA" (SH2-13),
     // and "LOADING SCREEN PREVIEW" (SH2-44)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::HorrorTriggersRoom
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Stage Events & Horror Triggers Room"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(

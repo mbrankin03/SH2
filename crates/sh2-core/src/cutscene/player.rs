@@ -3,14 +3,19 @@
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use sh2_assets::formats::demo::{
-    DemoDdsEvaluator, DemoDdsFile, DemoKeyframeState, DemoLightKind, DemoLightState,
-    DEMO_MAX_CHARS, DEMO_MAX_LIGHTS,
+    CutsceneBorderMode, CutsceneWidescreenMode, DemoDdsEvaluator, DemoDdsFile, DemoKeyframeState,
+    DemoLightKind, DemoLightState, DEMO_MAX_CHARS, DEMO_MAX_LIGHTS, STANDARD_16X9_ASPECT,
 };
 
 use super::anim_info::{
     derive_demo_actor_anm_and_cls_paths, find_drama_demo_anim_info, DramaDemoAnimInfo,
 };
 use super::catalog::DramaDemoPlayInfo;
+use super::culling::{should_cull_parked_offscreen_actor, ActorBoundingSphere};
+use super::stage_fixes::{
+    evaluate_hei_lau_widescreen_entry, evaluate_meeting_maria_fog_counters, ClosetCutsceneFixState,
+    PistonRoomFixState,
+};
 use super::CUTSCENE_NATIVE_FPS;
 
 /// Runtime state of a single actor inside an active `.dds` cutscene (`SubCharacter` in `Event/demoview.c`).
@@ -26,8 +31,15 @@ pub struct CutsceneActorRuntime {
     pub anm_path: String,
     /// Derived `.cls` facial morph animation relative asset path if applicable.
     pub cls_path: Option<String>,
-    /// Whether this actor is currently visible (`status & 1`).
+    /// Raw visibility flag authored in the `.dds` script (`status & 1`).
+    pub script_visible: bool,
+    /// Whether this actor is currently culled because it is parked outside the authored `4:3`
+    /// camera frustum on a widescreen/ultrawide viewport or despawned by a scene-specific fix (`SH2-77`).
+    pub culled_offscreen_4x3: bool,
+    /// Effective visibility (`script_visible && !culled_offscreen_4x3`).
     pub visible: bool,
+    /// World-space bounding sphere used for `4:3` off-screen frustum culling (`SH2-77`).
+    pub bounding_sphere: ActorBoundingSphere,
     /// Current world-space position (`pos + offset`).
     pub position: Vec3,
     /// Current Y rotation in radians (`PI` during `DdsPlay`).
@@ -38,6 +50,9 @@ pub struct CutsceneActorRuntime {
     pub subclip_index: usize,
     /// Continuous 30 FPS animation frame within the current sub-clip (`scene_frame - subclip_start_frame`).
     pub local_anm_frame: f32,
+    /// Optional scene-specific animation frame override (e.g. James's smooth widescreen pre-roll walk cycle
+    /// in `hei_lau` during frames `172.0..240.0`, `SH2-77`).
+    pub anm_frame_override: Option<f32>,
     /// Starting 30 FPS frame offset inside the actor's `.anm` file (accounts for multi-part
     /// cutscenes such as `mar_deai_e`, `papa_agl`, `piano_lau_e`, Laura's 226-frame `piano_lau_a` prefix,
     /// and NPC gameplay base clips prepended to `agl.anm`, `hhh_edi.anm`, `hhh_mar.anm`, `mry.anm`, `bos.anm`).
@@ -50,17 +65,19 @@ pub struct CutsceneActorRuntime {
 
 impl CutsceneActorRuntime {
     /// Returns the continuous global 30 FPS frame index inside the actor's `.anm` file
-    /// (`scene_frame + anm_frame_offset`).
+    /// (`base_frame + anm_frame_offset`).
     #[inline]
     pub fn global_anm_frame(&self, scene_frame: f32) -> f32 {
-        scene_frame.max(0.0) + (self.anm_frame_offset as f32)
+        let base_frame = self.anm_frame_override.unwrap_or(scene_frame.max(0.0));
+        base_frame + (self.anm_frame_offset as f32)
     }
 
     /// Returns the continuous global 30 FPS frame index inside the actor's `.cls` facial morph file
-    /// (`scene_frame + cls_frame_offset`).
+    /// (`base_frame + cls_frame_offset`).
     #[inline]
     pub fn global_cls_frame(&self, scene_frame: f32) -> f32 {
-        scene_frame.max(0.0) + (self.cls_frame_offset as f32)
+        let base_frame = self.anm_frame_override.unwrap_or(scene_frame.max(0.0));
+        base_frame + (self.cls_frame_offset as f32)
     }
 
     /// Computes the 4x4 row-major world transformation matrix for this cutscene actor (`rot_y = PI`, `pos = position`).
@@ -149,8 +166,20 @@ pub struct DramaDemoPlayer {
     pub active_subtitle_msg_id: Option<u16>,
     /// Current screen fade alpha (`0.0` = clear, `1.0` = black).
     pub fade_alpha: f32,
-    /// Whether Widescreen FOV reduction (`ReduceCutsceneFOV`) is enabled.
+    /// Whether Widescreen FOV reduction (`ReduceCutsceneFOV`) is enabled (`widescreen_mode == Sh2eeZoom16x9`).
     pub reduce_widescreen_fov: bool,
+    /// Current viewport aspect ratio (`width / height`, e.g. `16.0/9.0`, `64.0/27.0`, `32.0/9.0`) (`SH2-77`).
+    pub viewport_aspect: f32,
+    /// Active widescreen framing and off-screen actor culling mode (`SH2-77`).
+    pub widescreen_mode: CutsceneWidescreenMode,
+    /// Policy for top/bottom cutscene letterbox bars (`DisableCutsceneBorders` in `SH2-77`).
+    pub border_mode: CutsceneBorderMode,
+    /// Scene-specific widescreen fix state for Wood Side Room 307 (`sankaku1` / `wp_closet`, `demo_no == 14`).
+    pub closet_fix: ClosetCutsceneFixState,
+    /// Scene-specific widescreen fix state for Labyrinth Piston Room (`papa_agl` / `ug_angela`, `demo_no == 68`).
+    pub piston_fix: PistonRoomFixState,
+    /// Scene-specific widescreen fog counter triggers `(counter_one, counter_two)` for Rosewater Park (`deai`, `demo_no == 22`).
+    pub maria_fog_counters: (bool, bool),
     /// Evaluated camera snapshot for the current frame.
     pub camera: CutsceneCameraSnapshot,
     /// Evaluated keyframe state for the current frame.
@@ -162,6 +191,22 @@ pub struct DramaDemoPlayer {
 impl DramaDemoPlayer {
     /// Initializes a new real-time 3D cutscene session at Frame 0 (`DramaDemoInit` at `0x1b2080`).
     pub fn new(info: DramaDemoPlayInfo, script: DemoDdsFile, reduce_widescreen_fov: bool) -> Self {
+        let mode = if reduce_widescreen_fov {
+            CutsceneWidescreenMode::Sh2eeZoom16x9
+        } else {
+            CutsceneWidescreenMode::UltrawideHorPlusSmartCull
+        };
+        Self::new_with_widescreen(info, script, STANDARD_16X9_ASPECT, mode)
+    }
+
+    /// Initializes a new real-time 3D cutscene session with explicit `viewport_aspect` and [`CutsceneWidescreenMode`] (`SH2-77`).
+    pub fn new_with_widescreen(
+        info: DramaDemoPlayInfo,
+        script: DemoDdsFile,
+        viewport_aspect: f32,
+        widescreen_mode: CutsceneWidescreenMode,
+    ) -> Self {
+        let reduce_widescreen_fov = widescreen_mode == CutsceneWidescreenMode::Sh2eeZoom16x9;
         let mut actors = Vec::with_capacity(script.header.character_names.len());
         for (idx, name) in script.header.character_names.iter().enumerate() {
             let anim_info = find_drama_demo_anim_info(name);
@@ -178,6 +223,12 @@ impl DramaDemoPlayer {
                     || clean_actor.eq_ignore_ascii_case("i_letter_pos"))
             {
                 226u16
+            } else if info.dds_path.contains("/sankaku1/")
+                && clean_actor.eq_ignore_ascii_case("mkn_2_pos")
+            {
+                // In `data/demo/sankaku1/mkn.anm` (5,152 frames = 2,576 * 2), `mkn_1_pos` uses
+                // frames [0..2576) and `mkn_2_pos` uses frames [2576..5152).
+                2576u16
             } else {
                 0u16
             };
@@ -254,18 +305,23 @@ impl DramaDemoPlayer {
 
             let cls_frame_offset = info.anm_frame_offset.saturating_add(extra_subclip_offset);
             let anm_frame_offset = cls_frame_offset.saturating_add(anm_gameplay_prefix);
+            let bounding_sphere = ActorBoundingSphere::for_actor(name, anim_info);
             actors.push(CutsceneActorRuntime {
                 slot_index: idx,
                 actor_name: name.clone(),
                 anim_info,
                 anm_path,
                 cls_path,
+                script_visible: false,
+                culled_offscreen_4x3: false,
                 visible: false,
+                bounding_sphere,
                 position: Vec3::ZERO,
                 yaw_radians: std::f32::consts::PI,
                 current_aid: start_aid,
                 subclip_index: 0,
                 local_anm_frame: 0.0,
+                anm_frame_override: None,
                 anm_frame_offset,
                 cls_frame_offset,
             });
@@ -273,7 +329,8 @@ impl DramaDemoPlayer {
 
         let mut evaluator = DemoDdsEvaluator::new(script);
         let (init_state, _) = evaluator.sample_at(0.0, info.offset_x, info.offset_z);
-        let fov_y = init_state.vertical_fov_radians(info.fov_scale(), reduce_widescreen_fov);
+        let fov_y =
+            init_state.vertical_fov_radians(info.fov_scale(), viewport_aspect, widescreen_mode);
         let camera = CutsceneCameraSnapshot {
             eye: Vec3::from_array(init_state.camera_pos),
             interest: Vec3::from_array(init_state.camera_interest),
@@ -295,12 +352,39 @@ impl DramaDemoPlayer {
             active_subtitle_msg_id: None,
             fade_alpha: 0.0,
             reduce_widescreen_fov,
+            viewport_aspect,
+            widescreen_mode,
+            border_mode: CutsceneBorderMode::Auto,
+            closet_fix: ClosetCutsceneFixState::default(),
+            piston_fix: PistonRoomFixState::default(),
+            maria_fog_counters: (false, false),
             camera,
             current_state: init_state,
             actors,
         };
-        player.sync_actors_from_state();
+        player.sync_camera_and_actors();
         player
+    }
+
+    /// Updates the active viewport aspect ratio (`width / height`) andwidescreen mode,
+    /// re-evaluating camera FOV, scene fixes, and off-screen 4:3 actor culling immediately.
+    pub fn set_widescreen_config(
+        &mut self,
+        viewport_aspect: f32,
+        widescreen_mode: CutsceneWidescreenMode,
+    ) {
+        self.viewport_aspect = viewport_aspect.max(0.5);
+        self.widescreen_mode = widescreen_mode;
+        self.reduce_widescreen_fov = widescreen_mode == CutsceneWidescreenMode::Sh2eeZoom16x9;
+        self.sync_camera_and_actors();
+    }
+
+    /// Returns `true` if top/bottom `4:3` cutscene letterbox bars are suppressed on the current viewport
+    /// (`DisableCutsceneBorders = Auto` in `SH2-77`).
+    #[inline]
+    pub fn letterbox_bars_hidden(&self) -> bool {
+        self.border_mode
+            .should_hide_letterbox_bars(self.viewport_aspect, self.widescreen_mode)
     }
 
     /// Returns `true` if gameplay input and the pause menu should be locked while this cutscene is active.
@@ -479,6 +563,7 @@ impl DramaDemoPlayer {
             self.evaluator
                 .sample_at(self.scene_frame, self.info.offset_x, self.info.offset_z);
         self.current_state = sampled;
+        self.piston_fix = PistonRoomFixState::default();
         self.sync_camera_and_actors();
     }
 
@@ -512,9 +597,12 @@ impl DramaDemoPlayer {
     }
 
     fn sync_camera_and_actors(&mut self) {
-        let fov_y = self
-            .current_state
-            .vertical_fov_radians(self.info.fov_scale(), self.reduce_widescreen_fov);
+        let fov_scale = self.info.fov_scale();
+        let fov_y = self.current_state.vertical_fov_radians(
+            fov_scale,
+            self.viewport_aspect,
+            self.widescreen_mode,
+        );
         self.camera = CutsceneCameraSnapshot {
             eye: Vec3::from_array(self.current_state.camera_pos),
             interest: Vec3::from_array(self.current_state.camera_interest),
@@ -523,6 +611,33 @@ impl DramaDemoPlayer {
             fov_y_radians: fov_y,
             is_hard_cut: self.evaluator.is_cut,
         };
+
+        // Evaluate scene-specific widescreen/ultrawide fixes (`SH2-77`)
+        self.closet_fix = ClosetCutsceneFixState::evaluate(
+            self.info.demo_no,
+            self.scene_frame,
+            self.current_state.camera_pos[0],
+            self.viewport_aspect,
+        );
+        self.piston_fix
+            .update(self.info.demo_no, self.current_state.camera_pos[0]);
+        if self.piston_fix.active && !self.piston_fix.doorway_piston_culled {
+            for rec in &self.evaluator.script.records[..self.evaluator.next_record_idx] {
+                for &op in &rec.camera_ops {
+                    if let sh2_assets::formats::demo::DemoCameraOp::Position {
+                        values,
+                        is_raw: true,
+                    } = op
+                    {
+                        self.piston_fix
+                            .update(self.info.demo_no, values[0] + self.info.offset_x);
+                    }
+                }
+            }
+        }
+        self.maria_fog_counters =
+            evaluate_meeting_maria_fog_counters(self.info.demo_no, self.scene_frame);
+
         self.sync_actors_from_state();
     }
 
@@ -531,15 +646,63 @@ impl DramaDemoPlayer {
         let subclip_idx = trig_count.saturating_sub(1);
         let local_frame =
             (self.scene_frame - (self.evaluator.last_anim_trigger_frame as f32)).max(0.0);
+        let (fov_y_4x3, fov_x_4x3) = self
+            .current_state
+            .authored_4x3_fov_radians(self.info.fov_scale());
+        let offset_vec = Vec3::new(self.info.offset_x, 0.0, self.info.offset_z);
 
         for actor in &mut self.actors {
             let idx = actor.slot_index;
             if idx < DEMO_MAX_CHARS {
-                actor.visible = self.current_state.char_visible[idx];
-                actor.position = Vec3::from_array(self.current_state.char_positions[idx]);
+                let script_vis = self.current_state.char_visible[idx];
+                let pos = Vec3::from_array(self.current_state.char_positions[idx]);
+                let last_pos =
+                    Vec3::from_array(self.evaluator.last.char_positions[idx]) + offset_vec;
+                let next_pos =
+                    Vec3::from_array(self.evaluator.next.char_positions[idx]) + offset_vec;
+
+                let hei_lau_entry = evaluate_hei_lau_widescreen_entry(
+                    self.info.demo_no,
+                    &actor.actor_name,
+                    self.scene_frame,
+                    self.widescreen_mode,
+                    self.viewport_aspect,
+                    pos,
+                );
+
+                let hidden_by_scene_fix = self.closet_fix.should_hide_actor(&actor.actor_name)
+                    || hei_lau_entry.hidden_before_entry;
+                let culled_by_frustum =
+                    if hei_lau_entry.active && !hei_lau_entry.hidden_before_entry {
+                        // During the smooth widescreen pre-roll entry walk (`172.0..240.0`) and authored
+                        // walk (`240.0..292.0`) in `hei_lau`, keep James visible so he walks seamlessly in.
+                        false
+                    } else {
+                        should_cull_parked_offscreen_actor(
+                            self.widescreen_mode,
+                            self.viewport_aspect,
+                            script_vis,
+                            self.camera.eye,
+                            self.camera.interest,
+                            self.camera.roll_radians,
+                            fov_y_4x3,
+                            fov_x_4x3,
+                            pos,
+                            last_pos,
+                            next_pos,
+                            actor.bounding_sphere,
+                        )
+                    };
+
+                actor.script_visible = script_vis;
+                actor.culled_offscreen_4x3 =
+                    script_vis && (hidden_by_scene_fix || culled_by_frustum);
+                actor.visible = script_vis && !actor.culled_offscreen_4x3;
+                actor.position = hei_lau_entry.position_override.unwrap_or(pos);
                 actor.yaw_radians = std::f32::consts::PI;
                 actor.subclip_index = subclip_idx;
-                actor.local_anm_frame = local_frame;
+                actor.anm_frame_override = hei_lau_entry.anm_frame_override;
+                actor.local_anm_frame = hei_lau_entry.anm_frame_override.unwrap_or(local_frame);
                 if let Some(info) = actor.anim_info {
                     actor.current_aid = (info.start_aid + (subclip_idx as u16)).min(info.end_aid);
                 }

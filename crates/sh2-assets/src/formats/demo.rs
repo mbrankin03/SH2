@@ -26,8 +26,14 @@
 //! | `0x19` | `[u8; 16] * n_characters` | `char_names` | 16-byte null-padded ASCII actor node names |
 
 mod evaluator;
+mod widescreen;
 
 pub use evaluator::{DemoDdsEvaluator, DemoKeyframeState, DemoLightState};
+pub use widescreen::{
+    authored_4x3_fov_radians, compute_widescreen_scr_z, CutsceneBorderMode, CutsceneWidescreenMode,
+    AUTHORED_4X3_ASPECT, SH2EE_16X9_SCR_Z_ZOOM, STANDARD_16X9_ASPECT, SUPER_ULTRAWIDE_32X9_ASPECT,
+    ULTRAWIDE_21X9_ASPECT,
+};
 
 use super::binary::{read_f32, read_i16, read_u16, read_u32};
 use crate::error::AssetError;

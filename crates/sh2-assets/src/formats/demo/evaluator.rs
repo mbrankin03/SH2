@@ -1,8 +1,11 @@
 //! Stateful `.dds` keyframe evaluator (`DdsPlay` / `DramaDemoInit` / `DramaDemoSkipLast`) (`SH2-63`).
 
+use super::widescreen::{
+    authored_4x3_fov_radians, compute_widescreen_scr_z, CutsceneWidescreenMode,
+};
 use super::{
     dds_rotation_to_interest, DemoCameraOp, DemoCharOp, DemoDdsFile, DemoLightKind, DemoLightOp,
-    DEMO_MAX_CHARS, DEMO_MAX_LIGHTS, DEMO_SCREEN_SY, DEMO_SCR_Z_SCALE,
+    DEMO_MAX_CHARS, DEMO_MAX_LIGHTS, DEMO_SCREEN_SY,
 };
 
 /// Evaluates state of a single dynamic light at a keyframe (`SceneLight` in `DdsPlayLight`).
@@ -174,26 +177,28 @@ impl DemoKeyframeState {
         }
     }
 
-    /// Computes vertical field-of-view in radians (`fov_y`) from `camera_plane` matching `DdsPlay` (`0x4a176b`):
+    /// Computes aspect-aware vertical field-of-view in radians (`fov_y`) from `camera_plane`,
+    /// `demo_fov_scale`, `viewport_aspect`, and [`CutsceneWidescreenMode`] (`DdsPlay` at `0x4a176b` / `SH2-77`):
     ///
     /// $$\text{scr\_z} = \text{plane} \times 1.14702 \times \text{demo\_fov\_scale}$$
     /// $$\text{fov\_y} = 2 \arctan\left(\frac{224.0}{\text{scr\_z}}\right)$$
     #[inline]
-    pub fn vertical_fov_radians(&self, demo_fov_scale: f32, reduce_widescreen_fov: bool) -> f32 {
-        let scale = if demo_fov_scale > 0.0 {
-            demo_fov_scale
-        } else {
-            1.0
-        };
-        let mut scr_z = self.camera_plane * DEMO_SCR_Z_SCALE * scale;
-        if reduce_widescreen_fov {
-            // SH2:EE ReduceCutsceneFOV: scales scr_z slightly so off-screen actors parked just outside 4:3 stay hidden
-            scr_z *= 1.125;
-        }
-        if scr_z < 50.0 {
-            scr_z = DEMO_SCREEN_SY;
-        }
+    pub fn vertical_fov_radians(
+        &self,
+        demo_fov_scale: f32,
+        viewport_aspect: f32,
+        mode: CutsceneWidescreenMode,
+    ) -> f32 {
+        let scr_z =
+            compute_widescreen_scr_z(self.camera_plane, demo_fov_scale, viewport_aspect, mode);
         2.0 * (DEMO_SCREEN_SY * 0.5 / scr_z).atan()
+    }
+
+    /// Returns the authored `4:3` vertical and horizontal field-of-view `(fov_y_4x3, fov_x_4x3)` in radians
+    /// for 4:3 off-screen parked actor frustum culling (`SH2-77`).
+    #[inline]
+    pub fn authored_4x3_fov_radians(&self, demo_fov_scale: f32) -> (f32, f32) {
+        authored_4x3_fov_radians(self.camera_plane, demo_fov_scale)
     }
 }
 

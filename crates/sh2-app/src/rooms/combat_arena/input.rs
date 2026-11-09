@@ -260,6 +260,18 @@ fn handle_cutscene_locked_input(
                     false,
                 );
             }
+            KeyCode::KeyV => {
+                if let Some(ref mut session) = state.drama_demo_session {
+                    let next_mode = session.player.widescreen_mode.next();
+                    let aspect = session.player.viewport_aspect;
+                    session.player.set_widescreen_config(aspect, next_mode);
+                    tracing::info!(
+                        "[Cutscene Widescreen] Switched CutsceneWidescreenMode -> {:?} ({})",
+                        next_mode,
+                        next_mode.label()
+                    );
+                }
+            }
             _ => {}
         }
     }

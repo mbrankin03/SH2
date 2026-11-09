@@ -599,7 +599,11 @@ fn test_sh2_63_demo_dds_cls_and_mdl_facial_clusters_parsing() {
                     let mid_f = (dds.header.total_frames as f32 * 0.5).max(0.5);
                     let mut eval = DemoDdsEvaluator::new(dds);
                     let (snap0, _) = eval.sample_at(0.0, 0.0, 0.0);
-                    let fov0 = snap0.vertical_fov_radians(1.0, false);
+                    let fov0 = snap0.vertical_fov_radians(
+                        1.0,
+                        sh2_assets::formats::demo::STANDARD_16X9_ASPECT,
+                        sh2_assets::formats::demo::CutsceneWidescreenMode::UltrawideHorPlusSmartCull,
+                    );
                     assert!(
                         fov0.is_finite() && fov0 > 0.01 && fov0 < 3.10,
                         "{:?} invalid initial FOV: {fov0}",
@@ -614,7 +618,13 @@ fn test_sh2_63_demo_dds_cls_and_mdl_facial_clusters_parsing() {
 
                     eval.skip_to_last();
                     let snap_last = &eval.next;
-                    assert!(snap_last.vertical_fov_radians(1.0, false).is_finite());
+                    assert!(snap_last
+                        .vertical_fov_radians(
+                            1.0,
+                            sh2_assets::formats::demo::STANDARD_16X9_ASPECT,
+                            sh2_assets::formats::demo::CutsceneWidescreenMode::Sh2eeZoom16x9,
+                        )
+                        .is_finite());
 
                     dds_count += 1;
                 } else if ext.eq_ignore_ascii_case("cls") {

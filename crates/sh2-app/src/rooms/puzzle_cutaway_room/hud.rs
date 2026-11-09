@@ -137,6 +137,25 @@ pub(super) fn render_puzzle_cutaway_hud(
         }
     }
 
+    // Apply SH2:EE `SetBlackPillarBoxes` mask over any pillarbox/letterbox margins around the active still (`SH2-77`)
+    let content_aspect = vp_transform.draw_width.max(1.0) / vp_transform.draw_height.max(1.0);
+    let pillar_layout = sh2_core::PillarboxViewportLayout::for_aspect(
+        vp_box_w as f32,
+        vp_box_h as f32,
+        content_aspect,
+    );
+    for bar in &pillar_layout.black_bars {
+        if bar.is_non_empty() {
+            state.menu_rasterizer.fill_rect(
+                vp_box_x + (bar.x0.floor().max(0.0) as usize),
+                vp_box_y + (bar.y0.floor().max(0.0) as usize),
+                bar.width().ceil() as usize,
+                bar.height().ceil() as usize,
+                [0, 0, 0, 255],
+            );
+        }
+    }
+
     // Right Panel (x = 604..1250): Telemetry & Interactive Puzzle State
     let rx = 604usize;
     state.menu_rasterizer.draw_text(

@@ -44,8 +44,8 @@ pub use config::{
 };
 pub use cutaway::{
     original_sheet_dimensions, CutawayOverlayEngine, OverlayKind, OverlaySpriteQuad, OV_BOX,
-    OV_CLOCK_UV, OV_COIN, OV_DRUM_ABC, OV_DRUM_POS, OV_ELEVATOR, OV_ELEVATOR2, OV_MARKER,
-    OV_TEIEN, OV_VIDEO, OV_WALL, SHEET_ORIGINAL_DIMENSIONS,
+    OV_CLOCK_UV, OV_COIN, OV_DRUM_ABC, OV_DRUM_POS, OV_ELEVATOR, OV_ELEVATOR2, OV_MARKER, OV_TEIEN,
+    OV_VIDEO, OV_WALL, SHEET_ORIGINAL_DIMENSIONS,
 };
 pub use cutscene::{
     demo_fov_scale_for_demo_no, demo_light_decay_bounds, derive_demo_actor_anm_and_cls_paths,

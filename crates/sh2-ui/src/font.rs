@@ -311,26 +311,12 @@ impl TextRasterizer {
         src_h: usize,
         alpha_mul: f32,
     ) {
-        if src_w == 0
-            || src_h == 0
-            || src_rgba.len() < src_w * src_h * 4
-            || alpha_mul <= 0.0
-        {
+        if src_w == 0 || src_h == 0 || src_rgba.len() < src_w * src_h * 4 || alpha_mul <= 0.0 {
             return;
         }
-        let min_x = p0
-            .0
-            .min(p1.0)
-            .min(p2.0)
-            .floor()
-            .max(0.0) as usize;
+        let min_x = p0.0.min(p1.0).min(p2.0).floor().max(0.0) as usize;
         let max_x = (p0.0.max(p1.0).max(p2.0).ceil().max(0.0) as usize).min(self.width);
-        let min_y = p0
-            .1
-            .min(p1.1)
-            .min(p2.1)
-            .floor()
-            .max(0.0) as usize;
+        let min_y = p0.1.min(p1.1).min(p2.1).floor().max(0.0) as usize;
         let max_y = (p0.1.max(p1.1).max(p2.1).ceil().max(0.0) as usize).min(self.height);
 
         if min_x >= max_x || min_y >= max_y {

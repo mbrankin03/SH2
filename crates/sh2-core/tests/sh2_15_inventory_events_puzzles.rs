@@ -5,13 +5,13 @@ use sh2_core::{
     combine_items, evaluate_baldwin_tombstone_boards, format_carbon_box_code,
     format_wallet_safe_code, init_new_game, init_new_game_wish, is_clock_solved,
     is_coin_desk_solved, item_metadata, original_sheet_dimensions, place_baldwin_board,
-    place_coin_in_desk, step_clock_needles, step_safe_dial, try_open_safe,
-    use_key_on_hospital_box, verify_hospital_box_keypad, verify_hospital_box_wheels,
-    verify_hospital_corridor_keypad, ActionDifficulty, ClearData, EventFlags, InventoryManager,
-    ItemCategory, MessageInsertState, OverlayKind, PuzzleState, RiddleDifficulty, ScenarioKind,
-    ScenarioState, Sh2Rng, StageProgramRunner, AMPOULE_STAMINA_DURATION_SECS, CATALOG_ITEM_COUNT,
-    EV_MAX_FLAGS, ITEM_CATALOG, ITEM_COMBOS, MAX_ITEM_STACK, PROG_KEY_A, PROG_KEY_LEFT,
-    PZ_BOX_CODE, PZ_CLOCK, PZ_SAFE_CODE, PZ_SAFE_PROG, PZ_WHEEL, PZ_WHEEL_GOAL,
+    place_coin_in_desk, step_clock_needles, step_safe_dial, try_open_safe, use_key_on_hospital_box,
+    verify_hospital_box_keypad, verify_hospital_box_wheels, verify_hospital_corridor_keypad,
+    ActionDifficulty, ClearData, EventFlags, InventoryManager, ItemCategory, MessageInsertState,
+    OverlayKind, PuzzleState, RiddleDifficulty, ScenarioKind, ScenarioState, Sh2Rng,
+    StageProgramRunner, AMPOULE_STAMINA_DURATION_SECS, CATALOG_ITEM_COUNT, EV_MAX_FLAGS,
+    ITEM_CATALOG, ITEM_COMBOS, MAX_ITEM_STACK, PROG_KEY_A, PROG_KEY_LEFT, PZ_BOX_CODE, PZ_CLOCK,
+    PZ_SAFE_CODE, PZ_SAFE_PROG, PZ_WHEEL, PZ_WHEEL_GOAL,
 };
 
 #[test]
@@ -185,18 +185,12 @@ fn test_flag_init_randomization_and_extra_riddle_unlock() {
     assert_eq!(eff, RiddleDifficulty::Easy);
     assert!(flags.get(13));
     assert!(!is_clock_solved(&puzzle)); // Clock never starts inside the 9:10 window
-    assert_eq!(
-        puzzle.raw()[PZ_WHEEL_GOAL],
-        puzzle.raw()[PZ_WHEEL_GOAL + 2]
-    );
+    assert_eq!(puzzle.raw()[PZ_WHEEL_GOAL], puzzle.raw()[PZ_WHEEL_GOAL + 2]);
     assert_eq!(
         puzzle.raw()[PZ_WHEEL_GOAL + 1],
         puzzle.raw()[PZ_WHEEL_GOAL + 3]
     );
-    assert_ne!(
-        puzzle.raw()[PZ_WHEEL_GOAL],
-        puzzle.raw()[PZ_WHEEL_GOAL + 1]
-    );
+    assert_ne!(puzzle.raw()[PZ_WHEEL_GOAL], puzzle.raw()[PZ_WHEEL_GOAL + 1]);
 
     // Safe code never has two identical adjacent numbers
     for i in 1..4 {
@@ -301,10 +295,7 @@ fn test_apartment_clock_coin_desk_and_safe_puzzles() {
     puzzle.raw_mut()[PZ_SAFE_CODE..PZ_SAFE_CODE + 4].copy_from_slice(&[9, 19, 0, 14]); // 10, 20, 1, 15
     let mut inserts = MessageInsertState::default();
     format_wallet_safe_code(&puzzle, RiddleDifficulty::Normal, &mut inserts);
-    assert_eq!(
-        inserts.expand("<e0>>><e1><<<e2>>><e3>"),
-        "10>>20<<01>>15"
-    );
+    assert_eq!(inserts.expand("<e0>>><e1><<<e2>>><e3>"), "10>>20<<01>>15");
     format_wallet_safe_code(&puzzle, RiddleDifficulty::Hard, &mut inserts);
     assert_eq!(inserts.expand("<e0>>><e1><<<e2>>><e3>"), "X>>VV<<I>>XV");
     format_wallet_safe_code(&puzzle, RiddleDifficulty::Extra, &mut inserts);
@@ -365,13 +356,21 @@ fn test_hospital_and_born_from_a_wish_puzzles() {
     puzzle.write_u16(PZ_BOX_CODE, 0x4829);
     let mut inserts = MessageInsertState::default();
     assert_eq!(format_carbon_box_code(&puzzle, &mut inserts), "4829");
-    assert!(verify_hospital_box_keypad(&mut flags, &puzzle, [4, 8, 2, 9]));
+    assert!(verify_hospital_box_keypad(
+        &mut flags,
+        &puzzle,
+        [4, 8, 2, 9]
+    ));
     assert!(flags.get(198));
 
     puzzle.raw_mut()[PZ_WHEEL_GOAL..PZ_WHEEL_GOAL + 4].copy_from_slice(&[2, 5, 2, 5]);
     puzzle.raw_mut()[PZ_WHEEL..PZ_WHEEL + 4].copy_from_slice(&[2, 5, 2, 5]);
     // Without flag 203 (wall blood symbols read), wheel check fails and scrambles one wheel
-    assert!(!verify_hospital_box_wheels(&mut flags, &mut puzzle, &mut rng));
+    assert!(!verify_hospital_box_wheels(
+        &mut flags,
+        &mut puzzle,
+        &mut rng
+    ));
     assert!(!flags.get(197));
     assert_ne!(
         &puzzle.raw()[PZ_WHEEL..PZ_WHEEL + 4],
@@ -381,7 +380,11 @@ fn test_hospital_and_born_from_a_wish_puzzles() {
     // With flag 203 set, matching wheels unlock flag 197
     flags.set(203, true);
     puzzle.raw_mut()[PZ_WHEEL..PZ_WHEEL + 4].copy_from_slice(&[2, 5, 2, 5]);
-    assert!(verify_hospital_box_wheels(&mut flags, &mut puzzle, &mut rng));
+    assert!(verify_hospital_box_wheels(
+        &mut flags,
+        &mut puzzle,
+        &mut rng
+    ));
     assert!(flags.get(197));
 
     // Use combined Purple Bull + Lapis Eye keys (86) to unlock remaining chains and award Piece of hair (53)
@@ -497,12 +500,9 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
         ("htl_p_marker", 6),
     ] {
         state.cutaway_overlay.set_picture(Some(pic), &state.flags);
-        let sprites = state.cutaway_overlay.evaluate_frame(
-            &state.flags,
-            &state.puzzle_state,
-            0,
-            0,
-        );
+        let sprites = state
+            .cutaway_overlay
+            .evaluate_frame(&state.flags, &state.puzzle_state, 0, 0);
         assert!(
             sprites.len() >= expected_min_quads,
             "Overlay {pic} emitted {} sprites, expected >= {expected_min_quads}",

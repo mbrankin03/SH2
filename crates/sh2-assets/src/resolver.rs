@@ -133,9 +133,15 @@ impl AssetPathResolver {
 
     /// Resolves a cutaway still or overlay sprite sheet (e.g. `"out_p_incar"`, `"apt_clock_close"`,
     /// or `"out/p_incar_map"`), honoring `prefer_sh2ee` with graceful fallback.
-    pub fn resolve_cutaway_file(&self, pic_or_sheet_name: &str, prefer_sh2ee: bool) -> Option<PathBuf> {
-        let loader = crate::formats::texture::TextureLoader::new(&self.data_dir, self.sh2e_dir.as_ref());
-        let rel = crate::formats::texture::TextureLoader::normalize_cutaway_rel_path(pic_or_sheet_name);
+    pub fn resolve_cutaway_file(
+        &self,
+        pic_or_sheet_name: &str,
+        prefer_sh2ee: bool,
+    ) -> Option<PathBuf> {
+        let loader =
+            crate::formats::texture::TextureLoader::new(&self.data_dir, self.sh2e_dir.as_ref());
+        let rel =
+            crate::formats::texture::TextureLoader::normalize_cutaway_rel_path(pic_or_sheet_name);
         loader
             .resolve_path_with_preference(&rel, prefer_sh2ee)
             .map(|(p, _)| p)

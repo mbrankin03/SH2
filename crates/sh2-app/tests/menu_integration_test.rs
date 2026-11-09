@@ -588,7 +588,8 @@ fn test_sh2_15_inventory_and_puzzle_cutaway_debug_rooms_and_rasterizer() {
 
     // 3. Regression test: Entering a debug room and pressing Escape (`return_to_menu`)
     // must clear `is_fading_out` so `fade_alpha` remains 1.0 across subsequent menu ticks.
-    ctrl.title_sm.show_phase_immediately(TitlePhase::TestRoomsSelect);
+    ctrl.title_sm
+        .show_phase_immediately(TitlePhase::TestRoomsSelect);
     ctrl.title_sm.test_room_index = TestRoomKind::ALL
         .iter()
         .position(|&r| r == TestRoomKind::PuzzleAndCutawayRoom)

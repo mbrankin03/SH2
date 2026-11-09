@@ -211,6 +211,9 @@ pub const SUBTITLES_GERO_EDI: &[SubtitleWindow] = &[
     SubtitleWindow::new(25, 3219, 3408),
 ];
 
+/// `demo_no == 14` (`sankaku1` - Wood Side Apartments Room 307 Pyramid Head Closet Cutscene)
+pub const SUBTITLES_SANKAKU1: &[SubtitleWindow] = &[];
+
 /// `demo_no == 20` (`hei_lau` - Laura on the Wall)
 pub const SUBTITLES_HEI_LAU: &[SubtitleWindow] = &[];
 
@@ -777,6 +780,23 @@ pub const DRAMA_DEMO_CATALOG: &[DramaDemoPlayInfo] = &[
         sequence_chain: &[],
     },
     DramaDemoPlayInfo {
+        demo_no: 14,
+        id: "sankaku1",
+        title: "Wood Side Apt Room 307: Pyramid Head Closet (sankaku1)",
+        dds_path: "data/demo/sankaku1/sankaku.dds",
+        stage_map_path: "bg/ap/ap30.map",
+        stage_name: "ap30",
+        mes_path: "data/etc/message/stage_apart_e3fe_msg_e.mes",
+        msg_start: 0,
+        subtitle_windows: SUBTITLES_SANKAKU1,
+        stream_no: 60114,
+        stream_start: 18,
+        anm_frame_offset: 0,
+        offset_x: 0.0,
+        offset_z: 0.0,
+        sequence_chain: &[],
+    },
+    DramaDemoPlayInfo {
         demo_no: 20,
         id: "hei_lau",
         title: "Outdoors: Laura on the Wall (hei_lau)",
@@ -1106,9 +1126,15 @@ pub fn find_drama_demo_by_no(demo_no: u16) -> Option<&'static DramaDemoPlayInfo>
     DRAMA_DEMO_CATALOG.iter().find(|d| d.demo_no == demo_no)
 }
 
-/// Finds a cutscene descriptor in [`DRAMA_DEMO_CATALOG`] by short ID (e.g. `"tenbou"`, `"haka_agl"`).
+/// Finds a cutscene descriptor in [`DRAMA_DEMO_CATALOG`] by short ID (e.g. `"tenbou"`, `"haka_agl"`,
+/// `"sankaku1"` / `"wp_closet"`, `"papa_agl"` / `"ug_angela"`).
 pub fn find_drama_demo_by_id(id: &str) -> Option<&'static DramaDemoPlayInfo> {
+    let normalized = match id.trim() {
+        s if s.eq_ignore_ascii_case("wp_closet") => "sankaku1",
+        s if s.eq_ignore_ascii_case("ug_angela") => "papa_agl",
+        other => other,
+    };
     DRAMA_DEMO_CATALOG
         .iter()
-        .find(|d| d.id.eq_ignore_ascii_case(id))
+        .find(|d| d.id.eq_ignore_ascii_case(normalized))
 }

@@ -7,7 +7,9 @@
 
 mod anim_info;
 mod catalog;
+mod culling;
 mod player;
+mod stage_fixes;
 
 pub use anim_info::{
     demo_fov_scale_for_demo_no, demo_light_decay_bounds, derive_demo_actor_anm_and_cls_paths,
@@ -20,10 +22,35 @@ pub use catalog::{
     SUBTITLES_FUKATSU_A, SUBTITLES_GEKIJOU_A, SUBTITLES_GERO_EDI, SUBTITLES_HAKA_AGL,
     SUBTITLES_HEI_LAU, SUBTITLES_KAGIKERI, SUBTITLES_KILLER_EDI, SUBTITLES_KNIFE_AGL,
     SUBTITLES_MAR_DEAI_FULL, SUBTITLES_MAR_SAIKAI, SUBTITLES_MRY_YARINAOSHI_A, SUBTITLES_PAPA_AGL,
-    SUBTITLES_PIANO_LAU, SUBTITLES_PIANO_LAU_E, SUBTITLES_RADIO_GERO, SUBTITLES_TENBOU,
-    SUBTITLES_TOMATTA, SUBTITLES_VTR,
+    SUBTITLES_PIANO_LAU, SUBTITLES_PIANO_LAU_E, SUBTITLES_RADIO_GERO, SUBTITLES_SANKAKU1,
+    SUBTITLES_TENBOU, SUBTITLES_TOMATTA, SUBTITLES_VTR,
+};
+pub use culling::{
+    camera_basis_vectors, is_sphere_inside_4x3_frustum, should_cull_parked_offscreen_actor,
+    ActorBoundingSphere, PARKED_ACTOR_VELOCITY_EPSILON,
 };
 pub use player::{CutsceneActorRuntime, CutsceneCameraSnapshot, DramaDemoPlayer, DramaDemoStep};
+pub use sh2_assets::formats::demo::{
+    authored_4x3_fov_radians, compute_widescreen_scr_z, CutsceneBorderMode, CutsceneWidescreenMode,
+    AUTHORED_4X3_ASPECT, SH2EE_16X9_SCR_Z_ZOOM, STANDARD_16X9_ASPECT, SUPER_ULTRAWIDE_32X9_ASPECT,
+    ULTRAWIDE_21X9_ASPECT,
+};
+pub use stage_fixes::{
+    evaluate_meeting_maria_fog_counters, observation_deck_border_alpha_factor,
+    observation_deck_fog_bounds_x, observation_deck_wrap_particle_x, ClosetCutsceneFixState,
+    FinalBossRoomFixState, PistonRoomFixState, CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME,
+    CLOSET_BLURRED_BARS_HIDE_CAM_X, CLOSET_BLURRED_BARS_ORIG_DESPAWN_FRAME,
+    CLOSET_DISABLE_FLASHLIGHT_CAM_X, CLOSET_DISABLE_SHADOW_CAM_X,
+    CLOSET_MANNEQUIN_FIXED_DESPAWN_FRAME, CLOSET_MANNEQUIN_ORIG_DESPAWN_FRAME,
+    CS_APT_RPT_CLOSET_DEMO_NO, CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO, CS_PS_ANGELA_BOSS_FINISH_DEMO_NO,
+    CS_TOWN_WEST_MARIA_MEET_DEMO_NO, FINAL_BOSS_EXTENDED_DRAW_DISTANCE,
+    FINAL_BOSS_JAMES_ELEVATION_THRESHOLD_Y, FINAL_BOSS_LOWERED_SPAWN_Y,
+    MEETING_MARIA_FOG_COUNTER_ONE_FIXED, MEETING_MARIA_FOG_COUNTER_ONE_ORIG,
+    MEETING_MARIA_FOG_COUNTER_TWO_FIXED, MEETING_MARIA_FOG_COUNTER_TWO_ORIG,
+    OBSERVATION_DECK_FOG_BORDER_WIDTH, OBSERVATION_DECK_FOG_PARTICLE_MAX,
+    OBSERVATION_DECK_ORIG_MAX_POS_X, OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X,
+    PISTON_DOORWAY_PROP_OFFSET, PISTON_ROOM_DOOR_OPEN_CAM_X, R_APT_E_RM_307_ID, R_FINAL_BOSS_RM_ID,
+};
 
 /// Native keyframe rate of Silent Hill 2 `.dds`, `.anm`, and `.cls` cutscene data (30.0 FPS).
 pub const CUTSCENE_NATIVE_FPS: f32 = 30.0;

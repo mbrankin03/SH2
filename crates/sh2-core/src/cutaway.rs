@@ -7,7 +7,11 @@
 use crate::events::{EventFlags, PuzzleState};
 
 mod draw;
+mod pillarbox;
 mod tables;
+pub use pillarbox::{
+    ClippedQuadUv, CutsceneBorderBars, PillarboxMaskRect, PillarboxViewportLayout,
+};
 pub use tables::{
     original_sheet_dimensions, OV_BOX, OV_CLOCK_UV, OV_COIN, OV_DRUM_ABC, OV_DRUM_POS, OV_ELEVATOR,
     OV_ELEVATOR2, OV_MARKER, OV_TEIEN, OV_VIDEO, OV_WALL, SHEET_ORIGINAL_DIMENSIONS,

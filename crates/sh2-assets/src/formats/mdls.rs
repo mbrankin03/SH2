@@ -158,6 +158,23 @@ pub struct ModelVertices {
     pub weights: Vec<[f32; 4]>,
 }
 
+/// Vertex displacement delta for a single vertex inside a facial morph cluster (`model3_cluster_n.c`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelClusterDelta {
+    /// Target vertex index in [`ModelVertices::positions`] (covering both opaque and transparent vertices).
+    pub vertex_index: u16,
+    /// Model-bind-space displacement `[dx, dy, dz]` when the cluster weight is `1.0`
+    /// ($R_{\text{initial}[b_0]} \cdot (\text{raw\_delta} \times \frac{1}{16})$).
+    pub delta_bind: [f32; 3],
+}
+
+/// A single facial morph cluster target stored in a high-LOD character `.mdl` (`hhh_jms`, `hhh_mar`, `agl`, `lau`, `hhh_edi`, `mry`, `mxx`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelClusterTarget {
+    /// Sparse list of vertex displacements applied when this cluster's weight is non-zero.
+    pub deltas: Vec<ModelClusterDelta>,
+}
+
 /// Ingested representation of a complete character model (`.mdls` / `.mdl`).
 #[derive(Debug, Clone)]
 pub struct ModelFile {
@@ -179,6 +196,39 @@ pub struct ModelFile {
     pub vertices: ModelVertices,
     /// Embedded textures keyed by texture ID.
     pub textures: HashMap<u32, ModelTexture>,
+    /// Facial morph cluster targets (`n_clusters` at `base + 0x4C`, `12..=16` on high-LOD cutscene models).
+    pub clusters: Vec<ModelClusterTarget>,
+}
+
+impl ModelFile {
+    /// Applies facial morph cluster weights (`clani.c` / `model3_cluster_n.c::ApplyCluster`) into
+    /// `out_positions` with zero heap allocations.
+    ///
+    /// First copies the base bind-pose [`ModelVertices::positions`] into `out_positions`, then
+    /// accumulates `weight * delta_bind` for every active cluster.
+    pub fn apply_cluster_weights_into(&self, weights: &[f32], out_positions: &mut Vec<[f32; 3]>) {
+        let base_pos = &self.vertices.positions;
+        out_positions.clear();
+        out_positions.extend_from_slice(base_pos);
+
+        if self.clusters.is_empty() || weights.is_empty() {
+            return;
+        }
+
+        for (cluster, &w) in self.clusters.iter().zip(weights.iter()) {
+            if w.abs() < 1e-6 {
+                continue;
+            }
+            for d in &cluster.deltas {
+                let vi = d.vertex_index as usize;
+                if let Some(p) = out_positions.get_mut(vi) {
+                    p[0] += w * d.delta_bind[0];
+                    p[1] += w * d.delta_bind[1];
+                    p[2] += w * d.delta_bind[2];
+                }
+            }
+        }
+    }
 }
 
 /// Returns the canonical companion `.mdl` path that provides the embedded texture container
@@ -776,7 +826,101 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         }
     }
 
-    // 8. Embedded textures (parse 0x19990901 container if present at tex_ofs)
+    // 8. Facial morph cluster targets (`model3_cluster_n.c`: `base + 0x44..0x54`, `base + 0x98..0xA4`)
+    let mut clusters = Vec::new();
+    if base + 0xA4 <= data.len() {
+        let n_cluster_nodes = read_u32(data, base + 0x44)? as usize;
+        let n_clusters = read_u32(data, base + 0x4C)? as usize;
+        let clusters_ofs = read_u32(data, base + 0x50)? as usize;
+        let opaque_maps = read_u32(data, base + 0x98)? as usize;
+        let transp_maps = read_u32(data, base + 0x9C)? as usize;
+        let cluster_map_ofs = read_u32(data, base + 0xA0)? as usize;
+        let total_maps = opaque_maps.saturating_add(transp_maps);
+
+        if n_cluster_nodes > 0
+            && n_clusters > 0
+            && n_clusters <= 64
+            && total_maps > 0
+            && base + cluster_map_ofs + total_maps * 6 <= data.len()
+            && base + clusters_ofs + n_clusters * 8 <= data.len()
+        {
+            // Map each cluster node `0..n_cluster_nodes` to the vertex indices in `vertices.positions`
+            let mut node_to_vertices: Vec<Vec<u16>> = vec![Vec::new(); n_cluster_nodes];
+            let total_loaded_verts = vertices.positions.len();
+
+            for m_idx in 0..total_maps {
+                let mp = base + cluster_map_ofs + m_idx * 6;
+                let src_node = read_u16(data, mp)? as usize;
+                let dst_vert = read_u16(data, mp + 2)? as usize;
+                let run_len = read_u16(data, mp + 4)? as usize;
+                let is_transp = m_idx >= opaque_maps;
+                let vert_base = if is_transp { vertex_count } else { 0 };
+
+                for k in 0..run_len {
+                    let node_i = src_node + k;
+                    let vert_i = vert_base + dst_vert + k;
+                    if node_i < n_cluster_nodes
+                        && vert_i < total_loaded_verts
+                        && vert_i <= (u16::MAX as usize)
+                    {
+                        node_to_vertices[node_i].push(vert_i as u16);
+                    }
+                }
+            }
+
+            clusters.reserve(n_clusters);
+            for c_idx in 0..n_clusters {
+                let cp = base + clusters_ofs + c_idx * 8;
+                let elem_count = read_u32(data, cp)? as usize;
+                let elem_ofs = read_u32(data, cp + 4)? as usize;
+                let elem_base = base + elem_ofs;
+
+                let mut deltas = Vec::new();
+                if elem_count > 0 && elem_base + elem_count * 8 <= data.len() {
+                    deltas.reserve(elem_count);
+                    for e_idx in 0..elem_count {
+                        let ep = elem_base + e_idx * 8;
+                        let dx_local = (read_i16(data, ep)? as f32) * 0.0625;
+                        let dy_local = (read_i16(data, ep + 2)? as f32) * 0.0625;
+                        let dz_local = (read_i16(data, ep + 4)? as f32) * 0.0625;
+                        let node_idx = read_u16(data, ep + 6)? as usize;
+
+                        if let Some(target_verts) = node_to_vertices.get(node_idx) {
+                            for &vi in target_verts {
+                                let b0 = vertices
+                                    .bone_indices
+                                    .get(vi as usize)
+                                    .map(|b| b[0] as usize)
+                                    .unwrap_or(0);
+                                let delta_bind = if let Some(m) = initial_matrices.get(b0) {
+                                    [
+                                        m[0][0] * dx_local
+                                            + m[0][1] * dy_local
+                                            + m[0][2] * dz_local,
+                                        m[1][0] * dx_local
+                                            + m[1][1] * dy_local
+                                            + m[1][2] * dz_local,
+                                        m[2][0] * dx_local
+                                            + m[2][1] * dy_local
+                                            + m[2][2] * dz_local,
+                                    ]
+                                } else {
+                                    [dx_local, dy_local, dz_local]
+                                };
+                                deltas.push(ModelClusterDelta {
+                                    vertex_index: vi,
+                                    delta_bind,
+                                });
+                            }
+                        }
+                    }
+                }
+                clusters.push(ModelClusterTarget { deltas });
+            }
+        }
+    }
+
+    // 9. Embedded textures (parse 0x19990901 container if present at tex_ofs)
     let mut textures = HashMap::new();
     if no_tex == 0 && tex_ofs != 0 && tex_ofs + 16 <= data.len() {
         if let Ok(container_texs) = crate::formats::texture::parse_texture_container(data, tex_ofs)
@@ -817,5 +961,6 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         strip_indices,
         vertices,
         textures,
+        clusters,
     })
 }

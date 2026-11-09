@@ -416,6 +416,24 @@ fn test_sh2_34_primary_npc_models_reflection_fallbacks_and_animations() {
     let knife_anm = parse_anm(&knife_bytes, agl_mdl.bone_count, &agl_mdl.parents)
         .expect("parse knife_agl/agl.anm");
     assert_eq!(knife_anm.frames.len(), 6371);
+    assert_eq!(knife_anm.keyframe_spans.len(), 6371);
+    // In `knife_agl/agl.anm`, frame 3 is an explicit keyframe, frames 4 and 5 are hold frames (`t == 0`),
+    // and frame 6 is the next explicit keyframe. Verify `sample_span_at` bridges `[3, 6]` smoothly!
+    let (k0, k1, frac) = knife_anm.sample_span_at(4.5);
+    assert_eq!((k0, k1), (3, 6));
+    assert!((frac - 0.5).abs() < 1e-5);
+
+    // Also verify 1-bone prop (`knife_agl/i_knife.anm`) inter-clip alignment pads decode all 6,371 frames
+    let knife_prop_mdl =
+        parse_mdl(&fs::read(format!("{ROOT_ASSETS}/data/chr/item/i_knife.mdl")).unwrap()).unwrap();
+    let knife_prop_anm = parse_anm(
+        &fs::read(format!("{ROOT_ASSETS}/data/demo/knife_agl/i_knife.anm")).unwrap(),
+        knife_prop_mdl.bone_count,
+        &knife_prop_mdl.parents,
+    )
+    .unwrap();
+    assert_eq!(knife_prop_anm.frames.len(), 6371);
+
     for f_idx in 217..=390 {
         let frame = &knife_anm.frames[f_idx];
         for b_idx in 0..agl_mdl.bone_count {
@@ -529,4 +547,200 @@ fn test_sh2_56_quaternion_slerp_and_hermite_bone_interpolation() {
     interpolate_frames_hermite_into(&f0, &f1, &f2, &f3, 0.5, &mut out);
     let mid_t = out.bones[0].as_ref().unwrap().translation.unwrap();
     assert!(mid_t[0] > 10.0 && mid_t[0] < 25.0);
+}
+
+#[test]
+fn test_sh2_63_demo_dds_cls_and_mdl_facial_clusters_parsing() {
+    let demo_root = format!("{ROOT_ASSETS}/data/demo");
+    let demo2_root = format!("{ROOT_ASSETS}/data/demo2");
+    if !Path::new(&demo_root).exists() {
+        println!(
+            "Skipping test_sh2_63_demo_dds_cls_and_mdl_facial_clusters_parsing: retail assets not present"
+        );
+        return;
+    }
+
+    // 1. Parse and evaluate every single retail `.dds` cutscene script and `.cls` facial animation file
+    let mut dds_count = 0usize;
+    let mut cls_file_count = 0usize;
+    let mut cls_block_count = 0usize;
+
+    for root in [&demo_root, &demo2_root] {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir_path = entry.path();
+            if !dir_path.is_dir() {
+                continue;
+            }
+            let Ok(sub_entries) = fs::read_dir(&dir_path) else {
+                continue;
+            };
+            for sub in sub_entries.flatten() {
+                let p = sub.path();
+                let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
+                    continue;
+                };
+                if ext.eq_ignore_ascii_case("dds") {
+                    let bytes =
+                        fs::read(&p).unwrap_or_else(|e| panic!("Failed to read {:?}: {e}", p));
+                    let dds = parse_demo_dds(&bytes)
+                        .unwrap_or_else(|e| panic!("Failed to parse {:?}: {e}", p));
+                    assert!(dds.header.total_frames > 0, "{:?} must have frames", p);
+                    assert!(
+                        dds.header.total_lights() <= sh2_assets::formats::demo::DEMO_MAX_LIGHTS,
+                        "{:?} light count exceeds DEMO_MAX_LIGHTS",
+                        p
+                    );
+                    assert!(!dds.records.is_empty(), "{:?} must have frame records", p);
+
+                    // Evaluate initial frame, mid-cutscene sub-frame, and skip_to_last
+                    let mid_f = (dds.header.total_frames as f32 * 0.5).max(0.5);
+                    let mut eval = DemoDdsEvaluator::new(dds);
+                    let (snap0, _) = eval.sample_at(0.0, 0.0, 0.0);
+                    let fov0 = snap0.vertical_fov_radians(1.0, false);
+                    assert!(
+                        fov0.is_finite() && fov0 > 0.01 && fov0 < 3.10,
+                        "{:?} invalid initial FOV: {fov0}",
+                        p
+                    );
+
+                    let (snap_mid, _) = eval.sample_at(mid_f, 0.0, 0.0);
+                    for c in 0..3 {
+                        assert!(snap_mid.camera_pos[c].is_finite());
+                        assert!(snap_mid.camera_interest[c].is_finite());
+                    }
+
+                    eval.skip_to_last();
+                    let snap_last = &eval.next;
+                    assert!(snap_last.vertical_fov_radians(1.0, false).is_finite());
+
+                    dds_count += 1;
+                } else if ext.eq_ignore_ascii_case("cls") {
+                    let bytes =
+                        fs::read(&p).unwrap_or_else(|e| panic!("Failed to read {:?}: {e}", p));
+                    if bytes.is_empty() {
+                        continue;
+                    }
+                    let cls = parse_cls(&bytes)
+                        .unwrap_or_else(|e| panic!("Failed to parse {:?}: {e}", p));
+                    assert!(!cls.blocks.is_empty(), "{:?} must have blocks", p);
+
+                    let mut weights_scratch = Vec::new();
+                    for blk in &cls.blocks {
+                        blk.evaluate_weights_into(0.0, false, &mut weights_scratch);
+                        assert_eq!(weights_scratch.len(), blk.clusters.len());
+                        for &w in &weights_scratch {
+                            assert!(w.is_finite(), "{:?} non-finite cluster weight", p);
+                        }
+                        if blk.n_frames > 1 {
+                            blk.evaluate_weights_into(
+                                (blk.n_frames as f32 - 1.0) * 0.5,
+                                false,
+                                &mut weights_scratch,
+                            );
+                            for &w in &weights_scratch {
+                                assert!(w.is_finite(), "{:?} non-finite mid cluster weight", p);
+                            }
+                        }
+                        cls_block_count += 1;
+                    }
+                    cls.evaluate_global_frame_into(10.5, true, &mut weights_scratch);
+                    cls_file_count += 1;
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        dds_count, 130,
+        "Expected all 130 retail .dds cutscene scripts"
+    );
+    assert_eq!(
+        cls_file_count, 113,
+        "Expected all 113 non-empty retail .cls files"
+    );
+    assert_eq!(
+        cls_block_count, 346,
+        "Expected all 346 sub-clip blocks across retail .cls files"
+    );
+
+    // 2. Verify high-LOD character `.mdl` facial cluster targets and `apply_cluster_weights_into`
+    let high_lod_models: &[(&str, &str)] = &[
+        ("data/chr/jms/hhh_jms.mdl", "data/demo/tenbou/hhh_jms.cls"),
+        ("data/chr/jms/hhl_jms.mdl", "data/demo/tenbou/hhh_jms.cls"),
+        (
+            "data/chr/mar/hhh_mar.mdl",
+            "data/demo/mar_saikai/hhh_mar.cls",
+        ),
+        ("data/chr/agl/agl.mdl", "data/demo/haka_agl/agl.cls"),
+        ("data/chr/edi/hhh_edi.mdl", "data/demo/gero_edi/hhh_edi.cls"),
+        ("data/chr/lau/lau.mdl", "data/demo/hei_lau/lau.cls"),
+        ("data/chr/mry/mry.mdl", "data/demo/fukatsu_a/mry.cls"),
+        ("data/chr/mxx/mxx.mdl", "data/demo/mry_yarinaoshi_e/mxx.cls"),
+    ];
+
+    let mut weights_buf = Vec::new();
+    let mut morphed_positions = Vec::new();
+
+    for &(mdl_rel, cls_rel) in high_lod_models {
+        let mdl_bytes = fs::read(format!("{ROOT_ASSETS}/{mdl_rel}"))
+            .unwrap_or_else(|e| panic!("Failed to read {mdl_rel}: {e}"));
+        let model =
+            parse_mdl(&mdl_bytes).unwrap_or_else(|e| panic!("Failed to parse {mdl_rel}: {e:?}"));
+
+        assert!(
+            (12..=19).contains(&model.clusters.len()),
+            "Unexpected facial cluster count {} for {mdl_rel}",
+            model.clusters.len()
+        );
+        let total_deltas: usize = model.clusters.iter().map(|c| c.deltas.len()).sum();
+        assert!(
+            total_deltas > 500,
+            "{mdl_rel} should have >500 facial morph deltas"
+        );
+
+        let cls_bytes = fs::read(format!("{ROOT_ASSETS}/{cls_rel}"))
+            .unwrap_or_else(|e| panic!("Failed to read {cls_rel}: {e}"));
+        let cls =
+            parse_cls(&cls_bytes).unwrap_or_else(|e| panic!("Failed to parse {cls_rel}: {e:?}"));
+
+        assert_eq!(
+            cls.num_clusters(),
+            model.clusters.len(),
+            "Cluster count mismatch between {mdl_rel} and {cls_rel}"
+        );
+
+        // Find a frame in `.cls` with non-zero weights and verify vertex deformation
+        let mut deformed_verts = 0usize;
+        for f in (0..cls.total_frames()).step_by(5) {
+            cls.evaluate_global_frame_into(f as f32 + 0.25, true, &mut weights_buf);
+            model.apply_cluster_weights_into(&weights_buf, &mut morphed_positions);
+            assert_eq!(morphed_positions.len(), model.vertices.positions.len());
+
+            for (orig, morphed) in model
+                .vertices
+                .positions
+                .iter()
+                .zip(morphed_positions.iter())
+            {
+                let dx = morphed[0] - orig[0];
+                let dy = morphed[1] - orig[1];
+                let dz = morphed[2] - orig[2];
+                let dist_sq = dx * dx + dy * dy + dz * dz;
+                assert!(dist_sq.is_finite() && dist_sq < 2500.0 * 2500.0);
+                if dist_sq > 1e-4 {
+                    deformed_verts += 1;
+                }
+            }
+            if deformed_verts > 0 {
+                break;
+            }
+        }
+        assert!(
+            deformed_verts > 0,
+            "Expected {cls_rel} to deform facial vertices on {mdl_rel}"
+        );
+    }
 }

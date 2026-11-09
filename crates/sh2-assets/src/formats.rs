@@ -7,6 +7,8 @@ pub mod binary;
 pub mod bink;
 pub mod cam;
 pub mod cld;
+pub mod cls;
+pub mod demo;
 pub mod dxt;
 pub mod map;
 pub mod mdls;
@@ -39,9 +41,22 @@ pub use cam::{
     VC_RD_WARP_OUT_F,
 };
 pub use cld::{parse_cld, CldFile, FloorTriangle, WallSegment};
+pub use cls::{
+    is_valid_cls_magic, parse_cls, parse_cls_block_at, ClsBlock, ClsFile, ClsKeyframe, ClsTrack,
+    CLS_MAGIC_A, CLS_MAGIC_B, CLS_MAGIC_PROTO, MAX_FACIAL_CLUSTERS,
+};
+pub use demo::{
+    dds_f16_to_f32, dds_rotation_to_interest, parse_demo_dds, DemoCameraOp, DemoCharOp,
+    DemoDdsEvaluator, DemoDdsFile, DemoDdsHeader, DemoFrameRecord, DemoKeyframeState,
+    DemoLightKind, DemoLightOp, DemoLightState, DEMO_DDS_MAGIC, DEMO_MAX_CHARS, DEMO_MAX_LIGHTS,
+    DEMO_SCREEN_SY, DEMO_SCR_Z_SCALE,
+};
 pub use dxt::{decode_dds_file, decode_dxt};
 pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
-pub use mdls::{parse_mdl, ModelFile, ModelPrimitive, ModelTexture, ModelVertices};
+pub use mdls::{
+    parse_mdl, ModelClusterDelta, ModelClusterTarget, ModelFile, ModelPrimitive, ModelTexture,
+    ModelVertices,
+};
 pub use mes::{parse_mes, DialogueMessage, MessageTable};
 pub use sound::{
     decode_afs_entry_to_wav, decode_afs_slice_to_wav, decode_spu2_vag_to_wav, parse_afs_index,

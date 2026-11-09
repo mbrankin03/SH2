@@ -155,7 +155,7 @@ pub(crate) fn dispatch_render_hud(
             surface_sfx_room::SurfaceSfxRoomController::render_hud(state, encoder, surface_view);
         }
         _ => {
-            if state.debug_camera_hud {
+            if state.debug_camera_hud || state.drama_demo_session.is_some() {
                 combat_arena::CombatArenaRoomController::render_hud(state, encoder, surface_view);
             }
         }

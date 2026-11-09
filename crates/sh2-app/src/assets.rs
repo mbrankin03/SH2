@@ -1,5 +1,11 @@
 //! Level, collision, camera, character model, texture, and animation asset loading helpers.
 
+mod cutscene;
+
+pub(crate) use cutscene::{
+    load_cutscene_voice_wav, open_drama_demo_session, ActiveDramaDemoSession,
+};
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,15 +15,16 @@ use sh2_app::synthetic_geometry::{
     create_synthetic_fog_runway_geometry,
 };
 use sh2_assets::formats::anm::{compute_bind_locals, parse_anm, AnimationFile, AnimationFrame};
+use sh2_assets::formats::cls::{parse_cls, ClsFile};
 use sh2_assets::formats::map::MapFile;
 use sh2_assets::formats::mdls::{companion_texture_mdl_path, parse_mdl, ModelFile};
 use sh2_assets::formats::TextureLoader;
 use sh2_core::SecondaryBonePhysics;
 use sh2_debug::ModelViewerEntry;
-use sh2_renderer::{GpuSkeletalMesh, RenderContext};
+use sh2_renderer::{GpuSkeletalMesh, RenderContext, SkeletalVertex};
 use sh2_ui::menu::TestRoomKind;
 
-/// Loaded character asset representation (model hierarchy, bind locals, and animation tracks).
+/// Loaded character asset representation (model hierarchy, bind locals, animation tracks, and facial clusters).
 pub(crate) struct CharacterAsset {
     #[allow(dead_code)]
     pub name: &'static str,
@@ -30,6 +37,14 @@ pub(crate) struct CharacterAsset {
     pub frame_scratch_a: AnimationFrame,
     pub frame_scratch_b: AnimationFrame,
     pub anm: AnimationFile,
+    /// Optional companion `.cls` facial morph cluster animation file (`SH2-63`).
+    pub cls: Option<ClsFile>,
+    /// Reusable scratch buffer for evaluated `.cls` facial cluster weights (`0..n_clusters`).
+    pub cluster_weights_scratch: Vec<f32>,
+    /// Reusable scratch buffer for morphed model-bind-space vertex positions.
+    pub morphed_positions_scratch: Vec<[f32; 3]>,
+    /// Reusable scratch buffer for GPU `SkeletalVertex` upload.
+    pub gpu_vertex_scratch: Vec<SkeletalVertex>,
     pub vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -474,6 +489,7 @@ pub(crate) fn load_character_asset(
     let mut loaded_mdl_rel = None;
     let mut loaded_base_root = None;
     let mut anm_bytes = None;
+    let mut cls_bytes = None;
 
     for base in &base_roots {
         for &mdl_sub in mdl_rel_paths {
@@ -512,6 +528,16 @@ pub(crate) fn load_character_asset(
                 if !bytes.is_empty() {
                     tracing::info!("Found animation asset: {:?}", p);
                     anm_bytes = Some(bytes);
+                    if let Some(cls_rel) = anm_sub.strip_suffix(".anm").map(|s| format!("{s}.cls"))
+                    {
+                        let cls_p = PathBuf::from(base).join(&cls_rel);
+                        if let Ok(c_bytes) = std::fs::read(&cls_p) {
+                            if !c_bytes.is_empty() {
+                                tracing::info!("Found companion facial cluster asset: {:?}", cls_p);
+                                cls_bytes = Some(c_bytes);
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -566,7 +592,13 @@ pub(crate) fn load_character_asset(
             frames: vec![AnimationFrame {
                 bones: vec![None; model.bone_count],
             }],
+            keyframe_spans: vec![(0, 0)],
         });
+
+    let cls = cls_bytes
+        .as_deref()
+        .and_then(|bytes| parse_cls(bytes).ok())
+        .filter(|c| !c.blocks.is_empty());
 
     let bind_locals = compute_bind_locals(&model.parents, &model.initial_matrices);
     let gpu_mesh = ctx.compile_skeletal_mesh(&model);
@@ -663,6 +695,9 @@ pub(crate) fn load_character_asset(
     let frame_scratch_b = AnimationFrame {
         bones: Vec::with_capacity(model.bone_count),
     };
+    let cluster_weights_scratch = Vec::with_capacity(model.clusters.len());
+    let morphed_positions_scratch = model.vertices.positions.clone();
+    let gpu_vertex_scratch = Vec::with_capacity(model.vertices.positions.len());
 
     Some(CharacterAsset {
         name: character_name,
@@ -675,6 +710,10 @@ pub(crate) fn load_character_asset(
         frame_scratch_a,
         frame_scratch_b,
         anm,
+        cls,
+        cluster_weights_scratch,
+        morphed_positions_scratch,
+        gpu_vertex_scratch,
         vanilla_texture_bind_groups,
         hd_texture_bind_groups,
         texture_bind_groups,

@@ -94,7 +94,7 @@ impl RenderContext {
                 occlusion_query_set: None,
             });
 
-            // 1a. Render static level batches (Opaque + Alpha-Cutout, then Coplanar Decals)
+            // 1a. Render static level Opaque + Alpha-Cutout batches first
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
                     &mut rpass,
@@ -103,6 +103,18 @@ impl RenderContext {
                     BatchGroup::Opaque,
                     &self.geometry_pipeline.pipeline,
                 );
+            }
+
+            // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass),
+            // including any planar mirror reflections behind semi-transparent mirror decals (`er01.map` X = -20000.0)
+            if !skeletal_meshes.is_empty() {
+                self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
+            }
+
+            // 1c. Render static level Coplanar Decals (including `er01.map` Batch 17 semi-transparent dirty mirror glass
+            // with `depth_compare: LessEqual` and `depth_write_enabled: false`, blending over reflected skeletal meshes
+            // while occluded behind the real foreground character)
+            if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
                     &mut rpass,
                     map,
@@ -112,12 +124,7 @@ impl RenderContext {
                 );
             }
 
-            // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass)
-            if !skeletal_meshes.is_empty() {
-                self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
-            }
-
-            // 1c. Render static level semi-transparent batches (glass, water, transparent foliage fringes)
+            // 1d. Render static level semi-transparent batches (glass, water, transparent foliage fringes)
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
                     &mut rpass,
@@ -128,7 +135,7 @@ impl RenderContext {
                 );
             }
 
-            // 1d. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
+            // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
             if !debug_lines.is_empty() {
                 let line_buf = overflow_debug_line_buffer
                     .as_ref()
@@ -152,8 +159,15 @@ impl RenderContext {
         rpass: &mut wgpu::RenderPass<'a>,
         skeletal_meshes: &'a [SkeletalDrawItem<'a>],
     ) {
-        for (mesh, matrices, _) in skeletal_meshes {
-            mesh.update_bone_matrices(&self.queue, matrices);
+        for (i, (mesh, matrices, _)) in skeletal_meshes.iter().enumerate() {
+            let is_mirror_duplicate = skeletal_meshes[..i]
+                .iter()
+                .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
+            if is_mirror_duplicate {
+                mesh.update_mirror_bone_matrices(&self.queue, matrices);
+            } else {
+                mesh.update_bone_matrices(&self.queue, matrices);
+            }
         }
 
         for transparent_pass in [false, true] {
@@ -173,8 +187,16 @@ impl RenderContext {
             }
             rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
 
-            for (mesh, _matrices, texture_groups) in skeletal_meshes {
-                rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
+            for (i, (mesh, _matrices, texture_groups)) in skeletal_meshes.iter().enumerate() {
+                let is_mirror_duplicate = skeletal_meshes[..i]
+                    .iter()
+                    .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
+                let bone_bg = if is_mirror_duplicate {
+                    &mesh.mirror_bone_bind_group
+                } else {
+                    &mesh.bone_bind_group
+                };
+                rpass.set_bind_group(1, bone_bg, &[]);
                 rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 

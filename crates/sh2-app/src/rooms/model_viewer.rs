@@ -329,6 +329,29 @@ impl RoomController for ModelViewerRoomController {
                     &mut c.skin_scratch,
                 );
 
+                // Evaluate companion `.cls` facial morph cluster weights if available (`SH2-63`)
+                if let Some(ref cls) = c.cls {
+                    if !c.model.clusters.is_empty() {
+                        cls.evaluate_global_frame_into(
+                            state.model_viewer.current_frame,
+                            true,
+                            &mut c.cluster_weights_scratch,
+                        );
+                        c.model.apply_cluster_weights_into(
+                            &c.cluster_weights_scratch,
+                            &mut c.morphed_positions_scratch,
+                        );
+                        c.gpu_mesh.update_morphed_positions(
+                            &state.render_ctx.queue,
+                            &c.model,
+                            &c.morphed_positions_scratch,
+                            &mut c.gpu_vertex_scratch,
+                        );
+                    }
+                } else {
+                    c.cluster_weights_scratch.clear();
+                }
+
                 let entry = state.model_viewer.current_entry();
                 let (s, c_yaw) = state.model_viewer.turntable_yaw.sin_cos();
                 let (tx, ty, tz) = if entry.category == ModelCategory::WeaponOrItem
@@ -394,8 +417,15 @@ impl RoomController for ModelViewerRoomController {
                             all_tris.extend(c.model.primitive_triangles(k));
                         }
                     }
+                    let wire_positions = if c.cls.is_some()
+                        && c.morphed_positions_scratch.len() == c.model.vertices.positions.len()
+                    {
+                        c.morphed_positions_scratch.as_slice()
+                    } else {
+                        c.model.vertices.positions.as_slice()
+                    };
                     debug_lines.extend(build_wireframe_lines(
-                        &c.model.vertices.positions,
+                        wire_positions,
                         &c.model.vertices.bone_indices,
                         &c.model.vertices.weights,
                         &state.skin_matrices_scratch,
@@ -590,6 +620,39 @@ impl RoomController for ModelViewerRoomController {
             cyan,
             true,
         );
+
+        if let Some(ref c) = state.viewer_asset {
+            if !c.model.clusters.is_empty() {
+                let cls_summary = if let Some(ref cls) = c.cls {
+                    let active_count = c
+                        .cluster_weights_scratch
+                        .iter()
+                        .filter(|&&w| w.abs() > 0.01)
+                        .count();
+                    let max_w = c
+                        .cluster_weights_scratch
+                        .iter()
+                        .fold(0.0f32, |acc, &w| acc.max(w.abs()));
+                    format!(
+                        "FACIAL CLUSTERS (.CLS) : {} TARGETS | {} BLOCKS ({} FRAMES) | ACTIVE: {}/{} (PEAK WEIGHT: {:.2})",
+                        c.model.clusters.len(),
+                        cls.blocks.len(),
+                        cls.total_frames(),
+                        active_count,
+                        c.cluster_weights_scratch.len(),
+                        max_w
+                    )
+                } else {
+                    format!(
+                        "FACIAL CLUSTERS (.MDL) : {} MORPH TARGETS READY (SELECT DEMO .ANM WITH [M/Tab] FOR LIVE .CLS FACIAL SYNC)",
+                        c.model.clusters.len()
+                    )
+                };
+                state
+                    .menu_rasterizer
+                    .draw_text(&cls_summary, 24, 164, 1, yellow, true);
+            }
+        }
 
         // Bottom hotkey legend
         state.menu_rasterizer.draw_text(

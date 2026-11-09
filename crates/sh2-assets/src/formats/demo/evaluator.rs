@@ -230,11 +230,20 @@ pub struct DemoDdsEvaluator {
 }
 
 impl DemoDdsEvaluator {
-    /// Initializes the evaluator at Frame 0, matching `DramaDemoInit` (`0x1b2080` PS2 / `0x4a0fc0` PC).
+    /// Initializes the evaluator at Frame 0, matching `DramaDemoInit` (`0x1b1130` PS2 / `0x4a1052` PC).
     pub fn new(script: DemoDdsFile) -> Self {
         let mut init_state = DemoKeyframeState::default();
         for (i, slot) in init_state.lights.iter_mut().enumerate() {
             slot.kind = script.header.light_kind(i);
+        }
+        // Ground truth (`SLUS_202.28` `DramaDemoInit` at `0x1b12e8` / `sh2pc.exe` at `0x4a1244`):
+        // every declared actor slot `0..n_chars` has `work[i]->status |= 0x10` enabled unconditionally.
+        for vis in init_state
+            .char_visible
+            .iter_mut()
+            .take(script.header.character_names.len().min(DEMO_MAX_CHARS))
+        {
+            *vis = true;
         }
 
         let mut eval = Self {
@@ -405,7 +414,16 @@ impl DemoDdsEvaluator {
                 continue;
             }
             match op {
-                DemoCharOp::Visible(v) => self.next.char_visible[char_idx] = v,
+                DemoCharOp::Visible(_v) => {
+                    // Ground truth (`SLUS_202.28` `DdsPlay` at `0x1b2348` / `sh2pc.exe` at `0x4a1ca3`):
+                    // `DdsPlayCharacter` (`0x1b2d90` PS2 / `0x49ffb0` PC) writes `sub_key 1/2` to
+                    // `next.chara[i].visible` (`0x11337d0` PS2 / `0x94dfe4` PC), which only records
+                    // whether the `*_pos` null locator was visible in the Softimage 3D viewport when
+                    // the scene was exported (e.g. `hhh_mar_pos` has `sub_key == 2` for the first
+                    // 966 frames of `mar_deai_e.dds` and all of `mar_deai_c.dds` while Maria stands
+                    // center-screen). Unlike `light[i].visible`, `DdsPlay` never reads `chara[i].visible`.
+                    self.next.char_visible[char_idx] = true;
+                }
                 DemoCharOp::Position { values, is_raw } => {
                     if is_raw {
                         self.char_base[char_idx] = values;

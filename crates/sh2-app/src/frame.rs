@@ -74,7 +74,35 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
         .sim_core
         .deterministic_fog_time(state.sim_core.interpolation_alpha());
     state.fog_uniforms.time = det_fog_time;
-    state.render_ctx.update_fog(&state.fog_uniforms);
+    let mut effective_fog = state.fog_uniforms;
+    if let Some(ref session) = state.drama_demo_session {
+        if session.player.locks_gameplay_input() {
+            if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {
+                effective_fog.fog_color[0] = rgb[0];
+                effective_fog.fog_color[1] = rgb[1];
+                effective_fog.fog_color[2] = rgb[2];
+            }
+            effective_fog.fog_color[3] *= session.player.atmosphere.fog_density_scale;
+        }
+    }
+    state.render_ctx.update_fog(&effective_fog);
+
+    let (dof_tap_offset_px, dof_strength, motion_blur_strength) = if is_viewer || is_grapple_room {
+        ([1.0 / 3.0, 2.0 / 3.0], 0.0, 0.0)
+    } else if let Some(session) = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+    {
+        let fx = &session.player.special_fx;
+        (
+            fx.dof_tap_offset_px,
+            fx.dof_strength,
+            fx.motion_blur_strength,
+        )
+    } else {
+        ([1.0 / 3.0, 2.0 / 3.0], 0.0, 0.0)
+    };
 
     state
         .render_ctx
@@ -83,6 +111,9 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
             grain_intensity,
             exposure: 1.0,
             frame_count: state.frame_counter,
+            dof_tap_offset_px,
+            dof_strength,
+            motion_blur_strength,
         });
 
     // 8. Present to window surface swapchain

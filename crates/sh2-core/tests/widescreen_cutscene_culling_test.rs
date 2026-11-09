@@ -616,3 +616,143 @@ fn test_hei_lau_smooth_widescreen_entry_and_catalog_onscreen_actors_preserved() 
 
     let _ = Vec3::ZERO;
 }
+
+#[test]
+fn test_maria_and_eddie_softimage_locator_visibility_and_model_anm_cls_evaluation() {
+    let base = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+    let deai_e_path = format!("{base}/data/demo/mar_deai/mar_deai_e.dds");
+    if !std::path::Path::new(&deai_e_path).exists() {
+        return;
+    }
+
+    // 1. In `SLUS_202.28` (`DdsPlay` at `0x1b2348`) and `sh2pc.exe` (`0x4a1ca3`), `DdsPlayCharacter`
+    // sub_key `c == 2` (`DemoCharOp::Visible(false)`) only records whether the `*_pos` null locator
+    // was hidden in the Softimage 3D viewport when exported (`0x11337d0` PS2 / `0x94dfe4` PC is never
+    // read by `DdsPlay`). Verify Maria (`hhh_mar_pos`) and James (`hhh_jms_pos`) are both visible
+    // throughout `deai_c` (`mar_deai_c.dds`), `deai` (`mar_deai_e.dds`, including frame 78),
+    // `mar_deai_full` (`mar_deai.dds`), and `mar_saikai` (`mar_saikai.dds`).
+    for (id, frames) in [
+        (
+            "deai_c",
+            &[0.0f32, 78.0, 200.0, 500.0, 730.0, 966.0, 1500.0][..],
+        ),
+        (
+            "deai",
+            &[0.0f32, 78.0, 200.0, 500.0, 730.0, 966.0, 1500.0][..],
+        ),
+        ("mar_saikai", &[100.0f32, 500.0, 1000.0][..]),
+    ] {
+        let info = find_drama_demo_by_id(id).expect("Maria cutscene in catalog");
+        let dds =
+            parse_demo_dds(&std::fs::read(format!("{base}/{}", info.dds_path)).unwrap()).unwrap();
+        let mut player = DramaDemoPlayer::new_with_widescreen(
+            *info,
+            dds,
+            STANDARD_16X9_ASPECT,
+            CutsceneWidescreenMode::UltrawideHorPlusSmartCull,
+        );
+        for &frame in frames {
+            player.seek_to_frame(frame, false);
+            let jms = player
+                .actors
+                .iter()
+                .find(|a| a.actor_name == "hhh_jms_pos")
+                .expect("hhh_jms_pos in Maria cutscene");
+            let mar = player
+                .actors
+                .iter()
+                .find(|a| a.actor_name == "hhh_mar_pos")
+                .expect("hhh_mar_pos in Maria cutscene");
+            assert!(
+                jms.script_visible && jms.visible,
+                "James must be visible in {id} at frame {frame}"
+            );
+            assert!(
+                mar.script_visible && mar.visible && !mar.culled_offscreen_4x3,
+                "Maria (hhh_mar_pos) must be visible in {id} at frame {frame} (pos={:?}, eye={:?}, interest={:?})",
+                mar.position,
+                player.camera.eye,
+                player.camera.interest,
+            );
+        }
+    }
+
+    // 2. Verify Eddie (`hhh_edi_pos`) and his pizza box (`b_piz_pos`) are visible in `bp_edi_1` and `bp_edi_2`
+    for (id, frame) in [("bp_edi_1", 200.0f32), ("bp_edi_2", 100.0f32)] {
+        let info = find_drama_demo_by_id(id).unwrap();
+        let dds =
+            parse_demo_dds(&std::fs::read(format!("{base}/{}", info.dds_path)).unwrap()).unwrap();
+        let mut player = DramaDemoPlayer::new_with_widescreen(
+            *info,
+            dds,
+            STANDARD_16X9_ASPECT,
+            CutsceneWidescreenMode::UltrawideHorPlusSmartCull,
+        );
+        player.seek_to_frame(frame, false);
+        for actor_name in ["hhh_edi_pos", "b_piz_pos"] {
+            let actor = player
+                .actors
+                .iter()
+                .find(|a| a.actor_name == actor_name)
+                .unwrap();
+            assert!(
+                actor.script_visible && actor.visible,
+                "{actor_name} must be visible in {id} at frame {frame}"
+            );
+        }
+    }
+
+    // 3. Verify unplaced handheld items parked at raw (0.0, 0.0, 0.0) in Softimage stay hidden
+    let sankaku_info = find_drama_demo_by_id("sankaku1").unwrap();
+    let sankaku_dds =
+        parse_demo_dds(&std::fs::read(format!("{base}/{}", sankaku_info.dds_path)).unwrap())
+            .unwrap();
+    let mut sankaku_player = DramaDemoPlayer::new(*sankaku_info, sankaku_dds, false);
+    sankaku_player.seek_to_frame(100.0, false);
+    for unplaced_item in ["i_handgun_pos", "i_magazine_pos"] {
+        let item = sankaku_player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == unplaced_item)
+            .unwrap();
+        assert!(
+            !item.script_visible && !item.visible,
+            "Unplaced item {unplaced_item} at raw (0,0,0) in sankaku1 must remain hidden"
+        );
+    }
+
+    // 4. Verify Maria's 3D model (`data/chr/mar/hhh_mar.mdl`), cutscene skeletal animation
+    // (`data/demo/mar_deai/hhh_mar.anm`), and facial morph clusters (`data/demo/mar_deai/hhh_mar.cls`)
+    // load, match bone count, and evaluate cleanly at Frame 78 of `deai` (`mar_deai_e`).
+    let mar_mdl_bytes =
+        std::fs::read(format!("{base}/data/chr/mar/hhh_mar.mdl")).expect("read hhh_mar.mdl");
+    let mar_mdl = sh2_assets::formats::parse_mdl(&mar_mdl_bytes).expect("parse hhh_mar.mdl");
+    let mar_anm_bytes = std::fs::read(format!("{base}/data/demo/mar_deai/hhh_mar.anm"))
+        .expect("read mar_deai/hhh_mar.anm");
+    let mar_anm =
+        sh2_assets::formats::parse_anm(&mar_anm_bytes, mar_mdl.bone_count, &mar_mdl.parents)
+            .expect("parse mar_deai/hhh_mar.anm");
+    let mar_cls_bytes = std::fs::read(format!("{base}/data/demo/mar_deai/hhh_mar.cls"))
+        .expect("read mar_deai/hhh_mar.cls");
+    let mar_cls =
+        sh2_assets::formats::parse_cls(&mar_cls_bytes).expect("parse mar_deai/hhh_mar.cls");
+
+    let deai_info = find_drama_demo_by_id("deai").unwrap();
+    let deai_dds = parse_demo_dds(&std::fs::read(&deai_e_path).unwrap()).unwrap();
+    let mut deai_player = DramaDemoPlayer::new(*deai_info, deai_dds, false);
+    deai_player.seek_to_frame(78.0, false);
+    let mar_actor = deai_player
+        .actors
+        .iter()
+        .find(|a| a.actor_name == "hhh_mar_pos")
+        .unwrap();
+    assert_eq!(mar_actor.anm_frame_offset, 1546 + 15);
+    assert_eq!(mar_actor.cls_frame_offset, 1546);
+    let (f0, f1, frac) = mar_anm.sample_span_at(mar_actor.global_anm_frame(78.0));
+    assert!(f0 < mar_anm.frames.len() && f1 < mar_anm.frames.len());
+    assert!((0.0..=1.0).contains(&frac));
+
+    let mut weights = Vec::new();
+    mar_cls.evaluate_global_frame_into(mar_actor.global_cls_frame(78.0), false, &mut weights);
+    assert!(!weights.is_empty());
+}

@@ -6,14 +6,24 @@
 //! - [`player`]: Stateful `DramaDemoPlayer`, `CutsceneCameraSnapshot`, and `CutsceneActorRuntime`.
 
 mod anim_info;
+mod atmosphere;
 mod catalog;
 mod culling;
+mod piston_kinematics;
 mod player;
+mod special_fx;
 mod stage_fixes;
 
 pub use anim_info::{
     demo_fov_scale_for_demo_no, demo_light_decay_bounds, derive_demo_actor_anm_and_cls_paths,
     find_drama_demo_anim_info, DramaDemoAnimInfo, DEMO_LIGHT_DECAY_RAMP, DRAMA_DEMO_ANIM_INFO,
+};
+pub use atmosphere::{
+    resolve_cutscene_room_id, AtmosphereEvalInput, AtmosphereGradingEvaluation,
+    ScreenTransitionState, TreeLightingMode, CLOSET_DARKENED_AMBIENT_SCALE,
+    CS_APT_RPT_FIGHT_DEMO_NO, CS_END_LEAVE_LETTER_DEMO_NO, CS_END_MARIA_LETTER_DEMO_NO,
+    HOTEL_ROOM_312_SUNSET_TINT_RGB, MARIA_ENDING_HORIZON_FOG_RGB, R_HTL_RM_312_ID,
+    R_LAB_BOTTOM_D_ID, R_LAB_TOP_H_ID, TIME_OF_DAY_APARTMENT_DAY, TIME_OF_DAY_CLOSET_DARKENED,
 };
 pub use catalog::{
     find_drama_demo_by_id, find_drama_demo_by_no, CutsceneSequenceStep, DramaDemoPlayInfo,
@@ -30,11 +40,26 @@ pub use culling::{
     ActorBoundingSphere, DEFAULT_BOSS_BOUNDING_RADIUS, DEFAULT_HUMANOID_BOUNDING_RADIUS,
     DEFAULT_ITEM_BOUNDING_RADIUS, DEFAULT_PROP_BOUNDING_RADIUS, PARKED_ACTOR_VELOCITY_EPSILON,
 };
+pub use piston_kinematics::{
+    ClosetDoorReplacementState, PistonArrayRuntime, PistonAxisDir,
+    CLOSET_BONUS_AUDIO_TRIGGER_FRAME, CLOSET_BONUS_AUDIO_WAV_PATH, CLOSET_DOOR_HIDE_END_FRAME,
+    CLOSET_DOOR_HIDE_START_FRAME, CLOSET_DOOR_WORLD_MATRIX, DEFAULT_PISTON_STROKE_AMPLITUDE,
+    DOORWAY_PISTON_INDEX, PISTON_ARRAY_COUNT, PISTON_AXIS_DIR_TABLE, PISTON_SPEED_TABLE,
+};
 pub use player::{CutsceneActorRuntime, CutsceneCameraSnapshot, DramaDemoPlayer, DramaDemoStep};
 pub use sh2_assets::formats::demo::{
     authored_4x3_fov_radians, compute_widescreen_scr_z, CutsceneBorderMode, CutsceneWidescreenMode,
     AUTHORED_4X3_ASPECT, SH2EE_16X9_SCR_Z_ZOOM, STANDARD_16X9_ASPECT, SUPER_ULTRAWIDE_32X9_ASPECT,
     ULTRAWIDE_21X9_ASPECT,
+};
+pub use special_fx::{
+    evaluate_eddie_boss_death_blur, evaluate_mary_boss_blur_factor, MotionBlurRampWindow,
+    SpecialFxEvalInput, SpecialFxEvaluation, ANGELA_ABSTRACT_DADDY_BLUR_RAMPS,
+    CS_HSP_BOSS_FINISH_DEMO_NO, CS_INTRO_BATHROOM_DEMO_NO, CS_PS_ANGELA_BOSS_START_DEMO_NO,
+    CS_PS_MARIA_MEET_DEMO_NO, CS_TUNNEL_RADIO_DEMO_NO, EDDIE_BOSS_DEATH_TIMER_CHECK,
+    EDDIE_BOSS_DEATH_TIMER_SCALE, FLESH_LIPS_CUTSCENE_MOTION_BLUR_FACTOR,
+    FLESH_LIPS_DEATH_MOTION_BLUR_FACTOR, MARIA_JAIL_CELL_BLUR_FACTORS, MARY_BOSS_BLUR_SCALE,
+    PS2_MOTION_BLUR_SCALE, SPECIAL_FX_REFERENCE_HEIGHT,
 };
 pub use stage_fixes::{
     evaluate_hei_lau_widescreen_entry, evaluate_meeting_maria_fog_counters,

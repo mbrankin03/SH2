@@ -112,6 +112,7 @@ mod renderer_tests {
             grain_intensity: 0.65,
             exposure: 1.0,
             frame_count: 1,
+            ..post::PostUniforms::default()
         });
 
         // Test with synthetic cube geometry (always available in CI)
@@ -323,6 +324,7 @@ mod renderer_tests {
                 grain_intensity: 0.8,
                 exposure: 1.0,
                 frame_count: frame,
+                ..post::PostUniforms::default()
             });
             ctx.render_gpu_map(&gpu_map);
             let _ = ctx.device.poll(wgpu::Maintain::wait());
@@ -384,6 +386,23 @@ mod renderer_tests {
 
         ctx.render_gpu_map(&gpu_multi);
         ctx.render_scene(Some(&gpu_multi), Some(&[mip_bg]), &[]);
+        let _ = ctx.device.poll(wgpu::Maintain::wait());
+
+        // Test SH2-105: Room 312 Sunset ambient tint, Rm 307 Closet darkened preset, and PS2 DoF + Motion Blur GPU compute passes
+        ctx.update_spotlight(&light::SpotlightUniforms {
+            ambient_tint: [1.0, 1.0, 227.0 / 255.0, 0.55],
+            ..light::SpotlightUniforms::default()
+        });
+        ctx.update_post(&post::PostUniforms {
+            time: 0.5,
+            grain_intensity: 0.65,
+            exposure: 1.0,
+            frame_count: 15,
+            dof_tap_offset_px: [1.5, -1.5],
+            dof_strength: 0.85,
+            motion_blur_strength: 0.60,
+        });
+        ctx.render_gpu_map(&gpu_multi);
         let _ = ctx.device.poll(wgpu::Maintain::wait());
     }
 }

@@ -38,13 +38,14 @@ pub(super) fn tick_and_render_combat_arena_3d(
     // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63` / `SH2-77`) or sub-frame gameplay camera
     let alpha = state.sim_core.interpolation_alpha();
     let (cutscene_camera_override, cutscene_light_override) =
-        step_cutscene_player(state, dt, aspect, is_paused);
+        step_cutscene_player(state, dt, is_paused);
 
     update_camera_uniforms(state, aspect, alpha, cutscene_camera_override);
 
-    // 3. Dynamic Flashlight or `.dds` Cutscene Scene Light (`DdsPlayLight`)
+    // 3. Dynamic Flashlight or `.dds` Cutscene Scene Light (`DdsPlayLight`) + Atmosphere Fog
     let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
     update_spotlight_uniforms(state, alpha, player_pos, cutscene_light_override);
+    update_atmosphere_fog_uniforms(state, alpha);
 
     // 4. Sample player, cutscene actor, & enemy skeletal animations at sub-frame alpha
     evaluate_player_skinning(
@@ -303,7 +304,6 @@ fn reflect_skin_matrix_across_x(m: [[f32; 4]; 4], wall_x: f32) -> [[f32; 4]; 4] 
 fn step_cutscene_player(
     state: &mut AppState,
     dt: Duration,
-    aspect: f32,
     is_paused: bool,
 ) -> (Option<CutsceneCameraSnapshot>, Option<DemoLightState>) {
     let mut cutscene_camera_override = None;
@@ -321,7 +321,11 @@ fn step_cutscene_player(
 
         if let Some(ref mut session) = state.drama_demo_session {
             let mode = session.player.widescreen_mode;
-            session.player.set_widescreen_config(aspect, mode);
+            session.player.set_viewport_dimensions(
+                state.surface_config.width as f32,
+                state.surface_config.height as f32,
+                mode,
+            );
             session
                 .player
                 .tick_with_voice_sync(dt.as_secs_f32(), subs_enabled, voice_pos_secs);
@@ -440,6 +444,12 @@ fn update_spotlight_uniforms(
     cutscene_light_override: Option<DemoLightState>,
 ) {
     let (spot_pos, light_dir) = state.sim_core.interpolated_flashlight_ray(alpha);
+    let ambient_tint = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+        .map(|s| s.player.atmosphere.ambient_tint_rgba)
+        .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
     let spot_uniforms = if state.drama_demo_session.as_ref().is_some_and(|s| {
         s.player.locks_gameplay_input() && s.player.closet_fix.flashlight_suppressed
@@ -449,6 +459,7 @@ fn update_spotlight_uniforms(
             position: [spot_pos.x, spot_pos.y, spot_pos.z, 0.0],
             direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
             color_outer: [0.0, 0.0, 0.0, 0.0],
+            ambient_tint,
         }
     } else if let Some(cs_light) = cutscene_light_override {
         let l_pos = glam::Vec3::from_array(cs_light.position);
@@ -506,6 +517,7 @@ fn update_spotlight_uniforms(
                 cs_light.color[2].max(0.25) * 1.8 * range_boost,
                 outer_cos,
             ],
+            ambient_tint,
         }
     } else if state
         .drama_demo_session
@@ -521,6 +533,7 @@ fn update_spotlight_uniforms(
             position: [-19200.0, -1950.0, 20429.5, 1.0],
             direction_inner: [-0.65, 0.76, 0.0, 0.35],
             color_outer: [1.85, 1.90, 1.80, -0.25],
+            ambient_tint,
         }
     } else if let Some(session) = state
         .drama_demo_session
@@ -542,6 +555,7 @@ fn update_spotlight_uniforms(
             position: [key_pos.x, key_pos.y, key_pos.z, 1.0],
             direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
             color_outer: [1.75, 1.72, 1.68, -0.50],
+            ambient_tint,
         }
     } else {
         let light_color = if state.sim_core.scenario.flashlight_on {
@@ -553,9 +567,27 @@ fn update_spotlight_uniforms(
             position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
             direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
             color_outer: [light_color[0], light_color[1], light_color[2], 0.70],
+            ambient_tint,
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);
+}
+
+fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
+    let det_fog_time = state.sim_core.deterministic_fog_time(alpha);
+    state.fog_uniforms.time = det_fog_time;
+    let mut effective_fog = state.fog_uniforms;
+    if let Some(ref session) = state.drama_demo_session {
+        if session.player.locks_gameplay_input() {
+            if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {
+                effective_fog.fog_color[0] = rgb[0];
+                effective_fog.fog_color[1] = rgb[1];
+                effective_fog.fog_color[2] = rgb[2];
+            }
+            effective_fog.fog_color[3] *= session.player.atmosphere.fog_density_scale;
+        }
+    }
+    state.render_ctx.update_fog(&effective_fog);
 }
 
 fn evaluate_player_skinning(

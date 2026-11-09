@@ -308,7 +308,7 @@ fn render_cutscene_telemetry_and_subtitles(
             .collect();
         state.menu_rasterizer.draw_text(
             &format!(
-                "[IN-ENGINE 3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [V] Aspect Mode  [Esc/G] Skip  [,/.] Prev/Next",
+                "[3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [←/→] Scrub ±5s  [V] Aspect  [,/.] Prev/Next  [Esc/G] Skip",
                 p.info.demo_no,
                 p.info.title,
                 p.scene_frame.floor(),
@@ -324,11 +324,16 @@ fn render_cutscene_telemetry_and_subtitles(
         );
         state.menu_rasterizer.draw_text(
             &format!(
-                "ACTORS ({}) : {} | VOICE STREAM: {} (START @ {})",
+                "ACTORS ({}) : {} | VOICE: {} (@ {}) | ToD: {} | DoF: ({:.2},{:.2}) w={:.2} | Blur: {:.0}",
                 p.actors.len(),
                 actors_str.join(", "),
                 p.info.stream_no,
-                p.info.stream_start
+                p.info.stream_start,
+                p.atmosphere.time_of_day_preset,
+                p.special_fx.dof_tap_offset_px[0],
+                p.special_fx.dof_tap_offset_px[1],
+                p.special_fx.dof_strength,
+                p.special_fx.raw_motion_blur_factor,
             ),
             20,
             595,

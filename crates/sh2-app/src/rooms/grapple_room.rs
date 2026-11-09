@@ -298,6 +298,7 @@ impl RoomController for GrappleRoomController {
             position: [eye_pos.x, eye_pos.y - 300.0, eye_pos.z, 1.0],
             direction_inner: [to_target.x, to_target.y, to_target.z, 0.70],
             color_outer: [1.3, 1.28, 1.22, 0.35],
+            ambient_tint: [1.0, 1.0, 1.0, 1.0],
         };
         state.render_ctx.update_spotlight(&spot_uniforms);
 

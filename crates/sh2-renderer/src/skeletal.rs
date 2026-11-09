@@ -385,6 +385,7 @@ struct SpotlightUniforms {
     position: vec4<f32>,
     direction_inner: vec4<f32>,
     color_outer: vec4<f32>,
+    ambient_tint: vec4<f32>,
 };
 
 struct SkeletonBones {
@@ -497,7 +498,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if tex_color.a < 0.01 {
         discard;
     }
-    let total_light = select(ambient + diffuse, studio_light, shade_mode == 3);
+    let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
+    let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
+    let total_light = select((ambient * env_ambient_scale + diffuse) * env_tint_rgb, studio_light * env_tint_rgb, shade_mode == 3);
     let final_rgb = total_light * in.color.rgb * tex_color.rgb;
     return vec4<f32>(final_rgb, in.color.a * tex_color.a);
 }

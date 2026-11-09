@@ -54,6 +54,7 @@ struct SpotlightUniforms {
     position: vec4<f32>,
     direction_inner: vec4<f32>,
     color_outer: vec4<f32>,
+    ambient_tint: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -126,7 +127,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let shade_mode = i32(round(camera.cam_pos.w));
     let studio_ambient = select(base_ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
-    let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient + diffuse);
+    let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
+    let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
+    let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient * env_tint_rgb * env_ambient_scale + diffuse * env_tint_rgb);
     return vec4<f32>(lit_color, out_alpha);
 }
 "#;

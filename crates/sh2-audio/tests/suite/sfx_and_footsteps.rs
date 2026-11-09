@@ -78,36 +78,40 @@ fn test_sh2_61_se_id_lookup_and_dual_source_sfx_bank() {
         }
     }
     assert_eq!(
-        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Concrete, false).0,
-        147
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Concrete, false),
+        (147, 147)
+    );
+    assert_eq!(
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Concrete, true),
+        (147, 147)
     );
     assert_eq!(
         footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Wood, false),
-        (95, 151)
+        (151, 151)
     );
     assert_eq!(
-        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Metal, false).0,
-        146
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Metal, false),
+        (146, 146)
     );
     assert_eq!(
-        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Carpet, false).0,
-        144
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Carpet, false),
+        (144, 144)
     );
     assert_eq!(
-        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Water, false).0,
-        148
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Water, false),
+        (148, 148)
     );
     assert_eq!(
-        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Grass, false).0,
-        142
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Grass, false),
+        (142, 142)
     );
     assert_eq!(
-        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Gravel, false).0,
-        150
+        footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Gravel, false),
+        (150, 150)
     );
     assert_eq!(
         footstep_sddata_indices(false, sh2_core::SurfaceMaterial::Blood, false),
-        (148, 141)
+        (148, 148)
     );
 
     // 3. Verify dual-source loading of `MenuAudioBank` (`Sh2eeLossless` 48 kHz vs `Ps2Original`) when retail assets exist

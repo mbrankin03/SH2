@@ -99,40 +99,30 @@ impl TextureLoader {
         decode_texture_bytes(&bytes, &path)
     }
 
-    /// Loads a `.map` level geometry file with SH2:EE high-resolution texture pack interception.
+    /// Loads a `.map` level geometry file with SH2:EE high-resolution texture pack interception
+    /// and shared stage area texture bank merging (`<area>.map`).
     ///
     /// # Interceptor Precedence
     /// 1. Resolves the geometry and primary embedded textures from `sh2e/bg/.../*.map` first,
     ///    falling back to `data/bg/.../*.map`.
     /// 2. If both `sh2e/` and `data/` versions of the `.map` exist, compares every embedded texture
     ///    by `texture_id` and keeps whichever texture has the higher pixel resolution (`width * height`).
-    /// 3. Checks for standalone external `.dds` / `.png` / `.tex` overrides in the same directory
-    ///    (e.g. `sh2e/bg/ob/ob01_<tex_id>.dds` or `.png`).
+    /// 3. Automatically locates and merges the shared stage texture bank `<area>.map` in the same
+    ///    directory (e.g. `bg/ob/ob.map` for `bg/ob/ob01.map`, or `bg/rr/rr.map` for `bg/rr/rr21.map`),
+    ///    resolving shared area foliage, sign, and environment textures referenced by room materials.
     pub fn load_map_with_hd_overrides(
         &self,
         relative_map_path: impl AsRef<Path>,
         map_name: &str,
     ) -> Result<crate::formats::map::MapFile, AssetError> {
         let rel = relative_map_path.as_ref();
+        let clean_rel = rel
+            .strip_prefix("data")
+            .or_else(|_| rel.strip_prefix("sh2e"))
+            .unwrap_or(rel);
 
-        // Check both sh2e/ and data/ for the map file
-        let sh2e_map_path = self.sh2e_dir.as_ref().and_then(|sh2e| {
-            let cand = sh2e.join(rel);
-            if cand.exists() {
-                Some(cand)
-            } else {
-                find_case_insensitive(sh2e, rel)
-            }
-        });
-
-        let data_map_path = {
-            let cand = self.data_dir.join(rel);
-            if cand.exists() {
-                Some(cand)
-            } else {
-                find_case_insensitive(&self.data_dir, rel)
-            }
-        };
+        let sh2e_map_path = self.resolve_in_sh2e(clean_rel);
+        let data_map_path = self.resolve_in_data(clean_rel);
 
         let primary_path = sh2e_map_path
             .as_ref()
@@ -140,7 +130,7 @@ impl TextureLoader {
             .ok_or_else(|| {
                 AssetError::Io(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Map not found: {}", rel.display()),
+                    format!("Map not found: {}", clean_rel.display()),
                 ))
             })?;
 
@@ -149,16 +139,83 @@ impl TextureLoader {
 
         // If both sh2e and vanilla data maps exist, ensure any missing or higher-res textures are merged
         if let (Some(_), Some(ref van_path)) = (&sh2e_map_path, &data_map_path) {
-            if let Ok(van_bytes) = fs::read(van_path) {
-                if let Ok(van_map) = crate::formats::map::parse_map(&van_bytes, map_name) {
-                    for (tid, van_tex) in van_map.textures {
-                        map.textures.entry(tid).or_insert(van_tex);
+            self.merge_map_textures_from_path(van_path, map_name, &mut map);
+        }
+
+        // Merge shared area texture bank `<area>.map` in the same directory (e.g. `bg/ob/ob.map` for `bg/ob/ob01.map`)
+        self.merge_shared_area_textures(clean_rel, &mut map);
+
+        Ok(map)
+    }
+
+    fn resolve_in_sh2e(&self, rel: &Path) -> Option<PathBuf> {
+        self.sh2e_dir.as_ref().and_then(|sh2e| {
+            let cand = sh2e.join(rel);
+            if cand.exists() {
+                Some(cand)
+            } else {
+                find_case_insensitive(sh2e, rel)
+            }
+        })
+    }
+
+    fn resolve_in_data(&self, rel: &Path) -> Option<PathBuf> {
+        let cand = self.data_dir.join(rel);
+        if cand.exists() {
+            Some(cand)
+        } else {
+            find_case_insensitive(&self.data_dir, rel)
+        }
+    }
+
+    fn merge_map_textures_from_path(
+        &self,
+        path: &Path,
+        map_name: &str,
+        target_map: &mut crate::formats::map::MapFile,
+    ) {
+        if let Ok(bytes) = fs::read(path) {
+            if let Ok(donor_map) = crate::formats::map::parse_map(&bytes, map_name) {
+                for (tid, donor_tex) in donor_map.textures {
+                    match target_map.textures.get(&tid) {
+                        Some(existing)
+                            if existing.width.saturating_mul(existing.height)
+                                >= donor_tex.width.saturating_mul(donor_tex.height) => {}
+                        _ => {
+                            target_map.textures.insert(tid, donor_tex);
+                        }
                     }
                 }
             }
         }
+    }
 
-        Ok(map)
+    fn merge_shared_area_textures(
+        &self,
+        clean_rel: &Path,
+        target_map: &mut crate::formats::map::MapFile,
+    ) {
+        let Some(parent_dir) = clean_rel.parent() else {
+            return;
+        };
+        let Some(area_name) = parent_dir.file_name().and_then(|s| s.to_str()) else {
+            return;
+        };
+        if area_name.is_empty() {
+            return;
+        }
+
+        let shared_rel = parent_dir.join(format!("{area_name}.map"));
+        if shared_rel == clean_rel {
+            return;
+        }
+
+        if let Some(sh2e_shared) = self.resolve_in_sh2e(&shared_rel) {
+            self.merge_map_textures_from_path(&sh2e_shared, area_name, target_map);
+        }
+        if let Some(data_shared) = self.resolve_in_data(&shared_rel) {
+            self.merge_map_textures_from_path(&data_shared, area_name, target_map);
+        }
     }
 
     /// Loads a `.mdl` character/item model with SH2:EE high-resolution texture pack interception,

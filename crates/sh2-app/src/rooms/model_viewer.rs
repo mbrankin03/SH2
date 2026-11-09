@@ -250,8 +250,12 @@ impl RoomController for ModelViewerRoomController {
         }
 
         let view = state.model_viewer.camera.view_matrix();
-        let proj =
-            glam::Mat4::perspective_rh(state.model_viewer.camera.fov_y, aspect, 10.0, 30000.0);
+        let proj = glam::Mat4::perspective_rh(
+            state.model_viewer.camera.fov_y,
+            aspect,
+            super::DEFAULT_CAMERA_Z_NEAR,
+            super::DEFAULT_CAMERA_Z_FAR,
+        );
         let view_proj = proj * view;
         let inv_proj = proj.inverse();
         let eye_pos = state.model_viewer.camera.eye_position();

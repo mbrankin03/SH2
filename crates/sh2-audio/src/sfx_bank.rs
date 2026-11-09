@@ -139,100 +139,46 @@ pub fn compute_se_call_pos_distance_f(
 /// Ground-truth `sh2pc.exe` binary mapping verified against `.cld` room floor geometry across
 /// `ap` (Apartments), `bw` (Pete's Bowl-O-Rama), `ca..cd` (Town / Forest / Rosewater Park),
 /// `hp` (Brookhaven), `ps` (Prison), `rr` (Lakeview Hotel), and `ma` (Baldwin Mansion):
-/// - **James (`0x54A9A0` / `0x54AFC1`)**:
-///   - `Concrete` (`.cld` `0, 12`): `se_id = 11001` (`0x2AF9`) -> `sddata[147]` & `se_id = 18803` (`0x4973`) -> `sddata[161]`
+/// - **James (`0x54A9A0` / `0x54AFC1` switch table at `0x54B488`)**:
+///   - `Concrete` (`.cld` `0, 12`): `se_id = 11001` (`0x2AF9`) -> `sddata[147]`
 ///   - `Wood` (`.cld` `7` — Baldwin Mansion `ma`, Pete's Bowling Lanes `bw01`, Rosewater Pier `cd01/cd05`):
-///     `se_id = 11005` (`0x2AFD`) -> `sddata[151]` & `se_id = 19907` (`0x4DC3`) -> `sddata[95]` (`Hotel Stairway Footstep`)
-///   - `Metal` (`.cld` `5, 9, 11`): `se_id = 11000` (`0x2AF8`) -> `sddata[146]` & `se_id = 11006` (`0x2AFE`) -> `sddata[143]`
+///     `se_id = 11005` (`0x2AFD`) -> `sddata[151]`
+///   - `Metal` (`.cld` `5, 11`): `se_id = 11000` (`0x2AF8`) -> `sddata[146]`
 ///   - `Carpet` (`.cld` `8` — Lakeview Hotel `rr` & Wood Side Apartments `ap` carpeted corridors):
-///     `se_id = 11009` (`0x2B01`) -> `sddata[144]` & `se_id = 11054` (`0x2B2E`) -> `sddata[145]`
-///   - `Water` (`.cld` `6`): `se_id = 11003` (`0x2AFB`) -> `sddata[148]` (walk) and `sddata[83, 84]` (`0x4978, 0x4977` water splash)
+///     `se_id = 11009` (`0x2B01`) -> `sddata[144]`
+///   - `Water` (`.cld` `6`): `se_id = 11003` (`0x2AFB`) -> `sddata[148]`
 ///   - `Grass` (`.cld` `2`): `se_id = 11002` (`0x2AFA`) -> `sddata[142]` (`James footstep (grass)`)
-///   - `Gravel` (`.cld` `1, 3, 4`): `se_id = 11004` (`0x2AFC`) -> `sddata[150]` & `se_id = 11007` (`0x2AFF`) -> `sddata[149]` (dirt/gravel/sand crunch)
-///   - `Blood` / Wet / Glass (`.cld` `10`): `se_id = 11008` (`0x2B00`) -> `sddata[141]` & `se_id = 11003` (`0x2AFB`) -> `sddata[148]`
-/// - **Maria (`0x5495C0` / `0x549618`)**:
+///   - `Gravel` (`.cld` `1, 4`): `se_id = 11004` (`0x2AFC`) -> `sddata[150]` (dirt/gravel crunch)
+///   - `Blood` / Wet / Glass (`.cld` `10`): `se_id = 11003` (`0x2AFB`) -> `sddata[148]`
+/// - **Maria (`0x5495C0` / `0x549618` switch table at `0x549680`)**:
 ///   - `se_id = 19031..=19038` (`0x4A57..=0x4A5E`) -> `sddata[177..=184]`
 #[inline]
 pub const fn footstep_sddata_indices(
     is_maria: bool,
     material: SurfaceMaterial,
-    is_running: bool,
+    _is_running: bool,
 ) -> (usize, usize) {
     if is_maria {
         match material {
             SurfaceMaterial::Concrete => (177, 177), // 0x4A57 (Maria default concrete heel)
             SurfaceMaterial::Wood => (183, 183),     // 0x4A5D (Maria wood floorboard heel, .cld 7)
-            SurfaceMaterial::Metal => {
-                if is_running {
-                    (182, 184) // 0x4A5B, 0x4A5C (Maria metal grating / solid metal heel)
-                } else {
-                    (182, 182) // 0x4A5B (Maria metal heel)
-                }
-            }
-            SurfaceMaterial::Carpet => (180, 180), // 0x4A5E (Maria carpet / soft step, .cld 8)
-            SurfaceMaterial::Water => {
-                if is_running {
-                    (83, 84) // 0x4978, 0x4977 (Water splash L/R)
-                } else {
-                    (181, 181) // 0x4A59 (Maria water step)
-                }
-            }
-            SurfaceMaterial::Grass => (179, 179), // 0x4A58 (Maria grass step)
-            SurfaceMaterial::Gravel => (178, 178), // 0x4A5A (Maria dirt/gravel step)
-            SurfaceMaterial::Blood => (181, 184), // 0x4A59, 0x4A5C (Maria wet / glass step)
+            SurfaceMaterial::Metal => (182, 182),    // 0x4A5B (Maria metal heel, .cld 5/11)
+            SurfaceMaterial::Carpet => (180, 180),   // 0x4A5E (Maria carpet / soft step, .cld 8)
+            SurfaceMaterial::Water => (181, 181),    // 0x4A59 (Maria water step, .cld 6)
+            SurfaceMaterial::Grass => (179, 179),    // 0x4A58 (Maria grass step, .cld 2)
+            SurfaceMaterial::Gravel => (178, 178),   // 0x4A5A (Maria dirt/gravel step, .cld 1/4)
+            SurfaceMaterial::Blood => (181, 181),    // 0x4A59 (Maria wet / blood step)
         }
     } else {
         match material {
-            SurfaceMaterial::Concrete => {
-                if is_running {
-                    (147, 161) // 11001 (Concrete) & 18803 (Stone / tile hard floor)
-                } else {
-                    (147, 147) // 11001 (0x2AF9: James default concrete/stone step)
-                }
-            }
-            SurfaceMaterial::Wood => {
-                if is_running {
-                    (151, 95) // 11005 (0x2AFD: Wood floorboards) & 19907 (0x4DC3: Hotel Stairway wood step)
-                } else {
-                    (95, 151) // 19907 (0x4DC3: Hollow wood step) & 11005 (0x2AFD: Wood floorboards)
-                }
-            }
-            SurfaceMaterial::Metal => {
-                if is_running {
-                    (146, 143) // 11000 (Metal grating) & 11006 (Solid metal)
-                } else {
-                    (146, 146) // 11000 (0x2AF8: James metal grating step)
-                }
-            }
-            SurfaceMaterial::Carpet => {
-                if is_running {
-                    (144, 145) // 11009 (0x2B01: Carpeted corridor) & 11054 (0x2B2E: Soft rug step)
-                } else {
-                    (144, 144) // 11009 (0x2B01: James carpet / rug step)
-                }
-            }
-            SurfaceMaterial::Water => {
-                if is_running {
-                    (83, 84) // 0x4978, 0x4977 (Footstep water splash L/R)
-                } else {
-                    (148, 83) // 11003 (0x2AFB: Water puddle step) & 0x4978 (Footstep water)
-                }
-            }
-            SurfaceMaterial::Grass => (142, 142), // 11002 (0x2AFA: James footstep grass)
-            SurfaceMaterial::Gravel => {
-                if is_running {
-                    (150, 149) // 11004 (0x2AFC: Dirt/gravel) & 11007 (0x2AFF: Coarse gravel/sand)
-                } else {
-                    (150, 150) // 11004 (0x2AFC: James dirt / gravel crunch)
-                }
-            }
-            SurfaceMaterial::Blood => {
-                if is_running {
-                    (141, 148) // 11008 (0x2B00: Broken glass / sharp wet step) & 11003 (Wet step)
-                } else {
-                    (148, 141) // 11003 (Wet step) & 11008 (Glass / visceral step)
-                }
-            }
+            SurfaceMaterial::Concrete => (147, 147), // 11001 (0x2AF9: James default concrete/stone step)
+            SurfaceMaterial::Wood => (151, 151),     // 11005 (0x2AFD: James wood floorboard step)
+            SurfaceMaterial::Metal => (146, 146),    // 11000 (0x2AF8: James metal grating step)
+            SurfaceMaterial::Carpet => (144, 144),   // 11009 (0x2B01: James carpet / rug step)
+            SurfaceMaterial::Water => (148, 148),    // 11003 (0x2AFB: James water puddle step)
+            SurfaceMaterial::Grass => (142, 142),    // 11002 (0x2AFA: James grass step)
+            SurfaceMaterial::Gravel => (150, 150),   // 11004 (0x2AFC: James dirt / gravel crunch)
+            SurfaceMaterial::Blood => (148, 148),    // 11003 (0x2AFB: James wet / blood step)
         }
     }
 }

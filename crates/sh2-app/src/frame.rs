@@ -183,6 +183,13 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         if new_room == TestRoomKind::SurfaceSfxTestRoom {
             state.surface_sfx_room = rooms::surface_sfx_room::SurfaceSfxRoomState::default();
         }
+        if new_room == TestRoomKind::InventoryAndItemsRoom {
+            state.inventory_room = rooms::inventory_room::InventoryDebugRoomState::default();
+        }
+        if new_room == TestRoomKind::PuzzleAndCutawayRoom {
+            state.puzzle_cutaway_room =
+                rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default();
+        }
         if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
             let asset = load_viewer_entry_asset(
                 &state.render_ctx,

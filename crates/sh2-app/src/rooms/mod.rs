@@ -4,7 +4,9 @@ pub(crate) mod audio_room;
 pub(crate) mod combat_arena;
 pub(crate) mod fmv_room;
 pub(crate) mod grapple_room;
+pub(crate) mod inventory_room;
 pub(crate) mod model_viewer;
+pub(crate) mod puzzle_cutaway_room;
 pub(crate) mod surface_sfx_room;
 
 use std::time::Duration;
@@ -73,6 +75,16 @@ pub(crate) fn dispatch_key_input(
                 state, key_code, pressed, repeat,
             );
         }
+        TestRoomKind::InventoryAndItemsRoom => {
+            inventory_room::InventoryRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
+        }
+        TestRoomKind::PuzzleAndCutawayRoom => {
+            puzzle_cutaway_room::PuzzleCutawayRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
+        }
         _ => {
             combat_arena::CombatArenaRoomController::handle_key_input(
                 state, key_code, pressed, repeat,
@@ -123,6 +135,18 @@ pub(crate) fn dispatch_tick_and_render_3d(
                 );
                 return;
             }
+            TestRoomKind::InventoryAndItemsRoom => {
+                inventory_room::InventoryRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
+            TestRoomKind::PuzzleAndCutawayRoom => {
+                puzzle_cutaway_room::PuzzleCutawayRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
             _ => {}
         }
     }
@@ -153,6 +177,16 @@ pub(crate) fn dispatch_render_hud(
         }
         TestRoomKind::SurfaceSfxTestRoom => {
             surface_sfx_room::SurfaceSfxRoomController::render_hud(state, encoder, surface_view);
+        }
+        TestRoomKind::InventoryAndItemsRoom => {
+            inventory_room::InventoryRoomController::render_hud(state, encoder, surface_view);
+        }
+        TestRoomKind::PuzzleAndCutawayRoom => {
+            puzzle_cutaway_room::PuzzleCutawayRoomController::render_hud(
+                state,
+                encoder,
+                surface_view,
+            );
         }
         _ => {
             if state.debug_camera_hud || state.drama_demo_session.is_some() {

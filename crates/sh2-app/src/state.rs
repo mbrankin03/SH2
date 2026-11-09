@@ -8,6 +8,8 @@ use winit::window::Window;
 use crate::assets::{ActiveDramaDemoSession, CharacterAsset};
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
+use crate::rooms::inventory_room::InventoryDebugRoomState;
+use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
@@ -40,6 +42,8 @@ pub(crate) struct AppState {
     pub bgm_stage_override: Option<u32>,
     pub audio_debug: AudioDebugState,
     pub surface_sfx_room: SurfaceSfxRoomState,
+    pub inventory_room: InventoryDebugRoomState,
+    pub puzzle_cutaway_room: PuzzleCutawayRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -146,6 +150,32 @@ impl AppState {
         self.menu_rasterizer.clear();
     }
 
+    /// Exits the current in-game test room and returns to `target_phase` (e.g. `TitlePhase::TestRoomsSelect`)
+    /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
+    pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
+        self.key_forward = false;
+        self.key_backward = false;
+        self.key_left = false;
+        self.key_right = false;
+        self.key_zoom_in = false;
+        self.key_zoom_out = false;
+        self.key_pan_up = false;
+        self.key_pan_down = false;
+        self.bgm_manager.stop_all(self.audio_engine.as_mut());
+        if let Some(ref mut engine) = self.audio_engine {
+            engine.stop_bgm(std::time::Duration::from_millis(120));
+            engine.stop_fmv_audio(std::time::Duration::from_millis(120));
+            engine.stop_voice(std::time::Duration::from_millis(50));
+            engine.set_bgm_paused(false);
+            let _ = sh2_audio::play_menu_sound(
+                engine,
+                self.audio_bank.as_ref(),
+                sh2_audio::SoundCueKind::Cancel,
+            );
+        }
+        self.menu_ctrl.return_to_menu(target_phase);
+    }
+
     /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
     pub fn finish_hud_overlay(
         &self,
@@ -232,7 +262,9 @@ impl AppState {
             | TestRoomKind::FmvCutsceneViewer
             | TestRoomKind::GrappleAnimationRoom
             | TestRoomKind::LoadingScreenTest
-            | TestRoomKind::SurfaceSfxTestRoom => 0,
+            | TestRoomKind::SurfaceSfxTestRoom
+            | TestRoomKind::InventoryAndItemsRoom
+            | TestRoomKind::PuzzleAndCutawayRoom => 0,
         };
         (stage_id, flags)
     }

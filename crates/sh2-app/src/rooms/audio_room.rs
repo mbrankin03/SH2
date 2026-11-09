@@ -286,9 +286,7 @@ impl AudioDebugRoomController {
     fn handle_audio_room_shortcut(state: &mut AppState, key_code: KeyCode) -> bool {
         match key_code {
             KeyCode::Escape | KeyCode::Backspace => {
-                state.menu_ctrl.in_game_active = false;
-                state.menu_ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
-                state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                state.exit_room_to_menu(TitlePhase::TestRoomsSelect);
                 tracing::info!("Returned from Audio Debug Room to Test Rooms menu.");
                 true
             }

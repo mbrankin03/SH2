@@ -241,9 +241,33 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("SURFACE FOOTSTEP & 3D SFX ROOM", SH2-61),
-    // then up to "AUDIO & AIX MIXING DEBUG ROOM" (SH2-60), "GRAPPLE ANIMATION ROOM" (SH2-57),
-    // "COMBAT & WEAPON TESTING ARENA" (SH2-13), and "LOADING SCREEN PREVIEW" (SH2-44)
+    // Navigate up to wrap to the last entry ("PUZZLE LOGIC & CUTAWAY OVERLAYS ROOM", SH2-15),
+    // then up through "INVENTORY & 3D/2D ITEM INSPECT ROOM" (SH2-15),
+    // "SURFACE FOOTSTEP & 3D SFX ROOM" (SH2-61), "AUDIO & AIX MIXING DEBUG ROOM" (SH2-60),
+    // "GRAPPLE ANIMATION ROOM" (SH2-57), "COMBAT & WEAPON TESTING ARENA" (SH2-13),
+    // and "LOADING SCREEN PREVIEW" (SH2-44)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::PuzzleAndCutawayRoom
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Puzzle Logic & Cutaway Overlays Room"
+    );
+
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::InventoryAndItemsRoom
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Inventory & 3D/2D Item Inspect Room"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(
@@ -499,4 +523,99 @@ fn test_sh2_61_surface_sfx_test_room_8_material_pads_and_collision() {
         assert_eq!(sample.surface, SurfaceMaterial::from_index(idx as u8));
         assert!((sample.height_y - 0.0).abs() < 1e-3);
     }
+}
+
+#[test]
+fn test_sh2_15_inventory_and_puzzle_cutaway_debug_rooms_and_rasterizer() {
+    use sh2_core::{CutawayOverlayEngine, EventFlags, PuzzleState};
+    use sh2_ui::menu::{TestRoomKind, TitlePhase};
+    use sh2_ui::TextRasterizer;
+
+    let test_dir = std::env::temp_dir().join("sh2_15_debug_rooms_test");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).unwrap();
+    let config_path = test_dir.join("test_config.json");
+
+    // 1. Verify launching InventoryAndItemsRoom & PuzzleAndCutawayRoom via AppMenuController
+    let mut ctrl = AppMenuController::new(&config_path);
+    ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
+    ctrl.title_sm.test_room_index = TestRoomKind::ALL
+        .iter()
+        .position(|&r| r == TestRoomKind::InventoryAndItemsRoom)
+        .unwrap();
+    let cue = ctrl.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(
+        ctrl.title_sm.selected_test_room,
+        TestRoomKind::InventoryAndItemsRoom
+    );
+
+    ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
+    ctrl.title_sm.test_room_index = TestRoomKind::ALL
+        .iter()
+        .position(|&r| r == TestRoomKind::PuzzleAndCutawayRoom)
+        .unwrap();
+    let cue = ctrl.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(
+        ctrl.title_sm.selected_test_room,
+        TestRoomKind::PuzzleAndCutawayRoom
+    );
+
+    // 2. Verify TextRasterizer 2D cutaway blit & OverlaySpriteQuad triangle rasterization
+    let mut rast = TextRasterizer::new(640, 480);
+    let dummy_rgba: Vec<u8> = [200u8, 180, 160, 255].repeat(64 * 64);
+    rast.blit_rgba_scaled(20, 20, 128, 128, &dummy_rgba, 64, 64, 1.0);
+    let center_ofs = (80 * 640 + 80) * 4;
+    assert_eq!(rast.pixels[center_ofs], 200);
+    assert_eq!(rast.pixels[center_ofs + 1], 180);
+    assert_eq!(rast.pixels[center_ofs + 2], 160);
+    assert_eq!(rast.pixels[center_ofs + 3], 255);
+
+    let flags = EventFlags::new();
+    let puzzle = PuzzleState::new();
+    let mut overlay = CutawayOverlayEngine::new();
+    overlay.set_picture(Some("out_p_incar"), &flags);
+    let sprites = overlay.evaluate_frame(&flags, &puzzle, 0, 0).to_vec();
+    assert_eq!(sprites.len(), 1);
+    let tris = sprites[0].to_viewport_triangles(0.0, 0.0, 512.0, 512.0);
+    let map_rgba = vec![255u8; 32 * 32 * 4];
+    rast.blit_overlay_triangles(&tris, &map_rgba, 32, 32, 1.0);
+    // Sprite covers x: -127..129 -> screen x: 129..385, y: -234..22 -> screen y: 22..278
+    let sprite_ofs = (150 * 640 + 250) * 4;
+    assert_eq!(rast.pixels[sprite_ofs], 255);
+    assert_eq!(rast.pixels[sprite_ofs + 3], 255);
+
+    // 3. Regression test: Entering a debug room and pressing Escape (`return_to_menu`)
+    // must clear `is_fading_out` so `fade_alpha` remains 1.0 across subsequent menu ticks.
+    ctrl.title_sm
+        .show_phase_immediately(TitlePhase::TestRoomsSelect);
+    ctrl.title_sm.test_room_index = TestRoomKind::ALL
+        .iter()
+        .position(|&r| r == TestRoomKind::PuzzleAndCutawayRoom)
+        .unwrap();
+    ctrl.handle_nav(MenuNavAction::Confirm);
+    while !ctrl.in_game_active {
+        ctrl.tick(0.016);
+    }
+    assert!(ctrl.in_game_active);
+    assert!(!ctrl.title_sm.is_fading_out);
+    assert!(!ctrl.title_sm.is_fading_in);
+
+    // Simulate pressing Escape inside the debug room
+    ctrl.return_to_menu(TitlePhase::TestRoomsSelect);
+    assert!(!ctrl.in_game_active);
+    assert_eq!(ctrl.title_sm.phase, TitlePhase::TestRoomsSelect);
+    assert!((ctrl.title_sm.fade_alpha - 1.0).abs() < 1e-5);
+    assert!(!ctrl.title_sm.is_fading_out);
+    assert!(!ctrl.title_sm.is_fading_in);
+
+    // Tick 120 frames (2 seconds) on TestRoomsSelect and ensure fade_alpha never decays to 0.0
+    for _ in 0..120 {
+        ctrl.tick(0.016);
+    }
+    assert_eq!(ctrl.title_sm.phase, TitlePhase::TestRoomsSelect);
+    assert!((ctrl.title_sm.fade_alpha - 1.0).abs() < 1e-5);
+
+    let _ = fs::remove_dir_all(&test_dir);
 }

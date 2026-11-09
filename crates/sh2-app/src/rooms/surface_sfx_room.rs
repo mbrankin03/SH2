@@ -166,9 +166,7 @@ impl RoomController for SurfaceSfxRoomController {
         if pressed && !repeat {
             match key_code {
                 KeyCode::Escape | KeyCode::Backspace => {
-                    state.menu_ctrl.in_game_active = false;
-                    state.menu_ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
-                    state.menu_ctrl.title_sm.fade_alpha = 1.0;
+                    state.exit_room_to_menu(TitlePhase::TestRoomsSelect);
                     tracing::info!(
                         "Returned from Surface Footstep & 3D SFX Test Room to Test Rooms menu."
                     );

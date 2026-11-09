@@ -19,6 +19,10 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+mod cutaway;
+use cutaway::decode_ps2_tex;
+pub use cutaway::{probe_tex_dimensions, CutawayTextureAsset, CutawayViewportTransform};
+
 /// Magic identifier for PS2/PC single/multi-sprite `.tex` texture containers (`0x19990901`).
 pub const TEX_MAGIC: u32 = 0x19990901;
 
@@ -148,7 +152,7 @@ impl TextureLoader {
         Ok(map)
     }
 
-    fn resolve_in_sh2e(&self, rel: &Path) -> Option<PathBuf> {
+    pub(super) fn resolve_in_sh2e(&self, rel: &Path) -> Option<PathBuf> {
         self.sh2e_dir.as_ref().and_then(|sh2e| {
             let cand = sh2e.join(rel);
             if cand.exists() {
@@ -159,7 +163,7 @@ impl TextureLoader {
         })
     }
 
-    fn resolve_in_data(&self, rel: &Path) -> Option<PathBuf> {
+    pub(super) fn resolve_in_data(&self, rel: &Path) -> Option<PathBuf> {
         let cand = self.data_dir.join(rel);
         if cand.exists() {
             Some(cand)
@@ -452,9 +456,25 @@ impl ContainerTexture {
                 }
                 return Ok(rgba);
             } else if self.format == 8 {
-                return Err(AssetError::UnsupportedFormat(
-                    "8-bit paletted container textures are not currently supported".to_string(),
-                ));
+                let pixel_count = self.width * self.height;
+                let required = pixel_count + 32 + 1024;
+                if self.data.len() < required {
+                    return Err(AssetError::BufferUnderflow {
+                        required,
+                        available: self.data.len(),
+                    });
+                }
+                let pal = &self.data[pixel_count + 32..pixel_count + 32 + 1024];
+                let mut rgba = vec![0u8; pixel_count * 4];
+                for (i, &idx) in self.data[..pixel_count].iter().enumerate() {
+                    let p_ofs = (idx as usize) * 4;
+                    let d_ofs = i * 4;
+                    rgba[d_ofs] = pal[p_ofs];
+                    rgba[d_ofs + 1] = pal[p_ofs + 1];
+                    rgba[d_ofs + 2] = pal[p_ofs + 2];
+                    rgba[d_ofs + 3] = pal[p_ofs + 3];
+                }
+                return Ok(rgba);
             } else {
                 return Err(AssetError::UnsupportedFormat(format!(
                     "Unsupported uncompressed texture format: {}",
@@ -552,7 +572,7 @@ pub fn parse_texture_container(
                 let exp = if comp != 0 {
                     w.div_ceil(4).max(1) * h.div_ceil(4).max(1) * if fmt == 0 { 8 } else { 16 }
                 } else if fmt == 8 {
-                    w * h
+                    w * h + 32 + 1024
                 } else {
                     w * h * 4
                 };
@@ -569,9 +589,6 @@ pub fn parse_texture_container(
                     });
                 }
                 p += exp;
-                if fmt == 8 {
-                    p += 32 + 1024; // palette data
-                }
             }
         }
     }
@@ -606,11 +623,16 @@ pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture,
         });
     }
 
-    // 3. Check for PS2/PC .tex container (`0x19990901`)
+    // 3. Check for PS2-format .tex (`bytes[0x0c..0x10] == b"\xa7\xa7\xa7\xa7"`)
+    if bytes.len() >= 0xc0 && &bytes[0x0c..0x10] == b"\xa7\xa7\xa7\xa7" {
+        return decode_ps2_tex(bytes);
+    }
+
+    // 4. Check for PS2/PC .tex container (`0x19990901`)
     if bytes.len() >= 16 {
         let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         if magic == TEX_MAGIC {
-            // 3a. Multi-sprite container traversal
+            // 4a. Multi-sprite container traversal
             if let Ok(container_textures) = parse_texture_container(bytes, 0) {
                 if let Some(first) = container_textures.first() {
                     let rgba = first.to_rgba()?;
@@ -622,12 +644,15 @@ pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture,
                 }
             }
 
-            // 3b. Single-sprite container unpack (0x30 header, pixel payload at 0x50)
+            // 4b. Single-sprite container unpack (0x30 header, pixel payload at 0x50)
             // Used by standalone splash/UI screens like start00.tex, start01.tex, konami2048x2048.tex, etc.
             if bytes.len() >= 0x50 {
                 let w = u16::from_le_bytes([bytes[0x38], bytes[0x39]]) as usize;
                 let h = u16::from_le_bytes([bytes[0x3a], bytes[0x3b]]) as usize;
                 let fmt = u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]);
+                let length =
+                    u32::from_le_bytes([bytes[0x40], bytes[0x41], bytes[0x42], bytes[0x43]])
+                        as usize;
 
                 if w > 0 && h > 0 {
                     let pixel_data = &bytes[0x50..];
@@ -642,6 +667,26 @@ pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture,
                                 dst[1] = src[1]; // G
                                 dst[2] = src[0]; // B
                                 dst[3] = src[3]; // A
+                            }
+                            return Ok(DecodedTexture {
+                                width: w,
+                                height: h,
+                                rgba,
+                            });
+                        }
+                    } else if fmt == 8 {
+                        let idx_len = w * h;
+                        let pal_ofs = length.max(idx_len) + 0x20;
+                        if pixel_data.len() >= pal_ofs + 1024 {
+                            let pal = &pixel_data[pal_ofs..pal_ofs + 1024];
+                            let mut rgba = vec![0u8; idx_len * 4];
+                            for (i, &idx) in pixel_data[..idx_len].iter().enumerate() {
+                                let p_ofs = (idx as usize) * 4;
+                                let d_ofs = i * 4;
+                                rgba[d_ofs] = pal[p_ofs];
+                                rgba[d_ofs + 1] = pal[p_ofs + 1];
+                                rgba[d_ofs + 2] = pal[p_ofs + 2];
+                                rgba[d_ofs + 3] = pal[p_ofs + 3];
                             }
                             return Ok(DecodedTexture {
                                 width: w,

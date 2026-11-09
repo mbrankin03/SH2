@@ -93,10 +93,14 @@ pub enum TestRoomKind {
     AudioDebugRoom,
     /// Interactive 8-Material Acoustic Surface Footstep & 3D SFX Attenuation Test Chamber (`SH2-61`).
     SurfaceSfxTestRoom,
+    /// Interactive 85-Item Catalog, 3D `.mdl` / 2D `.tex` Inspect, Combinations & Healing Debug Room (`SH2-15`).
+    InventoryAndItemsRoom,
+    /// Interactive Puzzle State Machines, Stage Event (`ev_prog`) & Cutaway Sprite Overlay Debug Room (`SH2-15`).
+    PuzzleAndCutawayRoom,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 12] = [
+    pub const ALL: [TestRoomKind; 14] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -109,6 +113,8 @@ impl TestRoomKind {
         TestRoomKind::GrappleAnimationRoom,
         TestRoomKind::AudioDebugRoom,
         TestRoomKind::SurfaceSfxTestRoom,
+        TestRoomKind::InventoryAndItemsRoom,
+        TestRoomKind::PuzzleAndCutawayRoom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -125,6 +131,8 @@ impl TestRoomKind {
             Self::GrappleAnimationRoom => "Grapple Animation Room",
             Self::AudioDebugRoom => "Audio & AIX Mixing Debug Room",
             Self::SurfaceSfxTestRoom => "Surface Footstep & 3D SFX Room",
+            Self::InventoryAndItemsRoom => "Inventory & 3D/2D Item Inspect Room",
+            Self::PuzzleAndCutawayRoom => "Puzzle Logic & Cutaway Overlays Room",
         }
     }
 
@@ -155,6 +163,12 @@ impl TestRoomKind {
             }
             Self::SurfaceSfxTestRoom => {
                 "Walk across all 8 collision floor materials (Concrete/Wood/Metal/Carpet/Water/Grass/Gravel/Blood) & 3D SFX"
+            }
+            Self::InventoryAndItemsRoom => {
+                "Browse all 85 items (3D .mdl + 2D .tex), test 999 cap, Bullet Adjust, healing & 11 combinations"
+            }
+            Self::PuzzleAndCutawayRoom => {
+                "Interactive Clock, Safe, Coin Desk, Hospital Box, Hotel Drum & Baldwin Board cutaway overlays"
             }
         }
     }
@@ -250,6 +264,11 @@ impl TitleStateMachine {
                 self.is_fading_out = false;
                 self.on_fade_out_complete();
             }
+        } else if !matches!(
+            self.phase,
+            TitlePhase::SplashIntro | TitlePhase::TransitionToGame
+        ) {
+            self.fade_alpha = 1.0;
         }
 
         // Auto progression from splash screen
@@ -429,6 +448,14 @@ impl TitleStateMachine {
         self.fade_alpha = 0.0;
     }
 
+    /// Transitions immediately to `phase` at full opacity (`fade_alpha = 1.0`), clearing any active fade flags.
+    pub fn show_phase_immediately(&mut self, phase: TitlePhase) {
+        self.phase = phase;
+        self.fade_alpha = 1.0;
+        self.is_fading_in = false;
+        self.is_fading_out = false;
+    }
+
     fn on_fade_out_complete(&mut self) {
         match self.phase {
             TitlePhase::SplashIntro => {
@@ -439,7 +466,9 @@ impl TitleStateMachine {
                 // Keep faded out at 0.0 for seamless game world start
                 self.fade_alpha = 0.0;
             }
-            _ => {}
+            _ => {
+                self.fade_alpha = 1.0;
+            }
         }
     }
 }
@@ -1015,8 +1044,8 @@ pub fn draw_test_rooms_screen(sm: &TitleStateMachine, font: &AtlasFont, rast: &m
     );
 
     let count = TestRoomKind::ALL.len();
-    let start_y = 86.0;
-    let end_y = 376.0;
+    let start_y = 80.0;
+    let end_y = 384.0;
     let step_y = if count > 1 {
         ((end_y - start_y) / (count - 1) as f32).min(38.0) * scale_y
     } else {
@@ -1024,7 +1053,9 @@ pub fn draw_test_rooms_screen(sm: &TitleStateMachine, font: &AtlasFont, rast: &m
     };
     let base_y = start_y * scale_y;
     let center_panel_x = (x_offset + 320.0 * scale_x).round() as usize;
-    let font_size = if count > 8 {
+    let font_size = if count > 12 {
+        (14.0 * scale_y).round() as usize
+    } else if count > 8 {
         (16.0 * scale_y).round() as usize
     } else {
         (18.0 * scale_y).round() as usize

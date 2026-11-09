@@ -339,15 +339,9 @@ impl RoomController for FmvRoomController {
         }
         match key_code {
             KeyCode::Escape | KeyCode::Backspace => {
-                if let Some(ref mut engine) = state.audio_engine {
-                    engine.stop_bgm(std::time::Duration::from_millis(120));
-                    engine.stop_fmv_audio(std::time::Duration::from_millis(120));
-                }
                 state.fmv_session = None;
-                state.menu_ctrl.in_game_active = false;
-                state.menu_ctrl.title_sm.phase = TitlePhase::OptionsMenu;
-                state.menu_ctrl.title_sm.fade_alpha = 1.0;
-                tracing::info!("Returned from FMV Cutscene Player to Options menu.");
+                state.exit_room_to_menu(TitlePhase::TestRoomsSelect);
+                tracing::info!("Returned from FMV Cutscene Player to Test Rooms menu.");
             }
             KeyCode::KeyN | KeyCode::PageDown | KeyCode::ArrowRight | KeyCode::KeyD => {
                 state.fmv_viewer.audio_track = None;

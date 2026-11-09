@@ -362,6 +362,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         menu_ctrl.in_game_active = true;
         menu_ctrl.title_sm.phase = TitlePhase::TransitionToGame;
         menu_ctrl.title_sm.fade_alpha = 0.0;
+        menu_ctrl.title_sm.is_fading_in = false;
+        menu_ctrl.title_sm.is_fading_out = false;
     }
 
     let mut model_viewer = ModelViewerState::new();
@@ -467,6 +469,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         bgm_stage_override: None,
         audio_debug: rooms::audio_room::AudioDebugState::default(),
         surface_sfx_room: rooms::surface_sfx_room::SurfaceSfxRoomState::default(),
+        inventory_room: rooms::inventory_room::InventoryDebugRoomState::default(),
+        puzzle_cutaway_room: rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default(),
         sim_core,
         gpu_map,
         map_texture_bind_groups,

@@ -499,8 +499,7 @@ mod tests {
         assert_eq!(sim.scenario.current_room, "ob01");
         assert_eq!(sim.camera.active_room_id.as_deref(), Some("ob01"));
         assert_eq!(
-            sim.camera.curr_snapshot.eye,
-            sim.camera.prev_snapshot.eye,
+            sim.camera.curr_snapshot.eye, sim.camera.prev_snapshot.eye,
             "camera.reset_to_player() must snap prev_snapshot == curr_snapshot on room transition"
         );
 
@@ -508,12 +507,7 @@ mod tests {
         assert!(sim.transition_to_room("ap01", Vec3::new(0.0, 0.0, 0.0), 0.0, true));
         assert_eq!(sim.camera.active_room_id.as_deref(), Some("ap01"));
 
-        assert!(sim.transition_to_room(
-            "rr21",
-            Vec3::new(-100850.0, 0.0, -59400.0),
-            2.0,
-            true
-        ));
+        assert!(sim.transition_to_room("rr21", Vec3::new(-100850.0, 0.0, -59400.0), 2.0, true));
         assert_eq!(sim.camera.active_room_id.as_deref(), Some("rr21"));
         assert_eq!(
             sim.camera.active_cam_source,

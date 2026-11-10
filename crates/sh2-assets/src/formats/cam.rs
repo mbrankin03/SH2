@@ -62,7 +62,11 @@ pub fn normalize_room_cam_rel_path(room_or_rel_path: &str) -> Option<(String, St
         .or_else(|| file_part.strip_suffix(".CLD"))
         .unwrap_or(file_part);
 
-    if stem.len() < 2 || !stem.as_bytes()[0..2].iter().all(|b| b.is_ascii_alphabetic()) {
+    if stem.len() < 2
+        || !stem.as_bytes()[0..2]
+            .iter()
+            .all(|b| b.is_ascii_alphabetic())
+    {
         return None;
     }
 

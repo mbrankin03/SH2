@@ -212,12 +212,7 @@ impl AssetPathResolver {
         &self,
         room_or_rel_path: &str,
         prefer_sh2ee: bool,
-    ) -> Option<(
-        PathBuf,
-        crate::formats::cam::CamSourceKind,
-        String,
-        String,
-    )> {
+    ) -> Option<(PathBuf, crate::formats::cam::CamSourceKind, String, String)> {
         let (room_id, rel_path) =
             crate::formats::cam::normalize_room_cam_rel_path(room_or_rel_path)?;
         let loader =

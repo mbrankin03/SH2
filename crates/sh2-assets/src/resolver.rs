@@ -48,10 +48,10 @@ impl AssetPathResolver {
         "../mods/sh2_4k_textures/sh2_4k_textures.zip",
         "mods/sh2_4k_textures",
         "../mods/sh2_4k_textures",
-        "/home/matthewb/Documents/SH2-Port/mods/sh2_4k_textures/sh2_4k_textures.zip",
-        "/home/matthewb/Documents/SH2-Port/mods/sh2_4k_textures",
+        "../../Documents/SH2-Port/mods/sh2_4k_textures/sh2_4k_textures.zip",
+        "../../Documents/SH2-Port/mods/sh2_4k_textures",
         "tools/texture_pipeline/output",
-        "/home/matthewb/Documents/SH2-Port/tools/texture_pipeline/output",
+        "../../Documents/SH2-Port/tools/texture_pipeline/output",
     ];
 
     /// Resolves the active asset directories, prioritizing `SH2_DATA_DIR` environment variable,
@@ -257,5 +257,144 @@ impl AssetPathResolver {
         }
 
         None
+    }
+
+    /// Resolves a room camera trigger volume file (`.cam`) from a room identifier (`"er01"`, `"ob01"`,
+    /// `"rr21"`, `"ap01"`, `"ma61"`) or relative path (`"bg/er/er01.cam"`, `"bg2/ma/ma61.cam"`),
+    /// prioritizing SH2:EE overrides (`sh2e/bg/<area>/<room>.cam` or `sh2e/bg2/<area>/<room>.cam`)
+    /// when `prefer_sh2ee` is `true` before falling back to vanilla retail `data/bg/...` (`SH2-50`).
+    ///
+    /// Returns `(resolved_path, source_kind, canonical_room_id, canonical_rel_path)`.
+    pub fn resolve_cam_file(
+        &self,
+        room_or_rel_path: &str,
+        prefer_sh2ee: bool,
+    ) -> Option<(PathBuf, crate::formats::cam::CamSourceKind, String, String)> {
+        let (room_id, rel_path) =
+            crate::formats::cam::normalize_room_cam_rel_path(room_or_rel_path)?;
+        let loader =
+            crate::formats::texture::TextureLoader::new(&self.data_dir, self.sh2e_dir.as_ref());
+        let (resolved_path, is_sh2ee) =
+            loader.resolve_path_with_preference(&rel_path, prefer_sh2ee)?;
+        let source = if is_sh2ee {
+            crate::formats::cam::CamSourceKind::Sh2eeOverride
+        } else {
+            crate::formats::cam::CamSourceKind::VanillaRetail
+        };
+        Some((resolved_path, source, room_id, rel_path))
+    }
+
+    /// Resolves and parses the `.cam` trigger volume file for `room_or_rel_path`, prioritizing
+    /// SH2:EE widescreen/high-framerate overrides (`sh2e/bg/...` / `sh2e/bg2/...`) when
+    /// `prefer_sh2ee` is `true` before falling back to vanilla retail (`data/bg/...` / `data/bg2/...`).
+    ///
+    /// For town outdoor rooms (`ca*`, `cb*`, `cc*`, `cd*`), if the area's global `*GB.cam` file is
+    /// present on disk, its supplementary road records are automatically appended after the room's
+    /// primary records (`SH2-50`).
+    pub fn load_cam_for_room(
+        &self,
+        room_or_rel_path: &str,
+        prefer_sh2ee: bool,
+    ) -> Result<Option<crate::formats::cam::ResolvedCamAsset>, crate::error::AssetError> {
+        let Some((resolved_path, source, room_id, relative_path)) =
+            self.resolve_cam_file(room_or_rel_path, prefer_sh2ee)
+        else {
+            return Ok(None);
+        };
+
+        let bytes = std::fs::read(&resolved_path)?;
+        let mut cam_file = crate::formats::cam::parse_cam(&bytes)?;
+
+        // If this is an outdoor town room (ca/cb/cc/cd), append global area `<area>GB.cam` fallback records if present
+        if let Some(gb_rel) = crate::formats::cam::global_area_cam_rel_path(&room_id) {
+            if let Some((gb_path, _, _, _)) = self.resolve_cam_file(&gb_rel, prefer_sh2ee) {
+                if gb_path != resolved_path {
+                    if let Ok(gb_bytes) = std::fs::read(&gb_path) {
+                        if let Ok(gb_cam) = crate::formats::cam::parse_cam(&gb_bytes) {
+                            cam_file.extend_records(gb_cam);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Some(crate::formats::cam::ResolvedCamAsset {
+            room_id,
+            relative_path,
+            resolved_path,
+            source,
+            cam_file,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formats::cam::CamSourceKind;
+
+    #[test]
+    fn test_sh2_50_resolve_and_load_cam_with_sh2ee_override_priority() {
+        let resolver = AssetPathResolver::resolve();
+        if !resolver.data_dir.exists() {
+            return;
+        }
+
+        // 1. Rooms that have SH2:EE override .cam files in `sh2e/bg/` and `sh2e/bg2/`
+        let sh2ee_override_rooms = [
+            ("er01", "bg/er/er01.cam"),
+            ("ob01", "bg/ob/ob01.cam"),
+            ("ap01", "bg/ap/ap01.cam"),
+            ("ap108", "bg/ap/ap108.cam"),
+            ("cc11", "bg/cc/cc11.cam"),
+            ("hp121", "bg/hp/hp121.cam"),
+            ("ps66", "bg/ps/ps66.cam"),
+            ("rr25", "bg/rr/rr25.cam"),
+            ("ma61", "bg2/ma/ma61.cam"),
+            ("ma69", "bg2/ma/ma69.cam"),
+        ];
+
+        for (room_id, expected_rel) in sh2ee_override_rooms {
+            // With `prefer_sh2ee = true`, must resolve to `sh2e/` (`Sh2eeOverride`)
+            let asset = resolver
+                .load_cam_for_room(room_id, true)
+                .expect("Should parse .cam without error")
+                .unwrap_or_else(|| panic!("Expected .cam asset for {room_id}"));
+            assert_eq!(asset.room_id, room_id);
+            assert_eq!(asset.relative_path, expected_rel);
+            assert_eq!(
+                asset.source,
+                CamSourceKind::Sh2eeOverride,
+                "Expected {room_id} to resolve from sh2e/"
+            );
+            assert!(!asset.cam_file.records.is_empty());
+
+            // With `prefer_sh2ee = false`, must resolve to `data/` (`VanillaRetail`)
+            let vanilla_asset = resolver
+                .load_cam_for_room(room_id, false)
+                .expect("Should parse vanilla .cam without error")
+                .unwrap_or_else(|| panic!("Expected vanilla .cam asset for {room_id}"));
+            assert_eq!(vanilla_asset.source, CamSourceKind::VanillaRetail);
+            assert!(!vanilla_asset.cam_file.records.is_empty());
+        }
+
+        // 2. Rooms that only exist in vanilla `data/bg/` or `data/bg2/` must gracefully fall back
+        let vanilla_only_rooms = [
+            ("rr21", "bg/rr/rr21.cam"),
+            ("th09", "bg/th/th09.cam"),
+            ("ma01", "bg2/ma/ma01.cam"),
+            ("bw01", "bg/bw/bw01.cam"),
+        ];
+
+        for (room_id, expected_rel) in vanilla_only_rooms {
+            let asset = resolver
+                .load_cam_for_room(room_id, true)
+                .expect("Should parse fallback .cam")
+                .unwrap_or_else(|| panic!("Expected fallback .cam for {room_id}"));
+            assert_eq!(asset.room_id, room_id);
+            assert_eq!(asset.relative_path, expected_rel);
+            assert_eq!(asset.source, CamSourceKind::VanillaRetail);
+            assert!(!asset.cam_file.records.is_empty());
+        }
     }
 }

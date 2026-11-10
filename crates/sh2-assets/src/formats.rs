@@ -33,8 +33,9 @@ pub use bink::{
     DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, BINK_MAGICS,
 };
 pub use cam::{
-    parse_cam, AreaSizeType, CamFile, CamMovementParams, CamMovementType, ChaseCamParam,
-    FixAngCamParam, LocusCircleCamParam, RoadArea, RoadRecord, RoadType, SettleCamParam,
+    global_area_cam_rel_path, normalize_room_cam_rel_path, parse_cam, AreaSizeType, CamFile,
+    CamMovementParams, CamMovementType, CamSourceKind, ChaseCamParam, FixAngCamParam,
+    LocusCircleCamParam, ResolvedCamAsset, RoadArea, RoadRecord, RoadType, SettleCamParam,
     VC_RD_CAM_LIKE_SETTLE_F, VC_RD_END_DATA_F, VC_RD_INVALID_SV_F, VC_RD_LIM_UP_FAR_VIEW_F,
     VC_RD_MARGE_ROAD_F, VC_RD_NOT_WARP_F, VC_RD_NO_EXTRA_AREA_F, VC_RD_NO_FRONT_FLIP_F,
     VC_RD_USE_NEAR_ENEMY_F, VC_RD_USE_NO_ENEMY_F, VC_RD_WARP_IN_F, VC_RD_WARP_IN_OUT_FS,

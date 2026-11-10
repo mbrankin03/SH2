@@ -110,34 +110,14 @@ pub(crate) fn find_cld_file_for_room(room: TestRoomKind) -> sh2_core::collision:
     )
 }
 
-/// Locate and load authentic `.cam` camera volume file for the given test room, checking SH2:EE overrides first.
-pub(crate) fn find_cam_file_for_room(
-    room: TestRoomKind,
-) -> Option<sh2_assets::formats::cam::CamFile> {
-    let resolver = sh2_assets::AssetPathResolver::resolve();
-
-    let cam_rel = match room {
-        TestRoomKind::RestroomStart => Some("bg/er/er01.cam"),
-        TestRoomKind::HotelBoilerRoom => Some("bg/rr/rr21.cam"),
+/// Returns the retail room camera identifier (`<room>`) for a `TestRoomKind`, if backed by an authentic stage (`SH2-50`).
+pub(crate) const fn room_cam_id_for_test_room(room: TestRoomKind) -> Option<&'static str> {
+    match room {
+        TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => Some("ob01"),
+        TestRoomKind::RestroomStart => Some("er01"),
+        TestRoomKind::HotelBoilerRoom => Some("rr21"),
         _ => None,
-    };
-
-    if let Some(rel) = cam_rel {
-        if let Some(p) = resolver.resolve_file(rel) {
-            if let Ok(bytes) = std::fs::read(&p) {
-                if let Ok(cam) = sh2_assets::formats::cam::parse_cam(&bytes) {
-                    tracing::info!(
-                        "Loaded authentic .cam camera file ({}) with {} road records",
-                        p.display(),
-                        cam.records.len()
-                    );
-                    return Some(cam);
-                }
-            }
-        }
     }
-
-    None
 }
 
 pub(crate) fn find_map_file_for_room(

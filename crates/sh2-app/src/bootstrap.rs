@@ -7,9 +7,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 use crate::assets::{
-    build_map_texture_bind_groups, find_cam_file_for_room, find_cld_file_for_room,
-    find_map_file_for_room, find_vanilla_map_file_for_room, load_anm_file, load_character_asset,
-    load_viewer_entry_asset,
+    build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
+    find_vanilla_map_file_for_room, load_anm_file, load_character_asset, load_viewer_entry_asset,
+    room_cam_id_for_test_room,
 };
 use crate::cli::CliArgs;
 use crate::rooms;
@@ -218,16 +218,18 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
 
     let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
     sim_core.collision = find_cld_file_for_room(initial_room);
-    sim_core
-        .camera
-        .set_cam_file(find_cam_file_for_room(initial_room));
     sim_core.input.set_control_scheme(ControlScheme::Tank);
     sim_core.scenario.flashlight_on = true;
-    sim_core.snap_player_transform(player_pos, player_yaw);
-    sim_core.camera.reset_to_player(
-        sim_core.scenario.player_position,
-        sim_core.scenario.player_yaw,
-    );
+    if let Some(room_id) = room_cam_id_for_test_room(initial_room) {
+        sim_core.transition_to_room(room_id, player_pos, player_yaw, true);
+    } else {
+        sim_core.camera.set_cam_file(None);
+        sim_core.snap_player_transform(player_pos, player_yaw);
+        sim_core.camera.reset_to_player(
+            sim_core.scenario.player_position,
+            sim_core.scenario.player_yaw,
+        );
+    }
 
     // Atmospheric Silent Hill lighting & fog (calibrated for current room)
     render_ctx.update_fog(&fog_uniforms);

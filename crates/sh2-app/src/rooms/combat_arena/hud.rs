@@ -130,14 +130,14 @@ fn render_camera_and_player_telemetry(
         .draft_config
         .video
         .texture_quality;
-    let tex_color = if tex_quality == sh2_core::config::WorldTextureQuality::Ai4kMaster {
-        green
-    } else {
-        yellow
+    let tex_color = match tex_quality {
+        sh2_core::config::WorldTextureQuality::Ai4kMaster => green,
+        sh2_core::config::WorldTextureQuality::Sh2eeHd => cyan,
+        sh2_core::config::WorldTextureQuality::OriginalPs2 => yellow,
     };
     state.menu_rasterizer.draw_text(
         &format!(
-            "TEXTURES: {} [T: Toggle 4K AI / Original PS2]",
+            "TEXTURES: {} [T: Cycle 4K AI / SH2:EE / PS2]",
             tex_quality.label()
         ),
         20,

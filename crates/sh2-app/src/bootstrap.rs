@@ -465,7 +465,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         .audio
         .enable_restored_cut_audio;
 
-    AppState {
+    let initial_tex_quality = menu_ctrl.options_menu.draft_config.video.texture_quality;
+    let mut state = AppState {
         window,
         surface,
         surface_config,
@@ -550,5 +551,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         last_frame: Instant::now(),
         frame_counter: 0,
         sim_time: 0.0,
-    }
+    };
+    state.apply_texture_quality(initial_tex_quality);
+    state
 }

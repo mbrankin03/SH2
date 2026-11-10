@@ -149,10 +149,12 @@ impl AssetPathResolver {
     }
 
     /// Resolves the active 4K AI Super-Resolution Texture Pack directory or `.zip` archive (`SH2-92`),
-    /// prioritizing `SH2_4K_TEX_DIR` environment variable, then checking `<game_root>/sh2e_4k`,
-    /// `<game_root>/mods/sh2_4k_textures(.zip)`, and workspace candidates.
+    /// prioritizing `SH2_4K_TEX_DIR` / `SH2_4K_TEXTURE_DIR` environment variables, then checking
+    /// `<game_root>/sh2e_4k`, `<game_root>/mods/sh2_4k_textures(.zip)`, and workspace candidates.
     pub fn resolve_4k_texture_pack_dir(&self) -> Option<PathBuf> {
-        if let Ok(env_dir) = std::env::var("SH2_4K_TEX_DIR") {
+        if let Ok(env_dir) =
+            std::env::var("SH2_4K_TEX_DIR").or_else(|_| std::env::var("SH2_4K_TEXTURE_DIR"))
+        {
             let p = PathBuf::from(env_dir);
             if p.is_dir() || (p.is_file() && p.extension().is_some_and(|e| e == "zip")) {
                 return Some(p);

@@ -227,10 +227,16 @@ impl AppState {
 
         let sync_char = |c: &mut Option<CharacterAsset>| {
             if let Some(asset) = c.as_mut() {
-                asset.texture_bind_groups = if use_hd {
-                    asset.hd_texture_bind_groups.clone()
-                } else {
-                    asset.vanilla_texture_bind_groups.clone()
+                asset.texture_bind_groups = match quality {
+                    sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                        asset.hd_texture_bind_groups.clone()
+                    }
+                    sh2_core::config::WorldTextureQuality::Sh2eeHd => {
+                        asset.sh2e_texture_bind_groups.clone()
+                    }
+                    sh2_core::config::WorldTextureQuality::OriginalPs2 => {
+                        asset.vanilla_texture_bind_groups.clone()
+                    }
                 };
             }
         };

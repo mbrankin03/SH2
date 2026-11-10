@@ -622,7 +622,14 @@ fn read_texture_from_stored_zip(zip_path: &Path, sub: &str, tex_id: u32) -> Opti
                 }
                 let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
                 let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
-                let data_start = local_hdr_ofs + 30 + lname_len + lextra_len;
+                let data_start = local_hdr_ofs
+                    .checked_add(30)?
+                    .checked_add(lname_len)?
+                    .checked_add(lextra_len)?;
+                let data_end = data_start.checked_add(comp_size)?;
+                if data_end > file_len || comp_size > 128 * 1024 * 1024 {
+                    return None;
+                }
                 file.seek(SeekFrom::Start(data_start)).ok()?;
                 let mut payload = vec![0u8; comp_size as usize];
                 file.read_exact(&mut payload).ok()?;

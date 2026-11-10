@@ -13,15 +13,21 @@
 //! - PS2 / PC `.tex` texture containers (magic `0x19990901`).
 
 use crate::error::AssetError;
-use crate::formats::dxt::{decode_dds_file, decode_dxt};
-use image::ImageReader;
 use std::fs;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+mod container;
 mod cutaway;
-use cutaway::decode_ps2_tex;
+mod mipmap;
+mod zip_archive;
+
+pub use container::{decode_texture_bytes, parse_texture_container, ContainerTexture};
 pub use cutaway::{probe_tex_dimensions, CutawayTextureAsset, CutawayViewportTransform};
+pub use mipmap::{
+    compute_alpha_coverage_rgba, generate_mipmap_chain_rgba, mip_level_count_for_size,
+    preserve_alpha_coverage_in_place, ALPHA_CUTOUT_MIP_REF_THRESHOLD,
+};
+use zip_archive::{read_texture_from_stored_zip, ZipIndexCache};
 
 /// Magic identifier for PS2/PC single/multi-sprite `.tex` texture containers (`0x19990901`).
 pub const TEX_MAGIC: u32 = 0x19990901;
@@ -39,10 +45,6 @@ pub struct DecodedTexture {
     /// Uncompressed RGBA8 pixel byte array (stride = `width * 4`).
     pub rgba: Vec<u8>,
 }
-
-type ZipEntryIndex = std::collections::HashMap<String, (u64, u64)>;
-type ZipIndexCache =
-    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, ZipEntryIndex>>>;
 
 /// Asset loader managing file resolution and decoding across vanilla, SH2:EE, and 4K AI Master directories.
 #[derive(Debug, Clone)]
@@ -111,7 +113,9 @@ impl TextureLoader {
             };
             let nested_zip = root.join(zip_name);
             if nested_zip.is_file() {
-                if let Some(dec) = self.read_texture_from_stored_zip(&nested_zip, sub, tex_id) {
+                if let Some(dec) =
+                    read_texture_from_stored_zip(&self.zip_index_cache, &nested_zip, sub, tex_id)
+                {
                     return Some(dec);
                 }
             }
@@ -119,66 +123,14 @@ impl TextureLoader {
 
         // 2. If `root` itself is a `.zip` archive, read directly from it
         if root.is_file() && root.extension().is_some_and(|e| e == "zip") {
-            if let Some(dec) = self.read_texture_from_stored_zip(root, sub, tex_id) {
+            if let Some(dec) =
+                read_texture_from_stored_zip(&self.zip_index_cache, root, sub, tex_id)
+            {
                 return Some(dec);
             }
         }
 
         None
-    }
-
-    /// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
-    /// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive,
-    /// caching the parsed Central Directory index in `self.zip_index_cache`.
-    fn read_texture_from_stored_zip(
-        &self,
-        zip_path: &Path,
-        sub: &str,
-        tex_id: u32,
-    ) -> Option<DecodedTexture> {
-        use std::io::{Read, Seek, SeekFrom};
-
-        let cached_entry = {
-            let mut guard = self.zip_index_cache.lock().ok()?;
-            if !guard.contains_key(zip_path) {
-                if let Some(index) = build_stored_zip_central_directory_index(zip_path) {
-                    guard.insert(zip_path.to_path_buf(), index);
-                }
-            }
-            let index = guard.get(zip_path)?;
-            let dds_key = format!("{sub}/{tex_id}.dds");
-            let png_key = format!("{sub}/{tex_id}.png");
-            index
-                .get(&dds_key)
-                .copied()
-                .map(|v| (dds_key, v))
-                .or_else(|| index.get(&png_key).copied().map(|v| (png_key, v)))
-        };
-
-        let (entry_name, (local_hdr_ofs, comp_size)) = cached_entry?;
-        let mut file = fs::File::open(zip_path).ok()?;
-        let file_len = file.metadata().ok()?.len();
-
-        let mut lhdr = [0u8; 30];
-        file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
-        file.read_exact(&mut lhdr).ok()?;
-        if &lhdr[0..4] != b"PK\x03\x04" {
-            return None;
-        }
-        let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
-        let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
-        let data_start = local_hdr_ofs
-            .checked_add(30)?
-            .checked_add(lname_len)?
-            .checked_add(lextra_len)?;
-        let data_end = data_start.checked_add(comp_size)?;
-        if data_end > file_len || comp_size > 128 * 1024 * 1024 {
-            return None;
-        }
-        file.seek(SeekFrom::Start(data_start)).ok()?;
-        let mut payload = vec![0u8; comp_size as usize];
-        file.read_exact(&mut payload).ok()?;
-        decode_texture_bytes(&payload, Path::new(&entry_name)).ok()
     }
 
     /// Resolves and decodes a 4K AI upscaled world `.map` texture override (`map/<tex_id>.dds` or `.png`), if available.
@@ -582,614 +534,6 @@ impl TextureLoader {
     }
 }
 
-/// Parses the Central Directory of a `ZIP_STORED` (32-bit or ZIP64) archive once and returns
-/// a lookup map `entry_name -> (local_header_offset, compressed_size)`.
-fn build_stored_zip_central_directory_index(
-    zip_path: &Path,
-) -> Option<std::collections::HashMap<String, (u64, u64)>> {
-    use std::io::{Read, Seek, SeekFrom};
-
-    let mut file = fs::File::open(zip_path).ok()?;
-    let file_len = file.metadata().ok()?.len();
-    if file_len < 22 {
-        return None;
-    }
-
-    // Read the last 65 KB to locate the End of Central Directory (EOCD / ZIP64 EOCD Locator)
-    let tail_len = file_len.min(65557) as usize;
-    file.seek(SeekFrom::End(-(tail_len as i64))).ok()?;
-    let mut tail = vec![0u8; tail_len];
-    file.read_exact(&mut tail).ok()?;
-
-    let mut eocd_pos = None;
-    for i in (0..=tail_len.saturating_sub(22)).rev() {
-        if &tail[i..i + 4] == b"PK\x05\x06" {
-            eocd_pos = Some(i);
-            break;
-        }
-    }
-    let eocd_idx = eocd_pos?;
-
-    let mut cd_size =
-        u32::from_le_bytes(tail[eocd_idx + 12..eocd_idx + 16].try_into().ok()?) as u64;
-    let mut cd_offset =
-        u32::from_le_bytes(tail[eocd_idx + 16..eocd_idx + 20].try_into().ok()?) as u64;
-
-    // Check for ZIP64 End of Central Directory Locator (`PK\x06\x07`) 20 bytes before EOCD
-    if eocd_idx >= 20 && &tail[eocd_idx - 20..eocd_idx - 16] == b"PK\x06\x07" {
-        let zip64_eocd_ofs = u64::from_le_bytes(tail[eocd_idx - 12..eocd_idx - 4].try_into().ok()?);
-        let mut z64_hdr = [0u8; 56];
-        if file.seek(SeekFrom::Start(zip64_eocd_ofs)).is_ok()
-            && file.read_exact(&mut z64_hdr).is_ok()
-            && &z64_hdr[0..4] == b"PK\x06\x06"
-        {
-            cd_size = u64::from_le_bytes(z64_hdr[40..48].try_into().ok()?);
-            cd_offset = u64::from_le_bytes(z64_hdr[48..56].try_into().ok()?);
-        }
-    }
-
-    if cd_offset.checked_add(cd_size)? > file_len || cd_size > 32 * 1024 * 1024 {
-        return None;
-    }
-
-    file.seek(SeekFrom::Start(cd_offset)).ok()?;
-    let mut cd_buf = vec![0u8; cd_size as usize];
-    file.read_exact(&mut cd_buf).ok()?;
-
-    let mut index = std::collections::HashMap::new();
-    let mut pos = 0usize;
-    while pos + 46 <= cd_buf.len() && &cd_buf[pos..pos + 4] == b"PK\x01\x02" {
-        let compression = u16::from_le_bytes(cd_buf[pos + 10..pos + 12].try_into().ok()?);
-        let mut comp_size = u32::from_le_bytes(cd_buf[pos + 20..pos + 24].try_into().ok()?) as u64;
-        let uncomp_size = u32::from_le_bytes(cd_buf[pos + 24..pos + 28].try_into().ok()?) as u64;
-        let name_len = u16::from_le_bytes(cd_buf[pos + 28..pos + 30].try_into().ok()?) as usize;
-        let extra_len = u16::from_le_bytes(cd_buf[pos + 30..pos + 32].try_into().ok()?) as usize;
-        let comment_len = u16::from_le_bytes(cd_buf[pos + 32..pos + 34].try_into().ok()?) as usize;
-        let mut local_hdr_ofs =
-            u32::from_le_bytes(cd_buf[pos + 42..pos + 46].try_into().ok()?) as u64;
-
-        let name_start = pos + 46;
-        let extra_start = name_start + name_len;
-        let next_pos = extra_start + extra_len + comment_len;
-        if next_pos > cd_buf.len() {
-            break;
-        }
-
-        if compression == 0 {
-            if let Ok(entry_name) = std::str::from_utf8(&cd_buf[name_start..extra_start]) {
-                // Parse ZIP64 extra field (`0x0001`) if any 32-bit field is `0xFFFF_FFFF`
-                if uncomp_size == 0xFFFF_FFFF
-                    || comp_size == 0xFFFF_FFFF
-                    || local_hdr_ofs == 0xFFFF_FFFF
-                {
-                    let extra = &cd_buf[extra_start..extra_start + extra_len];
-                    let mut ep = 0usize;
-                    while ep + 4 <= extra.len() {
-                        let header_id = u16::from_le_bytes(extra[ep..ep + 2].try_into().ok()?);
-                        let data_sz =
-                            u16::from_le_bytes(extra[ep + 2..ep + 4].try_into().ok()?) as usize;
-                        ep += 4;
-                        if header_id == 0x0001 && ep + data_sz <= extra.len() {
-                            let mut zp = ep;
-                            if uncomp_size == 0xFFFF_FFFF && zp + 8 <= ep + data_sz {
-                                zp += 8;
-                            }
-                            if comp_size == 0xFFFF_FFFF && zp + 8 <= ep + data_sz {
-                                comp_size = u64::from_le_bytes(extra[zp..zp + 8].try_into().ok()?);
-                                zp += 8;
-                            }
-                            if local_hdr_ofs == 0xFFFF_FFFF && zp + 8 <= ep + data_sz {
-                                local_hdr_ofs =
-                                    u64::from_le_bytes(extra[zp..zp + 8].try_into().ok()?);
-                            }
-                            break;
-                        }
-                        ep += data_sz;
-                    }
-                }
-                index.insert(entry_name.to_string(), (local_hdr_ofs, comp_size));
-            }
-        }
-        pos = next_pos;
-    }
-
-    Some(index)
-}
-
-/// Computes the number of mipmap levels for a 2D texture of dimensions `(width, height)`.
-pub fn mip_level_count_for_size(width: u32, height: u32) -> u32 {
-    let max_dim = width.max(height).max(1);
-    32 - max_dim.leading_zeros()
-}
-
-/// Alpha-test cutout threshold (`128` out of `255` = `0.5` normalized) used when preserving
-/// cutout alpha coverage across mipmap levels (`SH2-92`).
-pub const ALPHA_CUTOUT_MIP_REF_THRESHOLD: u8 = 128;
-
-/// Computes the fraction `[0.0, 1.0]` of texels in an RGBA8 buffer whose alpha channel is `>= threshold`.
-pub fn compute_alpha_coverage_rgba(rgba: &[u8], threshold: u8) -> f32 {
-    let total_px = rgba.len() / 4;
-    if total_px == 0 {
-        return 1.0;
-    }
-    let mut passing = 0usize;
-    for px in rgba.as_chunks::<4>().0 {
-        if px[3] >= threshold {
-            passing += 1;
-        }
-    }
-    (passing as f32) / (total_px as f32)
-}
-
-/// Rescales the alpha channel of `rgba` via binary search so that its cutout coverage at `threshold`
-/// matches `target_coverage` (Castano's alpha-to-coverage mipmap preservation method).
-///
-/// Prevents distant chain-link fences, grate floors, tree foliage, and character hair fringes from
-/// thinning out or vanishing at higher mip levels under 16x anisotropic filtering.
-pub fn preserve_alpha_coverage_in_place(rgba: &mut [u8], target_coverage: f32, threshold: u8) {
-    let total_px = rgba.len() / 4;
-    if total_px == 0 || target_coverage <= 0.0 || target_coverage >= 1.0 {
-        return;
-    }
-
-    let current_cov = compute_alpha_coverage_rgba(rgba, threshold);
-    if (current_cov - target_coverage).abs() <= (1.0 / (total_px as f32).max(1.0)) {
-        return;
-    }
-
-    // Binary search for a multiplier `scale` in `[0.25, 8.0]` that brings coverage closest to `target_coverage`.
-    // If all texels fell below `threshold` after uniform box averaging (so `current_cov == 0.0`),
-    // ensure the lower bound starts at the exact scale needed to lift the peak alpha in this mip level
-    // back to `threshold`.
-    let max_a = rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|px| px[3])
-        .max()
-        .unwrap_or(0);
-    if max_a == 0 {
-        return;
-    }
-
-    let min_lift = (threshold as f32) / (max_a as f32);
-    let mut lo = 0.25f32;
-    let mut hi = (4.0f32).max(min_lift * 1.5);
-    let mut best_scale = min_lift.max(1.0);
-    let mut best_diff = (current_cov - target_coverage).abs();
-
-    for _ in 0..12 {
-        let mid = 0.5 * (lo + hi);
-        let mut passing = 0usize;
-        for px in rgba.as_chunks::<4>().0 {
-            let scaled_a = (px[3] as f32 * mid).round().clamp(0.0, 255.0) as u8;
-            if scaled_a >= threshold {
-                passing += 1;
-            }
-        }
-        let cov = (passing as f32) / (total_px as f32);
-        let diff = (cov - target_coverage).abs();
-        if diff < best_diff || (cov > 0.0 && best_diff == target_coverage) {
-            best_diff = diff;
-            best_scale = mid;
-        }
-        if cov < target_coverage {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-
-    if (best_scale - 1.0).abs() > 1e-3 {
-        for px in rgba.as_chunks_mut::<4>().0 {
-            px[3] = (px[3] as f32 * best_scale).round().clamp(0.0, 255.0) as u8;
-        }
-    }
-}
-
-/// Generates a full box-filtered RGBA8 mipmap chain from level-0 `rgba` pixels.
-///
-/// Preserves cutout alpha coverage (`ALPHA_CUTOUT_MIP_REF_THRESHOLD`) and weights RGB downsampling
-/// by alpha so transparent cutout regions neither thin out at distance nor bleed dark borders into
-/// higher mip levels when sampled with 16x anisotropic filtering.
-pub fn generate_mipmap_chain_rgba(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-) -> Vec<(u32, u32, Vec<u8>)> {
-    let w0 = width.max(1);
-    let h0 = height.max(1);
-    let levels = mip_level_count_for_size(w0, h0) as usize;
-    let mut chain = Vec::with_capacity(levels);
-
-    let expected0 = (w0 as usize) * (h0 as usize) * 4;
-    let mip0 = if rgba.len() >= expected0 {
-        rgba[..expected0].to_vec()
-    } else {
-        vec![255u8; expected0]
-    };
-    let mip0_coverage = compute_alpha_coverage_rgba(&mip0, ALPHA_CUTOUT_MIP_REF_THRESHOLD);
-    let has_cutout_alpha = mip0_coverage > 0.0 && mip0_coverage < 1.0;
-    chain.push((w0, h0, mip0));
-
-    for lvl in 1..levels {
-        let (prev_w, prev_h, ref prev_data) = chain[lvl - 1];
-        let next_w = (prev_w / 2).max(1);
-        let next_h = (prev_h / 2).max(1);
-        let mut next_data = vec![0u8; (next_w as usize) * (next_h as usize) * 4];
-
-        let pw = prev_w as usize;
-        let ph = prev_h as usize;
-        let nw = next_w as usize;
-        let nh = next_h as usize;
-
-        for y in 0..nh {
-            let sy0 = (y * 2).min(ph - 1);
-            let sy1 = (y * 2 + 1).min(ph - 1);
-            for x in 0..nw {
-                let sx0 = (x * 2).min(pw - 1);
-                let sx1 = (x * 2 + 1).min(pw - 1);
-
-                let idx00 = (sy0 * pw + sx0) * 4;
-                let idx10 = (sy0 * pw + sx1) * 4;
-                let idx01 = (sy1 * pw + sx0) * 4;
-                let idx11 = (sy1 * pw + sx1) * 4;
-
-                let samples = [idx00, idx10, idx01, idx11];
-                let mut sum_a = 0u32;
-                let mut sum_r = 0f32;
-                let mut sum_g = 0f32;
-                let mut sum_b = 0f32;
-                let mut weight_sum = 0f32;
-
-                for &s_ofs in &samples {
-                    let a = prev_data[s_ofs + 3];
-                    sum_a += a as u32;
-                    let w = (a as f32).max(1.0);
-                    sum_r += prev_data[s_ofs] as f32 * w;
-                    sum_g += prev_data[s_ofs + 1] as f32 * w;
-                    sum_b += prev_data[s_ofs + 2] as f32 * w;
-                    weight_sum += w;
-                }
-
-                let dst_ofs = (y * nw + x) * 4;
-                next_data[dst_ofs] = (sum_r / weight_sum).round().clamp(0.0, 255.0) as u8;
-                next_data[dst_ofs + 1] = (sum_g / weight_sum).round().clamp(0.0, 255.0) as u8;
-                next_data[dst_ofs + 2] = (sum_b / weight_sum).round().clamp(0.0, 255.0) as u8;
-                next_data[dst_ofs + 3] = ((sum_a + 2) / 4) as u8;
-            }
-        }
-
-        if has_cutout_alpha {
-            preserve_alpha_coverage_in_place(
-                &mut next_data,
-                mip0_coverage,
-                ALPHA_CUTOUT_MIP_REF_THRESHOLD,
-            );
-        }
-
-        chain.push((next_w, next_h, next_data));
-    }
-
-    chain
-}
-
-/// Entry in a `0x19990901` texture container.
-#[derive(Debug, Clone)]
-pub struct ContainerTexture {
-    /// Texture identification number.
-    pub id: u32,
-    /// Sprite identification number.
-    pub sprite_id: u32,
-    /// Width in pixels.
-    pub width: usize,
-    /// Height in pixels.
-    pub height: usize,
-    /// Format code: 0 = DXT1, 1/2 = DXT3, 3/4 = DXT5, 0x20 = BGRA8.
-    pub format: u8,
-    /// Whether the texture payload is DXT compressed.
-    pub is_compressed: bool,
-    /// Raw texture bytes (compressed DXT or uncompressed BGRA8).
-    pub data: Vec<u8>,
-}
-
-impl ContainerTexture {
-    /// Decodes the texture payload into an uncompressed RGBA8 buffer.
-    pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
-        if self.width == 0 || self.height == 0 {
-            return Err(AssetError::InvalidData(
-                "Texture dimensions must be non-zero".to_string(),
-            ));
-        }
-
-        if !self.is_compressed {
-            if self.format == 0x20 {
-                // Uncompressed 32-bit BGRA -> RGBA
-                let expected_len = self.width * self.height * 4;
-                if self.data.len() < expected_len {
-                    return Err(AssetError::BufferUnderflow {
-                        required: expected_len,
-                        available: self.data.len(),
-                    });
-                }
-                let mut rgba = vec![0u8; expected_len];
-                let (src_chunks, _) = self.data[..expected_len].as_chunks::<4>();
-                let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
-                for (src, dst) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
-                    dst[0] = src[2]; // R
-                    dst[1] = src[1]; // G
-                    dst[2] = src[0]; // B
-                    dst[3] = src[3]; // A
-                }
-                return Ok(rgba);
-            } else if self.format == 8 {
-                let pixel_count = self.width * self.height;
-                let required = pixel_count + 32 + 1024;
-                if self.data.len() < required {
-                    return Err(AssetError::BufferUnderflow {
-                        required,
-                        available: self.data.len(),
-                    });
-                }
-                let pal = &self.data[pixel_count + 32..pixel_count + 32 + 1024];
-                let mut rgba = vec![0u8; pixel_count * 4];
-                for (i, &idx) in self.data[..pixel_count].iter().enumerate() {
-                    let p_ofs = (idx as usize) * 4;
-                    let d_ofs = i * 4;
-                    rgba[d_ofs] = pal[p_ofs];
-                    rgba[d_ofs + 1] = pal[p_ofs + 1];
-                    rgba[d_ofs + 2] = pal[p_ofs + 2];
-                    rgba[d_ofs + 3] = pal[p_ofs + 3];
-                }
-                return Ok(rgba);
-            } else {
-                return Err(AssetError::UnsupportedFormat(format!(
-                    "Unsupported uncompressed texture format: {}",
-                    self.format
-                )));
-            }
-        }
-
-        let kind = match self.format {
-            0 => 1,
-            1 | 2 => 3,
-            3 | 4 => 5,
-            _ => {
-                return Err(AssetError::UnsupportedFormat(format!(
-                    "Unsupported compressed DXT texture format: {}",
-                    self.format
-                )))
-            }
-        };
-        decode_dxt(&self.data, self.width, self.height, kind)
-    }
-}
-
-/// Parses all textures stored in a `0x19990901` container buffer.
-pub fn parse_texture_container(
-    bytes: &[u8],
-    offset: usize,
-) -> Result<Vec<ContainerTexture>, AssetError> {
-    if bytes.len() < offset + 16 {
-        return Err(AssetError::BufferUnderflow {
-            required: offset + 16,
-            available: bytes.len(),
-        });
-    }
-
-    let magic = u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ]);
-    if magic != TEX_MAGIC {
-        return Err(AssetError::InvalidMagic {
-            expected: &TEX_MAGIC_BYTES,
-            found: bytes[offset..offset + 4].to_vec(),
-        });
-    }
-
-    let mut textures = Vec::new();
-    let mut p = offset + 16;
-    let end = bytes.len();
-
-    while end.saturating_sub(p) >= 16 {
-        let tag = u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]);
-        if tag == 0 {
-            p += 16;
-            continue;
-        }
-
-        if end.saturating_sub(p) < 32 {
-            break;
-        }
-
-        let tex_id = tag;
-        let w = u16::from_le_bytes([bytes[p + 4], bytes[p + 5]]) as usize;
-        let h = u16::from_le_bytes([bytes[p + 6], bytes[p + 7]]) as usize;
-        let nspr = u16::from_le_bytes([bytes[p + 12], bytes[p + 13]]) as usize;
-        p += 32;
-
-        if w == 0 || h == 0 {
-            // Guard against zero-dimension malformed entries to prevent GPU validation panics
-            continue;
-        }
-
-        for _ in 0..nspr {
-            if end.saturating_sub(p) < 32 {
-                break;
-            }
-
-            let sid = u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]);
-            let fmt = bytes[p + 12];
-            let comp = bytes[p + 13];
-            let ds =
-                u32::from_le_bytes([bytes[p + 16], bytes[p + 17], bytes[p + 18], bytes[p + 19]])
-                    as usize;
-            let marker = u16::from_le_bytes([bytes[p + 30], bytes[p + 31]]);
-            p += 32;
-
-            if marker != 0x9900 && marker != 0 {
-                // If marker doesn't match standard sprite header, stop container traversal safely
-                return Ok(textures);
-            }
-
-            if ds > 0 {
-                let exp = if comp != 0 {
-                    w.div_ceil(4).max(1) * h.div_ceil(4).max(1) * if fmt == 0 { 8 } else { 16 }
-                } else if fmt == 8 {
-                    w * h + 32 + 1024
-                } else {
-                    w * h * 4
-                };
-
-                if p + exp <= end {
-                    textures.push(ContainerTexture {
-                        id: tex_id,
-                        sprite_id: sid,
-                        width: w,
-                        height: h,
-                        format: fmt,
-                        is_compressed: comp != 0,
-                        data: bytes[p..p + exp].to_vec(),
-                    });
-                }
-                p += exp;
-            }
-        }
-    }
-
-    Ok(textures)
-}
-
-/// Decodes texture raw bytes depending on container magic and image signatures.
-pub fn decode_texture_bytes(bytes: &[u8], path: &Path) -> Result<DecodedTexture, AssetError> {
-    // 1. Check for DirectDraw Surface (DDS)
-    if bytes.len() >= 4 && &bytes[0..4] == b"DDS " {
-        let (width, height, rgba) = decode_dds_file(bytes)?;
-        return Ok(DecodedTexture {
-            width,
-            height,
-            rgba,
-        });
-    }
-
-    // 2. Check for PNG image signature
-    if bytes.len() >= 8 && &bytes[0..8] == b"\x89PNG\r\n\x1a\n" {
-        let img = ImageReader::new(Cursor::new(bytes))
-            .with_guessed_format()
-            .map_err(|e| AssetError::ImageError(e.to_string()))?
-            .decode()
-            .map_err(|e| AssetError::ImageError(e.to_string()))?;
-        let rgba_img = img.to_rgba8();
-        return Ok(DecodedTexture {
-            width: rgba_img.width() as usize,
-            height: rgba_img.height() as usize,
-            rgba: rgba_img.into_raw(),
-        });
-    }
-
-    // 3. Check for PS2-format .tex (`bytes[0x0c..0x10] == b"\xa7\xa7\xa7\xa7"`)
-    if bytes.len() >= 0xc0 && &bytes[0x0c..0x10] == b"\xa7\xa7\xa7\xa7" {
-        return decode_ps2_tex(bytes);
-    }
-
-    // 4. Check for PS2/PC .tex container (`0x19990901`)
-    if bytes.len() >= 16 {
-        let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        if magic == TEX_MAGIC {
-            // 4a. Multi-sprite container traversal
-            if let Ok(container_textures) = parse_texture_container(bytes, 0) {
-                if let Some(first) = container_textures.first() {
-                    let rgba = first.to_rgba()?;
-                    return Ok(DecodedTexture {
-                        width: first.width,
-                        height: first.height,
-                        rgba,
-                    });
-                }
-            }
-
-            // 4b. Single-sprite container unpack (0x30 header, pixel payload at 0x50)
-            // Used by standalone splash/UI screens like start00.tex, start01.tex, konami2048x2048.tex, etc.
-            if bytes.len() >= 0x50 {
-                let w = u16::from_le_bytes([bytes[0x38], bytes[0x39]]) as usize;
-                let h = u16::from_le_bytes([bytes[0x3a], bytes[0x3b]]) as usize;
-                let fmt = u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]);
-                let length =
-                    u32::from_le_bytes([bytes[0x40], bytes[0x41], bytes[0x42], bytes[0x43]])
-                        as usize;
-
-                if w > 0 && h > 0 {
-                    let pixel_data = &bytes[0x50..];
-                    if fmt == 0x20 {
-                        let exp_len = w * h * 4;
-                        if pixel_data.len() >= exp_len {
-                            let mut rgba = vec![0u8; exp_len];
-                            let (src_chunks, _) = pixel_data[..exp_len].as_chunks::<4>();
-                            let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
-                            for (src, dst) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
-                                dst[0] = src[2]; // R
-                                dst[1] = src[1]; // G
-                                dst[2] = src[0]; // B
-                                dst[3] = src[3]; // A
-                            }
-                            return Ok(DecodedTexture {
-                                width: w,
-                                height: h,
-                                rgba,
-                            });
-                        }
-                    } else if fmt == 8 {
-                        let idx_len = w * h;
-                        let pal_ofs = length.max(idx_len) + 0x20;
-                        if pixel_data.len() >= pal_ofs + 1024 {
-                            let pal = &pixel_data[pal_ofs..pal_ofs + 1024];
-                            let mut rgba = vec![0u8; idx_len * 4];
-                            for (i, &idx) in pixel_data[..idx_len].iter().enumerate() {
-                                let p_ofs = (idx as usize) * 4;
-                                let d_ofs = i * 4;
-                                rgba[d_ofs] = pal[p_ofs];
-                                rgba[d_ofs + 1] = pal[p_ofs + 1];
-                                rgba[d_ofs + 2] = pal[p_ofs + 2];
-                                rgba[d_ofs + 3] = pal[p_ofs + 3];
-                            }
-                            return Ok(DecodedTexture {
-                                width: w,
-                                height: h,
-                                rgba,
-                            });
-                        }
-                    } else {
-                        let kind = match fmt {
-                            0x100 => 1,         // DXT1
-                            0x101 | 0x102 => 3, // DXT2/DXT3
-                            0x103 | 0x104 => 5, // DXT4/DXT5
-                            _ => 3,
-                        };
-                        let bpp = if kind == 1 { 8 } else { 16 };
-                        let exp_len = w.div_ceil(4) * h.div_ceil(4) * bpp;
-                        if pixel_data.len() >= exp_len {
-                            let rgba = decode_dxt(&pixel_data[..exp_len], w, h, kind)?;
-                            return Ok(DecodedTexture {
-                                width: w,
-                                height: h,
-                                rgba,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Err(AssetError::UnsupportedFormat(format!(
-        "Unknown texture format for {}",
-        path.display()
-    )))
-}
-
 /// Recursively performs case-insensitive path component lookup.
 fn find_case_insensitive(root: &Path, rel: &Path) -> Option<PathBuf> {
     let mut current = root.to_path_buf();
@@ -1220,8 +564,6 @@ mod tests {
 
     #[test]
     fn test_alpha_coverage_preserving_mipmap_chain() {
-        // Construct a 64x64 cutout chain-link fence wire grid where wire crossings (`x % 4 == 0 || y % 4 == 0`)
-        // have alpha=220 and gaps have alpha=0 (~43.75% coverage at mip 0).
         // Simulate a soft-edged chain-link fence / foliage cutout texture (`64x64`).
         // Each `2x2` cell contains two opaque/semi-opaque wire texels (`160..240`) and two transparent texels (`0`),
         // so naive `2x2` box-averaging drops most cells below `128` (`(180 + 180 + 0 + 0) / 4 = 90 < 128`),
@@ -1261,6 +603,43 @@ mod tests {
             (cov1 - cov0).abs() < 0.08,
             "Mip 1 cutout coverage should match mip 0 ({cov0}) instead of collapsing to 0.0 under naive box averaging, got {cov1}"
         );
+    }
+
+    #[test]
+    fn test_gloss_map_alpha_not_distorted_by_cutout_mipmap_scaling() {
+        // Construct a 64x64 non-cutout gloss/specular texture (like Pyramid Head's helmet `1303`/`1307`),
+        // where `min_alpha >= 12` (zero transparent cutout texels) and ~84% of pixels have `alpha < 128`.
+        // Verify `generate_mipmap_chain_rgba` does NOT apply Castano cutout scaling at threshold 128
+        // and preserves the smooth box-averaged gloss alpha distribution across mip levels.
+        let w = 64u32;
+        let h = 64u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let ofs = ((y * w + x) * 4) as usize;
+                rgba[ofs] = 120;
+                rgba[ofs + 1] = 60;
+                rgba[ofs + 2] = 40;
+                let highlight = (x % 8 == 0) && (y % 8 == 0);
+                rgba[ofs + 3] = if highlight { 220 } else { 16 };
+            }
+        }
+
+        let chain = generate_mipmap_chain_rgba(&rgba, w, h);
+        assert_eq!(chain.len(), 7);
+        for (lvl, (_, _, ref mip_data)) in chain.iter().enumerate() {
+            let min_a = mip_data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|px| px[3])
+                .min()
+                .unwrap_or(0);
+            assert!(
+                min_a >= 16,
+                "Mip level {lvl} of non-cutout gloss texture must preserve min_alpha >= 16, got {min_a}"
+            );
+        }
     }
 
     #[test]

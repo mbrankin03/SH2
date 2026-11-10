@@ -11,6 +11,7 @@ use crate::events::{
     StageProgramRunner,
 };
 use crate::inventory::InventoryManager;
+use crate::room_loader::default_room_id_for_stage;
 use glam::Vec3;
 use std::collections::HashSet;
 use std::f32::consts::PI;
@@ -58,6 +59,8 @@ pub struct ScenarioState {
     pub current_stage: u16,
     /// Current stage name.
     pub stage_name: &'static str,
+    /// Active room map/camera identifier (e.g. `"er01"`, `"ob01"`, `"rr21"`, `"th09"`, `"ma61"`) (`SH2-50`).
+    pub current_room: String,
     /// Player character.
     pub character: PlayableCharacter,
     /// Player health (100.0 max).
@@ -123,6 +126,7 @@ impl ScenarioState {
                     scenario,
                     current_stage: 1, // Observation Deck restroom overlook
                     stage_name: "Observation Deck",
+                    current_room: "er01".to_string(),
                     character: PlayableCharacter::James,
                     health: 100.0,
                     max_health: 100.0,
@@ -172,6 +176,7 @@ impl ScenarioState {
                     scenario,
                     current_stage: 53, // Heaven's Night bar
                     stage_name: "Heaven's Night",
+                    current_room: "th09".to_string(),
                     character: PlayableCharacter::Maria,
                     health: 100.0,
                     max_health: 100.0,
@@ -261,8 +266,22 @@ impl ScenarioState {
     ) {
         self.current_stage = stage_id;
         self.stage_name = stage_name;
+        if let Some(default_room) = default_room_id_for_stage(stage_id) {
+            self.current_room = default_room.to_string();
+        }
         self.player_position = spawn_pos;
         self.player_yaw = spawn_yaw;
+    }
+
+    /// Transition to a specific room identifier (`"er01"`, `"ob01"`, `"rr21"`, `"ap01"`, `"ma61"`)
+    /// within the current or target stage.
+    pub fn set_current_room(&mut self, room_id: impl Into<String>) {
+        let raw = room_id.into();
+        if let Some((canonical, _)) = sh2_assets::formats::cam::normalize_room_cam_rel_path(&raw) {
+            self.current_room = canonical;
+        } else {
+            self.current_room = raw;
+        }
     }
 
     /// Advance Maria's Born from a Wish scenario stage progression.

@@ -14,6 +14,7 @@ pub mod input;
 pub mod inventory;
 pub mod locomotion;
 pub mod math;
+pub mod room_loader;
 pub mod scenario;
 pub mod secondary_physics;
 pub mod simulation;
@@ -27,7 +28,7 @@ pub use animation::{
     CharacterLocomotionClips, JamesBasicClips, JamesStageClips, LocomotionAnimCommand,
     LocomotionAnimationSync, MariaLocomotionClips,
 };
-pub use camera::{CameraMovementType, CameraSnapshot, Ps2CameraController};
+pub use camera::{CameraMovementType, CameraSnapshot, CameraSourceKind, Ps2CameraController};
 pub use clock::{EngineClock, FramePacer, DEFAULT_MAX_ACCUMULATED};
 pub use collision::{FloorSample, SurfaceMaterial};
 pub use combat::{
@@ -137,6 +138,10 @@ pub use locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
     MARIA_COMPANION_SPEED_MULTIPLIER, MIN_FOOTSTEP_INTERVAL_SECS, QUICK_TURN_SPEED_RAD_PER_SEC,
     SH2_WORLD_UNIT_SCALE,
+};
+pub use room_loader::{
+    default_room_id_for_stage, resolve_room_id_for_stage_or_override, stage_room_descriptor,
+    StageRoomDescriptor,
 };
 pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
 pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};

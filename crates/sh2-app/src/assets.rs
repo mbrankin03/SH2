@@ -802,6 +802,32 @@ pub(crate) fn find_vanilla_map_file_for_room(room: TestRoomKind) -> Option<MapFi
     None
 }
 
+/// Loads the SH2:EE HD (`sh2e/`) `.map` textures for a room without 4K AI Master overrides,
+/// supporting full 3-tier switching (`4K AI Master` / `SH2:EE HD` / `Original PS2`).
+pub(crate) fn find_sh2e_map_file_for_room(room: TestRoomKind) -> Option<MapFile> {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let base_roots = [
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
+    ];
+    let (rel_path, map_name) = match room {
+        TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => ("bg/ob/ob01.map", "ob01"),
+        TestRoomKind::RestroomStart => ("bg/er/er01.map", "er01"),
+        TestRoomKind::HotelBoilerRoom => ("bg/rr/rr21.map", "rr21"),
+        _ => return None,
+    };
+    for base in &base_roots {
+        let loader = TextureLoader::new(
+            PathBuf::from(base).join("data"),
+            Some(PathBuf::from(base).join("sh2e")),
+        );
+        if let Ok(map) = loader.load_sh2e_map(rel_path, map_name) {
+            return Some(map);
+        }
+    }
+    None
+}
+
 /// Builds GPU diffuse texture bind groups for every material in a [`MapFile`], caching by `texture_id`
 /// to avoid redundant VRAM allocations and falling back to [`RenderContext::default_texture_bind_group`].
 pub(crate) fn build_map_texture_bind_groups(

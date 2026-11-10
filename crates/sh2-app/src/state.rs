@@ -49,6 +49,7 @@ pub(crate) struct AppState {
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    pub map_sh2e_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub map_vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub character: Option<CharacterAsset>,
@@ -215,14 +216,26 @@ impl AppState {
     }
 
     /// Synchronizes all active map, character, enemy, and cutscene texture bind groups with
-    /// the given [`sh2_core::config::WorldTextureQuality`] (`Ai4kMaster` vs `OriginalPs2`).
+    /// the given [`sh2_core::config::WorldTextureQuality`] (`Ai4kMaster` / `Sh2eeHd` / `OriginalPs2`).
     pub fn apply_texture_quality(&mut self, quality: sh2_core::config::WorldTextureQuality) {
-        let use_hd = quality == sh2_core::config::WorldTextureQuality::Ai4kMaster;
-        self.map_texture_bind_groups = if use_hd || self.map_vanilla_texture_bind_groups.is_empty()
-        {
-            self.map_hd_texture_bind_groups.clone()
-        } else {
-            self.map_vanilla_texture_bind_groups.clone()
+        self.map_texture_bind_groups = match quality {
+            sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                self.map_hd_texture_bind_groups.clone()
+            }
+            sh2_core::config::WorldTextureQuality::Sh2eeHd => {
+                if !self.map_sh2e_texture_bind_groups.is_empty() {
+                    self.map_sh2e_texture_bind_groups.clone()
+                } else {
+                    self.map_hd_texture_bind_groups.clone()
+                }
+            }
+            sh2_core::config::WorldTextureQuality::OriginalPs2 => {
+                if !self.map_vanilla_texture_bind_groups.is_empty() {
+                    self.map_vanilla_texture_bind_groups.clone()
+                } else {
+                    self.map_hd_texture_bind_groups.clone()
+                }
+            }
         };
 
         let sync_char = |c: &mut Option<CharacterAsset>| {
@@ -258,12 +271,21 @@ impl AppState {
             for actor_asset in &mut session.actor_assets {
                 sync_char(actor_asset);
             }
-            if use_hd {
-                if let Some(ref hd) = session.stage_hd_texture_bind_groups {
-                    session.stage_texture_bind_groups = Some(hd.clone());
+            let chosen_stage_bgs = match quality {
+                sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                    session.stage_hd_texture_bind_groups.clone()
                 }
-            } else if let Some(ref van) = session.stage_vanilla_texture_bind_groups {
-                session.stage_texture_bind_groups = Some(van.clone());
+                sh2_core::config::WorldTextureQuality::Sh2eeHd => session
+                    .stage_sh2e_texture_bind_groups
+                    .clone()
+                    .or_else(|| session.stage_hd_texture_bind_groups.clone()),
+                sh2_core::config::WorldTextureQuality::OriginalPs2 => session
+                    .stage_vanilla_texture_bind_groups
+                    .clone()
+                    .or_else(|| session.stage_hd_texture_bind_groups.clone()),
+            };
+            if chosen_stage_bgs.is_some() {
+                session.stage_texture_bind_groups = chosen_stage_bgs;
             }
         }
     }

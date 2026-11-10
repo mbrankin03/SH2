@@ -40,12 +40,17 @@ pub struct DecodedTexture {
     pub rgba: Vec<u8>,
 }
 
+type ZipEntryIndex = std::collections::HashMap<String, (u64, u64)>;
+type ZipIndexCache =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, ZipEntryIndex>>>;
+
 /// Asset loader managing file resolution and decoding across vanilla, SH2:EE, and 4K AI Master directories.
 #[derive(Debug, Clone)]
 pub struct TextureLoader {
     data_dir: PathBuf,
     sh2e_dir: Option<PathBuf>,
     ai_4k_dir: Option<PathBuf>,
+    zip_index_cache: ZipIndexCache,
 }
 
 impl TextureLoader {
@@ -56,6 +61,9 @@ impl TextureLoader {
             data_dir: data_dir.as_ref().to_path_buf(),
             sh2e_dir: sh2e_dir.map(|p| p.as_ref().to_path_buf()),
             ai_4k_dir: resolver.resolve_4k_texture_pack_dir(),
+            zip_index_cache: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -69,6 +77,9 @@ impl TextureLoader {
             data_dir: data_dir.as_ref().to_path_buf(),
             sh2e_dir: sh2e_dir.map(|p| p.as_ref().to_path_buf()),
             ai_4k_dir: ai_4k_dir.map(|p| p.as_ref().to_path_buf()),
+            zip_index_cache: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 
@@ -100,7 +111,7 @@ impl TextureLoader {
             };
             let nested_zip = root.join(zip_name);
             if nested_zip.is_file() {
-                if let Some(dec) = read_texture_from_stored_zip(&nested_zip, sub, tex_id) {
+                if let Some(dec) = self.read_texture_from_stored_zip(&nested_zip, sub, tex_id) {
                     return Some(dec);
                 }
             }
@@ -108,12 +119,66 @@ impl TextureLoader {
 
         // 2. If `root` itself is a `.zip` archive, read directly from it
         if root.is_file() && root.extension().is_some_and(|e| e == "zip") {
-            if let Some(dec) = read_texture_from_stored_zip(root, sub, tex_id) {
+            if let Some(dec) = self.read_texture_from_stored_zip(root, sub, tex_id) {
                 return Some(dec);
             }
         }
 
         None
+    }
+
+    /// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
+    /// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive,
+    /// caching the parsed Central Directory index in `self.zip_index_cache`.
+    fn read_texture_from_stored_zip(
+        &self,
+        zip_path: &Path,
+        sub: &str,
+        tex_id: u32,
+    ) -> Option<DecodedTexture> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let cached_entry = {
+            let mut guard = self.zip_index_cache.lock().ok()?;
+            if !guard.contains_key(zip_path) {
+                if let Some(index) = build_stored_zip_central_directory_index(zip_path) {
+                    guard.insert(zip_path.to_path_buf(), index);
+                }
+            }
+            let index = guard.get(zip_path)?;
+            let dds_key = format!("{sub}/{tex_id}.dds");
+            let png_key = format!("{sub}/{tex_id}.png");
+            index
+                .get(&dds_key)
+                .copied()
+                .map(|v| (dds_key, v))
+                .or_else(|| index.get(&png_key).copied().map(|v| (png_key, v)))
+        };
+
+        let (entry_name, (local_hdr_ofs, comp_size)) = cached_entry?;
+        let mut file = fs::File::open(zip_path).ok()?;
+        let file_len = file.metadata().ok()?.len();
+
+        let mut lhdr = [0u8; 30];
+        file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
+        file.read_exact(&mut lhdr).ok()?;
+        if &lhdr[0..4] != b"PK\x03\x04" {
+            return None;
+        }
+        let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
+        let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
+        let data_start = local_hdr_ofs
+            .checked_add(30)?
+            .checked_add(lname_len)?
+            .checked_add(lextra_len)?;
+        let data_end = data_start.checked_add(comp_size)?;
+        if data_end > file_len || comp_size > 128 * 1024 * 1024 {
+            return None;
+        }
+        file.seek(SeekFrom::Start(data_start)).ok()?;
+        let mut payload = vec![0u8; comp_size as usize];
+        file.read_exact(&mut payload).ok()?;
+        decode_texture_bytes(&payload, Path::new(&entry_name)).ok()
     }
 
     /// Resolves and decodes a 4K AI upscaled world `.map` texture override (`map/<tex_id>.dds` or `.png`), if available.
@@ -220,18 +285,9 @@ impl TextureLoader {
         Ok(map)
     }
 
-    /// Loads a `.map` level geometry file with SH2:EE high-resolution texture pack interception
-    /// and shared stage area texture bank merging (`<area>.map`).
-    ///
-    /// # Interceptor Precedence
-    /// 1. Resolves the geometry and primary embedded textures from `sh2e/bg/.../*.map` first,
-    ///    falling back to `data/bg/.../*.map`.
-    /// 2. If both `sh2e/` and `data/` versions of the `.map` exist, compares every embedded texture
-    ///    by `texture_id` and keeps whichever texture has the higher pixel resolution (`width * height`).
-    /// 3. Automatically locates and merges the shared stage texture bank `<area>.map` in the same
-    ///    directory (e.g. `bg/ob/ob.map` for `bg/ob/ob01.map`, or `bg/rr/rr.map` for `bg/rr/rr21.map`),
-    ///    resolving shared area foliage, sign, and environment textures referenced by room materials.
-    pub fn load_map_with_hd_overrides(
+    /// Loads a `.map` level geometry file with SH2:EE high-resolution texture pack (`sh2e/`)
+    /// and shared stage area texture bank merging (`<area>.map`), without applying 4K AI Master overrides.
+    pub fn load_sh2e_map(
         &self,
         relative_map_path: impl AsRef<Path>,
         map_name: &str,
@@ -266,9 +322,28 @@ impl TextureLoader {
         // Merge shared area texture bank `<area>.map` in the same directory (e.g. `bg/ob/ob.map` for `bg/ob/ob01.map`)
         self.merge_shared_area_textures(clean_rel, &mut map);
 
-        // Apply 4K AI Master texture overrides from `ai_4k_dir/map/<tex_id>.dds` or `.png` if present
-        self.apply_4k_map_texture_overrides(&mut map);
+        Ok(map)
+    }
 
+    /// Loads a `.map` level geometry file with SH2:EE high-resolution texture pack interception,
+    /// shared stage area texture bank merging (`<area>.map`), and 4K AI Master overrides.
+    ///
+    /// # Interceptor Precedence
+    /// 1. Resolves the geometry and primary embedded textures from `sh2e/bg/.../*.map` first,
+    ///    falling back to `data/bg/.../*.map`.
+    /// 2. If both `sh2e/` and `data/` versions of the `.map` exist, compares every embedded texture
+    ///    by `texture_id` and keeps whichever texture has the higher pixel resolution (`width * height`).
+    /// 3. Automatically locates and merges the shared stage texture bank `<area>.map` in the same
+    ///    directory (e.g. `bg/ob/ob.map` for `bg/ob/ob01.map`, or `bg/rr/rr.map` for `bg/rr/rr21.map`),
+    ///    resolving shared area foliage, sign, and environment textures referenced by room materials.
+    /// 4. Applies 4K AI Master texture overrides from `ai_4k_dir/map/<tex_id>.dds` or `.zip` if present.
+    pub fn load_map_with_hd_overrides(
+        &self,
+        relative_map_path: impl AsRef<Path>,
+        map_name: &str,
+    ) -> Result<crate::formats::map::MapFile, AssetError> {
+        let mut map = self.load_sh2e_map(relative_map_path, map_name)?;
+        self.apply_4k_map_texture_overrides(&mut map);
         Ok(map)
     }
 
@@ -507,9 +582,11 @@ impl TextureLoader {
     }
 }
 
-/// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
-/// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive.
-fn read_texture_from_stored_zip(zip_path: &Path, sub: &str, tex_id: u32) -> Option<DecodedTexture> {
+/// Parses the Central Directory of a `ZIP_STORED` (32-bit or ZIP64) archive once and returns
+/// a lookup map `entry_name -> (local_header_offset, compressed_size)`.
+fn build_stored_zip_central_directory_index(
+    zip_path: &Path,
+) -> Option<std::collections::HashMap<String, (u64, u64)>> {
     use std::io::{Read, Seek, SeekFrom};
 
     let mut file = fs::File::open(zip_path).ok()?;
@@ -551,7 +628,7 @@ fn read_texture_from_stored_zip(zip_path: &Path, sub: &str, tex_id: u32) -> Opti
         }
     }
 
-    if cd_offset + cd_size > file_len || cd_size > 32 * 1024 * 1024 {
+    if cd_offset.checked_add(cd_size)? > file_len || cd_size > 32 * 1024 * 1024 {
         return None;
     }
 
@@ -559,9 +636,7 @@ fn read_texture_from_stored_zip(zip_path: &Path, sub: &str, tex_id: u32) -> Opti
     let mut cd_buf = vec![0u8; cd_size as usize];
     file.read_exact(&mut cd_buf).ok()?;
 
-    let target_dds = format!("{sub}/{tex_id}.dds");
-    let target_png = format!("{sub}/{tex_id}.png");
-
+    let mut index = std::collections::HashMap::new();
     let mut pos = 0usize;
     while pos + 46 <= cd_buf.len() && &cd_buf[pos..pos + 4] == b"PK\x01\x02" {
         let compression = u16::from_le_bytes(cd_buf[pos + 10..pos + 12].try_into().ok()?);
@@ -580,8 +655,8 @@ fn read_texture_from_stored_zip(zip_path: &Path, sub: &str, tex_id: u32) -> Opti
             break;
         }
 
-        if let Ok(entry_name) = std::str::from_utf8(&cd_buf[name_start..extra_start]) {
-            if (entry_name == target_dds || entry_name == target_png) && compression == 0 {
+        if compression == 0 {
+            if let Ok(entry_name) = std::str::from_utf8(&cd_buf[name_start..extra_start]) {
                 // Parse ZIP64 extra field (`0x0001`) if any 32-bit field is `0xFFFF_FFFF`
                 if uncomp_size == 0xFFFF_FFFF
                     || comp_size == 0xFFFF_FFFF
@@ -612,34 +687,13 @@ fn read_texture_from_stored_zip(zip_path: &Path, sub: &str, tex_id: u32) -> Opti
                         ep += data_sz;
                     }
                 }
-
-                // Seek to Local File Header (`PK\x03\x04`) and read payload bytes
-                let mut lhdr = [0u8; 30];
-                file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
-                file.read_exact(&mut lhdr).ok()?;
-                if &lhdr[0..4] != b"PK\x03\x04" {
-                    return None;
-                }
-                let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
-                let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
-                let data_start = local_hdr_ofs
-                    .checked_add(30)?
-                    .checked_add(lname_len)?
-                    .checked_add(lextra_len)?;
-                let data_end = data_start.checked_add(comp_size)?;
-                if data_end > file_len || comp_size > 128 * 1024 * 1024 {
-                    return None;
-                }
-                file.seek(SeekFrom::Start(data_start)).ok()?;
-                let mut payload = vec![0u8; comp_size as usize];
-                file.read_exact(&mut payload).ok()?;
-                return decode_texture_bytes(&payload, Path::new(entry_name)).ok();
+                index.insert(entry_name.to_string(), (local_hdr_ofs, comp_size));
             }
         }
         pos = next_pos;
     }
 
-    None
+    Some(index)
 }
 
 /// Computes the number of mipmap levels for a 2D texture of dimensions `(width, height)`.

@@ -8,8 +8,8 @@ use winit::window::Window;
 
 use crate::assets::{
     build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
-    find_vanilla_map_file_for_room, load_anm_file, load_character_asset, load_viewer_entry_asset,
-    room_cam_id_for_test_room,
+    find_sh2e_map_file_for_room, find_vanilla_map_file_for_room, load_anm_file,
+    load_character_asset, load_viewer_entry_asset, room_cam_id_for_test_room,
 };
 use crate::cli::CliArgs;
 use crate::rooms;
@@ -123,9 +123,12 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
 
     // Build level diffuse texture bind groups per material (cached by texture_id to avoid redundant VRAM allocations)
     let map_hd_texture_bind_groups = build_map_texture_bind_groups(&render_ctx, &map_file);
+    let map_sh2e_texture_bind_groups = find_sh2e_map_file_for_room(initial_room)
+        .map(|sh2e_map| build_map_texture_bind_groups(&render_ctx, &sh2e_map))
+        .unwrap_or_else(|| map_hd_texture_bind_groups.clone());
     let map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(initial_room)
         .map(|van_map| build_map_texture_bind_groups(&render_ctx, &van_map))
-        .unwrap_or_else(|| map_hd_texture_bind_groups.clone());
+        .unwrap_or_else(|| map_sh2e_texture_bind_groups.clone());
     let map_texture_bind_groups = map_hd_texture_bind_groups.clone();
 
     // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
@@ -492,6 +495,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         sim_core,
         gpu_map,
         map_hd_texture_bind_groups,
+        map_sh2e_texture_bind_groups,
         map_vanilla_texture_bind_groups,
         map_texture_bind_groups,
         character,

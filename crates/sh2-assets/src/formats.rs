@@ -52,7 +52,7 @@ pub use demo::{
     DemoLightKind, DemoLightOp, DemoLightState, DEMO_DDS_MAGIC, DEMO_MAX_CHARS, DEMO_MAX_LIGHTS,
     DEMO_SCREEN_SY, DEMO_SCR_Z_SCALE,
 };
-pub use dxt::{decode_dds_file, decode_dxt};
+pub use dxt::{decode_dds_file, decode_dxt, encode_dds_rgba, encode_dxt_rgba};
 pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
 pub use mdls::{
     parse_mdl, ModelClusterDelta, ModelClusterTarget, ModelFile, ModelPrimitive, ModelTexture,
@@ -67,7 +67,8 @@ pub use sound::{
     AFS_MAGIC, PS2_VAG_HEAD_MAGIC, PS2_VAG_VAGI_MAGIC, PS2_VAG_VERS_MAGIC,
 };
 pub use texture::{
-    decode_texture_bytes, generate_mipmap_chain_rgba, mip_level_count_for_size,
-    parse_texture_container, probe_tex_dimensions, ContainerTexture, CutawayTextureAsset,
-    CutawayViewportTransform, DecodedTexture, TextureLoader, TEX_MAGIC, TEX_MAGIC_BYTES,
+    compute_alpha_coverage_rgba, decode_texture_bytes, generate_mipmap_chain_rgba,
+    mip_level_count_for_size, parse_texture_container, preserve_alpha_coverage_in_place,
+    probe_tex_dimensions, ContainerTexture, CutawayTextureAsset, CutawayViewportTransform,
+    DecodedTexture, TextureLoader, ALPHA_CUTOUT_MIP_REF_THRESHOLD, TEX_MAGIC, TEX_MAGIC_BYTES,
 };

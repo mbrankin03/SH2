@@ -198,6 +198,33 @@ impl RoomController for GrappleRoomController {
             KeyCode::KeyB if pressed => {
                 state.grapple_viewer.skeleton_overlay = !state.grapple_viewer.skeleton_overlay;
             }
+            KeyCode::KeyH | KeyCode::KeyT if pressed => {
+                let next_quality = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality
+                    .next();
+                state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality = next_quality;
+                state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .video
+                    .texture_quality = next_quality;
+                state.apply_texture_quality(next_quality);
+                tracing::info!(
+                    "[Grapple Viewer] Switched Texture Quality -> {:?} ({})",
+                    next_quality,
+                    next_quality.label()
+                );
+            }
             KeyCode::KeyW => {
                 state.key_forward = pressed;
             }
@@ -629,19 +656,24 @@ impl RoomController for GrappleRoomController {
         } else {
             "PLAYING [Space to Pause]"
         };
+        let tex_quality = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .video
+            .texture_quality;
         state.menu_rasterizer.draw_text(
             &format!(
-                "STATUS: {} | SPEED: {:.2}x [-/+] | CAM DIST: {:.0} mm | PITCH: {:.1}° | YAW: {:.1}° | SKELETON: {} [B]",
+                "STATUS: {} | SPEED: {:.2}x [-/+] | CAM DIST: {:.0} mm | SKELETON: {} [B] | TEXTURES: {} [H/T]",
                 status_str,
                 state.grapple_viewer.playback_speed,
                 cam.distance,
-                cam.pitch.to_degrees(),
-                cam.yaw.to_degrees(),
                 if state.grapple_viewer.skeleton_overlay {
                     "ON"
                 } else {
                     "OFF"
-                }
+                },
+                tex_quality.label()
             ),
             20,
             202,

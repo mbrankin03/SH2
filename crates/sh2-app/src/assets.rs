@@ -46,6 +46,7 @@ pub(crate) struct CharacterAsset {
     /// Reusable scratch buffer for GPU `SkeletalVertex` upload.
     pub gpu_vertex_scratch: Vec<SkeletalVertex>,
     pub vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    pub sh2e_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub secondary_physics: SecondaryBonePhysics,
@@ -542,7 +543,7 @@ pub(crate) fn load_character_asset(
     // If this is a `no_tex = 1` reflection or untextured variant (e.g. `ragl.mdl`, `rhhh_edi.mdl`,
     // `rlau.mdl`, `rmry.mdl`), bind the embedded textures from its primary companion `.mdl`.
     if model.textures.is_empty() {
-        if let (Some(mdl_rel), Some(ref base)) = (loaded_mdl_rel, loaded_base_root) {
+        if let (Some(mdl_rel), Some(base)) = (loaded_mdl_rel, loaded_base_root.as_ref()) {
             if let Some(comp_rel) = companion_texture_mdl_path(mdl_rel) {
                 let comp_path = PathBuf::from(base).join(comp_rel);
                 if let Ok(comp_bytes) = std::fs::read(&comp_path) {
@@ -600,7 +601,15 @@ pub(crate) fn load_character_asset(
     unique_tex_ids.dedup();
 
     let mut vanilla_texture_bind_groups = Vec::with_capacity(unique_tex_ids.len());
+    let mut sh2e_texture_bind_groups = Vec::with_capacity(unique_tex_ids.len());
     let mut hd_texture_bind_groups = Vec::with_capacity(unique_tex_ids.len());
+
+    let tex_loader = loaded_base_root.as_ref().map(|base| {
+        TextureLoader::new(
+            PathBuf::from(base).join("data"),
+            Some(PathBuf::from(base).join("sh2e")),
+        )
+    });
 
     for &raw_tid in &unique_tex_ids {
         let tidx = raw_tid as u32;
@@ -613,8 +622,8 @@ pub(crate) fn load_character_asset(
                     Some(&format!("{character_name} Vanilla Texture {tidx}")),
                 );
 
-                // Check if `hd_model` provides an override texture, else generate sharpened 2x HD surface
-                let hd_bg = if let Some(ref hdm) = hd_model {
+                // 1. Build SH2:EE (`sh2e/chr/`) or 2x enhanced bind group
+                let sh2e_bg = if let Some(ref hdm) = hd_model {
                     if let Some(hd_tex) = hdm.textures.get(&tidx) {
                         if let Ok(hd_rgba) = hd_tex.to_rgba() {
                             ctx.create_texture_bind_group(
@@ -639,12 +648,35 @@ pub(crate) fn load_character_asset(
                     )
                 };
 
+                // 2. Check 4K AI Master pack (`chr/<tex_id>.dds` or `.png` / `.zip`) first, falling back to `sh2e_bg`
+                let hd_bg = tex_loader
+                    .as_ref()
+                    .and_then(|tl| tl.load_4k_chr_texture_override(tidx))
+                    .map(|dec| {
+                        tracing::info!(
+                            "Loaded 4K AI Master character texture override for '{}' tex_id={} ({}x{})",
+                            character_name,
+                            tidx,
+                            dec.width,
+                            dec.height
+                        );
+                        ctx.create_texture_bind_group(
+                            dec.width as u32,
+                            dec.height as u32,
+                            &dec.rgba,
+                            Some(&format!("{character_name} 4K AI Texture {tidx}")),
+                        )
+                    })
+                    .unwrap_or_else(|| Arc::clone(&sh2e_bg));
+
                 vanilla_texture_bind_groups.push(van_bg);
+                sh2e_texture_bind_groups.push(sh2e_bg);
                 hd_texture_bind_groups.push(hd_bg);
                 continue;
             }
         }
         vanilla_texture_bind_groups.push(Arc::clone(&ctx.default_texture_bind_group));
+        sh2e_texture_bind_groups.push(Arc::clone(&ctx.default_texture_bind_group));
         hd_texture_bind_groups.push(Arc::clone(&ctx.default_texture_bind_group));
     }
 
@@ -703,6 +735,7 @@ pub(crate) fn load_character_asset(
         morphed_positions_scratch,
         gpu_vertex_scratch,
         vanilla_texture_bind_groups,
+        sh2e_texture_bind_groups,
         hd_texture_bind_groups,
         texture_bind_groups,
         secondary_physics,
@@ -738,6 +771,58 @@ pub(crate) fn load_anm_file(
                     }
                 }
             }
+        }
+    }
+    None
+}
+
+/// Loads only the vanilla PS2 (`data/`) `.map` textures for a room, used for instant live
+/// comparison toggling (`[T]` or `Options -> Video -> World & Character Textures`).
+pub(crate) fn find_vanilla_map_file_for_room(room: TestRoomKind) -> Option<MapFile> {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let base_roots = [
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
+    ];
+    let (rel_path, map_name) = match room {
+        TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => ("bg/ob/ob01.map", "ob01"),
+        TestRoomKind::RestroomStart => ("bg/er/er01.map", "er01"),
+        TestRoomKind::HotelBoilerRoom => ("bg/rr/rr21.map", "rr21"),
+        _ => return None,
+    };
+    for base in &base_roots {
+        let loader = TextureLoader::new(
+            PathBuf::from(base).join("data"),
+            Some(PathBuf::from(base).join("sh2e")),
+        );
+        if let Ok(map) = loader.load_vanilla_map(rel_path, map_name) {
+            return Some(map);
+        }
+    }
+    None
+}
+
+/// Loads the SH2:EE HD (`sh2e/`) `.map` textures for a room without 4K AI Master overrides,
+/// supporting full 3-tier switching (`4K AI Master` / `SH2:EE HD` / `Original PS2`).
+pub(crate) fn find_sh2e_map_file_for_room(room: TestRoomKind) -> Option<MapFile> {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let base_roots = [
+        resolver.game_root.to_string_lossy().to_string(),
+        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
+    ];
+    let (rel_path, map_name) = match room {
+        TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => ("bg/ob/ob01.map", "ob01"),
+        TestRoomKind::RestroomStart => ("bg/er/er01.map", "er01"),
+        TestRoomKind::HotelBoilerRoom => ("bg/rr/rr21.map", "rr21"),
+        _ => return None,
+    };
+    for base in &base_roots {
+        let loader = TextureLoader::new(
+            PathBuf::from(base).join("data"),
+            Some(PathBuf::from(base).join("sh2e")),
+        );
+        if let Ok(map) = loader.load_sh2e_map(rel_path, map_name) {
+            return Some(map);
         }
     }
     None

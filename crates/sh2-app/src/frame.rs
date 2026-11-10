@@ -4,7 +4,8 @@ use std::time::Instant;
 
 use crate::assets::{
     build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
-    load_viewer_entry_asset, room_cam_id_for_test_room,
+    find_sh2e_map_file_for_room, find_vanilla_map_file_for_room, load_viewer_entry_asset,
+    room_cam_id_for_test_room,
 };
 use crate::menu_events::apply_pending_engine_config;
 use crate::rooms;
@@ -179,7 +180,21 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         tracing::info!("Switching test environment to: {:?}", new_room);
         let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
         state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
-        state.map_texture_bind_groups = build_map_texture_bind_groups(&state.render_ctx, &new_map);
+        state.map_hd_texture_bind_groups =
+            build_map_texture_bind_groups(&state.render_ctx, &new_map);
+        state.map_sh2e_texture_bind_groups = find_sh2e_map_file_for_room(new_room)
+            .map(|sh2e_map| build_map_texture_bind_groups(&state.render_ctx, &sh2e_map))
+            .unwrap_or_else(|| state.map_hd_texture_bind_groups.clone());
+        state.map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(new_room)
+            .map(|van_map| build_map_texture_bind_groups(&state.render_ctx, &van_map))
+            .unwrap_or_else(|| state.map_sh2e_texture_bind_groups.clone());
+        let active_tex_quality = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .video
+            .texture_quality;
+        state.apply_texture_quality(active_tex_quality);
         state.fog_uniforms = new_fog;
         state.render_ctx.update_fog(&state.fog_uniforms);
         state.sim_core.collision = find_cld_file_for_room(new_room);

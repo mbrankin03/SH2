@@ -17,6 +17,9 @@ pub(crate) struct ActiveDramaDemoSession {
     pub actor_mirror_skin_scratch: Vec<Vec<[[f32; 4]; 4]>>,
     /// Authentic stage `.map` geometry and textures loaded for this cutscene (`info.stage_map_path`).
     pub stage_gpu_map: Option<GpuMap>,
+    pub stage_hd_texture_bind_groups: Option<Vec<Arc<wgpu::BindGroup>>>,
+    pub stage_sh2e_texture_bind_groups: Option<Vec<Arc<wgpu::BindGroup>>>,
+    pub stage_vanilla_texture_bind_groups: Option<Vec<Arc<wgpu::BindGroup>>>,
     pub stage_texture_bind_groups: Option<Vec<Arc<wgpu::BindGroup>>>,
     #[allow(dead_code)]
     pub catalog_index: usize,
@@ -103,6 +106,9 @@ pub(crate) fn open_drama_demo_session(
     let loaded_actor_count = actor_assets.iter().filter(|a| a.is_some()).count();
 
     let mut stage_gpu_map = None;
+    let mut stage_hd_texture_bind_groups = None;
+    let mut stage_sh2e_texture_bind_groups = None;
+    let mut stage_vanilla_texture_bind_groups = None;
     let mut stage_texture_bind_groups = None;
     if !info.stage_map_path.is_empty() {
         for base in &base_roots {
@@ -113,9 +119,22 @@ pub(crate) fn open_drama_demo_session(
             if let Ok(map) = loader.load_map_with_hd_overrides(info.stage_map_path, info.stage_name)
             {
                 let gpu_map = GpuMap::from_map(&render_ctx.device, &map);
-                let tex_bgs = build_map_texture_bind_groups(render_ctx, &map);
+                let hd_bgs = build_map_texture_bind_groups(render_ctx, &map);
+                let sh2e_bgs = loader
+                    .load_sh2e_map(info.stage_map_path, info.stage_name)
+                    .ok()
+                    .map(|sh2e_map| build_map_texture_bind_groups(render_ctx, &sh2e_map))
+                    .unwrap_or_else(|| hd_bgs.clone());
+                let van_bgs = loader
+                    .load_vanilla_map(info.stage_map_path, info.stage_name)
+                    .ok()
+                    .map(|van_map| build_map_texture_bind_groups(render_ctx, &van_map))
+                    .unwrap_or_else(|| sh2e_bgs.clone());
                 stage_gpu_map = Some(gpu_map);
-                stage_texture_bind_groups = Some(tex_bgs);
+                stage_texture_bind_groups = Some(hd_bgs.clone());
+                stage_hd_texture_bind_groups = Some(hd_bgs);
+                stage_sh2e_texture_bind_groups = Some(sh2e_bgs);
+                stage_vanilla_texture_bind_groups = Some(van_bgs);
                 break;
             }
         }
@@ -139,6 +158,9 @@ pub(crate) fn open_drama_demo_session(
         actor_assets,
         actor_mirror_skin_scratch,
         stage_gpu_map,
+        stage_hd_texture_bind_groups,
+        stage_sh2e_texture_bind_groups,
+        stage_vanilla_texture_bind_groups,
         stage_texture_bind_groups,
         catalog_index: idx,
     })

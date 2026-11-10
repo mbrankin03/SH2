@@ -48,6 +48,9 @@ pub(crate) struct AppState {
     pub horror_triggers_room: HorrorTriggersRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
+    pub map_hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    pub map_sh2e_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    pub map_vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub character: Option<CharacterAsset>,
     pub maria: Option<CharacterAsset>,
@@ -210,6 +213,81 @@ impl AppState {
             surface_view,
             wgpu::LoadOp::Load,
         );
+    }
+
+    /// Synchronizes all active map, character, enemy, and cutscene texture bind groups with
+    /// the given [`sh2_core::config::WorldTextureQuality`] (`Ai4kMaster` / `Sh2eeHd` / `OriginalPs2`).
+    pub fn apply_texture_quality(&mut self, quality: sh2_core::config::WorldTextureQuality) {
+        self.map_texture_bind_groups = match quality {
+            sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                self.map_hd_texture_bind_groups.clone()
+            }
+            sh2_core::config::WorldTextureQuality::Sh2eeHd => {
+                if !self.map_sh2e_texture_bind_groups.is_empty() {
+                    self.map_sh2e_texture_bind_groups.clone()
+                } else {
+                    self.map_hd_texture_bind_groups.clone()
+                }
+            }
+            sh2_core::config::WorldTextureQuality::OriginalPs2 => {
+                if !self.map_vanilla_texture_bind_groups.is_empty() {
+                    self.map_vanilla_texture_bind_groups.clone()
+                } else {
+                    self.map_hd_texture_bind_groups.clone()
+                }
+            }
+        };
+
+        let sync_char = |c: &mut Option<CharacterAsset>| {
+            if let Some(asset) = c.as_mut() {
+                asset.texture_bind_groups = match quality {
+                    sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                        asset.hd_texture_bind_groups.clone()
+                    }
+                    sh2_core::config::WorldTextureQuality::Sh2eeHd => {
+                        asset.sh2e_texture_bind_groups.clone()
+                    }
+                    sh2_core::config::WorldTextureQuality::OriginalPs2 => {
+                        asset.vanilla_texture_bind_groups.clone()
+                    }
+                };
+            }
+        };
+
+        sync_char(&mut self.character);
+        sync_char(&mut self.maria);
+        sync_char(&mut self.enemy_scu_asset);
+        sync_char(&mut self.enemy_mkn_asset);
+        sync_char(&mut self.enemy_nse_asset);
+        sync_char(&mut self.enemy_red_asset);
+        sync_char(&mut self.enemy_pap_asset);
+        sync_char(&mut self.enemy_ike_asset);
+        sync_char(&mut self.enemy_arm_asset);
+        sync_char(&mut self.enemy_tyu_asset);
+        sync_char(&mut self.enemy_bos_asset);
+        sync_char(&mut self.viewer_asset);
+
+        if let Some(ref mut session) = self.drama_demo_session {
+            for actor_asset in &mut session.actor_assets {
+                sync_char(actor_asset);
+            }
+            let chosen_stage_bgs = match quality {
+                sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                    session.stage_hd_texture_bind_groups.clone()
+                }
+                sh2_core::config::WorldTextureQuality::Sh2eeHd => session
+                    .stage_sh2e_texture_bind_groups
+                    .clone()
+                    .or_else(|| session.stage_hd_texture_bind_groups.clone()),
+                sh2_core::config::WorldTextureQuality::OriginalPs2 => session
+                    .stage_vanilla_texture_bind_groups
+                    .clone()
+                    .or_else(|| session.stage_hd_texture_bind_groups.clone()),
+            };
+            if chosen_stage_bgs.is_some() {
+                session.stage_texture_bind_groups = chosen_stage_bgs;
+            }
+        }
     }
 
     /// Maps the active [`TestRoomKind`] (or user stage override) to a retail Silent Hill 2 stage ID

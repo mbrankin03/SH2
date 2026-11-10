@@ -468,6 +468,48 @@ impl FrameRateCap {
     }
 }
 
+/// 3-tier World (`.map`) & Character (`.mdl`) texture quality setting (`SH2-92`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum WorldTextureQuality {
+    /// 4K AI Super-Resolution Master Pack (`realesr-general-wdn-x4v3` + PBR Detail Maps),
+    /// falling back to `Sh2eeHd` -> `OriginalPs2`.
+    #[default]
+    Ai4kMaster,
+    /// Silent Hill 2: Enhanced Edition HD texture pack (`sh2e/bg/` and `sh2e/chr/`).
+    Sh2eeHd,
+    /// Original PS2 / Retail PC textures (`data/bg/` and `data/chr/`).
+    OriginalPs2,
+}
+
+impl WorldTextureQuality {
+    /// User-facing label string.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Ai4kMaster => "4K AI Master + Detail Maps",
+            Self::Sh2eeHd => "SH2:EE HD",
+            Self::OriginalPs2 => "Original PS2 / PC",
+        }
+    }
+
+    /// Cycle to next texture quality tier.
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Ai4kMaster => Self::Sh2eeHd,
+            Self::Sh2eeHd => Self::OriginalPs2,
+            Self::OriginalPs2 => Self::Ai4kMaster,
+        }
+    }
+
+    /// Cycle to previous texture quality tier.
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Ai4kMaster => Self::OriginalPs2,
+            Self::Sh2eeHd => Self::Ai4kMaster,
+            Self::OriginalPs2 => Self::Sh2eeHd,
+        }
+    }
+}
+
 /// Video and graphics options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoOptions {
@@ -481,6 +523,9 @@ pub struct VideoOptions {
     pub volumetric_light: bool,
     pub lens_flare: bool,
     pub depth_of_field: bool,
+    /// 3-tier World (`.map`) & Character (`.mdl`) texture quality (`SH2-92`).
+    #[serde(default)]
+    pub texture_quality: WorldTextureQuality,
 }
 
 impl Default for VideoOptions {
@@ -495,6 +540,7 @@ impl Default for VideoOptions {
             volumetric_light: true,
             lens_flare: true,
             depth_of_field: true,
+            texture_quality: WorldTextureQuality::default(),
         }
     }
 }

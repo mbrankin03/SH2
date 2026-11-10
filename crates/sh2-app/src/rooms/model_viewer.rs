@@ -172,6 +172,35 @@ impl RoomController for ModelViewerRoomController {
                     state.model_viewer.texture_source.label()
                 );
             }
+            KeyCode::KeyU if pressed => {
+                state.model_viewer.texture_source =
+                    state.model_viewer.texture_source.toggle_4k_vanilla();
+                tracing::info!(
+                    "[Model Viewer] Texture source (4K/PS2 A/B): {}",
+                    state.model_viewer.texture_source.label()
+                );
+            }
+            KeyCode::Digit1 if pressed => {
+                state.model_viewer.texture_source = TextureSourceMode::Ai4kMaster;
+                tracing::info!(
+                    "[Model Viewer] Selected Texture Source [1]: {}",
+                    state.model_viewer.texture_source.label()
+                );
+            }
+            KeyCode::Digit2 if pressed => {
+                state.model_viewer.texture_source = TextureSourceMode::VanillaPs2;
+                tracing::info!(
+                    "[Model Viewer] Selected Texture Source [2]: {}",
+                    state.model_viewer.texture_source.label()
+                );
+            }
+            KeyCode::Digit3 if pressed => {
+                state.model_viewer.texture_source = TextureSourceMode::EnhancedHd;
+                tracing::info!(
+                    "[Model Viewer] Selected Texture Source [3]: {}",
+                    state.model_viewer.texture_source.label()
+                );
+            }
             KeyCode::KeyL if pressed => {
                 state.model_viewer.lighting_rig = state.model_viewer.lighting_rig.next();
                 tracing::info!(
@@ -452,7 +481,8 @@ impl RoomController for ModelViewerRoomController {
         let skeletal_draw = if let Some(ref c) = state.viewer_asset {
             if !state.skin_matrices_scratch.is_empty() {
                 let tex_slice = match state.model_viewer.texture_source {
-                    TextureSourceMode::EnhancedHd => c.hd_texture_bind_groups.as_slice(),
+                    TextureSourceMode::Ai4kMaster => c.hd_texture_bind_groups.as_slice(),
+                    TextureSourceMode::EnhancedHd => c.sh2e_texture_bind_groups.as_slice(),
                     TextureSourceMode::VanillaPs2 => c.vanilla_texture_bind_groups.as_slice(),
                 };
                 vec![(
@@ -605,13 +635,18 @@ impl RoomController for ModelViewerRoomController {
             true,
         );
 
+        let tex_color = match state.model_viewer.texture_source {
+            TextureSourceMode::Ai4kMaster => green,
+            TextureSourceMode::EnhancedHd => cyan,
+            TextureSourceMode::VanillaPs2 => yellow,
+        };
         state.menu_rasterizer.draw_text(
             &format!(
-                "TEXTURES : {} | STAGE LIGHT : {} | TURNTABLE : {}",
+                "TEXTURES [1: 4K AI | 2: PS2 | 3: SH2:EE | H: Cycle | U: A/B] : {} | LIGHT : {} | SPIN : {}",
                 state.model_viewer.texture_source.label(),
                 state.model_viewer.lighting_rig.label(),
                 if state.model_viewer.turntable_enabled {
-                    "AUTO-SPIN ON"
+                    "ON"
                 } else {
                     "OFF"
                 }
@@ -619,7 +654,7 @@ impl RoomController for ModelViewerRoomController {
             24,
             146,
             1,
-            cyan,
+            tex_color,
             true,
         );
 
@@ -666,7 +701,7 @@ impl RoomController for ModelViewerRoomController {
             true,
         );
         state.menu_rasterizer.draw_text(
-            "[V] Render Mode  [B] Bone Skeleton  [G] Wireframe  [H] Vanilla/HD Textures  [L] Stage Light  [T] Turntable  [WASD/Mouse] Orbit  [Q/E] Zoom  [Esc] Exit",
+            "[V] Render Mode  [B] Skeleton  [G] Wireframe  [1/2/3 or H/U] Texture Quality  [L] Light  [T] Turntable  [WASD/Mouse] Orbit  [Q/E] Zoom  [Esc] Exit",
             24,
             688,
             1,

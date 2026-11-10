@@ -124,6 +124,28 @@ fn render_camera_and_player_telemetry(
         cyan,
         true,
     );
+    let tex_quality = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality;
+    let tex_color = match tex_quality {
+        sh2_core::config::WorldTextureQuality::Ai4kMaster => green,
+        sh2_core::config::WorldTextureQuality::Sh2eeHd => cyan,
+        sh2_core::config::WorldTextureQuality::OriginalPs2 => yellow,
+    };
+    state.menu_rasterizer.draw_text(
+        &format!(
+            "TEXTURES: {} [T: Cycle 4K AI / SH2:EE / PS2]",
+            tex_quality.label()
+        ),
+        20,
+        134,
+        1,
+        tex_color,
+        true,
+    );
 }
 
 fn render_combat_status_panel(
@@ -155,7 +177,7 @@ fn render_combat_status_panel(
             weapon_str, ammo_str, mode_str, atk_str
         ),
         20,
-        138,
+        154,
         1,
         yellow,
         true,
@@ -203,7 +225,7 @@ fn render_combat_status_panel(
                 status_str
             ),
             20,
-            158,
+            174,
             1,
             color,
             true,
@@ -212,7 +234,7 @@ fn render_combat_status_panel(
         state.menu_rasterizer.draw_text(
             "[Press TAB to Cycle Active Test Creature]",
             20,
-            178,
+            194,
             1,
             yellow,
             true,

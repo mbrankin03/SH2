@@ -615,6 +615,18 @@ pub(crate) fn load_character_asset(
         let tidx = raw_tid as u32;
         if let Some(tex) = model.textures.get(&tidx) {
             if let Ok(rgba) = tex.to_rgba() {
+                // Non-cutout character textures (such as Pyramid Head's helmet `1303`/`1307`, Great Knife `1305`,
+                // Lying Figure `1282`, and Abstract Daddy `1293`) store PS2 specular/gloss intensity in the DXT5
+                // alpha channel with `van_min_alpha > 0` across 100% of texels. Preserve that non-zero alpha floor
+                // on any HD / 4K override so bicubic ringing or compression artifacts never punch cutout holes.
+                let van_min_alpha = rgba
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|px| px[3])
+                    .min()
+                    .unwrap_or(255);
+
                 let van_bg = ctx.create_texture_bind_group(
                     tex.width as u32,
                     tex.height as u32,
@@ -625,7 +637,12 @@ pub(crate) fn load_character_asset(
                 // 1. Build SH2:EE (`sh2e/chr/`) or 2x enhanced bind group
                 let sh2e_bg = if let Some(ref hdm) = hd_model {
                     if let Some(hd_tex) = hdm.textures.get(&tidx) {
-                        if let Ok(hd_rgba) = hd_tex.to_rgba() {
+                        if let Ok(mut hd_rgba) = hd_tex.to_rgba() {
+                            if van_min_alpha > 0 {
+                                for px in hd_rgba.as_chunks_mut::<4>().0 {
+                                    px[3] = px[3].max(van_min_alpha);
+                                }
+                            }
                             ctx.create_texture_bind_group(
                                 hd_tex.width as u32,
                                 hd_tex.height as u32,
@@ -652,7 +669,12 @@ pub(crate) fn load_character_asset(
                 let hd_bg = tex_loader
                     .as_ref()
                     .and_then(|tl| tl.load_4k_chr_texture_override(tidx))
-                    .map(|dec| {
+                    .map(|mut dec| {
+                        if van_min_alpha > 0 {
+                            for px in dec.rgba.as_chunks_mut::<4>().0 {
+                                px[3] = px[3].max(van_min_alpha);
+                            }
+                        }
                         tracing::info!(
                             "Loaded 4K AI Master character texture override for '{}' tex_id={} ({}x{})",
                             character_name,

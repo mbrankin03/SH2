@@ -809,7 +809,14 @@ pub fn generate_mipmap_chain_rgba(
         vec![255u8; expected0]
     };
     let mip0_coverage = compute_alpha_coverage_rgba(&mip0, ALPHA_CUTOUT_MIP_REF_THRESHOLD);
-    let has_cutout_alpha = mip0_coverage > 0.0 && mip0_coverage < 1.0;
+    // Only apply Castano cutout coverage scaling when the texture actually contains transparent
+    // cutout texels (`alpha < 4`). Non-cutout DXT5 textures that store specular/gloss intensity
+    // in the alpha channel (where `min_alpha > 0` across the entire surface, such as Pyramid Head's
+    // helmet `1303`/`1307`, Great Knife `1305`, or Lying Figure `1282`) must not have their alpha
+    // rescaled toward `ALPHA_CUTOUT_MIP_REF_THRESHOLD` across mip levels.
+    let has_transparent_cutout_texels = mip0.as_chunks::<4>().0.iter().any(|px| px[3] < 4);
+    let has_cutout_alpha =
+        has_transparent_cutout_texels && mip0_coverage > 0.0 && mip0_coverage < 1.0;
     chain.push((w0, h0, mip0));
 
     for lvl in 1..levels {
@@ -1261,6 +1268,43 @@ mod tests {
             (cov1 - cov0).abs() < 0.08,
             "Mip 1 cutout coverage should match mip 0 ({cov0}) instead of collapsing to 0.0 under naive box averaging, got {cov1}"
         );
+    }
+
+    #[test]
+    fn test_gloss_map_alpha_not_distorted_by_cutout_mipmap_scaling() {
+        // Construct a 64x64 non-cutout gloss/specular texture (like Pyramid Head's helmet `1303`/`1307`),
+        // where `min_alpha >= 12` (zero transparent cutout texels) and ~84% of pixels have `alpha < 128`.
+        // Verify `generate_mipmap_chain_rgba` does NOT apply Castano cutout scaling at threshold 128
+        // and preserves the smooth box-averaged gloss alpha distribution across mip levels.
+        let w = 64u32;
+        let h = 64u32;
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let ofs = ((y * w + x) * 4) as usize;
+                rgba[ofs] = 120;
+                rgba[ofs + 1] = 60;
+                rgba[ofs + 2] = 40;
+                let highlight = (x % 8 == 0) && (y % 8 == 0);
+                rgba[ofs + 3] = if highlight { 220 } else { 16 };
+            }
+        }
+
+        let chain = generate_mipmap_chain_rgba(&rgba, w, h);
+        assert_eq!(chain.len(), 7);
+        for (lvl, (_, _, ref mip_data)) in chain.iter().enumerate() {
+            let min_a = mip_data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|px| px[3])
+                .min()
+                .unwrap_or(0);
+            assert!(
+                min_a >= 16,
+                "Mip level {lvl} of non-cutout gloss texture must preserve min_alpha >= 16, got {min_a}"
+            );
+        }
     }
 
     #[test]

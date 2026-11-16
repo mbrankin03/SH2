@@ -81,7 +81,11 @@ pub(crate) fn handle_horror_room_key_input(
                 trigger_scenario_quick_step(state);
                 return;
             }
-            KeyCode::KeyK => {
+            KeyCode::KeyK if !state.sim_core.active_camera_mode().is_modern() => {
+                trigger_scenario_secondary_action(state);
+                return;
+            }
+            KeyCode::F5 => {
                 trigger_scenario_secondary_action(state);
                 return;
             }
@@ -131,7 +135,7 @@ pub(crate) fn handle_horror_room_key_input(
                 }
                 return;
             }
-            KeyCode::KeyV => {
+            KeyCode::F4 => {
                 state.horror_triggers_room.show_3d_guides =
                     !state.horror_triggers_room.show_3d_guides;
                 return;

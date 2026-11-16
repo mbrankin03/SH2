@@ -29,8 +29,9 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     // 2. Advance menu transitions and loading screen fade state
     tick_menu_and_loading_screen(state, dt.as_secs_f32());
 
-    // 3. Synchronize active test room, model viewer selection, and FMV stream if changed
+    // 3. Synchronize active test room, model viewer selection, FMV stream, and camera cursor grab
     sync_active_room_and_viewers(state);
+    state.sync_cursor_grab_for_camera();
 
     // 4. Log menu HUD changes when menu revision updates
     if !state.menu_ctrl.in_game_active && state.last_menu_revision != state.menu_ctrl.revision {
@@ -205,7 +206,7 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         } else {
             state.sim_core.camera.set_cam_file(None);
             state.sim_core.snap_player_transform(new_pos, new_yaw);
-            state.sim_core.camera.reset_to_player(new_pos, new_yaw);
+            state.sim_core.reset_cameras_to_player(new_pos, new_yaw);
         }
         state.active_test_room = new_room;
         state.bgm_stage_override = None;

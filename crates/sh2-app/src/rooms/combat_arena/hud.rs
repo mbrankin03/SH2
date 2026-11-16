@@ -1,6 +1,7 @@
 //! 2D HUD telemetry & `.mes` subtitle rendering for 3D Stage Exploration & Combat Arena (`SH2-13` / `SH2-57` / `SH2-63`).
 
 use crate::state::AppState;
+use sh2_core::modern_camera::{GameplayCameraMode, OtsReticleState};
 use sh2_core::DRAMA_DEMO_CATALOG;
 use sh2_ui::menu::TestRoomKind;
 
@@ -11,21 +12,58 @@ pub(super) fn render_combat_arena_hud(
 ) {
     state.begin_hud_overlay();
 
+    render_subtle_aim_reticle(state);
+
     let yellow = [245, 210, 65, 255];
     let cyan = [105, 215, 235, 255];
     let green = [120, 230, 150, 255];
     let white = [225, 225, 225, 255];
     let muted = [165, 165, 170, 255];
 
-    render_camera_and_player_telemetry(state, yellow, green, cyan, white, muted);
+    if state.debug_camera_hud {
+        render_camera_and_player_telemetry(state, yellow, green, cyan, white, muted);
 
-    if state.active_test_room == TestRoomKind::CombatArena {
-        render_combat_status_panel(state, yellow, cyan, green, muted);
+        if state.active_test_room == TestRoomKind::CombatArena {
+            render_combat_status_panel(state, yellow, cyan, green, muted);
+        }
     }
 
-    render_cutscene_telemetry_and_subtitles(state, yellow, cyan, muted);
+    if state.debug_camera_hud || state.drama_demo_session.is_some() {
+        render_cutscene_telemetry_and_subtitles(state, yellow, cyan, muted);
+    }
 
     state.finish_hud_overlay(encoder, surface_view);
+}
+
+fn render_subtle_aim_reticle(state: &mut AppState) {
+    let OtsReticleState::SubtleDot { opacity, spread } = state.sim_core.active_reticle_state()
+    else {
+        return;
+    };
+    let alpha = (opacity.clamp(0.0, 1.0) * 235.0) as u8;
+    if alpha == 0 {
+        return;
+    }
+    let cx = state.menu_rasterizer.width / 2;
+    let cy = state.menu_rasterizer.height / 2;
+    let gap = (3.0 + spread.clamp(0.0, 1.0) * 6.0).round() as usize;
+    let col = [235, 232, 220, alpha];
+    state
+        .menu_rasterizer
+        .fill_rect(cx.saturating_sub(1), cy.saturating_sub(1), 3, 3, col);
+    let tick_col = [220, 215, 200, alpha / 2];
+    state
+        .menu_rasterizer
+        .fill_rect(cx.saturating_sub(gap + 2), cy, 2, 1, tick_col);
+    state
+        .menu_rasterizer
+        .fill_rect(cx + gap, cy, 2, 1, tick_col);
+    state
+        .menu_rasterizer
+        .fill_rect(cx, cy.saturating_sub(gap + 2), 1, 2, tick_col);
+    state
+        .menu_rasterizer
+        .fill_rect(cx, cy + gap, 1, 2, tick_col);
 }
 
 fn render_camera_and_player_telemetry(
@@ -38,17 +76,29 @@ fn render_camera_and_player_telemetry(
 ) {
     let p_pos = state.sim_core.scenario.player_position;
     let p_yaw = state.sim_core.scenario.player_yaw;
-    let cam_eye = state.sim_core.camera.curr_snapshot.eye;
-    let cam_tgt = state.sim_core.camera.curr_snapshot.target;
-    let cam_fov = state.sim_core.camera.curr_snapshot.fov_y.to_degrees();
+    let active_snap = state.sim_core.active_camera_snapshot(1.0);
+    let cam_eye = active_snap.eye;
+    let cam_tgt = active_snap.target;
+    let cam_fov = active_snap.fov_y.to_degrees();
+    let near_clip = state.sim_core.active_near_clip(1.0);
+    let active_mode = state.sim_core.active_camera_mode();
     let active_rec = state.sim_core.camera.active_road_index;
     let mv_type = state.sim_core.camera.mv_type;
     let room_label = state.active_test_room.label();
 
+    let mode_badge = match active_mode {
+        GameplayCameraMode::ClassicPs2Rail => "PS2 Rail".to_string(),
+        GameplayCameraMode::OverTheShoulder => format!(
+            "OTS ({})",
+            state.sim_core.modern_camera.ots.shoulder_side.label()
+        ),
+        GameplayCameraMode::FirstPerson => "First-Person".to_string(),
+    };
+
     state.menu_rasterizer.draw_text(
         &format!(
-            "[ROOM: {}] CAMERA & PLAYER TELEMETRY (F1/F3 Toggle)",
-            room_label
+            "[ROOM: {}] VIEW: {} | [V] Camera Mode  [X] Shoulder  [Mouse/IJKL] Look  [F1] HUD",
+            room_label, mode_badge
         ),
         20,
         18,
@@ -73,8 +123,12 @@ fn render_camera_and_player_telemetry(
     );
     state.menu_rasterizer.draw_text(
         &format!(
-            "CAMERA EYE: X: {:.1}  Y: {:.1}  Z: {:.1}",
-            cam_eye.x, cam_eye.y, cam_eye.z
+            "CAMERA EYE: X: {:.1}  Y: {:.1}  Z: {:.1} | NEAR: {:.0}u | VIS: {:?}",
+            cam_eye.x,
+            cam_eye.y,
+            cam_eye.z,
+            near_clip,
+            state.sim_core.player_mesh_visibility()
         ),
         20,
         58,
@@ -107,8 +161,12 @@ fn render_camera_and_player_telemetry(
     };
     state.menu_rasterizer.draw_text(
         &format!(
-            "CAM: {} | MODE: {:?} | ROAD: {} | FOV: {:.1}°",
-            cam_src_str, mv_type, rec_str, cam_fov
+            "CAM: {} | ACTIVE: {} (PS2 {:?}, {}) | FOV: {:.1}°",
+            cam_src_str,
+            active_mode.label(),
+            mv_type,
+            rec_str,
+            cam_fov
         ),
         20,
         98,
@@ -282,7 +340,7 @@ fn render_combat_status_panel(
     }
 
     state.menu_rasterizer.draw_text(
-        "[Controls: Right-Click/R: Ready | Space: Attack | 1..6: Weapons | Tab: Cycle Enemy | WASD: Move]",
+        "[Controls: WASD: Move | V: Camera Mode | X: Shoulder | Mouse/IJKL: Look | Right-Click/R: Ready | Space: Attack | 1..6: Weapons]",
         20,
         670,
         1,

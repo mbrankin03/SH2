@@ -7,7 +7,6 @@ use crate::assets::open_drama_demo_session;
 use crate::state::AppState;
 use sh2_audio::{play_menu_sound, SoundCueKind};
 use sh2_core::DRAMA_DEMO_CATALOG;
-use sh2_ui::menu::TestRoomKind;
 
 pub(super) fn handle_combat_arena_key_input(
     state: &mut AppState,
@@ -29,12 +28,14 @@ pub(super) fn handle_combat_arena_key_input(
 
     match key_code {
         KeyCode::Escape | KeyCode::Backspace if pressed => {
+            state.clear_held_gameplay_keys();
             let stage_name = state.active_test_room.label();
             let can_save = state.menu_ctrl.options_menu.draft_config.game.save_anywhere;
             state
                 .menu_ctrl
                 .pause_menu
                 .open(can_save, stage_name, state.sim_time as f64);
+            state.sync_cursor_grab_for_camera();
             if let Some(ref mut engine) = state.audio_engine {
                 engine.set_bgm_paused(true);
                 let _ =
@@ -55,8 +56,46 @@ pub(super) fn handle_combat_arena_key_input(
         KeyCode::KeyD | KeyCode::ArrowRight => {
             state.key_right = pressed;
         }
+        KeyCode::KeyI => {
+            state.key_look_up = pressed;
+        }
+        KeyCode::KeyK => {
+            state.key_look_down = pressed;
+        }
+        KeyCode::KeyJ => {
+            state.key_look_left = pressed;
+        }
+        KeyCode::KeyL => {
+            state.key_look_right = pressed;
+        }
         KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+            state.key_run_held = pressed;
             state.sim_core.input.state.is_running = pressed;
+        }
+        KeyCode::KeyV if pressed && !repeat => {
+            let next_mode = state
+                .sim_core
+                .active_camera_mode()
+                .cycle_with_preset(state.sim_core.modern_camera.cycle_preset);
+            state.sim_core.input.press_camera_mode_cycle();
+            tracing::info!(
+                "[Camera] Cycling gameplay camera mode -> {:?} ({})",
+                next_mode,
+                next_mode.label()
+            );
+        }
+        KeyCode::KeyX if pressed && !repeat => {
+            let next_shoulder = state.sim_core.modern_camera.ots.shoulder_side.toggle();
+            state.sim_core.input.press_shoulder_swap();
+            tracing::info!(
+                "[Camera] Swapping OTS shoulder -> {:?} ({})",
+                next_shoulder,
+                next_shoulder.label()
+            );
+        }
+        KeyCode::KeyQ if pressed && !repeat => {
+            state.sim_core.input.press_quick_turn();
+            tracing::info!("[Camera] Triggered 180° Quick Turn");
         }
         KeyCode::KeyF if pressed => {
             state.sim_core.scenario.flashlight_on = !state.sim_core.scenario.flashlight_on;
@@ -66,8 +105,13 @@ pub(super) fn handle_combat_arena_key_input(
                 let _ = bank.play_flashlight_toggle(eng, state.sim_core.scenario.flashlight_on);
             }
         }
-        KeyCode::KeyC if pressed => {
+        KeyCode::KeyC if pressed && !repeat => {
             state.active_maria = !state.active_maria;
+            state.sim_core.scenario.character = if state.active_maria {
+                sh2_core::scenario::PlayableCharacter::Maria
+            } else {
+                sh2_core::scenario::PlayableCharacter::James
+            };
             let locomotion_clips = if state.active_maria {
                 sh2_core::CharacterLocomotionClips::MARIA
             } else {
@@ -111,7 +155,7 @@ pub(super) fn handle_combat_arena_key_input(
             };
             tracing::info!("[Fog Tweak] Falloff curve: {}", curve_name);
         }
-        KeyCode::KeyK if pressed => {
+        KeyCode::F2 if pressed && !repeat => {
             state.debug_collision_overlay = !state.debug_collision_overlay;
             tracing::info!(
                 "[Debug] Collision wireframe overlay (clDbgDrawBGColiPoly): {}",
@@ -241,12 +285,7 @@ fn handle_cutscene_locked_input(
     pressed: bool,
     repeat: bool,
 ) {
-    state.key_forward = false;
-    state.key_backward = false;
-    state.key_left = false;
-    state.key_right = false;
-    state.sim_core.input.state.left_stick_x = 0.0;
-    state.sim_core.input.state.left_stick_y = 0.0;
+    state.clear_held_gameplay_keys();
 
     if pressed {
         match key_code {
@@ -255,8 +294,11 @@ fn handle_cutscene_locked_input(
                     session.player.skip();
                     if let Some((final_pos, final_yaw)) = session.player.player_handoff_transform()
                     {
-                        state.sim_core.snap_player_transform(final_pos, final_yaw);
-                        state.sim_core.camera.reset_to_player(final_pos, final_yaw);
+                        state
+                            .sim_core
+                            .handoff_player_after_cutscene(final_pos, final_yaw);
+                    } else {
+                        state.sim_core.sync_cutscene_handoff(None);
                     }
                     if let Some(ref mut eng) = state.audio_engine {
                         eng.stop_voice(Duration::from_millis(40));
@@ -486,28 +528,5 @@ fn cycle_bgm_stage_preset(state: &mut AppState) {
 }
 
 fn update_accumulated_directional_input(state: &mut AppState) {
-    let mut kb_y = 0.0f32;
-    let mut kb_x = 0.0f32;
-    if state.key_forward {
-        kb_y += 1.0;
-    }
-    if state.key_backward {
-        kb_y -= 1.0;
-    }
-    if state.key_right {
-        kb_x += 1.0;
-    }
-    if state.key_left {
-        kb_x -= 1.0;
-    }
-
-    if state.active_test_room == TestRoomKind::CombatArena
-        && state.combat_arena.player.mode != sh2_core::combat::CombatMode::Free
-    {
-        kb_x = 0.0;
-        kb_y = 0.0;
-    }
-
-    state.sim_core.input.state.left_stick_y = kb_y;
-    state.sim_core.input.state.left_stick_x = kb_x;
+    super::camera_wiring::sync_host_input_and_handoffs(state);
 }

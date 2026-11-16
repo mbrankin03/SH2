@@ -283,3 +283,108 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[test]
+fn test_sh2_93_options_controls_sync_and_live_camera_wiring() {
+    use sh2_core::config::{CameraCyclePreset, GameplayCameraMode, OtsShoulderSide, ReticleMode};
+    use sh2_core::modern_camera::{OtsReticleState, PlayerMeshVisibility};
+    use sh2_core::scenario::ScenarioKind;
+    use sh2_core::SimulationCore;
+
+    let test_dir = std::env::temp_dir().join("sh2_93_options_camera_wiring_test");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).unwrap();
+    let cfg_path = test_dir.join("camera_config.json");
+
+    let mut controller = AppMenuController::new(&cfg_path);
+    let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    sim_core.apply_control_options(&controller.options_menu.original_config.controls);
+    assert_eq!(
+        sim_core.active_camera_mode(),
+        GameplayCameraMode::ClassicPs2Rail
+    );
+
+    // Navigate Options -> Controls (rows 5..=10 are SH2-93 modern camera settings)
+    controller.title_sm.phase = TitlePhase::OptionsMenu;
+    controller.options_menu.active_tab = OptionsTab::Controls;
+
+    // Row 5: Default Camera -> Over-the-Shoulder 3D
+    controller.options_menu.selected_index = 5;
+    controller.handle_nav(MenuNavAction::Right);
+    // Row 6: R3 Cycle Preset -> OTS / FPS Only (`Right` x3 from `AllThree`)
+    controller.options_menu.selected_index = 6;
+    controller.handle_nav(MenuNavAction::Right);
+    controller.handle_nav(MenuNavAction::Right);
+    controller.handle_nav(MenuNavAction::Right);
+    // Row 7: OTS Shoulder -> Left Shoulder
+    controller.options_menu.selected_index = 7;
+    controller.handle_nav(MenuNavAction::Right);
+    // Row 8: Aiming Reticle -> Subtle Always
+    controller.options_menu.selected_index = 8;
+    controller.handle_nav(MenuNavAction::Right);
+    // Row 9: First-Person FOV -> 85° (`Right` x2 from 75°)
+    controller.options_menu.selected_index = 9;
+    controller.handle_nav(MenuNavAction::Right);
+    controller.handle_nav(MenuNavAction::Right);
+    // Row 10: First-Person Sway -> OFF (`Right` x1 from ON)
+    controller.options_menu.selected_index = 10;
+    controller.handle_nav(MenuNavAction::Right);
+
+    // Commit via Confirm -> produces `config_applied_pending` just like Pause/Title menu in `sh2-app`
+    assert_eq!(
+        controller.handle_nav(MenuNavAction::Confirm),
+        MenuSoundCue::Confirm
+    );
+    let committed = controller
+        .config_applied_pending
+        .take()
+        .expect("Committed Options must populate config_applied_pending");
+    assert_eq!(
+        committed.controls.default_camera_mode,
+        GameplayCameraMode::OverTheShoulder
+    );
+    assert_eq!(
+        committed.controls.camera_cycle_preset,
+        CameraCyclePreset::OtsAndFirstPerson
+    );
+    assert_eq!(committed.controls.ots_shoulder, OtsShoulderSide::Left);
+    assert_eq!(committed.controls.ots_reticle, ReticleMode::AlwaysSubtle);
+    assert_eq!(committed.controls.first_person_fov_deg, 85);
+    assert!(!committed.controls.first_person_head_bob);
+
+    // Apply to `SimulationCore` and step crossfade
+    sim_core.apply_control_options(&committed.controls);
+    for _ in 0..20 {
+        sim_core.tick();
+    }
+    assert_eq!(
+        sim_core.active_camera_mode(),
+        GameplayCameraMode::OverTheShoulder
+    );
+    assert_eq!(
+        sim_core.modern_camera.ots.shoulder_side,
+        OtsShoulderSide::Left
+    );
+    assert!(matches!(
+        sim_core.active_reticle_state(),
+        OtsReticleState::SubtleDot { .. }
+    ));
+
+    // Press `V` (`press_camera_mode_cycle`) with `OtsAndFirstPerson` preset -> enters `FirstPerson` at 85° FOV!
+    sim_core.input.press_camera_mode_cycle();
+    for _ in 0..22 {
+        sim_core.tick();
+    }
+    assert_eq!(
+        sim_core.active_camera_mode(),
+        GameplayCameraMode::FirstPerson
+    );
+    assert_eq!(
+        sim_core.player_mesh_visibility(),
+        PlayerMeshVisibility::HideHeadAndUpperBody
+    );
+    assert!((sim_core.active_fov_y(1.0).to_degrees() - 85.0).abs() < 0.25);
+    assert!((sim_core.active_near_clip(1.0) - 8.0).abs() < 1e-3);
+
+    let _ = fs::remove_dir_all(&test_dir);
+}

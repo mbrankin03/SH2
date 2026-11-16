@@ -435,7 +435,7 @@ fn render_cut_and_prototype_panel(
         true,
     );
     state.menu_rasterizer.draw_text(
-        "[WASD] Walk  |  [M] Footstep Surface  |  [T] Situation  |  [1-7, 0] Solo Layer  |  [U/I/O/L/J/H] SFX & 3D Shot  |  [E] Reverb  |  [V] Boxes",
+        "[WASD] Walk  |  [V] Camera Mode  |  [X] Shoulder  |  [M] Surface  |  [T] Situation  |  [1-7, 0] Solo  |  [E] Reverb  |  [F4] Boxes",
         20,
         688,
         1,

@@ -255,15 +255,16 @@ pub(crate) fn apply_pending_engine_config(state: &mut AppState) {
 
     state.apply_texture_quality(cfg.video.texture_quality);
 
-    // 3. Control settings dispatch
-    state.sim_core.input.config.stick_deadzone = cfg.controls.stick_deadzone;
-    state.sim_core.input.config.vibration_intensity = cfg.controls.vibration_intensity;
-    state
-        .sim_core
-        .input
-        .set_control_scheme(if cfg.controls.tank_controls {
-            sh2_core::input::ControlScheme::Tank
-        } else {
-            sh2_core::input::ControlScheme::AnalogDirectional
-        });
+    // 3. Control & Modern Camera settings dispatch (`SH2-93`)
+    state.sim_core.apply_control_options(&cfg.controls);
+    state.sync_cursor_grab_for_camera();
+    tracing::info!(
+        "[Options] Synced Controls & Camera: Mode={:?}, Cycle={:?}, Shoulder={:?}, Reticle={:?}, FpsFov={}°, Sway={}",
+        cfg.controls.default_camera_mode,
+        cfg.controls.camera_cycle_preset,
+        cfg.controls.ots_shoulder,
+        cfg.controls.ots_reticle,
+        cfg.controls.first_person_fov_deg,
+        cfg.controls.first_person_head_bob,
+    );
 }

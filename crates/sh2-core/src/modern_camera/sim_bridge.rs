@@ -2,6 +2,7 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::camera::CameraSnapshot;
 use crate::config::ControlOptions;
 use crate::cutaway::CutawayOverlayEngine;
 use crate::cutscene::DramaDemoPlayer;
@@ -14,6 +15,9 @@ use super::{
     beam_quat_from_direction, ExternalCameraHandoff, GameplayCameraMode, ModeTransitionState,
     ModernCameraTickInput, OtsReticleState, PlayerMeshVisibility,
 };
+
+/// Mouse motion conversion scalar in radians per raw pointer dot at `1.0x` sensitivity (`SH2-93`).
+pub const MOUSE_LOOK_RAD_PER_DOT: f32 = 0.0022;
 
 impl SimulationCore {
     /// Builds per-tick `(LocomotionInput, is_tank)` and pre-aligns `player_yaw` for `FirstPerson`
@@ -33,12 +37,22 @@ impl SimulationCore {
             || (mode == GameplayCameraMode::OverTheShoulder
                 && self.input.state.ready_weapon_pressed);
 
+        let lx = self.input.state.left_stick_x;
+        let ly = self.input.state.left_stick_y;
+
         if body_locked_strafe
             && !self.locomotion.state.is_quick_turn()
             && !self.input.state.quick_turn_pressed
         {
             if mode == GameplayCameraMode::FirstPerson {
-                self.scenario.player_yaw = self.modern_camera.first_person.look_yaw;
+                let diag_offset = if ly > 0.21 && lx.abs() > 0.21 {
+                    lx.atan2(ly)
+                } else if ly < -0.21 && lx.abs() > 0.21 {
+                    -lx.atan2(-ly)
+                } else {
+                    0.0
+                };
+                self.scenario.player_yaw = self.modern_camera.first_person.look_yaw + diag_offset;
             } else {
                 self.scenario.player_yaw = lerp_angle_shortest(
                     self.scenario.player_yaw,
@@ -49,8 +63,6 @@ impl SimulationCore {
         }
 
         if body_locked_strafe {
-            let lx = self.input.state.left_stick_x;
-            let ly = self.input.state.left_stick_y;
             let dominant_lateral = lx.abs() > 0.21 && lx.abs() > ly.abs();
             let stick_y = if dominant_lateral { 0.0 } else { ly };
             let strafe_left = if dominant_lateral {
@@ -79,7 +91,17 @@ impl SimulationCore {
             };
             (input, true)
         } else {
-            let is_tank = self.input.config.scheme == ControlScheme::Tank;
+            // In OverTheShoulder exploration, WASD / left stick always moves relative to `ots.orbit_yaw`
+            // and refreshes `cam_locked` each tick so continuous mouse/stick steering curves smoothly.
+            let is_tank = match mode {
+                GameplayCameraMode::ClassicPs2Rail => {
+                    self.input.config.scheme == ControlScheme::Tank
+                }
+                GameplayCameraMode::OverTheShoulder | GameplayCameraMode::FirstPerson => {
+                    self.locomotion.cam_locked = false;
+                    false
+                }
+            };
             let camera_yaw = match mode {
                 GameplayCameraMode::ClassicPs2Rail => self
                     .camera
@@ -91,8 +113,8 @@ impl SimulationCore {
                 GameplayCameraMode::FirstPerson => self.modern_camera.first_person.look_yaw,
             };
             let input = LocomotionInput {
-                stick_x: self.input.state.left_stick_x,
-                stick_y: self.input.state.left_stick_y,
+                stick_x: lx,
+                stick_y: ly,
                 run_held: self.input.state.is_running,
                 strafe_left: self.input.state.strafe_left,
                 strafe_right: self.input.state.strafe_right,
@@ -206,6 +228,83 @@ impl SimulationCore {
         self.modern_camera.sync_cutaway(cutaway);
     }
 
+    /// Converts raw desktop mouse motion `(dx_dots, dy_dots)` into sensitivity-scaled yaw/pitch radians
+    /// when an active modern camera (`OverTheShoulder` or `FirstPerson`) is unlocked (`SH2-93`).
+    pub fn accumulate_mouse_motion_dots(&mut self, dx_dots: f32, dy_dots: f32) {
+        if !self.modern_camera.active_mode.is_modern()
+            || self.modern_camera.handoff.locks_camera_controls()
+        {
+            return;
+        }
+        let aim_scale = if self.input.state.ready_weapon_pressed {
+            0.68
+        } else {
+            1.0
+        };
+        let rad_per_dot =
+            MOUSE_LOOK_RAD_PER_DOT * self.stick_sensitivity.clamp(0.2, 4.0) * aim_scale;
+        self.input
+            .accumulate_mouse_look(dx_dots * rad_per_dot, dy_dots * rad_per_dot);
+    }
+
+    /// Resets both `Ps2CameraController` and `ModernCameraRig` immediately to `(pos, yaw)` on room cuts
+    /// or debug teleports (`SH2-93`).
+    pub fn reset_cameras_to_player(&mut self, pos: Vec3, yaw: f32) {
+        self.camera.reset_to_player(pos, yaw);
+        self.modern_camera.reset_to_player(
+            self.scenario.character,
+            pos,
+            yaw,
+            &self.camera.curr_snapshot,
+        );
+    }
+
+    /// Snaps the player to `(pos, yaw)` at the end of a `.dds` cutscene while smoothly blending
+    /// `ModernCameraRig` out of the final cutscene shot back into `active_mode` (`SH2-63` / `SH2-93`).
+    pub fn handoff_player_after_cutscene(&mut self, pos: Vec3, yaw: f32) {
+        self.snap_player_transform(pos, yaw);
+        self.camera.reset_to_player(pos, yaw);
+        self.modern_camera.ots.reset_to_player(pos, yaw);
+        self.modern_camera
+            .first_person
+            .reset_to_player(self.scenario.character, pos, yaw);
+        self.modern_camera.sync_cutscene(None);
+    }
+
+    /// Evaluates the active sub-frame [`CameraSnapshot`] across `ClassicPs2Rail`, `OverTheShoulder`,
+    /// `FirstPerson`, crossfades, and external handoffs (`SH2-93`).
+    #[inline]
+    pub fn active_camera_snapshot(&self, alpha: f32) -> CameraSnapshot {
+        if self.modern_camera.active_mode == GameplayCameraMode::ClassicPs2Rail
+            && matches!(self.modern_camera.transition, ModeTransitionState::Settled)
+            && matches!(
+                self.modern_camera.handoff,
+                ExternalCameraHandoff::GameplayActive
+            )
+        {
+            let t = alpha.clamp(0.0, 1.0);
+            let prev = &self.camera.prev_snapshot;
+            let curr = &self.camera.curr_snapshot;
+            CameraSnapshot {
+                eye: prev.eye.lerp(curr.eye, t),
+                target: prev.target.lerp(curr.target, t),
+                up: prev
+                    .up
+                    .lerp(curr.up, t)
+                    .normalize_or(Vec3::new(0.0, -1.0, 0.0)),
+                fov_y: prev.fov_y + (curr.fov_y - prev.fov_y) * t,
+            }
+        } else {
+            self.modern_camera.interpolated_snapshot(alpha)
+        }
+    }
+
+    /// Evaluates the active sub-frame camera eye position in SH2 world units (`SH2-93`).
+    #[inline]
+    pub fn active_camera_eye(&self, alpha: f32) -> Vec3 {
+        self.active_camera_snapshot(alpha).eye
+    }
+
     /// Evaluates the active sub-frame view matrix across `ClassicPs2Rail`, `OverTheShoulder`, `FirstPerson`, and handoffs (`SH2-93`).
     #[inline]
     pub fn active_view_matrix(&self, alpha: f32) -> Mat4 {
@@ -264,8 +363,9 @@ impl SimulationCore {
 mod sim_bridge_tests {
     use glam::Vec3;
 
+    use crate::config::ControlOptions;
     use crate::input::ControlScheme;
-    use crate::modern_camera::{GameplayCameraMode, PlayerMeshVisibility};
+    use crate::modern_camera::{GameplayCameraMode, OtsShoulderSide, PlayerMeshVisibility};
     use crate::scenario::ScenarioKind;
     use crate::simulation::SimulationCore;
 
@@ -388,5 +488,77 @@ mod sim_bridge_tests {
             sim.last_locomotion.delta_position
         );
         assert!(sim.scenario.player_yaw.abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_sh2_93_host_wasd_mouse_ijkl_and_options_across_all_three_modes() {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        sim.collision = crate::collision::CollisionWorld::new();
+        // Default ControlOptions has `tank_controls = true`
+        sim.apply_control_options(&ControlOptions::default());
+        assert_eq!(sim.input.config.scheme, ControlScheme::Tank);
+
+        // 1. ClassicPs2Rail + Tank: 'A' (`move_x = -1`) turns left; 'W' (`move_y = +1`) walks along player_yaw
+        sim.snap_player_transform(Vec3::ZERO, 0.0);
+        sim.reset_cameras_to_player(Vec3::ZERO, 0.0);
+        sim.input
+            .set_host_keyboard_state(-1.0, 0.0, 0.0, 0.0, false, false);
+        sim.tick();
+        assert!(sim.scenario.player_yaw < 0.0);
+
+        // 2. Press 'V' -> OverTheShoulder: even with `tank_controls = true`, WASD moves relative to `ots.orbit_yaw`
+        // and continuous mouse motion (`accumulate_mouse_motion_dots`) steers mid-walk!
+        sim.snap_player_transform(Vec3::ZERO, 0.0);
+        sim.input.press_camera_mode_cycle();
+        sim.input
+            .set_host_keyboard_state(0.0, 0.0, 0.0, 0.0, false, false);
+        sim.tick();
+        assert_eq!(
+            sim.active_camera_mode(),
+            GameplayCameraMode::OverTheShoulder
+        );
+
+        // Orbit OTS camera +90 deg (+X) via mouse motion dots while James still faces +Z (0.0)
+        sim.accumulate_mouse_motion_dots(
+            std::f32::consts::FRAC_PI_2 / super::MOUSE_LOOK_RAD_PER_DOT,
+            0.0,
+        );
+        sim.tick();
+        assert!((sim.modern_camera.ots.orbit_yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-2);
+
+        // Hold 'W' (`move_y = +1.0`): James must turn and walk toward +X (OTS look direction)!
+        sim.input
+            .set_host_keyboard_state(0.0, 1.0, 0.0, 0.0, true, false);
+        for _ in 0..12 {
+            sim.tick();
+        }
+        assert!(
+            sim.scenario.player_position.x > 50.0,
+            "OTS 'W' at orbit_yaw=+PI/2 must move +X, got {:?}",
+            sim.scenario.player_position
+        );
+
+        // Press 'X' (`press_shoulder_swap`) -> Left Shoulder
+        sim.input.press_shoulder_swap();
+        sim.tick();
+        assert_eq!(sim.modern_camera.ots.shoulder_side, OtsShoulderSide::Left);
+
+        // 3. Press 'V' -> FirstPerson (inherits `ots.orbit_yaw == +PI/2` East!):
+        //    At look_yaw = +PI/2, diagonal W+D (`+3*PI/4`) moves (+X, -Z), while IJKL (`look_x=1, look_y=0.5`) pans right & pitches up!
+        sim.snap_player_transform(Vec3::ZERO, 0.0);
+        sim.input.press_camera_mode_cycle();
+        sim.input
+            .set_host_keyboard_state(1.0, 1.0, 1.0, 0.5, false, false);
+        for _ in 0..8 {
+            sim.tick();
+        }
+        assert_eq!(sim.active_camera_mode(), GameplayCameraMode::FirstPerson);
+        assert!(
+            sim.scenario.player_position.x > 5.0 && sim.scenario.player_position.z < -5.0,
+            "FPS W+D from inherited orbit_yaw=+PI/2 must move (+X, -Z), got {:?}",
+            sim.scenario.player_position
+        );
+        assert!(sim.modern_camera.first_person.look_yaw > std::f32::consts::FRAC_PI_2 + 0.05);
+        assert!(sim.modern_camera.first_person.look_pitch < 0.0);
     }
 }

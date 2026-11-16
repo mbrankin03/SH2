@@ -16,8 +16,8 @@ use winit::keyboard::KeyCode;
 use crate::state::AppState;
 use sh2_ui::menu::TestRoomKind;
 
-/// Default perspective camera near clip plane in Silent Hill 2 world units.
-/// Calibrated to `25.0` (~2.5 cm) to maximize 32-bit float depth precision for thin corrugated geometry.
+/// Default perspective camera near clip plane in Silent Hill 2 world units (`25.0` = ~5 cm)
+/// used by studio viewer rooms (`model_viewer`, `grapple_room`, `inventory_room`).
 pub(crate) const DEFAULT_CAMERA_Z_NEAR: f32 = 25.0;
 /// Default perspective camera far clip plane in Silent Hill 2 world units, calibrated
 /// to encompass the full Toluca Lake / Observation Deck (`ob01.map`) vista (~68,000 units).
@@ -208,7 +208,11 @@ pub(crate) fn dispatch_render_hud(
             );
         }
         _ => {
-            if state.debug_camera_hud || state.drama_demo_session.is_some() {
+            if state.debug_camera_hud
+                || state.drama_demo_session.is_some()
+                || state.sim_core.active_reticle_state()
+                    != sh2_core::modern_camera::OtsReticleState::Hidden
+            {
                 combat_arena::CombatArenaRoomController::render_hud(state, encoder, surface_view);
             }
         }

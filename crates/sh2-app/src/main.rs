@@ -83,17 +83,21 @@ impl ApplicationHandler for SilentHillApp {
                     let sound = state.menu_ctrl.handle_nav(MenuNavAction::Confirm);
                     emit_menu_sound(state, sound, "Menu");
                 } else if state.menu_ctrl.in_game_active
-                    && state.active_test_room == TestRoomKind::CombatArena
+                    && !state.menu_ctrl.pause_menu.is_open
+                    && state.is_3d_gameplay_room()
                 {
                     if button == winit::event::MouseButton::Right {
                         state.key_ready_held = pressed;
-                    } else if button == winit::event::MouseButton::Left {
+                    } else if button == winit::event::MouseButton::Left
+                        && state.active_test_room == TestRoomKind::CombatArena
+                    {
                         if pressed && !state.key_attack_held {
                             state.key_attack_pressed = true;
                         }
                         state.key_attack_held = pressed;
                     }
                     if pressed
+                        && state.active_test_room == TestRoomKind::CombatArena
                         && state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held
                     {
                         state.struggle_button_press_count += 1;
@@ -140,6 +144,11 @@ impl ApplicationHandler for SilentHillApp {
                 event_loop.exit();
             }
             WindowEvent::Focused(focused) => {
+                state.window_focused = focused;
+                if !focused {
+                    state.clear_held_gameplay_keys();
+                }
+                state.sync_cursor_grab_for_camera();
                 let mute_in_bg = state
                     .menu_ctrl
                     .options_menu
@@ -185,6 +194,28 @@ impl ApplicationHandler for SilentHillApp {
                 redraw_frame(state);
             }
             _ => {}
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        let Some(ref mut state) = self.state else {
+            return;
+        };
+        if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if state.window_focused
+                && state.menu_ctrl.in_game_active
+                && !state.menu_ctrl.pause_menu.is_open
+                && state.is_3d_gameplay_room()
+            {
+                state
+                    .sim_core
+                    .accumulate_mouse_motion_dots(dx as f32, dy as f32);
+            }
         }
     }
 

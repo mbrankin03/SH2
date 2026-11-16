@@ -24,30 +24,27 @@ type EnemySkinSnapshot = (
 pub(super) fn tick_and_render_combat_arena_3d(
     state: &mut AppState,
     dt: Duration,
-    aspect: f32,
+    _aspect: f32,
     is_paused: bool,
     is_in_game: bool,
 ) {
-    // 1. Advance 60 Hz simulation, combat state machine, and streaming BGM
+    // 1. Sync host keyboard/mouse axes + handoffs & advance 60 Hz simulation, combat, and BGM
     let ticks_processed = if !is_paused {
+        super::camera_wiring::sync_host_input_and_handoffs(state);
+        super::camera_wiring::sync_player_pose_and_visibility(state);
         step_simulation_and_audio(state, dt, is_in_game)
     } else {
         0
     };
 
-    // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63` / `SH2-77`) or sub-frame gameplay camera
+    // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63` / `SH2-77`)
     let alpha = state.sim_core.interpolation_alpha();
     let (cutscene_camera_override, cutscene_light_override) =
         step_cutscene_player(state, dt, is_paused);
 
-    update_camera_uniforms(state, aspect, alpha, cutscene_camera_override);
-
-    // 3. Dynamic Flashlight or `.dds` Cutscene Scene Light (`DdsPlayLight`) + Atmosphere Fog
+    // 3. Sample player, cutscene actor, & enemy skeletal animations at sub-frame alpha,
+    //    then feed animated `.mdl` head-bone pose & submesh visibility into `sim_core` / `gpu_mesh`
     let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
-    update_spotlight_uniforms(state, alpha, player_pos, cutscene_light_override);
-    update_atmosphere_fog_uniforms(state, alpha);
-
-    // 4. Sample player, cutscene actor, & enemy skeletal animations at sub-frame alpha
     evaluate_player_skinning(
         state,
         alpha,
@@ -56,20 +53,22 @@ pub(super) fn tick_and_render_combat_arena_3d(
         player_pos,
         player_yaw,
     );
+    super::camera_wiring::sync_player_pose_and_visibility(state);
     evaluate_cutscene_actors_skinning(state);
     let active_enemy_snapshot = evaluate_enemy_skinning(state, alpha);
 
-    // 5. Submit 3D map, skeletal meshes (plus planar mirror reflections in RestroomStart), and optional collision wireframe overlay
+    // 4. Upload active camera (PS2 Rail / OTS / First-Person / Cutscene), look-coupled flashlight, & fog
+    super::camera_wiring::update_camera_uniforms(state, alpha, cutscene_camera_override);
+    let cs_spot =
+        cutscene_light_override.map(|l| build_cutscene_spotlight_uniforms(state, l, player_pos));
+    super::camera_wiring::update_spotlight_uniforms(state, alpha, cs_spot);
+    update_atmosphere_fog_uniforms(state, alpha);
+
+    // 5. Submit 3D map, skeletal meshes (plus full-body planar mirror reflections in RestroomStart), and optional collision wireframe overlay
     submit_scene_draw(state, is_in_game, player_pos, active_enemy_snapshot);
 }
 
 fn step_simulation_and_audio(state: &mut AppState, dt: Duration, is_in_game: bool) -> u32 {
-    if state.active_test_room == TestRoomKind::CombatArena
-        && state.combat_arena.player.mode != sh2_core::combat::CombatMode::Free
-    {
-        state.sim_core.input.state.left_stick_x = 0.0;
-        state.sim_core.input.state.left_stick_y = 0.0;
-    }
     let ticks_processed = state.sim_core.update(dt);
 
     if ticks_processed > 0 {
@@ -91,7 +90,13 @@ fn step_simulation_and_audio(state: &mut AppState, dt: Duration, is_in_game: boo
 fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
     let p_pos = state.sim_core.scenario.player_position;
     let p_yaw = state.sim_core.scenario.player_yaw;
-    let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+    let fwd = if state.sim_core.active_camera_mode().is_modern() {
+        let snap = state.sim_core.active_camera_snapshot(1.0);
+        let d = snap.target - snap.eye;
+        glam::Vec3::new(d.x, 0.0, d.z).normalize_or(glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos()))
+    } else {
+        glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos())
+    };
     let is_interior_map = !matches!(
         state.active_test_room,
         TestRoomKind::ObservationDeck | TestRoomKind::SurfaceSfxTestRoom
@@ -126,14 +131,25 @@ fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
 
 fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
     let tick_dt = 1.0 / 60.0;
-    let mut atk_pressed = state.key_attack_pressed;
+    let ready_held = state.key_ready_held || state.sim_core.input.state.ready_weapon_pressed;
+    let atk_held = state.key_attack_held || state.sim_core.input.state.action_pressed;
+    let mut atk_pressed = state.key_attack_pressed || state.sim_core.input.state.action_pressed;
     state.key_attack_pressed = false;
     let mut struggle_presses = state.struggle_button_press_count;
     state.struggle_button_press_count = 0;
 
     for _ in 0..ticks_processed {
         state.combat_arena.player_position = state.sim_core.scenario.player_position;
-        state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
+        if state.sim_core.active_camera_mode().is_modern() && ready_held {
+            let (_aim_origin, aim_dir) = state.sim_core.active_aim_ray();
+            if aim_dir.x.abs() + aim_dir.z.abs() > 1e-4 {
+                state.combat_arena.player_yaw = aim_dir.x.atan2(aim_dir.z);
+            } else {
+                state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
+            }
+        } else {
+            state.combat_arena.player_yaw = state.sim_core.scenario.player_yaw;
+        }
 
         if struggle_presses > 0 {
             if state.combat_arena.grapple_session.is_some() {
@@ -150,9 +166,9 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
         }
 
         state.combat_arena.tick_isolated(
-            state.key_ready_held,
+            ready_held,
             atk_pressed,
-            state.key_attack_held,
+            atk_held,
             tick_dt,
             state.combat_enemy_idx,
         );
@@ -361,8 +377,9 @@ fn step_cutscene_player(
             }
         }
         if let Some((final_pos, final_yaw)) = finished_handoff {
-            state.sim_core.snap_player_transform(final_pos, final_yaw);
-            state.sim_core.camera.reset_to_player(final_pos, final_yaw);
+            state
+                .sim_core
+                .handoff_player_after_cutscene(final_pos, final_yaw);
             // If this cutscene is part of a multi-segment `.dds` sequence chain (e.g. `papa_agl_a` -> `papa_agl`,
             // `piano_lau_b` -> `piano_lau_e`, `bp_edi_1` -> `bp_edi_2`), automatically chain into the next in-engine step!
             let next_catalog_idx = state.drama_demo_session.as_ref().and_then(|s| {
@@ -396,6 +413,7 @@ fn step_cutscene_player(
             .is_some_and(|s| !s.player.locks_gameplay_input())
         {
             state.drama_demo_session = None;
+            state.sim_core.sync_cutscene_handoff(None);
         }
     } else if let Some(ref session) = state.drama_demo_session {
         if session.player.locks_gameplay_input() {
@@ -407,170 +425,55 @@ fn step_cutscene_player(
     (cutscene_camera_override, cutscene_light_override)
 }
 
-fn update_camera_uniforms(
-    state: &mut AppState,
-    aspect: f32,
-    alpha: f32,
-    cutscene_camera_override: Option<CutsceneCameraSnapshot>,
-) {
-    let (view, fov, cam_pos) = if let Some(cs_cam) = cutscene_camera_override {
-        (cs_cam.view_matrix(), cs_cam.fov_y_radians, cs_cam.eye)
-    } else {
-        let v = state.sim_core.camera.interpolated_view_matrix(alpha);
-        let f = state.sim_core.camera.interpolated_fov(alpha);
-        let cp = state
-            .sim_core
-            .camera
-            .prev_snapshot
-            .eye
-            .lerp(state.sim_core.camera.curr_snapshot.eye, alpha);
-        (v, f, cp)
-    };
-    let proj = glam::Mat4::perspective_rh(
-        fov,
-        aspect,
-        crate::rooms::DEFAULT_CAMERA_Z_NEAR,
-        crate::rooms::DEFAULT_CAMERA_Z_FAR,
-    );
-    let view_proj = proj * view;
-    let inv_proj = proj.inverse();
-    state.render_ctx.update_camera(view_proj, inv_proj, cam_pos);
-}
-
-fn update_spotlight_uniforms(
-    state: &mut AppState,
-    alpha: f32,
+fn build_cutscene_spotlight_uniforms(
+    state: &AppState,
+    cs_light: DemoLightState,
     player_pos: glam::Vec3,
-    cutscene_light_override: Option<DemoLightState>,
-) {
-    let (spot_pos, light_dir) = state.sim_core.interpolated_flashlight_ray(alpha);
+) -> sh2_renderer::light::SpotlightUniforms {
     let ambient_tint = state
         .drama_demo_session
         .as_ref()
         .filter(|s| s.player.locks_gameplay_input())
         .map(|s| s.player.atmosphere.ambient_tint_rgba)
         .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-
-    let spot_uniforms = if state.drama_demo_session.as_ref().is_some_and(|s| {
-        s.player.locks_gameplay_input() && s.player.closet_fix.flashlight_suppressed
-    }) {
-        // SH2:EE ClosetCutscene.cpp:164: suppress flashlight inside Room 307 closet when camera X == -22256.61133f
-        sh2_renderer::light::SpotlightUniforms {
-            position: [spot_pos.x, spot_pos.y, spot_pos.z, 0.0],
-            direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-            color_outer: [0.0, 0.0, 0.0, 0.0],
-            ambient_tint,
+    let l_pos = glam::Vec3::from_array(cs_light.position);
+    let l_tgt = glam::Vec3::from_array(cs_light.interest);
+    let (_near_decay, far_decay) = match cs_light.kind {
+        DemoLightKind::Point | DemoLightKind::Spot => {
+            sh2_core::demo_light_decay_bounds(cs_light.decay[1])
         }
-    } else if let Some(cs_light) = cutscene_light_override {
-        let l_pos = glam::Vec3::from_array(cs_light.position);
-        let l_tgt = glam::Vec3::from_array(cs_light.interest);
-        // Evaluate authentic PS2/PC 9-bucket linear distance decay ramp (`DEMO_LIGHT_DECAY_RAMP` at `0x50cff0`)
-        let (_near_decay, far_decay) = match cs_light.kind {
-            DemoLightKind::Point | DemoLightKind::Spot => {
-                sh2_core::demo_light_decay_bounds(cs_light.decay[1])
-            }
-            DemoLightKind::Directional => (3000.0, 7500.0),
-        };
-        let range_boost = (far_decay / 3500.0).clamp(0.8, 2.2);
-        let (pos, dir, inner_cos, outer_cos) = match cs_light.kind {
-            DemoLightKind::Spot => {
-                let d = (l_tgt - l_pos).normalize_or_zero();
-                let safe_d = if d.length_squared() > 1e-5 {
-                    d
-                } else {
-                    glam::Vec3::new(0.0, 0.0, 1.0)
-                };
-                (
-                    l_pos,
-                    safe_d,
-                    cs_light.cone[0].cos().clamp(0.1, 0.99),
-                    cs_light.cone[1].cos().clamp(0.05, 0.95),
-                )
-            }
-            DemoLightKind::Point => {
-                let d = (player_pos - l_pos).normalize_or_zero();
-                let safe_d = if d.length_squared() > 1e-5 {
-                    d
-                } else {
-                    glam::Vec3::new(0.0, 1.0, 0.0)
-                };
-                (l_pos, safe_d, 0.25, -0.65)
-            }
-            DemoLightKind::Directional => {
-                // `DdsPlay` (`0x4a1bf5..0x4a1c8a`) interprets `light.position` as the light vector
-                // and normalizes `-pos` as the incoming ray direction.
-                let d = (-l_pos).normalize_or_zero();
-                let safe_d = if d.length_squared() > 1e-5 {
-                    d
-                } else {
-                    glam::Vec3::new(0.0, 1.0, 0.0)
-                };
-                (player_pos - safe_d * 1800.0, safe_d, 0.25, -0.65)
-            }
-        };
-        sh2_renderer::light::SpotlightUniforms {
-            position: [pos.x, pos.y, pos.z, 1.0],
-            direction_inner: [dir.x, dir.y, dir.z, inner_cos],
-            color_outer: [
-                cs_light.color[0].max(0.25) * 1.8 * range_boost,
-                cs_light.color[1].max(0.25) * 1.8 * range_boost,
-                cs_light.color[2].max(0.25) * 1.8 * range_boost,
-                outer_cos,
-            ],
-            ambient_tint,
-        }
-    } else if state
-        .drama_demo_session
-        .as_ref()
-        .is_some_and(|s| s.player.locks_gameplay_input() && s.player.info.stage_name == "er01")
-        || (state.active_test_room == TestRoomKind::RestroomStart
-            && !state.sim_core.scenario.flashlight_on)
-    {
-        // In `RestroomStart` (`er01.map` / `first_toilet`), James has not found the flashlight in Room 205 yet;
-        // provide the overhead sink fluorescent fixture illumination above the mirror (`X = -20000.0, Z = 20429.5`)
-        // so both James and his planar mirror reflection are clearly visible.
-        sh2_renderer::light::SpotlightUniforms {
-            position: [-19200.0, -1950.0, 20429.5, 1.0],
-            direction_inner: [-0.65, 0.76, 0.0, 0.35],
-            color_outer: [1.85, 1.90, 1.80, -0.25],
-            ambient_tint,
-        }
-    } else if let Some(session) = state
-        .drama_demo_session
-        .as_ref()
-        .filter(|s| s.player.locks_gameplay_input())
-    {
-        // Cutscene with `0` dynamic `.dds` lights outside `er01`: place a wide ambient stage key light
-        // above the active camera/actor focus so characters and level geometry are clearly illuminated.
-        let cam_eye = session.player.camera.eye;
-        let cam_tgt = session.player.camera.interest;
-        let key_pos = cam_eye + glam::Vec3::new(0.0, -600.0, 0.0);
-        let key_dir = (cam_tgt - key_pos).normalize_or_zero();
-        let safe_dir = if key_dir.length_squared() > 1e-5 {
-            key_dir
-        } else {
-            glam::Vec3::new(0.0, 0.5, 0.86)
-        };
-        sh2_renderer::light::SpotlightUniforms {
-            position: [key_pos.x, key_pos.y, key_pos.z, 1.0],
-            direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
-            color_outer: [1.75, 1.72, 1.68, -0.50],
-            ambient_tint,
-        }
-    } else {
-        let light_color = if state.sim_core.scenario.flashlight_on {
-            [2.5, 2.3, 1.8, 1.0]
-        } else {
-            [0.0, 0.0, 0.0, 0.0]
-        };
-        sh2_renderer::light::SpotlightUniforms {
-            position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
-            direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-            color_outer: [light_color[0], light_color[1], light_color[2], 0.70],
-            ambient_tint,
+        DemoLightKind::Directional => (3000.0, 7500.0),
+    };
+    let boost = 1.8 * (far_decay / 3500.0).clamp(0.8, 2.2);
+    let (pos, dir, inner_cos, outer_cos) = match cs_light.kind {
+        DemoLightKind::Spot => (
+            l_pos,
+            (l_tgt - l_pos).normalize_or(glam::Vec3::Z),
+            cs_light.cone[0].cos().clamp(0.1, 0.99),
+            cs_light.cone[1].cos().clamp(0.05, 0.95),
+        ),
+        DemoLightKind::Point => (
+            l_pos,
+            (player_pos - l_pos).normalize_or(glam::Vec3::Y),
+            0.25,
+            -0.65,
+        ),
+        DemoLightKind::Directional => {
+            let safe_d = (-l_pos).normalize_or(glam::Vec3::Y);
+            (player_pos - safe_d * 1800.0, safe_d, 0.25, -0.65)
         }
     };
-    state.render_ctx.update_spotlight(&spot_uniforms);
+    sh2_renderer::light::SpotlightUniforms {
+        position: [pos.x, pos.y, pos.z, 1.0],
+        direction_inner: [dir.x, dir.y, dir.z, inner_cos],
+        color_outer: [
+            cs_light.color[0].max(0.25) * boost,
+            cs_light.color[1].max(0.25) * boost,
+            cs_light.color[2].max(0.25) * boost,
+            outer_cos,
+        ],
+        ambient_tint,
+    }
 }
 
 fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {

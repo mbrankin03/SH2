@@ -279,7 +279,7 @@ impl ThroughDoorSession {
         if self.timer_sec <= 0.75 {
             self.param.rail_sta_pos[1] += -250.0 * dt_sec;
         }
-        if !init_pullback && self.is_ended(player_pos, player_yaw, enemy_xz_dist) {
+        if self.is_ended(player_pos, player_yaw, enemy_xz_dist) {
             self.deactivate();
             return None;
         }
@@ -296,7 +296,7 @@ mod tests {
     use crate::camera::{CameraMovementType, Ps2CameraController};
     use sh2_assets::formats::cam::{parse_cam, CamFile, CamMovementType};
 
-    fn cir_param(ox: f32, oz: f32, ang_y: f32, radius: f32) -> LocusCircleCamParam {
+    fn cir(ox: f32, oz: f32, ang_y: f32, radius: f32) -> LocusCircleCamParam {
         let mut p = LocusCircleCamParam::default();
         (p.origin_x, p.origin_z, p.ang_y, p.radius) = (ox, oz, ang_y, radius);
         p
@@ -304,37 +304,46 @@ mod tests {
 
     #[test]
     fn test_locus_circle_quadrants_continuity_and_zero_origin() {
-        let mut sw = RoadArea::default();
-        (sw.x0, sw.z0, sw.x2, sw.z2) = (2250.0, 57750.0, 5500.0, 54500.0);
-        (sw.x1, sw.z1, sw.min_hy, sw.max_hy) = (2250.0, 54500.0, 500.0, -4000.0);
-        let mut rd = RoadArea::default();
-        (rd.min_hy, rd.max_hy) = (-865.0, -1385.0);
-        let mut rec = RoadRecord {
-            lim_sw: sw,
-            lim_rd: rd,
-            area_size_type: AreaSizeType::Outdoor,
-            mv_y_type: 5,
-            projection: 448.0,
-            cam_mv_type: CamMovementType::LocusCircle,
-            params: CamMovementParams::LocusCircle(cir_param(0.0, 0.0, -FRAC_PI_4, 1250.0)),
-            ..RoadRecord::default()
-        };
+        let mut buf = [0u8; 256];
+        for (off, val) in [
+            (0x00, 2250.0f32),
+            (0x04, 57750.0),
+            (0x08, 2250.0),
+            (0x0C, 54500.0),
+            (0x10, 5500.0),
+            (0x14, 54500.0),
+            (0x18, 500.0),
+            (0x1C, -4000.0),
+            (0x38, -865.0),
+            (0x3C, -1385.0),
+            (0x78, -FRAC_PI_4),
+            (0x7C, 1250.0),
+        ] {
+            buf[off..off + 4].copy_from_slice(&val.to_le_bytes());
+        }
+        buf[0x48..0x4C].copy_from_slice(&3i32.to_le_bytes());
+        buf[0x50..0x54].copy_from_slice(&5i32.to_le_bytes());
+        buf[0x6C..0x70].copy_from_slice(&4i32.to_le_bytes());
+        buf[0x80 + 0x44] = 0x01;
+        let mut rec = parse_cam(&buf)
+            .expect("valid synthetic cam")
+            .records
+            .remove(0);
         let (eye0, proj0) = evaluate_locus_circle_record(&rec, Vec3::new(3875.0, 0.0, 56125.0));
         assert!((eye0.x - 2250.0).abs() < 1.0 && (eye0.z - 57750.0).abs() < 1.0 && proj0 > 448.0);
 
-        // Verify cb31 out-of-range ang_y (-5*PI/4) & cb02 +0.0 atan2(-z) == +PI boundary safety
-        rec.params = CamMovementParams::LocusCircle(cir_param(5500.0, 54500.0, -3.9269907, 1000.0));
+        rec.params = CamMovementParams::LocusCircle(cir(5500.0, 54500.0, -3.9269907, 1000.0));
         assert!(evaluate_locus_circle_record(&rec, Vec3::ZERO).0.is_finite());
-        let q1 = cir_param(5500.0, 57750.0, -3.0 * FRAC_PI_4, 1000.0);
+        let q1 = cir(5500.0, 57750.0, -3.0 * FRAC_PI_4, 1000.0);
         let (e_edge, _) = evaluate_locus_circle_eye(&rec, &q1, Vec3::new(5500.0, 0.0, 54500.0));
         let (e_near, _) = evaluate_locus_circle_eye(&rec, &q1, Vec3::new(5499.9, 0.0, 54500.0));
         assert!((e_edge - e_near).length() < 5.0);
 
         for q in [-3.0 * FRAC_PI_4, -FRAC_PI_4, FRAC_PI_4, 3.0 * FRAC_PI_4] {
-            let cir = cir_param(1000.0, 2000.0, q, 1000.0);
+            let c = cir(1000.0, 2000.0, q, 1000.0);
             let pt = |a: f32| Vec3::new(1000.0 + a.sin() * 1500.0, 0.0, 2000.0 + a.cos() * 1500.0);
-            let d = evaluate_locus_circle_eye(&rec, &cir, pt(q + 1e-3)).0
-                - evaluate_locus_circle_eye(&rec, &cir, pt(q - 1e-3)).0;
+            let d = evaluate_locus_circle_eye(&rec, &c, pt(q + 1e-3)).0
+                - evaluate_locus_circle_eye(&rec, &c, pt(q - 1e-3)).0;
             assert!(d.length() < 25.0);
         }
     }

@@ -458,9 +458,9 @@ impl DramaDemoPlayer {
         final_state.camera_pos[2] += self.info.offset_z;
         final_state.camera_interest[0] += self.info.offset_x;
         final_state.camera_interest[2] += self.info.offset_z;
-        for c in 0..DEMO_MAX_CHARS {
-            final_state.char_positions[c][0] += self.info.offset_x;
-            final_state.char_positions[c][2] += self.info.offset_z;
+        for pos in &mut final_state.char_positions {
+            pos[0] += self.info.offset_x;
+            pos[2] += self.info.offset_z;
         }
         self.current_state = final_state;
         self.sync_camera_and_actors();

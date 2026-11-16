@@ -12,6 +12,7 @@ pub mod first_person;
 pub mod frame;
 pub mod handoff;
 pub mod ots;
+pub mod sim_bridge;
 pub mod spring_arm;
 #[cfg(test)]
 mod tests;
@@ -30,7 +31,7 @@ pub use first_person::{
     CharacterHeadRigSpec, FirstPersonCameraRig, FirstPersonConfig, HeadBobMode,
     PlayerMeshVisibility, FIRST_PERSON_NEAR_CLIP_UNITS, STANDARD_NEAR_CLIP_UNITS,
 };
-pub use frame::{ModernCameraFrame, ModernCameraTickInput};
+pub use frame::{ModernCameraFrame, ModernCameraTickInput, QuickTurnPhase};
 pub use handoff::{
     blend_snapshots, smoothstep01, snapshot_from_cutscene, CameraCyclePreset,
     ExternalCameraHandoff, GameplayCameraMode, ModeTransitionState,
@@ -354,8 +355,6 @@ impl ModernCameraRig {
             }
         }
 
-        let head_anchor = CharacterHeadRigSpec::for_character(input.character)
-            .resolve_world_eye_anchor(input.player_pos, input.player_yaw, None);
         let player_visibility = if matches!(
             self.handoff,
             ExternalCameraHandoff::BlendingIntoCutscene { .. }
@@ -363,7 +362,7 @@ impl ModernCameraRig {
         ) {
             PlayerMeshVisibility::FullBody
         } else if self.active_mode == GameplayCameraMode::FirstPerson
-            && final_snap.eye.distance(head_anchor) < 180.0
+            && final_snap.eye.distance(self.first_person.smoothed_eye) < 180.0
         {
             PlayerMeshVisibility::HideHeadAndUpperBody
         } else {

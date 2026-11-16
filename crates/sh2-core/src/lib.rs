@@ -146,8 +146,9 @@ pub use modern_camera::{
     CameraCyclePreset, CharacterHeadRigSpec, ExternalCameraHandoff, FirstPersonCameraRig,
     FirstPersonConfig, GameplayCameraMode, HeadBobMode, ModeTransitionState, ModernCameraFrame,
     ModernCameraRig, ModernCameraTickInput, OtsAimPhase, OtsBoomQuery, OtsCameraConfig,
-    OtsCameraRig, OtsReticleState, OtsShoulderSide, PlayerMeshVisibility, ReticleMode,
-    SpringArmConfig, SpringArmState, FIRST_PERSON_NEAR_CLIP_UNITS, STANDARD_NEAR_CLIP_UNITS,
+    OtsCameraRig, OtsReticleState, OtsShoulderSide, PlayerMeshVisibility, QuickTurnPhase,
+    ReticleMode, SpringArmConfig, SpringArmState, FIRST_PERSON_NEAR_CLIP_UNITS,
+    STANDARD_NEAR_CLIP_UNITS,
 };
 pub use room_loader::{
     default_room_id_for_stage, resolve_room_id_for_stage_or_override, stage_room_descriptor,

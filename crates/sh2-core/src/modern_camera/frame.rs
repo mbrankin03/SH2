@@ -3,11 +3,76 @@
 use glam::{Mat4, Vec3};
 
 use crate::camera::CameraSnapshot;
+use crate::locomotion::QUICK_TURN_SPEED_RAD_PER_SEC;
 use crate::scenario::PlayableCharacter;
 
 use super::first_person::{PlayerMeshVisibility, STANDARD_NEAR_CLIP_UNITS};
 use super::handoff::GameplayCameraMode;
 use super::ots::OtsReticleState;
+
+#[inline]
+fn wrap_angle_pi(rad: f32) -> f32 {
+    let mut wrapped = rad.rem_euclid(std::f32::consts::TAU);
+    if wrapped > std::f32::consts::PI {
+        wrapped -= std::f32::consts::TAU;
+    }
+    wrapped
+}
+
+/// Typed 180-degree quick-turn angular state machine stepping at PS2 `QUICK_TURN_SPEED_RAD_PER_SEC`
+/// (`5.497_787_5 rad/s` in `move.c`), preventing 1-tick 180-degree sub-frame smearing (`SH2-93`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum QuickTurnPhase {
+    /// No quick-turn active; free-look yaw input enabled.
+    #[default]
+    Idle,
+    /// Rotating 180 degrees at `QUICK_TURN_SPEED_RAD_PER_SEC` over ~35 ticks (`0.57 s` at 60 Hz).
+    Turning {
+        /// Cumulative angle rotated so far in radians (`0.0..PI`).
+        progress_rad: f32,
+        /// Target wrapped yaw in radians (`wrap_pi(start_yaw + PI)`).
+        target_yaw: f32,
+    },
+}
+
+impl QuickTurnPhase {
+    /// Starts a 180-degree quick-turn from `current_yaw` if currently `Idle`.
+    #[inline]
+    pub fn trigger(&mut self, current_yaw: f32) {
+        if matches!(self, Self::Idle) {
+            *self = Self::Turning {
+                progress_rad: 0.0,
+                target_yaw: wrap_angle_pi(current_yaw + std::f32::consts::PI),
+            };
+        }
+    }
+
+    /// Advances an active quick-turn by `dt` seconds (`1/60 s`), returning `true` while turning.
+    #[inline]
+    pub fn step(&mut self, current_yaw: &mut f32, dt: f32) -> bool {
+        if let Self::Turning {
+            progress_rad,
+            target_yaw,
+        } = *self
+        {
+            let step = QUICK_TURN_SPEED_RAD_PER_SEC * dt;
+            let next_progress = progress_rad + step;
+            if next_progress >= std::f32::consts::PI {
+                *current_yaw = target_yaw;
+                *self = Self::Idle;
+            } else {
+                *current_yaw = wrap_angle_pi(*current_yaw - step);
+                *self = Self::Turning {
+                    progress_rad: next_progress,
+                    target_yaw,
+                };
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
 
 /// Per-tick simulation inputs consumed by [`super::ModernCameraRig::tick`] at 60 Hz (`SH2-93`).
 #[derive(Debug, Clone, Copy)]

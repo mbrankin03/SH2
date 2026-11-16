@@ -10,18 +10,10 @@ use crate::animation::{
 use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
 use crate::collision::{CollisionConfig, CollisionWorld, SurfaceMaterial};
-use crate::config::ControlOptions;
-use crate::cutaway::CutawayOverlayEngine;
-use crate::cutscene::DramaDemoPlayer;
 use crate::events::StageTransitionCommand;
-use crate::input::{ControlScheme, HapticFeedback, InputManager};
-use crate::locomotion::{
-    LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
-};
-use crate::modern_camera::{
-    beam_quat_from_direction, GameplayCameraMode, ModernCameraRig, ModernCameraTickInput,
-    OtsReticleState, PlayerMeshVisibility,
-};
+use crate::input::{HapticFeedback, InputManager};
+use crate::locomotion::{LocomotionOutput, LocomotionState, PlayerLocomotionController};
+use crate::modern_camera::{GameplayCameraMode, ModernCameraRig};
 use crate::room_loader::{resolve_room_id_for_stage_or_override, stage_room_descriptor};
 use crate::scenario::{ScenarioKind, ScenarioState};
 use crate::timing::{
@@ -295,53 +287,14 @@ impl SimulationCore {
         // 1. Poll and update gamepad state
         self.input.update();
 
-        // 2. Handle flashlight toggle & live R3 gameplay camera swap (`SH2-93`)
+        // 2. Handle flashlight toggle
         if self.input.state.light_toggle_pressed {
             self.scenario.flashlight_on = !self.scenario.flashlight_on;
         }
-        if self.input.state.camera_mode_cycle_pressed {
-            self.modern_camera.cycle_mode_r3(
-                &self.camera.curr_snapshot,
-                self.scenario.character,
-                self.scenario.player_position,
-                self.scenario.player_yaw,
-            );
-        }
 
-        // 3. Update character position and turning via authentic PS2 locomotion controller
+        // 3. Update character position and turning via authentic PS2 locomotion controller + SH2-93 camera bridge
         let dt = 1.0 / 60.0;
-        let active_cam_mode = self.modern_camera.active_mode;
-        let is_tank = self.input.config.scheme == ControlScheme::Tank
-            && active_cam_mode != GameplayCameraMode::FirstPerson;
-
-        let loc_camera_yaw = match active_cam_mode {
-            GameplayCameraMode::ClassicPs2Rail => self
-                .camera
-                .curr_snapshot
-                .eye
-                .x
-                .atan2(self.camera.curr_snapshot.eye.z),
-            GameplayCameraMode::OverTheShoulder => {
-                self.modern_camera.ots.orbit_yaw + std::f32::consts::PI
-            }
-            GameplayCameraMode::FirstPerson => {
-                self.modern_camera.first_person.look_yaw + std::f32::consts::PI
-            }
-        };
-
-        let locomotion_in = LocomotionInput {
-            stick_x: self.input.state.left_stick_x,
-            stick_y: self.input.state.left_stick_y,
-            run_held: self.input.state.is_running,
-            strafe_left: self.input.state.strafe_left,
-            strafe_right: self.input.state.strafe_right,
-            quick_turn_pressed: self.input.state.quick_turn_pressed,
-            wall_ahead: false, // In free roam / room boundaries
-            enemy_near: false,
-            health_fraction: self.scenario.health / 100.0,
-            is_maria_follower: false, // Active player 1 always has 1.0x speed, even in Born From a Wish (Maria)
-            camera_yaw: loc_camera_yaw,
-        };
+        let (locomotion_in, is_tank) = self.prepare_locomotion_for_camera();
 
         let out =
             self.locomotion
@@ -392,6 +345,7 @@ impl SimulationCore {
         );
 
         // 4. Update authentic PS2 camera with raycast wall clamping (clCheckHitEyes)
+        let active_cam_mode = self.modern_camera.active_mode;
         let ps2_rx = if active_cam_mode == GameplayCameraMode::ClassicPs2Rail {
             self.input.state.right_stick_x
         } else {
@@ -416,43 +370,7 @@ impl SimulationCore {
                 .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
 
         // 4b. Step Over-the-Shoulder 3D / First-Person rig, .cld spring-arm, and look-coupled aiming (`SH2-93`)
-        let extra_yaw = self.input.state.mouse_look_delta_x + self.input.state.gyro_look_delta_yaw;
-        let extra_pitch =
-            self.input.state.mouse_look_delta_y + self.input.state.gyro_look_delta_pitch;
-        let modern_in = ModernCameraTickInput {
-            character: self.scenario.character,
-            player_pos: self.scenario.player_position,
-            player_yaw: self.scenario.player_yaw,
-            linear_speed: out.linear_speed,
-            right_stick_x: self.input.state.right_stick_x,
-            right_stick_y: self.input.state.right_stick_y,
-            extra_yaw_delta_rad: extra_yaw,
-            extra_pitch_delta_rad: extra_pitch,
-            sensitivity: self.stick_sensitivity,
-            ready_weapon: self.input.state.ready_weapon_pressed,
-            quick_turn_pressed: self.input.state.quick_turn_pressed,
-            shoulder_swap_pressed: self.input.state.shoulder_swap_pressed,
-            in_bug_room: false,
-        };
-        let modern_frame = self.modern_camera.tick(
-            &modern_in,
-            &self.camera.curr_snapshot,
-            &self.collision,
-            &self.timing,
-        );
-        if active_cam_mode == GameplayCameraMode::FirstPerson
-            || (active_cam_mode == GameplayCameraMode::OverTheShoulder
-                && self.input.state.ready_weapon_pressed)
-        {
-            let target_yaw = modern_frame.aim_dir.x.atan2(modern_frame.aim_dir.z);
-            self.scenario.player_yaw =
-                lerp_angle_shortest(self.scenario.player_yaw, target_yaw, 0.35);
-        }
-        if active_cam_mode.is_modern() {
-            self.flashlight_sweep.curr_origin = modern_frame.flashlight_origin;
-            self.flashlight_sweep.curr_orientation =
-                beam_quat_from_direction(modern_frame.flashlight_dir, self.scenario.player_yaw);
-        }
+        self.step_modern_camera_after_ps2_rail(&out);
 
         // 5. DualSense health heartbeat haptics
         if self.scenario.health <= 25.0 {
@@ -496,127 +414,6 @@ impl SimulationCore {
     #[inline]
     pub fn deterministic_fog_time(&self, alpha: f32) -> f32 {
         self.timing.deterministic_fog_time(self.tick_counter, alpha)
-    }
-
-    /// Synchronizes input sensitivity, control scheme, and modern camera settings from [`ControlOptions`] (`SH2-93`).
-    pub fn apply_control_options(&mut self, opts: &ControlOptions) {
-        self.input.config.scheme = if opts.tank_controls {
-            ControlScheme::Tank
-        } else {
-            ControlScheme::AnalogDirectional
-        };
-        self.input.config.stick_deadzone = opts.stick_deadzone.clamp(0.0, 0.5);
-        self.input.config.vibration_intensity = opts.vibration_intensity.clamp(0.0, 1.0);
-        self.stick_sensitivity = opts.stick_sensitivity.clamp(0.2, 4.0);
-        self.modern_camera.apply_control_options(
-            opts,
-            &self.camera.curr_snapshot,
-            self.scenario.character,
-            self.scenario.player_position,
-            self.scenario.player_yaw,
-        );
-    }
-
-    /// Returns the currently active gameplay camera mode (`SH2-93`).
-    #[inline]
-    pub fn active_camera_mode(&self) -> GameplayCameraMode {
-        self.modern_camera.active_mode
-    }
-
-    /// Smoothly switches to `mode` (`ClassicPs2Rail`, `OverTheShoulder`, or `FirstPerson`) (`SH2-93`).
-    pub fn set_camera_mode(&mut self, mode: GameplayCameraMode) {
-        self.modern_camera.set_mode_smooth(
-            mode,
-            &self.camera.curr_snapshot,
-            self.scenario.character,
-            self.scenario.player_position,
-            self.scenario.player_yaw,
-        );
-    }
-
-    /// Supplies evaluated character model-space bone matrices (`SH2-8`/`SH2-12`) to anchor First-Person view (`SH2-93`).
-    pub fn set_player_skeleton_pose(&mut self, pose_matrices: Option<&[[[f32; 4]; 4]]>) {
-        self.modern_camera.first_person.update_from_skeleton_pose(
-            self.scenario.character,
-            self.scenario.player_position,
-            self.scenario.player_yaw,
-            pose_matrices,
-        );
-    }
-
-    /// Returns the current foreground character mesh visibility directive (`FullBody` vs `HideHeadAndUpperBody`) (`SH2-93`).
-    #[inline]
-    pub fn player_mesh_visibility(&self) -> PlayerMeshVisibility {
-        self.modern_camera.curr_frame.player_visibility
-    }
-
-    /// Synchronizes scripted `.dds` cutscene camera blending/lock (`SH2-63` / `SH2-93`).
-    pub fn sync_cutscene_handoff(&mut self, demo_player: Option<&DramaDemoPlayer>) {
-        self.modern_camera.sync_cutscene(demo_player);
-    }
-
-    /// Synchronizes 2D interactive puzzle/memo cutaway camera lock (`SH2-15` / `SH2-93`).
-    pub fn sync_cutaway_handoff(&mut self, cutaway: &CutawayOverlayEngine) {
-        self.modern_camera.sync_cutaway(cutaway);
-    }
-
-    /// Evaluates the active sub-frame view matrix across `ClassicPs2Rail`, `OverTheShoulder`, `FirstPerson`, and handoffs (`SH2-93`).
-    #[inline]
-    pub fn active_view_matrix(&self, alpha: f32) -> glam::Mat4 {
-        if self.modern_camera.active_mode == GameplayCameraMode::ClassicPs2Rail
-            && matches!(
-                self.modern_camera.transition,
-                crate::modern_camera::ModeTransitionState::Settled
-            )
-            && matches!(
-                self.modern_camera.handoff,
-                crate::modern_camera::ExternalCameraHandoff::GameplayActive
-            )
-        {
-            self.camera.interpolated_view_matrix(alpha)
-        } else {
-            self.modern_camera.interpolated_view_matrix(alpha)
-        }
-    }
-
-    /// Evaluates the active sub-frame vertical FOV in radians (`SH2-93`).
-    #[inline]
-    pub fn active_fov_y(&self, alpha: f32) -> f32 {
-        if self.modern_camera.active_mode == GameplayCameraMode::ClassicPs2Rail
-            && matches!(
-                self.modern_camera.transition,
-                crate::modern_camera::ModeTransitionState::Settled
-            )
-            && matches!(
-                self.modern_camera.handoff,
-                crate::modern_camera::ExternalCameraHandoff::GameplayActive
-            )
-        {
-            self.camera.interpolated_fov(alpha)
-        } else {
-            self.modern_camera.interpolated_fov(alpha)
-        }
-    }
-
-    /// Evaluates the active sub-frame perspective near-clip distance in SH2 world units (`SH2-93`).
-    #[inline]
-    pub fn active_near_clip(&self, alpha: f32) -> f32 {
-        self.modern_camera.interpolated_near_clip(alpha)
-    }
-
-    /// Returns the active ranged weapon aiming `(origin, unit_direction)` in SH2 world space (`SH2-93`).
-    #[inline]
-    pub fn active_aim_ray(&self) -> (Vec3, Vec3) {
-        (
-            self.modern_camera.curr_frame.aim_origin,
-            self.modern_camera.curr_frame.aim_dir,
-        )
-    }
-
-    /// Returns the active subtle aiming reticle state (`SH2-93`).
-    #[inline]
-    pub fn active_reticle_state(&self) -> OtsReticleState {
-        self.modern_camera.curr_frame.reticle
     }
 }
 
@@ -762,49 +559,5 @@ mod tests {
                 Some(CamSourceKind::Sh2eeOverride)
             );
         }
-    }
-
-    #[test]
-    fn test_sh2_93_simulation_r3_ots_fps_flashlight_and_visibility() {
-        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
-        assert_eq!(sim.active_camera_mode(), GameplayCameraMode::ClassicPs2Rail);
-        assert_eq!(sim.player_mesh_visibility(), PlayerMeshVisibility::FullBody);
-
-        // Press R3 -> smoothly enters OverTheShoulder
-        sim.input.press_camera_mode_cycle();
-        sim.input.accumulate_mouse_look(0.25, -0.10);
-        sim.input.state.ready_weapon_pressed = true;
-        sim.tick();
-        assert_eq!(
-            sim.active_camera_mode(),
-            GameplayCameraMode::OverTheShoulder
-        );
-        for _ in 0..20 {
-            sim.tick();
-        }
-        let (_fl_orig, fl_dir) = sim.interpolated_flashlight_ray(1.0);
-        let (_aim_orig, aim_dir) = sim.active_aim_ray();
-        assert!((fl_dir - aim_dir).length() < 1e-3);
-        assert!(sim.active_view_matrix(0.5).is_finite());
-
-        // Press R3 again -> enters FirstPerson, hides head/upper-body, tightens near clip to 8.0
-        sim.input.press_camera_mode_cycle();
-        for _ in 0..22 {
-            sim.tick();
-        }
-        assert_eq!(sim.active_camera_mode(), GameplayCameraMode::FirstPerson);
-        assert_eq!(
-            sim.player_mesh_visibility(),
-            PlayerMeshVisibility::HideHeadAndUpperBody
-        );
-        assert!((sim.active_near_clip(1.0) - 8.0).abs() < 1e-3);
-
-        // Press R3 a third time -> returns cleanly to ClassicPs2Rail and restores FullBody
-        sim.input.press_camera_mode_cycle();
-        for _ in 0..22 {
-            sim.tick();
-        }
-        assert_eq!(sim.active_camera_mode(), GameplayCameraMode::ClassicPs2Rail);
-        assert_eq!(sim.player_mesh_visibility(), PlayerMeshVisibility::FullBody);
     }
 }

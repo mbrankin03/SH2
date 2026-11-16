@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::camera::CameraSnapshot;
 use crate::collision::CollisionWorld;
-use crate::timing::lerp_angle_shortest;
 
+use super::frame::QuickTurnPhase;
 use super::spring_arm::{
     solve_ots_spring_arm, sweep_ray_against_cld, OtsBoomQuery, SpringArmConfig, SpringArmState,
 };
@@ -224,6 +224,8 @@ pub struct OtsCameraRig {
     pub smoothed_spine_pos: Vec3,
     /// Spring-arm boom occlusion solver state.
     pub spring_arm: SpringArmState,
+    /// Active 180-degree quick-turn angular state (`QUICK_TURN_SPEED_RAD_PER_SEC`).
+    pub quick_turn: QuickTurnPhase,
 }
 
 impl Default for OtsCameraRig {
@@ -247,6 +249,7 @@ impl OtsCameraRig {
             aim_blend: 0.0,
             smoothed_spine_pos: Vec3::new(0.0, config.shoulder_height_y, 0.0),
             spring_arm: SpringArmState::new(boom),
+            quick_turn: QuickTurnPhase::Idle,
         }
     }
 
@@ -259,6 +262,7 @@ impl OtsCameraRig {
         self.aim_phase = OtsAimPhase::Exploration;
         self.smoothed_spine_pos = player_pos + Vec3::new(0.0, self.config.shoulder_height_y, 0.0);
         self.spring_arm.reset(self.config.hip_boom_distance);
+        self.quick_turn = QuickTurnPhase::Idle;
     }
 
     /// Toggles the active shoulder (`Right <-> Left`).
@@ -299,9 +303,9 @@ impl OtsCameraRig {
             self.toggle_shoulder();
         }
         if quick_turn_pressed {
-            self.orbit_yaw =
-                lerp_angle_shortest(self.orbit_yaw, self.orbit_yaw + std::f32::consts::PI, 1.0);
+            self.quick_turn.trigger(self.orbit_yaw);
         }
+        let is_quick_turning = self.quick_turn.step(&mut self.orbit_yaw, dt);
 
         self.aim_phase = if ready_weapon {
             OtsAimPhase::WeaponReadied
@@ -311,15 +315,16 @@ impl OtsCameraRig {
         let aim_scale = if ready_weapon { 0.65 } else { 1.0 };
         let sens = sensitivity.clamp(0.2, 4.0) * aim_scale;
 
-        let yaw_step = right_stick_x * self.config.stick_yaw_speed_rad_per_sec * sens * dt
-            + extra_yaw_delta_rad;
+        if !is_quick_turning {
+            let yaw_step = right_stick_x * self.config.stick_yaw_speed_rad_per_sec * sens * dt
+                + extra_yaw_delta_rad;
+            self.orbit_yaw = (self.orbit_yaw + yaw_step).rem_euclid(std::f32::consts::TAU);
+            if self.orbit_yaw > std::f32::consts::PI {
+                self.orbit_yaw -= std::f32::consts::TAU;
+            }
+        }
         let pitch_step = -right_stick_y * self.config.stick_pitch_speed_rad_per_sec * sens * dt
             + extra_pitch_delta_rad;
-
-        self.orbit_yaw = (self.orbit_yaw + yaw_step).rem_euclid(std::f32::consts::TAU);
-        if self.orbit_yaw > std::f32::consts::PI {
-            self.orbit_yaw -= std::f32::consts::TAU;
-        }
         self.orbit_pitch = (self.orbit_pitch + pitch_step)
             .clamp(self.config.min_pitch_radians, self.config.max_pitch_radians);
 

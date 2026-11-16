@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::camera::CameraSnapshot;
 use crate::collision::CollisionWorld;
 use crate::scenario::PlayableCharacter;
-use crate::timing::lerp_angle_shortest;
 
+use super::frame::QuickTurnPhase;
 use super::ots::{OtsReticleState, ReticleMode};
 use super::spring_arm::{constrain_eye_in_room, SpringArmConfig};
 
@@ -214,6 +214,8 @@ pub struct FirstPersonCameraRig {
     pub smoothed_eye: Vec3,
     /// Cached world-space eye anchor updated when external skeletal pose matrices are supplied.
     pub external_bone_eye: Option<Vec3>,
+    /// Active 180-degree quick-turn angular state (`QUICK_TURN_SPEED_RAD_PER_SEC`).
+    pub quick_turn: QuickTurnPhase,
 }
 
 impl Default for FirstPersonCameraRig {
@@ -234,6 +236,7 @@ impl FirstPersonCameraRig {
             bob_phase: 0.0,
             smoothed_eye: CharacterHeadRigSpec::JAMES.fallback_model_eye,
             external_bone_eye: None,
+            quick_turn: QuickTurnPhase::Idle,
         }
     }
 
@@ -265,6 +268,7 @@ impl FirstPersonCameraRig {
         self.look_pitch = 0.0;
         self.bob_phase = 0.0;
         self.external_bone_eye = None;
+        self.quick_turn = QuickTurnPhase::Idle;
         self.smoothed_eye = CharacterHeadRigSpec::for_character(character)
             .resolve_world_eye_anchor(player_pos, player_yaw, None);
     }
@@ -297,21 +301,22 @@ impl FirstPersonCameraRig {
     ) -> (CameraSnapshot, Vec3, Vec3, OtsReticleState) {
         let dt = 1.0 / 60.0;
         if quick_turn_pressed {
-            self.look_yaw =
-                lerp_angle_shortest(self.look_yaw, self.look_yaw + std::f32::consts::PI, 1.0);
+            self.quick_turn.trigger(self.look_yaw);
         }
+        let is_quick_turning = self.quick_turn.step(&mut self.look_yaw, dt);
 
         let aim_scale = if ready_weapon { 0.70 } else { 1.0 };
         let sens = sensitivity.clamp(0.2, 4.0) * aim_scale;
-        let yaw_step = right_stick_x * self.config.stick_yaw_speed_rad_per_sec * sens * dt
-            + extra_yaw_delta_rad;
+        if !is_quick_turning {
+            let yaw_step = right_stick_x * self.config.stick_yaw_speed_rad_per_sec * sens * dt
+                + extra_yaw_delta_rad;
+            self.look_yaw = (self.look_yaw + yaw_step).rem_euclid(std::f32::consts::TAU);
+            if self.look_yaw > std::f32::consts::PI {
+                self.look_yaw -= std::f32::consts::TAU;
+            }
+        }
         let pitch_step = -right_stick_y * self.config.stick_pitch_speed_rad_per_sec * sens * dt
             + extra_pitch_delta_rad;
-
-        self.look_yaw = (self.look_yaw + yaw_step).rem_euclid(std::f32::consts::TAU);
-        if self.look_yaw > std::f32::consts::PI {
-            self.look_yaw -= std::f32::consts::TAU;
-        }
         self.look_pitch = (self.look_pitch + pitch_step)
             .clamp(self.config.min_pitch_radians, self.config.max_pitch_radians);
 

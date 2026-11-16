@@ -300,6 +300,33 @@ fn test_first_person_retail_head_bone_anchoring_visibility_and_sway() {
     inp.extra_pitch_delta_rad = 0.0;
     let f2 = rig.tick(&inp, &rail, &collision, &timing);
     assert!((f2.aim_dir - f2.flashlight_dir).length() < 1e-5);
+
+    // Animated crouched external_bone_eye (> 250 units below upright bind pose) must keep HideHeadAndUpperBody
+    rig.first_person.external_bone_eye = Some(Vec3::new(0.0, -540.0, 40.0));
+    for _ in 0..20 {
+        rig.tick(&inp, &rail, &collision, &timing);
+    }
+    let crouched = rig.tick(&inp, &rail, &collision, &timing);
+    assert_eq!(
+        crouched.player_visibility,
+        PlayerMeshVisibility::HideHeadAndUpperBody,
+        "Animated/crouched head bone pose must never pop FullBody head geometry inside FPS camera"
+    );
+
+    // Gradual 180-degree quick-turn steps at QUICK_TURN_SPEED_RAD_PER_SEC (~0.0916 rad/tick), never snapping in 1 tick
+    rig.first_person.look_yaw = 0.0;
+    inp.quick_turn_pressed = true;
+    rig.tick(&inp, &rail, &collision, &timing);
+    inp.quick_turn_pressed = false;
+    assert!(
+        rig.first_person.look_yaw.abs() > 0.05 && rig.first_person.look_yaw.abs() < 0.20,
+        "Quick-turn tick 1 must step smoothly (~0.0916 rad), got {}",
+        rig.first_person.look_yaw
+    );
+    for _ in 0..40 {
+        rig.tick(&inp, &rail, &collision, &timing);
+    }
+    assert!((rig.first_person.look_yaw.abs() - std::f32::consts::PI).abs() < 1e-3);
 }
 
 #[test]

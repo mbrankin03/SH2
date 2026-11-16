@@ -406,3 +406,58 @@ mod renderer_tests {
         let _ = ctx.device.poll(wgpu::Maintain::wait());
     }
 }
+
+#[test]
+fn test_sh2_93_first_person_skeletal_body_region_and_mirror_visibility() {
+    use sh2_assets::formats::mdls::parse_mdl;
+    use sh2_core::PlayerMeshVisibility;
+    use sh2_renderer::{classify_primitive_body_region, GpuSkeletalPrimitive, SkeletalBodyRegion};
+
+    let root = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+    for rel in [
+        "data/chr/jms/hll_jms.mdl",
+        "data/chr/jms/hhh_jms.mdl",
+        "data/chr/mar/lll_mar.mdl",
+        "data/chr/mar/hhh_mar.mdl",
+    ] {
+        let full = format!("{root}/{rel}");
+        if !std::path::Path::new(&full).exists() {
+            continue;
+        }
+        let mdl = parse_mdl(&std::fs::read(&full).expect("read mdl")).expect("parse mdl");
+        let regions: Vec<SkeletalBodyRegion> = (0..mdl.primitives.len())
+            .map(|k| {
+                let tris = mdl.primitive_triangles(k);
+                classify_primitive_body_region(&mdl, k, &tris)
+            })
+            .collect();
+        assert!(
+            regions.contains(&SkeletalBodyRegion::HeadAndHair),
+            "{rel} must classify head/hair primitives"
+        );
+        assert!(
+            regions.contains(&SkeletalBodyRegion::UpperTorso),
+            "{rel} must classify upper-torso primitives"
+        );
+        assert!(
+            regions.contains(&SkeletalBodyRegion::LowerOrHands),
+            "{rel} must preserve lower-body/hand primitives"
+        );
+    }
+
+    let head_prim = GpuSkeletalPrimitive {
+        first_index: 0,
+        index_count: 36,
+        texture_index: 0,
+        is_transparent: false,
+        pose_index: 0,
+        is_active: true,
+        body_region: SkeletalBodyRegion::HeadAndHair,
+    };
+    assert!(head_prim.should_draw(PlayerMeshVisibility::FullBody, false));
+    assert!(!head_prim.should_draw(PlayerMeshVisibility::HideHeadAndUpperBody, false));
+    assert!(
+        head_prim.should_draw(PlayerMeshVisibility::HideHeadAndUpperBody, true),
+        "Planar mirror reflections must still draw head & hair in First-Person mode"
+    );
+}

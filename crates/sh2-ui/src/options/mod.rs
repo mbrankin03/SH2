@@ -240,4 +240,48 @@ mod tests {
             image::ExtendedColorType::Rgba8,
         );
     }
+
+    #[test]
+    fn test_sh2_93_controls_tab_camera_mode_fov_and_sway_options() {
+        use sh2_core::config::{CameraCyclePreset, GameplayCameraMode, OtsShoulderSide};
+
+        let mut menu = OptionsMenu::new(AppConfig::default());
+        menu.active_tab = OptionsTab::Controls;
+        assert_eq!(menu.item_count(), 11);
+
+        // Camera Mode: ClassicPs2Rail -> OverTheShoulder -> FirstPerson
+        menu.selected_index = 5;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.controls.default_camera_mode,
+            GameplayCameraMode::OverTheShoulder
+        );
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.controls.default_camera_mode,
+            GameplayCameraMode::FirstPerson
+        );
+
+        // R3 Cycle Preset & OTS Shoulder
+        menu.selected_index = 6;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.controls.camera_cycle_preset,
+            CameraCyclePreset::ClassicAndOts
+        );
+        menu.selected_index = 7;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.controls.ots_shoulder,
+            OtsShoulderSide::Left
+        );
+
+        // First-Person FOV (75 -> 80) & Sway toggle
+        menu.selected_index = 9;
+        menu.adjust_value(1);
+        assert_eq!(menu.draft_config.controls.first_person_fov_deg, 80);
+        menu.selected_index = 10;
+        menu.adjust_value(1);
+        assert!(!menu.draft_config.controls.first_person_head_bob);
+    }
 }

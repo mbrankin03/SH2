@@ -118,6 +118,18 @@ pub struct GamepadInputState {
     pub strafe_left: bool,
     /// Strafe right button held.
     pub strafe_right: bool,
+    /// Camera mode live-cycle button (`R3` / Right Thumb) pressed this tick (`SH2-93`).
+    pub camera_mode_cycle_pressed: bool,
+    /// Over-the-Shoulder left/right shoulder swap button (`L3` / Left Thumb) pressed this tick (`SH2-93`).
+    pub shoulder_swap_pressed: bool,
+    /// Accumulated mouse horizontal yaw look delta in radians for this 60 Hz tick (`SH2-93`).
+    pub mouse_look_delta_x: f32,
+    /// Accumulated mouse vertical pitch look delta in radians for this 60 Hz tick (`SH2-93`).
+    pub mouse_look_delta_y: f32,
+    /// Accumulated gyro motion-sensor horizontal yaw delta in radians for this 60 Hz tick (`SH2-87`/`SH2-93`).
+    pub gyro_look_delta_yaw: f32,
+    /// Accumulated gyro motion-sensor vertical pitch delta in radians for this 60 Hz tick (`SH2-87`/`SH2-93`).
+    pub gyro_look_delta_pitch: f32,
     /// Active controller speaker cue.
     pub pending_speaker_cue: Option<ControllerSpeakerCue>,
     /// Active haptic feedback command.
@@ -130,6 +142,10 @@ pub struct InputManager {
     active_gamepad: Option<GamepadId>,
     pub config: ControllerConfig,
     pub state: GamepadInputState,
+    pending_camera_cycle: bool,
+    pending_shoulder_swap: bool,
+    pending_mouse_look: [f32; 2],
+    pending_gyro_look: [f32; 2],
 }
 
 impl InputManager {
@@ -141,7 +157,33 @@ impl InputManager {
             active_gamepad: None,
             config,
             state: GamepadInputState::default(),
+            pending_camera_cycle: false,
+            pending_shoulder_swap: false,
+            pending_mouse_look: [0.0; 2],
+            pending_gyro_look: [0.0; 2],
         }
+    }
+
+    /// Queues a single-tick `R3` camera mode cycle trigger for the next 60 Hz `update()` (`SH2-93`).
+    pub fn press_camera_mode_cycle(&mut self) {
+        self.pending_camera_cycle = true;
+    }
+
+    /// Queues a single-tick `L3` OTS shoulder swap trigger for the next 60 Hz `update()` (`SH2-93`).
+    pub fn press_shoulder_swap(&mut self) {
+        self.pending_shoulder_swap = true;
+    }
+
+    /// Accumulates mouse look yaw/pitch deltas (in radians) to be consumed on the next 60 Hz `update()` (`SH2-93`).
+    pub fn accumulate_mouse_look(&mut self, delta_yaw_rad: f32, delta_pitch_rad: f32) {
+        self.pending_mouse_look[0] += delta_yaw_rad;
+        self.pending_mouse_look[1] += delta_pitch_rad;
+    }
+
+    /// Accumulates gyro look yaw/pitch deltas (in radians) to be consumed on the next 60 Hz `update()` (`SH2-87`/`SH2-93`).
+    pub fn accumulate_gyro_look(&mut self, delta_yaw_rad: f32, delta_pitch_rad: f32) {
+        self.pending_gyro_look[0] += delta_yaw_rad;
+        self.pending_gyro_look[1] += delta_pitch_rad;
     }
 
     /// Set control scheme (Tank vs Analog).
@@ -170,11 +212,17 @@ impl InputManager {
 
     /// Update controller input states from `gilrs` event loop.
     pub fn update(&mut self) {
-        // Reset single-frame pulse triggers
+        // Reset single-frame pulse triggers and flush queued host mouse/gyro/R3 inputs
         self.state.light_toggle_pressed = false;
         self.state.map_pressed = false;
         self.state.inventory_pressed = false;
         self.state.quick_turn_pressed = false;
+        self.state.camera_mode_cycle_pressed = std::mem::take(&mut self.pending_camera_cycle);
+        self.state.shoulder_swap_pressed = std::mem::take(&mut self.pending_shoulder_swap);
+        self.state.mouse_look_delta_x = std::mem::take(&mut self.pending_mouse_look[0]);
+        self.state.mouse_look_delta_y = std::mem::take(&mut self.pending_mouse_look[1]);
+        self.state.gyro_look_delta_yaw = std::mem::take(&mut self.pending_gyro_look[0]);
+        self.state.gyro_look_delta_pitch = std::mem::take(&mut self.pending_gyro_look[1]);
         self.state.pending_speaker_cue = None;
 
         // Decrement haptic timer
@@ -239,6 +287,14 @@ impl InputManager {
                     self.state.strafe_right = false;
                 }
 
+                EventType::ButtonPressed(Button::RightThumb, _) => {
+                    self.state.camera_mode_cycle_pressed = true;
+                }
+
+                EventType::ButtonPressed(Button::LeftThumb, _) => {
+                    self.state.shoulder_swap_pressed = true;
+                }
+
                 _ => {}
             }
         }
@@ -301,5 +357,21 @@ mod tests {
         });
         assert_eq!(mgr.state.active_haptic.duration_ticks, 10);
         assert!((mgr.state.active_haptic.heavy_rumble - 0.8).abs() < f32::EPSILON);
+
+        mgr.press_camera_mode_cycle();
+        mgr.press_shoulder_swap();
+        mgr.accumulate_mouse_look(0.15, -0.05);
+        mgr.accumulate_gyro_look(0.02, 0.01);
+        mgr.update();
+        assert!(mgr.state.camera_mode_cycle_pressed);
+        assert!(mgr.state.shoulder_swap_pressed);
+        assert!((mgr.state.mouse_look_delta_x - 0.15).abs() < 1e-6);
+        assert!((mgr.state.gyro_look_delta_yaw - 0.02).abs() < 1e-6);
+
+        // Next update clears single-tick pulses and look deltas
+        mgr.update();
+        assert!(!mgr.state.camera_mode_cycle_pressed);
+        assert!(!mgr.state.shoulder_swap_pressed);
+        assert!(mgr.state.mouse_look_delta_x.abs() < 1e-6);
     }
 }

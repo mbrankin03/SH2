@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+pub use crate::modern_camera::{
+    CameraCyclePreset, GameplayCameraMode, OtsShoulderSide, ReticleMode,
+};
+
+fn default_first_person_fov_deg() -> u32 {
+    75
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Internal rendering resolution option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum InternalResolution {
@@ -728,7 +740,7 @@ impl Default for AudioOptions {
     }
 }
 
-/// Control options matching SH2 / SH2:EE controls config.
+/// Control options matching SH2 / SH2:EE controls config plus modern 3D camera settings (`SH2-93`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ControlOptions {
     /// 3D Tank controls (authentic PS2) vs 2D camera-relative directional controls.
@@ -737,10 +749,28 @@ pub struct ControlOptions {
     pub glyph_style: ButtonGlyphStyle,
     /// Analog stick deadzone ratio (0.0 to 0.5).
     pub stick_deadzone: f32,
-    /// Stick sensitivity multiplier (0.5 to 2.0).
+    /// Stick sensitivity multiplier (0.5 to 3.0).
     pub stick_sensitivity: f32,
     /// Vibration / haptic feedback intensity (0.0 to 1.0).
     pub vibration_intensity: f32,
+    /// Default gameplay camera mode (`ClassicPs2Rail`, `OverTheShoulder`, or `FirstPerson`) (`SH2-93`).
+    #[serde(default)]
+    pub default_camera_mode: GameplayCameraMode,
+    /// Subset of camera modes cycled live via `R3` (`AllThree`, `ClassicAndOts`, etc.) (`SH2-93`).
+    #[serde(default)]
+    pub camera_cycle_preset: CameraCyclePreset,
+    /// Preferred shoulder alignment in Over-the-Shoulder 3D mode (`Right` or `Left`) (`SH2-93`).
+    #[serde(default)]
+    pub ots_shoulder: OtsShoulderSide,
+    /// Diegetic aiming reticle display mode (`AimOnly`, `AlwaysSubtle`, or `Off`) (`SH2-93`).
+    #[serde(default)]
+    pub ots_reticle: ReticleMode,
+    /// Vertical field-of-view in degrees for First-Person mode (`55..=100`, default `75`) (`SH2-93`).
+    #[serde(default = "default_first_person_fov_deg")]
+    pub first_person_fov_deg: u32,
+    /// Enable subtle stride head-bob and footstep sway in First-Person mode (`SH2-93`).
+    #[serde(default = "default_true")]
+    pub first_person_head_bob: bool,
 }
 
 impl Default for ControlOptions {
@@ -751,6 +781,12 @@ impl Default for ControlOptions {
             stick_deadzone: 0.15,
             stick_sensitivity: 1.0,
             vibration_intensity: 1.0,
+            default_camera_mode: GameplayCameraMode::default(),
+            camera_cycle_preset: CameraCyclePreset::default(),
+            ots_shoulder: OtsShoulderSide::default(),
+            ots_reticle: ReticleMode::default(),
+            first_person_fov_deg: default_first_person_fov_deg(),
+            first_person_head_bob: true,
         }
     }
 }
@@ -969,6 +1005,12 @@ mod tests {
         original.video.grain_intensity = 45;
         original.audio.master_volume = 0.8;
         original.controls.tank_controls = false;
+        original.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
+        original.controls.camera_cycle_preset = CameraCyclePreset::ClassicAndOts;
+        original.controls.ots_shoulder = OtsShoulderSide::Left;
+        original.controls.ots_reticle = ReticleMode::AlwaysSubtle;
+        original.controls.first_person_fov_deg = 85;
+        original.controls.first_person_head_bob = false;
         original.game.language = GameLanguage::Spanish;
 
         let json = serde_json::to_string(&original).expect("serialize config");

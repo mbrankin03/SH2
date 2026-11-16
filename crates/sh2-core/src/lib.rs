@@ -14,6 +14,7 @@ pub mod input;
 pub mod inventory;
 pub mod locomotion;
 pub mod math;
+pub mod modern_camera;
 pub mod room_loader;
 pub mod scenario;
 pub mod secondary_physics;
@@ -138,6 +139,15 @@ pub use locomotion::{
     LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
     MARIA_COMPANION_SPEED_MULTIPLIER, MIN_FOOTSTEP_INTERVAL_SECS, QUICK_TURN_SPEED_RAD_PER_SEC,
     SH2_WORLD_UNIT_SCALE,
+};
+pub use modern_camera::{
+    beam_quat_from_direction, blend_snapshots, constrain_eye_in_room, sample_local_ceiling_y,
+    smoothstep01, snapshot_from_cutscene, solve_ots_spring_arm, sweep_ray_against_cld,
+    CameraCyclePreset, CharacterHeadRigSpec, ExternalCameraHandoff, FirstPersonCameraRig,
+    FirstPersonConfig, GameplayCameraMode, HeadBobMode, ModeTransitionState, ModernCameraFrame,
+    ModernCameraRig, ModernCameraTickInput, OtsAimPhase, OtsBoomQuery, OtsCameraConfig,
+    OtsCameraRig, OtsReticleState, OtsShoulderSide, PlayerMeshVisibility, ReticleMode,
+    SpringArmConfig, SpringArmState, FIRST_PERSON_NEAR_CLIP_UNITS, STANDARD_NEAR_CLIP_UNITS,
 };
 pub use room_loader::{
     default_room_id_for_stage, resolve_room_id_for_stage_or_override, stage_room_descriptor,

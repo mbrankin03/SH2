@@ -297,10 +297,10 @@ impl MessageInsertState {
     /// Replaces `<e0>..<e3>` placeholders in `raw` with the current insertion strings.
     pub fn expand(&self, raw: &str) -> String {
         let mut out = raw.to_string();
-        for i in 0..4 {
+        for (i, slot) in self.slots.iter().enumerate() {
             let tag = format!("<e{i}>");
             if out.contains(&tag) {
-                out = out.replace(&tag, &self.slots[i]);
+                out = out.replace(&tag, slot);
             }
         }
         out

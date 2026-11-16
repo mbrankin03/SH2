@@ -283,8 +283,8 @@ fn test_first_person_retail_head_bone_anchoring_visibility_and_sway() {
     let f2 = rig.tick(&inp, &rail, &collision, &timing);
     assert!((f2.aim_dir - f2.flashlight_dir).length() < 1e-5);
 
-    // Animated crouched external_bone_eye (> 250 units below upright bind pose) must keep HideHeadOnly
-    rig.first_person.external_bone_eye = Some(Vec3::new(0.0, -540.0, 40.0));
+    // Animated crouched external_model_head (> 250 units below upright bind pose) must keep HideHeadOnly
+    rig.first_person.external_model_head = Some(Vec3::new(0.0, -505.0, -10.0));
     for _ in 0..20 {
         rig.tick(&inp, &rail, &collision, &timing);
     }

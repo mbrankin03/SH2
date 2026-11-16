@@ -101,7 +101,17 @@ impl CharacterHeadRigSpec {
         player_yaw: f32,
         pose_matrices: Option<&[[[f32; 4]; 4]]>,
     ) -> Vec3 {
-        let model_eye = match pose_matrices {
+        model_to_world(
+            player_pos,
+            player_yaw,
+            self.resolve_model_eye(pose_matrices),
+        )
+    }
+
+    /// Evaluates the model-space eye midpoint (`+Y` down, `+Z` forward) from evaluated row-major
+    /// model-space bone matrices, falling back to `fallback_model_eye`.
+    pub fn resolve_model_eye(&self, pose_matrices: Option<&[[[f32; 4]; 4]]>) -> Vec3 {
+        match pose_matrices {
             Some(mats)
                 if mats.len() >= self.min_eye_rig_bones
                     && self.left_eye_bone_index < mats.len()
@@ -127,8 +137,7 @@ impl CharacterHeadRigSpec {
                 None => self.fallback_model_eye,
             },
             None => self.fallback_model_eye,
-        };
-        model_to_world(player_pos, player_yaw, model_eye)
+        }
     }
 
     /// Evaluates the world-space head joint (translation of `head_bone_index`) from evaluated
@@ -139,18 +148,34 @@ impl CharacterHeadRigSpec {
         player_yaw: f32,
         pose_matrices: Option<&[[[f32; 4]; 4]]>,
     ) -> Vec3 {
-        let model_head = pose_matrices
+        model_to_world(
+            player_pos,
+            player_yaw,
+            self.resolve_model_head(pose_matrices),
+        )
+    }
+
+    /// Evaluates the model-space head joint (translation of `head_bone_index`, `+Y` down),
+    /// falling back to `fallback_model_head`.
+    pub fn resolve_model_head(&self, pose_matrices: Option<&[[[f32; 4]; 4]]>) -> Vec3 {
+        pose_matrices
             .and_then(|mats| mats.get(self.head_bone_index))
             .map(|m| Vec3::new(m[0][3], m[1][3], m[2][3]))
-            .unwrap_or(self.fallback_model_head);
-        model_to_world(player_pos, player_yaw, model_head)
+            .unwrap_or(self.fallback_model_head)
+    }
+
+    /// Bind-pose eye midpoint relative to the head joint in body-frame model axes
+    /// (James `(0, -35.5, +50.0)`, Maria `(0, -31.2, +47.6)`).
+    #[inline]
+    pub fn bind_eye_offset_from_head(&self) -> Vec3 {
+        self.fallback_model_eye - self.fallback_model_head
     }
 
     /// Model-space eye displacement (`+Z` forward, `+Y` down) produced by nodding the head forward
     /// about the head joint by `NECK_TILT_SHARE * look_pitch` (zero when looking level or up).
     pub fn neck_tilt_model_offset(&self, look_pitch: f32) -> Vec3 {
         let nod = look_pitch.max(0.0) * NECK_TILT_SHARE;
-        let rel = self.fallback_model_eye - self.fallback_model_head;
+        let rel = self.bind_eye_offset_from_head();
         let (s, c) = nod.sin_cos();
         // Rotate (z forward, y down) toward +Z/+Y: forward' = z c - y s, down' = z s + y c.
         let rotated = Vec3::new(rel.x, rel.z * s + rel.y * c, rel.z * c - rel.y * s);
@@ -160,11 +185,14 @@ impl CharacterHeadRigSpec {
     /// Minimum horizontal distance (SH2 units, along the horizontal view direction) from the head
     /// joint that the eye must keep so the bottom frustum edge at `depression_rad` (`pitch + fov_y/2`)
     /// passes in front of the neck opening's front lip lying `eye_drop_to_lip` units below the eye.
+    ///
+    /// Floored at `neck_opening_radius + margin` so the eye never sits above or behind the neck
+    /// stump at any pitch (e.g. animated head turns), even when the bottom edge looks forward.
     pub fn min_clear_forward(&self, eye_drop_to_lip: f32, depression_rad: f32) -> f32 {
         let drop = eye_drop_to_lip.max(0.0);
         let (s, c) = depression_rad.sin_cos();
         let cot = c / s.max(1e-3);
-        self.neck_opening_radius + NECK_OPENING_CLEAR_MARGIN_UNITS - drop * cot
+        self.neck_opening_radius + NECK_OPENING_CLEAR_MARGIN_UNITS + (-drop * cot).max(0.0)
     }
 
     /// Maximum look pitch in radians for which the bottom frustum edge (`pitch + half_fov_y`) still
@@ -216,8 +244,13 @@ mod tests {
         let spec = CharacterHeadRigSpec::MARIA;
         let half_fov = 37.5_f32.to_radians();
         // Steeper bottom-edge depression demands more forward clearance once past vertical.
+        let floor = spec.neck_opening_radius + NECK_OPENING_CLEAR_MARGIN_UNITS;
         let shallow = spec.min_clear_forward(30.0, 1.2);
         let steep = spec.min_clear_forward(30.0, 1.9);
+        assert!(
+            (shallow - floor).abs() < 1e-4,
+            "forward-looking edge only needs the floor"
+        );
         assert!(steep > shallow);
         // An eye placed exactly on the envelope yields a pitch cap equal to the probing pitch.
         let pitch = 1.1;

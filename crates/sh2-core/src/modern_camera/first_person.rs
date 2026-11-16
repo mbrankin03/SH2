@@ -1,8 +1,9 @@
 //! Head-bone anchored First-Person (FPS) camera controller (`SH2-93`).
 //!
-//! Anchors the gameplay camera to James's (`bone 15`, eyes `20`/`22` in `lll_jms`/`hll_jms`/`hhh_jms`)
-//! or Maria's (`bone 9` in `lll_mar`, eyes `23`/`25` in `hhh_mar`) skeletal head rig (`SH2-8`/`SH2-12`),
-//! with clean fallback eye height when bone pose matrices are unavailable, clamped pitch/yaw look,
+//! Anchors the gameplay camera to the animated head-joint *position* of James (`bone 15` in
+//! `lll_jms`/`hll_jms`/`hhh_jms`) or Maria (`bone 9` in `lll_mar`/`hhh_mar`) (`SH2-8`/`SH2-12`) plus the
+//! retail bind eye offset in the body frame (animated head rotation never steers the view), with
+//! clean fallback eye height when bone pose matrices are unavailable, clamped pitch/yaw look,
 //! configurable vertical FOV (`55..=100 deg`), tuned near-clip distance (`8.0` SH2 units = `1.6 cm`),
 //! subtle toggleable footstep/head-bob sway, `.cld` room bounds containment, typed
 //! [`PlayerMeshVisibility`] (`FullBody` vs `HideHeadOnly`), and a natural forward neck-tilt with a
@@ -121,12 +122,16 @@ pub struct FirstPersonCameraRig {
     pub look_pitch: f32,
     /// Continuous gait sway phase in radians `[0, TAU)`.
     pub bob_phase: f32,
-    /// Smoothed world-space eye anchor in SH2 units.
+    /// Latest world-space eye anchor in SH2 units (smoothed head joint + bind eye offset placed at
+    /// the current `(player_pos, look_yaw)`, before neck tilt / clearance push), used for crossfades.
     pub smoothed_eye: Vec3,
-    /// Cached world-space eye anchor updated when external skeletal pose matrices are supplied.
-    pub external_bone_eye: Option<Vec3>,
-    /// Cached world-space head joint (`head_bone_index` translation) from external skeletal pose matrices.
-    pub external_head_joint: Option<Vec3>,
+    /// Smoothed **model-space** head joint (`+Y` down, `+Z` forward). Smoothing in model space keeps
+    /// zero positional lag behind the rendered body at any run/strafe/turn speed.
+    pub smoothed_model_head: Vec3,
+    /// Model-space head joint (`head_bone_index` translation) from the latest evaluated skeletal
+    /// pose (`SH2-8`/`SH2-12`), if supplied. Only its *position* (lean, bob, crouch) drives the
+    /// eye; animated head rotation is ignored so the hidden head never steers the player's view.
+    pub external_model_head: Option<Vec3>,
     /// Active 180-degree quick-turn angular state (`QUICK_TURN_SPEED_RAD_PER_SEC`).
     pub quick_turn: QuickTurnPhase,
 }
@@ -148,25 +153,21 @@ impl FirstPersonCameraRig {
             look_pitch: 0.0,
             bob_phase: 0.0,
             smoothed_eye: CharacterHeadRigSpec::JAMES.fallback_model_eye,
-            external_bone_eye: None,
-            external_head_joint: None,
+            smoothed_model_head: CharacterHeadRigSpec::JAMES.fallback_model_head,
+            external_model_head: None,
             quick_turn: QuickTurnPhase::Idle,
         }
     }
 
-    /// Updates the cached world-space eye position from evaluated skeletal `pose_matrices` (`SH2-8`/`SH2-12`).
+    /// Caches the model-space head joint from evaluated skeletal `pose_matrices`
+    /// (`SH2-8`/`SH2-12`); `None` reverts to the retail bind-pose fallback.
     pub fn update_from_skeleton_pose(
         &mut self,
         character: PlayableCharacter,
-        player_pos: Vec3,
-        player_yaw: f32,
         pose_matrices: Option<&[[[f32; 4]; 4]]>,
     ) {
         let spec = CharacterHeadRigSpec::for_character(character);
-        self.external_bone_eye = pose_matrices
-            .map(|mats| spec.resolve_world_eye_anchor(player_pos, player_yaw, Some(mats)));
-        self.external_head_joint = pose_matrices
-            .map(|mats| spec.resolve_world_head_joint(player_pos, player_yaw, Some(mats)));
+        self.external_model_head = pose_matrices.map(|m| spec.resolve_model_head(Some(m)));
     }
 
     /// Snaps the First-Person rig immediately to `(player_pos, player_yaw)` for `character`.
@@ -176,14 +177,14 @@ impl FirstPersonCameraRig {
         player_pos: Vec3,
         player_yaw: f32,
     ) {
+        let spec = CharacterHeadRigSpec::for_character(character);
         self.look_yaw = player_yaw;
         self.look_pitch = 0.0;
         self.bob_phase = 0.0;
-        self.external_bone_eye = None;
-        self.external_head_joint = None;
+        self.external_model_head = None;
         self.quick_turn = QuickTurnPhase::Idle;
-        self.smoothed_eye = CharacterHeadRigSpec::for_character(character)
-            .resolve_world_eye_anchor(player_pos, player_yaw, None);
+        self.smoothed_model_head = spec.fallback_model_head;
+        self.smoothed_eye = model_to_world(player_pos, player_yaw, spec.fallback_model_eye);
     }
 
     /// Unit forward view vector in `+Y`-down world space for current `(look_yaw, look_pitch)`.
@@ -214,16 +215,18 @@ impl FirstPersonCameraRig {
         let spec = CharacterHeadRigSpec::for_character(input.character);
         self.step_look_angles(input, dt);
 
-        let raw_anchor = self.external_bone_eye.unwrap_or_else(|| {
-            spec.resolve_world_eye_anchor(input.player_pos, input.player_yaw, None)
-        });
-        self.smoothed_eye = self.smoothed_eye.lerp(
-            raw_anchor,
+        // The FP body is always rendered at `look_yaw` (`sim_bridge.rs` locks `player_yaw` to it), so all
+        // model-space rig vectors are placed at the *current* `(player_pos, look_yaw)`: no stale yaw
+        // during diagonal strafe, mouse flicks, or quick-turns, and no positional lag while running.
+        let body_yaw = self.look_yaw;
+        let raw_model_head = self.external_model_head.unwrap_or(spec.fallback_model_head);
+        self.smoothed_model_head = self.smoothed_model_head.lerp(
+            raw_model_head,
             self.config.eye_anchor_smoothing.clamp(0.05, 1.0),
         );
-        let head_joint = self.external_head_joint.unwrap_or_else(|| {
-            spec.resolve_world_head_joint(input.player_pos, input.player_yaw, None)
-        });
+        let head_joint = model_to_world(input.player_pos, body_yaw, self.smoothed_model_head);
+        let model_eye = self.smoothed_model_head + spec.bind_eye_offset_from_head();
+        self.smoothed_eye = model_to_world(input.player_pos, body_yaw, model_eye);
 
         let speed_norm = (input.linear_speed / 1750.0).clamp(0.0, 1.0);
         let sway_offset = self.step_head_bob(speed_norm, dt);
@@ -237,7 +240,7 @@ impl FirstPersonCameraRig {
         // Natural chin-forward neck tilt, then push the eye clear of the neck opening along the view.
         let tilt = model_to_world(
             Vec3::ZERO,
-            input.player_yaw,
+            body_yaw,
             spec.neck_tilt_model_offset(self.look_pitch),
         );
         let desired = self.clear_neck_opening(

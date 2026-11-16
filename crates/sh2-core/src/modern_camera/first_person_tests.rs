@@ -28,8 +28,9 @@ fn fp_input(character: PlayableCharacter, pos: Vec3, yaw: f32) -> ModernCameraTi
     }
 }
 
-/// Signed slack (SH2 units) between the eye's forward offset from the head joint and the
-/// envelope required for the bottom frustum edge to clear the neck opening (`>= 0` is clear).
+/// Signed slack (SH2 units) between the steepest bottom-edge ray (`pitch + fov_y/2`) and the
+/// neck-opening front lip plus margin, measured independently of the rig's own envelope
+/// (`>= 0` means the view cannot dip inside the torso).
 fn clearance_slack(
     spec: &CharacterHeadRigSpec,
     eye: Vec3,
@@ -39,8 +40,11 @@ fn clearance_slack(
     fov_y: f32,
 ) -> f32 {
     let fwd = Vec3::new(look_yaw.sin(), 0.0, look_yaw.cos());
-    let drop = spec.neck_lip_world_y(head_joint) - eye.y;
-    (eye - head_joint).dot(fwd) - spec.min_clear_forward(drop, pitch + 0.5 * fov_y)
+    let drop = (spec.neck_lip_world_y(head_joint) - eye.y).max(0.0);
+    let depression = pitch + 0.5 * fov_y;
+    let ray_fwd_at_lip = drop * depression.cos() / depression.sin();
+    (eye - head_joint).dot(fwd) + ray_fwd_at_lip
+        - (spec.neck_opening_radius + NECK_OPENING_CLEAR_MARGIN_UNITS)
 }
 
 fn wrap_angle(a: f32) -> f32 {
@@ -120,8 +124,7 @@ fn test_fp_stationary_mouse_turn_keeps_body_locked_and_chest_clear() {
                 fp.look_pitch,
                 1.309,
             );
-            // One-tick body-yaw lag at 0.05 rad/tick bounds the error to a few units.
-            assert!(slack > -4.0, "tick {tick}: chest clearance slack {slack}");
+            assert!(slack >= -1e-3, "tick {tick}: chest clearance slack {slack}");
         }
     }
     assert!((sim.modern_camera.first_person.look_pitch - 1.10).abs() < 1e-4);
@@ -167,4 +170,118 @@ fn test_fp_wall_pushback_caps_pitch_instead_of_seeing_inside_torso() {
         slack >= -1e-2,
         "capped view still clears neck opening: {slack}"
     );
+}
+
+/// Synthetic 41-bone James pose: identity rotations with the head joint at its retail bind position.
+fn james_bind_head_pose() -> Vec<[[f32; 4]; 4]> {
+    let id = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    let mut pose = vec![id; 41];
+    let head = CharacterHeadRigSpec::JAMES.fallback_model_head;
+    pose[15][0][3] = head.x;
+    pose[15][1][3] = head.y;
+    pose[15][2][3] = head.z;
+    pose
+}
+
+fn first_person_sim() -> SimulationCore {
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    sim.collision = CollisionWorld::create_synthetic_room(20000.0, 20000.0, 2400.0, 0.0, 0.0);
+    sim.snap_player_transform(Vec3::ZERO, 0.0);
+    sim.modern_camera.active_mode = GameplayCameraMode::FirstPerson;
+    sim.modern_camera.reset_to_player(
+        PlayableCharacter::James,
+        Vec3::ZERO,
+        0.0,
+        &CameraSnapshot::default(),
+    );
+    sim
+}
+
+/// Asserts the body faces the view and the eye clears the neck stump of the body rendered at the
+/// *end-of-tick* `(player_position, player_yaw)` (zero positional / yaw lag).
+fn assert_eye_locked_to_rendered_body(sim: &SimulationCore, tag: &str) {
+    let fp = &sim.modern_camera.first_person;
+    let yaw = sim.scenario.player_yaw;
+    let yaw_err = wrap_angle(yaw - fp.look_yaw);
+    assert!(
+        yaw_err.abs() < 1e-5,
+        "{tag}: player_yaw vs look_yaw err {yaw_err}"
+    );
+
+    let spec = CharacterHeadRigSpec::JAMES;
+    let pos = sim.scenario.player_position;
+    let snap = sim.modern_camera.curr_frame.snapshot;
+    let head = spec.resolve_world_head_joint(pos, yaw, None);
+    let slack = clearance_slack(&spec, snap.eye, head, yaw, fp.look_pitch, snap.fov_y);
+    assert!(
+        slack >= -1e-2,
+        "{tag}: eye lags the rendered neck stump (slack {slack:.2})"
+    );
+    let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let ahead = (snap.eye - head).dot(fwd);
+    assert!(
+        ahead >= spec.neck_opening_radius + NECK_OPENING_CLEAR_MARGIN_UNITS - 1e-2,
+        "{tag}: eye only {ahead:.1} units ahead of the rendered head joint"
+    );
+}
+
+#[test]
+fn test_fp_running_strafing_flicks_and_quick_turn_have_zero_eye_lag() {
+    for start_pitch in [0.0_f32, 5.0] {
+        let mut sim = first_person_sim();
+        let pose = james_bind_head_pose();
+        sim.input.accumulate_mouse_look(0.0, start_pitch);
+
+        // 1. `W + Shift` Run3 sprint for 60 ticks, feeding the pose BEFORE each tick like `render.rs`.
+        sim.input
+            .set_host_keyboard_state(0.0, 1.0, 0.0, 0.0, true, false);
+        for tick in 0..60 {
+            sim.set_player_skeleton_pose(Some(&pose));
+            sim.tick();
+            assert_eye_locked_to_rendered_body(&sim, &format!("run tick {tick} p{start_pitch}"));
+        }
+        assert!(
+            sim.scenario.player_position.length() > 800.0,
+            "sprint must actually move James: {:?}",
+            sim.scenario.player_position
+        );
+
+        // 2. `W + D` diagonal strafe (body pre-aligned to look_yaw + 45 deg during locomotion).
+        sim.input
+            .set_host_keyboard_state(1.0, 1.0, 0.0, 0.0, false, false);
+        for tick in 0..40 {
+            sim.set_player_skeleton_pose(Some(&pose));
+            sim.tick();
+            assert_eye_locked_to_rendered_body(&sim, &format!("W+D tick {tick} p{start_pitch}"));
+        }
+
+        // 3. Single-frame 90 deg mouse flick while still strafing.
+        sim.input
+            .accumulate_mouse_look(std::f32::consts::FRAC_PI_2, 0.0);
+        sim.set_player_skeleton_pose(Some(&pose));
+        sim.tick();
+        assert_eye_locked_to_rendered_body(&sim, &format!("90 deg flick p{start_pitch}"));
+
+        // 4. `Q` quick-turn from a standstill: body follows the camera through the whole 180 deg.
+        sim.input
+            .set_host_keyboard_state(0.0, 0.0, 0.0, 0.0, false, false);
+        let yaw_before = sim.modern_camera.first_person.look_yaw;
+        sim.input.press_quick_turn();
+        for tick in 0..45 {
+            sim.set_player_skeleton_pose(Some(&pose));
+            sim.tick();
+            let tag = format!("quick-turn tick {tick} p{start_pitch}");
+            assert_eye_locked_to_rendered_body(&sim, &tag);
+        }
+        let turned = wrap_angle(sim.modern_camera.first_person.look_yaw - yaw_before);
+        assert!(
+            (turned.abs() - std::f32::consts::PI).abs() < 1e-2,
+            "turned {turned}"
+        );
+    }
 }

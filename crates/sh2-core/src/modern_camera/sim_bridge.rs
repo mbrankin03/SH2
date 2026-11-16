@@ -156,7 +156,9 @@ impl SimulationCore {
             &self.collision,
             &self.timing,
         );
-        if mode == GameplayCameraMode::FirstPerson && !self.locomotion.state.is_quick_turn() {
+        if mode == GameplayCameraMode::FirstPerson {
+            // The FP body always faces the view (including mid quick-turn and after diagonal strafe
+            // pre-alignment), matching the camera rig's model-space anchor placement.
             self.scenario.player_yaw = self.modern_camera.first_person.look_yaw;
         }
         if mode.is_modern() {
@@ -204,12 +206,9 @@ impl SimulationCore {
 
     /// Supplies evaluated character model-space bone matrices (`SH2-8`/`SH2-12`) to anchor First-Person view (`SH2-93`).
     pub fn set_player_skeleton_pose(&mut self, pose_matrices: Option<&[[[f32; 4]; 4]]>) {
-        self.modern_camera.first_person.update_from_skeleton_pose(
-            self.scenario.character,
-            self.scenario.player_position,
-            self.scenario.player_yaw,
-            pose_matrices,
-        );
+        self.modern_camera
+            .first_person
+            .update_from_skeleton_pose(self.scenario.character, pose_matrices);
     }
 
     /// Returns the current foreground character mesh visibility directive (`FullBody` vs `HideHeadOnly`) (`SH2-93`).

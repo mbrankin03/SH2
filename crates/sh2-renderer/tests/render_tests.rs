@@ -560,11 +560,12 @@ fn test_sh2_37_bestiary_materials_hair_and_specular_pipeline() {
 
     for (rel, expect_specular, expect_transparent) in [
         ("data/chr/jms/hhh_jms.mdl", true, true),
-        ("data/chr/jms/lll_jms.mdl", true, false),
+        ("data/chr/jms/lll_jms.mdl", true, true),
         ("data/chr/red/red.mdl", true, false),
         ("data/chr/oni/oni.mdl", true, false),
         ("data/chr/mar/hhh_mar.mdl", true, true),
-        ("data/chr2/mar/lxx_mar.mdl", true, false),
+        ("data/chr/mar/lll_mar.mdl", true, true),
+        ("data/chr2/mar/lxx_mar.mdl", true, true),
     ] {
         let mdl =
             parse_mdl(&std::fs::read(format!("{root}/{rel}")).expect("read mdl")).expect("parse");
@@ -578,8 +579,38 @@ fn test_sh2_37_bestiary_materials_hair_and_specular_pipeline() {
         assert_eq!(
             gpu_mesh.primitives.iter().any(|p| p.is_transparent),
             expect_transparent,
-            "Unexpected transparent tprim presence in {rel}"
+            "Unexpected two-pass transparent hair/cutout presence in {rel}"
         );
+
+        // Verify Maria's `tid = 1245` gloss-mask fingernails stay opaque while `tid = 1246` hair cards
+        // on `lll_mar` / `lxx_mar` (and `prim[23]` on `lll_jms`) promote to two-pass alpha.
+        if rel == "data/chr/jms/lll_jms.mdl" {
+            assert!(
+                gpu_mesh.primitives[23].is_transparent,
+                "lll_jms prim[23] hair card must promote to two-pass transparency"
+            );
+            assert!(!gpu_mesh.primitives[0].is_transparent);
+        }
+        if rel == "data/chr/mar/lll_mar.mdl" {
+            assert!(!gpu_mesh.primitives[11].is_transparent);
+            assert!(!gpu_mesh.primitives[12].is_transparent);
+            for k in [19, 20, 21, 22, 24, 25] {
+                assert!(
+                    gpu_mesh.primitives[k].is_transparent,
+                    "lll_mar prim[{k}] hair card must promote to two-pass transparency"
+                );
+            }
+        }
+        if rel == "data/chr2/mar/lxx_mar.mdl" {
+            assert!(!gpu_mesh.primitives[14].is_transparent);
+            assert!(!gpu_mesh.primitives[15].is_transparent);
+            for k in [24, 25, 26, 27, 29, 30] {
+                assert!(
+                    gpu_mesh.primitives[k].is_transparent,
+                    "lxx_mar prim[{k}] hair card must promote to two-pass transparency"
+                );
+            }
+        }
 
         for prim in &gpu_mesh.primitives {
             assert_eq!(

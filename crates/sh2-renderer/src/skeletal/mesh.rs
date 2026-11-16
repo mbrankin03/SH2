@@ -9,6 +9,7 @@ use sh2_core::PlayerMeshVisibility;
 use wgpu::util::DeviceExt;
 
 use super::body_region::{cranial_bone_mask, partition_first_person_triangles};
+use super::cutout::{decode_model_textures_for_inspection, is_opaque_cutout_primitive};
 use super::material::{
     is_default_active_pose, pack_aligned_material_buffer, PoseVariantPreset,
     SkeletalMaterialUniforms,
@@ -225,6 +226,7 @@ impl GpuSkeletalMesh {
         let min_align = device.limits().min_uniform_buffer_offset_alignment;
         let (material_bytes, material_offsets) =
             pack_aligned_material_buffer(&model.primitives, min_align);
+        let decoded_textures = decode_model_textures_for_inspection(model);
 
         let mut indices: Vec<u32> = Vec::new();
         let mut prim_batches = Vec::with_capacity(model.primitives.len());
@@ -241,13 +243,15 @@ impl GpuSkeletalMesh {
             let index_count = (indices.len() as u32) - first_index;
 
             let is_active = is_default_active_pose(model, pr.pose_index);
+            let uses_two_pass_alpha =
+                pr.is_transparent || is_opaque_cutout_primitive(model, k, &decoded_textures);
 
             prim_batches.push(GpuSkeletalPrimitive {
                 first_index,
                 index_count,
                 body_index_count,
                 texture_index: pr.texture_index,
-                is_transparent: pr.is_transparent,
+                is_transparent: uses_two_pass_alpha,
                 backface_culling: pr.backface_culling != 0,
                 material_type: pr.material_type,
                 pose_index: pr.pose_index,

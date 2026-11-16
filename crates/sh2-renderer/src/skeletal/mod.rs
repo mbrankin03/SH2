@@ -2,6 +2,7 @@
 //! and GPU Linear Blend Skinning (LBS) pipeline (`SH2-37` / `SH2-93`).
 
 mod body_region;
+pub mod cutout;
 pub mod material;
 mod mesh;
 mod pipeline;
@@ -10,6 +11,10 @@ mod shader;
 pub use body_region::{
     classify_primitive_body_region, cranial_bone_mask, dominant_vertex_bone,
     find_cranial_root_bone, partition_first_person_triangles, SkeletalBodyRegion,
+};
+pub use cutout::{
+    decode_model_textures_for_inspection, dilate_transparent_border_rgb,
+    is_opaque_cutout_primitive, DecodedModelTextureMap,
 };
 pub use material::{
     discover_pose_presets, is_default_active_pose, pack_aligned_material_buffer, PoseVariantPreset,

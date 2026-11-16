@@ -258,6 +258,7 @@ pub fn companion_texture_mdl_path(mdl_rel_path: &str) -> Option<&'static str> {
             Some("data/chr/mar/hhh_mar.mdl")
         }
         "rlll_mar.mdl" => Some("data/chr/mar/lll_mar.mdl"),
+        "rlxx_mar.mdl" | "rlxx_mar_notex.mdl" => Some("data/chr2/mar/lxx_mar.mdl"),
         _ => None,
     }
 }

@@ -16,11 +16,12 @@ pub use gpu_map::{GpuMap, GpuMapBatch};
 use sh2_assets::formats::mdls::ModelFile;
 use sh2_assets::formats::texture::generate_mipmap_chain_rgba;
 pub use skeletal::{
-    classify_primitive_body_region, cranial_bone_mask, discover_pose_presets, dominant_vertex_bone,
-    find_cranial_root_bone, is_default_active_pose, partition_first_person_triangles,
-    GpuSkeletalMesh, GpuSkeletalPrimitive, PoseVariantPreset, SkeletalBodyRegion,
-    SkeletalMaterialUniforms, SkeletalPassStage, SkeletalPipeline, SkeletalVertex,
-    SkeletonBoneUniforms, MAX_SKELETON_BONES,
+    classify_primitive_body_region, cranial_bone_mask, decode_model_textures_for_inspection,
+    dilate_transparent_border_rgb, discover_pose_presets, dominant_vertex_bone,
+    find_cranial_root_bone, is_default_active_pose, is_opaque_cutout_primitive,
+    partition_first_person_triangles, DecodedModelTextureMap, GpuSkeletalMesh,
+    GpuSkeletalPrimitive, PoseVariantPreset, SkeletalBodyRegion, SkeletalMaterialUniforms,
+    SkeletalPassStage, SkeletalPipeline, SkeletalVertex, SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 use std::sync::Arc;
 use wgpu::util::DeviceExt;

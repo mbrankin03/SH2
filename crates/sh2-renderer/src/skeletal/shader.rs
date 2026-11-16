@@ -102,19 +102,17 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let mat_type = u32(round(material.diffuse_mtype.w));
 
     // Per-pass alpha discard before shading modes so cutout/hair silhouettes match across all modes:
-    // - Opaque `material_type == 3` or `4` store a PS2 specular gloss mask in `tex_color.a`
-    //   (down to `1/255` on Pyramid Head's helmet `1303` and Maria's rings `1245`) and NEVER discard.
-    // - Opaque `material_type <= 2` discard only exact `alpha == 0` cutout texels (`< 0.5 / 255.0`).
-    // - Transparent `tprim` hair submeshes split cleanly at `0.90` into depth-writing core + soft fringe.
-    if pass_mode == 0u {
-        if mat_type <= 2u && tex_color.a < (0.5 / 255.0) {
-            discard;
-        }
-    } else if pass_mode == 1u {
+    // - `pass_mode == 0u` (`Opaque`): solid & PS2 specular gloss-mask submeshes (`red.mdl` `1303`,
+    //   Maria's `1245` fingernails/rings, `scu.mdl` `1282`, `pap.mdl` `1293`) NEVER discard texels
+    //   (`sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`), as genuine cutout `prim` cards (`lll_jms`,
+    //   `lll_mar`, `lxx_mar` hair) are promoted to `pass_mode == 1u / 2u` at mesh compilation time.
+    // - `pass_mode == 1u / 2u`: transparent `tprim` and promoted cutout hair submeshes split cleanly
+    //   at `0.90` into depth-writing core (`1u`) + depth-read-only soft alpha-blended fringe (`2u`).
+    if pass_mode == 1u {
         if tex_color.a < 0.90 {
             discard;
         }
-    } else {
+    } else if pass_mode == 2u {
         if tex_color.a < (1.0 / 255.0) || tex_color.a >= 0.90 {
             discard;
         }

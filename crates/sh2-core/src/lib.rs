@@ -21,6 +21,7 @@ pub mod simulation;
 pub mod state;
 pub mod timing;
 pub mod types;
+pub mod widescreen_rail;
 
 // Re-exports for convenience
 pub use animation::{
@@ -147,3 +148,12 @@ pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, Sta
 pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};
 pub use simulation::SimulationCore;
 pub use timing::{lerp_angle_shortest, FlashlightSweepState, RowboatController, TimingConstants};
+pub use widescreen_rail::{
+    apply_chase_rail_clearance, base_ps2_rail_margin_mm, clamp_axis_with_margin,
+    clamp_to_road_rail_with_config, compute_aspect_rail_margin_mm, evaluate_intra_room_transition,
+    is_outdoor_room_or_record, is_rail_constrained, switch_hysteresis_advantage_mm,
+    AspectRailConfig, IntraRoomTransitionPolicy, IntraRoomTransitionStep, TransitionLerpFactors,
+    WidescreenClearanceMode, ASPECT_16X10, ASPECT_16X9, ASPECT_20X9_THOR, ASPECT_21X9_ULTRAWIDE,
+    DEFAULT_SMOOTH_WARP_EYE_LERP, DEFAULT_SMOOTH_WARP_TARGET_LERP, PS2_INDOOR_MIN_IN_ROAD_DIST_MM,
+    PS2_OUTDOOR_MIN_IN_ROAD_DIST_MM, PS2_REFERENCE_4X3_ASPECT,
+};

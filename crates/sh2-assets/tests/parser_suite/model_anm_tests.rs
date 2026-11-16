@@ -434,10 +434,9 @@ fn test_sh2_34_primary_npc_models_reflection_fallbacks_and_animations() {
     .unwrap();
     assert_eq!(knife_prop_anm.frames.len(), 6371);
 
-    for f_idx in 217..=390 {
-        let frame = &knife_anm.frames[f_idx];
-        for b_idx in 0..agl_mdl.bone_count {
-            let bt = frame.bones[b_idx].as_ref().unwrap_or_else(|| {
+    for (f_idx, frame) in knife_anm.frames.iter().enumerate().take(391).skip(217) {
+        for (b_idx, bone) in frame.bones.iter().enumerate().take(agl_mdl.bone_count) {
+            let bt = bone.as_ref().unwrap_or_else(|| {
                 panic!("knife_agl/agl.anm frame {f_idx} bone {b_idx} lost held transform")
             });
             assert!(

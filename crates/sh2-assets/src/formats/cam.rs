@@ -342,22 +342,53 @@ pub struct FixAngCamParam {
     pub cam2wth_dist: f32,
 }
 
-/// Locus circle camera parameters (`_VC_LOCUS_CIRCLE_CAM_PARAM`).
+/// Locus circle camera parameters (`_VC_LOCUS_CIRCLE_CAM_PARAM`, 16 bytes at `+0x70`).
+///
+/// Ground truth:
+/// - PS2 `SLUS_202.28` DWARF `_VC_LOCUS_CIRCLE_CAM_PARAM` (`0x1aff8f`) &
+///   `vcMakeIdealCamPosForLocusCircleCam` (`0x0019a9c0`).
+/// - Retail PC `sh2pc.exe` `vcMakeIdealCamPosForLocusCircleCam` (`0x0051b1e0`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct LocusCircleCamParam {
+    /// Orbit corner origin X in PS2 world millimeters (`0.0` selects `lim_sw` quadrant corner).
     pub origin_x: f32,
+    /// Orbit corner origin Z in PS2 world millimeters (`0.0` selects `lim_sw` quadrant corner).
     pub origin_z: f32,
+    /// Sector center yaw angle in radians (`< -PI` or `>= PI` also inverts vertical switch ratio).
     pub ang_y: f32,
+    /// Orbital extension radius in PS2 world millimeters.
     pub radius: f32,
 }
 
-/// Mode-specific camera parameters (16 bytes).
+/// Through-door camera parameters (`_VC_THROUGH_DOOR_CAM_PARAM` 16-byte `.cam` rail block at `+0x70`).
+///
+/// Ground truth:
+/// - PS2 `SLUS_202.28` DWARF `_VC_THROUGH_DOOR_CAM_PARAM` (`0x1afc54`),
+///   `vcMakeIdealCamPosForThroughDoorCam` (`0x0019a820`), and `vcConvertCamFile` (`0x001a6c20`).
+/// - Retail PC `sh2pc.exe` `vcMakeIdealCamPosForThroughDoorCam` (`0x0051b0c0`) and
+///   `vcConvertCamFile` (`0x00521960`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ThroughDoorCamParam {
+    /// Outward doorway rail yaw angle in radians (`0.0` = `+Z`, `+PI/2` = `+X`).
+    pub rail_ang_y: f32,
+    /// Doorway rail anchor position `[x, y, z]` in PS2 world millimeters (Y-down).
+    pub rail_sta_pos: [f32; 3],
+}
+
+/// Mode-specific camera parameters (16 bytes at `_VC_ROAD_DATA + 0x70`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CamMovementParams {
+    /// Mode 0 (`Chase`) parameters (`_VC_CHASE_CAM_PARAM`).
     Chase(ChaseCamParam),
+    /// Mode 1 (`Settle`) parameters (`_VC_SETTLE_CAM_PARAM`).
     Settle(SettleCamParam),
+    /// Mode 2 (`FixedAngle`) parameters (`_VC_FIX_ANG_CAM_PARAM`).
     FixedAngle(FixAngCamParam),
+    /// Mode 4 (`LocusCircle`) parameters (`_VC_LOCUS_CIRCLE_CAM_PARAM`).
     LocusCircle(LocusCircleCamParam),
+    /// Mode 5 (`ThroughDoor`) parameters (`_VC_THROUGH_DOOR_CAM_PARAM` rail payload).
+    ThroughDoor(ThroughDoorCamParam),
+    /// Uninterpreted 16-byte payload (e.g. Mode 3 `SelfView`).
     Raw([u8; 16]),
 }
 
@@ -636,6 +667,14 @@ pub fn parse_cam(data: &[u8]) -> Result<CamFile, AssetError> {
                 ang_y: read_f32_le(rec, 0x78),
                 radius: read_f32_le(rec, 0x7C),
             }),
+            CamMovementType::ThroughDoor => CamMovementParams::ThroughDoor(ThroughDoorCamParam {
+                rail_ang_y: read_f32_le(rec, 0x70),
+                rail_sta_pos: [
+                    read_f32_le(rec, 0x74),
+                    read_f32_le(rec, 0x78),
+                    read_f32_le(rec, 0x7C),
+                ],
+            }),
             _ => {
                 let mut raw = [0u8; 16];
                 raw.copy_from_slice(&rec[0x70..0x80]);
@@ -750,5 +789,82 @@ mod tests {
             Some("bg/cc/ccGB.cam".to_string())
         );
         assert_eq!(global_area_cam_rel_path("er01"), None);
+    }
+
+    #[test]
+    fn test_parse_cam_locus_circle_and_through_door_params() {
+        let mut buffer = [0u8; 384];
+        // Record 0: Mode 4 (LocusCircle)
+        buffer[0x6C..0x70].copy_from_slice(&4i32.to_le_bytes());
+        buffer[0x70..0x74].copy_from_slice(&5500.0f32.to_le_bytes());
+        buffer[0x74..0x78].copy_from_slice(&24000.0f32.to_le_bytes());
+        buffer[0x78..0x7C].copy_from_slice(&(-std::f32::consts::FRAC_PI_4 * 3.0).to_le_bytes());
+        buffer[0x7C..0x80].copy_from_slice(&1000.0f32.to_le_bytes());
+
+        // Record 1: Mode 5 (ThroughDoor)
+        let r1 = 0x80;
+        buffer[r1 + 0x54..r1 + 0x58].copy_from_slice(&10000.0f32.to_le_bytes());
+        buffer[r1 + 0x6C..r1 + 0x70].copy_from_slice(&5i32.to_le_bytes());
+        buffer[r1 + 0x70..r1 + 0x74].copy_from_slice(&std::f32::consts::FRAC_PI_2.to_le_bytes());
+        buffer[r1 + 0x74..r1 + 0x78].copy_from_slice(&(-12400.0f32).to_le_bytes());
+        buffer[r1 + 0x78..r1 + 0x7C].copy_from_slice(&(-1137.5f32).to_le_bytes());
+        buffer[r1 + 0x7C..r1 + 0x80].copy_from_slice(&8200.0f32.to_le_bytes());
+
+        // Record 2: Terminator
+        buffer[0x100 + 0x44] = 0x01;
+
+        let cam = parse_cam(&buffer).expect("Should parse LocusCircle and ThroughDoor records");
+        assert_eq!(cam.records.len(), 2);
+
+        assert_eq!(cam.records[0].cam_mv_type, CamMovementType::LocusCircle);
+        assert_eq!(
+            cam.records[0].params,
+            CamMovementParams::LocusCircle(LocusCircleCamParam {
+                origin_x: 5500.0,
+                origin_z: 24000.0,
+                ang_y: -std::f32::consts::FRAC_PI_4 * 3.0,
+                radius: 1000.0,
+            })
+        );
+
+        assert_eq!(cam.records[1].cam_mv_type, CamMovementType::ThroughDoor);
+        assert_eq!(cam.records[1].ofs_watch_hy, -300.0);
+        assert_eq!(
+            cam.records[1].params,
+            CamMovementParams::ThroughDoor(ThroughDoorCamParam {
+                rail_ang_y: std::f32::consts::FRAC_PI_2,
+                rail_sta_pos: [-12400.0, -1137.5, 8200.0],
+            })
+        );
+    }
+
+    #[test]
+    fn test_retail_locus_circle_cam_records_decode() {
+        let resolver = crate::resolver::AssetPathResolver::resolve();
+        // Verify representative retail rooms containing LOCUS_CIRCLE (Mode 4) records:
+        // cb02, cb31 (out-of-range ang_y = -5*PI/4), cc10 (zero-origin fallback), cc41 (4-quadrant circle), cc50 (Historical Society)
+        let rooms = ["cb02", "cb31", "cc10", "cc41", "cc50", "cc54"];
+        let mut found_any = false;
+        for room in rooms {
+            let Ok(Some(asset)) = resolver.load_cam_for_room(room, false) else {
+                continue;
+            };
+            found_any = true;
+            let locus_count = asset
+                .cam_file
+                .records
+                .iter()
+                .filter(|r| {
+                    r.cam_mv_type == CamMovementType::LocusCircle
+                        && matches!(
+                            r.params,
+                            CamMovementParams::LocusCircle(p)
+                                if p.radius > 0.0 && p.ang_y.is_finite()
+                        )
+                })
+                .count();
+            assert!(locus_count >= 1, "Expected LOCUS_CIRCLE record in {room}");
+        }
+        let _ = found_any;
     }
 }

@@ -4,8 +4,9 @@
 //! or Maria's (`bone 9` in `lll_mar`, eyes `23`/`25` in `hhh_mar`) skeletal head rig (`SH2-8`/`SH2-12`),
 //! with clean fallback eye height when bone pose matrices are unavailable, clamped pitch/yaw look,
 //! configurable vertical FOV (`55..=100 deg`), tuned near-clip distance (`8.0` SH2 units = `1.6 cm`),
-//! subtle toggleable footstep/head-bob sway, `.cld` room bounds containment, and typed
-//! [`PlayerMeshVisibility`] (`FullBody` vs `HideHeadAndUpperBody`) to eliminate near-plane mesh clipping.
+//! subtle toggleable footstep/head-bob sway, `.cld` room bounds containment, typed
+//! [`PlayerMeshVisibility`] (`FullBody` vs `HideHeadOnly`), and a natural forward neck-tilt with a
+//! chest-clear envelope (`head_rig.rs`) so looking down shows the outside of the jacket, arms and legs.
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,8 @@ use crate::camera::CameraSnapshot;
 use crate::collision::CollisionWorld;
 use crate::scenario::PlayableCharacter;
 
-use super::frame::QuickTurnPhase;
+use super::frame::{ModernCameraTickInput, QuickTurnPhase};
+use super::head_rig::{model_to_world, CharacterHeadRigSpec};
 use super::ots::{OtsReticleState, ReticleMode};
 use super::spring_arm::{constrain_eye_in_room, SpringArmConfig};
 
@@ -30,8 +32,10 @@ pub enum PlayerMeshVisibility {
     /// Draw all active character submeshes (`ClassicPs2Rail`, `OverTheShoulder`, cutscenes, and planar mirrors).
     #[default]
     FullBody,
-    /// Hide foreground head, hair, neck, and upper-torso submeshes in `FirstPerson` while preserving lower body/hands and mirror reflections.
-    HideHeadAndUpperBody,
+    /// Hide **only** the foreground cranial head subtree (skull, face, eyes, jaw, hair) in `FirstPerson`,
+    /// keeping neck stump, collar, torso, arms, hands, legs and shoes visible; planar mirror
+    /// reflections still draw the full body including head and hair.
+    HideHeadOnly,
 }
 
 /// Toggleable gait sway / head-bob mode for First-Person locomotion (`SH2-93`).
@@ -59,100 +63,6 @@ impl HeadBobMode {
     #[inline]
     pub const fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled)
-    }
-}
-
-/// Ground-truth skeletal head rig specification extracted from retail `.mdl` bind poses (`SH2-8`/`SH2-12`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CharacterHeadRigSpec {
-    /// Skeleton head bone index (`15` for James, `9` for Maria).
-    pub head_bone_index: usize,
-    /// Left eye bone index (`20` for James, `23` for high-LOD Maria).
-    pub left_eye_bone_index: usize,
-    /// Right eye bone index (`22` for James, `25` for high-LOD Maria).
-    pub right_eye_bone_index: usize,
-    /// Minimum skeleton `bone_count` required for `left_eye_bone_index`/`right_eye_bone_index` to be valid eye bones
-    /// (`41` on `lll_jms`/`hll_jms`/`hhh_jms`; `73` on `hhh_mar`, since 36-bone `lll_mar` reuses `23`/`25` for arms).
-    pub min_eye_rig_bones: usize,
-    /// Eye midpoint offset `[x, y, z]` in head-bone local coordinates (SH2 units, `+Y` down, `+Z` forward).
-    pub head_local_eye_offset: Vec3,
-    /// Fallback model-space eye `(x, y, z)` when skeletal pose matrices have not been supplied (`+Y` down).
-    pub fallback_model_eye: Vec3,
-}
-
-impl CharacterHeadRigSpec {
-    /// Ground-truth rig spec for James Sunderland (`lll_jms.mdl` / `hll_jms.mdl` 41 bones & `hhh_jms.mdl` 71 bones).
-    /// Head bone `15` sits at `(0.0, -809.1, -26.6)` with bone-local X along `-Y` neck; eyes `20`/`22` sit at `(±15.9, -844.6, +23.4)`.
-    pub const JAMES: Self = Self {
-        head_bone_index: 15,
-        left_eye_bone_index: 20,
-        right_eye_bone_index: 22,
-        min_eye_rig_bones: 41,
-        head_local_eye_offset: Vec3::new(38.1311, 0.0, 47.9967),
-        fallback_model_eye: Vec3::new(0.0, -844.6, 23.4),
-    };
-
-    /// Ground-truth rig spec for Maria (`lll_mar.mdl` 36 bones & `hhh_mar.mdl` 73 bones).
-    /// Head bone `9` sits at `(0.0, -794.4, -15.6)` (`M_init[9]^-1 * eye = (45.3310, 0.0019, 34.3863)`); eyes `23`/`25` in `hhh_mar` sit at `(±15.4, -825.6, +32.0)`.
-    pub const MARIA: Self = Self {
-        head_bone_index: 9,
-        left_eye_bone_index: 23,
-        right_eye_bone_index: 25,
-        min_eye_rig_bones: 73,
-        head_local_eye_offset: Vec3::new(45.3310, 0.0019, 34.3863),
-        fallback_model_eye: Vec3::new(0.0, -825.6, 32.0),
-    };
-
-    /// Returns the skeletal head rig specification for `character`.
-    #[inline]
-    pub const fn for_character(character: PlayableCharacter) -> Self {
-        match character {
-            PlayableCharacter::James => Self::JAMES,
-            PlayableCharacter::Maria => Self::MARIA,
-        }
-    }
-
-    /// Evaluates the character's 3D world-space eye position in SH2 world units (`+Y` down)
-    /// from evaluated row-major model-space bone matrices (`evaluate_pose_into`), or falls back
-    /// cleanly to `fallback_model_eye` rotated by `(player_pos, player_yaw)`.
-    pub fn resolve_world_eye_anchor(
-        &self,
-        player_pos: Vec3,
-        player_yaw: f32,
-        pose_matrices: Option<&[[[f32; 4]; 4]]>,
-    ) -> Vec3 {
-        let model_eye = if let Some(mats) = pose_matrices {
-            if mats.len() >= self.min_eye_rig_bones
-                && self.left_eye_bone_index < mats.len()
-                && self.right_eye_bone_index < mats.len()
-            {
-                let ml = &mats[self.left_eye_bone_index];
-                let mr = &mats[self.right_eye_bone_index];
-                Vec3::new(
-                    0.5 * (ml[0][3] + mr[0][3]),
-                    0.5 * (ml[1][3] + mr[1][3]),
-                    0.5 * (ml[2][3] + mr[2][3]),
-                )
-            } else if let Some(mh) = mats.get(self.head_bone_index) {
-                let off = self.head_local_eye_offset;
-                Vec3::new(
-                    mh[0][0] * off.x + mh[0][1] * off.y + mh[0][2] * off.z + mh[0][3],
-                    mh[1][0] * off.x + mh[1][1] * off.y + mh[1][2] * off.z + mh[1][3],
-                    mh[2][0] * off.x + mh[2][1] * off.y + mh[2][2] * off.z + mh[2][3],
-                )
-            } else {
-                self.fallback_model_eye
-            }
-        } else {
-            self.fallback_model_eye
-        };
-
-        let (s, c) = player_yaw.sin_cos();
-        Vec3::new(
-            c * model_eye.x + s * model_eye.z + player_pos.x,
-            model_eye.y + player_pos.y,
-            -s * model_eye.x + c * model_eye.z + player_pos.z,
-        )
     }
 }
 
@@ -185,7 +95,8 @@ impl Default for FirstPersonConfig {
             fov_y_degrees: 75.0,
             near_clip_units: FIRST_PERSON_NEAR_CLIP_UNITS,
             min_pitch_radians: -1.30,
-            max_pitch_radians: 1.25,
+            // `1.10 rad` = `63.0 deg`: natural chin-to-chest limit; the sightline grazes the jacket front.
+            max_pitch_radians: 1.10,
             stick_yaw_speed_rad_per_sec: 2.85,
             stick_pitch_speed_rad_per_sec: 2.05,
             bob_vertical_amplitude_units: 5.5,
@@ -214,6 +125,8 @@ pub struct FirstPersonCameraRig {
     pub smoothed_eye: Vec3,
     /// Cached world-space eye anchor updated when external skeletal pose matrices are supplied.
     pub external_bone_eye: Option<Vec3>,
+    /// Cached world-space head joint (`head_bone_index` translation) from external skeletal pose matrices.
+    pub external_head_joint: Option<Vec3>,
     /// Active 180-degree quick-turn angular state (`QUICK_TURN_SPEED_RAD_PER_SEC`).
     pub quick_turn: QuickTurnPhase,
 }
@@ -236,6 +149,7 @@ impl FirstPersonCameraRig {
             bob_phase: 0.0,
             smoothed_eye: CharacterHeadRigSpec::JAMES.fallback_model_eye,
             external_bone_eye: None,
+            external_head_joint: None,
             quick_turn: QuickTurnPhase::Idle,
         }
     }
@@ -248,13 +162,11 @@ impl FirstPersonCameraRig {
         player_yaw: f32,
         pose_matrices: Option<&[[[f32; 4]; 4]]>,
     ) {
-        self.external_bone_eye = pose_matrices.map(|mats| {
-            CharacterHeadRigSpec::for_character(character).resolve_world_eye_anchor(
-                player_pos,
-                player_yaw,
-                Some(mats),
-            )
-        });
+        let spec = CharacterHeadRigSpec::for_character(character);
+        self.external_bone_eye = pose_matrices
+            .map(|mats| spec.resolve_world_eye_anchor(player_pos, player_yaw, Some(mats)));
+        self.external_head_joint = pose_matrices
+            .map(|mats| spec.resolve_world_head_joint(player_pos, player_yaw, Some(mats)));
     }
 
     /// Snaps the First-Person rig immediately to `(player_pos, player_yaw)` for `character`.
@@ -268,6 +180,7 @@ impl FirstPersonCameraRig {
         self.look_pitch = 0.0;
         self.bob_phase = 0.0;
         self.external_bone_eye = None;
+        self.external_head_joint = None;
         self.quick_turn = QuickTurnPhase::Idle;
         self.smoothed_eye = CharacterHeadRigSpec::for_character(character)
             .resolve_world_eye_anchor(player_pos, player_yaw, None);
@@ -281,57 +194,114 @@ impl FirstPersonCameraRig {
         Vec3::new(sy * cp, sp, cy * cp).normalize_or(Vec3::Z)
     }
 
+    /// Unit horizontal (`Y = 0`) look direction for the current `look_yaw`.
+    #[inline]
+    pub fn look_forward_xz(&self) -> Vec3 {
+        let (sy, cy) = self.look_yaw.sin_cos();
+        Vec3::new(sy, 0.0, cy)
+    }
+
     /// Steps the First-Person camera for one 60 Hz tick, returning `(snapshot, aim_origin, aim_dir, reticle)`.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// `input` must already be gated by any cutscene/cutaway lock (see [`super::ModernCameraRig::tick`]).
     pub fn tick(
         &mut self,
-        character: PlayableCharacter,
-        player_pos: Vec3,
-        player_yaw: f32,
-        linear_speed: f32,
-        right_stick_x: f32,
-        right_stick_y: f32,
-        extra_yaw_delta_rad: f32,
-        extra_pitch_delta_rad: f32,
-        sensitivity: f32,
-        ready_weapon: bool,
-        quick_turn_pressed: bool,
+        input: &ModernCameraTickInput,
         collision: &CollisionWorld,
         spring_cfg: &SpringArmConfig,
     ) -> (CameraSnapshot, Vec3, Vec3, OtsReticleState) {
         let dt = 1.0 / 60.0;
-        if quick_turn_pressed {
-            self.quick_turn.trigger(self.look_yaw);
-        }
-        let is_quick_turning = self.quick_turn.step(&mut self.look_yaw, dt);
-
-        let aim_scale = if ready_weapon { 0.70 } else { 1.0 };
-        let sens = sensitivity.clamp(0.2, 4.0) * aim_scale;
-        if !is_quick_turning {
-            let yaw_step = right_stick_x * self.config.stick_yaw_speed_rad_per_sec * sens * dt
-                + extra_yaw_delta_rad;
-            self.look_yaw = (self.look_yaw + yaw_step).rem_euclid(std::f32::consts::TAU);
-            if self.look_yaw > std::f32::consts::PI {
-                self.look_yaw -= std::f32::consts::TAU;
-            }
-        }
-        let pitch_step = -right_stick_y * self.config.stick_pitch_speed_rad_per_sec * sens * dt
-            + extra_pitch_delta_rad;
-        self.look_pitch = (self.look_pitch + pitch_step)
-            .clamp(self.config.min_pitch_radians, self.config.max_pitch_radians);
+        let spec = CharacterHeadRigSpec::for_character(input.character);
+        self.step_look_angles(input, dt);
 
         let raw_anchor = self.external_bone_eye.unwrap_or_else(|| {
-            CharacterHeadRigSpec::for_character(character)
-                .resolve_world_eye_anchor(player_pos, player_yaw, None)
+            spec.resolve_world_eye_anchor(input.player_pos, input.player_yaw, None)
         });
         self.smoothed_eye = self.smoothed_eye.lerp(
             raw_anchor,
             self.config.eye_anchor_smoothing.clamp(0.05, 1.0),
         );
+        let head_joint = self.external_head_joint.unwrap_or_else(|| {
+            spec.resolve_world_head_joint(input.player_pos, input.player_yaw, None)
+        });
 
-        // Subtle stride head-bob & footstep sway (cleanly zero when Disabled)
-        let speed_norm = (linear_speed / 1750.0).clamp(0.0, 1.0);
-        let sway_offset = match self.head_bob_mode {
+        let speed_norm = (input.linear_speed / 1750.0).clamp(0.0, 1.0);
+        let sway_offset = self.step_head_bob(speed_norm, dt);
+        let base_fov = self.config.fov_y_degrees.clamp(55.0, 100.0).to_radians();
+        let fov_y = if input.ready_weapon {
+            base_fov * 0.86
+        } else {
+            base_fov
+        };
+
+        // Natural chin-forward neck tilt, then push the eye clear of the neck opening along the view.
+        let tilt = model_to_world(
+            Vec3::ZERO,
+            input.player_yaw,
+            spec.neck_tilt_model_offset(self.look_pitch),
+        );
+        let desired = self.clear_neck_opening(
+            &spec,
+            self.smoothed_eye + tilt + sway_offset,
+            head_joint,
+            0.5 * fov_y,
+        );
+        let constrained_eye =
+            constrain_eye_in_room(input.player_pos, desired, collision, spring_cfg);
+        // If `.cld` walls shoved the eye back toward the chest, cap pitch so the view never dips inside.
+        self.cap_pitch_for_clearance(&spec, constrained_eye, head_joint, 0.5 * fov_y);
+
+        let forward = self.view_forward();
+        let reticle = match self.reticle_mode {
+            ReticleMode::Off => OtsReticleState::Hidden,
+            ReticleMode::AimOnly if input.ready_weapon => OtsReticleState::SubtleDot {
+                opacity: 0.72,
+                spread: speed_norm * 0.4,
+            },
+            ReticleMode::AimOnly => OtsReticleState::Hidden,
+            ReticleMode::AlwaysSubtle => OtsReticleState::SubtleDot {
+                opacity: if input.ready_weapon { 0.75 } else { 0.25 },
+                spread: speed_norm * 0.45,
+            },
+        };
+
+        let snapshot = CameraSnapshot {
+            eye: constrained_eye,
+            target: constrained_eye + forward * 1000.0,
+            up: Vec3::new(0.0, -1.0, 0.0),
+            fov_y,
+        };
+        (snapshot, constrained_eye, forward, reticle)
+    }
+
+    /// Applies quick-turn, right-stick, and mouse/gyro deltas to `(look_yaw, look_pitch)`.
+    fn step_look_angles(&mut self, input: &ModernCameraTickInput, dt: f32) {
+        if input.quick_turn_pressed {
+            self.quick_turn.trigger(self.look_yaw);
+        }
+        let is_quick_turning = self.quick_turn.step(&mut self.look_yaw, dt);
+
+        let aim_scale = if input.ready_weapon { 0.70 } else { 1.0 };
+        let sens = input.sensitivity.clamp(0.2, 4.0) * aim_scale;
+        if !is_quick_turning {
+            let yaw_step =
+                input.right_stick_x * self.config.stick_yaw_speed_rad_per_sec * sens * dt
+                    + input.extra_yaw_delta_rad;
+            self.look_yaw = (self.look_yaw + yaw_step).rem_euclid(std::f32::consts::TAU);
+            if self.look_yaw > std::f32::consts::PI {
+                self.look_yaw -= std::f32::consts::TAU;
+            }
+        }
+        let pitch_step =
+            -input.right_stick_y * self.config.stick_pitch_speed_rad_per_sec * sens * dt
+                + input.extra_pitch_delta_rad;
+        self.look_pitch = (self.look_pitch + pitch_step)
+            .clamp(self.config.min_pitch_radians, self.config.max_pitch_radians);
+    }
+
+    /// Advances subtle stride head-bob & footstep sway, returning the world offset (zero when `Disabled`).
+    fn step_head_bob(&mut self, speed_norm: f32, dt: f32) -> Vec3 {
+        match self.head_bob_mode {
             HeadBobMode::Enabled if speed_norm > 0.03 => {
                 let freq_hz = 1.45 + 1.35 * speed_norm;
                 self.bob_phase =
@@ -349,41 +319,42 @@ impl FirstPersonCameraRig {
                 self.bob_phase *= 0.85;
                 Vec3::ZERO
             }
-        };
+        }
+    }
 
-        let constrained_eye = constrain_eye_in_room(
-            player_pos,
-            self.smoothed_eye + sway_offset,
-            collision,
-            spring_cfg,
-        );
-        let forward = self.view_forward();
-        let base_fov = self.config.fov_y_degrees.clamp(55.0, 100.0).to_radians();
-        let fov_y = if ready_weapon {
-            base_fov * 0.86
+    /// Pushes `desired_eye` forward along the horizontal look direction until the bottom frustum
+    /// edge (`look_pitch + half_fov_y`) passes in front of the neck opening's front lip.
+    fn clear_neck_opening(
+        &self,
+        spec: &CharacterHeadRigSpec,
+        desired_eye: Vec3,
+        head_joint: Vec3,
+        half_fov_y: f32,
+    ) -> Vec3 {
+        let fwd_xz = self.look_forward_xz();
+        let drop = spec.neck_lip_world_y(head_joint) - desired_eye.y;
+        let need = spec.min_clear_forward(drop, self.look_pitch + half_fov_y);
+        let have = (desired_eye - head_joint).dot(fwd_xz);
+        if have < need {
+            desired_eye + fwd_xz * (need - have)
         } else {
-            base_fov
-        };
+            desired_eye
+        }
+    }
 
-        let reticle = match self.reticle_mode {
-            ReticleMode::Off => OtsReticleState::Hidden,
-            ReticleMode::AimOnly if ready_weapon => OtsReticleState::SubtleDot {
-                opacity: 0.72,
-                spread: speed_norm * 0.4,
-            },
-            ReticleMode::AimOnly => OtsReticleState::Hidden,
-            ReticleMode::AlwaysSubtle => OtsReticleState::SubtleDot {
-                opacity: if ready_weapon { 0.75 } else { 0.25 },
-                spread: speed_norm * 0.45,
-            },
-        };
-
-        let snapshot = CameraSnapshot {
-            eye: constrained_eye,
-            target: constrained_eye + forward * 1000.0,
-            up: Vec3::new(0.0, -1.0, 0.0),
-            fov_y,
-        };
-        (snapshot, constrained_eye, forward, reticle)
+    /// Lowers `look_pitch` (never below level) when the room-constrained eye no longer clears the neck opening.
+    fn cap_pitch_for_clearance(
+        &mut self,
+        spec: &CharacterHeadRigSpec,
+        eye: Vec3,
+        head_joint: Vec3,
+        half_fov_y: f32,
+    ) {
+        let forward = (eye - head_joint).dot(self.look_forward_xz());
+        let drop = spec.neck_lip_world_y(head_joint) - eye.y;
+        let cap = spec.max_clear_pitch(forward, drop, half_fov_y).max(0.0);
+        if self.look_pitch > cap {
+            self.look_pitch = cap;
+        }
     }
 }

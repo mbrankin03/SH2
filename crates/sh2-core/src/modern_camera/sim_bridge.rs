@@ -212,7 +212,7 @@ impl SimulationCore {
         );
     }
 
-    /// Returns the current foreground character mesh visibility directive (`FullBody` vs `HideHeadAndUpperBody`) (`SH2-93`).
+    /// Returns the current foreground character mesh visibility directive (`FullBody` vs `HideHeadOnly`) (`SH2-93`).
     #[inline]
     pub fn player_mesh_visibility(&self) -> PlayerMeshVisibility {
         self.modern_camera.curr_frame.player_visibility
@@ -398,7 +398,7 @@ mod sim_bridge_tests {
         assert_eq!(sim.active_camera_mode(), GameplayCameraMode::FirstPerson);
         assert_eq!(
             sim.player_mesh_visibility(),
-            PlayerMeshVisibility::HideHeadAndUpperBody
+            PlayerMeshVisibility::HideHeadOnly
         );
         assert!((sim.active_near_clip(1.0) - 8.0).abs() < 1e-3);
 

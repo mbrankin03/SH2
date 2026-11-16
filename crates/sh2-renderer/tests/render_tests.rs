@@ -445,19 +445,44 @@ fn test_sh2_93_first_person_skeletal_body_region_and_mirror_visibility() {
         );
     }
 
-    let head_prim = GpuSkeletalPrimitive {
-        first_index: 0,
+    // Primitive with 30 below-neck indices followed by 6 cranial indices.
+    let prim = GpuSkeletalPrimitive {
+        first_index: 120,
         index_count: 36,
+        body_index_count: 30,
         texture_index: 0,
         is_transparent: false,
         pose_index: 0,
         is_active: true,
-        body_region: SkeletalBodyRegion::HeadAndHair,
     };
-    assert!(head_prim.should_draw(PlayerMeshVisibility::FullBody, false));
-    assert!(!head_prim.should_draw(PlayerMeshVisibility::HideHeadAndUpperBody, false));
-    assert!(
-        head_prim.should_draw(PlayerMeshVisibility::HideHeadAndUpperBody, true),
+    assert_eq!(
+        prim.draw_range(PlayerMeshVisibility::FullBody, false),
+        Some(120..156)
+    );
+    assert_eq!(
+        prim.draw_range(PlayerMeshVisibility::HideHeadOnly, false),
+        Some(120..150),
+        "First-Person foreground drops only cranial triangles"
+    );
+    assert_eq!(
+        prim.draw_range(PlayerMeshVisibility::HideHeadOnly, true),
+        Some(120..156),
         "Planar mirror reflections must still draw head & hair in First-Person mode"
+    );
+    let head_only = GpuSkeletalPrimitive {
+        body_index_count: 0,
+        ..prim.clone()
+    };
+    assert_eq!(
+        head_only.draw_range(PlayerMeshVisibility::HideHeadOnly, false),
+        None
+    );
+    let inactive = GpuSkeletalPrimitive {
+        is_active: false,
+        ..prim
+    };
+    assert_eq!(
+        inactive.draw_range(PlayerMeshVisibility::FullBody, true),
+        None
     );
 }

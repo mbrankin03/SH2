@@ -177,7 +177,8 @@ impl RenderContext {
                     .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
                 mesh.primitives.iter().any(|p| {
                     p.is_transparent == transparent_pass
-                        && p.should_draw(mesh.player_visibility, is_mirror_duplicate)
+                        && p.draw_range(mesh.player_visibility, is_mirror_duplicate)
+                            .is_some()
                 })
             });
             if !has_any {
@@ -206,8 +207,11 @@ impl RenderContext {
 
                 let mut current_tex: Option<u16> = None;
                 for prim in &mesh.primitives {
-                    if prim.is_transparent == transparent_pass
-                        && prim.should_draw(mesh.player_visibility, is_mirror_duplicate)
+                    if prim.is_transparent != transparent_pass {
+                        continue;
+                    }
+                    if let Some(range) =
+                        prim.draw_range(mesh.player_visibility, is_mirror_duplicate)
                     {
                         let tex_idx = prim.texture_index;
                         if current_tex != Some(tex_idx) {
@@ -221,11 +225,7 @@ impl RenderContext {
                             current_tex = Some(tex_idx);
                         }
 
-                        rpass.draw_indexed(
-                            prim.first_index..prim.first_index + prim.index_count,
-                            0,
-                            0..1,
-                        );
+                        rpass.draw_indexed(range, 0, 0..1);
                     }
                 }
             }

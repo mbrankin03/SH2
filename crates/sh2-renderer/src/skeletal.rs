@@ -1,9 +1,18 @@
 //! Skeletal mesh representation and GPU Linear Blend Skinning (LBS) pipeline.
 
+mod body_region;
+
+use std::ops::Range;
+
 use bytemuck::{Pod, Zeroable};
 use sh2_assets::formats::mdls::ModelFile;
 use sh2_core::PlayerMeshVisibility;
 use wgpu::util::DeviceExt;
+
+pub use body_region::{
+    classify_primitive_body_region, cranial_bone_mask, dominant_vertex_bone,
+    find_cranial_root_bone, partition_first_person_triangles, SkeletalBodyRegion,
+};
 
 /// Maximum number of bones supported in a single skeletal mesh uniform/storage buffer.
 /// Silent Hill 2 character models have up to ~71-80 bones (e.g. James has 71 bones).
@@ -117,107 +126,43 @@ impl SkeletonBoneUniforms {
     }
 }
 
-/// Anatomical body region of a character sub-primitive (`SH2-93`), used to suppress near-plane
-/// head/hair and upper-torso clipping in `FirstPerson` camera mode while preserving lower body,
-/// hands, and planar mirror reflections (`er01.map`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SkeletalBodyRegion {
-    /// Pelvis, skirt, legs, feet, and forearm/hand pose variants (`Y > -630.0` in bind pose).
-    #[default]
-    LowerOrHands,
-    /// Upper spine, jacket/shirt torso, lapels, clavicles, and shoulders (`-742.0 < Y <= -630.0`).
-    UpperTorso,
-    /// Neck, head, jaw, eyes, eyelashes, and opaque/transparent hair fringes (`Y <= -742.0`).
-    HeadAndHair,
-}
-
-/// Classifies a [`ModelFile`] primitive into [`SkeletalBodyRegion`] from its active bone bind-pose
-/// heights (`initial_matrices[b][1][3]` in `+Y`-down SH2 world units, `500.0 units = 1.0 m`) (`SH2-93`).
-///
-/// Handles both opaque primitives (`pr.bone_indices`) and transparent hair/eyelash primitives
-/// (whose `pr.bone_indices` are empty and store resolved bone IDs per vertex in `model.vertices.bone_indices`).
-pub fn classify_primitive_body_region(
-    model: &ModelFile,
-    prim_index: usize,
-    tris: &[[u16; 3]],
-) -> SkeletalBodyRegion {
-    let Some(pr) = model.primitives.get(prim_index) else {
-        return SkeletalBodyRegion::LowerOrHands;
-    };
-    // Hand pose variants (`pose_index` 3..=20 in James / Maria) are always kept in LowerOrHands
-    if (3..=20).contains(&pr.pose_index) {
-        return SkeletalBodyRegion::LowerOrHands;
-    }
-
-    let mut min_bind_y = 0.0_f32;
-    let mut found_bone = false;
-
-    for &b in &pr.bone_indices {
-        if let Some(m) = model.initial_matrices.get(b as usize) {
-            min_bind_y = if found_bone {
-                min_bind_y.min(m[1][3])
-            } else {
-                found_bone = true;
-                m[1][3]
-            };
-        }
-    }
-
-    if !found_bone {
-        for tri in tris {
-            for &vi in tri {
-                if let Some(bones) = model.vertices.bone_indices.get(vi as usize) {
-                    if let Some(m) = model.initial_matrices.get(bones[0] as usize) {
-                        min_bind_y = if found_bone {
-                            min_bind_y.min(m[1][3])
-                        } else {
-                            found_bone = true;
-                            m[1][3]
-                        };
-                    }
-                }
-            }
-        }
-    }
-
-    if !found_bone {
-        SkeletalBodyRegion::LowerOrHands
-    } else if min_bind_y <= -742.0 {
-        SkeletalBodyRegion::HeadAndHair
-    } else if min_bind_y <= -630.0 {
-        SkeletalBodyRegion::UpperTorso
-    } else {
-        SkeletalBodyRegion::LowerOrHands
-    }
-}
-
 /// GPU-resident sub-primitive draw batch for a skeletal character model.
+///
+/// Indices are laid out `[below-neck triangles | cranial triangles]` so First-Person rendering can
+/// draw the leading `body_index_count` indices and skip only the head/face/hair (`SH2-93`).
 #[derive(Debug, Clone)]
 pub struct GpuSkeletalPrimitive {
     pub first_index: u32,
     pub index_count: u32,
+    /// Leading index count (`<= index_count`) of below-the-neck triangles kept in `HideHeadOnly`.
+    pub body_index_count: u32,
     pub texture_index: u16,
     pub is_transparent: bool,
     /// Target pose identifier matching [`ModelPrimitive::pose_index`].
     pub pose_index: u8,
     /// Whether this primitive is currently active and should be drawn.
     pub is_active: bool,
-    /// Anatomical body region for First-Person foreground submesh filtering (`SH2-93`).
-    pub body_region: SkeletalBodyRegion,
 }
 
 impl GpuSkeletalPrimitive {
-    /// Returns `true` if this primitive should be drawn given `visibility` and `is_mirror_duplicate` (`SH2-93`).
+    /// Returns the index range to draw for `visibility`, or `None` if nothing should be drawn.
+    ///
+    /// Planar mirror duplicates (`is_mirror_duplicate`, `er01.map`) always draw the full primitive
+    /// including head and hair; the foreground `HideHeadOnly` player drops only cranial triangles (`SH2-93`).
     #[inline]
-    pub fn should_draw(&self, visibility: PlayerMeshVisibility, is_mirror_duplicate: bool) -> bool {
-        if !self.is_active || self.index_count == 0 {
-            return false;
+    pub fn draw_range(
+        &self,
+        visibility: PlayerMeshVisibility,
+        is_mirror_duplicate: bool,
+    ) -> Option<Range<u32>> {
+        if !self.is_active {
+            return None;
         }
-        if is_mirror_duplicate || visibility == PlayerMeshVisibility::FullBody {
-            true
-        } else {
-            self.body_region == SkeletalBodyRegion::LowerOrHands
-        }
+        let count = match (visibility, is_mirror_duplicate) {
+            (PlayerMeshVisibility::FullBody, _) | (_, true) => self.index_count,
+            (PlayerMeshVisibility::HideHeadOnly, false) => self.body_index_count,
+        };
+        (count > 0).then(|| self.first_index..self.first_index + count)
     }
 }
 
@@ -233,7 +178,7 @@ pub struct GpuSkeletalMesh {
     pub mirror_bone_bind_group: wgpu::BindGroup,
     pub primitives: Vec<GpuSkeletalPrimitive>,
     pub total_indices: u32,
-    /// Foreground submesh visibility directive (`FullBody` vs `HideHeadAndUpperBody` in First-Person) (`SH2-93`).
+    /// Foreground submesh visibility directive (`FullBody` vs `HideHeadOnly` in First-Person) (`SH2-93`).
     pub player_visibility: PlayerMeshVisibility,
 }
 
@@ -284,15 +229,16 @@ impl GpuSkeletalMesh {
         let has_pose_14 = model.primitives.iter().any(|pr| pr.pose_index == 14);
         let has_pose_6 = model.primitives.iter().any(|pr| pr.pose_index == 6);
 
+        let cranial_mask = cranial_bone_mask(model);
+
         for (k, pr) in model.primitives.iter().enumerate() {
             let tris = model.primitive_triangles(k);
-            let body_region = classify_primitive_body_region(model, k, &tris);
+            let (body_tris, cranial_tris) =
+                partition_first_person_triangles(model, &tris, &cranial_mask);
             let first_index = indices.len() as u32;
-            for tri in tris {
-                indices.push(tri[0] as u32);
-                indices.push(tri[1] as u32);
-                indices.push(tri[2] as u32);
-            }
+            indices.extend(body_tris.iter().flatten().map(|&i| i as u32));
+            let body_index_count = (indices.len() as u32) - first_index;
+            indices.extend(cranial_tris.iter().flatten().map(|&i| i as u32));
             let index_count = (indices.len() as u32) - first_index;
 
             // Default active state: if model uses pose variants, activate base mesh (0)
@@ -312,11 +258,11 @@ impl GpuSkeletalMesh {
             prim_batches.push(GpuSkeletalPrimitive {
                 first_index,
                 index_count,
+                body_index_count,
                 texture_index: pr.texture_index,
                 is_transparent: pr.is_transparent,
                 pose_index: pr.pose_index,
                 is_active,
-                body_region,
             });
         }
 
@@ -378,7 +324,7 @@ impl GpuSkeletalMesh {
         }
     }
 
-    /// Updates foreground submesh visibility (`FullBody` vs `HideHeadAndUpperBody` in First-Person) (`SH2-93`).
+    /// Updates foreground submesh visibility (`FullBody` vs `HideHeadOnly` in First-Person) (`SH2-93`).
     pub fn set_player_visibility(&mut self, visibility: PlayerMeshVisibility) {
         self.player_visibility = visibility;
     }

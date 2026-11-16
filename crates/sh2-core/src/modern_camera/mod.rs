@@ -9,8 +9,11 @@
 //! - [`ExternalCameraHandoff`] (`handoff.rs`): Smooth `R3` cross-mode blending and `.dds` cutscene / 2D cutaway handoffs.
 
 pub mod first_person;
+#[cfg(test)]
+mod first_person_tests;
 pub mod frame;
 pub mod handoff;
+pub mod head_rig;
 pub mod ots;
 pub mod sim_bridge;
 pub mod spring_arm;
@@ -28,14 +31,15 @@ use crate::scenario::PlayableCharacter;
 use crate::timing::TimingConstants;
 
 pub use first_person::{
-    CharacterHeadRigSpec, FirstPersonCameraRig, FirstPersonConfig, HeadBobMode,
-    PlayerMeshVisibility, FIRST_PERSON_NEAR_CLIP_UNITS, STANDARD_NEAR_CLIP_UNITS,
+    FirstPersonCameraRig, FirstPersonConfig, HeadBobMode, PlayerMeshVisibility,
+    FIRST_PERSON_NEAR_CLIP_UNITS, STANDARD_NEAR_CLIP_UNITS,
 };
 pub use frame::{ModernCameraFrame, ModernCameraTickInput, QuickTurnPhase};
 pub use handoff::{
     blend_snapshots, smoothstep01, snapshot_from_cutscene, CameraCyclePreset,
     ExternalCameraHandoff, GameplayCameraMode, ModeTransitionState,
 };
+pub use head_rig::{CharacterHeadRigSpec, NECK_OPENING_CLEAR_MARGIN_UNITS, NECK_TILT_SHARE};
 pub use ots::{
     beam_quat_from_direction, OtsAimPhase, OtsCameraConfig, OtsCameraRig, OtsReticleState,
     OtsShoulderSide, ReticleMode,
@@ -231,7 +235,7 @@ impl ModernCameraRig {
                 STANDARD_NEAR_CLIP_UNITS
             },
             player_visibility: if self.active_mode == GameplayCameraMode::FirstPerson {
-                PlayerMeshVisibility::HideHeadAndUpperBody
+                PlayerMeshVisibility::HideHeadOnly
             } else {
                 PlayerMeshVisibility::FullBody
             },
@@ -270,76 +274,53 @@ impl ModernCameraRig {
     ) -> ModernCameraFrame {
         self.prev_frame = self.curr_frame;
         let locked = self.handoff.locks_camera_controls();
-        let rx = if locked { 0.0 } else { input.right_stick_x };
-        let ry = if locked { 0.0 } else { input.right_stick_y };
-        let dyaw = if locked {
-            0.0
+        let gated = if locked {
+            ModernCameraTickInput {
+                right_stick_x: 0.0,
+                right_stick_y: 0.0,
+                extra_yaw_delta_rad: 0.0,
+                extra_pitch_delta_rad: 0.0,
+                ready_weapon: false,
+                quick_turn_pressed: false,
+                shoulder_swap_pressed: false,
+                ..*input
+            }
         } else {
-            input.extra_yaw_delta_rad
-        };
-        let dpitch = if locked {
-            0.0
-        } else {
-            input.extra_pitch_delta_rad
+            *input
         };
 
-        let (mut base_snap, mut near_clip, aim_origin, aim_dir, mut reticle) =
-            match self.active_mode {
-                GameplayCameraMode::ClassicPs2Rail => {
-                    let (sy, cy) = input.player_yaw.sin_cos();
-                    let fwd = Vec3::new(sy, 0.0, cy);
-                    let chest = input.player_pos + Vec3::new(sy * 45.0, -700.0, cy * 45.0);
-                    (
-                        *rail_snapshot,
-                        STANDARD_NEAR_CLIP_UNITS,
-                        chest,
-                        fwd,
-                        OtsReticleState::Hidden,
-                    )
-                }
-                GameplayCameraMode::OverTheShoulder => {
-                    let (snap, orig, dir, ret) = self.ots.tick(
-                        input.player_pos,
-                        input.player_yaw,
-                        input.linear_speed,
-                        rx,
-                        ry,
-                        dyaw,
-                        dpitch,
-                        input.sensitivity,
-                        input.ready_weapon && !locked,
-                        input.quick_turn_pressed && !locked,
-                        input.shoulder_swap_pressed && !locked,
-                        collision,
-                        &self.spring_config,
-                    );
-                    (snap, STANDARD_NEAR_CLIP_UNITS, orig, dir, ret)
-                }
-                GameplayCameraMode::FirstPerson => {
-                    let (snap, orig, dir, ret) = self.first_person.tick(
-                        input.character,
-                        input.player_pos,
-                        input.player_yaw,
-                        input.linear_speed,
-                        rx,
-                        ry,
-                        dyaw,
-                        dpitch,
-                        input.sensitivity,
-                        input.ready_weapon && !locked,
-                        input.quick_turn_pressed && !locked,
-                        collision,
-                        &self.spring_config,
-                    );
-                    (
-                        snap,
-                        self.first_person.config.near_clip_units,
-                        orig,
-                        dir,
-                        ret,
-                    )
-                }
-            };
+        let (mut base_snap, mut near_clip, aim_origin, aim_dir, mut reticle) = match self
+            .active_mode
+        {
+            GameplayCameraMode::ClassicPs2Rail => {
+                let (sy, cy) = input.player_yaw.sin_cos();
+                let fwd = Vec3::new(sy, 0.0, cy);
+                let chest = input.player_pos + Vec3::new(sy * 45.0, -700.0, cy * 45.0);
+                (
+                    *rail_snapshot,
+                    STANDARD_NEAR_CLIP_UNITS,
+                    chest,
+                    fwd,
+                    OtsReticleState::Hidden,
+                )
+            }
+            GameplayCameraMode::OverTheShoulder => {
+                let (snap, orig, dir, ret) = self.ots.tick(&gated, collision, &self.spring_config);
+                (snap, STANDARD_NEAR_CLIP_UNITS, orig, dir, ret)
+            }
+            GameplayCameraMode::FirstPerson => {
+                let (snap, orig, dir, ret) =
+                    self.first_person
+                        .tick(&gated, collision, &self.spring_config);
+                (
+                    snap,
+                    self.first_person.config.near_clip_units,
+                    orig,
+                    dir,
+                    ret,
+                )
+            }
+        };
 
         self.transition.step(&mut base_snap, &mut near_clip);
 
@@ -364,7 +345,7 @@ impl ModernCameraRig {
         } else if self.active_mode == GameplayCameraMode::FirstPerson
             && final_snap.eye.distance(self.first_person.smoothed_eye) < 180.0
         {
-            PlayerMeshVisibility::HideHeadAndUpperBody
+            PlayerMeshVisibility::HideHeadOnly
         } else {
             PlayerMeshVisibility::FullBody
         };

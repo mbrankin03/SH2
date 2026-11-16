@@ -114,7 +114,7 @@ pub struct ModernCameraFrame {
     pub snapshot: CameraSnapshot,
     /// Recommended perspective near-clip distance in SH2 world units (`8.0` FPS, `25.0` Rail/OTS).
     pub near_clip: f32,
-    /// Character submesh visibility directive (`FullBody` vs `HideHeadAndUpperBody`).
+    /// Character submesh visibility directive (`FullBody` vs `HideHeadOnly`).
     pub player_visibility: PlayerMeshVisibility,
     /// Optional subtle diegetic reticle state.
     pub reticle: OtsReticleState,

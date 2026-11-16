@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::camera::CameraSnapshot;
 use crate::collision::CollisionWorld;
 
-use super::frame::QuickTurnPhase;
+use super::frame::{ModernCameraTickInput, QuickTurnPhase};
 use super::spring_arm::{
     solve_ots_spring_arm, sweep_ray_against_cld, OtsBoomQuery, SpringArmConfig, SpringArmState,
 };
@@ -281,23 +281,26 @@ impl OtsCameraRig {
     /// Steps the OTS orbit, `.cld` spring-arm boom, reticle, and convergence ray for one 60 Hz tick.
     ///
     /// Returns `(snapshot, aim_origin, aim_dir, reticle_state)`.
-    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
-        player_pos: Vec3,
-        player_yaw: f32,
-        linear_speed: f32,
-        right_stick_x: f32,
-        right_stick_y: f32,
-        extra_yaw_delta_rad: f32,
-        extra_pitch_delta_rad: f32,
-        sensitivity: f32,
-        ready_weapon: bool,
-        quick_turn_pressed: bool,
-        shoulder_swap_pressed: bool,
+        input: &ModernCameraTickInput,
         collision: &CollisionWorld,
         spring_cfg: &SpringArmConfig,
     ) -> (CameraSnapshot, Vec3, Vec3, OtsReticleState) {
+        let ModernCameraTickInput {
+            player_pos,
+            player_yaw,
+            linear_speed,
+            right_stick_x,
+            right_stick_y,
+            extra_yaw_delta_rad,
+            extra_pitch_delta_rad,
+            sensitivity,
+            ready_weapon,
+            quick_turn_pressed,
+            shoulder_swap_pressed,
+            ..
+        } = *input;
         let dt = 1.0 / 60.0;
         if shoulder_swap_pressed {
             self.toggle_shoulder();

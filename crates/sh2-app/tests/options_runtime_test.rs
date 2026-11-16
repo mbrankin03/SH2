@@ -381,7 +381,7 @@ fn test_sh2_93_options_controls_sync_and_live_camera_wiring() {
     );
     assert_eq!(
         sim_core.player_mesh_visibility(),
-        PlayerMeshVisibility::HideHeadAndUpperBody
+        PlayerMeshVisibility::HideHeadOnly
     );
     assert!((sim_core.active_fov_y(1.0).to_degrees() - 85.0).abs() < 0.25);
     assert!((sim_core.active_near_clip(1.0) - 8.0).abs() < 1e-3);

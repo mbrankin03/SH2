@@ -176,9 +176,7 @@ fn test_spring_arm_against_retail_woodside_and_brookhaven_cld_corridors() {
     let mut ots = OtsCameraRig::default();
     ots.reset_to_player(james_pos, facing_yaw);
     let cfg = SpringArmConfig::default();
-    let (snap, _, _, _) = ots.tick(
-        james_pos, facing_yaw, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, false, false, false, &col_ap06, &cfg,
-    );
+    let (snap, _, _, _) = ots.tick(&default_tick_input(james_pos, facing_yaw), &col_ap06, &cfg);
     assert!(
         ots.spring_arm.last_hit_fraction < 0.5,
         "ap06 corridor wall must occlude 640-unit OTS boom (got {})",
@@ -208,21 +206,8 @@ fn test_spring_arm_against_retail_woodside_and_brookhaven_cld_corridors() {
         rig_ceil.config.hip_boom_distance = 1100.0;
         rig_ceil.reset_to_player(Vec3::new(cx, cy, cz), 0.0);
         rig_ceil.orbit_pitch = 1.00; // Looking steep down -> boom points steep up (-Y) into ceiling
-        let (csnap, _, _, _) = rig_ceil.tick(
-            Vec3::new(cx, cy, cz),
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            false,
-            false,
-            false,
-            &col,
-            &cfg,
-        );
+        let floor_pos = Vec3::new(cx, cy, cz);
+        let (csnap, _, _, _) = rig_ceil.tick(&default_tick_input(floor_pos, 0.0), &col, &cfg);
         assert!(
             csnap.eye.y >= expected_ceiling_y + cfg.ceiling_standoff_units - 1.0,
             "{rel_cld}: eye.y ({}) must not clip above ceiling ({expected_ceiling_y})",
@@ -287,10 +272,7 @@ fn test_first_person_retail_head_bone_anchoring_visibility_and_sway() {
     inp.linear_speed = 1200.0;
     inp.extra_pitch_delta_rad = -5.0; // Extreme upward flick -> must clamp to min_pitch_radians
     let f1 = rig.tick(&inp, &rail, &collision, &timing);
-    assert_eq!(
-        f1.player_visibility,
-        PlayerMeshVisibility::HideHeadAndUpperBody
-    );
+    assert_eq!(f1.player_visibility, PlayerMeshVisibility::HideHeadOnly);
     assert!((f1.near_clip - FIRST_PERSON_NEAR_CLIP_UNITS).abs() < 1e-4);
     assert!((f1.snapshot.fov_y - 85.0_f32.to_radians()).abs() < 1e-4);
     assert!((rig.first_person.look_pitch - rig.first_person.config.min_pitch_radians).abs() < 1e-4);
@@ -301,7 +283,7 @@ fn test_first_person_retail_head_bone_anchoring_visibility_and_sway() {
     let f2 = rig.tick(&inp, &rail, &collision, &timing);
     assert!((f2.aim_dir - f2.flashlight_dir).length() < 1e-5);
 
-    // Animated crouched external_bone_eye (> 250 units below upright bind pose) must keep HideHeadAndUpperBody
+    // Animated crouched external_bone_eye (> 250 units below upright bind pose) must keep HideHeadOnly
     rig.first_person.external_bone_eye = Some(Vec3::new(0.0, -540.0, 40.0));
     for _ in 0..20 {
         rig.tick(&inp, &rail, &collision, &timing);
@@ -309,7 +291,7 @@ fn test_first_person_retail_head_bone_anchoring_visibility_and_sway() {
     let crouched = rig.tick(&inp, &rail, &collision, &timing);
     assert_eq!(
         crouched.player_visibility,
-        PlayerMeshVisibility::HideHeadAndUpperBody,
+        PlayerMeshVisibility::HideHeadOnly,
         "Animated/crouched head bone pose must never pop FullBody head geometry inside FPS camera"
     );
 
@@ -342,7 +324,7 @@ fn test_cutscene_and_cutaway_handoffs_preserve_and_restore_modern_mode() {
     let fps_frame = rig.tick(&inp, &rail, &collision, &timing);
     assert_eq!(
         fps_frame.player_visibility,
-        PlayerMeshVisibility::HideHeadAndUpperBody
+        PlayerMeshVisibility::HideHeadOnly
     );
 
     // 1. 2D Puzzle Cutaway (`apt_clock_open`) locks camera & suppresses R3, then blends out cleanly
@@ -399,7 +381,7 @@ fn test_cutscene_and_cutaway_handoffs_preserve_and_restore_modern_mode() {
         assert_eq!(restored.active_mode, GameplayCameraMode::FirstPerson);
         assert_eq!(
             restored.player_visibility,
-            PlayerMeshVisibility::HideHeadAndUpperBody
+            PlayerMeshVisibility::HideHeadOnly
         );
     }
 }

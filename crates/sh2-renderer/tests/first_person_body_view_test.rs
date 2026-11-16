@@ -22,7 +22,7 @@ use sh2_core::{
 };
 use sh2_renderer::{
     classify_primitive_body_region, cranial_bone_mask, find_cranial_root_bone,
-    partition_first_person_triangles, SkeletalBodyRegion,
+    is_default_active_pose, partition_first_person_triangles, SkeletalBodyRegion,
 };
 
 const RETAIL_ROOT: &str = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
@@ -47,19 +47,11 @@ struct KeptGeometry {
 
 /// Mirrors `GpuSkeletalMesh::from_model` default-active pose selection and cranial partitioning.
 fn kept_first_person_geometry(model: &ModelFile) -> KeptGeometry {
-    let has_variants = model.primitives.iter().any(|p| p.pose_index > 0);
-    let has_14 = model.primitives.iter().any(|p| p.pose_index == 14);
-    let has_6 = model.primitives.iter().any(|p| p.pose_index == 6);
     let mask = cranial_bone_mask(model);
     let mut tris = Vec::new();
     let mut cranial_tri_count = 0;
     for (k, pr) in model.primitives.iter().enumerate() {
-        let active = !has_variants
-            || pr.pose_index == 0
-            || pr.pose_index == 3
-            || (has_14 && pr.pose_index == 14)
-            || (!has_14 && has_6 && pr.pose_index == 6);
-        if !active {
+        if !is_default_active_pose(model, pr.pose_index) {
             continue;
         }
         let prim_tris = model.primitive_triangles(k);

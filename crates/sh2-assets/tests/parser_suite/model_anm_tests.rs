@@ -176,7 +176,7 @@ fn test_sh2_36_bestiary_catalog_models_and_animations_parsing() {
         return;
     }
 
-    // Verify every single entry in `sh2_debug::BESTIARY_CATALOG` (29 models across
+    // Verify every single entry in `sh2_debug::BESTIARY_CATALOG` (31 models across
     // Protagonists, Story NPCs, Enemies, Bosses, Weapons & Key Items):
     let catalog_samples: &[(&str, Option<&str>)] = &[
         // 1. Playable Protagonists
@@ -186,6 +186,10 @@ fn test_sh2_36_bestiary_catalog_models_and_animations_parsing() {
         ),
         (
             "data/chr/jms/hll_jms.mdl",
+            Some("data/chr/jms/jms_basic1.anm"),
+        ),
+        (
+            "data/chr/jms/lll_jms.mdl",
             Some("data/chr/jms/jms_basic1.anm"),
         ),
         (
@@ -751,5 +755,120 @@ fn test_sh2_63_demo_dds_cls_and_mdl_facial_clusters_parsing() {
             deformed_verts > 0,
             "Expected {cls_rel} to deform facial vertices on {mdl_rel}"
         );
+    }
+}
+
+#[test]
+fn test_sh2_37_transparent_hair_outward_normals_and_specular_metadata() {
+    if !Path::new(&format!("{ROOT_ASSETS}/data")).exists() {
+        return;
+    }
+
+    // 1. Verify every character/boss model containing transparent hair/eyelash (`tprim`) submeshes
+    //    decodes outward-aligned vertex normals matching `FrontFace::Ccw` triangle winding
+    //    (`sh2pc.exe` `ActorTransparentDraw` `0x00504ccd` `fchs` normal negation).
+    let tprim_models = [
+        "data/chr/jms/hhh_jms.mdl",
+        "data/chr/jms/hll_jms.mdl",
+        "data/chr/mar/hhh_mar.mdl",
+        "data/chr/edi/hhh_edi.mdl",
+        "data/chr/edi/lll_edi.mdl",
+        "data/chr/lau/lau.mdl",
+        "data/chr/mry/mry.mdl",
+        "data/chr/agl/agl.mdl",
+        "data/chr/tyu/tyu.mdl",
+        "data/chr/bos/bos.mdl",
+    ];
+
+    for rel in tprim_models {
+        let bytes = fs::read(format!("{ROOT_ASSETS}/{rel}")).expect("read tprim mdl");
+        let mdl = parse_mdl(&bytes).expect("parse tprim mdl");
+
+        let mut tprim_count = 0usize;
+        for (k, pr) in mdl.primitives.iter().enumerate() {
+            if !pr.is_transparent {
+                continue;
+            }
+            tprim_count += 1;
+            let tris = mdl.primitive_triangles(k);
+            let mut non_degen = 0usize;
+            let mut outward_aligned = 0usize;
+
+            for &[i0, i1, i2] in &tris {
+                let p0 = mdl.vertices.positions[i0 as usize];
+                let p1 = mdl.vertices.positions[i1 as usize];
+                let p2 = mdl.vertices.positions[i2 as usize];
+
+                let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+                let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+                let face_n = [
+                    e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0],
+                ];
+                let len_sq = face_n[0] * face_n[0] + face_n[1] * face_n[1] + face_n[2] * face_n[2];
+                if len_sq < 1e-6 {
+                    continue;
+                }
+                non_degen += 1;
+
+                let n0 = mdl.vertices.normals[i0 as usize];
+                let n1 = mdl.vertices.normals[i1 as usize];
+                let n2 = mdl.vertices.normals[i2 as usize];
+                let avg_n = [
+                    n0[0] + n1[0] + n2[0],
+                    n0[1] + n1[1] + n2[1],
+                    n0[2] + n1[2] + n2[2],
+                ];
+                let dot = face_n[0] * avg_n[0] + face_n[1] * avg_n[1] + face_n[2] * avg_n[2];
+                if dot > 0.0 {
+                    outward_aligned += 1;
+                }
+            }
+
+            assert!(
+                non_degen > 0,
+                "{rel} tprim {k} had zero non-degenerate triangles"
+            );
+            assert!(
+                outward_aligned * 100 >= non_degen * 95,
+                "{rel} tprim {k} has inward-inverted normals: only {outward_aligned}/{non_degen} aligned with CCW winding"
+            );
+        }
+        assert!(
+            tprim_count > 0,
+            "{rel} expected at least one transparent primitive"
+        );
+    }
+
+    // 2. Verify Pyramid Head (`red.mdl` & `oni.mdl`) and James (`hhh_jms.mdl`) parse positive
+    //    `specular_scale` (`h + 48`) and PS2 specular RGB on `material_type == 4` submeshes.
+    for rel in [
+        "data/chr/red/red.mdl",
+        "data/chr/oni/oni.mdl",
+        "data/chr/jms/hhh_jms.mdl",
+    ] {
+        let bytes = fs::read(format!("{ROOT_ASSETS}/{rel}")).expect("read specular mdl");
+        let mdl = parse_mdl(&bytes).expect("parse specular mdl");
+        let spec_prims: Vec<_> = mdl
+            .primitives
+            .iter()
+            .filter(|p| p.material_type == 4)
+            .collect();
+        assert!(
+            !spec_prims.is_empty(),
+            "{rel} must contain material_type == 4 specular primitives"
+        );
+        for sp in spec_prims {
+            assert!(
+                sp.specular_scale > 1.0 && sp.specular_scale < 16.0,
+                "{rel} unexpected specular_scale={}",
+                sp.specular_scale
+            );
+            assert!(
+                sp.specular[0] > 0.0 || sp.specular[1] > 0.0 || sp.specular[2] > 0.0,
+                "{rel} material_type == 4 primitive had zero specular RGB"
+            );
+        }
     }
 }

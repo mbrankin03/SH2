@@ -16,9 +16,10 @@ pub use gpu_map::{GpuMap, GpuMapBatch};
 use sh2_assets::formats::mdls::ModelFile;
 use sh2_assets::formats::texture::generate_mipmap_chain_rgba;
 pub use skeletal::{
-    classify_primitive_body_region, cranial_bone_mask, dominant_vertex_bone,
-    find_cranial_root_bone, partition_first_person_triangles, GpuSkeletalMesh,
-    GpuSkeletalPrimitive, SkeletalBodyRegion, SkeletalPipeline, SkeletalVertex,
+    classify_primitive_body_region, cranial_bone_mask, discover_pose_presets, dominant_vertex_bone,
+    find_cranial_root_bone, is_default_active_pose, partition_first_person_triangles,
+    GpuSkeletalMesh, GpuSkeletalPrimitive, PoseVariantPreset, SkeletalBodyRegion,
+    SkeletalMaterialUniforms, SkeletalPassStage, SkeletalPipeline, SkeletalVertex,
     SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 use std::sync::Arc;
@@ -820,6 +821,7 @@ impl RenderContext {
         GpuSkeletalMesh::from_model(
             &self.device,
             &self.skeletal_pipeline.bone_bind_group_layout,
+            &self.skeletal_pipeline.material_bind_group_layout,
             model,
         )
     }

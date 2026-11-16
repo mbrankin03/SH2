@@ -69,13 +69,17 @@ pub struct ModelPrimitive {
     pub material_type: u8,
     /// Backface culling flags (0 = double sided, 1 = cull backfaces).
     pub backface_culling: u32,
-    /// Diffuse surface color reflection $(R, G, B)$.
+    /// Diffuse surface color reflection $(R, G, B)$, modulated by `2.0` (`MODULATE2X`) in PS2/PC shaders.
     pub diffuse: [f32; 3],
-    /// Ambient lighting color $(R, G, B)$.
+    /// Ambient lighting color $(R, G, B)$, modulated by `2.0` (`MODULATE2X`) in PS2/PC shaders.
     pub ambient: [f32; 3],
-    /// Specular reflection color $(R, G, B)$.
+    /// Specular reflection color $(R, G, B)$ in PS2 GS `[0..128]` fixed-point scale (`128.0 == 1.0`,
+    /// scaled by `1.0 / 128.0 = 0.0078125` in `sh2pc.exe` `ActorOpaqueDraw` `0x501a50`).
     pub specular: [f32; 3],
-    /// Indicates whether primitive is rendered in the alpha transparency pass.
+    /// Specular highlight lobe sharpness scale (`ModelMaterial::specularHighlightScale` at `h + 48`,
+    /// PS2 `SLUS_202.28` `DrawPart1` `+0x50` / `sh2pc.exe` `ActorOpaqueDraw` `[ebp + 0x34]`, typically `1.67..5.00`).
+    pub specular_scale: f32,
+    /// Indicates whether primitive is rendered in the alpha transparency pass (`tprim`).
     pub is_transparent: bool,
 }
 
@@ -408,6 +412,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         let mtype = data[h + 32];
         let pose = data[h + 34];
         let cull = read_u32(data, h + 36)?;
+        let specular_scale = read_f32(data, h + 48)?;
 
         let diffuse = [
             read_f32(data, h + 64)?,
@@ -467,6 +472,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             diffuse,
             ambient,
             specular,
+            specular_scale,
             is_transparent: false,
         });
 
@@ -691,7 +697,9 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             let tcount = read_u32(data, tp + 8)? as usize;
             let tofs = read_u32(data, tp + 12)? as usize;
             let mtype = data[tp + 20];
+            let pose = data[tp + 22];
             let cull = read_u32(data, tp + 24)?;
+            let specular_scale = read_f32(data, tp + 36)?;
 
             let diffuse = [
                 read_f32(data, tp + 52)?,
@@ -703,7 +711,11 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
                 read_f32(data, tp + 72)?,
                 read_f32(data, tp + 76)?,
             ];
-            let specular = [0.0f32, 0.0, 0.0];
+            let specular = [
+                read_f32(data, tp + 84)?,
+                read_f32(data, tp + 88)?,
+                read_f32(data, tp + 92)?,
+            ];
 
             let start = base_tstrip + (read_u32(data, tp + 100)? as usize);
             let length = read_u32(data, tp + 104)? as usize;
@@ -730,12 +742,13 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
                 texture_index: tidx,
                 start,
                 length,
-                pose_index: 0,
+                pose_index: pose,
                 material_type: mtype,
                 backface_culling: cull,
                 diffuse,
                 ambient,
                 specular,
+                specular_scale,
                 is_transparent: true,
             });
 
@@ -764,9 +777,12 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
                 read_f32(data, vo + 28)?,
             ];
 
-            let nx = read_f32(data, vo + 32)?;
-            let ny = read_f32(data, vo + 36)?;
-            let nz = read_f32(data, vo + 40)?;
+            // Transparent vertex normals (`vo + 32..44`) are stored negated in bone-local space
+            // just like opaque compressed `i16` normals (`read_i16 / -32768.0`), matching
+            // `sh2pc.exe` `0x504ccd..0x504ce4` (`fchs` on all 3 normal components).
+            let nx = -read_f32(data, vo + 32)?;
+            let ny = -read_f32(data, vo + 36)?;
+            let nz = -read_f32(data, vo + 40)?;
 
             let u = read_f32(data, vo + 48)?;
             let v = read_f32(data, vo + 52)?;

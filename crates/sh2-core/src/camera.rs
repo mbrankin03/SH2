@@ -70,6 +70,8 @@ pub struct Ps2CameraController {
     pub ideal_eye: Vec3,
     /// Target camera look-at position (smoothing accumulator).
     pub ideal_target: Vec3,
+    /// Dynamic viewport aspect-ratio rail clearance and intra-room warp transition configuration (`SH2-53`).
+    pub aspect_rail_config: crate::widescreen_rail::AspectRailConfig,
 }
 
 impl Default for Ps2CameraController {
@@ -95,7 +97,31 @@ impl Ps2CameraController {
             search_pitch_offset: 0.0,
             ideal_eye: initial.eye,
             ideal_target: initial.target,
+            aspect_rail_config: crate::widescreen_rail::AspectRailConfig::default(),
         }
+    }
+
+    /// Configure dynamic viewport aspect-ratio rail clearance (PS2 world mm) and intra-room
+    /// `VC_RD_WARP_OUT_F` / `VC_RD_WARP_IN_F` smoothing policy (`SH2-53`).
+    pub fn set_aspect_rail_config(&mut self, config: crate::widescreen_rail::AspectRailConfig) {
+        self.aspect_rail_config = config;
+    }
+
+    /// Enable dynamic widescreen rail wall clearance for `viewport_aspect` (`W / H`, dimensionless),
+    /// scaling `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST` (`0x0019b700`) margins when `aspect > 4.0 / 3.0` (`SH2-53`).
+    pub fn enable_dynamic_widescreen_clearance(&mut self, viewport_aspect: f32) {
+        let policy = self.aspect_rail_config.transition_policy;
+        self.aspect_rail_config =
+            crate::widescreen_rail::AspectRailConfig::dynamic_widescreen(viewport_aspect)
+                .with_transition_policy(policy);
+    }
+
+    /// Set the intra-room `.cam` volume warp transition policy (`SH2-53`, preserving instant cuts on `reset_to_player`).
+    pub fn set_intra_room_transition_policy(
+        &mut self,
+        policy: crate::widescreen_rail::IntraRoomTransitionPolicy,
+    ) {
+        self.aspect_rail_config.transition_policy = policy;
     }
 
     /// Load or swap the active room's `.cam` trigger volume definitions.
@@ -157,42 +183,31 @@ impl Ps2CameraController {
         self.load_room_cam_with_resolver(&resolver, room_or_rel_path, prefer_sh2ee)
     }
 
-    /// Clamps position `pos` within a `_VC_ROAD_AREA` rail using PS2 `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST`.
-    ///
-    /// For indoor rooms, `min_in_road_dist` = 400.0 mm.
-    fn clamp_to_road_rail(
+    /// Clamps `pos` (PS2 world mm, Y-down) within a `_VC_ROAD_AREA` rail using PS2
+    /// `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST` (`0x0019b700`) and `vcGetMinInRoadDist` (`0x001a6bd0`)
+    /// in authentic 4:3 CRT mode (`400.0` mm indoor, `500.0` mm outdoor).
+    pub fn clamp_to_road_rail(
         rail: &sh2_assets::formats::cam::RoadArea,
-        mut pos: Vec3,
+        pos: Vec3,
         is_outdoor: bool,
     ) -> Vec3 {
-        let min_dist = if is_outdoor { 500.0 } else { 400.0 };
-        let (min_x, max_x) = rail.x_bounds();
-        let (min_z, max_z) = rail.z_bounds();
+        crate::widescreen_rail::clamp_to_road_rail_with_config(
+            rail,
+            pos,
+            is_outdoor,
+            &crate::widescreen_rail::AspectRailConfig::authentic_ps2_4x3(),
+        )
+    }
 
-        let mut clamped_min_x = min_x + min_dist;
-        let mut clamped_max_x = max_x - min_dist;
-        if clamped_max_x < clamped_min_x {
-            let mid_x = (clamped_min_x + clamped_max_x) * 0.5;
-            clamped_min_x = mid_x;
-            clamped_max_x = mid_x;
-        }
-
-        let mut clamped_min_z = min_z + min_dist;
-        let mut clamped_max_z = max_z - min_dist;
-        if clamped_max_z < clamped_min_z {
-            let mid_z = (clamped_min_z + clamped_max_z) * 0.5;
-            clamped_min_z = mid_z;
-            clamped_max_z = mid_z;
-        }
-
-        pos.x = pos.x.clamp(clamped_min_x, clamped_max_x);
-        pos.z = pos.z.clamp(clamped_min_z, clamped_max_z);
-
-        // Clamp Y between min_hy and max_hy
-        let (min_y, max_y) = rail.y_bounds();
-        pos.y = pos.y.clamp(min_y, max_y);
-
-        pos
+    /// Clamps `pos` (PS2 world mm, Y-down) within a `_VC_ROAD_AREA` rail using dynamic viewport
+    /// aspect-ratio wall clearance (`SH2-53`, `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST` `0x0019b700`).
+    pub fn clamp_to_road_rail_with_config(
+        rail: &sh2_assets::formats::cam::RoadArea,
+        pos: Vec3,
+        is_outdoor: bool,
+        config: &crate::widescreen_rail::AspectRailConfig,
+    ) -> Vec3 {
+        crate::widescreen_rail::clamp_to_road_rail_with_config(rail, pos, is_outdoor, config)
     }
 
     /// Compute camera eye, target, fov, and movement type for a given road record and player pose.
@@ -390,7 +405,18 @@ impl Ps2CameraController {
                 if let Some(idx) = cam_file.records.iter().position(|r| std::ptr::eq(r, rec)) {
                     self.active_road_index = Some(idx);
                 }
-                Self::evaluate_road_record(rec, player_pos, player_yaw)
+                let (eval_eye, eval_look, eval_fov, eval_mv) =
+                    Self::evaluate_road_record(rec, player_pos, player_yaw);
+                let (eye, target) = crate::widescreen_rail::apply_chase_rail_clearance(
+                    rec,
+                    self.active_room_id.as_deref(),
+                    eval_eye,
+                    eval_look,
+                    player_pos,
+                    player_yaw,
+                    &self.aspect_rail_config,
+                );
+                (eye, target, eval_fov, eval_mv)
             } else {
                 Self::fallback_placement(player_pos, player_yaw)
             }
@@ -471,20 +497,36 @@ impl Ps2CameraController {
         let target_fov: f32;
         let target_mv_type: CameraMovementType;
         let mut warp_cut = false;
+        let mut eye_lerp = crate::widescreen_rail::DEFAULT_SMOOTH_WARP_EYE_LERP;
+        let mut target_lerp = crate::widescreen_rail::DEFAULT_SMOOTH_WARP_TARGET_LERP;
 
         if let Some(ref cam_file) = self.cam_file {
             let player_arr = [player_pos.x, player_pos.y, player_pos.z];
             if let Some(rec) = cam_file.find_active_record(player_arr, 150.0) {
                 let rec_idx = cam_file.records.iter().position(|r| std::ptr::eq(r, rec));
 
-                // Volume transition check
+                // Volume transition check (`vcSetCurNearRoadInVC_WORK` + `IntraRoomTransitionPolicy`)
                 if self.active_road_index != rec_idx {
                     if let Some(old_idx) = self.active_road_index {
                         let old_rec = &cam_file.records[old_idx];
                         if (old_rec.flags & VC_RD_WARP_OUT_F) != 0
                             || (rec.flags & VC_RD_WARP_IN_F) != 0
                         {
-                            warp_cut = true;
+                            match crate::widescreen_rail::evaluate_intra_room_transition(
+                                old_rec.flags,
+                                rec.flags,
+                                self.aspect_rail_config.transition_policy,
+                            ) {
+                                crate::widescreen_rail::IntraRoomTransitionStep::InstantWarpCut => {
+                                    warp_cut = true;
+                                }
+                                crate::widescreen_rail::IntraRoomTransitionStep::SmoothBlend(
+                                    factors,
+                                ) => {
+                                    eye_lerp = factors.eye_lerp;
+                                    target_lerp = factors.target_lerp;
+                                }
+                            }
                         }
                     }
                     self.active_road_index = rec_idx;
@@ -492,8 +534,15 @@ impl Ps2CameraController {
 
                 let (eval_eye, eval_look, eval_fov, eval_mv) =
                     Self::evaluate_road_record(rec, player_pos, player_yaw);
-                target_eye = eval_eye;
-                target_look = eval_look;
+                (target_eye, target_look) = crate::widescreen_rail::apply_chase_rail_clearance(
+                    rec,
+                    self.active_room_id.as_deref(),
+                    eval_eye,
+                    eval_look,
+                    player_pos,
+                    player_yaw,
+                    &self.aspect_rail_config,
+                );
                 target_fov = eval_fov;
                 target_mv_type = eval_mv;
             } else {
@@ -519,9 +568,9 @@ impl Ps2CameraController {
             self.ideal_eye = target_eye;
             self.ideal_target = target_look;
         } else {
-            // Authentic 60 Hz exponential smoothing across volume boundaries (~0.15 lerp coefficient)
-            self.ideal_eye = self.ideal_eye.lerp(target_eye, 0.15);
-            self.ideal_target = self.ideal_target.lerp(target_look, 0.18);
+            // Authentic 60 Hz exponential smoothing across volume boundaries
+            self.ideal_eye = self.ideal_eye.lerp(target_eye, eye_lerp);
+            self.ideal_target = self.ideal_target.lerp(target_look, target_lerp);
         }
 
         let mut final_target = self.ideal_target;

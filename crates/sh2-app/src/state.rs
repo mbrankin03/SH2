@@ -93,10 +93,17 @@ pub(crate) struct AppState {
     pub key_backward: bool,
     pub key_left: bool,
     pub key_right: bool,
+    pub key_run_held: bool,
+    pub key_look_up: bool,
+    pub key_look_down: bool,
+    pub key_look_left: bool,
+    pub key_look_right: bool,
     pub key_zoom_in: bool,
     pub key_zoom_out: bool,
     pub key_pan_up: bool,
     pub key_pan_down: bool,
+    pub window_focused: bool,
+    pub cursor_grabbed_for_camera: bool,
     pub last_menu_state_log: String,
     pub last_menu_revision: u64,
     pub active_audio_device: Option<String>,
@@ -155,17 +162,82 @@ impl AppState {
         self.menu_rasterizer.clear();
     }
 
-    /// Exits the current in-game test room and returns to `target_phase` (e.g. `TitlePhase::TestRoomsSelect`)
-    /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
-    pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
+    /// Returns `true` when `active_test_room` is a 3D exploration/gameplay room driven by `SimulationCore` (`SH2-93`).
+    pub fn is_3d_gameplay_room(&self) -> bool {
+        !matches!(
+            self.active_test_room,
+            TestRoomKind::ModelAndTextureViewer
+                | TestRoomKind::FmvCutsceneViewer
+                | TestRoomKind::GrappleAnimationRoom
+                | TestRoomKind::InventoryAndItemsRoom
+                | TestRoomKind::PuzzleAndCutawayRoom
+        )
+    }
+
+    /// Clears all held gameplay locomotion, look, sprint, and weapon-ready keyboard flags (`SH2-93`).
+    pub fn clear_held_gameplay_keys(&mut self) {
         self.key_forward = false;
         self.key_backward = false;
         self.key_left = false;
         self.key_right = false;
+        self.key_run_held = false;
+        self.key_ready_held = false;
+        self.key_attack_held = false;
+        self.key_look_up = false;
+        self.key_look_down = false;
+        self.key_look_left = false;
+        self.key_look_right = false;
         self.key_zoom_in = false;
         self.key_zoom_out = false;
         self.key_pan_up = false;
         self.key_pan_down = false;
+        self.sim_core.input.clear_host_keyboard_state();
+    }
+
+    /// Synchronizes Wayland/X11 relative cursor grab and cursor visibility when `OverTheShoulder`
+    /// or `FirstPerson` camera mode is active in gameplay (`SH2-93`).
+    pub fn sync_cursor_grab_for_camera(&mut self) {
+        let cutscene_locked = self
+            .drama_demo_session
+            .as_ref()
+            .is_some_and(|s| s.player.locks_gameplay_input());
+        let want_grab = self.window_focused
+            && self.menu_ctrl.in_game_active
+            && !self.menu_ctrl.pause_menu.is_open
+            && self.is_3d_gameplay_room()
+            && !cutscene_locked
+            && self.sim_core.active_camera_mode().is_modern()
+            && !self.sim_core.modern_camera.handoff.locks_camera_controls();
+
+        if want_grab == self.cursor_grabbed_for_camera {
+            return;
+        }
+        if want_grab {
+            let grabbed = self
+                .window
+                .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                .or_else(|_| {
+                    self.window
+                        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                })
+                .is_ok();
+            if grabbed {
+                self.window.set_cursor_visible(false);
+            }
+            self.cursor_grabbed_for_camera = true;
+        } else {
+            let _ = self
+                .window
+                .set_cursor_grab(winit::window::CursorGrabMode::None);
+            self.window.set_cursor_visible(true);
+            self.cursor_grabbed_for_camera = false;
+        }
+    }
+
+    /// Exits the current in-game test room and returns to `target_phase` (e.g. `TitlePhase::TestRoomsSelect`)
+    /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
+    pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
+        self.clear_held_gameplay_keys();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
         if let Some(ref mut engine) = self.audio_engine {
             engine.stop_bgm(std::time::Duration::from_millis(120));
@@ -179,6 +251,7 @@ impl AppState {
             );
         }
         self.menu_ctrl.return_to_menu(target_phase);
+        self.sync_cursor_grab_for_camera();
     }
 
     /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.

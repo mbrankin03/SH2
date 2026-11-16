@@ -14,7 +14,7 @@ impl OptionsMenu {
                     8
                 }
             }
-            OptionsTab::Controls => 5,
+            OptionsTab::Controls => 11,
             OptionsTab::Game => 7,
             OptionsTab::Debug => 6,
         }
@@ -159,6 +159,22 @@ impl OptionsMenu {
             4 => Some((
                 "Vibration Intensity",
                 format!("{:.0}%", c.vibration_intensity * 100.0),
+            )),
+            5 => Some(("Camera Mode", c.default_camera_mode.label().to_string())),
+            6 => Some(("R3 Camera Cycle", c.camera_cycle_preset.label().to_string())),
+            7 => Some(("OTS Shoulder", c.ots_shoulder.label().to_string())),
+            8 => Some(("Aiming Reticle", c.ots_reticle.label().to_string())),
+            9 => Some((
+                "First-Person FOV",
+                format!("{} deg", c.first_person_fov_deg),
+            )),
+            10 => Some((
+                "First-Person Sway",
+                if c.first_person_head_bob {
+                    "Subtle Sway".into()
+                } else {
+                    "Disabled".into()
+                },
             )),
             _ => None,
         }
@@ -383,6 +399,42 @@ impl OptionsMenu {
             4 => {
                 let step = if forward { 0.1 } else { -0.1 };
                 c.vibration_intensity = (c.vibration_intensity + step).clamp(0.0, 1.0);
+            }
+            5 => {
+                c.default_camera_mode = if forward {
+                    c.default_camera_mode.next()
+                } else {
+                    c.default_camera_mode.prev()
+                };
+            }
+            6 => {
+                c.camera_cycle_preset = if forward {
+                    c.camera_cycle_preset.next()
+                } else {
+                    c.camera_cycle_preset.prev()
+                };
+            }
+            7 => {
+                c.ots_shoulder = if forward {
+                    c.ots_shoulder.next()
+                } else {
+                    c.ots_shoulder.prev()
+                };
+            }
+            8 => {
+                c.ots_reticle = if forward {
+                    c.ots_reticle.next()
+                } else {
+                    c.ots_reticle.prev()
+                };
+            }
+            9 => {
+                let step: i32 = if forward { 5 } else { -5 };
+                c.first_person_fov_deg =
+                    (c.first_person_fov_deg as i32 + step).clamp(55, 100) as u32;
+            }
+            10 => {
+                c.first_person_head_bob = !c.first_person_head_bob;
             }
             _ => return Some(OptionsSoundCue::None),
         }

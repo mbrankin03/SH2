@@ -406,3 +406,83 @@ mod renderer_tests {
         let _ = ctx.device.poll(wgpu::Maintain::wait());
     }
 }
+
+#[test]
+fn test_sh2_93_first_person_skeletal_body_region_and_mirror_visibility() {
+    use sh2_assets::formats::mdls::parse_mdl;
+    use sh2_core::PlayerMeshVisibility;
+    use sh2_renderer::{classify_primitive_body_region, GpuSkeletalPrimitive, SkeletalBodyRegion};
+
+    let root = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+    for rel in [
+        "data/chr/jms/hll_jms.mdl",
+        "data/chr/jms/hhh_jms.mdl",
+        "data/chr/mar/lll_mar.mdl",
+        "data/chr/mar/hhh_mar.mdl",
+    ] {
+        let full = format!("{root}/{rel}");
+        if !std::path::Path::new(&full).exists() {
+            continue;
+        }
+        let mdl = parse_mdl(&std::fs::read(&full).expect("read mdl")).expect("parse mdl");
+        let regions: Vec<SkeletalBodyRegion> = (0..mdl.primitives.len())
+            .map(|k| {
+                let tris = mdl.primitive_triangles(k);
+                classify_primitive_body_region(&mdl, k, &tris)
+            })
+            .collect();
+        assert!(
+            regions.contains(&SkeletalBodyRegion::HeadAndHair),
+            "{rel} must classify head/hair primitives"
+        );
+        assert!(
+            regions.contains(&SkeletalBodyRegion::UpperTorso),
+            "{rel} must classify upper-torso primitives"
+        );
+        assert!(
+            regions.contains(&SkeletalBodyRegion::LowerOrHands),
+            "{rel} must preserve lower-body/hand primitives"
+        );
+    }
+
+    // Primitive with 30 below-neck indices followed by 6 cranial indices.
+    let prim = GpuSkeletalPrimitive {
+        first_index: 120,
+        index_count: 36,
+        body_index_count: 30,
+        texture_index: 0,
+        is_transparent: false,
+        pose_index: 0,
+        is_active: true,
+    };
+    assert_eq!(
+        prim.draw_range(PlayerMeshVisibility::FullBody, false),
+        Some(120..156)
+    );
+    assert_eq!(
+        prim.draw_range(PlayerMeshVisibility::HideHeadOnly, false),
+        Some(120..150),
+        "First-Person foreground drops only cranial triangles"
+    );
+    assert_eq!(
+        prim.draw_range(PlayerMeshVisibility::HideHeadOnly, true),
+        Some(120..156),
+        "Planar mirror reflections must still draw head & hair in First-Person mode"
+    );
+    let head_only = GpuSkeletalPrimitive {
+        body_index_count: 0,
+        ..prim.clone()
+    };
+    assert_eq!(
+        head_only.draw_range(PlayerMeshVisibility::HideHeadOnly, false),
+        None
+    );
+    let inactive = GpuSkeletalPrimitive {
+        is_active: false,
+        ..prim
+    };
+    assert_eq!(
+        inactive.draw_range(PlayerMeshVisibility::FullBody, true),
+        None
+    );
+}

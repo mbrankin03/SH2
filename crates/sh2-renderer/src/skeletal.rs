@@ -1,8 +1,18 @@
 //! Skeletal mesh representation and GPU Linear Blend Skinning (LBS) pipeline.
 
+mod body_region;
+
+use std::ops::Range;
+
 use bytemuck::{Pod, Zeroable};
 use sh2_assets::formats::mdls::ModelFile;
+use sh2_core::PlayerMeshVisibility;
 use wgpu::util::DeviceExt;
+
+pub use body_region::{
+    classify_primitive_body_region, cranial_bone_mask, dominant_vertex_bone,
+    find_cranial_root_bone, partition_first_person_triangles, SkeletalBodyRegion,
+};
 
 /// Maximum number of bones supported in a single skeletal mesh uniform/storage buffer.
 /// Silent Hill 2 character models have up to ~71-80 bones (e.g. James has 71 bones).
@@ -117,16 +127,43 @@ impl SkeletonBoneUniforms {
 }
 
 /// GPU-resident sub-primitive draw batch for a skeletal character model.
+///
+/// Indices are laid out `[below-neck triangles | cranial triangles]` so First-Person rendering can
+/// draw the leading `body_index_count` indices and skip only the head/face/hair (`SH2-93`).
 #[derive(Debug, Clone)]
 pub struct GpuSkeletalPrimitive {
     pub first_index: u32,
     pub index_count: u32,
+    /// Leading index count (`<= index_count`) of below-the-neck triangles kept in `HideHeadOnly`.
+    pub body_index_count: u32,
     pub texture_index: u16,
     pub is_transparent: bool,
     /// Target pose identifier matching [`ModelPrimitive::pose_index`].
     pub pose_index: u8,
     /// Whether this primitive is currently active and should be drawn.
     pub is_active: bool,
+}
+
+impl GpuSkeletalPrimitive {
+    /// Returns the index range to draw for `visibility`, or `None` if nothing should be drawn.
+    ///
+    /// Planar mirror duplicates (`is_mirror_duplicate`, `er01.map`) always draw the full primitive
+    /// including head and hair; the foreground `HideHeadOnly` player drops only cranial triangles (`SH2-93`).
+    #[inline]
+    pub fn draw_range(
+        &self,
+        visibility: PlayerMeshVisibility,
+        is_mirror_duplicate: bool,
+    ) -> Option<Range<u32>> {
+        if !self.is_active {
+            return None;
+        }
+        let count = match (visibility, is_mirror_duplicate) {
+            (PlayerMeshVisibility::FullBody, _) | (_, true) => self.index_count,
+            (PlayerMeshVisibility::HideHeadOnly, false) => self.body_index_count,
+        };
+        (count > 0).then(|| self.first_index..self.first_index + count)
+    }
 }
 
 /// GPU-resident skeletal character mesh containing vertex, index, and bone uniform buffers.
@@ -141,6 +178,8 @@ pub struct GpuSkeletalMesh {
     pub mirror_bone_bind_group: wgpu::BindGroup,
     pub primitives: Vec<GpuSkeletalPrimitive>,
     pub total_indices: u32,
+    /// Foreground submesh visibility directive (`FullBody` vs `HideHeadOnly` in First-Person) (`SH2-93`).
+    pub player_visibility: PlayerMeshVisibility,
 }
 
 impl GpuSkeletalMesh {
@@ -190,14 +229,16 @@ impl GpuSkeletalMesh {
         let has_pose_14 = model.primitives.iter().any(|pr| pr.pose_index == 14);
         let has_pose_6 = model.primitives.iter().any(|pr| pr.pose_index == 6);
 
+        let cranial_mask = cranial_bone_mask(model);
+
         for (k, pr) in model.primitives.iter().enumerate() {
             let tris = model.primitive_triangles(k);
+            let (body_tris, cranial_tris) =
+                partition_first_person_triangles(model, &tris, &cranial_mask);
             let first_index = indices.len() as u32;
-            for tri in tris {
-                indices.push(tri[0] as u32);
-                indices.push(tri[1] as u32);
-                indices.push(tri[2] as u32);
-            }
+            indices.extend(body_tris.iter().flatten().map(|&i| i as u32));
+            let body_index_count = (indices.len() as u32) - first_index;
+            indices.extend(cranial_tris.iter().flatten().map(|&i| i as u32));
             let index_count = (indices.len() as u32) - first_index;
 
             // Default active state: if model uses pose variants, activate base mesh (0)
@@ -217,6 +258,7 @@ impl GpuSkeletalMesh {
             prim_batches.push(GpuSkeletalPrimitive {
                 first_index,
                 index_count,
+                body_index_count,
                 texture_index: pr.texture_index,
                 is_transparent: pr.is_transparent,
                 pose_index: pr.pose_index,
@@ -278,7 +320,13 @@ impl GpuSkeletalMesh {
             mirror_bone_bind_group,
             primitives: prim_batches,
             total_indices,
+            player_visibility: PlayerMeshVisibility::FullBody,
         }
+    }
+
+    /// Updates foreground submesh visibility (`FullBody` vs `HideHeadOnly` in First-Person) (`SH2-93`).
+    pub fn set_player_visibility(&mut self, visibility: PlayerMeshVisibility) {
+        self.player_visibility = visibility;
     }
 
     /// Uploads newly evaluated skinning matrices to the GPU bone uniform buffer.

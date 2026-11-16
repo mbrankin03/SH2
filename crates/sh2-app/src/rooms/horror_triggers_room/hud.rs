@@ -192,7 +192,7 @@ pub(crate) fn render_horror_room_hud(
         true,
     );
     state.menu_rasterizer.draw_text(
-        "[1-8 / Tab] Switch Scenario  |  [R] Reset & Re-seed Room  |  [K] Secondary Action  |  [T] Door SFX / TV Static  |  [V] 3D Guides",
+        "[1-8 / Tab] Scenario  |  [R] Reset  |  [K/F5] Secondary  |  [T] Door SFX  |  [V] Camera Mode  |  [X] Shoulder  |  [F4] 3D Guides",
         20,
         678,
         1,

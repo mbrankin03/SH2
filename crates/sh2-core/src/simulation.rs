@@ -11,10 +11,9 @@ use crate::camera::Ps2CameraController;
 use crate::clock::EngineClock;
 use crate::collision::{CollisionConfig, CollisionWorld, SurfaceMaterial};
 use crate::events::StageTransitionCommand;
-use crate::input::{ControlScheme, HapticFeedback, InputManager};
-use crate::locomotion::{
-    LocomotionInput, LocomotionOutput, LocomotionState, PlayerLocomotionController,
-};
+use crate::input::{HapticFeedback, InputManager};
+use crate::locomotion::{LocomotionOutput, LocomotionState, PlayerLocomotionController};
+use crate::modern_camera::{GameplayCameraMode, ModernCameraRig};
 use crate::room_loader::{resolve_room_id_for_stage_or_override, stage_room_descriptor};
 use crate::scenario::{ScenarioKind, ScenarioState};
 use crate::timing::{
@@ -27,6 +26,10 @@ pub struct SimulationCore {
     pub clock: EngineClock,
     /// Authentic PS2 camera controller.
     pub camera: Ps2CameraController,
+    /// Toggleable Over-the-Shoulder 3D & First-Person camera orchestrator (`SH2-93`).
+    pub modern_camera: ModernCameraRig,
+    /// Active look sensitivity multiplier applied to OTS and First-Person cameras (`SH2-93`).
+    pub stick_sensitivity: f32,
     /// Active scenario state (James / Maria).
     pub scenario: ScenarioState,
     /// Previous 60 Hz tick player world position for sub-frame rendering interpolation.
@@ -78,6 +81,13 @@ impl SimulationCore {
         let mut camera = Ps2CameraController::new();
         camera.load_room_cam(&scenario.current_room, true);
         camera.reset_to_player(init_pos, init_yaw);
+        let mut modern_camera = ModernCameraRig::new();
+        modern_camera.reset_to_player(
+            scenario.character,
+            init_pos,
+            init_yaw,
+            &camera.curr_snapshot,
+        );
 
         let locomotion_clips = match scenario.character {
             crate::scenario::PlayableCharacter::James => CharacterLocomotionClips::JAMES,
@@ -87,6 +97,8 @@ impl SimulationCore {
         Self {
             clock: EngineClock::new(60),
             camera,
+            modern_camera,
+            stick_sensitivity: 1.0,
             scenario,
             prev_player_position: init_pos,
             prev_player_yaw: init_yaw,
@@ -131,6 +143,12 @@ impl SimulationCore {
         self.camera.load_room_cam(&self.scenario.current_room, true);
         self.camera
             .reset_to_player(self.scenario.player_position, self.scenario.player_yaw);
+        self.modern_camera.reset_to_player(
+            self.scenario.character,
+            self.scenario.player_position,
+            self.scenario.player_yaw,
+            &self.camera.curr_snapshot,
+        );
     }
 
     /// Transitions the simulation into `room_or_rel_path` (e.g. `"er01"`, `"ob01"`, `"rr21"`, `"ap01"`, `"ma61"`),
@@ -152,6 +170,12 @@ impl SimulationCore {
             .camera
             .load_room_cam(&self.scenario.current_room, prefer_sh2ee);
         self.camera.reset_to_player(spawn_pos, spawn_yaw);
+        self.modern_camera.reset_to_player(
+            self.scenario.character,
+            spawn_pos,
+            spawn_yaw,
+            &self.camera.curr_snapshot,
+        );
         loaded
     }
 
@@ -177,6 +201,12 @@ impl SimulationCore {
             .camera
             .load_room_cam(&self.scenario.current_room, prefer_sh2ee);
         self.camera.reset_to_player(spawn_pos, spawn_yaw);
+        self.modern_camera.reset_to_player(
+            self.scenario.character,
+            spawn_pos,
+            spawn_yaw,
+            &self.camera.curr_snapshot,
+        );
         loaded
     }
 
@@ -213,6 +243,12 @@ impl SimulationCore {
             // Intra-room coordinate warp or door cut within the currently loaded room `.cam`
             self.snap_player_transform(spawn_pos, spawn_yaw);
             self.camera.reset_to_player(spawn_pos, spawn_yaw);
+            self.modern_camera.reset_to_player(
+                self.scenario.character,
+                spawn_pos,
+                spawn_yaw,
+                &self.camera.curr_snapshot,
+            );
             self.camera.cam_file.is_some()
         }
     }
@@ -256,28 +292,9 @@ impl SimulationCore {
             self.scenario.flashlight_on = !self.scenario.flashlight_on;
         }
 
-        // 3. Update character position and turning via authentic PS2 locomotion controller
+        // 3. Update character position and turning via authentic PS2 locomotion controller + SH2-93 camera bridge
         let dt = 1.0 / 60.0;
-        let is_tank = self.input.config.scheme == ControlScheme::Tank;
-
-        let locomotion_in = LocomotionInput {
-            stick_x: self.input.state.left_stick_x,
-            stick_y: self.input.state.left_stick_y,
-            run_held: self.input.state.is_running,
-            strafe_left: self.input.state.strafe_left,
-            strafe_right: self.input.state.strafe_right,
-            quick_turn_pressed: self.input.state.quick_turn_pressed,
-            wall_ahead: false, // In free roam / room boundaries
-            enemy_near: false,
-            health_fraction: self.scenario.health / 100.0,
-            is_maria_follower: false, // Active player 1 always has 1.0x speed, even in Born From a Wish (Maria)
-            camera_yaw: self
-                .camera
-                .curr_snapshot
-                .eye
-                .x
-                .atan2(self.camera.curr_snapshot.eye.z),
-        };
+        let (locomotion_in, is_tank) = self.prepare_locomotion_for_camera();
 
         let out =
             self.locomotion
@@ -328,11 +345,22 @@ impl SimulationCore {
         );
 
         // 4. Update authentic PS2 camera with raycast wall clamping (clCheckHitEyes)
+        let active_cam_mode = self.modern_camera.active_mode;
+        let ps2_rx = if active_cam_mode == GameplayCameraMode::ClassicPs2Rail {
+            self.input.state.right_stick_x
+        } else {
+            0.0
+        };
+        let ps2_ry = if active_cam_mode == GameplayCameraMode::ClassicPs2Rail {
+            self.input.state.right_stick_y
+        } else {
+            0.0
+        };
         self.camera.tick(
             self.scenario.player_position,
             self.scenario.player_yaw,
-            self.input.state.right_stick_x,
-            self.input.state.right_stick_y,
+            ps2_rx,
+            ps2_ry,
         );
 
         let eye_target = self.scenario.player_position + Vec3::new(0.0, -1200.0, 0.0);
@@ -340,6 +368,9 @@ impl SimulationCore {
         self.camera.curr_snapshot.eye =
             self.collision
                 .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
+
+        // 4b. Step Over-the-Shoulder 3D / First-Person rig, .cld spring-arm, and look-coupled aiming (`SH2-93`)
+        self.step_modern_camera_after_ps2_rail(&out);
 
         // 5. DualSense health heartbeat haptics
         if self.scenario.health <= 25.0 {

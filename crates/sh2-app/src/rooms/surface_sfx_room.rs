@@ -201,8 +201,7 @@ impl RoomController for SurfaceSfxRoomController {
                         .snap_player_transform(target_pos, state.sim_core.scenario.player_yaw);
                     state
                         .sim_core
-                        .camera
-                        .reset_to_player(target_pos, state.sim_core.scenario.player_yaw);
+                        .reset_cameras_to_player(target_pos, state.sim_core.scenario.player_yaw);
 
                     let mat = SurfaceMaterial::from_cld_material(pad.material_id);
                     state.sim_core.active_floor_material = mat;
@@ -325,7 +324,7 @@ impl RoomController for SurfaceSfxRoomController {
                     return;
                 }
                 // [J]: Save Point Chime (`10051` / `0x2743` in `voice.afs` entry `35` or `sh2e/sound/extra/save_sound.wav`)
-                KeyCode::KeyJ => {
+                KeyCode::KeyJ if !state.sim_core.active_camera_mode().is_modern() => {
                     if let Some(ref mut eng) = state.audio_engine {
                         let _ = play_menu_sound(
                             eng,
@@ -339,7 +338,7 @@ impl RoomController for SurfaceSfxRoomController {
                     return;
                 }
                 // [L]: Game Start Transition (`15002` / `0x3A9A` in `voice.afs` entry `24` or `sh2e/sound/extra/g_start.wav`)
-                KeyCode::KeyL => {
+                KeyCode::KeyL if !state.sim_core.active_camera_mode().is_modern() => {
                     if let Some(ref mut eng) = state.audio_engine {
                         let _ = play_menu_sound(
                             eng,
@@ -352,8 +351,8 @@ impl RoomController for SurfaceSfxRoomController {
                             .to_string();
                     return;
                 }
-                // [V]: Toggle 3D wireframe pad outlines & attenuation rings
-                KeyCode::KeyV => {
+                // [F4]: Toggle 3D wireframe pad outlines & attenuation rings (`[V]` cycles camera mode)
+                KeyCode::F4 => {
                     state.surface_sfx_room.show_3d_guides = !state.surface_sfx_room.show_3d_guides;
                     return;
                 }
@@ -369,12 +368,14 @@ impl RoomController for SurfaceSfxRoomController {
         state: &mut AppState,
         dt: Duration,
         _dt_sec: f32,
-        aspect: f32,
+        _aspect: f32,
         _grain_pct: u32,
         is_paused: bool,
         is_in_game: bool,
     ) {
         if !is_paused {
+            super::combat_arena::camera_wiring::sync_host_input_and_handoffs(state);
+            super::combat_arena::camera_wiring::sync_player_pose_and_visibility(state);
             let ticks = state.sim_core.update(dt);
             if ticks > 0 {
                 let p_pos = state.sim_core.scenario.player_position;
@@ -411,19 +412,6 @@ impl RoomController for SurfaceSfxRoomController {
         }
 
         let alpha = state.sim_core.interpolation_alpha();
-        let view = state.sim_core.camera.interpolated_view_matrix(alpha);
-        let fov_y = state.sim_core.camera.interpolated_fov(alpha);
-        let proj = glam::Mat4::perspective_rh(
-            fov_y,
-            aspect,
-            super::DEFAULT_CAMERA_Z_NEAR,
-            super::DEFAULT_CAMERA_Z_FAR,
-        );
-        let view_proj = proj * view;
-        let inv_proj = proj.inverse();
-        let eye_pos = state.sim_core.camera.curr_snapshot.eye;
-        state.render_ctx.update_camera(view_proj, inv_proj, eye_pos);
-
         let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
 
         // Evaluate active character (James or Maria) skeletal pose
@@ -481,6 +469,9 @@ impl RoomController for SurfaceSfxRoomController {
                 }
             }
         }
+        super::combat_arena::camera_wiring::sync_player_pose_and_visibility(state);
+        super::combat_arena::camera_wiring::update_camera_uniforms(state, alpha, None);
+        super::combat_arena::camera_wiring::update_spotlight_uniforms(state, alpha, None);
 
         let mut skeletal_draw = Vec::new();
         let active_char_ref = if state.active_maria {
@@ -741,7 +732,7 @@ impl RoomController for SurfaceSfxRoomController {
             true,
         );
         state.menu_rasterizer.draw_text(
-            "[PgUp/PgDn/Enter] Browse All 417 sddata.bin WAVs  |  [J] Save Chime (10051)  |  [L] Start Chime (15002)  |  [F] Flashlight  |  [V] 3D Guides",
+            "[PgUp/PgDn/Enter] Browse 417 WAVs  |  [J/L] Save/Start Chime  |  [F] Flashlight  |  [V] Camera Mode  |  [X] Shoulder  |  [F4] Guides",
             20,
             688,
             1,

@@ -400,7 +400,7 @@ impl AudioDebugRoomController {
                 state.audio_debug.solo_track = None;
                 true
             }
-            KeyCode::KeyV => {
+            KeyCode::F4 => {
                 state.audio_debug.show_sound_boxes_3d = !state.audio_debug.show_sound_boxes_3d;
                 true
             }
@@ -412,7 +412,10 @@ impl AudioDebugRoomController {
                 }
                 true
             }
-            KeyCode::KeyU | KeyCode::KeyI | KeyCode::KeyO | KeyCode::KeyL | KeyCode::KeyJ => {
+            KeyCode::KeyU | KeyCode::KeyO | KeyCode::KeyI | KeyCode::KeyL | KeyCode::KeyJ
+                if matches!(key_code, KeyCode::KeyU | KeyCode::KeyO)
+                    || !state.sim_core.active_camera_mode().is_modern() =>
+            {
                 let (cue, label) = match key_code {
                     KeyCode::KeyU => (SoundCueKind::CursorMove, "10000: CursorMove (0x2710)"),
                     KeyCode::KeyI => (SoundCueKind::Confirm, "10002: Confirm (0x2712)"),
@@ -492,7 +495,7 @@ impl AudioDebugRoomController {
                 state.audio_debug.last_sfx_triggered = entry.title;
                 true
             }
-            KeyCode::KeyK => {
+            KeyCode::KeyK if !state.sim_core.active_camera_mode().is_modern() => {
                 let slice_idx = state.audio_debug.laura_slice_index;
                 let slice = LAURA_LETTER_VOICEOVER_SLICES[slice_idx];
                 if let (Some(eng), Some(bank)) =
@@ -550,6 +553,8 @@ impl AudioDebugRoomController {
     }
 
     fn step_audio_simulation(state: &mut AppState, dt: Duration, is_in_game: bool) {
+        super::combat_arena::camera_wiring::sync_host_input_and_handoffs(state);
+        super::combat_arena::camera_wiring::sync_player_pose_and_visibility(state);
         let ticks = state.sim_core.update(dt);
         if ticks > 0 {
             let p_pos = state.sim_core.scenario.player_position;
@@ -654,21 +659,8 @@ impl AudioDebugRoomController {
         }
     }
 
-    fn render_audio_scene_3d(state: &mut AppState, aspect: f32, is_in_game: bool) {
+    fn render_audio_scene_3d(state: &mut AppState, _aspect: f32, is_in_game: bool) {
         let alpha = state.sim_core.interpolation_alpha();
-        let view = state.sim_core.camera.interpolated_view_matrix(alpha);
-        let fov_y = state.sim_core.camera.interpolated_fov(alpha);
-        let proj = glam::Mat4::perspective_rh(
-            fov_y,
-            aspect,
-            super::DEFAULT_CAMERA_Z_NEAR,
-            super::DEFAULT_CAMERA_Z_FAR,
-        );
-        let view_proj = proj * view;
-        let inv_proj = proj.inverse();
-        let eye_pos = state.sim_core.camera.curr_snapshot.eye;
-        state.render_ctx.update_camera(view_proj, inv_proj, eye_pos);
-
         let (player_pos, player_yaw) = state.sim_core.interpolated_player_pose(alpha);
 
         state.skin_matrices_scratch.clear();
@@ -720,6 +712,9 @@ impl AudioDebugRoomController {
                 }
             }
         }
+        super::combat_arena::camera_wiring::sync_player_pose_and_visibility(state);
+        super::combat_arena::camera_wiring::update_camera_uniforms(state, alpha, None);
+        super::combat_arena::camera_wiring::update_spotlight_uniforms(state, alpha, None);
 
         let mut skeletal_draw = Vec::new();
         if let Some(ref c) = state.character {
@@ -797,6 +792,6 @@ impl AudioDebugRoomController {
             glam::Vec3::new(0.0, 0.0, 0.0)
         };
         state.sim_core.snap_player_transform(target_pos, 0.0);
-        state.sim_core.camera.reset_to_player(target_pos, 0.0);
+        state.sim_core.reset_cameras_to_player(target_pos, 0.0);
     }
 }

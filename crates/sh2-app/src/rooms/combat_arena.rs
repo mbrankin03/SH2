@@ -5,6 +5,7 @@
 //! - [`render`]: Fixed 60 Hz simulation step, skeletal animation skinning, cutscene camera/light overrides, and 3D draw submission.
 //! - [`hud`]: 2D HUD telemetry overlay and `.mes` subtitle rendering.
 
+pub(crate) mod camera_wiring;
 mod hud;
 mod input;
 mod render;

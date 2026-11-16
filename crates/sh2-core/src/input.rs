@@ -118,6 +118,18 @@ pub struct GamepadInputState {
     pub strafe_left: bool,
     /// Strafe right button held.
     pub strafe_right: bool,
+    /// Camera mode live-cycle button (`R3` / Right Thumb) pressed this tick (`SH2-93`).
+    pub camera_mode_cycle_pressed: bool,
+    /// Over-the-Shoulder left/right shoulder swap button (`L3` / Left Thumb) pressed this tick (`SH2-93`).
+    pub shoulder_swap_pressed: bool,
+    /// Accumulated mouse horizontal yaw look delta in radians for this 60 Hz tick (`SH2-93`).
+    pub mouse_look_delta_x: f32,
+    /// Accumulated mouse vertical pitch look delta in radians for this 60 Hz tick (`SH2-93`).
+    pub mouse_look_delta_y: f32,
+    /// Accumulated gyro motion-sensor horizontal yaw delta in radians for this 60 Hz tick (`SH2-87`/`SH2-93`).
+    pub gyro_look_delta_yaw: f32,
+    /// Accumulated gyro motion-sensor vertical pitch delta in radians for this 60 Hz tick (`SH2-87`/`SH2-93`).
+    pub gyro_look_delta_pitch: f32,
     /// Active controller speaker cue.
     pub pending_speaker_cue: Option<ControllerSpeakerCue>,
     /// Active haptic feedback command.
@@ -130,6 +142,17 @@ pub struct InputManager {
     active_gamepad: Option<GamepadId>,
     pub config: ControllerConfig,
     pub state: GamepadInputState,
+    pending_camera_cycle: bool,
+    pending_shoulder_swap: bool,
+    pending_quick_turn: bool,
+    pending_mouse_look: [f32; 2],
+    pending_gyro_look: [f32; 2],
+    host_active: bool,
+    host_move: [f32; 2],
+    host_look: [f32; 2],
+    host_run: bool,
+    host_ready: bool,
+    gamepad_ready: bool,
 }
 
 impl InputManager {
@@ -141,7 +164,71 @@ impl InputManager {
             active_gamepad: None,
             config,
             state: GamepadInputState::default(),
+            pending_camera_cycle: false,
+            pending_shoulder_swap: false,
+            pending_quick_turn: false,
+            pending_mouse_look: [0.0; 2],
+            pending_gyro_look: [0.0; 2],
+            host_active: false,
+            host_move: [0.0; 2],
+            host_look: [0.0; 2],
+            host_run: false,
+            host_ready: false,
+            gamepad_ready: false,
         }
+    }
+
+    /// Queues a single-tick `R3` camera mode cycle trigger for the next 60 Hz `update()` (`SH2-93`).
+    pub fn press_camera_mode_cycle(&mut self) {
+        self.pending_camera_cycle = true;
+    }
+
+    /// Queues a single-tick `L3` OTS shoulder swap trigger for the next 60 Hz `update()` (`SH2-93`).
+    pub fn press_shoulder_swap(&mut self) {
+        self.pending_shoulder_swap = true;
+    }
+
+    /// Queues a single-tick 180-degree quick-turn trigger for the next 60 Hz `update()` (`SH2-93`).
+    pub fn press_quick_turn(&mut self) {
+        self.pending_quick_turn = true;
+    }
+
+    /// Supplies held desktop keyboard/mouse axes (`WASD`, `IJKL`, `Shift`, `R`/Right-Click) in normalized
+    /// `[-1.0, 1.0]` units so 60 Hz ticks merge keyboard and `gilrs` gamepad state cleanly (`SH2-93`).
+    pub fn set_host_keyboard_state(
+        &mut self,
+        move_x: f32,
+        move_y: f32,
+        look_x: f32,
+        look_y: f32,
+        run_held: bool,
+        ready_held: bool,
+    ) {
+        self.host_active = true;
+        self.host_move = [move_x.clamp(-1.0, 1.0), move_y.clamp(-1.0, 1.0)];
+        self.host_look = [look_x.clamp(-1.0, 1.0), look_y.clamp(-1.0, 1.0)];
+        self.host_run = run_held;
+        self.host_ready = ready_held;
+    }
+
+    /// Resets held desktop keyboard/mouse axes (e.g. on pause menu open, focus loss, or room exit) (`SH2-93`).
+    pub fn clear_host_keyboard_state(&mut self) {
+        self.host_move = [0.0; 2];
+        self.host_look = [0.0; 2];
+        self.host_run = false;
+        self.host_ready = false;
+    }
+
+    /// Accumulates mouse look yaw/pitch deltas (in radians) to be consumed on the next 60 Hz `update()` (`SH2-93`).
+    pub fn accumulate_mouse_look(&mut self, delta_yaw_rad: f32, delta_pitch_rad: f32) {
+        self.pending_mouse_look[0] += delta_yaw_rad;
+        self.pending_mouse_look[1] += delta_pitch_rad;
+    }
+
+    /// Accumulates gyro look yaw/pitch deltas (in radians) to be consumed on the next 60 Hz `update()` (`SH2-87`/`SH2-93`).
+    pub fn accumulate_gyro_look(&mut self, delta_yaw_rad: f32, delta_pitch_rad: f32) {
+        self.pending_gyro_look[0] += delta_yaw_rad;
+        self.pending_gyro_look[1] += delta_pitch_rad;
     }
 
     /// Set control scheme (Tank vs Analog).
@@ -170,11 +257,17 @@ impl InputManager {
 
     /// Update controller input states from `gilrs` event loop.
     pub fn update(&mut self) {
-        // Reset single-frame pulse triggers
+        // Reset single-frame pulse triggers and flush queued host mouse/gyro/R3/quick-turn inputs
         self.state.light_toggle_pressed = false;
         self.state.map_pressed = false;
         self.state.inventory_pressed = false;
-        self.state.quick_turn_pressed = false;
+        self.state.quick_turn_pressed = std::mem::take(&mut self.pending_quick_turn);
+        self.state.camera_mode_cycle_pressed = std::mem::take(&mut self.pending_camera_cycle);
+        self.state.shoulder_swap_pressed = std::mem::take(&mut self.pending_shoulder_swap);
+        self.state.mouse_look_delta_x = std::mem::take(&mut self.pending_mouse_look[0]);
+        self.state.mouse_look_delta_y = std::mem::take(&mut self.pending_mouse_look[1]);
+        self.state.gyro_look_delta_yaw = std::mem::take(&mut self.pending_gyro_look[0]);
+        self.state.gyro_look_delta_pitch = std::mem::take(&mut self.pending_gyro_look[1]);
         self.state.pending_speaker_cue = None;
 
         // Decrement haptic timer
@@ -185,91 +278,120 @@ impl InputManager {
             }
         }
 
-        let Some(ref mut gilrs) = self.gilrs else {
-            return;
-        };
+        let mut pad_lx = 0.0_f32;
+        let mut pad_ly = 0.0_f32;
+        let mut pad_rx = 0.0_f32;
+        let mut pad_ry = 0.0_f32;
+        let mut pad_running = false;
+        let mut has_gamepad_axes = false;
 
-        while let Some(Event { id, event, .. }) = gilrs.next_event() {
-            self.active_gamepad = Some(id);
-            match event {
-                EventType::ButtonPressed(Button::South, _) => self.state.action_pressed = true,
-                EventType::ButtonReleased(Button::South, _) => self.state.action_pressed = false,
-
-                EventType::ButtonPressed(Button::East, _) => self.state.cancel_pressed = true,
-                EventType::ButtonReleased(Button::East, _) => self.state.cancel_pressed = false,
-
-                EventType::ButtonPressed(Button::RightTrigger2, _) => {
-                    self.state.ready_weapon_pressed = true;
-                }
-                EventType::ButtonReleased(Button::RightTrigger2, _) => {
-                    self.state.ready_weapon_pressed = false;
-                }
-
-                EventType::ButtonPressed(Button::North, _) => {
-                    self.state.light_toggle_pressed = true;
-                    if self.config.dualsense_speaker_enabled {
-                        self.state.pending_speaker_cue =
-                            Some(ControllerSpeakerCue::FlashlightClick);
+        if let Some(ref mut gilrs) = self.gilrs {
+            while let Some(Event { id, event, .. }) = gilrs.next_event() {
+                self.active_gamepad = Some(id);
+                match event {
+                    EventType::ButtonPressed(Button::South, _) => self.state.action_pressed = true,
+                    EventType::ButtonReleased(Button::South, _) => {
+                        self.state.action_pressed = false
                     }
-                }
 
-                EventType::ButtonPressed(Button::Select, _) => {
-                    self.state.map_pressed = true;
-                }
+                    EventType::ButtonPressed(Button::East, _) => self.state.cancel_pressed = true,
+                    EventType::ButtonReleased(Button::East, _) => self.state.cancel_pressed = false,
 
-                EventType::ButtonPressed(Button::Start, _) => {
-                    self.state.inventory_pressed = true;
-                }
+                    EventType::ButtonPressed(Button::RightTrigger2, _) => {
+                        self.gamepad_ready = true;
+                        self.state.ready_weapon_pressed = true;
+                    }
+                    EventType::ButtonReleased(Button::RightTrigger2, _) => {
+                        self.gamepad_ready = false;
+                        self.state.ready_weapon_pressed = self.host_active && self.host_ready;
+                    }
 
-                EventType::ButtonPressed(Button::DPadDown, _) => {
-                    self.state.quick_turn_pressed = true;
-                }
+                    EventType::ButtonPressed(Button::North, _) => {
+                        self.state.light_toggle_pressed = true;
+                        if self.config.dualsense_speaker_enabled {
+                            self.state.pending_speaker_cue =
+                                Some(ControllerSpeakerCue::FlashlightClick);
+                        }
+                    }
 
-                EventType::ButtonPressed(Button::LeftTrigger, _) => {
-                    self.state.strafe_left = true;
-                }
-                EventType::ButtonReleased(Button::LeftTrigger, _) => {
-                    self.state.strafe_left = false;
-                }
+                    EventType::ButtonPressed(Button::Select, _) => {
+                        self.state.map_pressed = true;
+                    }
 
-                EventType::ButtonPressed(Button::RightTrigger, _) => {
-                    self.state.strafe_right = true;
-                }
-                EventType::ButtonReleased(Button::RightTrigger, _) => {
-                    self.state.strafe_right = false;
-                }
+                    EventType::ButtonPressed(Button::Start, _) => {
+                        self.state.inventory_pressed = true;
+                    }
 
-                _ => {}
+                    EventType::ButtonPressed(Button::DPadDown, _) => {
+                        self.state.quick_turn_pressed = true;
+                    }
+
+                    EventType::ButtonPressed(Button::LeftTrigger, _) => {
+                        self.state.strafe_left = true;
+                    }
+                    EventType::ButtonReleased(Button::LeftTrigger, _) => {
+                        self.state.strafe_left = false;
+                    }
+
+                    EventType::ButtonPressed(Button::RightTrigger, _) => {
+                        self.state.strafe_right = true;
+                    }
+                    EventType::ButtonReleased(Button::RightTrigger, _) => {
+                        self.state.strafe_right = false;
+                    }
+
+                    EventType::ButtonPressed(Button::RightThumb, _) => {
+                        self.state.camera_mode_cycle_pressed = true;
+                    }
+
+                    EventType::ButtonPressed(Button::LeftThumb, _) => {
+                        self.state.shoulder_swap_pressed = true;
+                    }
+
+                    _ => {}
+                }
+            }
+
+            if let Some(id) = self.active_gamepad {
+                has_gamepad_axes = true;
+                let gamepad = gilrs.gamepad(id);
+                let raw_lx = gamepad.value(Axis::LeftStickX);
+                let raw_ly = gamepad.value(Axis::LeftStickY);
+                let raw_rx = gamepad.value(Axis::RightStickX);
+                let raw_ry = gamepad.value(Axis::RightStickY);
+
+                let filter_deadzone = |val: f32, deadzone: f32| -> f32 {
+                    if val.abs() < deadzone {
+                        0.0
+                    } else {
+                        let sign = val.signum();
+                        (val.abs() - deadzone) / (1.0 - deadzone) * sign
+                    }
+                };
+
+                pad_lx = filter_deadzone(raw_lx, self.config.stick_deadzone);
+                pad_ly = filter_deadzone(raw_ly, self.config.stick_deadzone);
+                pad_rx = filter_deadzone(raw_rx, self.config.stick_deadzone);
+                pad_ry = filter_deadzone(raw_ry, self.config.stick_deadzone);
+
+                let stick_magnitude = (pad_lx * pad_lx + pad_ly * pad_ly).sqrt();
+                pad_running = stick_magnitude >= self.config.run_threshold;
             }
         }
 
-        // Read axes for currently active gamepad
-        if let Some(id) = self.active_gamepad {
-            let gamepad = gilrs.gamepad(id);
-            let raw_lx = gamepad.value(Axis::LeftStickX);
-            let raw_ly = gamepad.value(Axis::LeftStickY);
-            let raw_rx = gamepad.value(Axis::RightStickX);
-            let raw_ry = gamepad.value(Axis::RightStickY);
-
-            let filter_deadzone = |val: f32, deadzone: f32| -> f32 {
-                if val.abs() < deadzone {
-                    0.0
-                } else {
-                    let sign = val.signum();
-                    (val.abs() - deadzone) / (1.0 - deadzone) * sign
-                }
-            };
-
-            self.state.left_stick_x = filter_deadzone(raw_lx, self.config.stick_deadzone);
-            self.state.left_stick_y = filter_deadzone(raw_ly, self.config.stick_deadzone);
-            self.state.right_stick_x = filter_deadzone(raw_rx, self.config.stick_deadzone);
-            self.state.right_stick_y = filter_deadzone(raw_ry, self.config.stick_deadzone);
-
-            let stick_magnitude = (self.state.left_stick_x * self.state.left_stick_x
-                + self.state.left_stick_y * self.state.left_stick_y)
-                .sqrt();
-
-            self.state.is_running = stick_magnitude >= self.config.run_threshold;
+        if self.host_active {
+            self.state.left_stick_x = (pad_lx + self.host_move[0]).clamp(-1.0, 1.0);
+            self.state.left_stick_y = (pad_ly + self.host_move[1]).clamp(-1.0, 1.0);
+            self.state.right_stick_x = (pad_rx + self.host_look[0]).clamp(-1.0, 1.0);
+            self.state.right_stick_y = (pad_ry + self.host_look[1]).clamp(-1.0, 1.0);
+            self.state.is_running = pad_running || self.host_run;
+            self.state.ready_weapon_pressed = self.gamepad_ready || self.host_ready;
+        } else if has_gamepad_axes {
+            self.state.left_stick_x = pad_lx;
+            self.state.left_stick_y = pad_ly;
+            self.state.right_stick_x = pad_rx;
+            self.state.right_stick_y = pad_ry;
+            self.state.is_running = pad_running;
         }
     }
 }
@@ -301,5 +423,21 @@ mod tests {
         });
         assert_eq!(mgr.state.active_haptic.duration_ticks, 10);
         assert!((mgr.state.active_haptic.heavy_rumble - 0.8).abs() < f32::EPSILON);
+
+        mgr.press_camera_mode_cycle();
+        mgr.press_shoulder_swap();
+        mgr.accumulate_mouse_look(0.15, -0.05);
+        mgr.accumulate_gyro_look(0.02, 0.01);
+        mgr.update();
+        assert!(mgr.state.camera_mode_cycle_pressed);
+        assert!(mgr.state.shoulder_swap_pressed);
+        assert!((mgr.state.mouse_look_delta_x - 0.15).abs() < 1e-6);
+        assert!((mgr.state.gyro_look_delta_yaw - 0.02).abs() < 1e-6);
+
+        // Next update clears single-tick pulses and look deltas
+        mgr.update();
+        assert!(!mgr.state.camera_mode_cycle_pressed);
+        assert!(!mgr.state.shoulder_swap_pressed);
+        assert!(mgr.state.mouse_look_delta_x.abs() < 1e-6);
     }
 }

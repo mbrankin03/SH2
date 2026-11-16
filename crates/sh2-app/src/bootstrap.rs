@@ -228,7 +228,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     } else {
         sim_core.camera.set_cam_file(None);
         sim_core.snap_player_transform(player_pos, player_yaw);
-        sim_core.camera.reset_to_player(
+        sim_core.reset_cameras_to_player(
             sim_core.scenario.player_position,
             sim_core.scenario.player_yaw,
         );
@@ -336,6 +336,13 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     menu_ctrl
         .options_menu
         .set_audio_devices(host_devices.clone());
+    sim_core.apply_control_options(&menu_ctrl.options_menu.original_config.controls);
+    sim_core.modern_camera.reset_to_player(
+        sim_core.scenario.character,
+        sim_core.scenario.player_position,
+        sim_core.scenario.player_yaw,
+        &sim_core.camera.curr_snapshot,
+    );
 
     let initial_audio_pack = menu_ctrl.resolved_audio_pack_source();
     let audio_bank = Some(MenuAudioBank::load_from_dirs_for_source(
@@ -368,7 +375,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     tracing::info!(
         "Simulation, Character Models, and Renderer initialized successfully on Vulkan!"
     );
-    tracing::info!("Controls: WASD / Stick: Move & Turn (Tank) | Shift: Run | F: Flashlight | C: Switch Character (James/Maria)");
+    tracing::info!(
+        "Controls: WASD: Move | Shift: Run | V/R3: Camera Mode (PS2 Rail / OTS / FPS) | X/L3: OTS Shoulder | Mouse/IJKL: Look | Q: Quick Turn | F: Flashlight | C: James/Maria"
+    );
 
     if let Some(room) = cli.initial_test_room {
         menu_ctrl.title_sm.selected_test_room = room;
@@ -539,10 +548,17 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         key_backward: false,
         key_left: false,
         key_right: false,
+        key_run_held: false,
+        key_look_up: false,
+        key_look_down: false,
+        key_look_left: false,
+        key_look_right: false,
         key_zoom_in: false,
         key_zoom_out: false,
         key_pan_up: false,
         key_pan_down: false,
+        window_focused: true,
+        cursor_grabbed_for_camera: false,
         last_menu_state_log: String::new(),
         last_menu_revision: u64::MAX,
         active_audio_device: target_audio_device,

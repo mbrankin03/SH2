@@ -16,8 +16,10 @@ pub use gpu_map::{GpuMap, GpuMapBatch};
 use sh2_assets::formats::mdls::ModelFile;
 use sh2_assets::formats::texture::generate_mipmap_chain_rgba;
 pub use skeletal::{
-    GpuSkeletalMesh, GpuSkeletalPrimitive, SkeletalPipeline, SkeletalVertex, SkeletonBoneUniforms,
-    MAX_SKELETON_BONES,
+    classify_primitive_body_region, cranial_bone_mask, dominant_vertex_bone,
+    find_cranial_root_bone, partition_first_person_triangles, GpuSkeletalMesh,
+    GpuSkeletalPrimitive, SkeletalBodyRegion, SkeletalPipeline, SkeletalVertex,
+    SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -506,6 +508,22 @@ impl RenderContext {
 
     pub fn update_camera(&self, view_proj: glam::Mat4, inv_proj: glam::Mat4, cam_pos: glam::Vec3) {
         self.update_camera_with_mode(view_proj, inv_proj, cam_pos, 0.0);
+    }
+
+    /// Builds a right-handed `Depth32Float` perspective `(proj, inv_proj)` pair honoring a custom
+    /// `near_clip` in SH2 world units (e.g. `8.0` in First-Person vs `25.0` in Third-Person/Rail) (`SH2-93`).
+    #[inline]
+    pub fn perspective_projection(
+        &self,
+        fov_y_radians: f32,
+        near_clip: f32,
+        far_clip: f32,
+    ) -> (glam::Mat4, glam::Mat4) {
+        let aspect = (self.config.width.max(1) as f32) / (self.config.height.max(1) as f32);
+        let z_near = near_clip.max(1.0);
+        let z_far = far_clip.max(z_near + 100.0);
+        let proj = glam::Mat4::perspective_rh(fov_y_radians, aspect, z_near, z_far);
+        (proj, proj.inverse())
     }
 
     pub fn update_camera_with_mode(

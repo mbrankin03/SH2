@@ -260,6 +260,24 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Controls, "Vibration Intensity") => {
             "Gamepad haptic vibration and rumble intensity"
         }
+        (OptionsTab::Controls, "Camera Mode") => {
+            "Default camera (Classic PS2 Rail, Over-the-Shoulder 3D, or First-Person)"
+        }
+        (OptionsTab::Controls, "R3 Camera Cycle") => {
+            "Camera modes cycled live in-game when pressing R3"
+        }
+        (OptionsTab::Controls, "OTS Shoulder") => {
+            "Over-the-Shoulder framing side (Right or Left shoulder)"
+        }
+        (OptionsTab::Controls, "Aiming Reticle") => {
+            "Diegetic aiming reticle visibility (Aim Only, Subtle Always, or Off)"
+        }
+        (OptionsTab::Controls, "First-Person FOV") => {
+            "Vertical field of view in degrees for First-Person mode (55 to 100 deg)"
+        }
+        (OptionsTab::Controls, "First-Person Sway") => {
+            "Subtle footstep and stride head-bob sway in First-Person mode"
+        }
 
         (OptionsTab::Game, "Action Difficulty") => {
             "Combat challenge and monster durability difficulty"

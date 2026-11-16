@@ -9,6 +9,7 @@ pub mod combat;
 pub mod config;
 pub mod cutaway;
 pub mod cutscene;
+pub mod event_camera;
 pub mod events;
 pub mod input;
 pub mod inventory;
@@ -95,6 +96,24 @@ pub use cutscene::{
     R_LAB_BOTTOM_D_ID, R_LAB_TOP_H_ID, SH2EE_16X9_SCR_Z_ZOOM, SPECIAL_FX_REFERENCE_HEIGHT,
     STANDARD_16X9_ASPECT, SUPER_ULTRAWIDE_32X9_ASPECT, TIME_OF_DAY_APARTMENT_DAY,
     TIME_OF_DAY_CLOSET_DARKENED, ULTRAWIDE_21X9_ASPECT, VOICE_AFS_STREAM_BASE,
+};
+pub use event_camera::{
+    effective_road_priority, evaluate_nearest_enemy, fov_y_from_ps2_projection,
+    is_road_eligible_for_enemy, old_road_advantage_mm, ps2_projection_from_fov_y,
+    rolled_ps2_up_vector, select_best_road_index, CutsceneCameraHandoff, CutsceneHandoffPhase,
+    DemoCameraTransitionKind, DemoFrameSyncState, EnemyCameraAlertState, EnemyCameraTarget,
+    EnemyEncounterFraming, EnemyLifeCameraState, EnemyProximityState, EventCameraAuthority,
+    EventCameraSystem, FmvAdvanceSignal, FmvPlaybackState, HandoffStepOutcome,
+    PlayerCameraSuppression, PostSequenceRestorePolicy, ProjectionChangeTiming,
+    ProjectionTransitionState, SavedGameplayCameraState, ScriptCameraController, ScriptCameraMode,
+    ScriptTransitionKind, ScriptedCameraShot, SelfViewGate, StageEventRoadGate,
+    BOWLING_ALLEY_EDDIE_CAM_1, BOWLING_ALLEY_EDDIE_CAM_2, BOWLING_ALLEY_ENTRANCE_CAM,
+    DEFAULT_USER_CAM_MV_PARAM, DEFAULT_USER_WATCH_MV_PARAM, FOREST_CEMETERY_ANGELA_CAM,
+    PS2_DEFAULT_PROJECTION_SCR_Z, VC_ALL_WARP_FLAGS, VC_DEAD_ENEMY_GRACE_SECS,
+    VC_DEAD_ENEMY_TIMER_MAX_SECS, VC_EVENT_EFFECT_ADVANTAGE_MM, VC_EXTRA_BOUNDARY_WIDTH_MM,
+    VC_INHIBIT_FAR_WATCH_F, VC_MAX_CAMERA_TARGETS, VC_NEAR_ENEMY_MAX_DIST_MM,
+    VC_PROJ_MOMENT_CHANGE_F, VC_RESET_ROAD_MARGIN_MM, VC_TICK_ROAD_MARGIN_MM, VC_USER_CAM_F,
+    VC_USER_MODE_FLAGS, VC_USER_WATCH_F, VC_WARP_CAM_F, VC_WARP_CAM_TGT_F, VC_WARP_WATCH_F,
 };
 pub use events::{
     check_event_flag_conditions, decode_ev_pos_shape, eval_monkey_kick_206,

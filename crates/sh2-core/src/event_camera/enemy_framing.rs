@@ -1,10 +1,12 @@
 //! Enemy encounter `.cam` road selection coordinator (`VC_RD_USE_NEAR_ENEMY_F`,
-//! `VC_RD_USE_NO_ENEMY_F`) and warp-safe encounter switching (`SH2-52`).
+//! `VC_RD_USE_NO_ENEMY_F`), `SelfViewGate`, `old_road_advantage_mm` hysteresis, and warp-safe
+//! encounter switching (`SH2-52`).
 //!
 //! Ground-truth PS2 `SLUS_202.28` references:
 //! - `vcSetNearestEnemyDataInVC_WORK` (`0x00196f20`)
 //! - `vcSetNearRoadAryByCharaPos` (`0x00197310`, `0x19738c..0x1973b8`)
-//! - `vcSetCurNearRoadInVC_WORK` (`0x00197ba4`): `VC_RD_WARP_IN_F` / `VC_RD_WARP_OUT_F` cuts
+//! - `vcRetRoadUsePriority` (`0x00197a10`) & `vcAdvantageDistOfOldCurRoad` (`0x00198ae0`)
+//! - `vcGetBestNewCurNearRoad` (`0x00198260`) & `vcSetCurNearRoadInVC_WORK` (`0x00197ba4`)
 
 pub use super::enemy_road_eval::{
     effective_road_priority, evaluate_nearest_enemy, is_road_eligible_for_enemy,
@@ -19,6 +21,14 @@ use crate::camera::Ps2CameraController;
 use glam::Vec3;
 use sh2_assets::formats::cam::{CamFile, RoadRecord, VC_RD_WARP_IN_F, VC_RD_WARP_OUT_F};
 
+/// Switch-volume containment margin in PS2 millimeters during `reset_camera_with_enemies`
+/// (matches `Ps2CameraController::reset_to_player`).
+pub const VC_RESET_ROAD_MARGIN_MM: f32 = 100.0;
+
+/// Switch-volume containment margin in PS2 millimeters during `tick_camera_with_enemies`
+/// (matches `Ps2CameraController::tick`).
+pub const VC_TICK_ROAD_MARGIN_MM: f32 = 150.0;
+
 /// Zero-allocation runtime coordinator for enemy-encounter `.cam` volume framing (`vc_main.c`).
 #[derive(Debug, Clone, Default)]
 pub struct EnemyEncounterFraming {
@@ -28,10 +38,8 @@ pub struct EnemyEncounterFraming {
     pub event_gate: StageEventRoadGate,
     /// Search self-view road priority gate (`VC_PRS_F_VIEW_F`).
     pub self_view: SelfViewGate,
-    /// Reusable scratch list of eligible road records to avoid per-tick allocations.
+    /// Reusable 1-element scratch buffer feeding the winning road into `Ps2CameraController`.
     scratch_records: Vec<RoadRecord>,
-    /// Reusable mapping from `scratch_records` index back to canonical `CamFile::records` index.
-    scratch_indices: Vec<usize>,
 }
 
 impl EnemyEncounterFraming {
@@ -40,8 +48,9 @@ impl EnemyEncounterFraming {
         Self::default()
     }
 
-    /// Resets `camera` to `player_pos` / `player_yaw` (in PS2 mm and radians) while filtering
-    /// `.cam` records by `VC_RD_USE_NEAR_ENEMY_F` (`0x0040`) and `VC_RD_USE_NO_ENEMY_F` (`0x0020`).
+    /// Resets `camera` to `player_pos` / `player_yaw` (in PS2 mm and radians) using
+    /// [`select_best_road_index`] (`0x0020`/`0x0040`, `SelfViewGate`, `StageEventRoadGate`, and
+    /// `old_road_advantage_mm` hysteresis).
     pub fn reset_camera_with_enemies(
         &mut self,
         camera: &mut Ps2CameraController,
@@ -51,13 +60,30 @@ impl EnemyEncounterFraming {
         enemies: &[EnemyCameraTarget],
     ) {
         self.proximity = evaluate_nearest_enemy(player_pos, player_suppression, enemies);
-        self.with_filtered_cam_file(camera, |cam, _| {
+        let Some(orig_cam) = camera.cam_file.take() else {
+            camera.reset_to_player(player_pos, player_yaw);
+            return;
+        };
+
+        let chosen_canonical = select_best_road_index(
+            &orig_cam,
+            player_pos,
+            VC_RESET_ROAD_MARGIN_MM,
+            camera.active_road_index,
+            self.proximity,
+            self.event_gate,
+            self.self_view,
+        );
+        self.run_on_selected_road(camera, &orig_cam, chosen_canonical, |cam| {
             cam.reset_to_player(player_pos, player_yaw);
         });
+        camera.cam_file = Some(orig_cam);
+        camera.active_road_index = chosen_canonical;
     }
 
-    /// Steps `camera` by one 60 Hz tick while enforcing `VC_RD_USE_NEAR_ENEMY_F` (`0x0040`),
-    /// `VC_RD_USE_NO_ENEMY_F` (`0x0020`), and warp-cut safety across enemy encounter transitions.
+    /// Steps `camera` by one 60 Hz tick using [`select_best_road_index`] (`0x0020`/`0x0040`,
+    /// `SelfViewGate`, `StageEventRoadGate`, `old_road_advantage_mm` hysteresis) and warp-cut
+    /// safety (`VC_RD_WARP_OUT_F` / `VC_RD_WARP_IN_F`).
     #[allow(clippy::too_many_arguments)]
     pub fn tick_camera_with_enemies(
         &mut self,
@@ -70,85 +96,70 @@ impl EnemyEncounterFraming {
         enemies: &[EnemyCameraTarget],
     ) {
         self.proximity = evaluate_nearest_enemy(player_pos, player_suppression, enemies);
+        let Some(orig_cam) = camera.cam_file.take() else {
+            camera.tick(player_pos, player_yaw, right_stick_x, right_stick_y);
+            return;
+        };
+
         let prev_canonical = camera.active_road_index;
-        let prev_warp_out = prev_canonical
-            .and_then(|i| camera.cam_file.as_ref()?.records.get(i))
-            .is_some_and(|r| (r.flags & VC_RD_WARP_OUT_F) != 0);
+        let chosen_canonical = select_best_road_index(
+            &orig_cam,
+            player_pos,
+            VC_TICK_ROAD_MARGIN_MM,
+            prev_canonical,
+            self.proximity,
+            self.event_gate,
+            self.self_view,
+        );
 
-        self.with_filtered_cam_file(camera, |cam, prev_became_filtered_out| {
-            let pre_tick_prev = cam.curr_snapshot;
-            cam.tick(player_pos, player_yaw, right_stick_x, right_stick_y);
+        let warp_cut = prev_canonical != chosen_canonical
+            && (prev_canonical
+                .and_then(|i| orig_cam.records.get(i))
+                .is_some_and(|r| (r.flags & VC_RD_WARP_OUT_F) != 0)
+                || chosen_canonical
+                    .and_then(|i| orig_cam.records.get(i))
+                    .is_some_and(|r| (r.flags & VC_RD_WARP_IN_F) != 0));
 
-            // When the previously active road was just disqualified by enemy appearance/death,
-            // enforce `VC_RD_WARP_OUT_F` / `VC_RD_WARP_IN_F` (`vcSetCurNearRoadInVC_WORK` `0x00197ba4`).
-            if prev_became_filtered_out {
-                let new_warp_in = cam
-                    .active_road_index
-                    .and_then(|fi| cam.cam_file.as_ref()?.records.get(fi))
-                    .is_some_and(|r| (r.flags & VC_RD_WARP_IN_F) != 0);
-                if prev_warp_out || new_warp_in {
-                    cam.reset_to_player(player_pos, player_yaw);
-                } else {
-                    cam.prev_snapshot = pre_tick_prev;
+        self.run_on_selected_road(camera, &orig_cam, chosen_canonical, |cam| {
+            if warp_cut {
+                cam.reset_to_player(player_pos, player_yaw);
+                if right_stick_x.abs() > f32::EPSILON || right_stick_y.abs() > f32::EPSILON {
+                    cam.tick(player_pos, player_yaw, right_stick_x, right_stick_y);
+                    cam.prev_snapshot = cam.curr_snapshot;
                 }
+            } else {
+                cam.tick(player_pos, player_yaw, right_stick_x, right_stick_y);
             }
         });
+        camera.cam_file = Some(orig_cam);
+        camera.active_road_index = chosen_canonical;
     }
 
-    fn with_filtered_cam_file<F>(&mut self, camera: &mut Ps2CameraController, f: F)
-    where
-        F: FnOnce(&mut Ps2CameraController, bool),
+    fn run_on_selected_road<F>(
+        &mut self,
+        camera: &mut Ps2CameraController,
+        orig_cam: &CamFile,
+        chosen_canonical: Option<usize>,
+        f: F,
+    ) where
+        F: FnOnce(&mut Ps2CameraController),
     {
-        let Some(orig_cam) = camera.cam_file.take() else {
-            f(camera, false);
-            return;
-        };
-
-        let proximity = self.proximity;
-        let event_gate = self.event_gate;
-        let self_view = self.self_view;
-        let needs_filtering = orig_cam.records.iter().any(|r| {
-            !is_road_eligible_for_enemy(r.flags, proximity)
-                || effective_road_priority(r, event_gate, self_view) != r.rd_type.priority()
-        });
-
-        if !needs_filtering {
-            camera.cam_file = Some(orig_cam);
-            f(camera, false);
-            return;
-        }
-
         self.scratch_records.clear();
-        self.scratch_indices.clear();
-        for (idx, rec) in orig_cam.records.iter().enumerate() {
-            let prio = effective_road_priority(rec, event_gate, self_view);
-            if is_road_eligible_for_enemy(rec.flags, proximity) && prio > 0 {
-                self.scratch_records.push(rec.clone());
-                self.scratch_indices.push(idx);
-            }
+        if let Some(rec) = chosen_canonical.and_then(|idx| orig_cam.records.get(idx)) {
+            self.scratch_records.push(rec.clone());
         }
-
-        let old_canonical = camera.active_road_index;
-        let mapped_old =
-            old_canonical.and_then(|orig| self.scratch_indices.iter().position(|&i| i == orig));
-        let prev_became_filtered_out = old_canonical.is_some() && mapped_old.is_none();
-
-        let filtered_cam = CamFile {
+        let single_cam = CamFile {
             records: std::mem::take(&mut self.scratch_records),
         };
-        camera.cam_file = Some(filtered_cam);
-        camera.active_road_index = mapped_old;
+        let has_rec = !single_cam.records.is_empty();
+        camera.cam_file = Some(single_cam);
+        camera.active_road_index = has_rec.then_some(0);
 
-        f(camera, prev_became_filtered_out);
+        f(camera);
 
-        let new_canonical = camera
-            .active_road_index
-            .and_then(|fi| self.scratch_indices.get(fi).copied());
         if let Some(mut temp_cam) = camera.cam_file.take() {
             temp_cam.records.clear();
             self.scratch_records = temp_cam.records;
         }
-        camera.cam_file = Some(orig_cam);
-        camera.active_road_index = new_canonical;
     }
 }

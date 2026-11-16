@@ -298,9 +298,9 @@ pub fn select_best_road_index(
         };
         let inside = rec.lim_sw.contains_point(pos, margin_mm + extra);
         let dist = if inside {
-            0.0
+            -extra
         } else {
-            rec.lim_sw.distance_to_xz(pos[0], pos[2])
+            (rec.lim_sw.distance_to_xz(pos[0], pos[2]) - extra).max(0.0)
         };
 
         if inside {

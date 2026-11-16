@@ -1,14 +1,10 @@
 //! Scripted event camera controller (`vcSetEventCamParamRefView` / `vcSetCameraScript`,
 //! `vcUserCamTarget`, `vcUserWatchTarget`, `vcReturnPreAutoCamWork`), projection blending
-//! (`vcSetProjectionValue`, `vcChangeProjectionValue`), and `.mes` dialogue camera locks (`SH2-52`).
+//! (`vcSetProjectionValue`), and `.mes` dialogue camera locks (`SH2-52`).
 //!
-//! Ground-truth PS2 `SLUS_202.28` & Retail PC `sh2pc.exe` references:
-//! - `vcUserWatchTarget` (`0x00195bd0` PS2 / `0x00519950` PC)
-//! - `vcUserCamTarget` (`0x00195ca0` PS2 / `0x00519a00` PC)
-//! - `vcReturnPreAutoCamWork` (`0x00195ea0` PS2 / `0x0051d520` PC)
-//! - `vcSetEventCamParamRefView` (`0x0019db10` PS2 / `0x0051d280` PC; angle variant `0x0051d1c0` PC)
-//! - `vcSetProjectionValue` (`0x0019db80` PS2 / `0x0051d2b0` PC)
-//! - `EventExecMessage` (`0x001a9cc0` PS2) & `EvSubMessage` (`0x001abf50` PS2)
+//! PS2 `SLUS_202.28` / PC `sh2pc.exe`: `vcUserWatchTarget` (`0x00195bd0`), `vcUserCamTarget`
+//! (`0x00195ca0`), `vcReturnPreAutoCamWork` (`0x00195ea0` / `0x0051d520`),
+//! `vcSetEventCamParamRefView` (`0x0019db10` / `0x0051d280`), `EventExecMessage` (`0x001a9cc0`).
 
 pub use super::script_kinematics::{
     fov_y_from_ps2_projection, ps2_projection_from_fov_y, rolled_ps2_up_vector,
@@ -36,6 +32,8 @@ pub struct ScriptCameraController {
     pub projection: ProjectionTransitionState,
     /// Simulated `_VC_FLAGS` register (`vcWork.flags` at `0x010e5ad8`).
     pub vc_flags: u32,
+    /// Last committed scripted/blended snapshot; insulates smooth overrides from `.cam` warp cuts.
+    last_output_snapshot: Option<CameraSnapshot>,
 }
 
 impl ScriptCameraController {
@@ -48,6 +46,13 @@ impl ScriptCameraController {
     #[inline]
     pub const fn is_overriding(&self) -> bool {
         !matches!(self.mode, ScriptCameraMode::AutoGameplay)
+    }
+
+    #[inline]
+    pub(crate) fn seed_previous_output_if_unset(&mut self, snapshot: CameraSnapshot) {
+        if self.is_overriding() && self.last_output_snapshot.is_none() {
+            self.last_output_snapshot = Some(snapshot);
+        }
     }
 
     /// Locks or blends both camera eye and watch target to `shot` (`vcSetEventCamParamRefView`
@@ -103,8 +108,7 @@ impl ScriptCameraController {
         self.set_camera_script(shot, transition, current_fov_y);
     }
 
-    /// Overrides only the camera eye target (`vcUserCamTarget` at `SLUS_202.28` `0x00195ca0`),
-    /// allowing automatic `.cam` watch-target tracking to continue framing the player.
+    /// Overrides only the camera eye target (`vcUserCamTarget` at `SLUS_202.28` `0x00195ca0`).
     pub fn set_user_cam_target(
         &mut self,
         target_eye_mm: Vec3,
@@ -178,33 +182,8 @@ impl ScriptCameraController {
         scr_z: f32,
         timing: ProjectionChangeTiming,
     ) {
-        let target_scr_z = if scr_z.abs() < f32::EPSILON {
-            PS2_DEFAULT_PROJECTION_SCR_Z
-        } else {
-            scr_z
-        };
-        let moment_flag = (self.vc_flags & VC_PROJ_MOMENT_CHANGE_F) != 0;
-        if moment_flag {
-            self.vc_flags &= !VC_PROJ_MOMENT_CHANGE_F;
-        }
-        match timing {
-            ProjectionChangeTiming::Instant => {
-                self.projection = ProjectionTransitionState::InstantSnap { target_scr_z };
-            }
-            ProjectionChangeTiming::OverTicks(ticks) if moment_flag || ticks < 2 => {
-                self.projection = ProjectionTransitionState::InstantSnap { target_scr_z };
-            }
-            ProjectionChangeTiming::OverTicks(ticks) => {
-                let start_scr_z = ps2_projection_from_fov_y(current_fov_y);
-                let step_per_tick = (target_scr_z - start_scr_z) / f32::from(ticks);
-                self.projection = ProjectionTransitionState::Interpolating {
-                    current_scr_z: start_scr_z,
-                    start_scr_z,
-                    target_scr_z,
-                    step_per_tick,
-                };
-            }
-        }
+        self.projection
+            .schedule(&mut self.vc_flags, current_fov_y, scr_z, timing);
     }
 
     /// Consumes a stage `CameraOverrideCommand` (`StageEventDispatcher` / `APART_E3FE_ROOM13_CAMERA`).
@@ -247,16 +226,19 @@ impl ScriptCameraController {
         camera.search_yaw_offset = 0.0;
         camera.search_pitch_offset = 0.0;
         if let Some((shot, transition)) = scripted_shot {
+            self.seed_previous_output_if_unset(camera.curr_snapshot);
             self.set_camera_script(shot, transition, camera.curr_snapshot.fov_y);
             if transition == ScriptTransitionKind::WarpCut {
                 self.apply_tick(camera, 1.0 / 60.0);
             }
         } else {
+            let held = camera.curr_snapshot;
             self.mode = ScriptCameraMode::DialogueHold {
                 message_id,
-                held_snapshot: camera.curr_snapshot,
+                held_snapshot: held,
             };
-            camera.prev_snapshot = camera.curr_snapshot;
+            self.last_output_snapshot = Some(held);
+            camera.prev_snapshot = held;
         }
     }
 
@@ -285,13 +267,21 @@ impl ScriptCameraController {
                 self.vc_flags |= VC_ALL_WARP_FLAGS;
                 self.mode = ScriptCameraMode::AutoGameplay;
                 self.projection = ProjectionTransitionState::Idle;
+                self.last_output_snapshot = None;
                 camera.raw_state.flags = self.vc_flags;
                 camera.reset_to_player(player_pos, player_yaw);
             }
             ScriptTransitionKind::SmoothBlend => {
-                let from_snapshot = camera.curr_snapshot;
+                let from_snapshot = self.last_output_snapshot.unwrap_or(camera.curr_snapshot);
+                camera.reset_to_player(player_pos, player_yaw);
+                let fallback_auto_snapshot = camera.curr_snapshot;
+                camera.curr_snapshot = from_snapshot;
+                camera.prev_snapshot = from_snapshot;
+                self.last_output_snapshot = Some(from_snapshot);
+                self.projection = ProjectionTransitionState::Idle;
                 self.mode = ScriptCameraMode::ReturningToAuto {
                     from_snapshot,
+                    fallback_auto_snapshot,
                     elapsed_ticks: 0,
                     total_ticks: 24,
                 };
@@ -301,14 +291,22 @@ impl ScriptCameraController {
     }
 
     /// Applies one 60 Hz tick (`dt_secs` seconds) of scripted camera override / return-blend /
-    /// projection stepping onto `camera`.
+    /// projection stepping onto `camera`. Works identically whether called after `camera.tick`
+    /// (via `EventCameraSystem::tick`) or standalone in a loop.
     pub fn apply_tick(&mut self, camera: &mut Ps2CameraController, dt_secs: f32) {
         let dt = dt_secs.clamp(0.0, 0.1);
-        let next_fov = step_projection_state(&mut self.projection, camera.curr_snapshot.fov_y);
+        let prev_output = self.last_output_snapshot.unwrap_or(camera.curr_snapshot);
+        let fallback_fov = if self.is_overriding() {
+            prev_output.fov_y
+        } else {
+            camera.curr_snapshot.fov_y
+        };
+        let next_fov = step_projection_state(&mut self.projection, fallback_fov);
 
         match &mut self.mode {
             ScriptCameraMode::AutoGameplay => {
                 camera.curr_snapshot.fov_y = next_fov;
+                self.last_output_snapshot = None;
             }
             ScriptCameraMode::DialogueHold { held_snapshot, .. } => {
                 camera.search_yaw_offset = 0.0;
@@ -317,6 +315,7 @@ impl ScriptCameraController {
                 camera.ideal_target = held_snapshot.target;
                 camera.curr_snapshot = *held_snapshot;
                 camera.prev_snapshot = *held_snapshot;
+                self.last_output_snapshot = Some(*held_snapshot);
             }
             ScriptCameraMode::ScriptedOverride {
                 target_eye_mm,
@@ -330,26 +329,21 @@ impl ScriptCameraController {
                 camera.search_yaw_offset = 0.0;
                 camera.search_pitch_offset = 0.0;
                 let is_warp = *transition == ScriptTransitionKind::WarpCut;
-                let prev_snap = camera.prev_snapshot;
 
                 let new_eye = match *target_eye_mm {
-                    Some(tgt_eye) if is_warp => {
+                    Some(tgt) if is_warp => {
                         *eye_velocity_mm_per_s = Vec3::ZERO;
-                        tgt_eye
+                        tgt
                     }
-                    Some(tgt_eye) => step_user_eye_pos(
-                        prev_snap.eye,
-                        tgt_eye,
-                        eye_velocity_mm_per_s,
-                        cam_prm,
-                        dt,
-                    ),
+                    Some(tgt) => {
+                        step_user_eye_pos(prev_output.eye, tgt, eye_velocity_mm_per_s, cam_prm, dt)
+                    }
                     None => camera.curr_snapshot.eye,
                 };
                 let new_target = match *target_watch_mm {
-                    Some(tgt_watch) if is_warp => tgt_watch,
-                    Some(tgt_watch) => {
-                        step_user_watch_target(new_eye, prev_snap.target, tgt_watch, watch_prm, dt)
+                    Some(tgt) if is_warp => tgt,
+                    Some(tgt) => {
+                        step_user_watch_target(new_eye, prev_output.target, tgt, watch_prm, dt)
                     }
                     None => camera.curr_snapshot.target,
                 };
@@ -360,32 +354,39 @@ impl ScriptCameraController {
                     up: rolled_ps2_up_vector(new_eye, new_target, *roll_radians),
                     fov_y: next_fov,
                 };
-                camera.ideal_eye = new_eye;
-                camera.ideal_target = new_target;
                 camera.curr_snapshot = snap;
+                camera.prev_snapshot = if is_warp { snap } else { prev_output };
                 if is_warp {
-                    camera.prev_snapshot = snap;
                     *transition = ScriptTransitionKind::SmoothBlend;
                     self.vc_flags &= !(VC_WARP_CAM_F | VC_WARP_WATCH_F);
                 }
+                self.last_output_snapshot = Some(snap);
             }
             ScriptCameraMode::ReturningToAuto {
                 from_snapshot,
+                fallback_auto_snapshot,
                 elapsed_ticks,
                 total_ticks,
             } => {
+                if camera.curr_snapshot != prev_output {
+                    *fallback_auto_snapshot = camera.curr_snapshot;
+                }
                 *elapsed_ticks = elapsed_ticks.saturating_add(1);
                 let blended = smoothstep_camera_snapshot(
                     *from_snapshot,
-                    camera.curr_snapshot,
+                    *fallback_auto_snapshot,
                     *elapsed_ticks,
                     *total_ticks,
                 );
-                camera.ideal_eye = blended.eye;
-                camera.ideal_target = blended.target;
+                camera.prev_snapshot = prev_output;
                 camera.curr_snapshot = blended;
                 if *elapsed_ticks >= *total_ticks {
+                    camera.ideal_eye = blended.eye;
+                    camera.ideal_target = blended.target;
                     self.mode = ScriptCameraMode::AutoGameplay;
+                    self.last_output_snapshot = None;
+                } else {
+                    self.last_output_snapshot = Some(blended);
                 }
             }
         }

@@ -161,6 +161,40 @@ pub enum ProjectionTransitionState {
     },
 }
 
+impl ProjectionTransitionState {
+    /// Schedules a PS2 projection focal change (`vcSetProjectionValue` at `SLUS_202.28` `0x0019db80`).
+    pub(crate) fn schedule(
+        &mut self,
+        vc_flags: &mut u32,
+        current_fov_y: f32,
+        scr_z: f32,
+        timing: ProjectionChangeTiming,
+    ) {
+        let target_scr_z = if scr_z.abs() < f32::EPSILON {
+            PS2_DEFAULT_PROJECTION_SCR_Z
+        } else {
+            scr_z
+        };
+        let moment = (*vc_flags & VC_PROJ_MOMENT_CHANGE_F) != 0;
+        *vc_flags &= !VC_PROJ_MOMENT_CHANGE_F;
+        *self = match timing {
+            ProjectionChangeTiming::Instant => Self::InstantSnap { target_scr_z },
+            ProjectionChangeTiming::OverTicks(ticks) if moment || ticks < 2 => {
+                Self::InstantSnap { target_scr_z }
+            }
+            ProjectionChangeTiming::OverTicks(ticks) => {
+                let start_scr_z = ps2_projection_from_fov_y(current_fov_y);
+                Self::Interpolating {
+                    current_scr_z: start_scr_z,
+                    start_scr_z,
+                    target_scr_z,
+                    step_per_tick: (target_scr_z - start_scr_z) / f32::from(ticks),
+                }
+            }
+        };
+    }
+}
+
 /// Active state machine for scripted event & `.mes` dialogue camera control (`vcWork.flags & 0x03`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ScriptCameraMode {
@@ -198,6 +232,8 @@ pub enum ScriptCameraMode {
     ReturningToAuto {
         /// Snapshot at the moment `vcReturnPreAutoCamWork(0)` was invoked.
         from_snapshot: CameraSnapshot,
+        /// Target `.cam` auto snapshot evaluated at `(player_pos, player_yaw)` for standalone ticks.
+        fallback_auto_snapshot: CameraSnapshot,
         /// Ticks elapsed in the return blend (`0..total_ticks`).
         elapsed_ticks: u16,
         /// Total 60 Hz ticks for the return blend.

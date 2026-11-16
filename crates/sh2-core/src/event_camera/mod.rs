@@ -20,9 +20,11 @@ pub mod script_kinematics;
 pub mod script_override;
 
 #[cfg(test)]
-mod tests_enemy_script;
+mod tests_enemy;
 #[cfg(test)]
 mod tests_handoff;
+#[cfg(test)]
+mod tests_script;
 
 pub use cutscene_handoff::{
     CutsceneCameraHandoff, CutsceneHandoffPhase, DemoCameraTransitionKind, DemoFrameSyncState,
@@ -35,7 +37,7 @@ pub use enemy_framing::{
     EnemyEncounterFraming, EnemyLifeCameraState, EnemyProximityState, PlayerCameraSuppression,
     SelfViewGate, StageEventRoadGate, VC_DEAD_ENEMY_GRACE_SECS, VC_DEAD_ENEMY_TIMER_MAX_SECS,
     VC_EVENT_EFFECT_ADVANTAGE_MM, VC_EXTRA_BOUNDARY_WIDTH_MM, VC_MAX_CAMERA_TARGETS,
-    VC_NEAR_ENEMY_MAX_DIST_MM,
+    VC_NEAR_ENEMY_MAX_DIST_MM, VC_RESET_ROAD_MARGIN_MM, VC_TICK_ROAD_MARGIN_MM,
 };
 pub use script_override::{
     fov_y_from_ps2_projection, ps2_projection_from_fov_y, rolled_ps2_up_vector,
@@ -159,8 +161,10 @@ impl EventCameraSystem {
             CutsceneHandoffPhase::Gameplay => {}
         }
 
-        // Advance underlying `.cam` road evaluation with enemy-proximity filtering (`0x0020` / `0x0040`),
-        // then layer any active scripted shot, `.mes` dialogue lock, or projection transition on top.
+        // Seed pre-rail camera output before underlying `.cam` road evaluation so `VC_RD_WARP_IN_F`
+        // / `VC_RD_WARP_OUT_F` cuts on the background rail never clobber smooth scripted motion.
+        self.script_camera
+            .seed_previous_output_if_unset(camera.curr_snapshot);
         self.enemy_framing.tick_camera_with_enemies(
             camera,
             player_pos,

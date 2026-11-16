@@ -20,6 +20,9 @@ use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI};
 pub use sh2_assets::formats::cam::CamMovementType as CameraMovementType;
 pub use sh2_assets::formats::cam::CamSourceKind as CameraSourceKind;
 
+/// Authentic PS2 `LOCUS_CIRCLE` (Mode 4) and `THROUGH_DOOR` (Mode 5) camera motion algorithms (`SH2-51`).
+pub mod locus_door;
+
 /// Snapshot of camera transforms for sub-frame alpha interpolation between 60 Hz ticks.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CameraSnapshot {
@@ -234,12 +237,22 @@ impl Ps2CameraController {
         let is_rail_constrained =
             (rail_max_x - rail_min_x).abs() > 0.01 || (rail_max_z - rail_min_z).abs() > 0.01;
 
+        let mut effective_projection = rec.projection;
         let eye = match rec.cam_mv_type {
             CameraMovementType::FixedAngle | CameraMovementType::Settle => Vec3::new(
                 (rail_min_x + rail_max_x) * 0.5,
                 eye_y,
                 (rail_min_z + rail_max_z) * 0.5,
             ),
+            CameraMovementType::LocusCircle => {
+                let (locus_eye, locus_proj) =
+                    locus_door::evaluate_locus_circle_record(rec, player_pos);
+                effective_projection = locus_proj;
+                locus_eye
+            }
+            CameraMovementType::ThroughDoor => {
+                locus_door::evaluate_through_door_record(rec, player_yaw)
+            }
             _ => {
                 if is_rail_constrained {
                     let forward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
@@ -261,6 +274,12 @@ impl Ps2CameraController {
                 return (eye, look_target, fov_y, CameraMovementType::FixedAngle);
             }
         }
+
+        let fov_y = if effective_projection > 0.0 {
+            (2.0 * ((0.5 * 448.0) / effective_projection).atan()).clamp(0.50, 1.15)
+        } else {
+            fov_y
+        };
 
         // 1. Dynamic Lookahead Watch Target (vcSetWatchTgtXzPos)
         let (tgt_watch_cir_r_base, min_cam2watch_dist) = match rec.area_size_type {
@@ -300,8 +319,8 @@ impl Ps2CameraController {
         let raw_ang_y = vec_to_tgt.x.atan2(vec_to_tgt.z);
 
         // 3. Screen framing adjustment (vcAdjCamOfsAngByCharaInScreen)
-        let scr_z = if rec.projection > 0.0 {
-            rec.projection
+        let scr_z = if effective_projection > 0.0 {
+            effective_projection
         } else {
             448.0
         };
@@ -379,6 +398,8 @@ impl Ps2CameraController {
 
         let mv_type = match rec.cam_mv_type {
             CameraMovementType::Settle => CameraMovementType::Settle,
+            CameraMovementType::LocusCircle => CameraMovementType::LocusCircle,
+            CameraMovementType::ThroughDoor => CameraMovementType::ThroughDoor,
             _ => CameraMovementType::Chase,
         };
 

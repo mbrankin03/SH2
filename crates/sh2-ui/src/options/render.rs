@@ -239,6 +239,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Audio, "Speaker Config") => {
             "Audio channel configuration (Stereo, Surround, Headphones)"
         }
+        (OptionsTab::Audio, "3D Spatial Audio") => {
+            "Binaural HRTF 3D headphone spatialization (ITD/ILD/elevation) vs Classic PS2 Stereo"
+        }
         (OptionsTab::Audio, "Mute in Background") => "Silence audio when game window loses focus",
         (OptionsTab::Audio, "Restored Cut Audio") => {
             "Restore cut audio cues (Mary's Laura letter voiceover, closet & street bonus SFX)"

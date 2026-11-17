@@ -179,6 +179,57 @@ impl SpeakerConfiguration {
     }
 }
 
+/// 3D point-source SFX spatialization mode (`SH2-84`).
+///
+/// Selects between authentic PlayStation 2 horizontal stereo panning (`SeCallPosDistanceF`
+/// `0x5155E0` / `0x517D10`) and real-time Binaural HRTF headphone processing (Woodworth
+/// spherical-head ITD, head-shadow ILD, and pinna elevation/front-back cues).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SpatialAudioMode {
+    /// Classic PS2 horizontal azimuth stereo panning (`0x517D10`).
+    #[default]
+    ClassicPs2Stereo,
+    /// Binaural 3D HRTF spatialization for headphones and IEMs (`SH2-84`).
+    BinauralHrtf,
+}
+
+impl SpatialAudioMode {
+    /// User-facing label for the Audio Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ClassicPs2Stereo => "Classic PS2 Stereo",
+            Self::BinauralHrtf => "Binaural HRTF (3D Headphones)",
+        }
+    }
+
+    /// Returns `true` when Binaural HRTF 3D spatialization is enabled.
+    #[inline]
+    pub const fn is_binaural_hrtf(self) -> bool {
+        matches!(self, Self::BinauralHrtf)
+    }
+
+    /// Toggles between `ClassicPs2Stereo` and `BinauralHrtf`.
+    #[inline]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::ClassicPs2Stereo => Self::BinauralHrtf,
+            Self::BinauralHrtf => Self::ClassicPs2Stereo,
+        }
+    }
+
+    /// Cycles to the next spatialization mode.
+    #[inline]
+    pub const fn next(self) -> Self {
+        self.toggle()
+    }
+
+    /// Cycles to the previous spatialization mode.
+    #[inline]
+    pub const fn prev(self) -> Self {
+        self.toggle()
+    }
+}
+
 /// Controller button prompt glyph style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ButtonGlyphStyle {
@@ -709,6 +760,9 @@ pub struct AudioOptions {
     pub dialogue_volume: f32,
     /// Output speaker configuration.
     pub speaker_config: SpeakerConfiguration,
+    /// 3D SFX headphone spatialization mode (`ClassicPs2Stereo` vs `BinauralHrtf`) (`SH2-84`).
+    #[serde(default)]
+    pub spatial_audio_mode: SpatialAudioMode,
     /// Selected audio output device name (None = System Default).
     pub selected_output_device: Option<String>,
     /// Mute game audio when the window loses focus.
@@ -732,6 +786,7 @@ impl Default for AudioOptions {
             sfx_volume: 0.9,
             dialogue_volume: 1.0,
             speaker_config: SpeakerConfiguration::default(),
+            spatial_audio_mode: SpatialAudioMode::default(),
             selected_output_device: None,
             mute_in_background: true,
             audio_pack_source: AudioPackSource::default(),

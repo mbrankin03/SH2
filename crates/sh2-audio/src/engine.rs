@@ -31,6 +31,8 @@ use kira::{
 };
 use mint::{Quaternion, Vector3};
 use sh2_assets::{CamFile, DecodedAdx, DialogueMessage, RoadRecord, WavEntry};
+use sh2_core::SpatialAudioMode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -43,6 +45,10 @@ pub use crate::dialogue::ActiveDialogue;
 pub use crate::dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
 pub use crate::looping::LoopRegionSamples;
 pub use crate::ringbuffer::{AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES};
+use crate::spatial_voice::{
+    SpatialDrySoundData, SpatialVoiceControl, SpatialVoiceHandle, SpatialVoiceInitParams,
+    SpatialWetSendSoundData,
+};
 
 /// Error type for audio playback and management.
 #[derive(Error, Debug)]
@@ -71,6 +77,10 @@ pub struct AudioEngine {
     fmv_track: Option<TrackHandle>,
     /// Sub-track handle for 3D and 2D sound effects.
     sfx_track: Option<TrackHandle>,
+    /// Dedicated dry sub-track for `.cld`-occluded & HRTF/PS2 spatialized 3D SFX (`SH2-84`).
+    sfx_dry_track: Option<TrackHandle>,
+    /// Dedicated 100%-wet corridor reverb return bus preserving hallway tails for occluded 3D SFX (`SH2-84`).
+    sfx_reverb_bus: Option<TrackHandle>,
     /// Sub-track handle for dialogue voice lines.
     voice_track: Option<TrackHandle>,
 
@@ -79,12 +89,18 @@ pub struct AudioEngine {
     /// Spatial listener attached to the camera/player.
     listener: Option<ListenerHandle>,
 
-    /// Reverb DSP effect handle on SFX track.
+    /// Reverb DSP effect handle on 2D SFX track.
     reverb_handle: Option<ReverbHandle>,
+    /// Reverb DSP effect handle on the 100%-wet 3D spatial corridor reverb bus (`SH2-84`).
+    spatial_reverb_handle: Option<ReverbHandle>,
     /// Current environmental reverb preset.
     current_preset: EnvironmentalPreset,
     /// Current continuous room acoustics profile derived from active `.cam` volume (`SH2-55`).
     current_acoustics: RoomAcousticsProfile,
+    /// Active 3D SFX spatialization mode (`ClassicPs2Stereo` vs `BinauralHrtf`) (`SH2-84`).
+    spatial_audio_mode: SpatialAudioMode,
+    /// Lock-free atomic flag shared with all active real-time 3D SFX voices (`SH2-84`).
+    binaural_hrtf_flag: Arc<AtomicBool>,
 
     /// Thread-safe, zero-allocation SPSC stereo audio ringbuffer (`SH2-55`).
     output_ringbuffer: Arc<AudioRingBuffer>,
@@ -154,6 +170,17 @@ impl AudioEngine {
             .add_sub_track(sfx_track_builder)
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
+        let sfx_dry_track = manager
+            .add_sub_track(TrackBuilder::default())
+            .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
+
+        let mut reverb_bus_builder = TrackBuilder::new().volume(Volume::Amplitude(0.0));
+        let spatial_reverb_handle =
+            reverb_bus_builder.add_effect(ReverbBuilder::new().feedback(0.5).damping(0.4).mix(1.0));
+        let sfx_reverb_bus = manager
+            .add_sub_track(reverb_bus_builder)
+            .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
+
         let voice_track = manager
             .add_sub_track(TrackBuilder::default())
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
@@ -186,12 +213,17 @@ impl AudioEngine {
             bgm_track: Some(bgm_track),
             fmv_track: Some(fmv_track),
             sfx_track: Some(sfx_track),
+            sfx_dry_track: Some(sfx_dry_track),
+            sfx_reverb_bus: Some(sfx_reverb_bus),
             voice_track: Some(voice_track),
             spatial_scene: Some(spatial_scene),
             listener: Some(listener),
             reverb_handle: Some(reverb_handle),
+            spatial_reverb_handle: Some(spatial_reverb_handle),
             current_preset: EnvironmentalPreset::Off,
             current_acoustics: RoomAcousticsProfile::from_preset(EnvironmentalPreset::Off),
+            spatial_audio_mode: SpatialAudioMode::ClassicPs2Stereo,
+            binaural_hrtf_flag: Arc::new(AtomicBool::new(false)),
             output_ringbuffer: Arc::new(AudioRingBuffer::with_capacity(DEFAULT_RINGBUFFER_FRAMES)),
             active_bgm_handle: None,
             active_bgm_layers: Vec::new(),
@@ -280,6 +312,37 @@ impl AudioEngine {
                 reverb.set_mix(0.0, tween);
             }
         }
+        if let Some(ref mut spatial_reverb) = self.spatial_reverb_handle {
+            spatial_reverb.set_feedback(profile.feedback, tween);
+            spatial_reverb.set_damping(profile.damping, tween);
+        }
+        if let Some(ref mut reverb_bus) = self.sfx_reverb_bus {
+            let wet_gain = if profile.wet_mix > 0.0 {
+                profile.wet_mix.clamp(0.0, 1.0).sqrt()
+                    * (self.sfx_volume * self.master_volume) as f64
+            } else {
+                0.0
+            };
+            reverb_bus.set_volume(Volume::Amplitude(wet_gain), tween);
+        }
+    }
+
+    /// Sets the active 3D SFX spatialization mode (`ClassicPs2Stereo` vs `BinauralHrtf`),
+    /// atomically switching all currently playing 3D SFX voices without heap allocation (`SH2-84`).
+    pub fn set_spatial_audio_mode(&mut self, mode: SpatialAudioMode) {
+        self.spatial_audio_mode = mode;
+        self.binaural_hrtf_flag
+            .store(mode.is_binaural_hrtf(), Ordering::Relaxed);
+    }
+
+    /// Returns the active 3D SFX [`SpatialAudioMode`] (`SH2-84`).
+    pub fn spatial_audio_mode(&self) -> SpatialAudioMode {
+        self.spatial_audio_mode
+    }
+
+    /// Returns a cloneable reference to the engine's lock-free Binaural HRTF toggle flag (`SH2-84`).
+    pub fn binaural_hrtf_flag(&self) -> &Arc<AtomicBool> {
+        &self.binaural_hrtf_flag
     }
 
     /// Evaluates and applies dynamic room acoustics from the active `.cam` [`RoadRecord`]
@@ -502,6 +565,87 @@ impl AudioEngine {
         let pan_01 = ((stereo_pan.clamp(-1.0, 1.0) + 1.0) * 0.5) as f64;
         handle.set_volume(Volume::Amplitude(target_vol), tween);
         handle.set_panning(pan_01, tween);
+    }
+
+    /// Plays a 3D point-source SFX using the split dry (`.cld` wall-occluded + Binaural HRTF / Classic PS2 Stereo)
+    /// and wet corridor reverb send (`RoomAcousticsProfile`) real-time DSP pipeline (`SH2-84`).
+    pub fn play_sfx_spatial_3d(
+        &mut self,
+        wav: &WavEntry,
+        mut init: SpatialVoiceInitParams,
+    ) -> Result<SpatialVoiceHandle, AudioError> {
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let dry_track_id = self
+            .sfx_dry_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No sfx dry track".into()))?
+            .id();
+        let reverb_bus_id = self
+            .sfx_reverb_bus
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No sfx reverb bus".into()))?
+            .id();
+
+        let (sample_rate, frames_vec) = wav_entry_to_frames_48k(wav);
+        self.output_ringbuffer
+            .push_frames(&frames_vec[..frames_vec.len().min(512)]);
+        let loop_region = if wav.loops {
+            LoopRegionSamples::from_source_samples(
+                wav.loop_start,
+                wav.loop_end,
+                wav.sample_rate,
+                sample_rate,
+                frames_vec.len(),
+            )
+        } else {
+            None
+        };
+
+        init.base_distance_gain =
+            (init.base_distance_gain * self.sfx_volume * self.master_volume).max(0.0);
+
+        let frames: Arc<[kira::Frame]> = Arc::from(frames_vec);
+        let control = SpatialVoiceControl::new(&init, Arc::clone(&self.binaural_hrtf_flag));
+
+        let dry_data = SpatialDrySoundData {
+            frames: Arc::clone(&frames),
+            sample_rate,
+            loop_region,
+            init,
+            control: Arc::clone(&control),
+            destination: dry_track_id,
+        };
+        let wet_data = SpatialWetSendSoundData {
+            frames,
+            sample_rate,
+            loop_region,
+            init,
+            control,
+            reverb_bus: reverb_bus_id,
+        };
+
+        let handle = manager
+            .play(dry_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+        manager
+            .play(wet_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+
+        Ok(handle)
+    }
+
+    /// Updates a live [`SpatialVoiceHandle`] with fresh distance gain, azimuth/elevation, and `.cld` occlusion (`SH2-84`).
+    pub fn update_spatial_voice(
+        &self,
+        handle: &SpatialVoiceHandle,
+        mut params: SpatialVoiceInitParams,
+    ) {
+        params.base_distance_gain =
+            (params.base_distance_gain * self.sfx_volume * self.master_volume).max(0.0);
+        handle.update(&params);
     }
 
     /// Streams a background music or ambient track from a decoded ADX stream.
@@ -945,6 +1089,8 @@ impl AudioEngine {
     /// Sets the master volume level [0.0..1.0].
     pub fn set_master_volume(&mut self, volume: f32) {
         self.master_volume = volume.clamp(0.0, 1.0);
+        let sfx_v = self.sfx_volume;
+        self.set_sfx_volume(sfx_v);
     }
 
     /// Migrates the active running game audio stream to the requested device in real-time.
@@ -970,15 +1116,25 @@ impl AudioEngine {
     /// Sets the sound effects volume level [0.0..1.0].
     pub fn set_sfx_volume(&mut self, volume: f32) {
         self.sfx_volume = volume.clamp(0.0, 1.0);
+        let tween = Tween {
+            duration: Duration::from_millis(50),
+            easing: Easing::Linear,
+            ..Default::default()
+        };
+        let amp = (self.sfx_volume * self.master_volume) as f64;
         if let Some(ref mut track) = self.sfx_track {
-            track.set_volume(
-                Volume::Amplitude((self.sfx_volume * self.master_volume) as f64),
-                Tween {
-                    duration: Duration::from_millis(50),
-                    easing: Easing::Linear,
-                    ..Default::default()
-                },
-            );
+            track.set_volume(Volume::Amplitude(amp), tween);
+        }
+        if let Some(ref mut dry_track) = self.sfx_dry_track {
+            dry_track.set_volume(Volume::Amplitude(amp), tween);
+        }
+        if let Some(ref mut reverb_bus) = self.sfx_reverb_bus {
+            let wet = if self.current_acoustics.wet_mix > 0.0 {
+                self.current_acoustics.wet_mix.clamp(0.0, 1.0).sqrt() * amp
+            } else {
+                0.0
+            };
+            reverb_bus.set_volume(Volume::Amplitude(wet), tween);
         }
     }
 
@@ -999,15 +1155,18 @@ impl AudioEngine {
 
     /// Sets the environmental DSP reverb mix ratio [0.0..1.0].
     pub fn set_reverb_mix(&mut self, mix: f32) {
+        let clamped = mix.clamp(0.0, 1.0) as f64;
+        let tween = Tween {
+            duration: Duration::from_millis(50),
+            easing: Easing::Linear,
+            ..Default::default()
+        };
         if let Some(ref mut reverb) = self.reverb_handle {
-            reverb.set_mix(
-                mix.clamp(0.0, 1.0) as f64,
-                Tween {
-                    duration: Duration::from_millis(50),
-                    easing: Easing::Linear,
-                    ..Default::default()
-                },
-            );
+            reverb.set_mix(clamped, tween);
+        }
+        if let Some(ref mut reverb_bus) = self.sfx_reverb_bus {
+            let wet = clamped.sqrt() * (self.sfx_volume * self.master_volume) as f64;
+            reverb_bus.set_volume(Volume::Amplitude(wet), tween);
         }
     }
 }

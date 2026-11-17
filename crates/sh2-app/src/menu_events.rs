@@ -35,6 +35,7 @@ pub(crate) fn sync_audio_config(state: &mut AppState, cfg: &AppConfig) {
         audio.set_bgm_volume(cfg.audio.bgm_volume);
         audio.set_sfx_volume(cfg.audio.sfx_volume);
         audio.set_voice_volume(cfg.audio.dialogue_volume);
+        audio.set_spatial_audio_mode(cfg.audio.spatial_audio_mode);
     }
     state.fmv_viewer.enable_restored_cut_audio = cfg.audio.enable_restored_cut_audio;
     state.bgm_manager.event_flags.enable_restored_cut_audio = cfg.audio.enable_restored_cut_audio;
@@ -189,6 +190,7 @@ pub(crate) fn apply_pending_engine_config(state: &mut AppState) {
                     new_engine.set_bgm_volume(cfg.audio.bgm_volume);
                     new_engine.set_sfx_volume(cfg.audio.sfx_volume);
                     new_engine.set_voice_volume(cfg.audio.dialogue_volume);
+                    new_engine.set_spatial_audio_mode(cfg.audio.spatial_audio_mode);
                     state.audio_engine = Some(new_engine);
                 }
                 Err(e) => {

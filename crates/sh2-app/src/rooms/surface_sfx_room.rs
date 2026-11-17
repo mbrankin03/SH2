@@ -240,17 +240,25 @@ impl RoomController for SurfaceSfxRoomController {
                         (state.audio_engine.as_mut(), state.audio_bank.as_ref())
                     {
                         eng.set_listener_transform(p_pos, fwd);
-                        if let Ok((eval, _)) =
-                            bank.play_se_id_3d(eng, se_id, p_pos, p_yaw, emit_pos, 1.0)
-                        {
+                        if let Ok((eval, occ, _)) = bank.play_se_id_3d_with_occlusion(
+                            eng,
+                            se_id,
+                            p_pos,
+                            p_yaw,
+                            0.0,
+                            state.active_maria,
+                            emit_pos,
+                            1.0,
+                            Some(&state.sim_core.collision),
+                        ) {
                             state.surface_sfx_room.last_triggered_desc = format!(
-                                "3D SFX {} @ dist={:.0}u -> v={:.2}, gain={:.0}%, att_byte={}, pan={:+.2}",
+                                "3D SFX {} @ dist={:.0}u -> gain={:.0}%, pan={:+.2}, lpf={:.0}Hz ({})",
                                 label,
                                 eval.distance,
-                                eval.proximity_v,
-                                eval.effective_gain * 100.0,
-                                eval.driver_attenuation_byte,
-                                eval.stereo_pan
+                                eval.effective_gain * occ.dry_gain_scale * 100.0,
+                                eval.stereo_pan,
+                                occ.dry_cutoff_hz,
+                                eng.spatial_audio_mode().label(),
                             );
                         }
                     }

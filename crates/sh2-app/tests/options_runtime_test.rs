@@ -187,13 +187,14 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Ps2Original
     );
 
-    // When only one pack is present, Audio tab has 8 rows (Row 7 = Restored Cut Audio, Audio Pack row hidden)
+    // When only one pack is present, Audio tab has 9 rows (Row 6 = 3D Spatial Audio, Row 8 = Restored Cut Audio, Audio Pack row hidden)
     let menu_single = OptionsMenu::new_with_audio_packs(AppConfig::default(), status_ps2);
     let mut menu_single = menu_single;
     menu_single.active_tab = OptionsTab::Audio;
-    assert_eq!(menu_single.item_count(), 8);
-    assert_eq!(menu_single.item_display(7).unwrap().0, "Restored Cut Audio");
-    assert!(menu_single.item_display(8).is_none());
+    assert_eq!(menu_single.item_count(), 9);
+    assert_eq!(menu_single.item_display(6).unwrap().0, "3D Spatial Audio");
+    assert_eq!(menu_single.item_display(8).unwrap().0, "Restored Cut Audio");
+    assert!(menu_single.item_display(9).is_none());
 
     // 2. Only SH2:EE Lossless audio directory present (`sh2e/sound/adx/`)
     let root_ee_only = test_dir.join("ee_only");
@@ -228,16 +229,21 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
     controller.title_sm.phase = TitlePhase::OptionsMenu;
     controller.switch_options_tab(true); // Audio tab
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
-    assert_eq!(controller.options_menu.item_count(), 9);
+    assert_eq!(controller.options_menu.item_count(), 10);
 
-    // Row 7 is "Restored Cut Audio" defaulting to OFF (Vanilla) (`SH2-62`)
-    let (cut_label, cut_val) = controller.options_menu.item_display(7).unwrap();
+    // Row 6 is "3D Spatial Audio" defaulting to Classic PS2 Stereo (`SH2-84`)
+    let (spatial_label, spatial_val) = controller.options_menu.item_display(6).unwrap();
+    assert_eq!(spatial_label, "3D Spatial Audio");
+    assert_eq!(spatial_val, "Classic PS2 Stereo");
+
+    // Row 8 is "Restored Cut Audio" defaulting to OFF (Vanilla) (`SH2-62`)
+    let (cut_label, cut_val) = controller.options_menu.item_display(8).unwrap();
     assert_eq!(cut_label, "Restored Cut Audio");
     assert_eq!(cut_val, "OFF (Vanilla)");
 
-    // Row 8 is "Audio Pack" defaulting to Auto
-    controller.options_menu.selected_index = 8;
-    let (label, val0) = controller.options_menu.item_display(8).unwrap();
+    // Row 9 is "Audio Pack" defaulting to Auto
+    controller.options_menu.selected_index = 9;
+    let (label, val0) = controller.options_menu.item_display(9).unwrap();
     assert_eq!(label, "Audio Pack");
     assert_eq!(val0, "Auto (Prefer SH2:EE Lossless)");
     assert_eq!(
@@ -252,7 +258,7 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Sh2eeLossless
     );
     assert_eq!(
-        controller.options_menu.item_display(8).unwrap().1,
+        controller.options_menu.item_display(9).unwrap().1,
         "SH2:EE Lossless (48 kHz)"
     );
 
@@ -263,7 +269,7 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Ps2Original
     );
     assert_eq!(
-        controller.options_menu.item_display(8).unwrap().1,
+        controller.options_menu.item_display(9).unwrap().1,
         "Original PS2 / PC (24/44.1 kHz)"
     );
 
@@ -385,6 +391,83 @@ fn test_sh2_93_options_controls_sync_and_live_camera_wiring() {
     );
     assert!((sim_core.active_fov_y(1.0).to_degrees() - 85.0).abs() < 0.25);
     assert!((sim_core.active_near_clip(1.0) - 8.0).abs() < 1e-3);
+
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_sh2_84_binaural_hrtf_options_toggle_and_persistence() {
+    use sh2_core::config::SpatialAudioMode;
+
+    let test_dir = std::env::temp_dir().join("sh2_84_binaural_hrtf_options_test");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).unwrap();
+    let cfg_path = test_dir.join("hrtf_config.json");
+
+    let mut controller = AppMenuController::new(&cfg_path);
+    controller.title_sm.phase = TitlePhase::OptionsMenu;
+    controller.switch_options_tab(true); // Video -> Audio
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
+
+    // Row 6: 3D Spatial Audio defaults to Classic PS2 Stereo
+    controller.options_menu.selected_index = 6;
+    let (label, val0) = controller.options_menu.item_display(6).unwrap();
+    assert_eq!(label, "3D Spatial Audio");
+    assert_eq!(val0, "Classic PS2 Stereo");
+    assert_eq!(
+        controller
+            .options_menu
+            .draft_config
+            .audio
+            .spatial_audio_mode,
+        SpatialAudioMode::ClassicPs2Stereo
+    );
+
+    // Toggle Right -> Binaural HRTF (3D Headphones), live-previewing via `config_applied_pending`
+    controller.handle_nav(MenuNavAction::Right);
+    assert_eq!(
+        controller
+            .options_menu
+            .draft_config
+            .audio
+            .spatial_audio_mode,
+        SpatialAudioMode::BinauralHrtf
+    );
+    assert_eq!(
+        controller.options_menu.item_display(6).unwrap().1,
+        "Binaural HRTF (3D Headphones)"
+    );
+    assert_eq!(
+        controller
+            .config_applied_pending
+            .as_ref()
+            .unwrap()
+            .audio
+            .spatial_audio_mode,
+        SpatialAudioMode::BinauralHrtf
+    );
+
+    // Commit and verify JSON persistence roundtrip
+    assert_eq!(
+        controller.handle_nav(MenuNavAction::Confirm),
+        MenuSoundCue::Confirm
+    );
+    let reloaded = AppConfig::load_from_file(&cfg_path);
+    assert_eq!(
+        reloaded.audio.spatial_audio_mode,
+        SpatialAudioMode::BinauralHrtf
+    );
+
+    // Toggle Left -> Classic PS2 Stereo
+    controller.handle_nav(MenuNavAction::Left);
+    assert_eq!(
+        controller
+            .options_menu
+            .draft_config
+            .audio
+            .spatial_audio_mode,
+        SpatialAudioMode::ClassicPs2Stereo
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }

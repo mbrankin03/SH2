@@ -10,10 +10,13 @@ pub mod device_routing;
 pub mod dialogue;
 pub mod dsp_resample;
 pub mod engine;
+pub mod hrtf;
 pub mod looping;
 pub mod menu_sfx;
+pub mod occlusion;
 pub mod ringbuffer;
 pub mod sfx_bank;
+pub mod spatial_voice;
 
 pub use acoustics::{
     evaluate_room_acoustics, evaluate_room_acoustics_for_pos, EnvironmentalPreset,
@@ -49,11 +52,22 @@ pub use cutscene_bgm::{
 pub use dialogue::ActiveDialogue;
 pub use dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
 pub use engine::{AudioEngine, AudioError};
+pub use hrtf::{
+    angles_from_azimuth_elevation, compute_listener_spherical_angles,
+    compute_woodworth_itd_seconds, BinauralHrtfProcessor, HrtfSphericalAngles, HEAD_RADIUS_METERS,
+    SPEED_OF_SOUND_MPS,
+};
 pub use looping::{
     apply_loop_boundary_crossfade, measure_loop_boundary_step_delta, LoopRegionSamples,
     DEFAULT_LOOP_CROSSFADE_SAMPLES_48K,
 };
 pub use menu_sfx::{play_menu_sound, MenuAudioBank, SoundCueKind};
+pub use occlusion::{
+    db_to_linear, evaluate_controller_occlusion, evaluate_occlusion_dsp, evaluate_world_occlusion,
+    OcclusionDspParams, OcclusionFilterState, OCCLUDED_MAX_ATTENUATION_DB, OCCLUDED_MAX_CUTOFF_HZ,
+    OCCLUDED_MIN_ATTENUATION_DB, OCCLUDED_MIN_CUTOFF_HZ, OCCLUSION_SMOOTH_TIME_SECS,
+    UNOCCLUDED_CUTOFF_HZ,
+};
 pub use ringbuffer::{
     pack_stereo_frame, unpack_stereo_frame, AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES,
 };
@@ -62,4 +76,8 @@ pub use sfx_bank::{
     footstep_sddata_indices, resolve_se_id_to_sddata_index, resolve_se_id_to_voice_afs_index,
     SfxSpatialEval, SDDATA_ENTRY_COUNT, SE_ID_TO_SDDATA_INDEX, SE_ID_TO_VOICE_AFS_INDEX,
     SFX_DISTANCE_SPAN, SFX_MAX_DISTANCE, SFX_MIN_DISTANCE,
+};
+pub use spatial_voice::{
+    SpatialDrySoundData, SpatialDryWetCore, SpatialVoiceControl, SpatialVoiceHandle,
+    SpatialVoiceInitParams, SpatialWetSendSoundData,
 };

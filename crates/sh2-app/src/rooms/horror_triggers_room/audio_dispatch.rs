@@ -67,23 +67,33 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
             let dur = if se_id == 0x9C70 { 6.5 } else { 5.0 };
             state.horror_triggers_room.mark_se_playing(se_id, dur);
 
-            let emit_vec = glam::Vec3::from_array(emit_world);
+            let anchor_vec = glam::Vec3::from_array(anchor);
+            let emit_local = glam::Vec3::from_array(emit_world) - anchor_vec;
             if let (Some(eng), Some(bank)) =
                 (state.audio_engine.as_mut(), state.audio_bank.as_mut())
             {
-                if let Ok(eval) =
-                    bank.play_se_id_3d_tracked(eng, se_id, p_world, p_yaw, emit_vec, volume)
-                {
+                if let Ok((eval, occ)) = bank.play_se_id_3d_tracked_with_occlusion(
+                    eng,
+                    se_id,
+                    p_local,
+                    p_yaw,
+                    0.0,
+                    state.active_maria,
+                    emit_local,
+                    volume,
+                    Some(&state.sim_core.collision),
+                ) {
                     state.horror_triggers_room.last_event_log = format!(
-                        "SeCallPos(0x{:04X}, ch={}) @ [{:.0}, {:.0}, {:.0}] -> dist={:.0}u, gain={:.0}%, pan={:+.2}",
+                        "SeCallPos(0x{:04X}, ch={}) @ [{:.0}, {:.0}, {:.0}] -> dist={:.0}u, gain={:.0}%, pan={:+.2}, lpf={:.0}Hz",
                         se_id,
                         channel,
                         emit_world[0],
                         emit_world[1],
                         emit_world[2],
                         eval.distance,
-                        eval.effective_gain * 100.0,
-                        eval.stereo_pan
+                        eval.effective_gain * occ.dry_gain_scale * 100.0,
+                        eval.stereo_pan,
+                        occ.dry_cutoff_hz,
                     );
                 }
             }
@@ -99,21 +109,20 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
             state.horror_triggers_room.last_se_vol = volume;
             state.horror_triggers_room.active_emitter_world_pos = pos;
             let anchor = active_scenario_anchor(state);
-            let p_world = glam::Vec3::new(
-                anchor[0] + p_local.x,
-                anchor[1] + p_local.y,
-                anchor[2] + p_local.z,
-            );
+            let emit_local = glam::Vec3::from_array(pos) - glam::Vec3::from_array(anchor);
             if let (Some(eng), Some(bank)) =
                 (state.audio_engine.as_ref(), state.audio_bank.as_mut())
             {
-                let _ = bank.update_se_id_3d(
+                let _ = bank.update_se_id_3d_with_occlusion(
                     eng,
                     se_id,
-                    p_world,
+                    p_local,
                     p_yaw,
-                    glam::Vec3::from_array(pos),
+                    0.0,
+                    state.active_maria,
+                    emit_local,
                     volume,
+                    Some(&state.sim_core.collision),
                 );
             }
         }
@@ -121,17 +130,23 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
             state.horror_triggers_room.last_se_id = se_id;
             state.horror_triggers_room.last_se_vol = volume;
             let anchor = active_scenario_anchor(state);
-            let p_world = glam::Vec3::new(
-                anchor[0] + p_local.x,
-                anchor[1] + p_local.y,
-                anchor[2] + p_local.z,
-            );
-            let emit_pos =
-                glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos);
+            let emit_local =
+                glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos)
+                    - glam::Vec3::from_array(anchor);
             if let (Some(eng), Some(bank)) =
                 (state.audio_engine.as_ref(), state.audio_bank.as_mut())
             {
-                let _ = bank.update_se_id_3d(eng, se_id, p_world, p_yaw, emit_pos, volume);
+                let _ = bank.update_se_id_3d_with_occlusion(
+                    eng,
+                    se_id,
+                    p_local,
+                    p_yaw,
+                    0.0,
+                    state.active_maria,
+                    emit_local,
+                    volume,
+                    Some(&state.sim_core.collision),
+                );
             }
         }
     }

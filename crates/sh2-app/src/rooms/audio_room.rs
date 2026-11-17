@@ -470,7 +470,17 @@ impl AudioDebugRoomController {
                     (state.audio_engine.as_mut(), state.audio_bank.as_ref())
                 {
                     eng.set_listener_transform(p_pos, fwd);
-                    let _ = bank.play_se_id_3d(eng, 11048, p_pos, p_yaw, emitter_pos, 1.0);
+                    let _ = bank.play_se_id_3d_with_occlusion(
+                        eng,
+                        11048,
+                        p_pos,
+                        p_yaw,
+                        0.0,
+                        state.active_maria,
+                        emitter_pos,
+                        1.0,
+                        Some(&state.sim_core.collision),
+                    );
                 }
                 state.audio_debug.last_sfx_triggered = "11048: 3D Handgun Shot (0x2B28)";
                 true

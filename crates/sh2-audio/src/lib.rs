@@ -79,5 +79,5 @@ pub use sfx_bank::{
 };
 pub use spatial_voice::{
     SpatialDrySoundData, SpatialDryWetCore, SpatialVoiceControl, SpatialVoiceHandle,
-    SpatialVoiceInitParams, SpatialWetSendSoundData,
+    SpatialVoiceInitParams, SpatialWetSendCore, SpatialWetSendSoundData,
 };

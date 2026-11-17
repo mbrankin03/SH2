@@ -77,6 +77,9 @@ impl OcclusionDspParams {
 /// Converts decibels (`dB`) to linear amplitude scale (`10^(dB / 20)`).
 #[inline]
 pub fn db_to_linear(db: f32) -> f32 {
+    if !db.is_finite() {
+        return 1.0;
+    }
     10.0_f32.powf(db * 0.05)
 }
 
@@ -84,7 +87,7 @@ pub fn db_to_linear(db: f32) -> f32 {
 /// direct-path attenuation (`-6 dB` to `-10 dB`), and wet corridor reverb bleed (`SH2-84`).
 #[inline]
 pub fn evaluate_occlusion_dsp(hit: &AcousticOcclusionHit) -> OcclusionDspParams {
-    if !hit.is_occluded() {
+    if !hit.is_occluded() || !hit.barrier_density.is_finite() {
         return OcclusionDspParams::unoccluded();
     }
 
@@ -180,9 +183,19 @@ impl OcclusionFilterState {
     /// Creates an occlusion filter snapped immediately to `(initial_cutoff_hz, initial_dry_gain)`.
     #[inline]
     pub fn new(initial_cutoff_hz: f32, initial_dry_gain: f32) -> Self {
-        let clamped_fc = initial_cutoff_hz.clamp(200.0, UNOCCLUDED_CUTOFF_HZ);
+        let safe_fc = if initial_cutoff_hz.is_finite() {
+            initial_cutoff_hz
+        } else {
+            UNOCCLUDED_CUTOFF_HZ
+        };
+        let safe_gain = if initial_dry_gain.is_finite() {
+            initial_dry_gain
+        } else {
+            1.0
+        };
+        let clamped_fc = safe_fc.clamp(200.0, UNOCCLUDED_CUTOFF_HZ);
         let log_fc = clamped_fc.ln();
-        let gain = initial_dry_gain.clamp(0.0, 2.0);
+        let gain = safe_gain.clamp(0.0, 2.0);
         let mut s = Self {
             start_log_cutoff: log_fc,
             current_log_cutoff: log_fc,
@@ -210,6 +223,9 @@ impl OcclusionFilterState {
     /// over `OCCLUSION_SMOOTH_TIME_SECS` (`100 ms`) whenever the target changes.
     #[inline]
     pub fn set_target(&mut self, cutoff_hz: f32, dry_gain_scale: f32) {
+        if !cutoff_hz.is_finite() || !dry_gain_scale.is_finite() {
+            return;
+        }
         let clamped_fc = cutoff_hz.clamp(200.0, UNOCCLUDED_CUTOFF_HZ);
         let new_log_fc = clamped_fc.ln();
         let new_gain = dry_gain_scale.clamp(0.0, 2.0);
@@ -222,12 +238,16 @@ impl OcclusionFilterState {
             self.start_dry_gain = self.current_dry_gain;
             self.target_dry_gain = new_gain;
             self.ramp_elapsed_secs = 0.0;
+            self.coeff_countdown = 0;
         }
     }
 
     /// Immediately snaps both cutoff and gain to the given values without ramping.
     #[inline]
     pub fn snap_to(&mut self, cutoff_hz: f32, dry_gain_scale: f32, sample_rate: f32) {
+        if !cutoff_hz.is_finite() || !dry_gain_scale.is_finite() || !sample_rate.is_finite() {
+            return;
+        }
         let clamped_fc = cutoff_hz.clamp(200.0, UNOCCLUDED_CUTOFF_HZ);
         let log_fc = clamped_fc.ln();
         let gain = dry_gain_scale.clamp(0.0, 2.0);
@@ -238,6 +258,7 @@ impl OcclusionFilterState {
         self.current_dry_gain = gain;
         self.target_dry_gain = gain;
         self.ramp_elapsed_secs = self.ramp_duration_secs;
+        self.coeff_countdown = 0;
         self.recompute_svf_coefficients(sample_rate);
     }
 
@@ -255,7 +276,11 @@ impl OcclusionFilterState {
 
     #[inline]
     fn recompute_svf_coefficients(&mut self, sample_rate: f32) {
-        let fs = sample_rate.max(8_000.0);
+        let fs = if sample_rate.is_finite() {
+            sample_rate.clamp(8_000.0, 384_000.0)
+        } else {
+            48_000.0
+        };
         self.last_sample_rate = fs;
         // Clamp cutoff safely below Nyquist (`0.46 * fs`) for unconditional bilinear stability
         let fc = self.current_log_cutoff.exp().clamp(150.0, 0.46 * fs);
@@ -273,7 +298,11 @@ impl OcclusionFilterState {
     /// Processes a single stereo [`Frame`] on the real-time audio thread with zero heap allocations.
     #[inline]
     pub fn process_frame(&mut self, input: Frame, sample_rate: f32) -> Frame {
-        let fs = sample_rate.max(8_000.0);
+        let fs = if sample_rate.is_finite() {
+            sample_rate.clamp(8_000.0, 384_000.0)
+        } else {
+            self.last_sample_rate
+        };
         let dt = 1.0 / fs;
 
         if self.ramp_elapsed_secs < self.ramp_duration_secs {
@@ -286,7 +315,7 @@ impl OcclusionFilterState {
             self.current_dry_gain =
                 self.start_dry_gain + (self.target_dry_gain - self.start_dry_gain) * smooth_t;
 
-            if self.coeff_countdown == 0 {
+            if self.coeff_countdown == 0 || self.ramp_elapsed_secs >= self.ramp_duration_secs {
                 self.recompute_svf_coefficients(fs);
                 self.coeff_countdown = 15;
             } else {
@@ -296,15 +325,26 @@ impl OcclusionFilterState {
             self.recompute_svf_coefficients(fs);
         }
 
+        let in_l = if input.left.is_finite() {
+            input.left
+        } else {
+            0.0
+        };
+        let in_r = if input.right.is_finite() {
+            input.right
+        } else {
+            0.0
+        };
+
         // Left channel 2-pole TPT SVF low-pass
-        let v3_l = input.left - self.ic2eq_l;
+        let v3_l = in_l - self.ic2eq_l;
         let v1_l = self.svf_a1 * self.ic1eq_l + self.svf_a2 * v3_l;
         let v2_l = self.ic2eq_l + self.svf_a2 * self.ic1eq_l + self.svf_a3 * v3_l;
         self.ic1eq_l = 2.0 * v1_l - self.ic1eq_l;
         self.ic2eq_l = 2.0 * v2_l - self.ic2eq_l;
 
         // Right channel 2-pole TPT SVF low-pass
-        let v3_r = input.right - self.ic2eq_r;
+        let v3_r = in_r - self.ic2eq_r;
         let v1_r = self.svf_a1 * self.ic1eq_r + self.svf_a2 * v3_r;
         let v2_r = self.ic2eq_r + self.svf_a2 * self.ic1eq_r + self.svf_a3 * v3_r;
         self.ic1eq_r = 2.0 * v1_r - self.ic1eq_r;

@@ -26,12 +26,38 @@ fn test_sh2_61_ps2_sfx_attenuation_formula_and_spatial_eval() {
     assert_eq!(eval_inner.driver_attenuation_byte, 0);
     assert!(eval_inner.stereo_pan.abs() < 1e-5);
 
-    // Halfway at d = 6500.0 -> v = 0.5, pan to right ear (listener facing +Z, right ear is -X)
-    let eval_mid = compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(-6500.0, 0.0, 0.0), 1.0);
+    // Halfway at d = 6500.0 -> v = 0.5, pan to right ear (listener facing +Z, screen-right / right ear in RH +Y-down is +X)
+    let eval_mid = compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(6500.0, 0.0, 0.0), 1.0);
     assert!((eval_mid.proximity_v - 0.5).abs() < 1e-5);
     assert!((eval_mid.ps2_curve_gain - 0.2).abs() < 1e-5);
     assert!((eval_mid.effective_gain - 0.1).abs() < 1e-5);
     assert!((eval_mid.stereo_pan - 1.0).abs() < 1e-5);
+    let eval_left =
+        compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(-6500.0, 0.0, 0.0), 1.0);
+    assert!((eval_left.stereo_pan - (-1.0)).abs() < 1e-5);
+
+    // Verify 1:1 view-space screen-right parity with `glam::Mat4::look_at_rh(..., Vec3::new(0.0, -1.0, 0.0))`
+    for &yaw in &[0.0f32, 0.75, -1.2, std::f32::consts::PI] {
+        let eye = Vec3::new(100.0, -844.6, -200.0);
+        let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+        let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        let view = glam::Mat4::look_at_rh(eye, eye + fwd, Vec3::new(0.0, -1.0, 0.0));
+        let test_pt = eye + fwd * 2500.0 + right * 1500.0;
+        let view_pt = view.transform_point3(test_pt);
+        assert!(
+            view_pt.x > 0.0,
+            "Point on screen-right must have view_pt.x > 0"
+        );
+        let pan_eval = compute_se_call_pos_distance_f(eye, yaw, test_pt, 1.0);
+        let hrtf_ang = compute_listener_spherical_angles(eye, yaw, 0.0, test_pt);
+        assert!(
+            pan_eval.stereo_pan > 0.0 && hrtf_ang.azimuth_rad > 0.0 && hrtf_ang.itd_seconds > 0.0,
+            "Screen-right emitter at yaw={yaw} must pan to right ear: pan={}, az={}, itd={}",
+            pan_eval.stereo_pan,
+            hrtf_ang.azimuth_rad,
+            hrtf_ang.itd_seconds
+        );
+    }
 
     // Beyond outer cutoff (11500.0) -> v = 0.0, effective_gain = 0.0, byte = 255
     let eval_far = compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(0.0, 0.0, 12000.0), 1.0);

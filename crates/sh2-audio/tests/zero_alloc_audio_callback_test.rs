@@ -82,6 +82,7 @@ fn test_sh2_84_zero_heap_allocation_on_realtime_audio_callback_thread() {
 
     let world = CollisionWorld::create_synthetic_room(6000.0, 6000.0, 2000.0, 800.0, 800.0);
     let hrtf_flag = Arc::new(AtomicBool::new(true));
+    let occ_flag = Arc::new(AtomicBool::new(true));
 
     let init = SpatialVoiceInitParams {
         base_distance_gain: 0.85,
@@ -89,9 +90,14 @@ fn test_sh2_84_zero_heap_allocation_on_realtime_audio_callback_thread() {
         angles: HrtfSphericalAngles::default(),
         occlusion: OcclusionDspParams::unoccluded(),
     };
-    let control = SpatialVoiceControl::new(&init, Arc::clone(&hrtf_flag));
+    let control = SpatialVoiceControl::new_with_flags(
+        &init,
+        Arc::clone(&hrtf_flag),
+        Arc::clone(&occ_flag),
+        false,
+    );
     let mut dry_core = SpatialDryWetCore::new(Arc::clone(&frames_arc), fs, loop_region, &init);
-    let mut wet_core = SpatialDryWetCore::new(frames_arc, fs, loop_region, &init);
+    let mut wet_core = SpatialWetSendCore::new(frames_arc, fs, loop_region, &init);
 
     // Enter strict real-time callback allocation guard (`SH2-49`)
     ALLOC_TRACKER.enable();
@@ -112,8 +118,9 @@ fn test_sh2_84_zero_heap_allocation_on_realtime_audio_callback_thread() {
         let angles = compute_listener_spherical_angles(head, 0.0, 0.0, emitter_pos);
         let eval = compute_se_call_pos_distance_f(listener_feet, 0.0, emitter_pos, 1.0);
 
-        // Toggle Binaural HRTF <-> Classic PS2 Stereo mid-stream to verify mode switch is also zero-alloc
+        // Toggle Binaural HRTF <-> Classic PS2 Stereo and Wall Occlusion ON <-> OFF mid-stream (zero-alloc)
         hrtf_flag.store(block % 64 != 32, Ordering::Relaxed);
+        occ_flag.store(block % 96 != 48, Ordering::Relaxed);
 
         control.update_spatial_and_occlusion(&SpatialVoiceInitParams {
             base_distance_gain: eval.effective_gain,

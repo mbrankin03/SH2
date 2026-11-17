@@ -451,12 +451,17 @@ impl MenuAudioBank {
         let eval =
             compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
         let head_pos = listener_head_position(listener_pos, is_maria);
-        let occlusion = match collision {
+        let raw_occlusion = match collision {
             Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
             None => OcclusionDspParams::unoccluded(),
         };
+        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
+            raw_occlusion
+        } else {
+            OcclusionDspParams::unoccluded()
+        };
         if eval.effective_gain <= 0.001 {
-            return Ok((eval, occlusion, None));
+            return Ok((eval, reported_occlusion, None));
         }
 
         let angles =
@@ -465,15 +470,15 @@ impl MenuAudioBank {
             base_distance_gain: eval.effective_gain,
             stereo_pan: eval.stereo_pan,
             angles,
-            occlusion,
+            occlusion: raw_occlusion,
         };
 
         if let Some(wav) = self.resolve_se_id(se_id) {
             let handle = engine.play_sfx_spatial_3d(wav, init)?;
-            Ok((eval, occlusion, Some(handle)))
+            Ok((eval, reported_occlusion, Some(handle)))
         } else {
             let _ = synthesize_fallback_cue(engine, SoundCueKind::Footstep)?;
-            Ok((eval, occlusion, None))
+            Ok((eval, reported_occlusion, None))
         }
     }
 
@@ -594,14 +599,20 @@ impl MenuAudioBank {
     ) -> (SfxSpatialEval, OcclusionDspParams) {
         let eval =
             compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
-        let occlusion = match collision {
+        let raw_occlusion = match collision {
             Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
             None => OcclusionDspParams::unoccluded(),
         };
+        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
+            raw_occlusion
+        } else {
+            OcclusionDspParams::unoccluded()
+        };
+        self.active_spatial_voices.retain(|_, v| !v.is_finished());
         if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
             engine.update_sound_spatial(
                 handle,
-                eval.effective_gain * occlusion.dry_gain_scale,
+                eval.effective_gain * reported_occlusion.dry_gain_scale,
                 eval.stereo_pan,
             );
         }
@@ -619,11 +630,30 @@ impl MenuAudioBank {
                     base_distance_gain: eval.effective_gain,
                     stereo_pan: eval.stereo_pan,
                     angles,
-                    occlusion,
+                    occlusion: raw_occlusion,
                 },
             );
         }
-        (eval, occlusion)
+        (eval, reported_occlusion)
+    }
+
+    /// Pauses or resumes all tracked 3D spatial sound handles (e.g. when opening/closing the Pause Menu) (`SH2-84`).
+    pub fn set_spatial_handles_paused(&mut self, paused: bool) {
+        let tween = kira::tween::Tween {
+            duration: std::time::Duration::from_millis(30),
+            easing: kira::tween::Easing::Linear,
+            ..Default::default()
+        };
+        for handle in self.active_spatial_handles.values_mut() {
+            if paused {
+                handle.pause(tween);
+            } else {
+                handle.resume(tween);
+            }
+        }
+        for voice in self.active_spatial_voices.values() {
+            voice.set_paused(paused);
+        }
     }
 
     /// Stops all tracked 3D spatial sound handles (`SH2-47` & `SH2-84`).
@@ -848,6 +878,15 @@ impl MenuAudioBank {
         let handle = synthesize_fallback_cue(engine, SoundCueKind::Confirm)?;
         self.active_cut_audio_handle = handle;
         Ok(None)
+    }
+}
+
+impl Drop for MenuAudioBank {
+    fn drop(&mut self) {
+        // Ensure any looped 3D voices (`SpatialVoiceControl`) or cut-audio previews stop cleanly
+        // when `MenuAudioBank` is replaced during live audio-pack hot-swapping (`SH2-84`).
+        self.stop_all_spatial_handles();
+        self.stop_active_cut_audio();
     }
 }
 

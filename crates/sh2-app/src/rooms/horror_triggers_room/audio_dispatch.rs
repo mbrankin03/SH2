@@ -10,6 +10,7 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
     let idx = state.horror_triggers_room.scenario_idx % HORROR_SCENARIOS.len();
     let p_local = state.sim_core.scenario.player_position;
     let p_yaw = state.sim_core.scenario.player_yaw;
+    let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
 
     match cmd {
         SpatialSoundCommand::Call2D { se_id, volume } => {
@@ -76,8 +77,8 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
                     eng,
                     se_id,
                     p_local,
-                    p_yaw,
-                    0.0,
+                    listener_yaw,
+                    listener_pitch,
                     state.active_maria,
                     emit_local,
                     volume,
@@ -117,8 +118,8 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
                     eng,
                     se_id,
                     p_local,
-                    p_yaw,
-                    0.0,
+                    listener_yaw,
+                    listener_pitch,
                     state.active_maria,
                     emit_local,
                     volume,
@@ -140,8 +141,8 @@ pub(crate) fn apply_spatial_sound_command(state: &mut AppState, cmd: SpatialSoun
                     eng,
                     se_id,
                     p_local,
-                    p_yaw,
-                    0.0,
+                    listener_yaw,
+                    listener_pitch,
                     state.active_maria,
                     emit_local,
                     volume,

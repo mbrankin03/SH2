@@ -361,10 +361,12 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             engine.set_sfx_volume(audio_cfg.sfx_volume);
             engine.set_voice_volume(audio_cfg.dialogue_volume);
             engine.set_spatial_audio_mode(audio_cfg.spatial_audio_mode);
+            engine.set_acoustic_occlusion_enabled(audio_cfg.enable_acoustic_occlusion);
             tracing::info!(
-                "Audio engine successfully initialized with Kira runtime (Device: {:?}, Spatial: {:?}).",
+                "Audio engine successfully initialized with Kira runtime (Device: {:?}, Spatial: {:?}, Occlusion: {}).",
                 target_audio_device.as_deref().unwrap_or("Default"),
                 audio_cfg.spatial_audio_mode,
+                audio_cfg.enable_acoustic_occlusion,
             );
             Some(engine)
         }

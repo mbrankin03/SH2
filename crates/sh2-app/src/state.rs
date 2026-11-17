@@ -239,6 +239,10 @@ impl AppState {
     pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
         self.clear_held_gameplay_keys();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
+        if let Some(ref mut bank) = self.audio_bank {
+            bank.stop_all_spatial_handles();
+            bank.stop_active_cut_audio();
+        }
         if let Some(ref mut engine) = self.audio_engine {
             engine.stop_bgm(std::time::Duration::from_millis(120));
             engine.stop_fmv_audio(std::time::Duration::from_millis(120));

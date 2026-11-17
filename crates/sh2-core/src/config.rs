@@ -763,6 +763,11 @@ pub struct AudioOptions {
     /// 3D SFX headphone spatialization mode (`ClassicPs2Stereo` vs `BinauralHrtf`) (`SH2-84`).
     #[serde(default)]
     pub spatial_audio_mode: SpatialAudioMode,
+    /// Real-time `.cld` 3D line-of-sight wall, door, and floor-slab acoustic occlusion (`SH2-84`).
+    /// Defaults to `false` (`OFF (Original PS2)`) so players receive strict 1:1 PlayStation 2
+    /// `SeCallPosDistanceF` (`0x00192bc0` / `0x5155E0`) unoccluded behavior unless enabled.
+    #[serde(default)]
+    pub enable_acoustic_occlusion: bool,
     /// Selected audio output device name (None = System Default).
     pub selected_output_device: Option<String>,
     /// Mute game audio when the window loses focus.
@@ -787,6 +792,7 @@ impl Default for AudioOptions {
             dialogue_volume: 1.0,
             speaker_config: SpeakerConfiguration::default(),
             spatial_audio_mode: SpatialAudioMode::default(),
+            enable_acoustic_occlusion: false,
             selected_output_device: None,
             mute_in_background: true,
             audio_pack_source: AudioPackSource::default(),

@@ -187,14 +187,15 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Ps2Original
     );
 
-    // When only one pack is present, Audio tab has 9 rows (Row 6 = 3D Spatial Audio, Row 8 = Restored Cut Audio, Audio Pack row hidden)
+    // When only one pack is present, Audio tab has 10 rows (Row 6 = 3D Spatial Audio, Row 7 = Wall Occlusion, Row 9 = Restored Cut Audio, Audio Pack row hidden)
     let menu_single = OptionsMenu::new_with_audio_packs(AppConfig::default(), status_ps2);
     let mut menu_single = menu_single;
     menu_single.active_tab = OptionsTab::Audio;
-    assert_eq!(menu_single.item_count(), 9);
+    assert_eq!(menu_single.item_count(), 10);
     assert_eq!(menu_single.item_display(6).unwrap().0, "3D Spatial Audio");
-    assert_eq!(menu_single.item_display(8).unwrap().0, "Restored Cut Audio");
-    assert!(menu_single.item_display(9).is_none());
+    assert_eq!(menu_single.item_display(7).unwrap().0, "Wall Occlusion");
+    assert_eq!(menu_single.item_display(9).unwrap().0, "Restored Cut Audio");
+    assert!(menu_single.item_display(10).is_none());
 
     // 2. Only SH2:EE Lossless audio directory present (`sh2e/sound/adx/`)
     let root_ee_only = test_dir.join("ee_only");
@@ -229,21 +230,26 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
     controller.title_sm.phase = TitlePhase::OptionsMenu;
     controller.switch_options_tab(true); // Audio tab
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
-    assert_eq!(controller.options_menu.item_count(), 10);
+    assert_eq!(controller.options_menu.item_count(), 11);
 
     // Row 6 is "3D Spatial Audio" defaulting to Classic PS2 Stereo (`SH2-84`)
     let (spatial_label, spatial_val) = controller.options_menu.item_display(6).unwrap();
     assert_eq!(spatial_label, "3D Spatial Audio");
     assert_eq!(spatial_val, "Classic PS2 Stereo");
 
-    // Row 8 is "Restored Cut Audio" defaulting to OFF (Vanilla) (`SH2-62`)
-    let (cut_label, cut_val) = controller.options_menu.item_display(8).unwrap();
+    // Row 7 is "Wall Occlusion" defaulting to OFF (Original PS2) (`SH2-84`)
+    let (occ_label, occ_val) = controller.options_menu.item_display(7).unwrap();
+    assert_eq!(occ_label, "Wall Occlusion");
+    assert_eq!(occ_val, "OFF (Original PS2)");
+
+    // Row 9 is "Restored Cut Audio" defaulting to OFF (Vanilla) (`SH2-62`)
+    let (cut_label, cut_val) = controller.options_menu.item_display(9).unwrap();
     assert_eq!(cut_label, "Restored Cut Audio");
     assert_eq!(cut_val, "OFF (Vanilla)");
 
-    // Row 9 is "Audio Pack" defaulting to Auto
-    controller.options_menu.selected_index = 9;
-    let (label, val0) = controller.options_menu.item_display(9).unwrap();
+    // Row 10 is "Audio Pack" defaulting to Auto
+    controller.options_menu.selected_index = 10;
+    let (label, val0) = controller.options_menu.item_display(10).unwrap();
     assert_eq!(label, "Audio Pack");
     assert_eq!(val0, "Auto (Prefer SH2:EE Lossless)");
     assert_eq!(
@@ -258,7 +264,7 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Sh2eeLossless
     );
     assert_eq!(
-        controller.options_menu.item_display(9).unwrap().1,
+        controller.options_menu.item_display(10).unwrap().1,
         "SH2:EE Lossless (48 kHz)"
     );
 
@@ -269,7 +275,7 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         AudioPackPreference::Ps2Original
     );
     assert_eq!(
-        controller.options_menu.item_display(9).unwrap().1,
+        controller.options_menu.item_display(10).unwrap().1,
         "Original PS2 / PC (24/44.1 kHz)"
     );
 
@@ -447,7 +453,40 @@ fn test_sh2_84_binaural_hrtf_options_toggle_and_persistence() {
         SpatialAudioMode::BinauralHrtf
     );
 
-    // Commit and verify JSON persistence roundtrip
+    // Row 7: Wall Occlusion defaults to OFF (Original PS2) for strict 1:1 vanilla parity, toggles to ON (.cld Raycast)
+    controller.options_menu.selected_index = 7;
+    let (occ_label, occ_val0) = controller.options_menu.item_display(7).unwrap();
+    assert_eq!(occ_label, "Wall Occlusion");
+    assert_eq!(occ_val0, "OFF (Original PS2)");
+    assert!(
+        !controller
+            .options_menu
+            .draft_config
+            .audio
+            .enable_acoustic_occlusion
+    );
+    controller.handle_nav(MenuNavAction::Right);
+    assert!(
+        controller
+            .options_menu
+            .draft_config
+            .audio
+            .enable_acoustic_occlusion
+    );
+    assert_eq!(
+        controller.options_menu.item_display(7).unwrap().1,
+        "ON (.cld Raycast)"
+    );
+    assert!(
+        controller
+            .config_applied_pending
+            .as_ref()
+            .unwrap()
+            .audio
+            .enable_acoustic_occlusion
+    );
+
+    // Commit and verify JSON persistence roundtrip for both Binaural HRTF and Wall Occlusion
     assert_eq!(
         controller.handle_nav(MenuNavAction::Confirm),
         MenuSoundCue::Confirm
@@ -457,8 +496,18 @@ fn test_sh2_84_binaural_hrtf_options_toggle_and_persistence() {
         reloaded.audio.spatial_audio_mode,
         SpatialAudioMode::BinauralHrtf
     );
+    assert!(reloaded.audio.enable_acoustic_occlusion);
 
-    // Toggle Left -> Classic PS2 Stereo
+    // Toggle Left on Row 7 -> OFF (Original PS2) and Row 6 -> Classic PS2 Stereo
+    controller.handle_nav(MenuNavAction::Left);
+    assert!(
+        !controller
+            .options_menu
+            .draft_config
+            .audio
+            .enable_acoustic_occlusion
+    );
+    controller.options_menu.selected_index = 6;
     controller.handle_nav(MenuNavAction::Left);
     assert_eq!(
         controller

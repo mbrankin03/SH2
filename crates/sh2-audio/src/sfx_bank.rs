@@ -80,10 +80,11 @@ pub struct SfxSpatialEval {
     pub stereo_pan: f32,
 }
 
-/// Evaluates `SeCallPosDistanceF` (`0x5155E0`) and stereo listener panning (`0x517D10`) for a 3D sound emitter.
+/// Evaluates `SeCallPosDistanceF` (`SLUS_202.28` `0x00192bc0` / `sh2pc.exe` `0x5155E0`) and
+/// stereo listener panning (`SeCallPosDirection` `0x00192990` / `0x517D10`) for a 3D sound emitter.
 ///
-/// - `listener_pos`: Player / camera position in world space.
-/// - `listener_yaw`: Listener facing yaw in radians (`0.0` = $+Z$, matching `SimulationCore`).
+/// - `listener_pos`: Player / camera position in world space (`+Y` downward, `500.0` units = `1.0 m`).
+/// - `listener_yaw`: Active camera / listener facing yaw in radians (`0.0` = $+Z$, $+\pi/2$ = $+X$).
 /// - `source_pos`: 3D world position of the sound effect emitter.
 /// - `base_volume`: Caller volume multiplier in `[0.0, 1.0]`.
 pub fn compute_se_call_pos_distance_f(
@@ -92,6 +93,21 @@ pub fn compute_se_call_pos_distance_f(
     source_pos: Vec3,
     base_volume: f32,
 ) -> SfxSpatialEval {
+    if !listener_pos.is_finite()
+        || !source_pos.is_finite()
+        || !listener_yaw.is_finite()
+        || !base_volume.is_finite()
+    {
+        return SfxSpatialEval {
+            distance: SFX_MAX_DISTANCE,
+            proximity_v: 0.0,
+            ps2_curve_gain: 0.1,
+            effective_gain: 0.0,
+            driver_attenuation_byte: 255,
+            stereo_pan: 0.0,
+        };
+    }
+
     let delta = source_pos - listener_pos;
     let distance = delta.length();
     let v_dist = compute_sfx_distance_param_v(distance, SFX_MIN_DISTANCE, SFX_MAX_DISTANCE);
@@ -108,16 +124,17 @@ pub fn compute_se_call_pos_distance_f(
         (ps2_curve_gain * v).clamp(0.0, 1.0)
     };
 
-    // Compute horizontal azimuth angle relative to listener's right ear vector
+    // Compute horizontal azimuth projection onto screen-right / right-ear axis (`SeCallPosDirection` `0x00192990`):
+    // In SH2 right-handed `+Y`-down space, `fwd = (sin(yaw), 0, cos(yaw))` and `world_up = (0, -1, 0)`,
+    // so `right = fwd × world_up = (cos(yaw), 0, -sin(yaw))` (`+X` when facing `+Z`).
     let horiz_len_sq = delta.x * delta.x + delta.z * delta.z;
     let stereo_pan = if horiz_len_sq > 1.0 {
         let inv_len = horiz_len_sq.sqrt().recip();
         let dir_x = delta.x * inv_len;
         let dir_z = delta.z * inv_len;
-        // Listener forward is (sin(yaw), 0, cos(yaw)); right ear in RH Y-down is (-cos(yaw), 0, sin(yaw))
         let (sin_y, cos_y) = listener_yaw.sin_cos();
-        let right_x = -cos_y;
-        let right_z = sin_y;
+        let right_x = cos_y;
+        let right_z = -sin_y;
         (dir_x * right_x + dir_z * right_z).clamp(-1.0, 1.0)
     } else {
         0.0

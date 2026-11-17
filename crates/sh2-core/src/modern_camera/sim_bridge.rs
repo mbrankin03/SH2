@@ -304,6 +304,35 @@ impl SimulationCore {
         self.active_camera_snapshot(alpha).eye
     }
 
+    /// Evaluates the active audio listener `(yaw_rad, pitch_rad)` in SH2 `+Y`-down world space
+    /// (`yaw = 0` -> `+Z`, `yaw = +PI/2` -> `+X`; `pitch > 0` -> looking down `+Y`, `pitch < 0` -> looking up `-Y`)
+    /// from [`Self::active_camera_snapshot`], matching `SLUS_202.28` `SeCallPosDirection` (`0x00192990`,
+    /// which transforms 3D SFX emitters by the active camera's `VbWvsMatrix` `0x010e59d0`) across
+    /// `ClassicPs2Rail`, `OverTheShoulder`, `FirstPerson`, and `.dds` cutscene handoffs (`SH2-84` & `SH2-93`).
+    #[inline]
+    pub fn active_listener_yaw_pitch(&self, alpha: f32) -> (f32, f32) {
+        let snap = self.active_camera_snapshot(alpha);
+        let d = snap.target - snap.eye;
+        let len_sq = d.length_squared();
+        let fallback_yaw = match self.modern_camera.active_mode {
+            GameplayCameraMode::FirstPerson => self.modern_camera.first_person.look_yaw,
+            GameplayCameraMode::OverTheShoulder => self.modern_camera.ots.orbit_yaw,
+            GameplayCameraMode::ClassicPs2Rail => self.scenario.player_yaw,
+        };
+        if !d.is_finite() || !len_sq.is_finite() || len_sq <= 1e-6 {
+            return (fallback_yaw, 0.0);
+        }
+        let u = d * len_sq.sqrt().recip();
+        let pitch = u.y.clamp(-1.0, 1.0).asin();
+        let horiz_sq = u.x * u.x + u.z * u.z;
+        let yaw = if horiz_sq > 1e-6 {
+            u.x.atan2(u.z)
+        } else {
+            fallback_yaw
+        };
+        (yaw, pitch)
+    }
+
     /// Evaluates the active sub-frame view matrix across `ClassicPs2Rail`, `OverTheShoulder`, `FirstPerson`, and handoffs (`SH2-93`).
     #[inline]
     pub fn active_view_matrix(&self, alpha: f32) -> Mat4 {
@@ -559,5 +588,47 @@ mod sim_bridge_tests {
         );
         assert!(sim.modern_camera.first_person.look_yaw > std::f32::consts::FRAC_PI_2 + 0.05);
         assert!(sim.modern_camera.first_person.look_pitch < 0.0);
+
+        // Let the 18-tick OTS -> FirstPerson crossfade settle, then verify listener yaw/pitch matches FirstPerson look
+        sim.input
+            .set_host_keyboard_state(0.0, 0.0, 0.0, 0.0, false, false);
+        for _ in 0..12 {
+            sim.tick();
+        }
+        let (fp_yaw, fp_pitch) = sim.active_listener_yaw_pitch(1.0);
+        assert!((fp_yaw - sim.modern_camera.first_person.look_yaw).abs() < 1e-2);
+        assert!((fp_pitch - sim.modern_camera.first_person.look_pitch).abs() < 1e-2);
+    }
+
+    #[test]
+    fn test_sh2_84_active_listener_yaw_pitch_matches_vb_wvs_matrix_and_modern_modes() {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        // Fixed rail camera looking along +Z while James walks toward the camera (player_yaw = PI)
+        sim.snap_player_transform(Vec3::ZERO, std::f32::consts::PI);
+        sim.camera.curr_snapshot.eye = Vec3::new(0.0, -900.0, -2500.0);
+        sim.camera.curr_snapshot.target = Vec3::new(0.0, -900.0, 0.0);
+        sim.camera.prev_snapshot = sim.camera.curr_snapshot;
+
+        let (rail_yaw, rail_pitch) = sim.active_listener_yaw_pitch(1.0);
+        assert!(
+            rail_yaw.abs() < 1e-4,
+            "SeCallPosDirection (0x00192990) must follow active camera view (+Z -> yaw 0), got {rail_yaw}"
+        );
+        assert!(rail_pitch.abs() < 1e-4);
+
+        // OverTheShoulder orbited +90 deg (+X) and pitched down +0.30 rad
+        sim.modern_camera.active_mode = GameplayCameraMode::OverTheShoulder;
+        sim.modern_camera.reset_to_player(
+            sim.scenario.character,
+            Vec3::ZERO,
+            0.0,
+            &sim.camera.curr_snapshot,
+        );
+        sim.modern_camera.ots.orbit_yaw = std::f32::consts::FRAC_PI_2;
+        sim.modern_camera.ots.orbit_pitch = 0.30;
+        sim.tick();
+        let (ots_yaw, ots_pitch) = sim.active_listener_yaw_pitch(1.0);
+        assert!((ots_yaw - std::f32::consts::FRAC_PI_2).abs() < 0.05);
+        assert!((ots_pitch - 0.30).abs() < 0.05);
     }
 }

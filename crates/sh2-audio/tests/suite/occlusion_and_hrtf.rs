@@ -10,11 +10,20 @@ use glam::Vec3;
 use kira::Frame;
 use sh2_assets::formats::cld::{parse_cld, FloorTriangle, WallSegment};
 use sh2_audio::*;
-use sh2_core::collision::{CollisionController, CollisionWorld};
-use sh2_core::{listener_head_position, SpatialAudioMode, JAMES_HEAD_OFFSET_Y};
+use sh2_core::collision::{cld_material_barrier_weight, CollisionController, CollisionWorld};
+use sh2_core::{
+    listener_head_position, SpatialAudioMode, JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y,
+};
 
 #[test]
 fn test_sh2_84_cld_raycast_wall_door_and_slab_occlusion() {
+    // 0. Verify exact retail `.mdl` bind eye heights (`vcMakeHeroHeadPos` `0x0019e320`) & unmasked `.cld` material 99
+    assert!((JAMES_HEAD_OFFSET_Y - (-844.6)).abs() < 1e-3);
+    assert!((MARIA_HEAD_OFFSET_Y - (-825.6)).abs() < 1e-3);
+    assert!((cld_material_barrier_weight(99) - 1.0).abs() < 1e-5);
+    assert!((cld_material_barrier_weight(7) - 0.85).abs() < 1e-5);
+    assert!((cld_material_barrier_weight(5) - 1.15).abs() < 1e-5);
+
     // 1. Synthetic room with a 600x600 solid center pillar (-300..300, -300..300)
     let mut world = CollisionWorld::create_synthetic_room(6000.0, 6000.0, 2000.0, 600.0, 600.0);
 
@@ -39,14 +48,14 @@ fn test_sh2_84_cld_raycast_wall_door_and_slab_occlusion() {
     assert!((pillar_params.dry_attenuation_db - OCCLUDED_MAX_ATTENUATION_DB).abs() < 1e-3);
     assert!(pillar_params.wet_reverb_bleed_scale >= 0.85);
 
-    // 2. Single wooden door (`.cld` material = 7) vs single concrete wall (`.cld` material = 0)
+    // 2. Single wooden door (`wldofs` `group == 1`, `.cld` `material == 7`) vs `cedofs` (`group == 2`) vs `swdofs` (`group == 3`)
     world.walls.clear();
     world.add_extra_wall(WallSegment::new(
         [-800.0, 0.0],
         [800.0, 0.0],
         -1500.0,
         0.0,
-        3, // swd door group
+        1, // wldofs main wall/door group (`SLUS_202.28` `clCheckHitEyeVector` `0x00139420`)
         7, // Wood door material
     ));
     let door_params = evaluate_world_occlusion(
@@ -61,8 +70,60 @@ fn test_sh2_84_cld_raycast_wall_door_and_slab_occlusion() {
     assert!((door_params.dry_attenuation_db - (-6.0)).abs() < 0.1);
     assert!((door_params.wet_reverb_bleed_scale - 1.0).abs() < 1e-5);
 
-    // 3. Multi-story stairwell floor slab occlusion (2F enemy at Y = -2200 above 2F floor deck at Y = -1600)
+    // `cedofs` (`group == 2` upper wall/lintel) MUST occlude (`clCheckHitEyeVector` `0x0013958c`),
+    // while `swdofs` (`group == 3` character-only low walk curb) MUST be skipped!
     world.extra_walls.clear();
+    world.add_extra_wall(WallSegment::new(
+        [-800.0, 0.0],
+        [800.0, 0.0],
+        -1600.0,
+        -600.0,
+        2,
+        0,
+    ));
+    let ced_params = evaluate_world_occlusion(
+        &world,
+        Vec3::new(0.0, -850.0, 1200.0),
+        Vec3::new(0.0, 0.0, -1200.0),
+        false,
+    );
+    assert!(
+        ced_params.occluded && ced_params.wall_hit_count == 1,
+        "SLUS_202.28 cedofs (group == 2) upper wall/lintel must occlude acoustic rays"
+    );
+
+    world.extra_walls.clear();
+    world.add_extra_wall(WallSegment::new(
+        [-800.0, 0.0],
+        [800.0, 0.0],
+        -1500.0,
+        0.0,
+        3,
+        0,
+    ));
+    let swd_params = evaluate_world_occlusion(
+        &world,
+        Vec3::new(0.0, -850.0, 1200.0),
+        Vec3::new(0.0, 0.0, -1200.0),
+        false,
+    );
+    assert!(
+        !swd_params.occluded,
+        "SLUS_202.28 swdofs (group == 3) character-walk curb must NOT occlude sight/acoustic rays"
+    );
+
+    // 3. Multi-story stairwell floor slab occlusion (including floor-level 2F emitter right on `Y = -1600.0`!)
+    world.extra_walls.clear();
+    world.floors.clear();
+    // 1F walkable floor at Y = 0.0 (must NOT falsely occlude!) + 2F floor deck at Y = -1600.0
+    world.floors.push(FloorTriangle::new(
+        [
+            [-1000.0, 0.0, -1000.0],
+            [1000.0, 0.0, -1000.0],
+            [1000.0, 0.0, 1000.0],
+        ],
+        0,
+    ));
     world.floors.push(FloorTriangle::new(
         [
             [-1000.0, -1600.0, -1000.0],
@@ -75,12 +136,24 @@ fn test_sh2_84_cld_raycast_wall_door_and_slab_occlusion() {
     let slab_params = evaluate_controller_occlusion(
         &ctrl,
         Vec3::new(200.0, -2400.0, -200.0), // Upstairs above deck
-        Vec3::new(200.0, 0.0, -200.0),     // James on 1F (`head_y = -830`)
+        Vec3::new(200.0, 0.0, -200.0),     // James on 1F (`head_y = -844.6`)
         false,
     );
     assert!(slab_params.occluded);
     assert_eq!(slab_params.slab_hit_count, 1);
     assert!((OCCLUDED_MIN_CUTOFF_HZ..=OCCLUDED_MAX_CUTOFF_HZ).contains(&slab_params.dry_cutoff_hz));
+
+    // Floor-level upstairs emitter authored directly on the 2F floor (`emitter_pos.y == -1600.0`, e.g. `SE_APART_E3FE_FOOTSTEPS`)
+    let floor_level_2f = evaluate_controller_occlusion(
+        &ctrl,
+        Vec3::new(200.0, -1600.0, -200.0),
+        Vec3::new(200.0, 0.0, -200.0),
+        false,
+    );
+    assert!(
+        floor_level_2f.occluded && floor_level_2f.slab_hit_count == 1,
+        "Emitter sitting directly on 2F floor slab (y = -1600) must be occluded by 2F slab!"
+    );
 
     // 4. `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`) & `clCheckHitEyesOnlyFloorThru` (`0x00139010`):
     //    `material == 9` (chainlink fence), `11` (Toluca Prison iron cell bars / Labyrinth open metal floor grate),
@@ -144,7 +217,7 @@ fn test_sh2_84_retail_apartment_and_hospital_cld_occlusion() {
         .walls
         .iter()
         .find(|w| {
-            w.group != 2
+            w.group != 3
                 && !sh2_core::collision::is_cld_material_thru(w.material)
                 && w.y_top <= -1100.0
                 && w.y_bottom >= -25.0
@@ -295,14 +368,14 @@ fn test_sh2_84_dry_lpf_muffling_vs_wet_corridor_reverb_bleed_and_100ms_smoothing
 fn test_sh2_84_binaural_hrtf_itd_ild_and_vertical_elevation_cues() {
     let fs = 48_000.0f32;
     let james_feet = Vec3::ZERO;
-    let head = listener_head_position(james_feet, false); // (0, -830, 0)
+    let head = listener_head_position(james_feet, false); // (0, -844.6, 0)
 
     // 1. Verify listener spherical angle & Woodworth ITD mapping in SH2 `+Y`-down world coordinates
-    // Right ear at yaw = 0 is -X (matching `SeCallPosDistanceF` `stereo_pan = +1.0`)
+    // Screen-right / right ear at yaw = 0 is +X (matching `SeCallPosDirection` `0x00192990` & `Mat4::look_at_rh`)
     let ang_right =
-        compute_listener_spherical_angles(head, 0.0, 0.0, head + Vec3::new(-2000.0, 0.0, 0.0));
-    let ang_left =
         compute_listener_spherical_angles(head, 0.0, 0.0, head + Vec3::new(2000.0, 0.0, 0.0));
+    let ang_left =
+        compute_listener_spherical_angles(head, 0.0, 0.0, head + Vec3::new(-2000.0, 0.0, 0.0));
     assert!(ang_right.itd_seconds > 0.000_60 && ang_right.itd_seconds < 0.000_70);
     assert!((ang_right.itd_seconds + ang_left.itd_seconds).abs() < 1e-6);
 
@@ -384,21 +457,98 @@ fn test_sh2_84_binaural_hrtf_itd_ild_and_vertical_elevation_cues() {
         "Rear source (180 deg) must exhibit pinna-rim high-frequency shadowing vs frontal source ({front_l_6k:.3} vs {behind_l_6k:.3})"
     );
 
-    // 5. Verify live atomic switching between ClassicPs2Stereo and BinauralHrtf on SpatialVoiceControl
+    // 5. Verify live atomic switching between ClassicPs2Stereo / BinauralHrtf AND Wall Occlusion OFF / ON
     let hrtf_flag = Arc::new(AtomicBool::new(false));
-    let ctrl = SpatialVoiceControl::new(
-        &SpatialVoiceInitParams {
-            base_distance_gain: 1.0,
-            stereo_pan: 0.8,
-            angles: ang_right,
-            occlusion: OcclusionDspParams::unoccluded(),
-        },
+    let occ_flag = Arc::new(AtomicBool::new(false)); // Purist default: OFF (Original PS2)
+    let occ_wall = evaluate_occlusion_dsp(&sh2_core::AcousticOcclusionHit {
+        wall_hit_count: 1,
+        slab_hit_count: 0,
+        closest_t: 0.5,
+        primary_material: 0,
+        barrier_density: 1.0,
+    });
+    let init_toggle = SpatialVoiceInitParams {
+        base_distance_gain: 1.0,
+        stereo_pan: 0.8,
+        angles: ang_right,
+        occlusion: occ_wall,
+    };
+    let ctrl = SpatialVoiceControl::new_with_flags(
+        &init_toggle,
         Arc::clone(&hrtf_flag),
+        Arc::clone(&occ_flag),
+        false,
     );
     assert_eq!(
         ctrl.active_spatial_mode(),
         SpatialAudioMode::ClassicPs2Stereo
     );
+    assert!(!ctrl.is_occlusion_enabled());
     hrtf_flag.store(true, Ordering::Relaxed);
     assert_eq!(ctrl.active_spatial_mode(), SpatialAudioMode::BinauralHrtf);
+
+    // Verify `occ_flag == false` keeps `SpatialDryWetCore` at unoccluded 20 kHz, and toggling `true` ramps to muffled!
+    let frames_4k: Arc<[Frame]> = Arc::from(
+        (0..9_600)
+            .map(|i| {
+                let s = (2.0 * std::f32::consts::PI * 4_000.0 * (i as f32) / 48_000.0).sin() * 0.7;
+                Frame::new(s, s)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let mut toggle_core = SpatialDryWetCore::new_with_occlusion_enabled(
+        frames_4k,
+        48_000,
+        None,
+        &init_toggle,
+        ctrl.is_occlusion_enabled(),
+    );
+    toggle_core.sync_from_control(&ctrl, 48_000.0);
+    assert!((toggle_core.occlusion_filter.current_cutoff_hz() - UNOCCLUDED_CUTOFF_HZ).abs() < 1.0);
+    occ_flag.store(true, Ordering::Relaxed);
+    toggle_core.sync_from_control(&ctrl, 48_000.0);
+    for _ in 0..5_000 {
+        let _ = toggle_core.process_pair(1.0 / 48_000.0, &ctrl);
+    }
+    assert!(
+        toggle_core.occlusion_filter.current_cutoff_hz() <= OCCLUDED_MAX_CUTOFF_HZ + 1.0,
+        "Toggling Wall Occlusion ON live must ramp dry cutoff down to <= 850 Hz (got {})",
+        toggle_core.occlusion_filter.current_cutoff_hz()
+    );
+
+    // 6. Verify 192 kHz Woodworth ITD delay (`~126` samples) does not saturate (`HRTF_DELAY_BUFFER_LEN == 256`)
+    //    and non-finite (`NaN` / `Inf`) inputs never poison IIR filter integrators!
+    let mut hrtf_192k = BinauralHrtfProcessor::new();
+    hrtf_192k.update_angles(std::f32::consts::FRAC_PI_2, 0.0, 192_000.0, true);
+    let mut peak_r_192 = None;
+    let mut peak_l_192 = None;
+    for i in 0..200 {
+        let imp = if i == 0 { 1.0 } else { 0.0 };
+        let out = hrtf_192k.process_frame(Frame::new(imp, imp));
+        if peak_r_192.is_none() && out.right.abs() > 0.15 {
+            peak_r_192 = Some(i);
+        }
+        if peak_l_192.is_none() && out.left.abs() > 0.05 {
+            peak_l_192 = Some(i);
+        }
+    }
+    let lead_192k = peak_l_192.unwrap() as isize - peak_r_192.unwrap() as isize;
+    assert!(
+        (122..=130).contains(&lead_192k),
+        "192 kHz Woodworth ITD at +90 deg must delay left ear by ~126 samples without 128-sample truncation (got {lead_192k})"
+    );
+
+    // Non-finite input guard verification
+    let nan_hit = sh2_core::collision::raycast_acoustic_occlusion(
+        Vec3::splat(f32::NAN),
+        head,
+        std::iter::empty(),
+        std::iter::empty(),
+    );
+    assert!(!nan_hit.is_occluded());
+    let nan_ang = compute_listener_spherical_angles(head, f32::NAN, f32::INFINITY, head);
+    assert!(nan_ang.azimuth_rad.is_finite() && nan_ang.itd_seconds.is_finite());
+    hrtf_192k.update_angles(f32::NAN, f32::INFINITY, f32::NAN, false);
+    let safe_out = hrtf_192k.process_frame(Frame::new(f32::NAN, f32::INFINITY));
+    assert!(safe_out.left.is_finite() && safe_out.right.is_finite());
 }

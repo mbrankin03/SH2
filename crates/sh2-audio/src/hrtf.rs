@@ -22,8 +22,9 @@ pub const HEAD_RADIUS_METERS: f32 = 0.0875;
 /// Speed of sound in air at room temperature ($343.0\text{ m/s}$).
 pub const SPEED_OF_SOUND_MPS: f32 = 343.0;
 
-/// Fixed per-ear circular delay buffer length in samples (`128` samples covers `> 1.3 ms` up to `96 kHz`).
-const HRTF_DELAY_BUFFER_LEN: usize = 128;
+/// Fixed per-ear circular delay buffer length in samples (`256` samples covers Woodworth max ITD `655.8 µs`
+/// = `125.9` samples up to `192 kHz` desktop interfaces like Arturia MiniFuse 2 with generous margin).
+const HRTF_DELAY_BUFFER_LEN: usize = 256;
 const HRTF_DELAY_BUFFER_MASK: usize = HRTF_DELAY_BUFFER_LEN - 1;
 
 /// Listener-relative 3D spherical coordinates and Woodworth ITD for a point-source emitter (`SH2-84`).
@@ -59,6 +60,9 @@ impl Default for HrtfSphericalAngles {
 /// $$\Delta t(\alpha) = \operatorname{sign}(\alpha)\,\frac{a}{c}\,\left(|\alpha| + \sin|\alpha|\right)$$
 #[inline]
 pub fn compute_woodworth_itd_seconds(lateral_sin: f32) -> f32 {
+    if !lateral_sin.is_finite() {
+        return 0.0;
+    }
     let s = lateral_sin.clamp(-1.0, 1.0);
     let abs_s = s.abs();
     let abs_alpha = abs_s.asin();
@@ -68,11 +72,12 @@ pub fn compute_woodworth_itd_seconds(lateral_sin: f32) -> f32 {
 
 /// Computes listener-relative [`HrtfSphericalAngles`] from Silent Hill 2 world coordinates (`+Y` downward,
 /// `500.0` SH2 units = `1.0 m`), matching `sfx_bank::compute_se_call_pos_distance_f`'s horizontal ear basis
-/// 1:1 so toggling between Classic PS2 Stereo and Binaural HRTF preserves exact Left/Right ear polarity.
+/// (`SLUS_202.28` `SeCallPosDirection` `0x00192990` / `VbWvsMatrix` `0x010e59d0`) 1:1 so toggling between
+/// Classic PS2 Stereo and Binaural HRTF preserves exact screen-space Left/Right ear polarity.
 ///
 /// - `listener_head_pos`: Listener ear/head world position (e.g. `listener_head_position(player_pos, is_maria)`).
-/// - `listener_yaw`: Listener horizontal facing yaw in radians (`0.0` = `+Z`).
-/// - `listener_pitch`: Listener vertical pitch in radians (`0.0` = level, `< 0` = looking up `-Y`, `> 0` = looking down `+Y`).
+/// - `listener_yaw`: Active camera / listener horizontal facing yaw in radians (`0.0` = `+Z`, `+PI/2` = `+X`).
+/// - `listener_pitch`: Active camera / listener vertical pitch in radians (`0.0` = level, `< 0` = looking up `-Y`, `> 0` = looking down `+Y`).
 /// - `source_pos`: 3D world position of the sound emitter.
 pub fn compute_listener_spherical_angles(
     listener_head_pos: Vec3,
@@ -80,9 +85,16 @@ pub fn compute_listener_spherical_angles(
     listener_pitch: f32,
     source_pos: Vec3,
 ) -> HrtfSphericalAngles {
+    if !listener_head_pos.is_finite()
+        || !source_pos.is_finite()
+        || !listener_yaw.is_finite()
+        || !listener_pitch.is_finite()
+    {
+        return HrtfSphericalAngles::default();
+    }
     let delta = source_pos - listener_head_pos;
     let len_sq = delta.length_squared();
-    if len_sq <= 1e-4 {
+    if !len_sq.is_finite() || len_sq <= 1e-4 {
         return HrtfSphericalAngles::default();
     }
 
@@ -90,10 +102,11 @@ pub fn compute_listener_spherical_angles(
     let (sin_y, cos_y) = listener_yaw.sin_cos();
     let (sin_p, cos_p) = listener_pitch.sin_cos();
 
-    // Horizontal basis matching `compute_se_call_pos_distance_f` (`0x517D10`):
-    // Forward = (sin(yaw), 0, cos(yaw)), Right ear = (-cos(yaw), 0, sin(yaw)), World Up = (0, -1, 0)
+    // Right-handed `+Y`-down basis matching `Mat4::look_at_rh(..., Vec3::new(0.0, -1.0, 0.0))`
+    // and `compute_se_call_pos_distance_f` (`0x00192990` / `0x517D10`):
+    // Forward = (sin(yaw), 0, cos(yaw)), World Up = (0, -1, 0), Right = fwd × world_up = (cos(yaw), 0, -sin(yaw))
     let fwd_horiz = Vec3::new(sin_y, 0.0, cos_y);
-    let right = Vec3::new(-cos_y, 0.0, sin_y);
+    let right = Vec3::new(cos_y, 0.0, -sin_y);
     let world_up = Vec3::new(0.0, -1.0, 0.0);
 
     // Pitch > 0 tilts forward toward +Y (downward), matching `ModernCameraRig`
@@ -120,16 +133,17 @@ pub fn compute_listener_spherical_angles(
 /// Reconstructs [`HrtfSphericalAngles`] directly from `(azimuth_rad, elevation_rad)` on the audio thread.
 #[inline]
 pub fn angles_from_azimuth_elevation(azimuth_rad: f32, elevation_rad: f32) -> HrtfSphericalAngles {
+    if !azimuth_rad.is_finite() || !elevation_rad.is_finite() {
+        return HrtfSphericalAngles::default();
+    }
+    let clamped_el = elevation_rad.clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
     let (sin_az, cos_az) = azimuth_rad.sin_cos();
-    let (sin_el, cos_el) = elevation_rad
-        .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
-        .sin_cos();
+    let (_sin_el, cos_el) = clamped_el.sin_cos();
     let lateral_sin = (sin_az * cos_el).clamp(-1.0, 1.0);
     let front_cos = (cos_az * cos_el).clamp(-1.0, 1.0);
-    let _ = sin_el;
     HrtfSphericalAngles {
         azimuth_rad,
-        elevation_rad,
+        elevation_rad: clamped_el,
         lateral_sin,
         front_cos,
         itd_seconds: compute_woodworth_itd_seconds(lateral_sin),
@@ -190,11 +204,15 @@ pub struct BinauralHrtfProcessor {
     notch_g: f32,
     notch_k: f32,
     elev_g: f32,
-    elev_high_scale: f32,
-    elev_low_scale: f32,
+    cur_elev_high_scale: f32,
+    cur_elev_low_scale: f32,
+    target_elev_high_scale: f32,
+    target_elev_low_scale: f32,
     rear_g: f32,
-    rear_high_scale: f32,
+    cur_rear_high_scale: f32,
+    target_rear_high_scale: f32,
     head_lp_alpha: f32,
+    sample_smooth: f32,
     last_az: f32,
     last_el: f32,
     last_fs: f32,
@@ -233,14 +251,18 @@ impl BinauralHrtfProcessor {
             notch_g: 0.5,
             notch_k: 0.35,
             elev_g: 0.4,
-            elev_high_scale: 1.0,
-            elev_low_scale: 1.0,
+            cur_elev_high_scale: 1.0,
+            cur_elev_low_scale: 1.0,
+            target_elev_high_scale: 1.0,
+            target_elev_low_scale: 1.0,
             rear_g: 0.25,
-            rear_high_scale: 1.0,
+            cur_rear_high_scale: 1.0,
+            target_rear_high_scale: 1.0,
             head_lp_alpha: 0.16,
+            sample_smooth: 0.0025,
             last_az: f32::NAN,
             last_el: f32::NAN,
-            last_fs: 0.0,
+            last_fs: 48_000.0,
         };
         p.update_angles(0.0, 0.0, 48_000.0, true);
         p
@@ -255,7 +277,10 @@ impl BinauralHrtfProcessor {
         sample_rate: f32,
         snap_immediately: bool,
     ) {
-        let fs = sample_rate.max(8_000.0);
+        if !azimuth_rad.is_finite() || !elevation_rad.is_finite() || !sample_rate.is_finite() {
+            return;
+        }
+        let fs = sample_rate.clamp(8_000.0, 384_000.0);
         if !snap_immediately
             && (azimuth_rad - self.last_az).abs() < 1e-4
             && (elevation_rad - self.last_el).abs() < 1e-4
@@ -266,6 +291,7 @@ impl BinauralHrtfProcessor {
         self.last_az = azimuth_rad;
         self.last_el = elevation_rad;
         self.last_fs = fs;
+        self.sample_smooth = (0.0025 * (48_000.0 / fs)).clamp(0.0004, 0.02);
 
         let angles = angles_from_azimuth_elevation(azimuth_rad, elevation_rad);
 
@@ -310,13 +336,13 @@ impl BinauralHrtfProcessor {
         self.elev_g = (std::f32::consts::PI * elev_split_fc / fs).tan();
         if elev_norm >= 0.0 {
             // Above listener: overhead Blauert 5–10 kHz air boost (`+5.0 dB` max) + slightly leaner low-end
-            self.elev_high_scale = 1.0 + 0.78 * elev_norm;
-            self.elev_low_scale = 1.0 - 0.14 * elev_norm;
+            self.target_elev_high_scale = 1.0 + 0.78 * elev_norm;
+            self.target_elev_low_scale = 1.0 - 0.14 * elev_norm;
         } else {
             // Below listener: upper-treble floor/body damping (`-6.5 dB`) + subtle sub-grate warmth (`+1.8 dB`)
             let b = -elev_norm;
-            self.elev_high_scale = 1.0 - 0.53 * b;
-            self.elev_low_scale = 1.0 + 0.23 * b;
+            self.target_elev_high_scale = 1.0 - 0.53 * b;
+            self.target_elev_low_scale = 1.0 + 0.23 * b;
         }
 
         // 4. Front vs Behind pinna-rim high-frequency shadowing (`fc = 3200 Hz`)
@@ -324,9 +350,9 @@ impl BinauralHrtfProcessor {
         self.rear_g = (std::f32::consts::PI * rear_fc / fs).tan();
         if angles.front_cos < 0.0 {
             let behind = -angles.front_cos; // 0..=1
-            self.rear_high_scale = 1.0 - 0.45 * behind; // up to -5.2 dB rear pinna shadow above 3.2 kHz
+            self.target_rear_high_scale = 1.0 - 0.45 * behind; // up to -5.2 dB rear pinna shadow above 3.2 kHz
         } else {
-            self.rear_high_scale = 1.0 + 0.16 * angles.front_cos; // subtle frontal presence
+            self.target_rear_high_scale = 1.0 + 0.16 * angles.front_cos; // subtle frontal presence
         }
 
         if snap_immediately {
@@ -336,6 +362,9 @@ impl BinauralHrtfProcessor {
             self.cur_high_gain_l = self.target_high_gain_l;
             self.cur_low_gain_r = self.target_low_gain_r;
             self.cur_high_gain_r = self.target_high_gain_r;
+            self.cur_elev_high_scale = self.target_elev_high_scale;
+            self.cur_elev_low_scale = self.target_elev_low_scale;
+            self.cur_rear_high_scale = self.target_rear_high_scale;
         }
     }
 
@@ -356,18 +385,27 @@ impl BinauralHrtfProcessor {
     /// Spatializes a single mono/stereo input [`Frame`] into a binaural stereo [`Frame`] with zero heap allocations.
     #[inline]
     pub fn process_frame(&mut self, input: Frame) -> Frame {
-        let mono = 0.5 * (input.left + input.right);
+        let mono = if input.left.is_finite() && input.right.is_finite() {
+            0.5 * (input.left + input.right)
+        } else {
+            0.0
+        };
 
-        // Smooth per-ear ITD & ILD parameters (`~8 ms` time constant at 48 kHz) to prevent zipper noise
-        const SMOOTH: f32 = 0.0025;
+        // Sample-rate-invariant per-sample smoothing (`~8 ms` time constant across 8 kHz..192 kHz)
+        let smooth = self.sample_smooth;
         self.cur_delay_samples_l +=
-            (self.target_delay_samples_l - self.cur_delay_samples_l) * SMOOTH;
+            (self.target_delay_samples_l - self.cur_delay_samples_l) * smooth;
         self.cur_delay_samples_r +=
-            (self.target_delay_samples_r - self.cur_delay_samples_r) * SMOOTH;
-        self.cur_low_gain_l += (self.target_low_gain_l - self.cur_low_gain_l) * SMOOTH;
-        self.cur_high_gain_l += (self.target_high_gain_l - self.cur_high_gain_l) * SMOOTH;
-        self.cur_low_gain_r += (self.target_low_gain_r - self.cur_low_gain_r) * SMOOTH;
-        self.cur_high_gain_r += (self.target_high_gain_r - self.cur_high_gain_r) * SMOOTH;
+            (self.target_delay_samples_r - self.cur_delay_samples_r) * smooth;
+        self.cur_low_gain_l += (self.target_low_gain_l - self.cur_low_gain_l) * smooth;
+        self.cur_high_gain_l += (self.target_high_gain_l - self.cur_high_gain_l) * smooth;
+        self.cur_low_gain_r += (self.target_low_gain_r - self.cur_low_gain_r) * smooth;
+        self.cur_high_gain_r += (self.target_high_gain_r - self.cur_high_gain_r) * smooth;
+        self.cur_elev_high_scale +=
+            (self.target_elev_high_scale - self.cur_elev_high_scale) * smooth;
+        self.cur_elev_low_scale += (self.target_elev_low_scale - self.cur_elev_low_scale) * smooth;
+        self.cur_rear_high_scale +=
+            (self.target_rear_high_scale - self.cur_rear_high_scale) * smooth;
 
         // 1. Pinna concha notch (`mono - 0.55 * k * bp` produces a ~-7.5 dB narrow pinna spectral notch)
         let (_lp_n, bp_n, _hp_n) = self.pinna_notch_svf.step(mono, self.notch_g, self.notch_k);
@@ -377,19 +415,19 @@ impl BinauralHrtfProcessor {
         let (lp_e, bp_e, hp_e) =
             self.pinna_elev_svf
                 .step(after_notch, self.elev_g, std::f32::consts::SQRT_2);
-        let after_elev = lp_e * self.elev_low_scale
+        let after_elev = lp_e * self.cur_elev_low_scale
             + std::f32::consts::SQRT_2
                 * bp_e
-                * (0.5 * (self.elev_low_scale + self.elev_high_scale))
-            + hp_e * self.elev_high_scale;
+                * (0.5 * (self.cur_elev_low_scale + self.cur_elev_high_scale))
+            + hp_e * self.cur_elev_high_scale;
 
         // 3. Front/Back pinna rim shadow above 3.2 kHz
         let (lp_fb, bp_fb, hp_fb) =
             self.pinna_rear_svf
                 .step(after_elev, self.rear_g, std::f32::consts::SQRT_2);
         let pinna_out = lp_fb
-            + std::f32::consts::SQRT_2 * bp_fb * (0.5 * (1.0 + self.rear_high_scale))
-            + hp_fb * self.rear_high_scale;
+            + std::f32::consts::SQRT_2 * bp_fb * (0.5 * (1.0 + self.cur_rear_high_scale))
+            + hp_fb * self.cur_rear_high_scale;
 
         // 4. Write into circular ITD delay buffers and read fractional ear delays
         self.delay_buf_l[self.write_idx] = pinna_out;

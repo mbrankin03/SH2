@@ -11,13 +11,17 @@
 use glam::Vec3;
 use sh2_assets::formats::cld::{FloorTriangle, WallSegment};
 
-/// Vertical offset from James's feet (`+Y` downward, `500.0` SH2 units = `1.0 m`) to ear/head height
-/// (`-830.0` SH2 units = `1.66 m`, matching `CharacterHeadRigSpec::JAMES` bind head `-809.1` / eye `-844.6`).
-pub const JAMES_HEAD_OFFSET_Y: f32 = -830.0;
+use crate::modern_camera::CharacterHeadRigSpec;
 
-/// Vertical offset from Maria's feet (`+Y` downward, `500.0` SH2 units = `1.0 m`) to ear/head height
-/// (`-810.0` SH2 units = `1.62 m`, matching `CharacterHeadRigSpec::MARIA` bind head `-794.4` / eye `-825.6`).
-pub const MARIA_HEAD_OFFSET_Y: f32 = -810.0;
+/// Vertical offset from James's feet (`+Y` downward, `500.0` SH2 units = `1.0 m`) to ear/eye anchor height
+/// (`-844.6` SH2 units = `1.6892 m`), extracted 1:1 from retail `hhh_jms.mdl` bones `15/20/22`
+/// (`CharacterHeadRigSpec::JAMES.fallback_model_eye.y`) and `SLUS_202.28` `vcMakeHeroHeadPos` (`0x0019e320`).
+pub const JAMES_HEAD_OFFSET_Y: f32 = CharacterHeadRigSpec::JAMES.fallback_model_eye.y;
+
+/// Vertical offset from Maria's feet (`+Y` downward, `500.0` SH2 units = `1.0 m`) to ear/eye anchor height
+/// (`-825.6` SH2 units = `1.6512 m`), extracted 1:1 from retail `hhh_mar.mdl` bones `9/23/25`
+/// (`CharacterHeadRigSpec::MARIA.fallback_model_eye.y`) and `SLUS_202.28` `vcMakeHeroHeadPos` (`0x0019e320`).
+pub const MARIA_HEAD_OFFSET_Y: f32 = CharacterHeadRigSpec::MARIA.fallback_model_eye.y;
 
 /// Minimum separation along a 3D acoustic ray (`220.0` SH2 units = `44 cm`) required to count two
 /// intersected `.cld` segments as distinct physical walls rather than opposite faces of one room partition.
@@ -157,7 +161,7 @@ where
 /// James's/Maria's head against `.cld` wall/door planes and multi-story floor slabs (`SH2-84`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AcousticOcclusionHit {
-    /// Number of distinct solid `.cld` wall or door barriers intersected (`group == 1` or `3`).
+    /// Number of distinct solid `.cld` wall or door barriers intersected (`wldofs` `group == 1` or `cedofs` `group == 2`).
     pub wall_hit_count: u32,
     /// Number of distinct solid `.cld` floor/ceiling slabs intersected vertically between stories.
     pub slab_hit_count: u32,
@@ -218,20 +222,26 @@ pub const fn is_cld_material_thru(raw_material: u32) -> bool {
 
 /// Relative acoustic transmission weight per solid `.cld` `_CL_HITPOLY_PLANE::material` (`+0x08`).
 ///
-/// Verified against `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`):
+/// Verified across all 337 retail `.cld` files (`{0, 1, 2, 3, 5, 7, 8, 9, 10, 11, 12, 99}`) and
+/// `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`):
 /// - `9, 11, 12` return `0.0` (`Thru` — chainlink fence, iron prison bars / grates, invisible walk boundary).
 /// - `7, 8` return `0.85` (wooden doors / partitions in `ap01.cld` & `ps01.cld` and carpeted dividers).
 /// - `5` returns `1.15` (solid boiler / bulkhead steel plate in `rr21.cld` & `ap01.cld`).
-/// - `0..=4, 6, 10` return `1.0` (standard concrete, plaster, brick, and stone walls).
+/// - `0, 1, 2, 3, 4, 6, 10, 99` (and any other solid `.cld` material) return `1.0` (standard concrete, plaster, brick, stone).
 #[inline]
 pub const fn cld_material_barrier_weight(raw_material: u32) -> f32 {
     if is_cld_material_thru(raw_material) {
         return 0.0;
     }
-    match raw_material & 0x0F {
+    let material = if (raw_material & 0x80) != 0 {
+        raw_material & !0x80
+    } else {
+        raw_material
+    };
+    match material {
         7 | 8 => 0.85, // Wood door / carpeted partition
         5 => 1.15,     // Solid metal plate / bulkhead
-        _ => 1.0,      // Standard concrete / plaster / stone wall
+        _ => 1.0,      // Standard concrete / plaster / stone wall (including retail material 99)
     }
 }
 
@@ -274,8 +284,9 @@ pub fn intersect_ray_triangle_3d(origin: Vec3, target: Vec3, tri: &FloorTriangle
 }
 
 /// Casts a zero-allocation 3D line-of-sight ray from `emitter_pos` to `listener_head_pos`
-/// (in SH2 world units, `+Y` downward) against active `.cld` walls (`group != 2`) and multi-story
-/// floor/ceiling triangles (`SH2-84`).
+/// (in SH2 world units, `+Y` downward) against active `.cld` walls (`wldofs` `group == 1` &
+/// `cedofs` `group == 2`, matching `SLUS_202.28` `clCheckHitEyeVector` `0x00139420`) and
+/// multi-story floor/ceiling slabs (`fldofs` `group == 0`, `clCheckHitEyesOnlyFloorThru` `0x00139010`) (`SH2-84`).
 pub fn raycast_acoustic_occlusion<'w, 'f, W, F>(
     emitter_pos: Vec3,
     listener_head_pos: Vec3,
@@ -286,15 +297,19 @@ where
     W: Iterator<Item = &'w WallSegment>,
     F: Iterator<Item = &'f FloorTriangle>,
 {
+    if !emitter_pos.is_finite() || !listener_head_pos.is_finite() {
+        return AcousticOcclusionHit::clear();
+    }
     let delta = listener_head_pos - emitter_pos;
     let ray_len = delta.length();
-    if ray_len <= 10.0 {
+    if !ray_len.is_finite() || ray_len <= 10.0 {
         return AcousticOcclusionHit::clear();
     }
 
     const MAX_TRACKED_BARRIERS: usize = 8;
     const WALL_Y_EPSILON: f32 = 20.0;
     const ENDPOINT_T_MARGIN: f32 = 0.015;
+    const SLAB_RAY_PAD: f32 = 20.0;
 
     let mut barrier_dists = [0.0f32; MAX_TRACKED_BARRIERS];
     let mut barrier_weights = [0.0f32; MAX_TRACKED_BARRIERS];
@@ -304,11 +319,14 @@ where
     let mut closest_t = 1.0f32;
     let mut primary_material = 0u32;
 
-    // 1. Intersect vertical .cld wall & door planes (`group == 1` main walls, `group == 3` doors/side walls)
+    // 1. Intersect vertical `.cld` wall, door (`wldofs` `group == 1`, e.g. `material == 7`), and
+    //    upper-wall/lintel/arch (`cedofs` `group == 2`) planes.
+    //    `SLUS_202.28` `clCheckHitEyeVector` (`0x00139420` at `0x001394dc..0x0013958c`),
+    //    `clCheckHitEyesOnlyWall` (`0x00139110`), and `clCheckHitThrustGunVector` (`0x00137c70`)
+    //    test `fldofs` (`0`), `wldofs` (`1`), and `cedofs` (`2`) while skipping `swdofs` (`group == 3`,
+    //    waist-high character-walk pushback curbs/furniture tested only in `clCheckBg2Chara` `0x00133a9c`).
     for w in walls {
-        // `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`): skip ceiling trim (`group == 2`)
-        // and acoustically transparent `Thru` barriers (`material == 9` fence, `11` bars/grate, `12` invisible boundary).
-        if w.group == 2 || is_cld_material_thru(w.material) {
+        if w.group == 3 || is_cld_material_thru(w.material) {
             continue;
         }
         if let Some((t, _normal)) = intersect_segment_xz(
@@ -318,7 +336,7 @@ where
             listener_head_pos.z,
             w,
         ) {
-            if !(ENDPOINT_T_MARGIN..=(1.0 - ENDPOINT_T_MARGIN)).contains(&t) {
+            if !t.is_finite() || !(ENDPOINT_T_MARGIN..=(1.0 - ENDPOINT_T_MARGIN)).contains(&t) {
                 continue;
             }
             let y_at_hit = emitter_pos.y + delta.y * t;
@@ -349,8 +367,18 @@ where
         }
     }
 
-    // 2. Intersect multi-story .cld floor/ceiling slabs when vertical separation spans stories (`|dy| > 450`)
+    // 2. Intersect multi-story `.cld` floor/ceiling slabs when vertical separation spans stories (`|dy| > 450`).
+    //    Extend the ray segment by `SLAB_RAY_PAD` (`20.0` SH2 units = `4 cm`) so emitters authored directly
+    //    on an upstairs floor slab (`emitter_pos.y == -1600.0`, `t ≈ 0.0`) still intersect the 2F deck cleanly,
+    //    while rejecting the lower story's own walkable floor beneath the lower endpoint's feet.
     if delta.y.abs() > 450.0 {
+        let ray_dir_unit = delta / ray_len;
+        let padded_origin = emitter_pos - ray_dir_unit * SLAB_RAY_PAD;
+        let padded_target = listener_head_pos + ray_dir_unit * SLAB_RAY_PAD;
+        let padded_len = ray_len + 2.0 * SLAB_RAY_PAD;
+        let upper_y = emitter_pos.y.min(listener_head_pos.y);
+        let lower_y = emitter_pos.y.max(listener_head_pos.y);
+
         for tri in floors {
             // `SLUS_202.28` `clCheckHitEyesOnlyFloorThru` (`0x00139010` -> `0x00139b90`):
             // open metal grates / wire mesh floors (`material == 9, 11, 12`, e.g. Mandarin under Labyrinth grates)
@@ -358,34 +386,34 @@ where
             if is_cld_material_thru(tri.material) {
                 continue;
             }
-            if let Some(t) = intersect_ray_triangle_3d(emitter_pos, listener_head_pos, tri) {
-                if !(0.06..=0.94).contains(&t) {
+            if let Some(t_padded) = intersect_ray_triangle_3d(padded_origin, padded_target, tri) {
+                if !t_padded.is_finite() {
                     continue;
                 }
-                let y_at_hit = emitter_pos.y + delta.y * t;
-                // Ignore the walkable floor directly beneath the emitter or listener feet
-                if (y_at_hit - emitter_pos.y).abs() < 120.0
-                    || (y_at_hit - listener_head_pos.y).abs() < 120.0
-                {
+                let hit_pt = padded_origin + (padded_target - padded_origin) * t_padded;
+                let y_at_hit = hit_pt.y;
+                // Accept iff one endpoint is at or above the slab (`+Y` down: `upper_y <= y_at_hit + 25.0`)
+                // and the other endpoint lies in a story below the slab (`lower_y >= y_at_hit + 350.0`).
+                if upper_y > y_at_hit + 25.0 || lower_y < y_at_hit + 350.0 {
                     continue;
                 }
 
-                let hit_dist = t * ray_len;
+                let unpadded_dist = (t_padded * padded_len - SLAB_RAY_PAD).clamp(0.0, ray_len);
+                let t = (unpadded_dist / ray_len).clamp(0.0, 1.0);
                 let weight = cld_material_barrier_weight(tri.material);
                 if t < closest_t {
                     closest_t = t;
                     primary_material = tri.material;
                 }
 
-                if let Some(existing_idx) = barrier_dists[..barrier_count]
-                    .iter()
-                    .position(|&d| (d - hit_dist).abs() < MIN_DISTINCT_BARRIER_SEPARATION_UNITS)
-                {
+                if let Some(existing_idx) = barrier_dists[..barrier_count].iter().position(|&d| {
+                    (d - unpadded_dist).abs() < MIN_DISTINCT_BARRIER_SEPARATION_UNITS
+                }) {
                     if weight > barrier_weights[existing_idx] {
                         barrier_weights[existing_idx] = weight;
                     }
                 } else if barrier_count < MAX_TRACKED_BARRIERS {
-                    barrier_dists[barrier_count] = hit_dist;
+                    barrier_dists[barrier_count] = unpadded_dist;
                     barrier_weights[barrier_count] = weight;
                     barrier_is_slab[barrier_count] = true;
                     barrier_count += 1;

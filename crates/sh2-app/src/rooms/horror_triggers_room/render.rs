@@ -188,6 +188,7 @@ pub(crate) fn tick_and_render_horror_room_3d(
         if !state.horror_triggers_room.active_se_timers.is_empty() {
             let last_se = state.horror_triggers_room.last_se_id;
             let last_vol = state.horror_triggers_room.last_se_vol;
+            let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
             let emit_local =
                 glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos)
                     - glam::Vec3::from_array(anchor);
@@ -198,8 +199,8 @@ pub(crate) fn tick_and_render_horror_room_3d(
                     eng,
                     last_se,
                     p_local,
-                    p_yaw,
-                    0.0,
+                    listener_yaw,
+                    listener_pitch,
                     state.active_maria,
                     emit_local,
                     last_vol,

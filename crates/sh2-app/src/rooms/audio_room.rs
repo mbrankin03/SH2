@@ -461,9 +461,9 @@ impl AudioDebugRoomController {
                 state.audio_debug.test_emitter_distance = next_dist;
 
                 let p_pos = state.sim_core.scenario.player_position;
-                let p_yaw = state.sim_core.scenario.player_yaw;
-                let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
-                let right = glam::Vec3::new(p_yaw.cos(), 0.0, -p_yaw.sin());
+                let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
+                let fwd = glam::Vec3::new(listener_yaw.sin(), 0.0, listener_yaw.cos());
+                let right = glam::Vec3::new(listener_yaw.cos(), 0.0, -listener_yaw.sin());
                 let emitter_pos = p_pos + (fwd * 0.7 + right * 0.7).normalize() * next_dist;
 
                 if let (Some(eng), Some(bank)) =
@@ -474,8 +474,8 @@ impl AudioDebugRoomController {
                         eng,
                         11048,
                         p_pos,
-                        p_yaw,
-                        0.0,
+                        listener_yaw,
+                        listener_pitch,
                         state.active_maria,
                         emitter_pos,
                         1.0,

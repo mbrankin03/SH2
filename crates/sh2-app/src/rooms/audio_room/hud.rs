@@ -293,11 +293,13 @@ fn render_sfx_and_spatial_panel(
         .as_ref()
         .map(|b| b.primary_sample_rate())
         .unwrap_or(0);
+    let (listener_yaw, _) = state.sim_core.active_listener_yaw_pitch(1.0);
+    let fwd = glam::Vec3::new(listener_yaw.sin(), 0.0, listener_yaw.cos());
+    let right = glam::Vec3::new(listener_yaw.cos(), 0.0, -listener_yaw.sin());
     let spatial_eval = compute_se_call_pos_distance_f(
         p_pos,
-        state.sim_core.scenario.player_yaw,
-        p_pos
-            + glam::Vec3::new(1.0, 0.0, 1.0).normalize() * state.audio_debug.test_emitter_distance,
+        listener_yaw,
+        p_pos + (fwd * 0.7 + right * 0.7).normalize() * state.audio_debug.test_emitter_distance,
         1.0,
     );
 

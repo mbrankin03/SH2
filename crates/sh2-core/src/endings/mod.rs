@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod epilogue_credits;
+pub mod letter_scroll;
 pub mod playing_info;
 pub mod point_evaluator;
 pub mod ranking;
@@ -17,12 +18,24 @@ pub mod special_endings;
 pub mod ufo_slideshow;
 
 pub use epilogue_credits::{
-    active_mary_letter_stanza, credits_descriptor_for_ending, leave_ending_cemetery_draw_distance,
-    CreditsMusicTheme, CreditsPresentationKind, EndingCreditsDescriptor, MaryLetterStanza,
-    StaffCreditsSection, ENDING_CREDITS_TABLE, LEAVE_CEMETERY_ENHANCED_DRAW_DISTANCE_MM,
-    LEAVE_CEMETERY_VANILLA_DRAW_DISTANCE_MM, MARY_FULL_LETTER_STANZAS,
-    MARY_FULL_LETTER_VOICE_AFS_INDEX, SE_IN_WATER_DROWNING_STREAM, SE_MARY_FULL_LETTER_VOICEOVER,
+    credits_descriptor_for_ending, leave_ending_cemetery_draw_distance, CreditsMusicTheme,
+    CreditsPresentationKind, EndingCreditsDescriptor, StaffCreditsSection, ENDING_CREDITS_TABLE,
+    LEAVE_CEMETERY_ENHANCED_DRAW_DISTANCE_MM, LEAVE_CEMETERY_VANILLA_DRAW_DISTANCE_MM,
     TEAM_SILENT_STAFF_SECTIONS,
+};
+pub use letter_scroll::{
+    layout_letter_scroll_entries, letter_scroll_total_duration_secs, parse_letter_mes_entries,
+    visible_letter_entries_at, MaryLetterScrollEntry, ParsedLetterMesEntry, PositionedLetterEntry,
+    CREDITS_BIK_DURATION_SECS, END_BIK_DURATION_SECS, END_DOG_BIK_DURATION_SECS,
+    END_WISH_BIK_DURATION_SECS, IN_WATER_BEDSIDE_DURATION_SECS,
+    IN_WATER_CLOSING_SCROLL_DURATION_SECS, IN_WATER_DROWNING_STREAM_TRIGGER_SECS,
+    IN_WATER_DROWNING_VOICE_AFS_INDEX, IN_WATER_DROWNING_VOICE_DURATION_SECS,
+    LEAVE_LETTER_VOICE_AFS_INDEX, LEAVE_LETTER_VOICE_DELAY_SECS, LEAVE_LETTER_VOICE_DURATION_SECS,
+    LETTER_MSG_E_ENTRIES, LETTER_SCROLL_ENTRY_GAP_PX, LETTER_SCROLL_FONT_LINE_HEIGHT_PX,
+    LETTER_SCROLL_INITIAL_Y_PX, LETTER_SCROLL_SPEED_PX_PER_SEC, LETTER_W0_MSG_E_ENTRIES,
+    LETTER_W1_MSG_E_ENTRIES, LETTER_W2_MSG_E_ENTRIES, MARIA_LETTER_VOICE_AFS_INDEX,
+    MARIA_LETTER_VOICE_DELAY_SECS, MARIA_LETTER_VOICE_DURATION_SECS, SE_IN_WATER_DROWNING_STREAM,
+    SE_LEAVE_LETTER_VOICEOVER, SE_MARIA_LETTER_VOICEOVER, WATER_BIK_DURATION_SECS,
 };
 pub use playing_info::{
     ClearEndKind, GameEnding, MainEndingKind, PlayingInfo, FLAG_ANGELAS_KNIFE_EXAMINED,
@@ -54,8 +67,9 @@ pub use ranking::{
 pub use secret_weapons::{
     evaluate_ngplus_secret_spawns, evaluate_spray_enemy_reaction, try_pickup_chainsaw,
     HyperSprayCanState, HyperSprayColor, HyperSprayTickResult, NgPlusSecretSpawns,
-    SprayEnemyReaction, SprayParticleTimingConfig, ATK_CHAINSAW_OVERHEAD, ATK_CHAINSAW_SWEEP,
-    ATK_CHAINSAW_THRUST_1, ATK_HYPER_SPRAY_STAND, ATK_HYPER_SPRAY_WALK, FLAG_CHAINSAW_PICKED_UP,
+    SprayEnemyReaction, SprayParticleTimingConfig, ATK_CHAINSAW_OVERHEAD_1,
+    ATK_CHAINSAW_OVERHEAD_2, ATK_CHAINSAW_SWING_1, ATK_CHAINSAW_SWING_2, ATK_CHAINSAW_THRUST,
+    ATK_HYPER_SPRAY_STAND, ATK_HYPER_SPRAY_WALK, CHAINSAW_ATTACK_SPECS, FLAG_CHAINSAW_PICKED_UP,
     FLAG_HYPER_SPRAY_PICKED_UP, FLAG_SPAWN_BLUE_GEM, FLAG_SPAWN_CHAINSAW, FLAG_SPAWN_DOG_KEY,
     FLAG_SPAWN_HYPER_SPRAY, HYPER_SPRAY_BASE_MAX_RANGE_MM, HYPER_SPRAY_BASE_MIN_RANGE_MM,
     HYPER_SPRAY_CONE_HALF_ANGLE_RAD, HYPER_SPRAY_FULL_DURATION_SECS,

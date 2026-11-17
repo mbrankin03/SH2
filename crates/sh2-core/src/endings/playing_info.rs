@@ -92,11 +92,11 @@ pub const FLAG_LABYRINTH_MARIA_REVISIT: usize = 371;
 pub const FLAG_HOTEL_READING_ROOM_TAPE: usize = 500;
 /// Event flag: Read Neely's Bar 2nd visit message in Dark South Vale (`Flag 615`, `Stage 2 ev[13] @0x008e7db8` -> `+1` In Water).
 pub const FLAG_NEELYS_BAR_SECOND_MESSAGE: usize = 615;
-/// Event flag: Result flag for *Leave* ending (`Flag 618` at `0x0057669f`).
+/// Event flag: Result flag for *Leave* ending (`Flag 618`, `orl $0x400` at `0x005766d9`).
 pub const FLAG_ENDING_LEAVE: usize = 618;
-/// Event flag: Result flag for *Maria* ending (`Flag 619` at `0x005766ad`).
+/// Event flag: Result flag for *Maria* ending (`Flag 619`, `orl $0x800` at `0x0057669f`).
 pub const FLAG_ENDING_MARIA: usize = 619;
-/// Event flag: Result flag for *In Water* ending (`Flag 620` at `0x005766e7`).
+/// Event flag: Result flag for *In Water* ending (`Flag 620`, `orl $0x1000` at `0x00576711`).
 pub const FLAG_ENDING_IN_WATER: usize = 620;
 /// Event flag: Result flag for *Rebirth* ending (`Flag 621` at `0x0057665d`).
 pub const FLAG_ENDING_REBIRTH: usize = 621;

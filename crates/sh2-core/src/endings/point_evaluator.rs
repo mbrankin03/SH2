@@ -364,7 +364,11 @@ impl EndingPointTracker {
     }
 }
 
-/// Exact tie-breaker logic from `0x00576677..0x0057672a` in `sh2pc.exe`.
+/// Exact branch-for-branch tie-breaker logic from `EvProgEndingJudge` (`0x00576677..0x0057672a` in `sh2pc.exe`).
+///
+/// Register mapping in `sh2pc.exe`:
+/// - `%edi` = `leave`, `%ecx` = `maria`, `%esi` = `in_water`
+/// - `%dl` = `seen_leave` (`0x01`), `%bl` = `seen_maria` (`0x02`), `0x13(%esp)` = `seen_water` (`0x04`).
 fn resolve_ending_winner(
     leave: i32,
     maria: i32,
@@ -373,34 +377,44 @@ fn resolve_ending_winner(
     seen_maria: bool,
     seen_water: bool,
 ) -> MainEndingKind {
-    if !seen_leave && leave >= maria && leave >= in_water {
-        return MainEndingKind::Leave;
-    }
-    if !seen_maria && maria >= leave && maria >= in_water {
-        return MainEndingKind::Maria;
-    }
-    if !seen_water && in_water >= leave && in_water >= maria {
-        return MainEndingKind::InWater;
-    }
-
+    // 0x00576677..0x0057667d: strict Leave win
     if leave > maria && leave > in_water {
         return MainEndingKind::Leave;
     }
+    // 0x0057667f..0x00576689: unseen Leave tied for max
+    if !seen_leave && leave >= maria && leave >= in_water {
+        return MainEndingKind::Leave;
+    }
+    // 0x0057668b..0x00576691: strict Maria win
     if maria > leave && maria > in_water {
         return MainEndingKind::Maria;
     }
+    // 0x00576693..0x0057669d: unseen Maria tied for max
+    if !seen_maria && maria >= leave && maria >= in_water {
+        return MainEndingKind::Maria;
+    }
+    // 0x005766b9..0x005766bf: strict In Water win
     if in_water > leave && in_water > maria {
         return MainEndingKind::InWater;
     }
-
-    if leave == maria && leave > in_water {
+    // 0x005766c1..0x005766c7: if In Water is unseen and neither Leave nor Maria won above
+    // (including `seen_leave && seen_maria && !seen_water` with `leave == maria > in_water`),
+    // `test %al, %al; je 0x00576711` awards the unseen In Water ending!
+    if !seen_water {
+        return MainEndingKind::InWater;
+    }
+    // 0x005766c9..0x005766cf: all 3 base endings previously cleared -> In Water checked first (`>=`)
+    if in_water >= leave && in_water >= maria {
+        return MainEndingKind::InWater;
+    }
+    // 0x005766d1..0x005766d9: Leave checked second (`>=`, e.g. `leave == maria > in_water`)
+    if leave >= maria && leave >= in_water {
         return MainEndingKind::Leave;
     }
-    if leave == in_water && leave > maria {
-        return MainEndingKind::Leave;
+    // 0x005766f3..0x00576716: Maria vs In Water fallback
+    if maria >= in_water {
+        MainEndingKind::Maria
+    } else {
+        MainEndingKind::InWater
     }
-    if maria == in_water && maria > leave {
-        return MainEndingKind::Maria;
-    }
-    MainEndingKind::Leave
 }

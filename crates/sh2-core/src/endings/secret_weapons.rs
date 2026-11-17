@@ -1,22 +1,10 @@
 //! Secret NG+ Weapons: Chainsaw & Hyper Spray (`FlagInit`, `EvProgGetChainsaw`, `enCheckSpray`, `SprayEffect.cpp`).
 //!
-//! Verified 1:1 against:
-//! - PS2 Prototype ELF (`SLUS_202.28`):
-//!   - `EvProgGetChainsaw` (`0x01f02c30`, Stage 4 Forest Trail).
-//!   - `sh2_attack_list` (`0x0038cb90`, attack entries `8..=9` Hyper Spray & `19..=23` Chainsaw).
-//!   - `enCheckSpray` (`0x001425a0`), `enCheckPlayerSprayNow` (`0x00142d90`), `enGetSprayPower` (`0x00142e00`),
-//!     `enCheckDamage` (`0x001424dc`), `enEDBCtrlDamage` (`0x0014c010`), `enPAPCtrlWander` (`0x0015a4d4`),
-//!     `enMKNCtrlConfuse` (`0x00155cfc`), `shGetHumanAttackSprayPos` (`0x00121630`).
-//! - Retail PC Binary (`sh2pc.exe` v1.0 Director's Cut):
-//!   - `FlagInit` NG+ unlock block (`0x0048ab52..0x0048abc3`).
-//!   - `EvProgGetChainsaw` (`0x0059fb00`, `Stage 4 ev[20]` @ `0x008e7138`, Room `0x0156`).
-//!   - Hyper Spray Motorhome spawn (`Stage 2 ev[8]` @ `0x008e7d68`, Room `0x0072`).
-//!   - Hyper Spray can timer (`20.0` s at `0x00533f51`), range/volume taper (`< 10.0` s at `0x00545694` & `0x0054a9c1`),
-//!     color ABGR table (`0x00545896..0x005458c4`), Hard-mode self-damage (`0x00545937..0x005459b8`),
-//!     and empty-can coughing / unequip (`0x005459be..0x00545a00`).
-//! - Silent Hill 2: Enhanced Edition:
-//!   - `Patches/PreventChainsawSpawn.cpp` (`0x0048ab6e` first-playthrough Chainsaw spawn bug toggle).
-//!   - `Patches/SprayEffect.cpp` (30 FPS vanilla vs 60 FPS particle speeds & every-other-frame spawn gate).
+//! Verified 1:1 against `SLUS_202.28` (`EvProgGetChainsaw` `0x01f02c30`, `sh2_attack_list` `0x0038cb90`,
+//! `enCheckSpray` `0x001425a0`, `enCheckDamage` `0x001424dc`, `enEDBCtrlDamage` `0x0014c010`,
+//! `shGetHumanAttackSprayPos` `0x00121630`), `sh2pc.exe` (`FlagInit` `0x0048ab52..0x0048abc3`,
+//! `sh2_attack_list` `0x00629000`, `EvProgGetChainsaw` `0x0059fb00`, spray timer/taper/ABGR/self-damage
+//! `0x00533f51` & `0x00545694..0x00545a00`), and SH2:EE (`PreventChainsawSpawn.cpp`, `SprayEffect.cpp`).
 
 use crate::combat::AttackSpec;
 
@@ -54,9 +42,9 @@ pub const SE_HYPER_SPRAY_HISS: u32 = 0x2B27;
 pub const HYPER_SPRAY_FULL_DURATION_SECS: f32 = 20.0;
 /// Remaining Hyper Spray time below which cone range and hiss volume taper linearly (`10.0` s at `0x00638854`).
 pub const HYPER_SPRAY_TAPER_THRESHOLD_SECS: f32 = 10.0;
-/// Base minimum cone range of Hyper Spray (`-125.0` mm in `sh2_attack_list[8..=9]` at `0x0038cbc8`).
+/// Base minimum cone range of Hyper Spray (`-125.0` mm in `sh2_attack_list[8..=9]` at `SLUS_202.28 @ 0x0038ccbc` / `sh2pc.exe @ 0x0062912c`).
 pub const HYPER_SPRAY_BASE_MIN_RANGE_MM: f32 = -125.0;
-/// Base maximum cone range of Hyper Spray (`1000.0` mm in `sh2_attack_list[8..=9]` at `0x0038cbcc`).
+/// Base maximum cone range of Hyper Spray (`1000.0` mm in `sh2_attack_list[8..=9]` at `SLUS_202.28 @ 0x0038ccc0` / `sh2pc.exe @ 0x00629130`).
 pub const HYPER_SPRAY_BASE_MAX_RANGE_MM: f32 = 1000.0;
 /// Ray origin forward offset in `shGetHumanAttackSprayPos` (`900.0` mm = `0x44610000` at `0x001216ec`).
 pub const HYPER_SPRAY_RAY_STEP_MM: f32 = 900.0;
@@ -67,12 +55,12 @@ pub const HYPER_SPRAY_INITIAL_SFX_VOLUME: f32 = 0.7;
 /// Sustained loop SFX volume above the `10.0` s taper threshold (`0.5` = `0x3f000000` at `0x0054a9d4`).
 pub const HYPER_SPRAY_SUSTAIN_SFX_VOLUME: f32 = 0.5;
 
-/// Authentic Chainsaw melee attacks (`sh2_attack_list[19..=23]` at `0x0038cb90` PS2 / `0x006ec380` PC).
-pub const ATK_CHAINSAW_THRUST_1: AttackSpec = AttackSpec {
+/// Chainsaw horizontal swing 1 (`sh2_attack_list[19]` at `SLUS_202.28 @ 0x0038ce3c` / `sh2pc.exe @ 0x006292ac`).
+pub const ATK_CHAINSAW_SWING_1: AttackSpec = AttackSpec {
     id: 19,
     kind: 1,
-    ap: 200.0,
-    sp: 100.0,
+    ap: 600.0,
+    sp: 0.0,
     min_range: 0.0,
     max_range: 725.0,
     first_hit_frame: 10,
@@ -80,12 +68,12 @@ pub const ATK_CHAINSAW_THRUST_1: AttackSpec = AttackSpec {
     sfx_id: 0x2B26,
 };
 
-/// Chainsaw horizontal sweep (`sh2_attack_list[20]`).
-pub const ATK_CHAINSAW_SWEEP: AttackSpec = AttackSpec {
+/// Chainsaw horizontal swing 2 (`sh2_attack_list[20]` at `SLUS_202.28 @ 0x0038ce60` / `sh2pc.exe @ 0x006292d0`).
+pub const ATK_CHAINSAW_SWING_2: AttackSpec = AttackSpec {
     id: 20,
     kind: 1,
-    ap: 220.0,
-    sp: 100.0,
+    ap: 600.0,
+    sp: 0.0,
     min_range: 0.0,
     max_range: 725.0,
     first_hit_frame: 13,
@@ -93,12 +81,38 @@ pub const ATK_CHAINSAW_SWEEP: AttackSpec = AttackSpec {
     sfx_id: 0x2B26,
 };
 
-/// Chainsaw overhead revved plunge (`sh2_attack_list[23]`).
-pub const ATK_CHAINSAW_OVERHEAD: AttackSpec = AttackSpec {
+/// Chainsaw revved overhead chop 1 (`sh2_attack_list[21]` at `SLUS_202.28 @ 0x0038ce84` / `sh2pc.exe @ 0x006292f4`).
+pub const ATK_CHAINSAW_OVERHEAD_1: AttackSpec = AttackSpec {
+    id: 21,
+    kind: 1,
+    ap: 1000.0,
+    sp: 0.0,
+    min_range: 0.0,
+    max_range: 725.0,
+    first_hit_frame: 17,
+    last_hit_frame: 18,
+    sfx_id: 0x2B26,
+};
+
+/// Chainsaw revved overhead chop 2 (`sh2_attack_list[22]` at `SLUS_202.28 @ 0x0038cea8` / `sh2pc.exe @ 0x00629318`).
+pub const ATK_CHAINSAW_OVERHEAD_2: AttackSpec = AttackSpec {
+    id: 22,
+    kind: 1,
+    ap: 1000.0,
+    sp: 0.0,
+    min_range: 0.0,
+    max_range: 725.0,
+    first_hit_frame: 18,
+    last_hit_frame: 19,
+    sfx_id: 0x2B26,
+};
+
+/// Chainsaw forward thrust (`sh2_attack_list[23]` at `SLUS_202.28 @ 0x0038cecc` / `sh2pc.exe @ 0x0062933c`).
+pub const ATK_CHAINSAW_THRUST: AttackSpec = AttackSpec {
     id: 23,
     kind: 1,
-    ap: 300.0,
-    sp: 120.0,
+    ap: 250.0,
+    sp: 0.0,
     min_range: 0.0,
     max_range: 525.0,
     first_hit_frame: 12,
@@ -106,11 +120,20 @@ pub const ATK_CHAINSAW_OVERHEAD: AttackSpec = AttackSpec {
     sfx_id: 0x2B26,
 };
 
-/// Standing Hyper Spray attack spec (`sh2_attack_list[8]` at `0x0038cb90` PS2 / `0x006ec380` PC).
+/// Complete 5-entry Chainsaw slice of `sh2_attack_list[19..=23]` (`SLUS_202.28 @ 0x0038cb90` / `sh2pc.exe @ 0x00629000`).
+pub const CHAINSAW_ATTACK_SPECS: [AttackSpec; 5] = [
+    ATK_CHAINSAW_SWING_1,
+    ATK_CHAINSAW_SWING_2,
+    ATK_CHAINSAW_OVERHEAD_1,
+    ATK_CHAINSAW_OVERHEAD_2,
+    ATK_CHAINSAW_THRUST,
+];
+
+/// Standing Hyper Spray attack spec (`sh2_attack_list[8]` at `SLUS_202.28 @ 0x0038ccb0` / `sh2pc.exe @ 0x00629120`).
 pub const ATK_HYPER_SPRAY_STAND: AttackSpec = AttackSpec {
     id: 8,
     kind: 7,
-    ap: 0.0,
+    ap: 1.0,
     sp: 0.0,
     min_range: HYPER_SPRAY_BASE_MIN_RANGE_MM,
     max_range: HYPER_SPRAY_BASE_MAX_RANGE_MM,
@@ -119,11 +142,11 @@ pub const ATK_HYPER_SPRAY_STAND: AttackSpec = AttackSpec {
     sfx_id: SE_HYPER_SPRAY_HISS,
 };
 
-/// Walking Hyper Spray attack spec (`sh2_attack_list[9]` at `0x0038cb90` PS2 / `0x006ec380` PC).
+/// Walking Hyper Spray attack spec (`sh2_attack_list[9]` at `SLUS_202.28 @ 0x0038ccd4` / `sh2pc.exe @ 0x00629144`).
 pub const ATK_HYPER_SPRAY_WALK: AttackSpec = AttackSpec {
     id: 9,
     kind: 7,
-    ap: 0.0,
+    ap: 1.0,
     sp: 0.0,
     min_range: HYPER_SPRAY_BASE_MIN_RANGE_MM,
     max_range: HYPER_SPRAY_BASE_MAX_RANGE_MM,

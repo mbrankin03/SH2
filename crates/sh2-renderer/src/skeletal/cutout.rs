@@ -197,6 +197,169 @@ pub fn dilate_transparent_border_rgb(width: u32, height: u32, rgba: &mut [u8], p
     }
 }
 
+/// Transfers SH2:EE RGB color corrections (such as Maria's restored pink hair tips on `tid = 1246`
+/// in `sh2e/chr/mar/lll_mar.mdl` and `sh2e/chr2/mar/lxx_mar.mdl`) onto a 4K AI Master override
+/// texture while preserving 4K strand detail, and strips offline-upscaler `(255,255,255,0)` /
+/// `(0,0,0,0)` gutter bleed along binary cutout borders.
+pub fn refine_4k_chr_texture_from_sources(
+    van_w: u32,
+    van_h: u32,
+    van_raw_rgba: &[u8],
+    sh2e_raw: Option<(u32, u32, &[u8])>,
+    dst_w: u32,
+    dst_h: u32,
+    dst_4k_rgba: &mut [u8],
+) {
+    let vw = van_w as usize;
+    let vh = van_h as usize;
+    let dw = dst_w as usize;
+    let dh = dst_h as usize;
+    if vw == 0
+        || vh == 0
+        || dw == 0
+        || dh == 0
+        || van_raw_rgba.len() != vw * vh * 4
+        || dst_4k_rgba.len() != dw * dh * 4
+    {
+        return;
+    }
+
+    let van_pixels = van_raw_rgba.as_chunks::<4>().0;
+    let has_zero_alpha = van_pixels.iter().any(|px| px[3] == 0);
+    let mid_alpha_count = van_pixels
+        .iter()
+        .filter(|px| px[3] > 0 && px[3] < 240)
+        .count();
+    let is_binary_cutout_source = has_zero_alpha && mid_alpha_count * 100 < van_pixels.len();
+
+    let sh2e_edit_slice = sh2e_raw.and_then(|(sw, sh, s_rgba)| {
+        if sw == van_w && sh == van_h && s_rgba.len() == van_raw_rgba.len() {
+            let differs_rgb = van_pixels
+                .iter()
+                .zip(s_rgba.as_chunks::<4>().0.iter())
+                .any(|(v, s)| v[0] != s[0] || v[1] != s[1] || v[2] != s[2]);
+            differs_rgb.then_some(s_rgba)
+        } else {
+            None
+        }
+    });
+
+    if !is_binary_cutout_source && sh2e_edit_slice.is_none() {
+        return;
+    }
+
+    let mut van_dil = van_raw_rgba.to_vec();
+    dilate_transparent_border_rgb(van_w, van_h, &mut van_dil, 6);
+
+    let sh2e_dil = sh2e_edit_slice.map(|s_rgba| {
+        let mut buf = s_rgba.to_vec();
+        dilate_transparent_border_rgb(van_w, van_h, &mut buf, 6);
+        buf
+    });
+
+    let scale_x = (vw as f32) / (dw as f32);
+    let scale_y = (vh as f32) / (dh as f32);
+
+    for y4 in 0..dh {
+        let sy = ((y4 as f32 + 0.5) * scale_y - 0.5).clamp(0.0, (vh - 1) as f32);
+        let y0 = sy.floor() as usize;
+        let y1 = (y0 + 1).min(vh - 1);
+        let fy = sy - (y0 as f32);
+
+        for x4 in 0..dw {
+            let sx = ((x4 as f32 + 0.5) * scale_x - 0.5).clamp(0.0, (vw - 1) as f32);
+            let x0 = sx.floor() as usize;
+            let x1 = (x0 + 1).min(vw - 1);
+            let fx = sx - (x0 as f32);
+
+            let van_rgb = bilerp_rgb(&van_dil, vw, x0, y0, x1, y1, fx, fy);
+            let dst_base = (y4 * dw + x4) * 4;
+            let mut rgb = [
+                dst_4k_rgba[dst_base] as f32,
+                dst_4k_rgba[dst_base + 1] as f32,
+                dst_4k_rgba[dst_base + 2] as f32,
+            ];
+
+            if is_binary_cutout_source {
+                let src_a = bilerp_alpha(van_raw_rgba, vw, x0, y0, x1, y1, fx, fy);
+                if src_a < 254.0 {
+                    let w_clean = ((254.0 - src_a) * (1.0 / 50.0)).clamp(0.0, 1.0);
+                    for c in 0..3 {
+                        rgb[c] = rgb[c] * (1.0 - w_clean) + van_rgb[c] * w_clean;
+                    }
+                }
+            }
+
+            if let Some(ref s_dil) = sh2e_dil {
+                let sh2e_rgb = bilerp_rgb(s_dil, vw, x0, y0, x1, y1, fx, fy);
+                for c in 0..3 {
+                    let ratio = (sh2e_rgb[c] + 12.0) / (van_rgb[c] + 12.0);
+                    rgb[c] = (rgb[c] * ratio).clamp(0.0, 255.0);
+                }
+            }
+
+            dst_4k_rgba[dst_base] = rgb[0].round().clamp(0.0, 255.0) as u8;
+            dst_4k_rgba[dst_base + 1] = rgb[1].round().clamp(0.0, 255.0) as u8;
+            dst_4k_rgba[dst_base + 2] = rgb[2].round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn bilerp_rgb(
+    rgba: &[u8],
+    width: usize,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    fx: f32,
+    fy: f32,
+) -> [f32; 3] {
+    let i00 = (y0 * width + x0) * 4;
+    let i10 = (y0 * width + x1) * 4;
+    let i01 = (y1 * width + x0) * 4;
+    let i11 = (y1 * width + x1) * 4;
+    let w00 = (1.0 - fx) * (1.0 - fy);
+    let w10 = fx * (1.0 - fy);
+    let w01 = (1.0 - fx) * fy;
+    let w11 = fx * fy;
+    [
+        rgba[i00] as f32 * w00
+            + rgba[i10] as f32 * w10
+            + rgba[i01] as f32 * w01
+            + rgba[i11] as f32 * w11,
+        rgba[i00 + 1] as f32 * w00
+            + rgba[i10 + 1] as f32 * w10
+            + rgba[i01 + 1] as f32 * w01
+            + rgba[i11 + 1] as f32 * w11,
+        rgba[i00 + 2] as f32 * w00
+            + rgba[i10 + 2] as f32 * w10
+            + rgba[i01 + 2] as f32 * w01
+            + rgba[i11 + 2] as f32 * w11,
+    ]
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn bilerp_alpha(
+    rgba: &[u8],
+    width: usize,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    fx: f32,
+    fy: f32,
+) -> f32 {
+    let a00 = rgba[(y0 * width + x0) * 4 + 3] as f32;
+    let a10 = rgba[(y0 * width + x1) * 4 + 3] as f32;
+    let a01 = rgba[(y1 * width + x0) * 4 + 3] as f32;
+    let a11 = rgba[(y1 * width + x1) * 4 + 3] as f32;
+    (a00 * (1.0 - fx) + a10 * fx) * (1.0 - fy) + (a01 * (1.0 - fx) + a11 * fx) * fy
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +379,46 @@ mod tests {
         // Pixels 1 & 2 inherit hair RGB while keeping alpha == 0
         assert_eq!(&rgba[4..8], &[120, 96, 64, 0]);
         assert_eq!(&rgba[8..12], &[120, 96, 64, 0]);
+    }
+
+    #[test]
+    fn refine_4k_chr_texture_transfers_sh2e_pink_tips_and_cleans_cutout_gutter() {
+        // 2x1 vanilla: [blonde tip (168, 148, 110, 255), black cutout gutter (0, 0, 0, 0)]
+        let van = vec![168, 148, 110, 255, 0, 0, 0, 0];
+        // 2x1 SH2:EE: [pink-dyed tip (168, 108, 94, 255), black cutout gutter (0, 0, 0, 0)]
+        let sh2e = vec![168, 108, 94, 255, 0, 0, 0, 0];
+        // 4x1 4K upscaled from vanilla with dark gutter bleed on pixel 1 (`alpha = 140`, darkened RGB)
+        let mut dst_4k = vec![
+            170, 150, 112, 255, // interior strand
+            60, 50, 35, 140, // upscaler gutter-bled fringe
+            0, 0, 0, 0, // cutout
+            0, 0, 0, 0, // cutout
+        ];
+
+        refine_4k_chr_texture_from_sources(
+            2,
+            1,
+            &van,
+            Some((2, 1, sh2e.as_slice())),
+            4,
+            1,
+            &mut dst_4k,
+        );
+
+        // Interior pixel gains SH2:EE's rose-pink ratio (`R` stays ~170, `G` drops ~110)
+        assert!(dst_4k[0] >= 165);
+        assert!(dst_4k[1] <= 115);
+        assert!(
+            dst_4k[0] as i32 - dst_4k[1] as i32 >= 50,
+            "Expected rose-pink R-G spread >= 50, got {:?}",
+            &dst_4k[0..4]
+        );
+        // Fringe pixel (`alpha = 140`) is decontaminated from `(60, 50, 35)` up to bright pink-blonde!
+        assert!(
+            dst_4k[4] >= 150,
+            "Expected gutter-decontaminated red >= 150, got {:?}",
+            &dst_4k[4..8]
+        );
+        assert_eq!(dst_4k[7], 140);
     }
 }

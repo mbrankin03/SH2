@@ -19,9 +19,10 @@ pub use skeletal::{
     classify_primitive_body_region, cranial_bone_mask, decode_model_textures_for_inspection,
     dilate_transparent_border_rgb, discover_pose_presets, dominant_vertex_bone,
     find_cranial_root_bone, is_default_active_pose, is_opaque_cutout_primitive,
-    partition_first_person_triangles, DecodedModelTextureMap, GpuSkeletalMesh,
-    GpuSkeletalPrimitive, PoseVariantPreset, SkeletalBodyRegion, SkeletalMaterialUniforms,
-    SkeletalPassStage, SkeletalPipeline, SkeletalVertex, SkeletonBoneUniforms, MAX_SKELETON_BONES,
+    partition_first_person_triangles, refine_4k_chr_texture_from_sources, DecodedModelTextureMap,
+    GpuSkeletalMesh, GpuSkeletalPrimitive, PoseVariantPreset, SkeletalBodyRegion,
+    SkeletalMaterialUniforms, SkeletalPassStage, SkeletalPipeline, SkeletalVertex,
+    SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 use std::sync::Arc;
 use wgpu::util::DeviceExt;

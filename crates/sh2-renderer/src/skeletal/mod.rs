@@ -14,7 +14,7 @@ pub use body_region::{
 };
 pub use cutout::{
     decode_model_textures_for_inspection, dilate_transparent_border_rgb,
-    is_opaque_cutout_primitive, DecodedModelTextureMap,
+    is_opaque_cutout_primitive, refine_4k_chr_texture_from_sources, DecodedModelTextureMap,
 };
 pub use material::{
     discover_pose_presets, is_default_active_pose, pack_aligned_material_buffer, PoseVariantPreset,

@@ -201,17 +201,37 @@ impl AcousticOcclusionHit {
     }
 }
 
-/// Relative acoustic transmission weight per `.cld` material index (`0..=15`).
+/// Returns `true` when a `.cld` `_CL_HITPOLY_PLANE::material` (`+0x08`) is acoustically and
+/// visually see-through (`Thru`), matching `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90` at
+/// `0x00139be4..0x00139c04`) and `clCheckHitEyesOnlyFloorThru` (`0x00139010`):
+/// - `9`: Chainlink fence / wire mesh (`Thru` — sight and sound pass unoccluded)
+/// - `11`: Toluca Prison iron cell bars & Labyrinth open metal floor grates (`Thru`)
+/// - `12`: Invisible player walk-containment boundary (`er01.cld`, `rr21.cld`, `hp01.cld`, `ob01.cld`) (`Thru`)
+#[inline]
+pub const fn is_cld_material_thru(raw_material: u32) -> bool {
+    // Synthetic surface-SFX pad markers have bit 0x80 set; only inspect raw `.cld` plane materials.
+    if (raw_material & 0x80) != 0 {
+        return false;
+    }
+    matches!(raw_material, 9 | 11 | 12)
+}
+
+/// Relative acoustic transmission weight per solid `.cld` `_CL_HITPOLY_PLANE::material` (`+0x08`).
 ///
-/// Wooden doors/partitions (`material == 7` in `ap01.cld` / `ps01.cld`) transmit slightly more midrange
-/// (`0.85`), standard plaster/concrete walls (`0`) evaluate to `1.0`, and heavy stone/metal bulkheads
-/// (`5, 9, 11, 12`) evaluate to `1.15`.
+/// Verified against `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`):
+/// - `9, 11, 12` return `0.0` (`Thru` — chainlink fence, iron prison bars / grates, invisible walk boundary).
+/// - `7, 8` return `0.85` (wooden doors / partitions in `ap01.cld` & `ps01.cld` and carpeted dividers).
+/// - `5` returns `1.15` (solid boiler / bulkhead steel plate in `rr21.cld` & `ap01.cld`).
+/// - `0..=4, 6, 10` return `1.0` (standard concrete, plaster, brick, and stone walls).
 #[inline]
 pub const fn cld_material_barrier_weight(raw_material: u32) -> f32 {
+    if is_cld_material_thru(raw_material) {
+        return 0.0;
+    }
     match raw_material & 0x0F {
-        7 | 8 => 0.85,           // Wood door / carpeted partition
-        5 | 9 | 11 | 12 => 1.15, // Solid metal / heavy masonry
-        _ => 1.0,                // Standard concrete / plaster wall
+        7 | 8 => 0.85, // Wood door / carpeted partition
+        5 => 1.15,     // Solid metal plate / bulkhead
+        _ => 1.0,      // Standard concrete / plaster / stone wall
     }
 }
 
@@ -286,7 +306,9 @@ where
 
     // 1. Intersect vertical .cld wall & door planes (`group == 1` main walls, `group == 3` doors/side walls)
     for w in walls {
-        if w.group == 2 {
+        // `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`): skip ceiling trim (`group == 2`)
+        // and acoustically transparent `Thru` barriers (`material == 9` fence, `11` bars/grate, `12` invisible boundary).
+        if w.group == 2 || is_cld_material_thru(w.material) {
             continue;
         }
         if let Some((t, _normal)) = intersect_segment_xz(
@@ -330,6 +352,12 @@ where
     // 2. Intersect multi-story .cld floor/ceiling slabs when vertical separation spans stories (`|dy| > 450`)
     if delta.y.abs() > 450.0 {
         for tri in floors {
+            // `SLUS_202.28` `clCheckHitEyesOnlyFloorThru` (`0x00139010` -> `0x00139b90`):
+            // open metal grates / wire mesh floors (`material == 9, 11, 12`, e.g. Mandarin under Labyrinth grates)
+            // are acoustically see-through (`Thru`) and must not muffle vertical sources!
+            if is_cld_material_thru(tri.material) {
+                continue;
+            }
             if let Some(t) = intersect_ray_triangle_3d(emitter_pos, listener_head_pos, tri) {
                 if !(0.06..=0.94).contains(&t) {
                     continue;

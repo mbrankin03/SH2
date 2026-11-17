@@ -81,6 +81,49 @@ fn test_sh2_84_cld_raycast_wall_door_and_slab_occlusion() {
     assert!(slab_params.occluded);
     assert_eq!(slab_params.slab_hit_count, 1);
     assert!((OCCLUDED_MIN_CUTOFF_HZ..=OCCLUDED_MAX_CUTOFF_HZ).contains(&slab_params.dry_cutoff_hz));
+
+    // 4. `SLUS_202.28` `clCheckHitEyeVectorWall` (`0x00139b90`) & `clCheckHitEyesOnlyFloorThru` (`0x00139010`):
+    //    `material == 9` (chainlink fence), `11` (Toluca Prison iron cell bars / Labyrinth open metal floor grate),
+    //    and `12` (invisible walk-containment boundary in `er01.cld`/`rr21.cld`) MUST be acoustically `Thru` (unoccluded)!
+    for thru_mat in [9u32, 11, 12] {
+        let mut thru_world = CollisionWorld::new();
+        thru_world.add_extra_wall(WallSegment::new(
+            [-1000.0, 0.0],
+            [1000.0, 0.0],
+            -1600.0,
+            0.0,
+            1,
+            thru_mat,
+        ));
+        thru_world.floors.push(FloorTriangle::new(
+            [
+                [-1000.0, -1600.0, -1000.0],
+                [1000.0, -1600.0, -1000.0],
+                [1000.0, -1600.0, 1000.0],
+            ],
+            thru_mat,
+        ));
+        let thru_wall_eval = evaluate_world_occlusion(
+            &thru_world,
+            Vec3::new(0.0, -500.0, 1200.0),
+            Vec3::new(0.0, 0.0, -1200.0),
+            false,
+        );
+        assert!(
+            !thru_wall_eval.occluded,
+            "SLUS_202.28 Thru wall material {thru_mat} (0x00139b90) must NOT muffle sound"
+        );
+        let thru_grate_eval = evaluate_world_occlusion(
+            &thru_world,
+            Vec3::new(200.0, -2400.0, -200.0),
+            Vec3::new(200.0, 0.0, -200.0),
+            false,
+        );
+        assert!(
+            !thru_grate_eval.occluded,
+            "SLUS_202.28 Thru floor grate material {thru_mat} (0x00139010) must NOT muffle vertical Mandarin/stairwell sound"
+        );
+    }
 }
 
 #[test]
@@ -96,12 +139,13 @@ fn test_sh2_84_retail_apartment_and_hospital_cld_occlusion() {
     let world = CollisionWorld::from_cld(&cld);
     assert!(!world.walls.is_empty());
 
-    // Pick a real full-height interior apartment wall in `ap01.cld` (`y_top <= -1100`, `y_bottom >= -25`)
+    // Pick a real full-height solid interior apartment wall in `ap01.cld` (`y_top <= -1100`, `y_bottom >= -25`)
     let sample_wall = world
         .walls
         .iter()
         .find(|w| {
             w.group != 2
+                && !sh2_core::collision::is_cld_material_thru(w.material)
                 && w.y_top <= -1100.0
                 && w.y_bottom >= -25.0
                 && ((w.end[0] - w.start[0]).hypot(w.end[1] - w.start[1]) > 500.0)

@@ -28,7 +28,7 @@ pub use controller::{
 pub use dynamic::{DynamicFloor, DynamicWall};
 pub use grid::SpatialGrid;
 pub use raycast::{
-    cld_material_barrier_weight, intersect_ray_triangle_3d, listener_head_position,
-    raycast_acoustic_occlusion, AcousticOcclusionHit, RayHit, RaycastFilter, JAMES_HEAD_OFFSET_Y,
-    MARIA_HEAD_OFFSET_Y, MIN_DISTINCT_BARRIER_SEPARATION_UNITS,
+    cld_material_barrier_weight, intersect_ray_triangle_3d, is_cld_material_thru,
+    listener_head_position, raycast_acoustic_occlusion, AcousticOcclusionHit, RayHit,
+    RaycastFilter, JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y, MIN_DISTINCT_BARRIER_SEPARATION_UNITS,
 };

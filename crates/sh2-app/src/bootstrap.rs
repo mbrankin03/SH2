@@ -351,18 +351,22 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         initial_audio_pack,
     ));
 
-    let target_audio_device = menu_ctrl
-        .options_menu
-        .original_config
-        .audio
-        .selected_output_device
-        .clone();
+    let audio_cfg = &menu_ctrl.options_menu.original_config.audio;
+    let target_audio_device = audio_cfg.selected_output_device.clone();
 
     let audio_engine = match AudioEngine::new_with_device(target_audio_device.as_deref()) {
-        Ok(engine) => {
+        Ok(mut engine) => {
+            engine.set_master_volume(audio_cfg.master_volume);
+            engine.set_bgm_volume(audio_cfg.bgm_volume);
+            engine.set_sfx_volume(audio_cfg.sfx_volume);
+            engine.set_voice_volume(audio_cfg.dialogue_volume);
+            engine.set_spatial_audio_mode(audio_cfg.spatial_audio_mode);
+            engine.set_acoustic_occlusion_enabled(audio_cfg.enable_acoustic_occlusion);
             tracing::info!(
-                "Audio engine successfully initialized with Kira runtime (Device: {:?}).",
-                target_audio_device.as_deref().unwrap_or("Default")
+                "Audio engine successfully initialized with Kira runtime (Device: {:?}, Spatial: {:?}, Occlusion: {}).",
+                target_audio_device.as_deref().unwrap_or("Default"),
+                audio_cfg.spatial_audio_mode,
+                audio_cfg.enable_acoustic_occlusion,
             );
             Some(engine)
         }

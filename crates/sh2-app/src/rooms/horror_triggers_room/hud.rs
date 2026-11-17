@@ -25,6 +25,7 @@ pub(crate) fn render_horror_room_hud(
     let anchor = active_scenario_anchor(state);
     let p_local = state.sim_core.scenario.player_position;
     let p_yaw = state.sim_core.scenario.player_yaw;
+    let (listener_yaw, _) = state.sim_core.active_listener_yaw_pitch(1.0);
     let p_world = glam::Vec3::new(
         anchor[0] + p_local.x,
         anchor[1] + p_local.y,
@@ -33,7 +34,7 @@ pub(crate) fn render_horror_room_hud(
     let emit_world = glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos);
     let eval = compute_se_call_pos_distance_f(
         p_world,
-        p_yaw,
+        listener_yaw,
         emit_world,
         state.horror_triggers_room.last_se_vol,
     );

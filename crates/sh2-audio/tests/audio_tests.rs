@@ -22,5 +22,7 @@ mod dsp_and_looping;
 #[cfg(not(target_os = "windows"))]
 #[path = "suite/engine_hardware.rs"]
 mod engine_hardware;
+#[path = "suite/occlusion_and_hrtf.rs"]
+mod occlusion_and_hrtf;
 #[path = "suite/sfx_and_footsteps.rs"]
 mod sfx_and_footsteps;

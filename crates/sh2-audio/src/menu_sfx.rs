@@ -3,17 +3,21 @@
 use crate::beta_audio_catalog::{
     CutSfxCatalogEntry, LAURA_LETTER_VOICEOVER_SLICES, VOICE_AFS_LAURA_LETTER_INDEX,
 };
+use crate::hrtf::compute_listener_spherical_angles;
+use crate::occlusion::{evaluate_world_occlusion, OcclusionDspParams};
 use crate::sfx_bank::{
     compute_se_call_pos_distance_f, footstep_sddata_indices, resolve_se_id_to_sddata_index,
     resolve_se_id_to_voice_afs_index, SfxSpatialEval,
 };
+use crate::spatial_voice::{SpatialVoiceHandle, SpatialVoiceInitParams};
 use crate::{AudioEngine, AudioError};
 use glam::Vec3;
 use kira::sound::static_sound::StaticSoundHandle;
 use sh2_assets::formats::sound::{
     decode_afs_slice_to_wav, parse_afs_index, parse_sddata, slice_wav_time_range, WavEntry,
 };
-use sh2_core::{AudioPackPreference, SurfaceMaterial};
+use sh2_core::collision::CollisionWorld;
+use sh2_core::{listener_head_position, AudioPackPreference, SurfaceMaterial};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -85,6 +89,8 @@ pub struct MenuAudioBank {
     pub active_cut_audio_handle: Option<StaticSoundHandle>,
     /// Active 3D spatial sound handles keyed by `se_id` (`0x515910` `SePosMove` / `0x515740` `SePosSet`).
     pub active_spatial_handles: HashMap<u32, StaticSoundHandle>,
+    /// Active 3D `.cld`-occluded & HRTF/PS2 spatial voice handles keyed by `se_id` (`SH2-84`).
+    pub active_spatial_voices: HashMap<u32, SpatialVoiceHandle>,
 }
 
 impl MenuAudioBank {
@@ -124,6 +130,7 @@ impl MenuAudioBank {
             last_footstep_handle: None,
             active_cut_audio_handle: None,
             active_spatial_handles: HashMap::new(),
+            active_spatial_voices: HashMap::new(),
         };
 
         let prefer_ee = matches!(
@@ -394,7 +401,8 @@ impl MenuAudioBank {
         }
     }
 
-    /// Plays a 3D positional sound effect by its `se_id` using `SeCallPosDistanceF` (`0x5155E0`) distance attenuation.
+    /// Plays a 3D positional sound effect by its `se_id` using `SeCallPosDistanceF` (`0x5155E0`) distance attenuation
+    /// and the active spatialization mode (`ClassicPs2Stereo` vs `BinauralHrtf`) (`SH2-61` & `SH2-84`).
     pub fn play_se_id_3d(
         &self,
         engine: &mut AudioEngine,
@@ -403,25 +411,80 @@ impl MenuAudioBank {
         listener_yaw: f32,
         source_pos: Vec3,
         base_volume: f32,
-    ) -> Result<(SfxSpatialEval, Option<StaticSoundHandle>), AudioError> {
+    ) -> Result<(SfxSpatialEval, Option<SpatialVoiceHandle>), AudioError> {
+        let (eval, _occ, voice_opt) = self.play_se_id_3d_with_occlusion(
+            engine,
+            se_id,
+            listener_pos,
+            listener_yaw,
+            0.0,
+            false,
+            source_pos,
+            base_volume,
+            None,
+        )?;
+        Ok((eval, voice_opt))
+    }
+
+    /// Plays a 3D positional sound effect by `se_id` with real-time `.cld` raycast wall/door occlusion
+    /// and `ClassicPs2Stereo` / `BinauralHrtf` 3D spatialization (`SH2-84`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_se_id_3d_with_occlusion(
+        &self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        listener_pitch: f32,
+        is_maria: bool,
+        source_pos: Vec3,
+        base_volume: f32,
+        collision: Option<&CollisionWorld>,
+    ) -> Result<
+        (
+            SfxSpatialEval,
+            OcclusionDspParams,
+            Option<SpatialVoiceHandle>,
+        ),
+        AudioError,
+    > {
         let eval =
             compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
+        let head_pos = listener_head_position(listener_pos, is_maria);
+        let raw_occlusion = match collision {
+            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
+            None => OcclusionDspParams::unoccluded(),
+        };
+        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
+            raw_occlusion
+        } else {
+            OcclusionDspParams::unoccluded()
+        };
         if eval.effective_gain <= 0.001 {
-            return Ok((eval, None));
+            return Ok((eval, reported_occlusion, None));
         }
 
+        let angles =
+            compute_listener_spherical_angles(head_pos, listener_yaw, listener_pitch, source_pos);
+        let init = SpatialVoiceInitParams {
+            base_distance_gain: eval.effective_gain,
+            stereo_pan: eval.stereo_pan,
+            angles,
+            occlusion: raw_occlusion,
+        };
+
         if let Some(wav) = self.resolve_se_id(se_id) {
-            let handle = engine.play_sfx_panned(wav, eval.effective_gain, eval.stereo_pan)?;
-            Ok((eval, Some(handle)))
+            let handle = engine.play_sfx_spatial_3d(wav, init)?;
+            Ok((eval, reported_occlusion, Some(handle)))
         } else {
-            let handle = synthesize_fallback_cue(engine, SoundCueKind::Footstep)?;
-            Ok((eval, handle))
+            let _ = synthesize_fallback_cue(engine, SoundCueKind::Footstep)?;
+            Ok((eval, reported_occlusion, None))
         }
     }
 
     /// Plays a 3D positional sound effect by `se_id` (lazily loading `voice.afs` streams if needed),
     /// replacing any previous instance of the same `se_id` and storing its handle so `SePosMove` / `SePosSet`
-    /// can update its stereo pan and distance gain every frame (`SH2-47`).
+    /// can update its stereo pan / HRTF angles and `.cld` occlusion every frame (`SH2-47` & `SH2-84`).
     pub fn play_se_id_3d_tracked(
         &mut self,
         engine: &mut AudioEngine,
@@ -431,6 +494,35 @@ impl MenuAudioBank {
         source_pos: Vec3,
         base_volume: f32,
     ) -> Result<SfxSpatialEval, AudioError> {
+        let (eval, _occ) = self.play_se_id_3d_tracked_with_occlusion(
+            engine,
+            se_id,
+            listener_pos,
+            listener_yaw,
+            0.0,
+            false,
+            source_pos,
+            base_volume,
+            None,
+        )?;
+        Ok(eval)
+    }
+
+    /// Plays and tracks a 3D positional sound effect by `se_id` with live `.cld` raycast wall/door occlusion
+    /// and Binaural HRTF / Classic PS2 Stereo spatialization (`SH2-84`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_se_id_3d_tracked_with_occlusion(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        listener_pitch: f32,
+        is_maria: bool,
+        source_pos: Vec3,
+        base_volume: f32,
+        collision: Option<&CollisionWorld>,
+    ) -> Result<(SfxSpatialEval, OcclusionDspParams), AudioError> {
         // Lazily populate `voice_afs_sfx` if `se_id` maps to a `voice.afs` index not yet cached
         if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
             if !self.voice_afs_sfx.contains_key(&afs_idx) {
@@ -446,22 +538,28 @@ impl MenuAudioBank {
                 ..Default::default()
             });
         }
+        if let Some(prev_voice) = self.active_spatial_voices.remove(&se_id) {
+            prev_voice.stop();
+        }
 
-        let (eval, handle_opt) = self.play_se_id_3d(
+        let (eval, occ, voice_opt) = self.play_se_id_3d_with_occlusion(
             engine,
             se_id,
             listener_pos,
             listener_yaw,
+            listener_pitch,
+            is_maria,
             source_pos,
             base_volume,
+            collision,
         )?;
-        if let Some(handle) = handle_opt {
-            self.active_spatial_handles.insert(se_id, handle);
+        if let Some(voice) = voice_opt {
+            self.active_spatial_voices.insert(se_id, voice);
         }
-        Ok(eval)
+        Ok((eval, occ))
     }
 
-    /// Updates the live stereo panning and distance-attenuated volume of a tracked `se_id` handle (`SePosMove` / `SePosSet`).
+    /// Updates the live stereo panning / HRTF angles and distance-attenuated volume of a tracked `se_id` handle (`SePosMove` / `SePosSet`).
     pub fn update_se_id_3d(
         &mut self,
         engine: &AudioEngine,
@@ -471,15 +569,94 @@ impl MenuAudioBank {
         source_pos: Vec3,
         base_volume: f32,
     ) -> SfxSpatialEval {
-        let eval =
-            compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
-        if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
-            engine.update_sound_spatial(handle, eval.effective_gain, eval.stereo_pan);
-        }
+        let (eval, _occ) = self.update_se_id_3d_with_occlusion(
+            engine,
+            se_id,
+            listener_pos,
+            listener_yaw,
+            0.0,
+            false,
+            source_pos,
+            base_volume,
+            None,
+        );
         eval
     }
 
-    /// Stops all tracked 3D spatial sound handles (`SH2-47`).
+    /// Updates a tracked `se_id` voice with fresh 3D `.cld` wall/door raycast occlusion and HRTF spherical angles (`SH2-84`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_se_id_3d_with_occlusion(
+        &mut self,
+        engine: &AudioEngine,
+        se_id: u32,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        listener_pitch: f32,
+        is_maria: bool,
+        source_pos: Vec3,
+        base_volume: f32,
+        collision: Option<&CollisionWorld>,
+    ) -> (SfxSpatialEval, OcclusionDspParams) {
+        let eval =
+            compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
+        let raw_occlusion = match collision {
+            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
+            None => OcclusionDspParams::unoccluded(),
+        };
+        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
+            raw_occlusion
+        } else {
+            OcclusionDspParams::unoccluded()
+        };
+        self.active_spatial_voices.retain(|_, v| !v.is_finished());
+        if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
+            engine.update_sound_spatial(
+                handle,
+                eval.effective_gain * reported_occlusion.dry_gain_scale,
+                eval.stereo_pan,
+            );
+        }
+        if let Some(voice) = self.active_spatial_voices.get(&se_id) {
+            let head_pos = listener_head_position(listener_pos, is_maria);
+            let angles = compute_listener_spherical_angles(
+                head_pos,
+                listener_yaw,
+                listener_pitch,
+                source_pos,
+            );
+            engine.update_spatial_voice(
+                voice,
+                SpatialVoiceInitParams {
+                    base_distance_gain: eval.effective_gain,
+                    stereo_pan: eval.stereo_pan,
+                    angles,
+                    occlusion: raw_occlusion,
+                },
+            );
+        }
+        (eval, reported_occlusion)
+    }
+
+    /// Pauses or resumes all tracked 3D spatial sound handles (e.g. when opening/closing the Pause Menu) (`SH2-84`).
+    pub fn set_spatial_handles_paused(&mut self, paused: bool) {
+        let tween = kira::tween::Tween {
+            duration: std::time::Duration::from_millis(30),
+            easing: kira::tween::Easing::Linear,
+            ..Default::default()
+        };
+        for handle in self.active_spatial_handles.values_mut() {
+            if paused {
+                handle.pause(tween);
+            } else {
+                handle.resume(tween);
+            }
+        }
+        for voice in self.active_spatial_voices.values() {
+            voice.set_paused(paused);
+        }
+    }
+
+    /// Stops all tracked 3D spatial sound handles (`SH2-47` & `SH2-84`).
     pub fn stop_all_spatial_handles(&mut self) {
         for (_, mut handle) in self.active_spatial_handles.drain() {
             handle.stop(kira::tween::Tween {
@@ -487,6 +664,9 @@ impl MenuAudioBank {
                 easing: kira::tween::Easing::Linear,
                 ..Default::default()
             });
+        }
+        for (_, voice) in self.active_spatial_voices.drain() {
+            voice.stop();
         }
     }
 
@@ -698,6 +878,15 @@ impl MenuAudioBank {
         let handle = synthesize_fallback_cue(engine, SoundCueKind::Confirm)?;
         self.active_cut_audio_handle = handle;
         Ok(None)
+    }
+}
+
+impl Drop for MenuAudioBank {
+    fn drop(&mut self) {
+        // Ensure any looped 3D voices (`SpatialVoiceControl`) or cut-audio previews stop cleanly
+        // when `MenuAudioBank` is replaced during live audio-pack hot-swapping (`SH2-84`).
+        self.stop_all_spatial_handles();
+        self.stop_active_cut_audio();
     }
 }
 

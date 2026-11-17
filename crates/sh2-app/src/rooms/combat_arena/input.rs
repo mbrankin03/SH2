@@ -36,6 +36,9 @@ pub(super) fn handle_combat_arena_key_input(
                 .pause_menu
                 .open(can_save, stage_name, state.sim_time as f64);
             state.sync_cursor_grab_for_camera();
+            if let Some(ref mut bank) = state.audio_bank {
+                bank.set_spatial_handles_paused(true);
+            }
             if let Some(ref mut engine) = state.audio_engine {
                 engine.set_bgm_paused(true);
                 let _ =

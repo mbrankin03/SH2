@@ -461,16 +461,26 @@ impl AudioDebugRoomController {
                 state.audio_debug.test_emitter_distance = next_dist;
 
                 let p_pos = state.sim_core.scenario.player_position;
-                let p_yaw = state.sim_core.scenario.player_yaw;
-                let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
-                let right = glam::Vec3::new(p_yaw.cos(), 0.0, -p_yaw.sin());
+                let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
+                let fwd = glam::Vec3::new(listener_yaw.sin(), 0.0, listener_yaw.cos());
+                let right = glam::Vec3::new(listener_yaw.cos(), 0.0, -listener_yaw.sin());
                 let emitter_pos = p_pos + (fwd * 0.7 + right * 0.7).normalize() * next_dist;
 
                 if let (Some(eng), Some(bank)) =
                     (state.audio_engine.as_mut(), state.audio_bank.as_ref())
                 {
                     eng.set_listener_transform(p_pos, fwd);
-                    let _ = bank.play_se_id_3d(eng, 11048, p_pos, p_yaw, emitter_pos, 1.0);
+                    let _ = bank.play_se_id_3d_with_occlusion(
+                        eng,
+                        11048,
+                        p_pos,
+                        listener_yaw,
+                        listener_pitch,
+                        state.active_maria,
+                        emitter_pos,
+                        1.0,
+                        Some(&state.sim_core.collision),
+                    );
                 }
                 state.audio_debug.last_sfx_triggered = "11048: 3D Handgun Shot (0x2B28)";
                 true

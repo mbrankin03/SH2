@@ -16,7 +16,9 @@ use sh2_assets::formats::cld::{CldFile, FloorTriangle, WallSegment};
 use super::character::{CharacterCylinder, CharacterId};
 use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
-use super::raycast::{clamp_camera_ray, RaycastFilter};
+use super::raycast::{
+    clamp_camera_ray, raycast_acoustic_occlusion, AcousticOcclusionHit, RaycastFilter,
+};
 
 /// Surface material category extracted from `.cld` / `.sfm` floor collision triangles (`FloorTriangle::material`),
 /// driving authentic material-dependent footstep sound selection (`0x54A9A0` / `0x5495C0` -> `0x5147E0` / `sddata.bin`).
@@ -546,6 +548,31 @@ impl CollisionWorld {
         clamp_camera_ray(target, camera_pos, self.all_walls(), filter)
     }
 
+    /// Iterate over all active walkable/structural floor triangles (static + active dynamic floors).
+    pub fn all_floors(&self) -> impl Iterator<Item = &FloorTriangle> {
+        self.floors.iter().chain(
+            self.dynamic_floors
+                .iter()
+                .filter(|df| df.active)
+                .map(|df| &df.triangle),
+        )
+    }
+
+    /// Casts a zero-allocation 3D acoustic line-of-sight ray from `emitter_pos` to
+    /// `listener_head_pos` against active `.cld` walls, doors, and multi-story floor slabs (`SH2-84`).
+    pub fn raycast_acoustic_occlusion(
+        &self,
+        emitter_pos: Vec3,
+        listener_head_pos: Vec3,
+    ) -> AcousticOcclusionHit {
+        raycast_acoustic_occlusion(
+            emitter_pos,
+            listener_head_pos,
+            self.all_walls(),
+            self.all_floors(),
+        )
+    }
+
     /// Find safe walkable spawn point closest to $(x, z)$ snapped to nearest floor centroid (`col_spawn`).
     pub fn find_safe_spawn_point(&self, x: f32, z: f32) -> Option<Vec3> {
         let mut best_dist_sq = f32::INFINITY;
@@ -609,6 +636,17 @@ impl CollisionController {
     /// Remove a character cylinder.
     pub fn unregister_character(&mut self, id: CharacterId) {
         self.characters.retain(|c| c.id != id);
+    }
+
+    /// Casts a zero-allocation 3D acoustic line-of-sight ray from `emitter_pos` to
+    /// `listener_head_pos` against the controller's active `.cld` collision world (`SH2-84`).
+    pub fn raycast_acoustic_occlusion(
+        &self,
+        emitter_pos: Vec3,
+        listener_head_pos: Vec3,
+    ) -> AcousticOcclusionHit {
+        self.world
+            .raycast_acoustic_occlusion(emitter_pos, listener_head_pos)
     }
 
     /// Resolve character-to-character separation pushes across all active cylinders (`clCheckColumn2ColumnHit`).

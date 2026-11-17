@@ -184,17 +184,28 @@ pub(crate) fn tick_and_render_horror_room_3d(
             }
         }
 
-        // 4. Continuously update stereo panning & distance attenuation of any active 3D emitter
+        // 4. Continuously update stereo panning / HRTF & .cld wall occlusion of any active 3D emitter
         if !state.horror_triggers_room.active_se_timers.is_empty() {
             let last_se = state.horror_triggers_room.last_se_id;
             let last_vol = state.horror_triggers_room.last_se_vol;
-            let emit_pos =
-                glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos);
-            let p_world_vec = glam::Vec3::from_array(p_world);
+            let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
+            let emit_local =
+                glam::Vec3::from_array(state.horror_triggers_room.active_emitter_world_pos)
+                    - glam::Vec3::from_array(anchor);
             if let (Some(eng), Some(bank)) =
                 (state.audio_engine.as_ref(), state.audio_bank.as_mut())
             {
-                let _ = bank.update_se_id_3d(eng, last_se, p_world_vec, p_yaw, emit_pos, last_vol);
+                let _ = bank.update_se_id_3d_with_occlusion(
+                    eng,
+                    last_se,
+                    p_local,
+                    listener_yaw,
+                    listener_pitch,
+                    state.active_maria,
+                    emit_local,
+                    last_vol,
+                    Some(&state.sim_core.collision),
+                );
             }
         }
     }

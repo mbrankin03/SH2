@@ -211,6 +211,10 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         state.active_test_room = new_room;
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());
+        if let Some(ref mut bank) = state.audio_bank {
+            bank.stop_all_spatial_handles();
+            bank.stop_active_cut_audio();
+        }
         state.drama_demo_session = None;
         if let Some(ref mut eng) = state.audio_engine {
             eng.stop_voice(std::time::Duration::from_millis(30));

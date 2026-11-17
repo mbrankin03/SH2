@@ -33,7 +33,10 @@ pub use animation::{
 };
 pub use camera::{CameraMovementType, CameraSnapshot, CameraSourceKind, Ps2CameraController};
 pub use clock::{EngineClock, FramePacer, DEFAULT_MAX_ACCUMULATED};
-pub use collision::{FloorSample, SurfaceMaterial};
+pub use collision::{
+    listener_head_position, AcousticOcclusionHit, FloorSample, SurfaceMaterial,
+    JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y,
+};
 pub use combat::{
     AttackSpec, CombatArena, CombatController, CombatHitbox, CombatMode, CombatTargetEnemy,
     WeaponGrip, ATK_HANDGUN, ATK_HUNTING_RIFLE, ATK_KICKS, ATK_PIPE_COMBO, ATK_PIPE_LUNGE,
@@ -43,8 +46,8 @@ pub use combat::{
 pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
     AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, FogQuality, FrameRateCap,
-    GameLanguage, GameOptions, InternalResolution, RiddleDifficulty, SpeakerConfiguration,
-    VideoOptions, WindowDisplayMode, WorldTextureQuality,
+    GameLanguage, GameOptions, InternalResolution, RiddleDifficulty, SpatialAudioMode,
+    SpeakerConfiguration, VideoOptions, WindowDisplayMode, WorldTextureQuality,
 };
 pub use cutaway::{
     original_sheet_dimensions, ClippedQuadUv, CutawayOverlayEngine, CutsceneBorderBars,

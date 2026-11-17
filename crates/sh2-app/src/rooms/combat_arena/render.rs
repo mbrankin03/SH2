@@ -89,14 +89,8 @@ fn step_simulation_and_audio(state: &mut AppState, dt: Duration, is_in_game: boo
 
 fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
     let p_pos = state.sim_core.scenario.player_position;
-    let p_yaw = state.sim_core.scenario.player_yaw;
-    let fwd = if state.sim_core.active_camera_mode().is_modern() {
-        let snap = state.sim_core.active_camera_snapshot(1.0);
-        let d = snap.target - snap.eye;
-        glam::Vec3::new(d.x, 0.0, d.z).normalize_or(glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos()))
-    } else {
-        glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos())
-    };
+    let (listener_yaw, _listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
+    let fwd = glam::Vec3::new(listener_yaw.sin(), 0.0, listener_yaw.cos());
     let is_interior_map = !matches!(
         state.active_test_room,
         TestRoomKind::ObservationDeck | TestRoomKind::SurfaceSfxTestRoom
@@ -111,9 +105,7 @@ fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
     });
     if let Some(ref mut eng) = state.audio_engine {
         eng.set_listener_transform(p_pos, fwd);
-        if active_cam_record.is_some() {
-            eng.update_room_acoustics_from_record(active_cam_record, is_interior_map);
-        }
+        eng.update_room_acoustics_from_record(active_cam_record, is_interior_map);
     }
     if state.sim_core.footstep_triggered_since_last_poll {
         state.sim_core.footstep_triggered_since_last_poll = false;

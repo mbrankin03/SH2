@@ -9,9 +9,9 @@ impl OptionsMenu {
             OptionsTab::Video => 11,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
-                    9
+                    11
                 } else {
-                    8
+                    10
                 }
             }
             OptionsTab::Controls => 11,
@@ -116,7 +116,16 @@ impl OptionsMenu {
                     .unwrap_or_else(|| "Default (System)".into()),
             )),
             5 => Some(("Speaker Config", a.speaker_config.label().to_string())),
-            6 => Some((
+            6 => Some(("3D Spatial Audio", a.spatial_audio_mode.label().to_string())),
+            7 => Some((
+                "Wall Occlusion",
+                if a.enable_acoustic_occlusion {
+                    "ON (.cld Raycast)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            8 => Some((
                 "Mute in Background",
                 if a.mute_in_background {
                     "YES".into()
@@ -124,7 +133,7 @@ impl OptionsMenu {
                     "NO".into()
                 },
             )),
-            7 => Some((
+            9 => Some((
                 "Restored Cut Audio",
                 if a.enable_restored_cut_audio {
                     "ON (Restored)".into()
@@ -132,7 +141,7 @@ impl OptionsMenu {
                     "OFF (Vanilla)".into()
                 },
             )),
-            8 if self.audio_pack_status.both_detected() => {
+            10 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -363,9 +372,17 @@ impl OptionsMenu {
                     a.speaker_config.prev()
                 };
             }
-            6 => a.mute_in_background = !a.mute_in_background,
-            7 => a.enable_restored_cut_audio = !a.enable_restored_cut_audio,
-            8 if self.audio_pack_status.both_detected() => {
+            6 => {
+                a.spatial_audio_mode = if forward {
+                    a.spatial_audio_mode.next()
+                } else {
+                    a.spatial_audio_mode.prev()
+                };
+            }
+            7 => a.enable_acoustic_occlusion = !a.enable_acoustic_occlusion,
+            8 => a.mute_in_background = !a.mute_in_background,
+            9 => a.enable_restored_cut_audio = !a.enable_restored_cut_audio,
+            10 if self.audio_pack_status.both_detected() => {
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()
                 } else {

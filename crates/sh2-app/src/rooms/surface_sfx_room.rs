@@ -51,6 +51,8 @@ pub(crate) struct SurfaceSfxRoomState {
     pub emitter_pos: glam::Vec3,
     /// Index into [`SPATIAL_SFX_PRESETS`].
     pub spatial_preset_idx: usize,
+    /// Currently tracked 3D spatial `se_id` (`Some(5698)` for Chainsaw Loop, etc.) so movement & exit update/stop it.
+    pub active_tracked_se_id: Option<u32>,
     /// Selected `sddata.bin` entry index (`0..417`) for the raw sample jukebox browser.
     pub browse_sddata_idx: usize,
     /// Last `sddata.bin` index triggered by a footstep (`0..112`).
@@ -68,6 +70,7 @@ impl Default for SurfaceSfxRoomState {
         Self {
             emitter_pos: glam::Vec3::new(0.0, 0.0, 4000.0),
             spatial_preset_idx: 0,
+            active_tracked_se_id: None,
             browse_sddata_idx: 147, // James concrete footstep (`11001`)
             last_footstep_sddata_idx: 147,
             footstep_counter: 0,
@@ -228,29 +231,43 @@ impl RoomController for SurfaceSfxRoomController {
                     }
                     return;
                 }
-                // [H]: Fire active 3D spatial SFX preset from `emitter_pos` using `SeCallPosDistanceF` (`0x5155E0`)
+                // [H]: Fire & track active 3D spatial SFX preset from `emitter_pos` using `SeCallPosDistanceF` (`0x5155E0`)
                 KeyCode::KeyH => {
                     let (se_id, label) = state.surface_sfx_room.current_spatial_preset();
                     let p_pos = state.sim_core.scenario.player_position;
-                    let p_yaw = state.sim_core.scenario.player_yaw;
-                    let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+                    let (listener_yaw, listener_pitch) =
+                        state.sim_core.active_listener_yaw_pitch(1.0);
+                    let fwd = glam::Vec3::new(listener_yaw.sin(), 0.0, listener_yaw.cos());
                     let emit_pos = state.surface_sfx_room.emitter_pos;
 
                     if let (Some(eng), Some(bank)) =
-                        (state.audio_engine.as_mut(), state.audio_bank.as_ref())
+                        (state.audio_engine.as_mut(), state.audio_bank.as_mut())
                     {
+                        if state.surface_sfx_room.active_tracked_se_id != Some(se_id) {
+                            bank.stop_all_spatial_handles();
+                        }
                         eng.set_listener_transform(p_pos, fwd);
-                        if let Ok((eval, _)) =
-                            bank.play_se_id_3d(eng, se_id, p_pos, p_yaw, emit_pos, 1.0)
-                        {
+                        eng.update_room_acoustics_from_record(None, false);
+                        if let Ok((eval, occ)) = bank.play_se_id_3d_tracked_with_occlusion(
+                            eng,
+                            se_id,
+                            p_pos,
+                            listener_yaw,
+                            listener_pitch,
+                            state.active_maria,
+                            emit_pos,
+                            1.0,
+                            Some(&state.sim_core.collision),
+                        ) {
+                            state.surface_sfx_room.active_tracked_se_id = Some(se_id);
                             state.surface_sfx_room.last_triggered_desc = format!(
-                                "3D SFX {} @ dist={:.0}u -> v={:.2}, gain={:.0}%, att_byte={}, pan={:+.2}",
+                                "3D SFX {} @ dist={:.0}u -> gain={:.0}%, pan={:+.2}, lpf={:.0}Hz ({})",
                                 label,
                                 eval.distance,
-                                eval.proximity_v,
-                                eval.effective_gain * 100.0,
-                                eval.driver_attenuation_byte,
-                                eval.stereo_pan
+                                eval.effective_gain * occ.dry_gain_scale * 100.0,
+                                eval.stereo_pan,
+                                occ.dry_cutoff_hz,
+                                eng.spatial_audio_mode().label(),
                             );
                         }
                     }
@@ -379,10 +396,29 @@ impl RoomController for SurfaceSfxRoomController {
             let ticks = state.sim_core.update(dt);
             if ticks > 0 {
                 let p_pos = state.sim_core.scenario.player_position;
-                let p_yaw = state.sim_core.scenario.player_yaw;
-                let fwd = glam::Vec3::new(p_yaw.sin(), 0.0, p_yaw.cos());
+                let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
+                let fwd = glam::Vec3::new(listener_yaw.sin(), 0.0, listener_yaw.cos());
                 if let Some(ref mut eng) = state.audio_engine {
                     eng.set_listener_transform(p_pos, fwd);
+                    eng.update_room_acoustics_from_record(None, false);
+                }
+                if let Some(tracked_se) = state.surface_sfx_room.active_tracked_se_id {
+                    let emit_pos = state.surface_sfx_room.emitter_pos;
+                    if let (Some(eng), Some(bank)) =
+                        (state.audio_engine.as_ref(), state.audio_bank.as_mut())
+                    {
+                        let _ = bank.update_se_id_3d_with_occlusion(
+                            eng,
+                            tracked_se,
+                            p_pos,
+                            listener_yaw,
+                            listener_pitch,
+                            state.active_maria,
+                            emit_pos,
+                            1.0,
+                            Some(&state.sim_core.collision),
+                        );
+                    }
                 }
                 if state.sim_core.footstep_triggered_since_last_poll {
                     state.sim_core.footstep_triggered_since_last_poll = false;
@@ -536,7 +572,6 @@ impl RoomController for SurfaceSfxRoomController {
         let muted = [165, 165, 175, 255];
 
         let p_pos = state.sim_core.scenario.player_position;
-        let p_yaw = state.sim_core.scenario.player_yaw;
         let active_mat = state.sim_core.active_floor_material;
         let is_running = state.sim_core.last_locomotion.state.is_running();
 
@@ -646,7 +681,8 @@ impl RoomController for SurfaceSfxRoomController {
 
         // 3D Positional Attenuation Telemetry (`SeCallPosDistanceF` `0x5155E0`)
         let emit_pos = state.surface_sfx_room.emitter_pos;
-        let eval = compute_se_call_pos_distance_f(p_pos, p_yaw, emit_pos, 1.0);
+        let (listener_yaw, _) = state.sim_core.active_listener_yaw_pitch(1.0);
+        let eval = compute_se_call_pos_distance_f(p_pos, listener_yaw, emit_pos, 1.0);
         let (_, preset_label) = state.surface_sfx_room.current_spatial_preset();
 
         state.menu_rasterizer.draw_text(

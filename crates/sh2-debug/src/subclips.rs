@@ -836,7 +836,7 @@ pub fn sub_clips_for_anm(model_id: &str, anm_rel_path: &str) -> &'static [Viewer
         ("scu", "data/chr/scu/scu.anm") => SCU_SUBCLIPS,
         ("mkn", "data/chr/mkn/mkn.anm") => MKN_SUBCLIPS,
         ("nse" | "xoo", _) => NSE_SUBCLIPS,
-        ("xmar", "data/chr/mar/lll_mar.anm") => MAR_SUBCLIPS,
+        ("lll_mar" | "xmar", "data/chr/mar/lll_mar.anm") => MAR_SUBCLIPS,
         ("red", "data/chr/red/red.anm") => RED_SUBCLIPS,
         ("pap", "data/chr/pap/pap.anm") => PAP_SUBCLIPS,
         ("ike", "data/chr/ike/ike.anm") => IKE_SUBCLIPS,

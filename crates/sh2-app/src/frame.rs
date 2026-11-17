@@ -245,13 +245,17 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
                 rooms::horror_triggers_room::HorrorTriggersRoomState::default();
         }
         if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
-            let asset = load_viewer_entry_asset(
+            let mut asset = load_viewer_entry_asset(
                 &state.render_ctx,
                 state.model_viewer.current_entry(),
                 state.model_viewer.selected_anm_index,
             );
-            if let Some(ref a) = asset {
+            if let Some(ref mut a) = asset {
                 state.model_viewer.set_total_frames(a.anm.frames.len());
+                let presets = sh2_renderer::discover_pose_presets(&a.model);
+                if let Some(preset) = presets.get(state.model_viewer.selected_pose_preset_index) {
+                    a.gpu_mesh.apply_pose_preset(preset);
+                }
             }
             state.viewer_asset = asset;
             state.loaded_viewer_model_idx = state.model_viewer.selected_model_index;
@@ -266,13 +270,17 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             || state.loaded_viewer_model_idx != state.model_viewer.selected_model_index
             || state.loaded_viewer_anm_idx != state.model_viewer.selected_anm_index)
     {
-        let asset = load_viewer_entry_asset(
+        let mut asset = load_viewer_entry_asset(
             &state.render_ctx,
             state.model_viewer.current_entry(),
             state.model_viewer.selected_anm_index,
         );
-        if let Some(ref a) = asset {
+        if let Some(ref mut a) = asset {
             state.model_viewer.set_total_frames(a.anm.frames.len());
+            let presets = sh2_renderer::discover_pose_presets(&a.model);
+            if let Some(preset) = presets.get(state.model_viewer.selected_pose_preset_index) {
+                a.gpu_mesh.apply_pose_preset(preset);
+            }
         }
         state.viewer_asset = asset;
         state.loaded_viewer_model_idx = state.model_viewer.selected_model_index;

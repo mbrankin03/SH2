@@ -452,8 +452,11 @@ fn test_sh2_93_first_person_skeletal_body_region_and_mirror_visibility() {
         body_index_count: 30,
         texture_index: 0,
         is_transparent: false,
+        backface_culling: true,
+        material_type: 2,
         pose_index: 0,
         is_active: true,
+        material_dynamic_offset: 0,
     };
     assert_eq!(
         prim.draw_range(PlayerMeshVisibility::FullBody, false),
@@ -485,4 +488,164 @@ fn test_sh2_93_first_person_skeletal_body_region_and_mirror_visibility() {
         inactive.draw_range(PlayerMeshVisibility::FullBody, true),
         None
     );
+}
+
+#[test]
+fn test_sh2_37_bestiary_materials_hair_and_specular_pipeline() {
+    use sh2_assets::formats::anm::{compute_bind_locals, compute_skin_matrices, evaluate_pose};
+    use sh2_assets::formats::mdls::parse_mdl;
+    use sh2_renderer::*;
+
+    let root = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+    if !std::path::Path::new(root).exists() {
+        return;
+    }
+
+    // 1. Verify James's breast-pocket flashlight (`pose_index == 21`) is active by default across
+    //    all three LOD models (`hhh_jms`, `hll_jms`, `lll_jms`) and pose presets cover weapon grips.
+    for (rel, min_presets) in [
+        ("data/chr/jms/hhh_jms.mdl", 2usize),
+        ("data/chr/jms/hll_jms.mdl", 9),
+        ("data/chr/jms/lll_jms.mdl", 9),
+    ] {
+        let mdl = parse_mdl(&std::fs::read(format!("{root}/{rel}")).expect("read jms mdl"))
+            .expect("parse jms mdl");
+        assert!(
+            mdl.primitives.iter().any(|p| p.pose_index == 21),
+            "{rel} must contain breast-pocket flashlight primitives (pose_index == 21)"
+        );
+        assert!(
+            is_default_active_pose(&mdl, 21),
+            "{rel} must activate pose_index == 21 by default"
+        );
+        let presets = discover_pose_presets(&mdl);
+        assert!(
+            presets.len() >= min_presets,
+            "{rel} expected >= {min_presets} pose presets, got {}",
+            presets.len()
+        );
+        assert!(presets[0].active_poses.contains(&21));
+    }
+
+    // 2. Compile and render character/boss models (including transparent hair `tprim`,
+    //    `material_type == 4` specular gloss submeshes, and planar mirror front-face culling)
+    //    through a headless wgpu `RenderContext` with zero validation errors.
+    let Some(ctx) = RenderContext::new_headless(RendererConfig {
+        width: 320,
+        height: 240,
+        enable_hdr: true,
+        enable_fog: true,
+        enable_post: true,
+    }) else {
+        println!("Skipping headless GPU render verification: no suitable GPU adapter");
+        return;
+    };
+
+    let eye = glam::Vec3::new(0.0, -900.0, 2400.0);
+    let view = glam::Mat4::look_at_rh(
+        eye,
+        glam::Vec3::new(0.0, -850.0, 0.0),
+        glam::Vec3::new(0.0, -1.0, 0.0),
+    );
+    let proj = glam::Mat4::perspective_rh(42.0_f32.to_radians(), 320.0 / 240.0, 10.0, 50_000.0);
+    ctx.update_camera_with_mode(proj * view, proj.inverse(), eye, 0.0);
+    ctx.update_spotlight(&light::SpotlightUniforms {
+        position: [eye.x, eye.y, eye.z, 1.0],
+        direction_inner: [0.0, 0.0, -1.0, 0.90],
+        color_outer: [2.4, 2.2, 1.9, 0.70],
+        ambient_tint: [1.0, 1.0, 1.0, 1.0],
+    });
+
+    let min_align = ctx.device.limits().min_uniform_buffer_offset_alignment;
+
+    for (rel, expect_specular, expect_transparent) in [
+        ("data/chr/jms/hhh_jms.mdl", true, true),
+        ("data/chr/jms/lll_jms.mdl", true, true),
+        ("data/chr/red/red.mdl", true, false),
+        ("data/chr/oni/oni.mdl", true, false),
+        ("data/chr/mar/hhh_mar.mdl", true, true),
+        ("data/chr/mar/lll_mar.mdl", true, true),
+        ("data/chr2/mar/lxx_mar.mdl", true, true),
+    ] {
+        let mdl =
+            parse_mdl(&std::fs::read(format!("{root}/{rel}")).expect("read mdl")).expect("parse");
+        let mut gpu_mesh = ctx.compile_skeletal_mesh(&mdl);
+
+        assert_eq!(
+            gpu_mesh.primitives.iter().any(|p| p.material_type == 4),
+            expect_specular,
+            "Unexpected specular material_type == 4 presence in {rel}"
+        );
+        assert_eq!(
+            gpu_mesh.primitives.iter().any(|p| p.is_transparent),
+            expect_transparent,
+            "Unexpected two-pass transparent hair/cutout presence in {rel}"
+        );
+
+        // Verify Maria's `tid = 1245` gloss-mask fingernails stay opaque while `tid = 1246` hair cards
+        // on `lll_mar` / `lxx_mar` (and `prim[23]` on `lll_jms`) promote to two-pass alpha.
+        if rel == "data/chr/jms/lll_jms.mdl" {
+            assert!(
+                gpu_mesh.primitives[23].is_transparent,
+                "lll_jms prim[23] hair card must promote to two-pass transparency"
+            );
+            assert!(!gpu_mesh.primitives[0].is_transparent);
+        }
+        if rel == "data/chr/mar/lll_mar.mdl" {
+            assert!(!gpu_mesh.primitives[11].is_transparent);
+            assert!(!gpu_mesh.primitives[12].is_transparent);
+            for k in [19, 20, 21, 22, 24, 25] {
+                assert!(
+                    gpu_mesh.primitives[k].is_transparent,
+                    "lll_mar prim[{k}] hair card must promote to two-pass transparency"
+                );
+            }
+        }
+        if rel == "data/chr2/mar/lxx_mar.mdl" {
+            assert!(!gpu_mesh.primitives[14].is_transparent);
+            assert!(!gpu_mesh.primitives[15].is_transparent);
+            for k in [24, 25, 26, 27, 29, 30] {
+                assert!(
+                    gpu_mesh.primitives[k].is_transparent,
+                    "lxx_mar prim[{k}] hair card must promote to two-pass transparency"
+                );
+            }
+        }
+
+        for prim in &gpu_mesh.primitives {
+            assert_eq!(
+                prim.material_dynamic_offset % min_align,
+                0,
+                "{rel}: unaligned dynamic material offset {}",
+                prim.material_dynamic_offset
+            );
+        }
+
+        let presets = discover_pose_presets(&mdl);
+        if presets.len() > 1 {
+            gpu_mesh.apply_pose_preset(&presets[1]);
+            gpu_mesh.apply_pose_preset(&presets[0]);
+        }
+
+        let bind_locals = compute_bind_locals(&mdl.parents, &mdl.initial_matrices);
+        let empty_frame = sh2_assets::formats::anm::AnimationFrame {
+            bones: vec![None; mdl.bone_count],
+        };
+        let pose = evaluate_pose(&mdl.parents, &bind_locals, &empty_frame);
+        let skin = compute_skin_matrices(&pose, &mdl.initial_matrices);
+        let mut mirror_skin = skin.clone();
+        for m in &mut mirror_skin {
+            m[0][0] = -m[0][0];
+            m[0][1] = -m[0][1];
+            m[0][2] = -m[0][2];
+            m[0][3] = -m[0][3];
+        }
+
+        let draws = [
+            (&gpu_mesh, skin.as_slice(), None),
+            (&gpu_mesh, mirror_skin.as_slice(), None),
+        ];
+        ctx.render_scene(None, None, &draws);
+        let _ = ctx.device.poll(wgpu::Maintain::wait());
+    }
 }

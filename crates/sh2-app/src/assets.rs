@@ -614,7 +614,7 @@ pub(crate) fn load_character_asset(
     for &raw_tid in &unique_tex_ids {
         let tidx = raw_tid as u32;
         if let Some(tex) = model.textures.get(&tidx) {
-            if let Ok(rgba) = tex.to_rgba() {
+            if let Ok(mut rgba) = tex.to_rgba() {
                 // Non-cutout character textures (such as Pyramid Head's helmet `1303`/`1307`, Great Knife `1305`,
                 // Lying Figure `1282`, and Abstract Daddy `1293`) store PS2 specular/gloss intensity in the DXT5
                 // alpha channel with `van_min_alpha > 0` across 100% of texels. Preserve that non-zero alpha floor
@@ -626,6 +626,16 @@ pub(crate) fn load_character_asset(
                     .map(|px| px[3])
                     .min()
                     .unwrap_or(255);
+                let van_raw_rgba = (van_min_alpha == 0 || hd_model.is_some()).then(|| rgba.clone());
+
+                // Dilate local hair/fringe RGB into `alpha == 0` cutout gutters (`1246`, `1241`, `1252`, `1258`)
+                // so hardware bilinear filtering never bleeds `(0, 0, 0, 0)` dark borders into hair strands.
+                sh2_renderer::dilate_transparent_border_rgb(
+                    tex.width as u32,
+                    tex.height as u32,
+                    &mut rgba,
+                    2,
+                );
 
                 let van_bg = ctx.create_texture_bind_group(
                     tex.width as u32,
@@ -635,6 +645,7 @@ pub(crate) fn load_character_asset(
                 );
 
                 // 1. Build SH2:EE (`sh2e/chr/`) or 2x enhanced bind group
+                let mut sh2e_raw_for_4k: Option<(u32, u32, Vec<u8>)> = None;
                 let sh2e_bg = if let Some(ref hdm) = hd_model {
                     if let Some(hd_tex) = hdm.textures.get(&tidx) {
                         if let Ok(mut hd_rgba) = hd_tex.to_rgba() {
@@ -643,6 +654,14 @@ pub(crate) fn load_character_asset(
                                     px[3] = px[3].max(van_min_alpha);
                                 }
                             }
+                            sh2e_raw_for_4k =
+                                Some((hd_tex.width as u32, hd_tex.height as u32, hd_rgba.clone()));
+                            sh2_renderer::dilate_transparent_border_rgb(
+                                hd_tex.width as u32,
+                                hd_tex.height as u32,
+                                &mut hd_rgba,
+                                2,
+                            );
                             ctx.create_texture_bind_group(
                                 hd_tex.width as u32,
                                 hd_tex.height as u32,
@@ -656,7 +675,9 @@ pub(crate) fn load_character_asset(
                         Arc::clone(&van_bg)
                     }
                 } else {
-                    let (hw, hh, hd_rgba) = upscale_hd_preview_rgba(&rgba, tex.width, tex.height);
+                    let (hw, hh, mut hd_rgba) =
+                        upscale_hd_preview_rgba(&rgba, tex.width, tex.height);
+                    sh2_renderer::dilate_transparent_border_rgb(hw, hh, &mut hd_rgba, 2);
                     ctx.create_texture_bind_group(
                         hw,
                         hh,
@@ -675,6 +696,25 @@ pub(crate) fn load_character_asset(
                                 px[3] = px[3].max(van_min_alpha);
                             }
                         }
+                        if let Some(ref van_raw) = van_raw_rgba {
+                            sh2_renderer::refine_4k_chr_texture_from_sources(
+                                tex.width as u32,
+                                tex.height as u32,
+                                van_raw,
+                                sh2e_raw_for_4k
+                                    .as_ref()
+                                    .map(|(w, h, b)| (*w, *h, b.as_slice())),
+                                dec.width as u32,
+                                dec.height as u32,
+                                &mut dec.rgba,
+                            );
+                        }
+                        sh2_renderer::dilate_transparent_border_rgb(
+                            dec.width as u32,
+                            dec.height as u32,
+                            &mut dec.rgba,
+                            2,
+                        );
                         tracing::info!(
                             "Loaded 4K AI Master character texture override for '{}' tex_id={} ({}x{})",
                             character_name,

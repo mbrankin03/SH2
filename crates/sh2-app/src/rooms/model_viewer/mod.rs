@@ -1,4 +1,6 @@
-//! 3D Model, Animation & Texture Viewer room controller (`SH2-36`).
+//! 3D Model, Animation & Texture Viewer room controller (`SH2-36` / `SH2-37`).
+
+mod hud;
 
 use std::time::Duration;
 use winit::keyboard::KeyCode;
@@ -87,6 +89,21 @@ impl RoomController for ModelViewerRoomController {
                         "[Model Viewer] Selected PS2 Sub-Clip: ALL FRAMES (0..{} @ 30.0 FPS)",
                         state.model_viewer.total_frames
                     );
+                }
+            }
+            KeyCode::KeyJ if pressed => {
+                if let Some(ref mut c) = state.viewer_asset {
+                    let presets = sh2_renderer::discover_pose_presets(&c.model);
+                    let idx = state.model_viewer.cycle_pose_preset(presets.len());
+                    if let Some(preset) = presets.get(idx) {
+                        c.gpu_mesh.apply_pose_preset(preset);
+                        tracing::info!(
+                            "[Model Viewer] Selected Pose/Equipment Preset [{}/{}]: {}",
+                            idx + 1,
+                            presets.len(),
+                            preset.label
+                        );
+                    }
                 }
             }
             KeyCode::Space if pressed => {
@@ -304,7 +321,6 @@ impl RoomController for ModelViewerRoomController {
             .render_ctx
             .update_camera_with_mode(view_proj, inv_proj, eye_pos, shade_mode);
 
-        // Stage spotlight configuration
         let target = state.model_viewer.camera.target;
         let to_target = (target - eye_pos).normalize_or_zero();
         let spot_uniforms = match state.model_viewer.lighting_rig {
@@ -431,20 +447,9 @@ impl RoomController for ModelViewerRoomController {
                 if state.model_viewer.render_mode == ViewerRenderMode::Wireframe
                     || state.model_viewer.wireframe_overlay
                 {
-                    let has_variant_poses = c.model.primitives.iter().any(|pr| pr.pose_index > 0);
-                    let has_pose_14 = c.model.primitives.iter().any(|pr| pr.pose_index == 14);
-                    let has_pose_6 = c.model.primitives.iter().any(|pr| pr.pose_index == 6);
                     let mut all_tris = Vec::new();
-                    for (k, pr) in c.model.primitives.iter().enumerate() {
-                        let is_active = if has_variant_poses {
-                            pr.pose_index == 0
-                                || pr.pose_index == 3
-                                || (has_pose_14 && pr.pose_index == 14)
-                                || (!has_pose_14 && has_pose_6 && pr.pose_index == 6)
-                        } else {
-                            true
-                        };
-                        if is_active {
+                    for k in 0..c.model.primitives.len() {
+                        if c.gpu_mesh.primitives.get(k).is_some_and(|gp| gp.is_active) {
                             all_tris.extend(c.model.primitive_triangles(k));
                         }
                     }
@@ -510,205 +515,6 @@ impl RoomController for ModelViewerRoomController {
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
     ) {
-        state.begin_hud_overlay();
-
-        let white = [225, 225, 225, 255];
-        let yellow = [245, 210, 65, 255];
-        let cyan = [105, 215, 235, 255];
-        let green = [120, 230, 150, 255];
-        let muted = [165, 165, 170, 255];
-
-        let entry = state.model_viewer.current_entry();
-        let cat_str = entry.category.label();
-        let total_models = BESTIARY_CATALOG.len();
-        let cur_idx = state.model_viewer.selected_model_index + 1;
-
-        state.menu_rasterizer.draw_text(
-            "3D MODEL, ANIMATION & TEXTURE VIEWER [BESTIARY DEBUG]",
-            24,
-            18,
-            2,
-            yellow,
-            true,
-        );
-        state.menu_rasterizer.draw_text(
-            &format!(
-                "MODEL [{}/{}] ({}) : {}",
-                cur_idx, total_models, cat_str, entry.display_name
-            ),
-            24,
-            46,
-            2,
-            white,
-            true,
-        );
-
-        if let Some(ref c) = state.viewer_asset {
-            let tri_count = (c.gpu_mesh.total_indices / 3) as usize;
-            state.menu_rasterizer.draw_text(
-                &format!(
-                    "MESH STATS : {} BONES | {} VERTICES | {} TRIS | {} SUBMESHES | {} TEXTURES",
-                    c.model.bone_count,
-                    c.model.vertices.positions.len(),
-                    tri_count,
-                    c.model.primitives.len(),
-                    c.model.textures.len()
-                ),
-                24,
-                72,
-                1,
-                cyan,
-                true,
-            );
-        }
-
-        let anm_name = if entry.anm_paths.is_empty() {
-            "STATIC BIND POSE"
-        } else {
-            entry.anm_paths[state.model_viewer.selected_anm_index % entry.anm_paths.len()]
-        };
-        let play_status = if state.model_viewer.is_paused {
-            "PAUSED"
-        } else {
-            "PLAYING"
-        };
-        let subclips = state.model_viewer.available_subclips();
-        let subclip_info = if let Some(sc) = state.model_viewer.active_subclip() {
-            let idx = state.model_viewer.selected_subclip_index.unwrap_or(0) + 1;
-            format!(
-                "SUB-CLIP [{}/{}] {} ({}..={} @ {:.2} FPS)",
-                idx,
-                subclips.len(),
-                sc.label,
-                sc.clip.start_frame,
-                sc.clip.end_frame,
-                sc.clip.fps
-            )
-        } else if !subclips.is_empty() {
-            format!(
-                "SUB-CLIP [ALL/{}] FULL TRACK (PRESS [C] FOR PS2 SUB-CLIPS)",
-                subclips.len()
-            )
-        } else {
-            "SUB-CLIP [FULL TRACK]".to_string()
-        };
-        state.menu_rasterizer.draw_text(
-            &format!(
-                "ANIM CLIP [{}/{}] : {} | {} | FRAME {:03.0}/{:03} | SPEED {:.1}X",
-                state.model_viewer.selected_anm_index + 1,
-                entry.anm_paths.len().max(1),
-                anm_name,
-                play_status,
-                state.model_viewer.current_frame.floor(),
-                state.model_viewer.total_frames,
-                state.model_viewer.playback_speed
-            ),
-            24,
-            92,
-            1,
-            green,
-            true,
-        );
-        state
-            .menu_rasterizer
-            .draw_text(&subclip_info, 24, 110, 1, yellow, true);
-
-        state.menu_rasterizer.draw_text(
-            &format!(
-                "SHADING : {} | OVERLAYS: BONES={} WIRE={}",
-                state.model_viewer.render_mode.label(),
-                if state.model_viewer.skeleton_overlay {
-                    "ON"
-                } else {
-                    "OFF"
-                },
-                if state.model_viewer.wireframe_overlay {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-            ),
-            24,
-            128,
-            1,
-            white,
-            true,
-        );
-
-        let tex_color = match state.model_viewer.texture_source {
-            TextureSourceMode::Ai4kMaster => green,
-            TextureSourceMode::EnhancedHd => cyan,
-            TextureSourceMode::VanillaPs2 => yellow,
-        };
-        state.menu_rasterizer.draw_text(
-            &format!(
-                "TEXTURES [1: 4K AI | 2: PS2 | 3: SH2:EE | H: Cycle | U: A/B] : {} | LIGHT : {} | SPIN : {}",
-                state.model_viewer.texture_source.label(),
-                state.model_viewer.lighting_rig.label(),
-                if state.model_viewer.turntable_enabled {
-                    "ON"
-                } else {
-                    "OFF"
-                }
-            ),
-            24,
-            146,
-            1,
-            tex_color,
-            true,
-        );
-
-        if let Some(ref c) = state.viewer_asset {
-            if !c.model.clusters.is_empty() {
-                let cls_summary = if let Some(ref cls) = c.cls {
-                    let active_count = c
-                        .cluster_weights_scratch
-                        .iter()
-                        .filter(|&&w| w.abs() > 0.01)
-                        .count();
-                    let max_w = c
-                        .cluster_weights_scratch
-                        .iter()
-                        .fold(0.0f32, |acc, &w| acc.max(w.abs()));
-                    format!(
-                        "FACIAL CLUSTERS (.CLS) : {} TARGETS | {} BLOCKS ({} FRAMES) | ACTIVE: {}/{} (PEAK WEIGHT: {:.2})",
-                        c.model.clusters.len(),
-                        cls.blocks.len(),
-                        cls.total_frames(),
-                        active_count,
-                        c.cluster_weights_scratch.len(),
-                        max_w
-                    )
-                } else {
-                    format!(
-                        "FACIAL CLUSTERS (.MDL) : {} MORPH TARGETS READY (SELECT DEMO .ANM WITH [M/Tab] FOR LIVE .CLS FACIAL SYNC)",
-                        c.model.clusters.len()
-                    )
-                };
-                state
-                    .menu_rasterizer
-                    .draw_text(&cls_summary, 24, 164, 1, yellow, true);
-            }
-        }
-
-        // Bottom hotkey legend
-        state.menu_rasterizer.draw_text(
-            "[N/P or PgDn/PgUp] Next/Prev Model  [M/Tab] Next .ANM File  [C] Next PS2 Sub-Clip  [Space] Play/Pause  [[ / ]] Step  [-/+] Speed  [R] Rev",
-            24,
-            666,
-            1,
-            muted,
-            true,
-        );
-        state.menu_rasterizer.draw_text(
-            "[V] Render Mode  [B] Skeleton  [G] Wireframe  [1/2/3 or H/U] Texture Quality  [L] Light  [T] Turntable  [WASD/Mouse] Orbit  [Q/E] Zoom  [Esc] Exit",
-            24,
-            688,
-            1,
-            muted,
-            true,
-        );
-
-        state.finish_hud_overlay(encoder, surface_view);
+        hud::render_model_viewer_hud(state, encoder, surface_view);
     }
 }

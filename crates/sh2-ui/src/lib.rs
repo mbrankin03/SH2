@@ -2,6 +2,7 @@
 
 pub mod atlas_font;
 pub mod button_atlas;
+pub mod credits;
 pub mod font;
 pub mod loading;
 pub mod map;
@@ -12,6 +13,12 @@ pub mod quickslots;
 
 pub use atlas_font::{draw_subtitle, AtlasFont, Sh2TextColor};
 pub use button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
+pub use credits::{
+    CreditsSequencePhase, EndingCreditsSequence, BORN_FROM_A_WISH_EPILOGUE_SECS,
+    DOG_ENDING_BLOOPER_DURATION_SECS, IN_WATER_PRELUDE_DURATION_SECS,
+    MARY_LETTER_TOTAL_DURATION_SECS, REBIRTH_RITUAL_FMV_DURATION_SECS,
+    STAFF_CREDITS_SCROLL_DURATION_SECS,
+};
 pub use font::TextRasterizer;
 pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
 pub use map::{MapCanvasClipper, MapDescriptor, MapPlayerMarker};

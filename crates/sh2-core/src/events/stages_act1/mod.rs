@@ -9,6 +9,7 @@
 pub mod descriptor;
 pub mod lifecycle;
 pub mod riddles_apartments;
+pub mod riddles_apartments_coins;
 pub mod riddles_hospital_normal;
 pub mod riddles_hospital_otherworld;
 pub mod tables_apart_e1f_e2f;
@@ -31,6 +32,7 @@ pub use descriptor::*;
 pub(crate) use descriptor::{en, ev, ev_sentinel, gi, hdr, mdl};
 pub use lifecycle::*;
 pub use riddles_apartments::*;
+pub use riddles_apartments_coins::*;
 pub use riddles_hospital_normal::*;
 pub use riddles_hospital_otherworld::*;
 

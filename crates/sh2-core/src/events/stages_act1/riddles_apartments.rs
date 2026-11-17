@@ -4,7 +4,6 @@
 //! Disassembled 1:1 from `sh2pc.exe` (`0x00595810..0x0059b0f0`) and `SLUS_202.28`
 //! (`0x01f02000..0x01f04100`), plus `OldManCoinFix.cpp` and `PuzzleAlignmentFixes.cpp`.
 
-use super::Act1VanillaFixesConfig;
 use crate::config::RiddleDifficulty;
 use crate::events::{EventFlags, PuzzleState, PZ_SAFE_CODE, PZ_SAFE_PROG};
 use crate::inventory::InventoryManager;
@@ -13,10 +12,12 @@ use crate::inventory::InventoryManager;
 pub const ACT1_ITEM_HANDGUN_BULLETS: u8 = 5;
 /// Item ID for Clock Key (`28`, `0x1c`, pulled from Rm 202 Butterfly Hole, `sh2pc.exe` `0x0059aa3f`).
 pub const ACT1_ITEM_CLOCK_KEY: u8 = 28;
-/// Item ID for Apartment Fire-Escape Key (`29`, `0x1d`).
-pub const ACT1_ITEM_FIRE_ESCAPE_KEY: u8 = 29;
-/// Item ID for Lyne House Key (`30`, `0x1e`, awarded by Blue Creek Rm 105 3-Coin Desk).
-pub const ACT1_ITEM_LYNE_HOUSE_KEY: u8 = 30;
+/// Item ID for Courtyard Key (`29`, `0x1d`, `inventory/catalog.rs`, `sh2pc.exe` `0x0059b8aa`).
+pub const ACT1_ITEM_COURTYARD_KEY: u8 = 29;
+/// Item ID for Apartment Fire-Escape Key (`30`, `0x1e`, `ACT1_APART_E2F_EVENT_LIST[31]` `cond = 0xa12831ec`).
+pub const ACT1_ITEM_FIRE_ESCAPE_KEY: u8 = 30;
+/// Item ID for Lyne House Key (`31`, `0x1f`, awarded by Blue Creek Rm 105 3-Coin Desk).
+pub const ACT1_ITEM_LYNE_HOUSE_KEY: u8 = 31;
 /// Item ID for Canned Juice (`49`, `0x31`, dropped down Wood Side 2F Trash Chute, `0x0059b010`).
 pub const ACT1_ITEM_CANNED_JUICE: u8 = 49;
 /// Item ID for Coin [Snake] (`50`, `0x32`).
@@ -28,6 +29,8 @@ pub const ACT1_ITEM_COIN_PRISONER: u8 = 52;
 
 /// Flag `79` (`0x4f`, `0x1f7a9e8 |= 0x8000`): Clock Key retrieved from Rm 202 Butterfly Hole (`0x0059aa71`).
 pub const ACT1_FLAG_BUTTERFLY_HOLE_TAKEN: usize = 79;
+/// Flag `93` (`0x5d`): Wood Side 2F West Fire-Escape door unlocked (`ACT1_APART_E2F_EVENT_LIST[30..=31]`: `0x805d0000` / `0x0001c05d`).
+pub const ACT1_FLAG_FIRE_ESCAPE_UNLOCKED: usize = 93;
 /// Flag `95` (`0x5f`): Canned Juice dropped down Wood Side 2F Trash Chute (`0x0059b010`, `OldManCoinFix.cpp`).
 pub const ACT1_FLAG_CANNED_JUICE_DROPPED: usize = 95;
 /// Flag `96` (`0x60`): Coin [Old Man] picked up from Courtyard trash pile (`0x00595810`).
@@ -36,14 +39,12 @@ pub const ACT1_FLAG_OLD_MAN_COIN_TAKEN: usize = 96;
 pub const ACT1_FLAG_WALLET_PULLED_FROM_TOILET: usize = 102;
 /// Base flag `103` (`103..=107`, `0x1f7a9ec` bits `7..=11`): 5-bit Rm 203 Safe dial position (`0..=19`, `0x00596fd0`).
 pub const ACT1_FLAG_SAFE_DIAL_BIT0: usize = 103;
-/// Flag `108` (`0x6c`, `0x1f7a9ec |= 0x1000`): Rm 203 Safe unlocked (`0x00597128`).
+/// Flag `108` (`0x6c`, `0x1f7a9ec |= 0x1000`): Rm 203 Safe unlocked (`0x00597155`).
 pub const ACT1_FLAG_SAFE_UNLOCKED: usize = 108;
 /// Flag `109` (`0x6d`): Rm 203 Safe ammunition contents collected.
 pub const ACT1_FLAG_SAFE_LOOTED: usize = 109;
-/// Flag `118` (`0x76`): Secondary Old Man Coin completion flag (`0x00595810`).
+/// Flag `118` (`0x76`): Old Man Coin `mdl_list[1]` `flag_0` (`flag_off`) in `stg_apart_out` (`0x008de900`, `OldManCoinFix.cpp:30`).
 pub const ACT1_FLAG_OLD_MAN_COIN_SUB: usize = 118;
-/// Flag `138` (`0x8a`): Apartment Fire-Escape door unlocked (`stg_apart_e2f` -> `stg_apart_w2f`).
-pub const ACT1_FLAG_FIRE_ESCAPE_UNLOCKED: usize = 138;
 /// Flag `142` (`0x8e`, `0x1f7a9f0` bit `14`): Blue Creek Rm 105 3-Coin Desk solved (`0x0059864a`).
 pub const ACT1_FLAG_COIN_DESK_SOLVED: usize = 142;
 
@@ -195,12 +196,14 @@ fn write_safe_dial_pos(flags: &mut EventFlags, pos: u8) {
     }
 }
 
-/// Rotates the W2F Rm 203 Safe dial by one notch, matching `EvProgSubSafeLockRotate` (`0x00596fd0`).
+/// Rotates the W2F Rm 203 Safe dial by one notch, matching `EvProgSubSafeLockRotate`
+/// (`sh2pc.exe` `0x00597121..0x00597270`, where `PZ_SAFE_PROG` at `0x1f7ae64..67` is `i8[4]`
+/// initialized to `[-1, -1, -1, -1]` / `0xffffffff` by `FlagInit`).
 ///
-/// - Stage `0`: accepts `Left` or `Right`; reaching `code[0]` advances `PZ_SAFE_PROG` to `1`.
-/// - Stage `1`: requires `Right` (`>>`); rotating `Left` resets `PZ_SAFE_PROG` to `0` (or `1` if landing on `code[0]`).
-/// - Stage `2`: requires `Left` (`<<`); rotating `Right` resets `PZ_SAFE_PROG`.
-/// - Stage `3`: requires `Right` (`>>`); reaching `code[3]` sets `flag(108)` and plays `0x3e88`.
+/// - When `prog[0] < 0`: accepts `Left` or `Right`; reaching `code[0]` writes `prog[0] = next`.
+/// - When `prog[0] >= 0 && prog[1] < 0`: requires `Right` (`>>`); `Left` resets `PZ_SAFE_PROG` to `0xffffffff` (`0x59723b`).
+/// - When `prog[1] >= 0 && prog[2] < 0`: requires `Left` (`<<`); `Right` resets `PZ_SAFE_PROG` to `0xffffffff` (`0x5971a1`).
+/// - When `prog[2] >= 0`: requires `Right` (`>>`); reaching `code[3]` sets `flag(108)` (`0x597155`), while `Left` resets `PZ_SAFE_PROG` (`0x597207`).
 pub fn act1_rotate_safe_dial(
     direction: Act1SafeDialDirection,
     puzzle: &mut PuzzleState,
@@ -219,50 +222,57 @@ pub fn act1_rotate_safe_dial(
         puzzle.raw()[PZ_SAFE_CODE + 2],
         puzzle.raw()[PZ_SAFE_CODE + 3],
     ];
-    let mut prog = puzzle.raw()[PZ_SAFE_PROG];
+    let p0 = puzzle.raw()[PZ_SAFE_PROG] as i8;
+    let p1 = puzzle.raw()[PZ_SAFE_PROG + 1] as i8;
+    let p2 = puzzle.raw()[PZ_SAFE_PROG + 2] as i8;
 
-    match prog {
-        0 => {
-            if next == code[0] {
-                prog = 1;
-            }
-        }
-        1 => {
-            if direction == Act1SafeDialDirection::Right {
-                if next == code[1] {
-                    prog = 2;
-                }
-            } else {
-                prog = u8::from(next == code[0]);
-            }
-        }
-        2 => {
-            if direction == Act1SafeDialDirection::Left {
-                if next == code[2] {
-                    prog = 3;
-                }
-            } else {
-                prog = u8::from(next == code[0]);
-            }
-        }
-        3 => {
-            if direction == Act1SafeDialDirection::Right {
+    match direction {
+        Act1SafeDialDirection::Right => {
+            if p2 >= 0 {
                 if next == code[3] {
-                    prog = 4;
                     flags.set(ACT1_FLAG_SAFE_UNLOCKED, true);
                 }
-            } else {
-                prog = u8::from(next == code[0]);
+            } else if p1 >= 0 {
+                puzzle.raw_mut()[PZ_SAFE_PROG..PZ_SAFE_PROG + 4].fill(0xff);
+            } else if p0 >= 0 {
+                if next == code[1] {
+                    puzzle.raw_mut()[PZ_SAFE_PROG + 1] = next;
+                }
+            } else if next == code[0] {
+                puzzle.raw_mut()[PZ_SAFE_PROG] = next;
             }
         }
-        _ => {}
+        Act1SafeDialDirection::Left => {
+            if p2 >= 0 {
+                puzzle.raw_mut()[PZ_SAFE_PROG..PZ_SAFE_PROG + 4].fill(0xff);
+            } else if p1 >= 0 {
+                if next == code[2] {
+                    puzzle.raw_mut()[PZ_SAFE_PROG + 2] = next;
+                }
+            } else if p0 >= 0 {
+                puzzle.raw_mut()[PZ_SAFE_PROG..PZ_SAFE_PROG + 4].fill(0xff);
+            } else if next == code[0] {
+                puzzle.raw_mut()[PZ_SAFE_PROG] = next;
+            }
+        }
     }
 
-    puzzle.raw_mut()[PZ_SAFE_PROG] = prog;
     let unlocked = flags.get(ACT1_FLAG_SAFE_UNLOCKED);
+    let raw_p = &puzzle.raw()[PZ_SAFE_PROG..PZ_SAFE_PROG + 3];
+    let progress_stage = if unlocked {
+        4
+    } else if (raw_p[2] as i8) >= 0 {
+        3
+    } else if (raw_p[1] as i8) >= 0 {
+        2
+    } else if (raw_p[0] as i8) >= 0 {
+        1
+    } else {
+        0
+    };
     Act1SafeStepOutcome {
         dial_pos: next,
-        progress_stage: prog,
+        progress_stage,
         unlocked,
         unlock_se: unlocked.then_some(ACT1_SE_SAFE_UNLOCK),
     }
@@ -279,139 +289,6 @@ pub fn act1_claim_safe_contents(flags: &mut EventFlags, inventory: &mut Inventor
         inventory.item_get_now(ACT1_ITEM_HANDGUN_BULLETS);
     }
     inventory.count(ACT1_ITEM_HANDGUN_BULLETS) - before
-}
-
-/// Inspects the Wood Side 2F Trash Chute (`EvProgLookDustChute` at `sh2pc.exe` `0x0059ade0`).
-///
-/// Displays message `15`, plus hint message `16` exclusively on `RiddleDifficulty::Easy` (`riddle == 0`).
-#[must_use]
-pub fn act1_look_trash_chute(difficulty: RiddleDifficulty) -> &'static [u8] {
-    if difficulty == RiddleDifficulty::Easy {
-        &[15, 16]
-    } else {
-        &[15]
-    }
-}
-
-/// Uses `Canned juice` (`49`) on the Wood Side 2F Trash Chute (`EvProgUseCannedJuice` `0x0059b010`).
-pub fn act1_use_canned_juice_on_chute(
-    flags: &mut EventFlags,
-    inventory: &mut InventoryManager,
-) -> Option<u32> {
-    if flags.get(ACT1_FLAG_CANNED_JUICE_DROPPED) || !inventory.has_item(ACT1_ITEM_CANNED_JUICE) {
-        return None;
-    }
-    inventory.item_lose(ACT1_ITEM_CANNED_JUICE);
-    flags.set(ACT1_FLAG_CANNED_JUICE_DROPPED, true);
-    Some(ACT1_SE_TRASH_CHUTE_DROP)
-}
-
-/// Evaluates whether the 3D `Coin [Old Man]` model (`kind = 0x071f`, `Stage 13` `mdl_list[1]` at `0x008de900`)
-/// is visible in the Courtyard trash pile.
-///
-/// - **Vanilla PS2 (`fixes.old_man_coin_fix == false`):** `flag_on = 0, flag_off = 96` -> visible even before dropping Canned Juice!
-/// - **SH2:EE (`fixes.old_man_coin_fix == true`):** `flag_on = 95, flag_off = 96` (`OldManCoinFix.cpp`).
-#[must_use]
-pub fn act1_is_old_man_coin_prop_visible(
-    flags: &EventFlags,
-    fixes: Act1VanillaFixesConfig,
-) -> bool {
-    if flags.get(ACT1_FLAG_OLD_MAN_COIN_TAKEN) {
-        return false;
-    }
-    if fixes.old_man_coin_fix {
-        flags.get(ACT1_FLAG_CANNED_JUICE_DROPPED)
-    } else {
-        true
-    }
-}
-
-/// Picks up `Coin [Old Man]` (`51`) from the Wood Side Courtyard chute (`EvProgGetCoinOfOldman` `0x00595810`).
-pub fn act1_pickup_old_man_coin_courtyard(
-    flags: &mut EventFlags,
-    inventory: &mut InventoryManager,
-) -> bool {
-    if !flags.get(ACT1_FLAG_CANNED_JUICE_DROPPED) || flags.get(ACT1_FLAG_OLD_MAN_COIN_TAKEN) {
-        return false;
-    }
-    inventory.item_get_now(ACT1_ITEM_COIN_OLD_MAN);
-    flags.set(ACT1_FLAG_OLD_MAN_COIN_TAKEN, true);
-    flags.set(ACT1_FLAG_OLD_MAN_COIN_SUB, true);
-    true
-}
-
-/// Unlocks the Wood Side 2F West Fire-Escape door into Blue Creek (`ACT1_ITEM_FIRE_ESCAPE_KEY` `29`).
-pub fn act1_use_fire_escape_key(flags: &mut EventFlags, inventory: &InventoryManager) -> bool {
-    if !inventory.has_item(ACT1_ITEM_FIRE_ESCAPE_KEY) {
-        return false;
-    }
-    flags.set(ACT1_FLAG_FIRE_ESCAPE_UNLOCKED, true);
-    true
-}
-
-/// Which of the three Apartment Coins is being rendered in the Rm 105 5-slot desk cutaway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Act1DeskCoinKind {
-    /// `Coin [Old Man]` (`51`).
-    OldMan,
-    /// `Coin [Snake]` (`50`).
-    Snake,
-    /// `Coin [Prisoner]` (`52`).
-    Prisoner,
-}
-
-/// 2D cutaway quad UV (`[u1, v1, u2, v2]`) and screen vertex bounds (`[x0, y0, x1, y1]`) for a coin
-/// in `R_APT_W_RM_105` (`0x22`), preserving both 1:1 vanilla PS2 and SH2:EE `CoinPuzzleFix`
-/// (`Patches/PuzzleAlignmentFixes.cpp` lines 98–181).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Act1CoinQuadLayout {
-    /// Texture coordinates `[u1, v1, u2, v2]` in Q4 texel space.
-    pub uv: [f32; 4],
-    /// Screen-space quad corners `[x0, y0, x1, y1]` in Q4 pixel units.
-    pub bounds: [i16; 4],
-}
-
-/// Computes the exact coin sprite UVs and slot bounds for `slot` (`0..=4`), gated by `fixes.coin_puzzle_alignment_fix`.
-#[must_use]
-pub const fn act1_coin_puzzle_quad_layout(
-    coin: Act1DeskCoinKind,
-    slot: usize,
-    fixes: Act1VanillaFixesConfig,
-) -> Option<Act1CoinQuadLayout> {
-    if slot >= 5 {
-        return None;
-    }
-    let uv = if fixes.coin_puzzle_alignment_fix {
-        match coin {
-            Act1DeskCoinKind::OldMan => [0.0, 0.0, 1024.0, 1024.0],
-            Act1DeskCoinKind::Snake => [0.0, 1055.0, 1024.0, 2075.0],
-            Act1DeskCoinKind::Prisoner => [-4.0, 2082.0, 1028.0, 3108.0],
-        }
-    } else {
-        match coin {
-            Act1DeskCoinKind::OldMan => [0.0, 0.0, 752.0, 1008.0],
-            Act1DeskCoinKind::Snake => [0.0, 1024.0, 752.0, 2032.0],
-            Act1DeskCoinKind::Prisoner => [0.0, 2048.0, 752.0, 3056.0],
-        }
-    };
-    let bounds = if fixes.coin_puzzle_alignment_fix {
-        match slot {
-            0 => [-3160, -708, -2090, 362],
-            1 => [-1790, -682, -720, 388],
-            2 => [-414, -650, 656, 420],
-            3 => [962, -612, 2032, 458],
-            _ => [2348, -580, 3418, 490],
-        }
-    } else {
-        match slot {
-            0 => [-3150, -680, -2126, 344],
-            1 => [-1750, -650, -726, 374],
-            2 => [-450, -620, 574, 404],
-            3 => [950, -590, 1974, 434],
-            _ => [2350, -560, 3374, 464],
-        }
-    };
-    Some(Act1CoinQuadLayout { uv, bounds })
 }
 
 /// Evaluates the Rm 202 Butterfly Hole encounter (`EvProgAnyoneInHole` `0x0059a860` / `EvProgNooneInHole` `0x0059abb0`).

@@ -270,7 +270,8 @@ pub fn act1_apply_quiz_poison_gas_damage(
     (next_timer, current_hp, true)
 }
 
-/// Evaluates the 4 Pyramid Head chase speed zones in the Hospital Basement Passage (`stg_hospital_pass.c`
+/// Evaluates the 4 Pyramid Head AI chase substate zones (`0..=3`, written to `en_kind == 5` substate
+/// via `0x004a8be0(4, zone)` at `0x004a8cc9`) in the Hospital Basement Passage (`stg_hospital_pass.c`
 /// `sh2pc.exe` `0x00587c10..0x00587d30`: `z = -258800, -257600, -256000, -255200, -252400`, `x = 19200`).
 #[must_use]
 pub fn act1_eval_hospital_pass_ph_speed_tier(ph_x_mm: f32, ph_z_mm: f32) -> Option<u8> {
@@ -285,6 +286,25 @@ pub fn act1_eval_hospital_pass_ph_speed_tier(ph_x_mm: f32, ph_z_mm: f32) -> Opti
     } else {
         None
     }
+}
+
+/// Computes Red Pyramid Thing's HP-ratio walk speed factor from `enREDGetSpeed` (`SLUS_202.28`
+/// `0x0015ff60`: `0.25 + 0.75 * (hp / max_hp)`) and `enREDGetWalkSpeed` (`0x0015ffa0`:
+/// multiplies by `mode_scale`, by `1.2` (`0x3f99999a`) when `substate_b == 1` (`Zone1`), and by
+/// `4096.0` (`0x45800000`) Q12 fixed-point anim rate).
+#[must_use]
+pub fn act1_eval_red_pyramid_walk_speed_q12(
+    hp: f32,
+    max_hp: f32,
+    mode_scale: f32,
+    substate_b: u8,
+) -> i16 {
+    let ratio = if max_hp > 0.0 { hp / max_hp } else { 1.0 };
+    let mut speed = (0.25 + 0.75 * ratio) * mode_scale;
+    if substate_b == 1 {
+        speed *= f32::from_bits(0x3f99_999a);
+    }
+    (speed * 4096.0) as i32 as i16
 }
 
 /// Completes the Hospital Basement Passage escape cutscene (`sh2pc.exe` `0x00587e3a..0x00587e98`),

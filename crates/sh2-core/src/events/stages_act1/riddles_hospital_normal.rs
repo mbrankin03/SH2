@@ -38,6 +38,9 @@ pub const ACT1_FLAG_SHOWER_DRAIN_KEY_TAKEN: usize = 172;
 pub const ACT1_FLAG_WING_KEYPAD_UNLOCKED: usize = 181;
 /// Flag `183` (`0xb7`, `0x1f7a9f4 |= 0x800000`): 2F Carbon Paper examined on Hard/Extra (`0x0058fca9`).
 pub const ACT1_FLAG_CARBON_PAPER_HARD_READ: usize = 183;
+/// Flag `192` (`0xc0`, `0x1f7a9f8 & 0x01`): 3F Special Treatment Room Wall Blood Code inspected
+/// (`EvProgGuruguruNumber` `0x0058eec0..0x0058eefe`, `ACT1_HOSPITAL_3F_F_EVENT_LIST[3]` `rslt1 = 0x000100c0`).
+pub const ACT1_FLAG_WALL_BLOOD_CODE_READ: usize = 192;
 /// Flag `193` (`0xc1`, `0x1f7a9f8 |= 0x02`): Louise Box Key Lock 1 unlocked (`0x0058f29d`).
 pub const ACT1_FLAG_LOUISE_KEY1_OPEN: usize = 193;
 /// Flag `195` (`0xc3`, `0x1f7a9f8 |= 0x08`): Louise Box Key Lock 2 unlocked (`0x0058f319`).
@@ -50,8 +53,10 @@ pub const ACT1_FLAG_LOUISE_KEYPAD_OPEN: usize = 198;
 pub const ACT1_FLAG_ROOF_DOOR_UNLOCKED: usize = 199;
 /// Flag `200` (`0xc8`): Hospital Roof door slammed/locked behind James (`stg_hospital_rf_f` `ev_list[8]`).
 pub const ACT1_FLAG_ROOF_DOOR_LOCKED_BEHIND: usize = 200;
-/// Flag `203` (`0xcb`, `0x1f7a9f8 & 0x0800`): 3F Wall Blood Code read (`0x0058f41d`) / Roof PH push (`ev_list[2]`).
-pub const ACT1_FLAG_WALL_BLOOD_CODE_OR_ROOF_PUSH: usize = 203;
+/// Flag `203` (`0xcb`, `0x1f7a9f8 & 0x0800`): Pyramid Head pushed James off the Hospital Roof into the
+/// Special Treatment Room (`EvProgTriheadOnRoof` `ACT1_HOSPITAL_RF_F_EVENT_LIST[2]` `rslt1 = 0x0000c0cb`;
+/// tested by Louise's rotary wheel at `0x0058f41d`).
+pub const ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED: usize = 203;
 /// Flag `204` (`0xcc`): Hospital Roof rusty chain-link fence inspected (`stg_hospital_rf_f` `ev_list[11]`).
 pub const ACT1_FLAG_ROOF_FENCE_INSPECTED: usize = 204;
 /// Flag `613` (`0x265`, `0x1f7aa2c |= 0x20`): 2F Carbon Paper memo recorded on Easy/Normal (`0x0058fcd4`).
@@ -152,10 +157,11 @@ pub fn act1_read_carbon_paper_memo(
     (msg, text)
 }
 
-/// Marks the 3F Wall Blood Code (`PZ_WHEEL_GOAL`) as read (`EvProgGuruguruNumber` `0x0058eec0`),
-/// setting `flag(203)` (`0x1f7a9f8 |= 0x0800`) required before Louise's rotary lock can unlatch.
+/// Marks the 3F Special Treatment Room Wall Blood Code (`PZ_WHEEL_GOAL`) as read
+/// (`EvProgGuruguruNumber` `sh2pc.exe` `0x0058eec0..0x0058eefe`, `ACT1_HOSPITAL_3F_F_EVENT_LIST[3]` `rslt1 = 0x000100c0`),
+/// setting `flag(192)` (`0x1f7a9f8 |= 0x01`).
 pub fn act1_read_louise_wall_blood_code(flags: &mut EventFlags) {
-    flags.set(ACT1_FLAG_WALL_BLOOD_CODE_OR_ROOF_PUSH, true);
+    flags.set(ACT1_FLAG_WALL_BLOOD_CODE_READ, true);
 }
 
 /// Interactive state machine for Room S14's 4-lock Louise Box (`EvProgBoxWithKey` `sh2pc.exe` `0x0058f100`).
@@ -243,7 +249,8 @@ impl Act1LouiseBoxState {
     }
 
     /// Increments rotary wheel `wheel_idx` (`0..=3`, wrapping `0..=8` -> `1..=9` on dial, `0x0058e789..0x0058e7a4`),
-    /// unlocking `flag(197)` if `flag(203)` is set and `PZ_WHEEL == PZ_WHEEL_GOAL` (`0x0058f418..0x0058f48a`).
+    /// unlocking `flag(197)` if `flag(203)` (`ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED`, `0x0058f41d`: `test ch, 0x08`)
+    /// is set and `PZ_WHEEL == PZ_WHEEL_GOAL` (`0x0058f418..0x0058f48a`).
     pub fn rotate_wheel(
         &mut self,
         wheel_idx: usize,
@@ -258,7 +265,7 @@ impl Act1LouiseBoxState {
 
         let solved =
             puzzle.raw()[PZ_WHEEL..PZ_WHEEL + 4] == puzzle.raw()[PZ_WHEEL_GOAL..PZ_WHEEL_GOAL + 4];
-        if flags.get(ACT1_FLAG_WALL_BLOOD_CODE_OR_ROOF_PUSH) && solved {
+        if flags.get(ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED) && solved {
             flags.set(ACT1_FLAG_LOUISE_WHEEL_OPEN, true);
             return true;
         }
@@ -393,7 +400,7 @@ pub fn act1_apply_roof_pyramid_head_push(
     flags: &mut EventFlags,
 ) -> f32 {
     flags.set(ACT1_FLAG_ROOF_DOOR_LOCKED_BEHIND, false);
-    flags.set(ACT1_FLAG_WALL_BLOOD_CODE_OR_ROOF_PUSH, true);
+    flags.set(ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED, true);
     let drop = max_hp * 0.7;
     if current_hp > drop {
         current_hp - drop

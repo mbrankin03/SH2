@@ -85,7 +85,8 @@ pub struct Act1LifecycleSnapshot {
     pub town_streaming_block: Option<u16>,
     /// Grandfather clock `(hour_hand_rad, minute_hand_rad)` in Wood Side Rm 208 (`stg_apart_e2f`).
     pub clock_hand_angles_rad: Option<[f32; 2]>,
-    /// Dynamic door state overrides `(door_id, state)` emitted by `DoorStateChange` (`0x004a2f10`).
+    /// Dynamic door/prop state overrides `(id, state)` applied during `EvRoomInit` / `EvAllTimeFunc`
+    /// (distinct from `.map` geometry group visibility bitmasks `1 << cl` written via `0x004a2f10`).
     pub door_overrides: Vec<(u8, i8)>,
     /// Sound effect IDs triggered on room load (`EvSoundCallAfterLoad`) or one-shot proximity.
     pub triggered_sound_effects: Vec<u32>,
@@ -148,10 +149,11 @@ pub const fn act1_eval_shower_flashlight_glow(
     }
 }
 
-/// Applies `EvStageInit` side effects when loading an Act 1 stage (`sh2pc.exe` `Stage_Data::stage_init`).
+/// Applies `EvStageInit` `EventFlags` side effects when loading an Act 1 stage (`sh2pc.exe` `Stage_Data::stage_init`).
 ///
-/// Ported from `stg_apart_e3fe` (`0x005992f0`), `stg_apart_out` (`0x00595e80`), `stg_town_west`
-/// (`0x00593af0`), `stg_bowling` (`0x00591bd0`), and `stg_hospital_3f_b` (`0x00589db0`).
+/// Ported from `stg_apart_out` (`0x00595e80`), `stg_town_west` (`0x00593af0`), and `stg_bowling`
+/// (`0x00591bd0`). Note that `stg_apart_e3fe` (`0x005992f0`) and `stg_hospital_3f_b` (`0x00589db0`)
+/// only zero stage-local BSS state/timers rather than mutating `EventFlags`.
 pub fn act1_eval_stage_init(stage: Act1StageId, flags: &mut EventFlags) {
     match stage {
         Act1StageId::ApartOut => {
@@ -292,7 +294,8 @@ pub fn act1_eval_alltime_and_room(
         Act1StageId::ApartE2f => {
             if room_id == ACT1_ROOM_APT_E_208 {
                 snap.clock_hand_angles_rad = Some(act1_clock_hand_angles_rad(puzzle));
-                // `0x0059ba80` (`EvSoundCallAfterLoad`): ticking clock SE `0x3e80` (`16000`) while `!flag(69)`.
+                // `0x0059ba80` (`EvSoundCallAfterLoad`): when `flag(69)` is set (`0x0059ba8a`), sets `flag(70)`
+                // and triggers ticking grandfather clock SE `0x3e80` (`16000`).
                 if flags.get(69) {
                     flags.set(70, true);
                     snap.triggered_sound_effects.push(0x3e80);

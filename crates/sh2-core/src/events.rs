@@ -11,15 +11,16 @@ pub mod engine;
 pub mod horror_triggers;
 mod puzzles;
 mod runner;
-pub mod stages_act2;
 pub mod triggers;
 
 pub use engine::*;
 pub use horror_triggers::*;
 pub use puzzles::*;
 pub use runner::*;
-pub use stages_act2::*;
 pub use triggers::*;
+
+pub mod stages_act2;
+pub use stages_act2::*;
 
 /// Maximum number of event condition flags (`0..16384`, 2048 bytes at `0x1f7d5e0`).
 pub const EV_MAX_FLAGS: usize = 16384;

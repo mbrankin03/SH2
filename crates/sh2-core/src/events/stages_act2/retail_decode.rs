@@ -4,9 +4,7 @@
 use std::f32::consts::PI;
 
 use crate::events::triggers::EvPosShape;
-use crate::types::{
-    char_to_float4, EnemyListEntry, EventListEntry, EventShapeKind, ItemListEntry, StageDataHeader,
-};
+use crate::types::{char_to_float4, EnemyListEntry, EventListEntry, EventShapeKind, ItemListEntry};
 
 /// Sentinel `EventListEntry` (`flag_1 == 0x3fff`, `cond == 0`, `rslt0 == 0`) terminating both
 /// PS2 `SLUS_202.28` (`0x001a8ee8`) and retail PC `sh2pc.exe` (`0x0048e181`) event scans.
@@ -310,13 +308,22 @@ pub fn decode_retail_ev_pos_shape(
 
 /// Maps a retail `sh2pc.exe` [`EventListEntry`] (`0x0048e5b4` & `0x0048e7a4`) onto `SLUS_202.28`
 /// trigger and result discriminants expected by [`crate::events::EventEngine::tick_standard`].
+///
+/// Retail `trg == 1` maps to `Always` (`9`): in `EventCheck` (`0x0048e1db..0x0048e2cb`) it falls
+/// through both the button/item jump (`ecx = trg - 2 > 8u` -> `ja 0x0048e219`) and the spatial
+/// jump (`ja 0x0048e572`), firing every frame whenever `flag_0`/`flag_1` hold.
+///
+/// Note: only the trigger/result nibbles are normalized. The `ev_pos` offsets still index the
+/// retail 10-byte `f32`/`f16` geometry in [`super::StageTableAct2::pos_list`], which must be
+/// decoded with [`decode_retail_ev_pos_shape`] (the PS2 `tick_standard` `i16` decoder does not
+/// understand that layout).
 pub const fn normalize_retail_event_entry(entry: EventListEntry) -> EventListEntry {
     if entry.is_sentinel() {
         return entry;
     }
     let trg = match (entry.cond >> 28) & 0xf {
         0 => 5,
-        1 => 4,
+        1 => 9,
         2 | 7 => 2,
         3 | 4 | 8 | 9 => 0,
         5 | 10 => 6,
@@ -355,86 +362,5 @@ fn clamp_f32_to_i16(v: f32) -> i16 {
         0
     } else {
         clamp_i32_to_i16(v.round() as i32)
-    }
-}
-
-pub(crate) const fn ev(flag: u32, cond: u32, rslt0: u32, rslt1: u32) -> EventListEntry {
-    EventListEntry {
-        flag,
-        cond,
-        rslt0,
-        rslt1,
-    }
-}
-
-pub(crate) const fn gi(
-    pos_x_bits: u32,
-    pos_z_bits: u32,
-    pos_y_hi16: u16,
-    rot_y_hi16: u16,
-    flags_packed: u32,
-) -> RetailItemSpawn {
-    RetailItemSpawn {
-        pos_x_bits,
-        pos_z_bits,
-        pos_y_hi16,
-        rot_y_hi16,
-        flags_packed,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) const fn en(
-    kind: i16,
-    id: i16,
-    pos_x: i32,
-    pos_z: i32,
-    pos_y: i16,
-    rot_y: i16,
-    cond_type: u16,
-    diff_cond: u16,
-) -> RetailEnemySpawn {
-    RetailEnemySpawn {
-        kind,
-        id,
-        pos_x,
-        pos_z,
-        pos_y,
-        rot_y,
-        cond_type,
-        diff_cond,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) const fn hdr(
-    ev_list_ptr: u32,
-    ev_pos_ptr: u32,
-    ev_prog_ptr: u32,
-    item_list_ptr: u32,
-    model_list_ptr: u32,
-    enemy_list_ptr: u32,
-    stage_init_fn: u32,
-    room_init_fn: u32,
-    all_time_fn: u32,
-    glb_crd: i32,
-    sound_call_after_load_fn: u32,
-    bgm_control_fn: u32,
-    chara_data_clear_fn: u32,
-) -> StageDataHeader {
-    StageDataHeader {
-        ev_list_ptr,
-        ev_pos_ptr,
-        ev_prog_ptr,
-        item_list_ptr,
-        model_list_ptr,
-        enemy_list_ptr,
-        stage_init_fn,
-        room_init_fn,
-        all_time_fn,
-        glb_crd,
-        sound_call_after_load_fn,
-        bgm_control_fn,
-        chara_data_clear_fn,
     }
 }

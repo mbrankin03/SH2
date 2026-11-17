@@ -44,7 +44,7 @@ pub const STAGE_END_MARIA: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f033f0,
     header: hdr(
         0x007b0ac0, 0x007b0a38, 0x007b1284, 0x00000000, 0x007b1298, 0x00000000, 0x00440160,
-        0x00440190, 0x00440910, 13, 0x00440180, 0x00440280, 0x00440250,
+        0x00440190, 0x00440910, 13, 0x00440250, 0x00440280, 0x00440180,
     ),
     event_list: STAGE_END_MARIA_EV,
     pos_list: STAGE_END_MARIA_POS,
@@ -87,7 +87,7 @@ pub const STAGE_END_SUICIDE: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f035a0,
     header: hdr(
         0x007b17d0, 0x007b1750, 0x007b1f64, 0x00000000, 0x007b1f70, 0x00000000, 0x00440ee0,
-        0x00440f10, 0x00441900, 13, 0x00440ed0, 0x00441000, 0x00440fd0,
+        0x00440f10, 0x00441900, 13, 0x00440fd0, 0x00441000, 0x00440ed0,
     ),
     event_list: STAGE_END_SUICIDE_EV,
     pos_list: STAGE_END_SUICIDE_POS,
@@ -133,7 +133,7 @@ pub const STAGE_END_REBIRTH: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f033f0,
     header: hdr(
         0x007afda8, 0x007afd28, 0x007b055c, 0x00000000, 0x007b0570, 0x00000000, 0x0043f310,
-        0x0043f340, 0x0043fac0, 13, 0x0043f330, 0x0043f430, 0x0043f400,
+        0x0043f340, 0x0043fac0, 13, 0x0043f400, 0x0043f430, 0x0043f330,
     ),
     event_list: STAGE_END_REBIRTH_EV,
     pos_list: STAGE_END_REBIRTH_POS,
@@ -176,7 +176,7 @@ pub const STAGE_END_DOG: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f02050,
     header: hdr(
         0x008c6178, 0x008c60f8, 0x008c690c, 0x00000000, 0x008c6918, 0x00000000, 0x00574a80,
-        0x00574ab0, 0x00575280, 13, 0x00574aa0, 0x00574ba0, 0x00574b70,
+        0x00574ab0, 0x00575280, 13, 0x00574b70, 0x00574ba0, 0x00574aa0,
     ),
     event_list: STAGE_END_DOG_EV,
     pos_list: STAGE_END_DOG_POS,
@@ -204,7 +204,7 @@ pub const STAGE_END_LEAVE: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x00000000,
     header: hdr(
         0x008c5f1c, 0x008c5f10, 0x008c5f3c, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        0x00000000, 0x00000000, 14, 0x00574660, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 14, 0x00000000, 0x00000000, 0x00574660,
     ),
     event_list: STAGE_END_LEAVE_EV,
     pos_list: STAGE_END_LEAVE_POS,

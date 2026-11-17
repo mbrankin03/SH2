@@ -202,7 +202,7 @@ pub const STAGE_HOTEL_1F_B: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f035f0,
     header: hdr(
         0x008c7d28, 0x008c7b48, 0x008c8098, 0x008c8048, 0x008c80c8, 0x008c8190, 0x00000000,
-        0x00576790, 0x005767e0, 13, 0x00576730, 0x00576750, 0x00000000,
+        0x00576790, 0x005767e0, 13, 0x00000000, 0x00576750, 0x00576730,
     ),
     event_list: STAGE_HOTEL_1F_B_EV,
     pos_list: STAGE_HOTEL_1F_B_POS,

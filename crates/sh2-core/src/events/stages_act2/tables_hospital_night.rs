@@ -36,7 +36,7 @@ pub const STAGE_TO_HEAVEN: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f02700,
     header: hdr(
         0x008da618, 0x008da5c8, 0x008da688, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        0x00591170, 0x00591210, 3, 0x00591160, 0x00000000, 0x00000000,
+        0x00591170, 0x00591210, 3, 0x00000000, 0x00000000, 0x00591160,
     ),
     event_list: STAGE_TO_HEAVEN_EV,
     pos_list: STAGE_TO_HEAVEN_POS,
@@ -241,7 +241,7 @@ pub const STAGE_HOSPITAL_BF_B: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f04330,
     header: hdr(
         0x008d4f20, 0x008d4db8, 0x008d53a0, 0x008d5100, 0x008d53c0, 0x00000000, 0x00000000,
-        0x005889e0, 0x00588a20, 10, 0x005889a0, 0x00000000, 0x00000000,
+        0x005889e0, 0x00588a20, 10, 0x00000000, 0x00000000, 0x005889a0,
     ),
     event_list: STAGE_HOSPITAL_BF_B_EV,
     pos_list: STAGE_HOSPITAL_BF_B_POS,
@@ -287,7 +287,7 @@ pub const STAGE_HOSPITAL_PASS: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f02630,
     header: hdr(
         0x008d4a80, 0x008d4a00, 0x008d4b20, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
-        0x00587ee0, 0x00587f40, 10, 0x00587ed0, 0x00587f50, 0x00000000,
+        0x00587ee0, 0x00587f40, 10, 0x00000000, 0x00587f50, 0x00587ed0,
     ),
     event_list: STAGE_HOSPITAL_PASS_EV,
     pos_list: STAGE_HOSPITAL_PASS_POS,

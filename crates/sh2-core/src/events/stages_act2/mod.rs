@@ -10,6 +10,7 @@
 
 #![warn(missing_docs)]
 
+mod retail_ctors;
 pub mod retail_decode;
 pub mod riddles_hotel_2f;
 pub mod riddles_hotel_lobby_bar;
@@ -29,6 +30,7 @@ pub mod tables_prison_s_bf;
 pub mod tables_society_delusion;
 pub mod tables_wish_a;
 pub mod tables_wish_b;
+pub mod wish_gravestone_render;
 
 pub use retail_decode::*;
 pub use riddles_hotel_2f::*;
@@ -49,10 +51,11 @@ pub use tables_prison_s_bf::*;
 pub use tables_society_delusion::*;
 pub use tables_wish_a::*;
 pub use tables_wish_b::*;
+pub use wish_gravestone_render::*;
 
 use crate::types::{EventListEntry, ItemListEntry, StageDataHeader};
 
-pub(crate) use retail_decode::{en, ev, gi, hdr};
+pub(crate) use retail_ctors::{en, ev, gi, hdr};
 
 /// Canonical stage IDs ported in `SH2-114` (`StgOverlayGetStageData` `SLUS_202.28` `0x00228670`
 /// and `sh2pc.exe` `0x00495048`).
@@ -239,11 +242,14 @@ pub struct StageTableAct2 {
     pub retail_stage_data_va: u32,
     /// Virtual address of `Stage_Data` in `SLUS_202.28` (`0` for Director's Cut / non-overlay stages).
     pub ps2_stage_data_va: u32,
-    /// 52-byte `Stage_Data` pointer/callback header.
+    /// `Stage_Data` pointer/callback header, projected from the retail 64-byte (`16 x u32`) record
+    /// (see `hdr` in `retail_decode.rs` for the `word[15]`/`word[12]`/`word[14]` callback mapping).
     pub header: StageDataHeader,
     /// Raw retail `Event_List` slice terminated by [`EV_SENTINEL`].
     pub event_list: &'static [EventListEntry],
-    /// Raw retail `ev_pos` spatial geometry byte buffer (decoded via [`decode_retail_ev_pos_shape`]).
+    /// Raw retail `ev_pos` spatial geometry byte buffer in the 10-byte `f32`/`f16` PC layout.
+    /// Must be decoded via [`decode_retail_ev_pos_shape`]; it is NOT the 8-byte PS2 `i16` layout
+    /// read by `EventEngine::tick_standard`'s shape tests.
     pub pos_list: &'static [u8],
     /// Virtual addresses of `ev_prog` coroutine handlers indexed by `EventListEntry::prog_index`.
     pub ev_prog_vas: &'static [u32],
@@ -262,6 +268,10 @@ impl StageTableAct2 {
 
     /// Adapts `self.event_list` from retail `sh2pc.exe` trigger/result nibbles (`0x0048e1a9` &
     /// `0x0048e6af`) to `SLUS_202.28` [`crate::events::EventEngine::tick_standard`] nibbles.
+    ///
+    /// Flag-, button-, item- and `Always`-gated entries evaluate correctly; spatial shapes still
+    /// reference [`Self::pos_list`] in the retail layout and must be resolved with
+    /// [`decode_retail_ev_pos_shape`].
     pub fn engine_event_list(&self) -> Vec<EventListEntry> {
         self.event_list
             .iter()

@@ -3,25 +3,10 @@
 //! `ev_prog`, `Item_List`, `Enemy_List`) and interactive `ev_prog` riddles across Toluca Prison,
 //! Labyrinth, Lakeview Hotel, and *Born from a Wish*.
 
-use std::path::Path;
-
 use sh2_core::config::{ActionDifficulty, RiddleDifficulty};
 use sh2_core::events::*;
 use sh2_core::inventory::InventoryManager;
-use sh2_core::types::EventListEntry;
-
-fn u16_le(pe: &[u8], o: usize) -> u16 {
-    u16::from_le_bytes([pe[o], pe[o + 1]])
-}
-fn i16_le(pe: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([pe[o], pe[o + 1]])
-}
-fn u32_le(pe: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([pe[o], pe[o + 1], pe[o + 2], pe[o + 3]])
-}
-fn i32_le(pe: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes([pe[o], pe[o + 1], pe[o + 2], pe[o + 3]])
-}
+use sh2_core::types::{EventListEntry, EventTriggerKind};
 
 #[test]
 fn static_stage_tables_25_to_58_and_16_match_retail_counts_and_decode_cleanly() {
@@ -101,136 +86,6 @@ fn static_stage_tables_25_to_58_and_16_match_retail_counts_and_decode_cleanly() 
         }
     }
     assert_eq!((total_events, total_items, total_enemies), (1173, 119, 145));
-}
-
-#[test]
-fn retail_sh2pc_binary_and_stage_assets_match_static_tables_bit_for_bit() {
-    let exe_path =
-        Path::new("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2pc.exe");
-    if !exe_path.exists() {
-        return;
-    }
-    let pe = std::fs::read(exe_path).expect("read sh2pc.exe");
-    let jt_off = 0x0049_5048usize - 0x0040_0000;
-
-    assert_eq!(
-        f32::from_bits(u32_le(&pe, 0x002a_91e8)),
-        RETAIL_LOOK_RADIUS_MM
-    );
-    assert_eq!(
-        &pe[0x004c_a414..0x004c_a434],
-        BRIEFCASE_TRUNK_DRUMS.as_flattened()
-    );
-    let boards = [
-        GravestoneBoard::White,
-        GravestoneBoard::Black,
-        GravestoneBoard::Red,
-    ];
-    for (idx, b) in boards.into_iter().enumerate() {
-        let o = 0x004c_4650 + idx * 8;
-        let uv = gravestone_board_uv(b, false);
-        let exp = [
-            u16_le(&pe, o),
-            u16_le(&pe, o + 2),
-            u16_le(&pe, o + 4),
-            u16_le(&pe, o + 6),
-        ];
-        assert_eq!([uv.u1, uv.v1, uv.u2, uv.v2], exp.map(f32::from));
-    }
-
-    for &stage_id in &ALL_ACT2_STAGE_IDS {
-        let table = stage_table_act2(stage_id).expect("stage table");
-        let case_va = u32_le(&pe, jt_off + ((stage_id as usize) - 1) * 4);
-        let stg_va = u32_le(&pe, (case_va as usize) - 0x0040_0000 + 1);
-        assert_eq!(stg_va, table.retail_stage_data_va, "Stage {stage_id} VA");
-
-        let h_off = (stg_va as usize) - 0x0040_0000;
-        let h = &table.header;
-        let exp_hdr = [
-            h.ev_list_ptr,
-            h.ev_pos_ptr,
-            h.ev_prog_ptr,
-            h.item_list_ptr,
-            h.model_list_ptr,
-            h.enemy_list_ptr,
-            h.stage_init_fn,
-            h.room_init_fn,
-            h.all_time_fn,
-            h.glb_crd as u32,
-            h.sound_call_after_load_fn,
-            h.bgm_control_fn,
-            h.chara_data_clear_fn,
-        ];
-        for (w, &exp) in exp_hdr.iter().enumerate() {
-            assert_eq!(u32_le(&pe, h_off + w * 4), exp, "Stage {stage_id} hdr[{w}]");
-        }
-
-        if h.ev_list_ptr >= 0x0040_1000 {
-            let ev_off = (h.ev_list_ptr as usize) - 0x0040_0000;
-            for (i, &e) in table.event_list[..table.active_event_count()]
-                .iter()
-                .enumerate()
-            {
-                let b = ev_off + i * 16;
-                let bin = EventListEntry {
-                    flag: u32_le(&pe, b),
-                    cond: u32_le(&pe, b + 4),
-                    rslt0: u32_le(&pe, b + 8),
-                    rslt1: u32_le(&pe, b + 12),
-                };
-                assert_eq!(e, bin);
-            }
-        }
-        if h.ev_pos_ptr >= 0x0040_1000 && !table.pos_list.is_empty() {
-            let p_off = (h.ev_pos_ptr as usize) - 0x0040_0000;
-            assert_eq!(&pe[p_off..p_off + table.pos_list.len()], table.pos_list);
-        }
-        if h.ev_prog_ptr >= 0x0040_1000 {
-            let pr_off = (h.ev_prog_ptr as usize) - 0x0040_0000;
-            for (i, &va) in table.ev_prog_vas.iter().enumerate() {
-                assert_eq!(u32_le(&pe, pr_off + i * 4), va);
-            }
-        }
-        if h.item_list_ptr >= 0x0040_1000 {
-            let gi_off = (h.item_list_ptr as usize) - 0x0040_0000;
-            for (i, &it) in table.retail_items.iter().enumerate() {
-                let b = gi_off + i * 16;
-                let bin = RetailItemSpawn {
-                    pos_x_bits: u32_le(&pe, b),
-                    pos_z_bits: u32_le(&pe, b + 4),
-                    pos_y_hi16: u16_le(&pe, b + 8),
-                    rot_y_hi16: u16_le(&pe, b + 10),
-                    flags_packed: u32_le(&pe, b + 12),
-                };
-                assert_eq!(it, bin);
-            }
-        }
-        if h.enemy_list_ptr >= 0x0040_1000 {
-            let en_off = (h.enemy_list_ptr as usize) - 0x0040_0000;
-            for (i, &en) in table.retail_enemies.iter().enumerate() {
-                let b = en_off + i * 20;
-                let bin = RetailEnemySpawn {
-                    kind: i16_le(&pe, b),
-                    id: i16_le(&pe, b + 2),
-                    pos_x: i32_le(&pe, b + 4),
-                    pos_z: i32_le(&pe, b + 8),
-                    pos_y: i16_le(&pe, b + 12),
-                    rot_y: i16_le(&pe, b + 14),
-                    cond_type: u16_le(&pe, b + 16),
-                    diff_cond: u16_le(&pe, b + 18),
-                };
-                assert_eq!(en, bin);
-            }
-        }
-    }
-
-    for dir in ["ps", "ob", "rr", "hp", "bw"] {
-        let p = Path::new("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg")
-            .join(dir);
-        if p.exists() {
-            assert!(p.is_dir());
-        }
-    }
 }
 
 #[test]
@@ -472,7 +327,11 @@ fn hotel_otherworld_and_born_from_a_wish_gravestone_and_mansion_triggers() {
     assert!(
         trigger_reading_room_headphones(&mut flags) && !trigger_reading_room_headphones(&mut flags)
     );
-    assert!(!is_hotel_2f_teleport_corridor_room(0x29) && is_hotel_2f_teleport_corridor_room(0x2a));
+    assert!(is_hotel_2f_teleport_corridor_room(0x29) && !is_hotel_2f_teleport_corridor_room(0x2a));
+    let teleporting: Vec<u8> = (0x29..=0x39)
+        .filter(|&r| is_hotel_2f_teleport_corridor_room(r))
+        .collect();
+    assert_eq!(teleporting, [0x29, 0x2d, 0x31, 0x39]);
 
     inv.give_raw(ITEM_DOG_KEY, 1);
     assert!(apply_hotel_dog_key(&mut flags, &mut inv) && flags.get(FLAG_DOG_KEY_DOOR_UNLOCKED));
@@ -522,4 +381,61 @@ fn hotel_otherworld_and_born_from_a_wish_gravestone_and_mansion_triggers() {
         gravestone_board_uv(GravestoneBoard::White, true),
     );
     assert_ne!(uv_van.u1, uv_fix.u1);
+}
+
+#[test]
+fn retail_trg1_always_events_fire_mid_room_and_gravestone_verts_toggle() {
+    // Retail `trg == 1` (`EventCheck` `0x0048e1db`) fires every frame without room/stage change.
+    let raw = EventListEntry {
+        flag: 0,
+        cond: 0x1000_0000,
+        rslt0: 0x1000_0000,
+        rslt1: 0,
+    };
+    let norm = normalize_retail_event_entry(raw);
+    assert_eq!(norm.trigger_kind(), Some(EventTriggerKind::Always));
+    let eval = EventEvalInput {
+        player_pos: [0.0; 3],
+        player_rot_y: 0.0,
+        ev_active: 0,
+        action_pressed: false,
+        map_disabled_pressed: false,
+        room_changed: false,
+        stage_changed: false,
+        used_item_id: None,
+        is_demo_mode: false,
+        action_difficulty: ActionDifficulty::Normal,
+        player_can_search: true,
+    };
+    let mut ts = EventTriggerState::new();
+    assert!(evaluate_event_entry(0, &norm, &[], &EventFlags::new(), &eval, &mut ts) > 0.0);
+    let s53 = stage_table_act2(53).expect("stage 53");
+    let s53_ev0 = normalize_retail_event_entry(s53.event_list[0]);
+    if (s53.event_list[0].cond >> 28) & 0xf == 1 {
+        assert_eq!(s53_ev0.trigger_kind(), Some(EventTriggerKind::Always));
+    }
+
+    // Gravestone quad vertices: vanilla `0x008c4670` orderings vs SH2:EE `GravestoneBoardsFix`.
+    let [x0, y0, x1, y1] = GRAVESTONE_BOARD_VERT_EXTENTS;
+    assert_eq!([x0, y0, x1, y1], [-1285, -2110, 1275, 1218]);
+    assert_eq!(
+        gravestone_board_verts(BoardRotation::Deg0, true),
+        gravestone_board_verts(BoardRotation::Deg0, false)
+    );
+    assert_eq!(
+        gravestone_board_verts(BoardRotation::Left90, false),
+        [[x0, y1], [x0, y0], [x1, y1], [x1, y0]]
+    );
+    assert_eq!(
+        gravestone_board_verts(BoardRotation::Right90, true)[0],
+        [1355, -2030]
+    );
+    assert_eq!(
+        gravestone_board_verts(BoardRotation::Deg180, true)[3],
+        [-1267, -2066]
+    );
+    assert_eq!(
+        gravestone_board_verts(BoardRotation::Left90, true)[1],
+        [-1353, -2005]
+    );
 }

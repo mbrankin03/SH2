@@ -104,7 +104,7 @@ pub const STAGE_HOTEL_BF_F: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f02f60,
     header: hdr(
         0x008cc1e8, 0x008cc040, 0x008cc4c8, 0x008cc478, 0x008cc4e8, 0x008cc5d8, 0x00000000,
-        0x0057d8d0, 0x0057d930, 12, 0x00000000, 0x00000000, 0x0057d8e0,
+        0x0057d8d0, 0x0057d930, 12, 0x0057d8e0, 0x00000000, 0x00000000,
     ),
     event_list: STAGE_HOTEL_BF_F_EV,
     pos_list: STAGE_HOTEL_BF_F_POS,
@@ -353,7 +353,7 @@ pub const STAGE_HOTEL_1F_F: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f065f0,
     header: hdr(
         0x008cb128, 0x008cabc0, 0x008cb938, 0x008cb8c8, 0x008cb970, 0x008cbc90, 0x0057c0c0,
-        0x0057c0f0, 0x0057c1a0, 12, 0x0057c0d0, 0x0057c230, 0x00000000,
+        0x0057c0f0, 0x0057c1a0, 12, 0x00000000, 0x0057c230, 0x0057c0d0,
     ),
     event_list: STAGE_HOTEL_1F_F_EV,
     pos_list: STAGE_HOTEL_1F_F_POS,

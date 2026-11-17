@@ -124,7 +124,7 @@ pub const STAGE_LABYRINTH_W: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f05ae0,
     header: hdr(
         0x008d0948, 0x008d06d8, 0x008d122c, 0x008d0bf8, 0x008d1250, 0x008d13b8, 0x00000000,
-        0x00582a00, 0x00583790, 11, 0x005829e0, 0x00000000, 0x00582d10,
+        0x00582a00, 0x00583790, 11, 0x00582d10, 0x00000000, 0x005829e0,
     ),
     event_list: STAGE_LABYRINTH_W_EV,
     pos_list: STAGE_LABYRINTH_W_POS,
@@ -288,7 +288,7 @@ pub const STAGE_LABYRINTH_E: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f03a50,
     header: hdr(
         0x008cf930, 0x008cf598, 0x008cffe0, 0x008cfcd0, 0x008d0010, 0x008d00d8, 0x00000000,
-        0x00581320, 0x005813b0, 11, 0x00581300, 0x005815b0, 0x00000000,
+        0x00581320, 0x005813b0, 11, 0x00000000, 0x005815b0, 0x00581300,
     ),
     event_list: STAGE_LABYRINTH_E_EV,
     pos_list: STAGE_LABYRINTH_E_POS,

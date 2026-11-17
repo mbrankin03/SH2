@@ -309,7 +309,7 @@ pub const STAGE_WISH_1F: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x00000000,
     header: hdr(
         0x008c3b00, 0x008c37a0, 0x008c4040, 0x008c3fc0, 0x008c4080, 0x008c44b8, 0x00000000,
-        0x00572950, 0x00572b10, 16, 0x00572940, 0x00000000, 0x00000000,
+        0x00572950, 0x00572b10, 16, 0x00000000, 0x00000000, 0x00572940,
     ),
     event_list: STAGE_WISH_1F_EV,
     pos_list: STAGE_WISH_1F_POS,

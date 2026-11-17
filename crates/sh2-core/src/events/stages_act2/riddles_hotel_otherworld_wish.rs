@@ -5,6 +5,7 @@
 //! `stg_to_heaven.c`), retail PC Director's Cut `sh2pc.exe` (`0x00570c70..0x00577b70`), and
 //! SH2:EE `PuzzleAlignmentFixes.cpp` (`GravestoneBoardsFix`).
 
+use super::{BoardRotation, GravestoneBoard};
 use crate::events::EventFlags;
 use crate::inventory::InventoryManager;
 
@@ -86,10 +87,14 @@ pub const SE_EGG_DOOR_INSERT: u32 = 0x44c7;
 /// Sound effect ID: Egg door unlocked when both eggs are mounted (`0x4a3c` at `0x00576bf0`).
 pub const SE_EGG_DOOR_UNLOCK: u32 = 0x4a3c;
 
-/// Exact 17-entry teleport corridor table for Otherworld Hotel 2F rooms `0x29..=0x39` (`sh2pc.exe` `0x00575db0`).
+/// Exact 17-entry teleport table for Otherworld Hotel 2F rooms `0x29..=0x39` (`sh2pc.exe`
+/// `0x00575dd2..0x00575e04`): index bytes at `0x00575e10` are
+/// `[0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0]`, where jump target `0` (`0x00575ded`)
+/// executes the teleport (`call 0x0047b210`) and target `1` (`0x00575e01`) returns without it.
+/// Only rooms `0x29`, `0x2d`, `0x31`, and `0x39` teleport.
 pub const HOTEL_2F_OTHERWORLD_TELEPORT_MASK: [bool; 17] = [
-    false, true, true, true, false, true, true, true, false, true, true, true, true, true, true,
-    true, false,
+    true, false, false, false, true, false, false, false, true, false, false, false, false, false,
+    false, false, true,
 ];
 
 /// Inserts Rust-Colored Egg (`72`) or Scarlet Egg (`73`) into the Otherworld Hotel 1F doors
@@ -153,7 +158,7 @@ pub fn trigger_reading_room_headphones(flags: &mut EventFlags) -> bool {
 }
 
 /// Returns `true` if `room_low_byte` (`0x29..=0x39`) in Otherworld Hotel 2F triggers a non-Euclidean
-/// corridor teleport (`sh2pc.exe` `0x00575db0`).
+/// corridor teleport (`sh2pc.exe` `0x00575dd2`, table `0x00575e10`).
 pub const fn is_hotel_2f_teleport_corridor_room(room_low_byte: u8) -> bool {
     if room_low_byte < 0x29 || room_low_byte > 0x39 {
         return false;
@@ -169,103 +174,6 @@ pub fn apply_hotel_dog_key(flags: &mut EventFlags, inventory: &mut InventoryMana
     inventory.item_lose(ITEM_DOG_KEY);
     flags.set(FLAG_DOG_KEY_DOOR_UNLOCKED, true);
     true
-}
-
-/// Which of the three *Born from a Wish* gravestone boards is being manipulated (`0x00572d40`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GravestoneBoard {
-    /// Item `79` (`0x4f`, pickup model `0x074e`, placed model `0x0753`): "White Board".
-    White,
-    /// Item `80` (`0x50`, pickup model `0x074c`, placed model `0x0754`): "Black Board".
-    Black,
-    /// Item `81` (`0x51`, pickup model `0x074d`, placed model `0x0755`): "Red Board".
-    Red,
-}
-
-impl GravestoneBoard {
-    /// Inventory item ID (`79..=81`).
-    pub const fn item_id(self) -> u8 {
-        match self {
-            Self::Black => ITEM_BLACK_BOARD,
-            Self::White => ITEM_WHITE_BOARD,
-            Self::Red => ITEM_RED_BOARD,
-        }
-    }
-}
-
-/// 90-degree board orientation in the Baldwin Mansion gravestone cavity (`0x00572fb0..0x00573068`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum BoardRotation {
-    /// Choice `0`: Upright (`0°`).
-    Deg0 = 0,
-    /// Choice `1`: Rotated right (`-90°` / `270°`, `0x00572fde`).
-    Right90 = 1,
-    /// Choice `2`: Upside-down (`180°`, `0x00573019`).
-    Deg180 = 2,
-    /// Choice `3`: Rotated left (`+90°`, `0x00573044`).
-    Left90 = 3,
-}
-
-/// UV rectangle `[u1, v1, u2, v2]` in texel space (`sh2pc.exe` `0x008c4650`, SH2:EE `GravestoneBoardsFix`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GravestoneBoardUv {
-    /// Left U coordinate in `1/16` texels (`+0x1c` on `UIElement` at `0x01f7a77c`).
-    pub u1: f32,
-    /// Top V coordinate in `1/16` texels (`+0x20` on `UIElement` at `0x01f7a780`).
-    pub v1: f32,
-    /// Right U coordinate in `1/16` texels (`+0x24` on `UIElement` at `0x01f7a784`).
-    pub u2: f32,
-    /// Bottom V coordinate in `1/16` texels (`+0x28` on `UIElement` at `0x01f7a788`).
-    pub v2: f32,
-}
-
-/// Returns either the SH2:EE-aligned (`PuzzleAlignmentFixes.cpp:17-41`) or 1:1 vanilla PC
-/// (`sh2pc.exe` `0x008c4650..0x008c4667` read at `0x00572148`) UV coordinates for `board`.
-pub const fn gravestone_board_uv(board: GravestoneBoard, alignment_fix: bool) -> GravestoneBoardUv {
-    if alignment_fix {
-        match board {
-            GravestoneBoard::Black => GravestoneBoardUv {
-                u1: 3.0,
-                v1: 1.0,
-                u2: 2548.0,
-                v2: 3320.0,
-            },
-            GravestoneBoard::White => GravestoneBoardUv {
-                u1: 2581.0,
-                v1: -5.0,
-                u2: 5126.0,
-                v2: 3320.0,
-            },
-            GravestoneBoard::Red => GravestoneBoardUv {
-                u1: 3.0,
-                v1: 3316.0,
-                u2: 2542.0,
-                v2: 6636.0,
-            },
-        }
-    } else {
-        match board {
-            GravestoneBoard::White => GravestoneBoardUv {
-                u1: 2560.0,
-                v1: 0.0,
-                u2: 5104.0,
-                v2: 3312.0,
-            },
-            GravestoneBoard::Black => GravestoneBoardUv {
-                u1: 0.0,
-                v1: 0.0,
-                u2: 2544.0,
-                v2: 3312.0,
-            },
-            GravestoneBoard::Red => GravestoneBoardUv {
-                u1: 0.0,
-                v1: 3312.0,
-                u2: 2544.0,
-                v2: 6640.0,
-            },
-        }
-    }
 }
 
 /// LIFO stack & orientation state of the *Born from a Wish* Baldwin Mansion gravestone puzzle (`0x00572d40`).

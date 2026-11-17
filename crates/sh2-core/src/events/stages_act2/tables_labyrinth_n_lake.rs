@@ -212,7 +212,7 @@ pub const STAGE_EDDIE_BOSS: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f02cd0,
     header: hdr(
         0x008ccc68, 0x008ccc10, 0x008ccd8c, 0x008ccd48, 0x008ccda0, 0x00000000, 0x00000000,
-        0x0057f2b0, 0x0057f390, 11, 0x0057f290, 0x0057f3a0, 0x00000000,
+        0x0057f2b0, 0x0057f390, 11, 0x00000000, 0x0057f3a0, 0x0057f290,
     ),
     event_list: STAGE_EDDIE_BOSS_EV,
     pos_list: STAGE_EDDIE_BOSS_POS,
@@ -264,7 +264,7 @@ pub const STAGE_LAKE: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f02530,
     header: hdr(
         0x008cc7f8, 0x008cc738, 0x008cc8c8, 0x00000000, 0x008cc8f8, 0x00000000, 0x00000000,
-        0x0057e5d0, 0x0057ece0, 4, 0x0057e5c0, 0x00000000, 0x0057e670,
+        0x0057e5d0, 0x0057ece0, 4, 0x0057e670, 0x00000000, 0x0057e5c0,
     ),
     event_list: STAGE_LAKE_EV,
     pos_list: STAGE_LAKE_POS,

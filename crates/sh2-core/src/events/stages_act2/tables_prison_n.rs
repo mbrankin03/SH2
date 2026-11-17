@@ -189,7 +189,7 @@ pub const STAGE_PRISON_N: StageTableAct2 = StageTableAct2 {
     ps2_stage_data_va: 0x01f04210,
     header: hdr(
         0x008d2c88, 0x008d28f8, 0x008d3358, 0x008d31f8, 0x008d3388, 0x008d34a0, 0x00000000,
-        0x005859a0, 0x005859e0, 11, 0x00585980, 0x00000000, 0x00000000,
+        0x005859a0, 0x005859e0, 11, 0x00000000, 0x00000000, 0x00585980,
     ),
     event_list: STAGE_PRISON_N_EV,
     pos_list: STAGE_PRISON_N_POS,

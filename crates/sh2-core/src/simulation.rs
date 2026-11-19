@@ -287,9 +287,9 @@ impl SimulationCore {
         // 1. Poll and update gamepad state
         self.input.update();
 
-        // 2. Handle flashlight toggle
+        // 2. Handle flashlight toggle (`LightSpotOnOffCheck` @ `SLUS_202.28` `0x001aad70`)
         if self.input.state.light_toggle_pressed {
-            self.scenario.flashlight_on = !self.scenario.flashlight_on;
+            let _ = self.scenario.toggle_flashlight();
         }
 
         // 3. Update character position and turning via authentic PS2 locomotion controller + SH2-93 camera bridge

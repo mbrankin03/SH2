@@ -14,9 +14,6 @@ use std::collections::HashSet;
 use crate::config::OutdoorStreamingMode;
 use crate::world::outdoor_grid::{OutdoorArea, OutdoorTileId};
 
-/// PS2 / PC outdoor resident distance threshold (`7,000 mm`) for immediate active tiles.
-pub const LOADBG_RESIDENT_RADIUS_MM: f32 = 7_000.0;
-
 /// Exact 7 priority distance bands in PS2 mm from `loadBgAll_SetLoadRequestOutdoor2x2`
 /// (`SLUS_202.28` `0x00270e54..0x00270f54`: `0x4c5693a4`..`0x4d3aeb90`).
 pub const LOADBG_DIST_BANDS_MM: [f32; 7] = [

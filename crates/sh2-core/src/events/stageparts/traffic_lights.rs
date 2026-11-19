@@ -203,8 +203,9 @@ impl TrafficLightState {
             list.entry(stage_id, STAGE5_CB35, ped_variant);
 
             // Phase-shifted flickering intersection: cb37 (0x25, `sh2pc.exe` `0x0059e6d0`)
-            // Flag bit `0x0800` at `0x01f7a9e4` (flag 267) enables static variant 0 on cb37.
-            if flags.get(267) {
+            // Flag bit `0x0800` at `0x01f7a9e4` (word 1 bit 11 relative to `flag_work` `0x01f7a9e0`
+            // -> flag `43` / `0x2b`) enables static variant 0 on cb37.
+            if flags.get(43) {
                 list.entry(stage_id, STAGE5_CB37, 0);
             }
             let cb37_phase = if flicker_off {

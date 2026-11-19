@@ -10,7 +10,7 @@ use sh2_assets::formats::mdls::parse_mdl;
 use sh2_assets::AssetPathResolver;
 use sh2_core::config::OutdoorStreamingMode;
 use sh2_core::events::stagemdl::{
-    StageModelManager, StageModelTickInput, MODEL_KIND_HOTEL_MUSIC_BOX,
+    StageModelKind, StageModelManager, StageModelTickInput, MODEL_KIND_HOTEL_MUSIC_BOX,
 };
 use sh2_core::events::stageparts::{
     stageparts_tick, StagePartsContext, StagePartsState, FLAG_WOODSIDE_GATE_UNLOCKED,
@@ -98,6 +98,22 @@ fn test_retail_music_box_org_mdl_matches_stagemdl_figurine_bones() {
     let org_path = resolver.data_dir.join("chr/item/org.mdl");
     if !org_path.exists() {
         return;
+    }
+
+    // Verify all 5 stage-placed `.mdl` prop paths exist in retail `data/`.
+    for kind in [
+        StageModelKind::HotelMusicBox,
+        StageModelKind::LabyrinthRotatingCube,
+        StageModelKind::LabyrinthElevatorGate,
+        StageModelKind::OldManCoin,
+        StageModelKind::MariaRestingRoomS3,
+    ] {
+        let abs = resolver.data_dir.join(kind.asset_rel_path());
+        assert!(
+            abs.exists(),
+            "Retail stage model asset missing on disk: {}",
+            abs.display()
+        );
     }
 
     let bytes = std::fs::read(&org_path).expect("read org.mdl");

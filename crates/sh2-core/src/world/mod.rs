@@ -12,7 +12,7 @@ pub mod outdoor_grid;
 
 pub use loadbg::{
     OutdoorTileStreamer, TileLoadRequest, TileStreamingPlan, LOADBG_DIST_BANDS_MM,
-    LOADBG_PREFETCH_CUTOFF_MM, LOADBG_RESIDENT_RADIUS_MM,
+    LOADBG_PREFETCH_CUTOFF_MM,
 };
 pub use outdoor_grid::{
     OutdoorArea, OutdoorTileId, CA_OUTDOOR_BLOCKS, CB_OUTDOOR_BLOCKS, CC_OUTDOOR_BLOCKS,

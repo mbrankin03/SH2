@@ -33,7 +33,7 @@ pub struct GpuOutdoorTilePool {
     data_dir: PathBuf,
     active_area: Option<OutdoorArea>,
     resident: HashMap<u16, GpuMap>,
-    in_flight: HashSet<u16>,
+    in_flight: HashSet<(OutdoorArea, u16)>,
     job_tx: Option<Sender<LoadJob>>,
     result_rx: Receiver<LoadedTile>,
     worker: Option<JoinHandle<()>>,
@@ -94,14 +94,16 @@ impl GpuOutdoorTilePool {
 
         for &block_no in &plan.evict_blocks {
             self.resident.remove(&block_no);
-            self.in_flight.remove(&block_no);
+            self.in_flight.remove(&(area, block_no));
         }
 
         let mut queued = 0usize;
         if let Some(tx) = &self.job_tx {
             for req in &plan.load_queue {
                 let block_no = req.tile.block_no;
-                if self.resident.contains_key(&block_no) || self.in_flight.contains(&block_no) {
+                if self.resident.contains_key(&block_no)
+                    || self.in_flight.contains(&(area, block_no))
+                {
                     continue;
                 }
                 let abs_path = self.data_dir.join(&req.map_rel_path);
@@ -115,7 +117,7 @@ impl GpuOutdoorTilePool {
                     })
                     .is_ok()
                 {
-                    self.in_flight.insert(block_no);
+                    self.in_flight.insert((area, block_no));
                     queued += 1;
                 }
             }
@@ -140,7 +142,7 @@ impl GpuOutdoorTilePool {
             let Ok(done) = self.result_rx.try_recv() else {
                 break;
             };
-            self.in_flight.remove(&done.block_no);
+            self.in_flight.remove(&(done.area, done.block_no));
             if self.active_area != Some(done.area) {
                 continue;
             }

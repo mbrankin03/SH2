@@ -21,13 +21,13 @@ use crate::events::EventFlags;
 
 /// Model kind ID for Lakeview Hotel Lobby Music Box (`data/chr/item/org.mdl`).
 pub const MODEL_KIND_HOTEL_MUSIC_BOX: u16 = 0x0524;
-/// Model kind ID for Labyrinth Rotating Cube Room (`sh2pc.exe` `0x00582c50`).
+/// Model kind ID for Labyrinth Rotating Cube Room (`sh2pc.exe` `0x00582c50`, `data/chr/item/box.mdl`).
 pub const MODEL_KIND_LABYRINTH_CUBE: u16 = 0x0522;
-/// Model kind ID for Labyrinth Elevator Gate prop.
-pub const MODEL_KIND_LABYRINTH_ELEVATOR_GATE: u16 = 0x0520;
-/// Model kind ID for Old Man Coin in Wood Side garbage chute (`Patches/OldManCoinFix.cpp:30`).
+/// Model kind ID for Labyrinth Elevator Gate prop (`sh2pc.exe` `0x00582fdd`, `data/chr/item/evj.mdl`).
+pub const MODEL_KIND_LABYRINTH_ELEVATOR_GATE: u16 = 0x0530;
+/// Model kind ID for Old Man Coin in Wood Side garbage chute (`Patches/OldManCoinFix.cpp:30`, `data/chr/item/x_coinelder.mdl`).
 pub const MODEL_KIND_OLD_MAN_COIN: u16 = 0x071f;
-/// Model kind ID for Maria resting in Brookhaven Room S3 (`sh2pc.exe` `0x0058ee0f`).
+/// Model kind ID for Maria resting in Brookhaven Room S3 (`sh2pc.exe` `0x0058ee0f`, `data/chr/mar/lll_mar.mdl`).
 pub const MODEL_KIND_MARIA_RESTING: u16 = 0x0106;
 
 /// Flag `186` (`0xba`): Maria is resting on the bed in Brookhaven Hospital Room S3 (`Stage 20`).
@@ -50,6 +50,12 @@ pub const LABYRINTH_ELEVATOR_BOTTOM_Y_MM: f32 = -45_600.0;
 
 /// Labyrinth Elevator speed factor (`500.0 mm/s`, `sh2pc.exe` `0x0062d230`).
 pub const LABYRINTH_ELEVATOR_SPEED_MM_PER_SEC: f32 = 500.0;
+
+/// Labyrinth Elevator Gate travel distance in PS2 mm (`450.0` = `0x43e10000`, `sh2pc.exe` `0x00582fd0`).
+pub const LABYRINTH_ELEVATOR_GATE_TRAVEL_MM: f32 = 450.0;
+
+/// Labyrinth Elevator Gate translation speed in PS2 mm/s (`1000.0` = `0x447a0000`, `sh2pc.exe` `0x00582f06`).
+pub const LABYRINTH_ELEVATOR_GATE_SPEED_MM_PER_SEC: f32 = 1_000.0;
 
 /// Labyrinth Elevator sound IDs (`sh2pc.exe` `0x005831ad` & `Patches/LabyrinthElevatorVolumeFix.cpp:48`).
 pub const SE_LABYRINTH_ELEVATOR_LOOP: u16 = 0x4653;
@@ -93,16 +99,16 @@ impl StageModelKind {
         }
     }
 
-    /// Returns the canonical relative `.mdl` path under `data/`.
+    /// Returns the canonical relative `.mdl` path under `data/` (verified against retail `data/chr/`).
     #[inline]
     #[must_use]
     pub const fn asset_rel_path(self) -> &'static str {
         match self {
             Self::HotelMusicBox => "chr/item/org.mdl",
             Self::LabyrinthRotatingCube => "chr/item/box.mdl",
-            Self::LabyrinthElevatorGate => "chr/item/ele.mdl",
-            Self::OldManCoin => "chr/item/cni.mdl",
-            Self::MariaRestingRoomS3 => "chr/mar/mar.mdl",
+            Self::LabyrinthElevatorGate => "chr/item/evj.mdl",
+            Self::OldManCoin => "chr/item/x_coinelder.mdl",
+            Self::MariaRestingRoomS3 => "chr/mar/lll_mar.mdl",
         }
     }
 }
@@ -200,7 +206,7 @@ impl Default for LabyrinthElevatorState {
             cabin_y_mm: 0.0,
             gate_open_ratio: 0.0,
             gate_target_open: false,
-            gate_travel_mm: 950.0,
+            gate_travel_mm: LABYRINTH_ELEVATOR_GATE_TRAVEL_MM,
             arrived: false,
         }
     }
@@ -335,10 +341,11 @@ impl StageModelManager {
 
             // Stage 35 & 36: Labyrinth East / North — Rotating Cube Room & Elevator Gates
             35 | 36 => {
-                // SH2:EE `LabyrinthElevatorVolumeFix` (`Patches/LabyrinthElevatorVolumeFix.cpp:24`):
-                // Use 1/60 s frame step at 60 FPS (or 1/30 s at 30 FPS) and full 1.0 volume instead of 0.8.
+                // SH2:EE `LabyrinthElevatorVolumeFix` (`Patches/LabyrinthElevatorVolumeFix.cpp:24, 65`):
+                // Uses 1/60 s (60 FPS) vs 1/30 s (30 FPS) frame time for audio fade and full `1.0`
+                // volume instead of vanilla `0.8`, while physical gate & cabin motion uses real `dt`.
                 let audio_volume = if input.enable_sh2ee_fixes { 1.0 } else { 0.8 };
-                let step_dt = if input.enable_sh2ee_fixes {
+                let _audio_fade_dt = if input.enable_sh2ee_fixes {
                     if input.sixty_fps_mode {
                         1.0 / 60.0
                     } else {
@@ -348,20 +355,20 @@ impl StageModelManager {
                     dt
                 };
 
-                // Animate lift gate bone translation (open <-> closed).
-                let gate_speed = 1.0; // full travel in 1.0 s
+                // Animate lift gate bone translation (`sh2pc.exe` `0x00582f06`, `0x00582fd0`, `0x00583012`).
+                let travel = self.labyrinth_elevator.gate_travel_mm.max(1.0);
+                let ratio_step = (LABYRINTH_ELEVATOR_GATE_SPEED_MM_PER_SEC / travel) * dt;
                 if self.labyrinth_elevator.gate_target_open {
                     self.labyrinth_elevator.gate_open_ratio =
-                        (self.labyrinth_elevator.gate_open_ratio + step_dt * gate_speed).min(1.0);
+                        (self.labyrinth_elevator.gate_open_ratio + ratio_step).min(1.0);
                 } else {
                     self.labyrinth_elevator.gate_open_ratio =
-                        (self.labyrinth_elevator.gate_open_ratio - step_dt * gate_speed).max(0.0);
+                        (self.labyrinth_elevator.gate_open_ratio - ratio_step).max(0.0);
                 }
 
                 // Animate elevator descent toward -45600.0 mm (`sh2pc.exe` `0x00583164..0x005831c4`).
                 if self.labyrinth_elevator.descending {
-                    self.labyrinth_elevator.cabin_y_mm -=
-                        LABYRINTH_ELEVATOR_SPEED_MM_PER_SEC * step_dt;
+                    self.labyrinth_elevator.cabin_y_mm -= LABYRINTH_ELEVATOR_SPEED_MM_PER_SEC * dt;
                     if self.labyrinth_elevator.cabin_y_mm <= LABYRINTH_ELEVATOR_BOTTOM_Y_MM {
                         self.labyrinth_elevator.cabin_y_mm = LABYRINTH_ELEVATOR_BOTTOM_Y_MM;
                         self.labyrinth_elevator.descending = false;
@@ -380,8 +387,8 @@ impl StageModelManager {
                     }
                 }
 
-                let gate_offset_x = self.labyrinth_elevator.gate_open_ratio
-                    * self.labyrinth_elevator.gate_travel_mm;
+                // `sh2pc.exe` `0x00583012..0x00583094`: bone 0 translated by `-gate_pos` along Z.
+                let gate_offset_z = self.labyrinth_elevator.gate_open_ratio * travel;
                 out.instances.push(StageModelInstance {
                     kind: StageModelKind::LabyrinthElevatorGate,
                     model_kind_id: MODEL_KIND_LABYRINTH_ELEVATOR_GATE,
@@ -390,18 +397,11 @@ impl StageModelManager {
                     position_mm: [0.0, self.labyrinth_elevator.cabin_y_mm, 0.0],
                     rotation_rad: [0.0, 0.0, 0.0],
                     anim_id: None,
-                    bone_overrides: vec![
-                        BoneTransformOverride {
-                            bone_index: 1,
-                            translation_mm: [-gate_offset_x, 0.0, 0.0],
-                            rotation_rad: [0.0, 0.0, 0.0],
-                        },
-                        BoneTransformOverride {
-                            bone_index: 2,
-                            translation_mm: [gate_offset_x, 0.0, 0.0],
-                            rotation_rad: [0.0, 0.0, 0.0],
-                        },
-                    ],
+                    bone_overrides: vec![BoneTransformOverride {
+                        bone_index: 0,
+                        translation_mm: [0.0, 0.0, -gate_offset_z],
+                        rotation_rad: [0.0, 0.0, 0.0],
+                    }],
                 });
 
                 // Stage 36 also hosts the Labyrinth Rotating Cube Room (`0x0522`, `sh2pc.exe` `0x00582bd0`).
@@ -463,11 +463,16 @@ impl StageModelManager {
                     rotation_rad: [0.0, 0.0, 0.0],
                     anim_id: None,
                     bone_overrides: vec![
-                        // Cylinder bone
+                        // Cylinder/base bone 0 (`sh2pc.exe` `0x0057b4d9`) & lid/crank bone 2 (`0x0057b588`)
                         BoneTransformOverride {
-                            bone_index: 5,
+                            bone_index: 0,
                             translation_mm: [0.0, 0.0, 0.0],
                             rotation_rad: [self.music_box.cylinder_angle_rad, 0.0, 0.0],
+                        },
+                        BoneTransformOverride {
+                            bone_index: 2,
+                            translation_mm: [0.0, 0.0, 0.0],
+                            rotation_rad: [if self.music_box.playing { PI } else { 0.0 }, 0.0, 0.0],
                         },
                         // 3 Princess figurines: bones 6, 7, 8 (`sh2pc.exe` `0x0057b646`, `0x0057b658`, `0x0057b713`)
                         BoneTransformOverride {
@@ -542,12 +547,14 @@ mod tests {
         assert_eq!(out.instances.len(), 1);
         let inst = &out.instances[0];
         assert_eq!(inst.model_kind_id, MODEL_KIND_HOTEL_MUSIC_BOX);
-        assert_eq!(inst.bone_overrides.len(), 4);
+        assert_eq!(inst.bone_overrides.len(), 5);
+        assert_eq!(inst.bone_overrides[0].bone_index, 0);
         assert!(inst.bone_overrides[0].rotation_rad[0] > 0.0);
-        assert!(inst.bone_overrides[1].rotation_rad[1] > 0.0);
-        assert_eq!(inst.bone_overrides[1].bone_index, 6);
-        assert_eq!(inst.bone_overrides[2].bone_index, 7);
-        assert_eq!(inst.bone_overrides[3].bone_index, 8);
+        assert_eq!(inst.bone_overrides[1].bone_index, 2);
+        assert_eq!(inst.bone_overrides[2].bone_index, 6);
+        assert!(inst.bone_overrides[2].rotation_rad[1] > 0.0);
+        assert_eq!(inst.bone_overrides[3].bone_index, 7);
+        assert_eq!(inst.bone_overrides[4].bone_index, 8);
     }
 
     #[test]

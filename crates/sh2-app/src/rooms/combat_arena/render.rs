@@ -473,10 +473,15 @@ fn build_cutscene_spotlight_uniforms(
     }
 }
 
-fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
+pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     let det_fog_time = state.sim_core.deterministic_fog_time(alpha);
+    let fog_dt = (det_fog_time - state.last_fog_time).clamp(0.0, 0.1);
+    state.last_fog_time = det_fog_time;
     state.fog_uniforms.time = det_fog_time;
+
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
     let mut effective_fog = state.fog_uniforms;
+    effective_fog.apply_video_options(video.fog_quality, video.volumetric_light);
     if let Some(ref session) = state.drama_demo_session {
         if session.player.locks_gameplay_input() {
             if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {
@@ -488,6 +493,69 @@ fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         }
     }
     state.render_ctx.update_fog(&effective_fog);
+
+    // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`)
+    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
+        let player_pos = state.sim_core.scenario.player_position;
+        let ps2_room_id = match state.active_test_room {
+            TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway => {
+                sh2_core::fog::R_OBSV_DECK_ID
+            }
+            _ => 0,
+        };
+        let room_eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
+            room_id: ps2_room_id,
+            james_pos_y_mm: player_pos.y,
+            camera_pos_y_mm: state.sim_core.active_camera_eye(alpha).y,
+            flashlight_on: state.sim_core.scenario.flashlight_on,
+            extended_observation_deck_range: true,
+        });
+        let target_count = if room_eval.particle_count > 0 {
+            room_eval.particle_count
+        } else {
+            sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_COUNT
+        };
+        state.fog_particles.reconfigure(
+            target_count,
+            room_eval.particle_range_x_mm,
+            room_eval.particle_range_z_mm,
+        );
+        // PS2 Y-down coordinate system: -Y is UP above the floor; center mist puffs 520 mm above ground
+        // (height band ±100 mm, radius 300..440 mm) so radial alpha reaches 0 before touching the floor.
+        let anchor = [player_pos.x, player_pos.y - 520.0, player_pos.z];
+        let player_arr = [player_pos.x, player_pos.y, player_pos.z];
+        state.fog_particles.step(
+            fog_dt,
+            effective_fog.speed_mult,
+            anchor,
+            player_arr,
+            room_eval.james_fog_influence_mm,
+        );
+        let fog_rgb = [
+            effective_fog.fog_color[0],
+            effective_fog.fog_color[1],
+            effective_fog.fog_color[2],
+        ];
+        state.fog_particle_scratch.clear();
+        state
+            .fog_particle_scratch
+            .extend(state.fog_particles.particles().iter().map(|p| {
+                sh2_renderer::fog::GpuFogParticle {
+                    world_pos_radius: [
+                        anchor[0] + p.local_pos[0],
+                        anchor[1] + p.local_pos[1],
+                        anchor[2] + p.local_pos[2],
+                        p.radius_mm,
+                    ],
+                    color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
+                }
+            }));
+        state
+            .render_ctx
+            .update_fog_particles(&state.fog_particle_scratch);
+    } else {
+        state.render_ctx.update_fog_particles(&[]);
+    }
 }
 
 fn evaluate_player_skinning(

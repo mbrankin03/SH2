@@ -142,17 +142,15 @@ pub(crate) fn find_map_file_for_room(
                         base
                     );
                     // Toluca Lake vista outdoor fog parameters calibrated for full ob01 draw distance
-                    let fog = sh2_renderer::fog::FogUniforms {
-                        fog_color: [0.65, 0.68, 0.72, 1.0], // Daylight Toluca Lake mist
-                        fog_near: 2000.0,
-                        fog_far: 32000.0,
-                        density: 0.90,
-                        time: 0.0,
-                        step_count: 32,
-                        curve_type: 1, // Exponential curve
-                        speed_mult: 1.0,
-                        _padding: 0.0,
-                    };
+                    let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
+                        room_id: sh2_core::fog::R_OBSV_DECK_ID,
+                        ..Default::default()
+                    });
+                    let fog = sh2_renderer::fog::FogUniforms::from_room_evaluation(
+                        &eval,
+                        sh2_core::config::FogQuality::ModernVolumetric,
+                        true,
+                    );
                     // Authentic parking lot overlook coordinates: X: 0.0, Y: -100.0, Z: -5000.0
                     return (map, glam::Vec3::new(0.0, -100.0, -5000.0), 0.0, fog);
                 }
@@ -163,11 +161,10 @@ pub(crate) fn find_map_file_for_room(
                 fog_near: 2000.0,
                 fog_far: 25000.0,
                 density: 0.80,
-                time: 0.0,
                 step_count: 32,
                 curve_type: 1,
-                speed_mult: 1.0,
-                _padding: 0.0,
+                speed_mult: sh2_core::fog::FOG_SPEED_OUTDOOR_SLOW,
+                ..Default::default()
             };
             (
                 create_synthetic_fog_runway_geometry(),
@@ -187,17 +184,17 @@ pub(crate) fn find_map_file_for_room(
                         "Loaded authentic Opening Restroom level geometry (er01.map with SH2:EE HD overrides): base={}",
                         base
                     );
-                    let fog = sh2_renderer::fog::FogUniforms {
+                    let mut fog = sh2_renderer::fog::FogUniforms {
                         fog_color: [0.12, 0.13, 0.14, 1.0], // Dim authentic restroom lighting
                         fog_near: 800.0,
                         fog_far: 5000.0,
                         density: 0.30,
-                        time: 0.0,
                         step_count: 24,
                         curve_type: 0,
                         speed_mult: 1.0,
-                        _padding: 0.0,
+                        ..Default::default()
                     };
+                    fog.layer2_params[3] = 0.0;
                     // Authentic PS2 stage 2 (er01) post-prologue mirror spawn coordinates:
                     // James stands at the sink: X: -19606.6, Y: 0.0 (floor), Z: 20429.55, Facing: -PI/2 (-1.5707964 rad, West towards mirror)
                     return (
@@ -209,17 +206,17 @@ pub(crate) fn find_map_file_for_room(
                 }
             }
             tracing::warn!("Failed to load er01.map; using fallback room geometry");
-            let fog = sh2_renderer::fog::FogUniforms {
+            let mut fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.12, 0.13, 0.14, 1.0],
                 fog_near: 800.0,
                 fog_far: 5000.0,
                 density: 0.30,
-                time: 0.0,
                 step_count: 24,
                 curve_type: 0,
                 speed_mult: 1.0,
-                _padding: 0.0,
+                ..Default::default()
             };
+            fog.layer2_params[3] = 0.0;
             (
                 create_fallback_room_geometry(),
                 glam::Vec3::new(0.0, -800.0, 2000.0),
@@ -238,34 +235,34 @@ pub(crate) fn find_map_file_for_room(
                         "Loaded authentic Lakeview Hotel Boiler Room level geometry (rr21.map with SH2:EE HD overrides): base={}",
                         base
                     );
-                    let fog = sh2_renderer::fog::FogUniforms {
+                    let mut fog = sh2_renderer::fog::FogUniforms {
                         fog_color: [0.08, 0.09, 0.11, 1.0], // Dark basement boiler tone
                         fog_near: 800.0,
                         fog_far: 6000.0,
                         density: 0.35,
-                        time: 0.0,
                         step_count: 24,
                         curve_type: 0,
                         speed_mult: 1.0,
-                        _padding: 0.0,
+                        ..Default::default()
                     };
+                    fog.layer2_params[3] = 0.0;
                     // Authentic rr21 hotel boiler room entrance coordinates (open doorway corridor, outside boiler collision hulls):
                     // Floor Y = 0.0, X = -100850.0, Z = -59400.0, facing North-East into the room (yaw = 2.0 rad)
                     return (map, glam::Vec3::new(-100850.0, 0.0, -59400.0), 2.0, fog);
                 }
             }
             tracing::warn!("Failed to load rr21.map; using fallback room geometry");
-            let fog = sh2_renderer::fog::FogUniforms {
+            let mut fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.08, 0.09, 0.11, 1.0],
                 fog_near: 800.0,
                 fog_far: 6000.0,
                 density: 0.35,
-                time: 0.0,
                 step_count: 24,
                 curve_type: 0,
                 speed_mult: 1.0,
-                _padding: 0.0,
+                ..Default::default()
             };
+            fog.layer2_params[3] = 0.0;
             (
                 create_fallback_room_geometry(),
                 glam::Vec3::new(0.0, -800.0, 2000.0),
@@ -280,11 +277,10 @@ pub(crate) fn find_map_file_for_room(
                 fog_near: 2000.0,
                 fog_far: 30000.0,
                 density: 0.85,
-                time: 0.0,
                 step_count: 32,
                 curve_type: 1, // Exponential
-                speed_mult: 1.0,
-                _padding: 0.0,
+                speed_mult: sh2_core::fog::FOG_SPEED_OUTDOOR_SLOW,
+                ..Default::default()
             };
             (
                 create_synthetic_fog_runway_geometry(),
@@ -295,17 +291,17 @@ pub(crate) fn find_map_file_for_room(
         }
         TestRoomKind::FallbackSandbox => {
             tracing::info!("Generated built-in Fallback Sandbox room.");
-            let fog = sh2_renderer::fog::FogUniforms {
+            let mut fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.08, 0.09, 0.11, 1.0],
                 fog_near: 800.0,
                 fog_far: 6000.0,
                 density: 0.35,
-                time: 0.0,
                 step_count: 24,
                 curve_type: 0,
                 speed_mult: 1.0,
-                _padding: 0.0,
+                ..Default::default()
             };
+            fog.layer2_params[3] = 0.0;
             (
                 create_fallback_room_geometry(),
                 glam::Vec3::new(0.0, -800.0, 2000.0),
@@ -320,17 +316,17 @@ pub(crate) fn find_map_file_for_room(
         | TestRoomKind::InventoryAndItemsRoom
         | TestRoomKind::PuzzleAndCutawayRoom
         | TestRoomKind::StoryStagesAndEndingsRoom => {
-            let fog = sh2_renderer::fog::FogUniforms {
+            let mut fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.06, 0.07, 0.08, 1.0],
                 fog_near: 5000.0,
                 fog_far: 30000.0,
                 density: 0.05, // Clean neutral inspection visibility
-                time: 0.0,
                 step_count: 16,
                 curve_type: 0,
                 speed_mult: 0.0,
-                _padding: 0.0,
+                ..Default::default()
             };
+            fog.layer2_params[3] = 0.0;
             (
                 create_model_viewer_pedestal_geometry(),
                 glam::Vec3::new(0.0, 0.0, 0.0),
@@ -343,17 +339,17 @@ pub(crate) fn find_map_file_for_room(
                 "Generated Combat / Horror Testing Arena Stage ({:?}).",
                 room
             );
-            let fog = sh2_renderer::fog::FogUniforms {
+            let mut fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.12, 0.13, 0.16, 1.0],
                 fog_near: 2500.0,
                 fog_far: 20000.0,
                 density: 0.12,
-                time: 0.0,
                 step_count: 24,
                 curve_type: 0,
                 speed_mult: 1.0,
-                _padding: 0.0,
+                ..Default::default()
             };
+            fog.layer2_params[3] = 0.0;
             (
                 create_fallback_room_geometry(),
                 // Spawn James at Z = -1500.0, facing North (0.0 rad) directly looking toward the enemies (Z = 1200..2000)
@@ -366,17 +362,17 @@ pub(crate) fn find_map_file_for_room(
             tracing::info!(
                 "Generated 8-Material Surface Footstep & 3D SFX Attenuation Test Room (SH2-61)."
             );
-            let fog = sh2_renderer::fog::FogUniforms {
+            let mut fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.09, 0.10, 0.13, 1.0],
                 fog_near: 4500.0,
                 fog_far: 26000.0,
                 density: 0.08,
-                time: 0.0,
                 step_count: 20,
                 curve_type: 0,
                 speed_mult: 0.5,
-                _padding: 0.0,
+                ..Default::default()
             };
+            fog.layer2_params[3] = 0.0;
             (
                 create_surface_sfx_test_room_geometry(),
                 // Spawn James on Pad 0 (Concrete, X = -4300, Z = -3200) facing East (+X) across the 8 material pads

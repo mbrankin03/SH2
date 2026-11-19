@@ -9,24 +9,23 @@ pub struct CameraUniforms {
     pub inv_proj: [[f32; 4]; 4],
     /// Camera eye position `(x, y, z)` and debug shading mode in `w` (`0.0` = Textured, `1.0` = Clay, `2.0` = Normals, `3.0` = Studio 3-Point).
     pub cam_pos: [f32; 4],
+    /// Inverse view-projection matrix for world-space ray reconstruction in volumetric compute passes (`SH2-32`).
+    pub inv_view_proj: [[f32; 4]; 4],
 }
 
 impl Default for CameraUniforms {
     fn default() -> Self {
+        let id = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
         Self {
-            view_proj: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            inv_proj: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
+            view_proj: id,
+            inv_proj: id,
             cam_pos: [0.0, 0.0, 0.0, 1.0],
+            inv_view_proj: id,
         }
     }
 }
@@ -48,6 +47,7 @@ struct CameraUniforms {
     view_proj: mat4x4<f32>,
     inv_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
 };
 
 struct SpotlightUniforms {
@@ -366,6 +366,7 @@ struct CameraUniforms {
     view_proj: mat4x4<f32>,
     inv_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;

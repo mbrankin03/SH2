@@ -104,7 +104,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         enable_post: true,
     };
 
-    let render_ctx = RenderContext::from_device(
+    let mut render_ctx = RenderContext::from_device(
         instance,
         adapter,
         Arc::clone(&device),
@@ -242,6 +242,20 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
         Some("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e"),
     );
+
+    // Upload authentic retail PS2/PC fog noise texture (`data/pic/effect/fog.tex`) if present (`SH2-32`)
+    if let Ok(fog_tex) = tex_loader.load_texture("pic/effect/fog.tex") {
+        render_ctx.upload_fog_noise_texture(
+            &fog_tex.rgba,
+            fog_tex.width as u32,
+            fog_tex.height as u32,
+        );
+        tracing::info!(
+            "Uploaded retail fog.tex ({}x{}) to volumetric fog & particle pipelines.",
+            fog_tex.width,
+            fog_tex.height
+        );
+    }
 
     let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
     let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -518,6 +532,13 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         active_maria: false,
         active_test_room: initial_room,
         fog_uniforms,
+        fog_particles: sh2_core::fog::FogParticleVolume::new(
+            sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_COUNT,
+            sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+            sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+        ),
+        fog_particle_scratch: Vec::with_capacity(sh2_renderer::fog::MAX_GPU_FOG_PARTICLES),
+        last_fog_time: 0.0,
         menu_ctrl,
         combat_arena,
         enemy_scu_asset,

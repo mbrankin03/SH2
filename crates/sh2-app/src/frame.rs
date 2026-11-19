@@ -71,23 +71,10 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     // 6. Dispatch 3D scene or video pass to the active room controller (advances 60 Hz sim ticks)
     rooms::dispatch_tick_and_render_3d(state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game);
 
-    // 7. Update fog flow velocity time deterministically from elapsed 60 Hz simulation ticks + sub-frame alpha
-    let det_fog_time = state
-        .sim_core
-        .deterministic_fog_time(state.sim_core.interpolation_alpha());
-    state.fog_uniforms.time = det_fog_time;
-    let mut effective_fog = state.fog_uniforms;
-    if let Some(ref session) = state.drama_demo_session {
-        if session.player.locks_gameplay_input() {
-            if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {
-                effective_fog.fog_color[0] = rgb[0];
-                effective_fog.fog_color[1] = rgb[1];
-                effective_fog.fog_color[2] = rgb[2];
-            }
-            effective_fog.fog_color[3] *= session.player.atmosphere.fog_density_scale;
-        }
-    }
-    state.render_ctx.update_fog(&effective_fog);
+    // 7. Update fog flow velocity time and proximity particles deterministically from 60 Hz sim ticks
+    let alpha = state.sim_core.interpolation_alpha();
+    rooms::combat_arena::render::update_atmosphere_fog_uniforms(state, alpha);
+    let det_fog_time = state.fog_uniforms.time;
 
     let (dof_tap_offset_px, dof_strength, motion_blur_strength) = if is_viewer || is_grapple_room {
         ([1.0 / 3.0, 2.0 / 3.0], 0.0, 0.0)

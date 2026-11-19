@@ -82,18 +82,33 @@ pub struct RenderContext {
     pub skeletal_pipeline: skeletal::SkeletalPipeline,
     pub debug_line_pipeline: pipeline::DebugLinePipeline,
     pub fog_pipeline: fog::FogComputePipeline,
+    pub fog_particle_pipeline: fog::FogParticlePipeline,
+    pub spotlight_shadow_pipeline: fog::SpotlightShadowPipeline,
     pub post_pipeline: post::PostProcessPipeline,
 
     pub camera_buffer: wgpu::Buffer,
     pub spotlight_buffer: wgpu::Buffer,
+    pub spotlight_shadow_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
+    pub fog_particle_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
     pub debug_line_buffer: wgpu::Buffer,
 
+    pub shadow_depth_texture: wgpu::Texture,
+    pub shadow_depth_view: wgpu::TextureView,
+    pub fog_noise_texture: wgpu::Texture,
+    pub fog_noise_view: wgpu::TextureView,
+    pub fog_noise_sampler: wgpu::Sampler,
+
     pub geometry_bind_group: wgpu::BindGroup,
+    pub spotlight_shadow_bind_group: wgpu::BindGroup,
+    pub fog_particle_bind_group: wgpu::BindGroup,
     pub fog_bind_group: wgpu::BindGroup,
     pub post_bind_group_fog: wgpu::BindGroup,
     pub post_bind_group_direct: wgpu::BindGroup,
+
+    pub fog_particle_count: std::sync::atomic::AtomicU32,
+    last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
 
     pub default_sampler: wgpu::Sampler,
     pub default_view: wgpu::TextureView,
@@ -236,10 +251,14 @@ impl RenderContext {
         post_pipeline: &post::PostProcessPipeline,
         fog_buffer: &wgpu::Buffer,
         camera_buffer: &wgpu::Buffer,
+        spotlight_buffer: &wgpu::Buffer,
         post_buffer: &wgpu::Buffer,
         depth_view: &wgpu::TextureView,
         hdr_color_view: &wgpu::TextureView,
         fog_color_view: &wgpu::TextureView,
+        shadow_depth_view: &wgpu::TextureView,
+        fog_noise_view: &wgpu::TextureView,
+        fog_noise_sampler: &wgpu::Sampler,
         ldr_output_view: &wgpu::TextureView,
     ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
         let fog_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -265,6 +284,22 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(fog_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: spotlight_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(shadow_depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(fog_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::Sampler(fog_noise_sampler),
                 },
             ],
         });
@@ -340,6 +375,10 @@ impl RenderContext {
             &geometry_pipeline.bind_group_layout,
         );
         let fog_pipeline = fog::FogComputePipeline::new(&device);
+        let fog_particle_pipeline =
+            fog::FogParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let spotlight_shadow_pipeline =
+            fog::SpotlightShadowPipeline::new(&device, Self::DEPTH_FORMAT);
         let post_pipeline = post::PostProcessPipeline::new(&device);
 
         let camera_uniforms = pipeline::CameraUniforms::default();
@@ -356,11 +395,98 @@ impl RenderContext {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let fog_uniforms = fog::FogUniforms::default();
+        let initial_shadow_vp =
+            fog::compute_spotlight_view_proj(&spotlight_uniforms).to_cols_array_2d();
+        let spotlight_shadow_uniforms = fog::SpotlightShadowUniforms {
+            light_view_proj: initial_shadow_vp,
+        };
+        let spotlight_shadow_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Spotlight Shadow Uniform Buffer"),
+                contents: bytemuck::bytes_of(&spotlight_shadow_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let fog_uniforms = fog::FogUniforms {
+            shadow_view_proj: initial_shadow_vp,
+            ..fog::FogUniforms::default()
+        };
         let fog_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Fog Uniform Buffer"),
             contents: bytemuck::bytes_of(&fog_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let fog_particle_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Fog Particle Instance Buffer"),
+            size: (fog::MAX_GPU_FOG_PARTICLES * std::mem::size_of::<fog::GpuFogParticle>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let shadow_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Spotlight Shadow Depth Texture"),
+            size: wgpu::Extent3d {
+                width: fog::SPOTLIGHT_SHADOW_MAP_SIZE,
+                height: fog::SPOTLIGHT_SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_depth_view =
+            shadow_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let fog_noise_size = 256u32;
+        let fog_noise_rgba = fog::generate_procedural_fog_noise_rgba(fog_noise_size);
+        let fog_noise_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Tileable Fog Noise Texture"),
+            size: wgpu::Extent3d {
+                width: fog_noise_size,
+                height: fog_noise_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &fog_noise_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &fog_noise_rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(fog_noise_size * 4),
+                rows_per_image: Some(fog_noise_size),
+            },
+            wgpu::Extent3d {
+                width: fog_noise_size,
+                height: fog_noise_size,
+                depth_or_array_layers: 1,
+            },
+        );
+        let fog_noise_view = fog_noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let fog_noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Tileable Fog Noise Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
 
         let post_uniforms = post::PostUniforms::default();
@@ -394,6 +520,34 @@ impl RenderContext {
             ],
         });
 
+        let spotlight_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Spotlight Shadow Bind Group"),
+            layout: &spotlight_shadow_pipeline.bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: spotlight_shadow_buffer.as_entire_binding(),
+            }],
+        });
+
+        let fog_particle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fog Particle Bind Group"),
+            layout: &fog_particle_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fog_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&fog_noise_sampler),
+                },
+            ],
+        });
+
         let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
             Self::create_compute_bind_groups(
                 &device,
@@ -401,10 +555,14 @@ impl RenderContext {
                 &post_pipeline,
                 &fog_buffer,
                 &camera_buffer,
+                &spotlight_buffer,
                 &post_buffer,
                 &depth_view,
                 &hdr_color_view,
                 &fog_color_view,
+                &shadow_depth_view,
+                &fog_noise_view,
+                &fog_noise_sampler,
                 &ldr_output_view,
             );
 
@@ -493,16 +651,29 @@ impl RenderContext {
             skeletal_pipeline,
             debug_line_pipeline,
             fog_pipeline,
+            fog_particle_pipeline,
+            spotlight_shadow_pipeline,
             post_pipeline,
             camera_buffer,
             spotlight_buffer,
+            spotlight_shadow_buffer,
             fog_buffer,
+            fog_particle_buffer,
             post_buffer,
             debug_line_buffer,
+            shadow_depth_texture,
+            shadow_depth_view,
+            fog_noise_texture,
+            fog_noise_view,
+            fog_noise_sampler,
             geometry_bind_group,
+            spotlight_shadow_bind_group,
+            fog_particle_bind_group,
             fog_bind_group,
             post_bind_group_fog,
             post_bind_group_direct,
+            fog_particle_count: std::sync::atomic::AtomicU32::new(0),
+            last_shadow_view_proj: std::sync::Mutex::new(initial_shadow_vp),
             default_sampler,
             default_view,
             default_texture_bind_group,
@@ -536,23 +707,147 @@ impl RenderContext {
         cam_pos: glam::Vec3,
         shade_mode: f32,
     ) {
+        let inv_vp = if view_proj.determinant().abs() > 1e-12 {
+            view_proj.inverse()
+        } else {
+            glam::Mat4::IDENTITY
+        };
         let uniforms = pipeline::CameraUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             inv_proj: inv_proj.to_cols_array_2d(),
             cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, shade_mode],
+            inv_view_proj: inv_vp.to_cols_array_2d(),
         };
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
     pub fn update_fog(&self, uniforms: &fog::FogUniforms) {
+        let mut effective = *uniforms;
+        if let Ok(guard) = self.last_shadow_view_proj.lock() {
+            effective.shadow_view_proj = *guard;
+        }
         self.queue
-            .write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(uniforms));
+            .write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(&effective));
     }
 
     pub fn update_spotlight(&self, uniforms: &light::SpotlightUniforms) {
         self.queue
             .write_buffer(&self.spotlight_buffer, 0, bytemuck::bytes_of(uniforms));
+        let shadow_vp = fog::compute_spotlight_view_proj(uniforms).to_cols_array_2d();
+        let shadow_u = fog::SpotlightShadowUniforms {
+            light_view_proj: shadow_vp,
+        };
+        self.queue.write_buffer(
+            &self.spotlight_shadow_buffer,
+            0,
+            bytemuck::bytes_of(&shadow_u),
+        );
+        if let Ok(mut guard) = self.last_shadow_view_proj.lock() {
+            *guard = shadow_vp;
+        }
+        let vp_offset = std::mem::offset_of!(fog::FogUniforms, shadow_view_proj) as u64;
+        self.queue
+            .write_buffer(&self.fog_buffer, vp_offset, bytemuck::bytes_of(&shadow_vp));
+    }
+
+    /// Uploads localized 3D proximity fog sprite instances (`fogMakePacket` @ `0x0016bb70`)
+    /// for rendering in the next scene pass (`SH2-32`).
+    pub fn update_fog_particles(&self, particles: &[fog::GpuFogParticle]) {
+        let count = particles.len().min(fog::MAX_GPU_FOG_PARTICLES);
+        if count > 0 {
+            self.queue.write_buffer(
+                &self.fog_particle_buffer,
+                0,
+                bytemuck::cast_slice(&particles[..count]),
+            );
+        }
+        self.fog_particle_count
+            .store(count as u32, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replaces the tileable fog noise texture with decoded RGBA8 data (e.g. retail `data/pic/effect/fog.tex`).
+    pub fn upload_fog_noise_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if rgba.len() < (w * h * 4) as usize {
+            return;
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Retail Fog Noise Texture (fog.tex)"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.fog_noise_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.fog_noise_texture = tex;
+
+        self.fog_particle_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Fog Particle Bind Group"),
+            layout: &self.fog_particle_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.fog_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                },
+            ],
+        });
+
+        let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
+            Self::create_compute_bind_groups(
+                &self.device,
+                &self.fog_pipeline,
+                &self.post_pipeline,
+                &self.fog_buffer,
+                &self.camera_buffer,
+                &self.spotlight_buffer,
+                &self.post_buffer,
+                &self.depth_view,
+                &self.hdr_color_view,
+                &self.fog_color_view,
+                &self.shadow_depth_view,
+                &self.fog_noise_view,
+                &self.fog_noise_sampler,
+                &self.ldr_output_view,
+            );
+        self.fog_bind_group = fog_bind_group;
+        self.post_bind_group_fog = post_bind_group_fog;
+        self.post_bind_group_direct = post_bind_group_direct;
     }
 
     /// Reconfigures offscreen intermediate targets (Depth, HDR, Fog, and LDR surfaces) when window resolution changes.
@@ -590,10 +885,14 @@ impl RenderContext {
                 &self.post_pipeline,
                 &self.fog_buffer,
                 &self.camera_buffer,
+                &self.spotlight_buffer,
                 &self.post_buffer,
                 &self.depth_view,
                 &self.hdr_color_view,
                 &self.fog_color_view,
+                &self.shadow_depth_view,
+                &self.fog_noise_view,
+                &self.fog_noise_sampler,
                 &self.ldr_output_view,
             );
 

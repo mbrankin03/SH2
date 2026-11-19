@@ -8,7 +8,7 @@
 pub(crate) mod camera_wiring;
 mod hud;
 mod input;
-mod render;
+pub(crate) mod render;
 pub(crate) mod story_input;
 pub(crate) mod story_overlay;
 pub(crate) mod story_progression_3d;

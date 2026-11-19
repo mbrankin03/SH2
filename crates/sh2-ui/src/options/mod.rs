@@ -194,7 +194,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 11);
+        assert_eq!(menu.item_count(), 13);
 
         // Adjust Resolution
         menu.adjust_value(1);

@@ -573,6 +573,96 @@ impl WorldTextureQuality {
     }
 }
 
+/// Shadow rendering backend mode (`SH2-81`).
+///
+/// Allows purist players to select authentic 1:1 PS2 `.kg1`/`.kg2` stencil & drop shadows,
+/// SH2:EE soft-opacity stencil shadows, or Native Enhanced GPU PCSS contact-hardening soft
+/// self-shadows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ShadowQualityMode {
+    /// Authentic PS2 `.kg1`/`.kg2` two-pass stencil shadow volumes + lit-room drop shadows (`sh2shd_shadow_model.c`).
+    ClassicPs2Stencil,
+    /// SH2:EE per-room opacity (`170/255` default) + `~33`-frame fade-in soft stencil shadows (`EnableSoftShadows`).
+    EnhancedEditionSoft,
+    /// Native `wgpu` Percentage-Closer Soft Shadows (PCSS) with contact-hardening penumbras & true self-shadowing.
+    #[default]
+    NativePcss,
+}
+
+impl ShadowQualityMode {
+    /// User-facing label for the Video Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ClassicPs2Stencil => "Classic PS2 (.kg1/.kg2 Stencil)",
+            Self::EnhancedEditionSoft => "SH2:EE Soft Stencil",
+            Self::NativePcss => "Native PCSS (Soft Self-Shadow)",
+        }
+    }
+
+    /// Cycles to the next shadow mode.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::ClassicPs2Stencil => Self::EnhancedEditionSoft,
+            Self::EnhancedEditionSoft => Self::NativePcss,
+            Self::NativePcss => Self::ClassicPs2Stencil,
+        }
+    }
+
+    /// Cycles to the previous shadow mode.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::ClassicPs2Stencil => Self::NativePcss,
+            Self::EnhancedEditionSoft => Self::ClassicPs2Stencil,
+            Self::NativePcss => Self::EnhancedEditionSoft,
+        }
+    }
+}
+
+/// Room & character lighting parity profile (`SH2-81`).
+///
+/// Controls whether SH2:EE lighting patches (`PS2FlashlightBrightness`, `HalogenLightFix`,
+/// `CatacombsMeatRoomFix`, `EnemyRevealLighting`, `SpecularFix`) are applied over raw PS2
+/// `DrawEnvData` tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LightingProfile {
+    /// Strict 1:1 original PS2 `DrawEnvData` lighting without SH2:EE overrides.
+    Ps2Authentic,
+    /// PS2 `DrawEnvData` plus SH2:EE lighting parity fixes (`EnhancedFlashlight`, `CatacombsMeatRoom`, `SpecularFix`).
+    EnhancedEdition,
+    /// SH2:EE lighting parity fixes combined with Native Enhanced PCSS self-shadowing.
+    #[default]
+    NativeEnhanced,
+}
+
+impl LightingProfile {
+    /// User-facing label for the Video Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ps2Authentic => "PS2 Authentic (1:1 Original)",
+            Self::EnhancedEdition => "SH2:EE (Lighting Fixes)",
+            Self::NativeEnhanced => "Native Enhanced (Fixes + PCSS)",
+        }
+    }
+
+    /// Cycles to the next lighting profile.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Ps2Authentic => Self::EnhancedEdition,
+            Self::EnhancedEdition => Self::NativeEnhanced,
+            Self::NativeEnhanced => Self::Ps2Authentic,
+        }
+    }
+
+    /// Cycles to the previous lighting profile.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Ps2Authentic => Self::NativeEnhanced,
+            Self::EnhancedEdition => Self::Ps2Authentic,
+            Self::NativeEnhanced => Self::EnhancedEdition,
+        }
+    }
+}
+
 /// Video and graphics options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoOptions {
@@ -589,6 +679,12 @@ pub struct VideoOptions {
     /// 3-tier World (`.map`) & Character (`.mdl`) texture quality (`SH2-92`).
     #[serde(default)]
     pub texture_quality: WorldTextureQuality,
+    /// Shadow rendering mode: Classic PS2 `.kg1`/`.kg2` stencil, SH2:EE soft stencil, or Native PCSS (`SH2-81`).
+    #[serde(default)]
+    pub shadow_quality: ShadowQualityMode,
+    /// Room & character lighting parity profile (`SH2-81`).
+    #[serde(default)]
+    pub lighting_profile: LightingProfile,
 }
 
 impl Default for VideoOptions {
@@ -604,6 +700,8 @@ impl Default for VideoOptions {
             lens_flare: true,
             depth_of_field: true,
             texture_quality: WorldTextureQuality::default(),
+            shadow_quality: ShadowQualityMode::default(),
+            lighting_profile: LightingProfile::default(),
         }
     }
 }

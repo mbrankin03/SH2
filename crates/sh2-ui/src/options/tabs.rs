@@ -6,7 +6,7 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 11,
+            OptionsTab::Video => 13,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     11
@@ -22,7 +22,7 @@ impl OptionsMenu {
 
     /// Returns true if the currently selected row is the interactive FMV Cutscene Viewer launcher.
     pub fn is_fmv_viewer_selected(&self) -> bool {
-        self.active_tab == OptionsTab::Video && self.selected_index == 10
+        self.active_tab == OptionsTab::Video && self.selected_index == 12
     }
 
     /// Returns true if the currently selected row is the Test Rooms launcher.
@@ -91,7 +91,9 @@ impl OptionsMenu {
                 "World & Character Textures",
                 v.texture_quality.label().to_string(),
             )),
-            10 => Some((
+            10 => Some(("Shadow Mode", v.shadow_quality.label().to_string())),
+            11 => Some(("Lighting Profile", v.lighting_profile.label().to_string())),
+            12 => Some((
                 "FMV Cutscene Viewer",
                 "[Press Enter / Right to Launch]".into(),
             )),
@@ -314,7 +316,21 @@ impl OptionsMenu {
                     v.texture_quality.prev()
                 };
             }
-            10 => return Some(OptionsSoundCue::LaunchFmvViewer),
+            10 => {
+                v.shadow_quality = if forward {
+                    v.shadow_quality.next()
+                } else {
+                    v.shadow_quality.prev()
+                };
+            }
+            11 => {
+                v.lighting_profile = if forward {
+                    v.lighting_profile.next()
+                } else {
+                    v.lighting_profile.prev()
+                };
+            }
+            12 => return Some(OptionsSoundCue::LaunchFmvViewer),
             _ => return Some(OptionsSoundCue::None),
         }
         None

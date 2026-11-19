@@ -10,6 +10,7 @@ pub mod cld;
 pub mod cls;
 pub mod demo;
 pub mod dxt;
+pub mod kg;
 pub mod map;
 pub mod mdls;
 pub mod mes;
@@ -53,6 +54,10 @@ pub use demo::{
     DEMO_SCREEN_SY, DEMO_SCR_Z_SCALE,
 };
 pub use dxt::{decode_dds_file, decode_dxt, encode_dds_rgba, encode_dxt_rgba};
+pub use kg::{
+    parse_kg, parse_kg1, parse_kg2, KgBoundingSphere, KgFile, KgPart, KgStrip, KgStripGeometry,
+    KgTriangle, KG_NORMAL_Q15_SCALE,
+};
 pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
 pub use mdls::{
     parse_mdl, ModelClusterDelta, ModelClusterTarget, ModelFile, ModelPrimitive, ModelTexture,

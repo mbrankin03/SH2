@@ -1,6 +1,7 @@
 //! sh2-renderer: Modern wgpu/Vulkan pipeline, 32-bit float depth, volumetric compute fog.
 
 pub mod blitter;
+pub mod effects;
 pub mod fmv;
 pub mod fog;
 pub mod gpu_map;
@@ -8,6 +9,7 @@ pub mod light;
 pub mod pipeline;
 pub mod post;
 pub mod scene;
+pub mod shadow;
 pub mod skeletal;
 
 pub use blitter::SurfaceBlitter;
@@ -84,11 +86,21 @@ pub struct RenderContext {
     pub fog_pipeline: fog::FogComputePipeline,
     pub fog_particle_pipeline: fog::FogParticlePipeline,
     pub spotlight_shadow_pipeline: fog::SpotlightShadowPipeline,
+    pub pcss_shadow_pipeline: shadow::PcssShadowPipeline,
+    pub stencil_shadow_pipeline: shadow::StencilShadowPipeline,
+    pub lens_flare_pipeline: effects::LensFlarePipeline,
+    pub spray_mist_pipeline: effects::SprayMistPipeline,
     pub post_pipeline: post::PostProcessPipeline,
 
     pub camera_buffer: wgpu::Buffer,
     pub spotlight_buffer: wgpu::Buffer,
     pub spotlight_shadow_buffer: wgpu::Buffer,
+    pub pcss_shadow_buffer: wgpu::Buffer,
+    pub shadow_darken_buffer: wgpu::Buffer,
+    pub shadow_volume_buffer: wgpu::Buffer,
+    pub drop_shadow_buffer: wgpu::Buffer,
+    pub lens_flare_buffer: wgpu::Buffer,
+    pub spray_mist_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
     pub fog_particle_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
@@ -96,19 +108,37 @@ pub struct RenderContext {
 
     pub shadow_depth_texture: wgpu::Texture,
     pub shadow_depth_view: wgpu::TextureView,
+    pub pcss_shadow_depth_texture: wgpu::Texture,
+    pub pcss_shadow_depth_view: wgpu::TextureView,
+    pub stencil_depth_texture: wgpu::Texture,
+    pub stencil_depth_view: wgpu::TextureView,
     pub fog_noise_texture: wgpu::Texture,
     pub fog_noise_view: wgpu::TextureView,
     pub fog_noise_sampler: wgpu::Sampler,
+    pub lens_flare_texture: wgpu::Texture,
+    pub lens_flare_view: wgpu::TextureView,
+    pub spray_mist_texture: wgpu::Texture,
+    pub spray_mist_view: wgpu::TextureView,
 
     pub geometry_bind_group: wgpu::BindGroup,
     pub spotlight_shadow_bind_group: wgpu::BindGroup,
+    pub pcss_shadow_bind_group: wgpu::BindGroup,
+    pub shadow_darken_bind_group: wgpu::BindGroup,
+    pub lens_flare_bind_group: wgpu::BindGroup,
+    pub spray_mist_bind_group: wgpu::BindGroup,
     pub fog_particle_bind_group: wgpu::BindGroup,
     pub fog_bind_group: wgpu::BindGroup,
     pub post_bind_group_fog: wgpu::BindGroup,
     pub post_bind_group_direct: wgpu::BindGroup,
 
     pub fog_particle_count: std::sync::atomic::AtomicU32,
+    pub shadow_volume_vertex_count: std::sync::atomic::AtomicU32,
+    pub drop_shadow_vertex_count: std::sync::atomic::AtomicU32,
+    pub lens_flare_quad_count: std::sync::atomic::AtomicU32,
+    pub spray_mist_particle_count: std::sync::atomic::AtomicU32,
+    pub pcss_enabled: std::sync::atomic::AtomicBool,
     last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
+    last_pcss_params: std::sync::Mutex<[f32; 4]>,
 
     pub default_sampler: wgpu::Sampler,
     pub default_view: wgpu::TextureView,
@@ -379,6 +409,20 @@ impl RenderContext {
             fog::FogParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let spotlight_shadow_pipeline =
             fog::SpotlightShadowPipeline::new(&device, Self::DEPTH_FORMAT);
+        let pcss_shadow_pipeline = shadow::PcssShadowPipeline::new(
+            &device,
+            Self::DEPTH_FORMAT,
+            &skeletal_pipeline.bone_bind_group_layout,
+        );
+        let stencil_shadow_pipeline = shadow::StencilShadowPipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
+        );
+        let lens_flare_pipeline = effects::LensFlarePipeline::new(&device, Self::HDR_FORMAT);
+        let spray_mist_pipeline =
+            effects::SprayMistPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let post_pipeline = post::PostProcessPipeline::new(&device);
 
         let camera_uniforms = pipeline::CameraUniforms::default();
@@ -406,6 +450,59 @@ impl RenderContext {
                 contents: bytemuck::bytes_of(&spotlight_shadow_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
+
+        let initial_pcss_uniforms = shadow::PcssShadowUniforms {
+            light_view_proj: initial_shadow_vp,
+            ..shadow::PcssShadowUniforms::default()
+        };
+        let pcss_shadow_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("PCSS Shadow Uniform Buffer"),
+            contents: bytemuck::bytes_of(&initial_pcss_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let shadow_darken_uniforms = shadow::ShadowDarkenUniforms::default();
+        let shadow_darken_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Shadow Darken Uniform Buffer"),
+            contents: bytemuck::bytes_of(&shadow_darken_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let shadow_volume_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PS2 Stencil Shadow Volume Vertex Buffer"),
+            size: (shadow::MAX_SHADOW_VOLUME_VERTICES
+                * std::mem::size_of::<shadow::ShadowVolumeVertex>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let drop_shadow_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PS2 Floor Drop Shadow Vertex Buffer"),
+            size: (shadow::MAX_SHADOW_VOLUME_VERTICES
+                * std::mem::size_of::<shadow::ShadowVolumeVertex>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let lens_flare_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Lens Flare Quad Instance Buffer"),
+            size: (effects::MAX_GPU_LENS_FLARE_QUADS
+                * std::mem::size_of::<effects::GpuLensFlareQuad>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let spray_mist_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Hyper Spray Mist Instance Buffer"),
+            size: (effects::MAX_GPU_SPRAY_PARTICLES
+                * std::mem::size_of::<effects::GpuSprayParticle>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let fog_uniforms = fog::FogUniforms {
             shadow_view_proj: initial_shadow_vp,
@@ -441,6 +538,40 @@ impl RenderContext {
         });
         let shadow_depth_view =
             shadow_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let pcss_shadow_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PCSS 2048x2048 Spotlight Shadow Depth Texture"),
+            size: wgpu::Extent3d {
+                width: shadow::PCSS_SHADOW_MAP_SIZE,
+                height: shadow::PCSS_SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let pcss_shadow_depth_view =
+            pcss_shadow_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let stencil_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 Stencil Shadow Depth24PlusStencil8 Texture"),
+            size: wgpu::Extent3d {
+                width: config.width.max(1),
+                height: config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: shadow::StencilShadowPipeline::STENCIL_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let stencil_depth_view =
+            stencil_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let fog_noise_size = 256u32;
         let fog_noise_rgba = fog::generate_procedural_fog_noise_rgba(fog_noise_size);
@@ -489,6 +620,81 @@ impl RenderContext {
             ..Default::default()
         });
 
+        // Procedural fallback textures for Lens Flare (`lens_flare.tbn2`) and Hyper Spray (`poison.tbn2`)
+        let flare_size = 128u32;
+        let flare_rgba = effects::generate_procedural_lens_flare_rgba(flare_size);
+        let lens_flare_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Lens Flare Atlas Texture"),
+            size: wgpu::Extent3d {
+                width: flare_size,
+                height: flare_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &lens_flare_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &flare_rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(flare_size * 4),
+                rows_per_image: Some(flare_size),
+            },
+            wgpu::Extent3d {
+                width: flare_size,
+                height: flare_size,
+                depth_or_array_layers: 1,
+            },
+        );
+        let lens_flare_view =
+            lens_flare_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let spray_mist_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Hyper Spray Mist Texture"),
+            size: wgpu::Extent3d {
+                width: fog_noise_size,
+                height: fog_noise_size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &spray_mist_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &fog_noise_rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(fog_noise_size * 4),
+                rows_per_image: Some(fog_noise_size),
+            },
+            wgpu::Extent3d {
+                width: fog_noise_size,
+                height: fog_noise_size,
+                depth_or_array_layers: 1,
+            },
+        );
+        let spray_mist_view =
+            spray_mist_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let post_uniforms = post::PostUniforms::default();
         let post_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Post Uniform Buffer"),
@@ -517,6 +723,14 @@ impl RenderContext {
                     binding: 1,
                     resource: spotlight_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pcss_shadow_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&pcss_shadow_depth_view),
+                },
             ],
         });
 
@@ -527,6 +741,58 @@ impl RenderContext {
                 binding: 0,
                 resource: spotlight_shadow_buffer.as_entire_binding(),
             }],
+        });
+
+        let pcss_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PCSS Shadow Bind Group"),
+            layout: &pcss_shadow_pipeline.bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: pcss_shadow_buffer.as_entire_binding(),
+            }],
+        });
+
+        let shadow_darken_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Shadow Darken Bind Group"),
+            layout: &stencil_shadow_pipeline.darken_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shadow_darken_buffer.as_entire_binding(),
+            }],
+        });
+
+        let lens_flare_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lens Flare Texture Bind Group"),
+            layout: &lens_flare_pipeline.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&lens_flare_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&fog_noise_sampler),
+                },
+            ],
+        });
+
+        let spray_mist_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hyper Spray Mist Bind Group"),
+            layout: &spray_mist_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&spray_mist_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&fog_noise_sampler),
+                },
+            ],
         });
 
         let fog_particle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -653,27 +919,55 @@ impl RenderContext {
             fog_pipeline,
             fog_particle_pipeline,
             spotlight_shadow_pipeline,
+            pcss_shadow_pipeline,
+            stencil_shadow_pipeline,
+            lens_flare_pipeline,
+            spray_mist_pipeline,
             post_pipeline,
             camera_buffer,
             spotlight_buffer,
             spotlight_shadow_buffer,
+            pcss_shadow_buffer,
+            shadow_darken_buffer,
+            shadow_volume_buffer,
+            drop_shadow_buffer,
+            lens_flare_buffer,
+            spray_mist_buffer,
             fog_buffer,
             fog_particle_buffer,
             post_buffer,
             debug_line_buffer,
             shadow_depth_texture,
             shadow_depth_view,
+            pcss_shadow_depth_texture,
+            pcss_shadow_depth_view,
+            stencil_depth_texture,
+            stencil_depth_view,
             fog_noise_texture,
             fog_noise_view,
             fog_noise_sampler,
+            lens_flare_texture,
+            lens_flare_view,
+            spray_mist_texture,
+            spray_mist_view,
             geometry_bind_group,
             spotlight_shadow_bind_group,
+            pcss_shadow_bind_group,
+            shadow_darken_bind_group,
+            lens_flare_bind_group,
+            spray_mist_bind_group,
             fog_particle_bind_group,
             fog_bind_group,
             post_bind_group_fog,
             post_bind_group_direct,
             fog_particle_count: std::sync::atomic::AtomicU32::new(0),
+            shadow_volume_vertex_count: std::sync::atomic::AtomicU32::new(0),
+            drop_shadow_vertex_count: std::sync::atomic::AtomicU32::new(0),
+            lens_flare_quad_count: std::sync::atomic::AtomicU32::new(0),
+            spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
+            pcss_enabled: std::sync::atomic::AtomicBool::new(true),
             last_shadow_view_proj: std::sync::Mutex::new(initial_shadow_vp),
+            last_pcss_params: std::sync::Mutex::new(initial_pcss_uniforms.params),
             default_sampler,
             default_view,
             default_texture_bind_group,
@@ -746,9 +1040,243 @@ impl RenderContext {
         if let Ok(mut guard) = self.last_shadow_view_proj.lock() {
             *guard = shadow_vp;
         }
+        let pcss_params =
+            self.last_pcss_params
+                .lock()
+                .map(|g| *g)
+                .unwrap_or([1.0, 170.0 / 255.0, 0.024, 0.5]);
+        let pcss_u = shadow::PcssShadowUniforms {
+            light_view_proj: shadow_vp,
+            params: pcss_params,
+        };
+        self.queue
+            .write_buffer(&self.pcss_shadow_buffer, 0, bytemuck::bytes_of(&pcss_u));
         let vp_offset = std::mem::offset_of!(fog::FogUniforms, shadow_view_proj) as u64;
         self.queue
             .write_buffer(&self.fog_buffer, vp_offset, bytemuck::bytes_of(&shadow_vp));
+    }
+
+    /// Configures Native PCSS vs Classic PS2 / SH2:EE Stencil shadow mode, shadow opacity,
+    /// and SH2:EE `SpecularFix` scaling (`SH2-81`).
+    pub fn update_shadow_config(
+        &self,
+        shadow_mode: sh2_core::config::ShadowQualityMode,
+        opacity: f32,
+        specular_scale: f32,
+    ) {
+        let pcss_on = matches!(shadow_mode, sh2_core::config::ShadowQualityMode::NativePcss);
+        self.pcss_enabled
+            .store(pcss_on, std::sync::atomic::Ordering::Relaxed);
+        let params = [
+            if pcss_on { 1.0 } else { 0.0 },
+            opacity.clamp(0.0, 1.0),
+            0.024,
+            specular_scale.clamp(0.1, 2.0),
+        ];
+        if let Ok(mut guard) = self.last_pcss_params.lock() {
+            *guard = params;
+        }
+        let vp = self
+            .last_shadow_view_proj
+            .lock()
+            .map(|g| *g)
+            .unwrap_or_else(|_| glam::Mat4::IDENTITY.to_cols_array_2d());
+        let pcss_u = shadow::PcssShadowUniforms {
+            light_view_proj: vp,
+            params,
+        };
+        self.queue
+            .write_buffer(&self.pcss_shadow_buffer, 0, bytemuck::bytes_of(&pcss_u));
+        let darken_u = shadow::ShadowDarkenUniforms {
+            color_opacity: [0.0, 0.0, 0.0, opacity.clamp(0.0, 1.0)],
+        };
+        self.queue
+            .write_buffer(&self.shadow_darken_buffer, 0, bytemuck::bytes_of(&darken_u));
+    }
+
+    /// Uploads extruded `.kg1`/`.kg2` stencil shadow volume vertices and/or flattened floor
+    /// drop-shadow vertices (`0x445540` / `0x5a7c90`) for the next frame (`SH2-81`).
+    pub fn update_shadow_volumes(
+        &self,
+        stencil_verts: &[shadow::ShadowVolumeVertex],
+        drop_verts: &[shadow::ShadowVolumeVertex],
+        opacity: f32,
+    ) {
+        let sv_count = stencil_verts.len().min(shadow::MAX_SHADOW_VOLUME_VERTICES);
+        if sv_count > 0 {
+            self.queue.write_buffer(
+                &self.shadow_volume_buffer,
+                0,
+                bytemuck::cast_slice(&stencil_verts[..sv_count]),
+            );
+        }
+        self.shadow_volume_vertex_count
+            .store(sv_count as u32, std::sync::atomic::Ordering::Relaxed);
+
+        let dv_count = drop_verts.len().min(shadow::MAX_SHADOW_VOLUME_VERTICES);
+        if dv_count > 0 {
+            self.queue.write_buffer(
+                &self.drop_shadow_buffer,
+                0,
+                bytemuck::cast_slice(&drop_verts[..dv_count]),
+            );
+        }
+        self.drop_shadow_vertex_count
+            .store(dv_count as u32, std::sync::atomic::Ordering::Relaxed);
+
+        let darken_u = shadow::ShadowDarkenUniforms {
+            color_opacity: [0.0, 0.0, 0.0, opacity.clamp(0.0, 1.0)],
+        };
+        self.queue
+            .write_buffer(&self.shadow_darken_buffer, 0, bytemuck::bytes_of(&darken_u));
+    }
+
+    /// Uploads evaluated 7-sprite lens flare quads (`Lens/lens_flare.c`) for the next frame (`SH2-81`).
+    pub fn update_lens_flares(&self, quads: &[effects::GpuLensFlareQuad]) {
+        let count = quads.len().min(effects::MAX_GPU_LENS_FLARE_QUADS);
+        if count > 0 {
+            self.queue.write_buffer(
+                &self.lens_flare_buffer,
+                0,
+                bytemuck::cast_slice(&quads[..count]),
+            );
+        }
+        self.lens_flare_quad_count
+            .store(count as u32, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Uploads Hyper Spray / Lying Figure mist billboard instances (`enEfctDrawSpray`) for the next frame (`SH2-81`).
+    pub fn update_spray_particles(&self, particles: &[effects::GpuSprayParticle]) {
+        let count = particles.len().min(effects::MAX_GPU_SPRAY_PARTICLES);
+        if count > 0 {
+            self.queue.write_buffer(
+                &self.spray_mist_buffer,
+                0,
+                bytemuck::cast_slice(&particles[..count]),
+            );
+        }
+        self.spray_mist_particle_count
+            .store(count as u32, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replaces the lens flare atlas texture with decoded RGBA8 data from retail `lens_flare.tbn2`.
+    pub fn upload_lens_flare_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if rgba.len() < (w * h * 4) as usize {
+            return;
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Retail Lens Flare Atlas (lens_flare.tbn2)"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.lens_flare_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.lens_flare_texture = tex;
+        self.lens_flare_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lens Flare Texture Bind Group"),
+            layout: &self.lens_flare_pipeline.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.lens_flare_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                },
+            ],
+        });
+    }
+
+    /// Replaces the Hyper Spray mist texture with decoded RGBA8 data from retail `poison.tbn2` / `fog.tex`.
+    pub fn upload_spray_mist_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if rgba.len() < (w * h * 4) as usize {
+            return;
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Retail Hyper Spray Mist Texture"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.spray_mist_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.spray_mist_texture = tex;
+        self.spray_mist_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Hyper Spray Mist Bind Group"),
+            layout: &self.spray_mist_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.spray_mist_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                },
+            ],
+        });
     }
 
     /// Uploads localized 3D proximity fog sprite instances (`fogMakePacket` @ `0x0016bb70`)
@@ -877,6 +1405,24 @@ impl RenderContext {
         self.fog_color_view = fog_color_view;
         self.ldr_output_texture = ldr_output_texture;
         self.ldr_output_view = ldr_output_view;
+
+        let stencil_depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 Stencil Shadow Depth24PlusStencil8 Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: shadow::StencilShadowPipeline::STENCIL_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.stencil_depth_view =
+            stencil_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.stencil_depth_texture = stencil_depth_texture;
 
         let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
             Self::create_compute_bind_groups(

@@ -89,9 +89,14 @@ impl SkeletalPipeline {
             push_constant_ranges: &[],
         });
 
+        let shader_src = format!(
+            "{}\n{}",
+            crate::shadow::WGSL_PCSS_FUNCTIONS,
+            Self::WGSL_SKINNING_SHADER
+        );
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skeletal WGSL Shader"),
-            source: wgpu::ShaderSource::Wgsl(Self::WGSL_SKINNING_SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
 
         let build_cull_triplet = |label_prefix: &str,

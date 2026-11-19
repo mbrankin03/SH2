@@ -208,4 +208,11 @@ pub(crate) fn update_spotlight_uniforms(
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
+    let specular_scale =
+        sh2_core::lighting::specular_intensity_scale("", 0, video.lighting_profile);
+    let opacity = f32::from(sh2_core::lighting::SH2EE_DEFAULT_SHADOW_OPACITY_U8) / 255.0;
+    state
+        .render_ctx
+        .update_shadow_config(video.shadow_quality, opacity, specular_scale);
 }

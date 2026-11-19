@@ -20,15 +20,18 @@ pub enum OptionsTab {
     Audio = 1,
     Controls = 2,
     Game = 3,
-    Debug = 4,
+    /// Dedicated collated tab for all enhanced graphics, audio, and camera toggles + 1-click Version Preset.
+    Enhanced = 4,
+    Debug = 5,
 }
 
 impl OptionsTab {
-    pub const ALL: [OptionsTab; 5] = [
+    pub const ALL: [OptionsTab; 6] = [
         OptionsTab::Video,
         OptionsTab::Audio,
         OptionsTab::Controls,
         OptionsTab::Game,
+        OptionsTab::Enhanced,
         OptionsTab::Debug,
     ];
 
@@ -38,6 +41,7 @@ impl OptionsTab {
             Self::Audio => "AUDIO & SOUND",
             Self::Controls => "CONTROLS & INPUT",
             Self::Game => "GAMEPLAY & PUZZLES",
+            Self::Enhanced => "ENHANCED MODE",
             Self::Debug => "DEBUG & TESTING",
         }
     }
@@ -47,7 +51,8 @@ impl OptionsTab {
             Self::Video => Self::Audio,
             Self::Audio => Self::Controls,
             Self::Controls => Self::Game,
-            Self::Game => Self::Debug,
+            Self::Game => Self::Enhanced,
+            Self::Enhanced => Self::Debug,
             Self::Debug => Self::Video,
         }
     }
@@ -58,7 +63,8 @@ impl OptionsTab {
             Self::Audio => Self::Video,
             Self::Controls => Self::Audio,
             Self::Game => Self::Controls,
-            Self::Debug => Self::Game,
+            Self::Enhanced => Self::Game,
+            Self::Debug => Self::Enhanced,
         }
     }
 }
@@ -194,7 +200,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 13);
+        assert_eq!(menu.item_count(), 11);
 
         // Adjust Resolution
         menu.adjust_value(1);
@@ -283,5 +289,77 @@ mod tests {
         menu.selected_index = 10;
         menu.adjust_value(1);
         assert!(!menu.draft_config.controls.first_person_head_bob);
+    }
+
+    #[test]
+    fn test_enhanced_tab_version_presets_and_custom_detection() {
+        use sh2_core::config::{
+            EnhancedPreset, FogQuality, LightingProfile, ShadowQualityMode, SpatialAudioMode,
+            WorldTextureQuality,
+        };
+
+        let mut menu = OptionsMenu::new(AppConfig::default());
+        menu.active_tab = OptionsTab::Enhanced;
+        assert_eq!(menu.item_count(), 11);
+
+        // Row 0: Version Preset snaps to PS2 Authentic (1:1 Original)
+        menu.selected_index = 0;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::Ps2Authentic
+        );
+        assert_eq!(
+            menu.draft_config.video.texture_quality,
+            WorldTextureQuality::OriginalPs2
+        );
+        assert_eq!(menu.draft_config.video.fog_quality, FogQuality::ClassicPs2);
+        assert_eq!(
+            menu.draft_config.video.shadow_quality,
+            ShadowQualityMode::ClassicPs2Stencil
+        );
+        assert_eq!(
+            menu.draft_config.video.lighting_profile,
+            LightingProfile::Ps2Authentic
+        );
+        assert_eq!(
+            menu.draft_config.audio.spatial_audio_mode,
+            SpatialAudioMode::ClassicPs2Stereo
+        );
+        assert!(!menu.draft_config.audio.enable_acoustic_occlusion);
+
+        // Next preset: SH2:EE
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::Sh2ee
+        );
+        assert_eq!(
+            menu.draft_config.video.shadow_quality,
+            ShadowQualityMode::EnhancedEditionSoft
+        );
+
+        // Next preset: Native Enhanced
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::NativeEnhanced
+        );
+        assert_eq!(
+            menu.draft_config.video.shadow_quality,
+            ShadowQualityMode::NativePcss
+        );
+        assert_eq!(
+            menu.draft_config.audio.spatial_audio_mode,
+            SpatialAudioMode::BinauralHrtf
+        );
+
+        // Toggling an individual setting switches Version Preset display to Custom (Mixed)
+        menu.selected_index = 4; // Shadow Mode
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::Custom
+        );
     }
 }

@@ -11,6 +11,8 @@ pub mod engine;
 pub mod horror_triggers;
 mod puzzles;
 mod runner;
+pub mod stagemdl;
+pub mod stageparts;
 pub mod stages_act1;
 pub mod triggers;
 
@@ -18,6 +20,8 @@ pub use engine::*;
 pub use horror_triggers::*;
 pub use puzzles::*;
 pub use runner::*;
+pub use stagemdl::*;
+pub use stageparts::*;
 pub use stages_act1::*;
 pub use triggers::*;
 

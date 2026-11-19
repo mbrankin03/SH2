@@ -663,6 +663,51 @@ impl LightingProfile {
     }
 }
 
+/// Outdoor `.map` tile residency & streaming mode (`SH2-78`).
+///
+/// Allows purist players to select strict 1:1 PS2 `loadbg_2x2` (`0x26f910` / `0x270ad0`)
+/// `2x2` quadrant streaming with `7,500..17,500 mm` bands, or native `wgpu` `5x5` /
+/// Whole-Town GPU residency (`< 45 MB` VRAM) eliminating tile-boundary stutters and pop-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OutdoorStreamingMode {
+    /// Authentic 1:1 PS2 `loadbg_2x2` 2x2 quadrant streaming (`SLUS_202.28` `0x270dd0`).
+    ClassicPs2LoadBg2x2,
+    /// Native `5x5` neighborhood GPU residency (25 tiles around the player's current cell).
+    Native5x5Grid,
+    /// Native Whole-Town GPU residency (pre-streams all tiles in the outdoor area onto GPU buffers).
+    #[default]
+    NativeWholeTown,
+}
+
+impl OutdoorStreamingMode {
+    /// User-facing label for the Video Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ClassicPs2LoadBg2x2 => "Classic PS2 (2x2 LoadBg)",
+            Self::Native5x5Grid => "Native 5x5 Tile Grid",
+            Self::NativeWholeTown => "Native Whole-Town Residency",
+        }
+    }
+
+    /// Cycles to the next outdoor streaming mode.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::ClassicPs2LoadBg2x2 => Self::Native5x5Grid,
+            Self::Native5x5Grid => Self::NativeWholeTown,
+            Self::NativeWholeTown => Self::ClassicPs2LoadBg2x2,
+        }
+    }
+
+    /// Cycles to the previous outdoor streaming mode.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::ClassicPs2LoadBg2x2 => Self::NativeWholeTown,
+            Self::Native5x5Grid => Self::ClassicPs2LoadBg2x2,
+            Self::NativeWholeTown => Self::Native5x5Grid,
+        }
+    }
+}
+
 /// Video and graphics options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoOptions {
@@ -685,6 +730,9 @@ pub struct VideoOptions {
     /// Room & character lighting parity profile (`SH2-81`).
     #[serde(default)]
     pub lighting_profile: LightingProfile,
+    /// Outdoor `.map` tile residency mode: Classic PS2 `2x2`, Native `5x5`, or Whole-Town (`SH2-78`).
+    #[serde(default)]
+    pub outdoor_streaming_mode: OutdoorStreamingMode,
 }
 
 impl Default for VideoOptions {
@@ -702,6 +750,7 @@ impl Default for VideoOptions {
             texture_quality: WorldTextureQuality::default(),
             shadow_quality: ShadowQualityMode::default(),
             lighting_profile: LightingProfile::default(),
+            outdoor_streaming_mode: OutdoorStreamingMode::default(),
         }
     }
 }
@@ -1069,6 +1118,7 @@ impl AppConfig {
                 self.video.volumetric_light = false;
                 self.video.shadow_quality = ShadowQualityMode::ClassicPs2Stencil;
                 self.video.lighting_profile = LightingProfile::Ps2Authentic;
+                self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_restored_cut_audio = false;
@@ -1081,6 +1131,7 @@ impl AppConfig {
                 self.video.volumetric_light = false;
                 self.video.shadow_quality = ShadowQualityMode::EnhancedEditionSoft;
                 self.video.lighting_profile = LightingProfile::EnhancedEdition;
+                self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_restored_cut_audio = true;
@@ -1093,6 +1144,7 @@ impl AppConfig {
                 self.video.volumetric_light = true;
                 self.video.shadow_quality = ShadowQualityMode::NativePcss;
                 self.video.lighting_profile = LightingProfile::NativeEnhanced;
+                self.video.outdoor_streaming_mode = OutdoorStreamingMode::NativeWholeTown;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
                 self.audio.enable_restored_cut_audio = true;
@@ -1112,6 +1164,7 @@ impl AppConfig {
             && !self.video.volumetric_light
             && self.video.shadow_quality == ShadowQualityMode::ClassicPs2Stencil
             && self.video.lighting_profile == LightingProfile::Ps2Authentic
+            && self.video.outdoor_streaming_mode == OutdoorStreamingMode::ClassicPs2LoadBg2x2
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_restored_cut_audio
@@ -1125,6 +1178,7 @@ impl AppConfig {
             && !self.video.volumetric_light
             && self.video.shadow_quality == ShadowQualityMode::EnhancedEditionSoft
             && self.video.lighting_profile == LightingProfile::EnhancedEdition
+            && self.video.outdoor_streaming_mode == OutdoorStreamingMode::ClassicPs2LoadBg2x2
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && self.audio.enable_restored_cut_audio
@@ -1138,6 +1192,7 @@ impl AppConfig {
             && self.video.volumetric_light
             && self.video.shadow_quality == ShadowQualityMode::NativePcss
             && self.video.lighting_profile == LightingProfile::NativeEnhanced
+            && self.video.outdoor_streaming_mode == OutdoorStreamingMode::NativeWholeTown
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion
             && self.audio.enable_restored_cut_audio

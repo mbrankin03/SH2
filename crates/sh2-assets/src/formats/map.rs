@@ -156,6 +156,48 @@ pub struct MapVertex {
 }
 
 impl MapBatch {
+    /// Returns the sub-room / part-group offset encoded in the upper byte of `geo_id` (`geo_id >> 8`).
+    ///
+    /// Verified 1:1 against `sh2pc.exe` `0x5b47a0` (`movzx ecx, byte ptr [eax + 0x2]`), where
+    /// multi-room indoor `.map` containers (e.g. `ap42.map`, `rr91.map`) store `0..=3` to match
+    /// `target_room_id - loaded_map_base_room_id`.
+    #[inline]
+    #[must_use]
+    pub const fn part_group(&self) -> u8 {
+        (self.geo_id >> 8) as u8
+    }
+
+    /// Returns the 1-based switchable variant index encoded in the low byte of `geo_id` (`geo_id & 0xff`).
+    ///
+    /// - `0`: Base static room geometry (always visible regardless of display control bitmask).
+    /// - `1..=16`: Switchable variant controlled by bit `1u16 << (variant - 1)` from
+    ///   `EvDispControlModelEntry` (`SLUS_202.28` `0x001ad560` / `sh2pc.exe` `0x4a2f10`).
+    #[inline]
+    #[must_use]
+    pub const fn variant_index(&self) -> u8 {
+        (self.geo_id & 0xff) as u8
+    }
+
+    /// Evaluates whether this batch is visible under the given 16-bit display control `bitmask`
+    /// for its [`Self::part_group`].
+    ///
+    /// Exact 1:1 parity with `sh2pc.exe` `0x5b47a8..0x5b47c8`:
+    /// - `variant_index == 0` is always visible.
+    /// - `variant_index in 1..=16` is visible iff `(bitmask & (1u16 << (variant_index - 1))) != 0`.
+    #[inline]
+    #[must_use]
+    pub const fn is_visible_for_mask(&self, bitmask: u16) -> bool {
+        let variant = self.variant_index();
+        if variant == 0 {
+            return true;
+        }
+        let bit = variant - 1;
+        if bit >= 16 {
+            return false;
+        }
+        (bitmask & (1u16 << bit)) != 0
+    }
+
     /// Converts parallel vertex attributes (`positions`, `normals`, `uvs`, `colors`) into interleaved [`MapVertex`] structs for direct GPU consumption.
     pub fn interleaved_vertices(&self) -> Vec<MapVertex> {
         let count = self.positions.len();

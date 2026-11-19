@@ -123,7 +123,9 @@ fn hg_phase(cos_theta: f32, g: f32) -> f32 {
 // Evaluate flashlight spotlight volumetric inscattering at a single world-space raymarch sample
 fn eval_spotlight_scatter(sample_world: vec3<f32>, ray_dir: vec3<f32>) -> vec3<f32> {
     let spot_intensity_sum = spotlight.color_outer.x + spotlight.color_outer.y + spotlight.color_outer.z;
-    if (spot_intensity_sum <= 1e-4) {
+    // Only raymarch volumetric flashlight god rays for an actual forward spotlight cone (`outer_cos > 0.0`),
+    // never for omnidirectional fills or parallel directional lights (`sh2gfw_setparal3LGT_blk`).
+    if (spot_intensity_sum <= 1e-4 || spotlight.color_outer.w <= 0.0) {
         return vec3<f32>(0.0);
     }
     let light_to_sample = sample_world - spotlight.position.xyz;

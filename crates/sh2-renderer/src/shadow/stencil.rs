@@ -367,7 +367,7 @@ fn fs_darken() -> @location(0) vec4<f32> {
                 rpass.set_bind_group(0, camera_bind_group, &[]);
                 rpass.set_bind_group(1, darken_bind_group, &[]);
                 for batch in &map.batches {
-                    if batch.group != BatchGroup::Opaque {
+                    if batch.group != BatchGroup::Opaque || !map.is_batch_visible(batch) {
                         continue;
                     }
                     rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));

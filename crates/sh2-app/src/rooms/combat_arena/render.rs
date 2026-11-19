@@ -441,7 +441,7 @@ fn build_cutscene_spotlight_uniforms(
         }
         DemoLightKind::Directional => (3000.0, 7500.0),
     };
-    let boost = 1.8 * (far_decay / 3500.0).clamp(0.8, 2.2);
+    let boost = (far_decay / 3500.0).clamp(0.25, 0.55);
     let (pos, dir, inner_cos, outer_cos) = match cs_light.kind {
         DemoLightKind::Spot => (
             l_pos,
@@ -457,20 +457,20 @@ fn build_cutscene_spotlight_uniforms(
         ),
         DemoLightKind::Directional => {
             let safe_d = (-l_pos).normalize_or(glam::Vec3::Y);
-            (player_pos - safe_d * 1800.0, safe_d, 0.25, -0.65)
+            (player_pos - safe_d * 50_000.0, safe_d, -1.0, -1.0)
         }
     };
     sh2_renderer::light::SpotlightUniforms {
         position: [pos.x, pos.y, pos.z, 1.0],
         direction_inner: [dir.x, dir.y, dir.z, inner_cos],
         color_outer: [
-            cs_light.color[0].max(0.25) * boost,
-            cs_light.color[1].max(0.25) * boost,
-            cs_light.color[2].max(0.25) * boost,
+            cs_light.color[0].max(0.20) * boost,
+            cs_light.color[1].max(0.20) * boost,
+            cs_light.color[2].max(0.20) * boost,
             outer_cos,
         ],
         ambient_tint,
-        ..Default::default()
+        fill_and_range: [0.0, far_decay.max(4500.0), 0.0, 0.0],
     }
 }
 

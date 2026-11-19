@@ -159,7 +159,8 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let reach = select(8500.0, spotlight.fill_and_range.y, spotlight.fill_and_range.y > 1.0);
     let reach_ratio = clamp(dist / reach, 0.0, 1.0);
     let reach_window = (1.0 - reach_ratio * reach_ratio);
-    let attenuation = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
+    let local_atten = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
+    let attenuation = select(local_atten, 1.0, inner_cos <= -0.99 && outer_cos <= -0.99);
     let n_dot_l = max(dot(norm, -l_dir), 0.0);
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
 

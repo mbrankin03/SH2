@@ -27,6 +27,7 @@ pub mod state;
 pub mod timing;
 pub mod types;
 pub mod widescreen_rail;
+pub mod world;
 
 // Re-exports for convenience
 pub use animation::{
@@ -50,8 +51,8 @@ pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
     AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, EnhancedPreset,
     FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution, LightingProfile,
-    RiddleDifficulty, ShadowQualityMode, SpatialAudioMode, SpeakerConfiguration, VideoOptions,
-    WindowDisplayMode, WorldTextureQuality,
+    OutdoorStreamingMode, RiddleDifficulty, ShadowQualityMode, SpatialAudioMode,
+    SpeakerConfiguration, VideoOptions, WindowDisplayMode, WorldTextureQuality,
 };
 pub use cutaway::{
     original_sheet_dimensions, ClippedQuadUv, CutawayOverlayEngine, CutsceneBorderBars,
@@ -204,4 +205,10 @@ pub use widescreen_rail::{
     WidescreenClearanceMode, ASPECT_16X10, ASPECT_16X9, ASPECT_20X9_THOR, ASPECT_21X9_ULTRAWIDE,
     DEFAULT_SMOOTH_WARP_EYE_LERP, DEFAULT_SMOOTH_WARP_TARGET_LERP, PS2_INDOOR_MIN_IN_ROAD_DIST_MM,
     PS2_OUTDOOR_MIN_IN_ROAD_DIST_MM, PS2_REFERENCE_4X3_ASPECT,
+};
+pub use world::{
+    OutdoorArea, OutdoorTileId, OutdoorTileStreamer, TileLoadRequest, TileStreamingPlan,
+    CA_OUTDOOR_BLOCKS, CB_OUTDOOR_BLOCKS, CC_OUTDOOR_BLOCKS, CD_OUTDOOR_BLOCKS,
+    LOADBG_DIST_BANDS_MM, LOADBG_PREFETCH_CUTOFF_MM, OUTDOOR_GRID_OFFSET, OUTDOOR_TILE_HALF_MM,
+    OUTDOOR_TILE_SIZE_MM,
 };

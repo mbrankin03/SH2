@@ -414,7 +414,7 @@ impl RenderContext {
         let mut current_bg: Option<usize> = None;
 
         for batch in &map.batches {
-            if batch.group != target_group {
+            if batch.group != target_group || !map.is_batch_visible(batch) {
                 continue;
             }
             let bg_idx = batch.material_index;

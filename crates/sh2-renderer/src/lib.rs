@@ -12,6 +12,7 @@ pub mod post;
 pub mod scene;
 pub mod shadow;
 pub mod skeletal;
+pub mod tile_pool;
 
 pub use blitter::SurfaceBlitter;
 pub use fmv::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
@@ -28,6 +29,7 @@ pub use skeletal::{
     SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 use std::sync::Arc;
+pub use tile_pool::GpuOutdoorTilePool;
 use wgpu::util::DeviceExt;
 
 #[derive(Debug, Clone, Copy)]

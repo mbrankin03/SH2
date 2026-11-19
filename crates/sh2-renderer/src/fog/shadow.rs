@@ -182,7 +182,7 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, shadow_bind_group, &[]);
             for batch in &map.batches {
-                if batch.group != BatchGroup::Opaque {
+                if batch.group != BatchGroup::Opaque || !map.is_batch_visible(batch) {
                     continue;
                 }
                 rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));

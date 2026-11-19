@@ -212,7 +212,19 @@ pub(crate) fn update_spotlight_uniforms(
     let specular_scale =
         sh2_core::lighting::specular_intensity_scale("", 0, video.lighting_profile);
     let opacity = f32::from(sh2_core::lighting::SH2EE_DEFAULT_SHADOW_OPACITY_U8) / 255.0;
+    // Only cast directional PCSS spotlight shadows when an actual forward spotlight cone is active
+    // (`outer_cos > 0` and non-zero intensity), not on wide omnidirectional indoor ambient fill lights.
+    let has_active_spotlight_cone = spot_uniforms.color_outer[3] > 0.0
+        && (spot_uniforms.color_outer[0]
+            + spot_uniforms.color_outer[1]
+            + spot_uniforms.color_outer[2])
+            > 0.01;
+    let effective_shadow_mode = if has_active_spotlight_cone {
+        video.shadow_quality
+    } else {
+        sh2_core::config::ShadowQualityMode::ClassicPs2Stencil
+    };
     state
         .render_ctx
-        .update_shadow_config(video.shadow_quality, opacity, specular_scale);
+        .update_shadow_config(effective_shadow_mode, opacity, specular_scale);
 }

@@ -24,17 +24,12 @@ impl RenderContext {
         if let Ok(mut guard) = self.last_pcss_params.lock() {
             *guard = params;
         }
-        let vp = self
-            .last_shadow_view_proj
-            .lock()
-            .map(|g| *g)
-            .unwrap_or_else(|_| glam::Mat4::IDENTITY.to_cols_array_2d());
-        let pcss_u = shadow::PcssShadowUniforms {
-            light_view_proj: vp,
-            params,
-        };
-        self.queue
-            .write_buffer(&self.pcss_shadow_buffer, 0, bytemuck::bytes_of(&pcss_u));
+        let params_offset = std::mem::offset_of!(shadow::PcssShadowUniforms, params) as u64;
+        self.queue.write_buffer(
+            &self.pcss_shadow_buffer,
+            params_offset,
+            bytemuck::bytes_of(&params),
+        );
         let darken_u = shadow::ShadowDarkenUniforms {
             color_opacity: [0.0, 0.0, 0.0, opacity.clamp(0.0, 1.0)],
         };

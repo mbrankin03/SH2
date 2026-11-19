@@ -17,6 +17,33 @@ use sh2_assets::formats::map::BatchGroup;
 /// High-resolution spotlight PCSS shadow map size in texels (`2048x2048` `Depth32Float`).
 pub const PCSS_SHADOW_MAP_SIZE: u32 = 2048;
 
+/// Computes the spotlight view-projection matrix for the `2048x2048` PCSS shadow map.
+///
+/// Uses a `240.0 mm` near clip plane so the emitter sits cleanly outside James's chest pocket
+/// (`~150 mm` from torso centerline) without his own jacket occluding the flashlight lens,
+/// while outstretched arms/weapons, enemies, and room furniture cast crisp contact-hardening shadows.
+#[must_use]
+pub fn compute_pcss_spotlight_view_proj(spot: &crate::light::SpotlightUniforms) -> glam::Mat4 {
+    let pos = glam::Vec3::new(spot.position[0], spot.position[1], spot.position[2]);
+    let raw_dir = glam::Vec3::new(
+        spot.direction_inner[0],
+        spot.direction_inner[1],
+        spot.direction_inner[2],
+    );
+    let dir = raw_dir.normalize_or(glam::Vec3::NEG_Z);
+    let up = if dir.y.abs() > 0.95 {
+        glam::Vec3::X
+    } else {
+        glam::Vec3::Y
+    };
+    let view = glam::Mat4::look_to_rh(pos, dir, up);
+    let outer_cos = spot.color_outer[3].clamp(0.05, 0.99);
+    let half_angle = outer_cos.acos();
+    let fov_y = (half_angle * 2.15).clamp(0.26, 2.1);
+    let proj = glam::Mat4::perspective_rh(fov_y, 1.0, 240.0, 18_000.0);
+    proj * view
+}
+
 /// Uniform buffer shared by [`crate::pipeline::GeometryPipeline`] and [`crate::skeletal::SkeletalPipeline`]
 /// for Native PCSS sampling and SH2:EE lighting/specular parity (`80` bytes, 16-byte aligned).
 #[repr(C)]
@@ -129,7 +156,10 @@ fn evaluate_pcss_spotlight_visibility(world_pos: vec3<f32>, surf_normal: vec3<f3
     }
 
     let raw_vis = lit_sum / 16.0;
-    let opacity = clamp(pcss_u.params.y, 0.0, 1.0);
+    // Softly fade shadow influence near shadow-map UV borders so no hard frustum rectangle ever appears
+    let edge_dist = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    let border_fade = smoothstep(0.0, 0.04, edge_dist);
+    let opacity = clamp(pcss_u.params.y, 0.0, 1.0) * border_fade;
     return mix(1.0 - opacity, 1.0, raw_vis);
 }
 "#;

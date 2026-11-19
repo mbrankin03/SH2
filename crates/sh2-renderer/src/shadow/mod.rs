@@ -9,7 +9,10 @@ pub mod pcss;
 pub mod stencil;
 pub mod volume;
 
-pub use pcss::{PcssShadowPipeline, PcssShadowUniforms, PCSS_SHADOW_MAP_SIZE, WGSL_PCSS_FUNCTIONS};
+pub use pcss::{
+    compute_pcss_spotlight_view_proj, PcssShadowPipeline, PcssShadowUniforms, PCSS_SHADOW_MAP_SIZE,
+    WGSL_PCSS_FUNCTIONS,
+};
 pub use stencil::{ShadowDarkenUniforms, StencilShadowPipeline, MAX_SHADOW_VOLUME_VERTICES};
 pub use volume::{
     extrude_kg1_stencil_volume, extrude_kg2_stencil_volume, flatten_kg1_drop_shadow,

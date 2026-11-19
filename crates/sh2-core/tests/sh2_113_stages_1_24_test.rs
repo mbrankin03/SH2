@@ -60,8 +60,9 @@ fn act1_static_stage_tables_cover_all_27_stages_with_valid_offsets_and_sentinels
 
 #[test]
 fn act1_retail_sh2pc_binary_byte_for_byte_verification() {
-    let exe = Path::new("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2pc.exe");
-    let Ok(pe) = std::fs::read(exe) else {
+    let exe = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2pc.exe");
+    let Ok(pe) = std::fs::read(&exe) else {
         return; // Retail asset rip is symlinked locally and omitted in GitHub Actions CI.
     };
 

@@ -273,13 +273,15 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
 
     match ctx.room_id {
         R_OBSV_DECK_ID => {
-            let (range_x, count) = if ctx.extended_observation_deck_range {
+            let (range_x, range_z, count) = if ctx.extended_observation_deck_range {
                 (
                     OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X,
+                    12000.0,
                     OBSERVATION_DECK_FOG_PARTICLE_MAX,
                 )
             } else {
                 (
+                    PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                     PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                     PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 )
@@ -294,7 +296,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                 layers: base_layers,
                 particle_count: count,
                 particle_range_x_mm: range_x,
-                particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_range_z_mm: range_z,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: false,

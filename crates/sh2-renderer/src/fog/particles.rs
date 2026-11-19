@@ -82,11 +82,13 @@ fn vs_main(
     let up = cross(to_cam, right);
 
     let world_vertex = center + (right * corner.x + up * corner.y) * radius;
+    // Fade smoothly as particles approach the camera lens so billboards never clip or pop
+    let near_fade = clamp((to_cam_len - 350.0) / 1100.0, 0.0, 1.0);
 
     var out: VertexOutput;
     out.clip_pos = camera.view_proj * vec4<f32>(world_vertex, 1.0);
     out.uv = corner * 0.5 + 0.5;
-    out.color_alpha = inst.color_alpha;
+    out.color_alpha = vec4<f32>(inst.color_alpha.rgb, inst.color_alpha.a * near_fade);
     return out;
 }
 
@@ -97,11 +99,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (r2 >= 1.0) {
         discard;
     }
-    let radial = pow(1.0 - r2, 1.8);
+    let radial = pow(1.0 - r2, 2.4);
     let tex_n = textureSample(fog_tex, fog_sampler, in.uv).r;
-    // PS2 GS soft-mist alpha scaled to avoid harsh quad edges
-    let alpha = radial * (0.45 + 0.55 * tex_n) * in.color_alpha.a * 0.28;
-    if (alpha < 0.004) {
+    // Soft PS2 GS mist puff alpha to blend seamlessly without hard disc edges
+    let alpha = radial * (0.40 + 0.60 * tex_n) * in.color_alpha.a * 0.14;
+    if (alpha < 0.003) {
         discard;
     }
     return vec4<f32>(in.color_alpha.rgb, alpha);

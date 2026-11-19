@@ -214,10 +214,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let sample_world = cam_pos + ray_dir * t;
 
             // Local 3D animated mist density modulated by dual-layer scrolling noise
-            let sample_uv = sample_world.xz * (max(0.005, fog.layer2_params.x) * 0.0022)
+            let sample_uv = sample_world.xz * (max(0.005, fog.layer2_params.x) * 0.0018)
                           + vec2<f32>(drift_t * 0.025, -drift_t * 0.015);
             let local_n = textureSampleLevel(fog_noise_tex, fog_noise_sampler, sample_uv, 0.0).r;
-            let height_atten = exp(-max(0.0, sample_world.y - cam_pos.y + 400.0) * 0.00018);
+            // PS2 coordinate system is Y-down (negative Y is UP into the sky).
+            // Mist stays dense near ground level and gently thins high above the camera.
+            let height_above_cam = max(0.0, cam_pos.y - sample_world.y - 600.0);
+            let height_atten = exp(-height_above_cam * 0.00010);
 
             // Match curve falloff derivative along raymarch steps
             let norm_t = clamp((t - fog.fog_near) * inv_span, 0.0, 1.0);

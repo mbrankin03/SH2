@@ -78,7 +78,7 @@ impl FogParticleVolume {
             let vx = (next_unit() - 0.5) * 80.0;
             let vy = (next_unit() - 0.5) * 18.0;
             let vz = (next_unit() - 0.5) * 80.0;
-            let radius_mm = 260.0 + next_unit() * 240.0;
+            let radius_mm = 300.0 + next_unit() * 140.0;
             let sway_phase = next_unit() * std::f32::consts::TAU;
             particles.push(FogParticle {
                 local_pos: [x, y, z],

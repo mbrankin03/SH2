@@ -82,6 +82,7 @@ fn test_sh2_81_pcss_stencil_drop_shadows_lens_flares_and_hyper_spray_pipeline() 
         direction_inner: [0.0, 0.25, -0.968, 0.92],
         color_outer: [1.2, 1.15, 1.0, 0.72],
         ambient_tint: [1.0, 1.0, 1.0, 1.0],
+        ..Default::default()
     };
     ctx.update_spotlight(&spot);
 

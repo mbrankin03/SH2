@@ -554,6 +554,7 @@ fn test_sh2_37_bestiary_materials_hair_and_specular_pipeline() {
         direction_inner: [0.0, 0.0, -1.0, 0.90],
         color_outer: [2.4, 2.2, 1.9, 0.70],
         ambient_tint: [1.0, 1.0, 1.0, 1.0],
+        ..Default::default()
     });
 
     let min_align = ctx.device.limits().min_uniform_buffer_offset_alignment;

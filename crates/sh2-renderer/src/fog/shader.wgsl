@@ -37,6 +37,7 @@ struct SpotlightUniforms {
     direction_inner: vec4<f32>,
     color_outer: vec4<f32>,
     ambient_tint: vec4<f32>,
+    fill_and_range: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> fog: FogUniforms;

@@ -222,7 +222,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
     sim_core.collision = find_cld_file_for_room(initial_room);
     sim_core.input.set_control_scheme(ControlScheme::Tank);
-    sim_core.scenario.flashlight_on = true;
+    if initial_room != TestRoomKind::RestroomStart {
+        sim_core.scenario.acquire_flashlight(true);
+    }
     if let Some(room_id) = room_cam_id_for_test_room(initial_room) {
         sim_core.transition_to_room(room_id, player_pos, player_yaw, true);
     } else {

@@ -152,16 +152,18 @@ pub(crate) fn update_spotlight_uniforms(
             direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
             color_outer: [0.0, 0.0, 0.0, 0.0],
             ambient_tint,
+            ..Default::default()
         }
     } else if active_demo.is_some_and(|s| s.player.info.stage_name == "er01")
         || (state.active_test_room == TestRoomKind::RestroomStart
-            && !state.sim_core.scenario.flashlight_on)
+            && !state.sim_core.scenario.is_flashlight_active())
     {
         SpotlightUniforms {
             position: [-19200.0, -1950.0, 20429.5, 1.0],
             direction_inner: [-0.65, 0.76, 0.0, 0.35],
             color_outer: [1.85, 1.90, 1.80, -0.65],
             ambient_tint: [1.65, 1.68, 1.62, 1.85],
+            ..Default::default()
         }
     } else if let Some(cs_spot) = cutscene_spotlight_override {
         cs_spot
@@ -174,6 +176,7 @@ pub(crate) fn update_spotlight_uniforms(
             direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
             color_outer: [1.75, 1.72, 1.68, -0.50],
             ambient_tint,
+            ..Default::default()
         }
     } else {
         let video = &state.menu_ctrl.options_menu.draft_config.video;
@@ -183,25 +186,59 @@ pub(crate) fn update_spotlight_uniforms(
             sh2_core::lighting::apply_draw_env_fixes(raw, room_code, video.lighting_profile)
         });
 
-        // 1:1 PS2 `DrawEnvData.ambient` (+0x1b0) & `sh2pc.exe` `0x50a010` (`env_flash_off_level`):
-        // - Naturally lit stages (OB 0.9, ER 0.65, daytime streets) stay visible when flashlight is off.
-        // - Dark interiors (AP/HP/PS/RR, ambient ~0.15) dim by `env_flash_off_level` (0.3) when off
-        //   and emit ZERO spotlight — never substituting a fake overhead room floodlight!
-        let (env_amb_rgb, outer_cos) = if let Some(env) = draw_env {
+        let (env_amb_rgb, outer_cos, packed_map_id, world_color_rgb) = if let Some(env) = draw_env {
             (
                 env.ambient,
                 env.flashlight_outer_rad.cos().clamp(0.45, 0.92),
+                sh2_core::lighting::packed_map_id_from_draw_env(&env),
+                Some(env.clear_color_rgb),
             )
         } else {
-            ([0.15, 0.15, 0.15], std::f32::consts::FRAC_PI_4.cos())
+            (
+                [0.15, 0.15, 0.15],
+                std::f32::consts::FRAC_PI_4.cos(),
+                None,
+                None,
+            )
         };
         let env_lum = env_amb_rgb[0].max(env_amb_rgb[1]).max(env_amb_rgb[2]);
-        // Scale PS2 DrawEnvData.ambient (0.15..0.90) into HDR shader ambient_tint multiplier
-        let base_amb_scale = (env_lum * 2.2).clamp(0.25, 2.2);
+        let is_dark_room = env_lum < 0.45;
+        let chapter = match state.sim_core.scenario.scenario {
+            sh2_core::scenario::ScenarioKind::LetterFromSilentHeaven => {
+                sh2_core::lighting::ShadowChapter::MainScenario
+            }
+            sh2_core::scenario::ScenarioKind::BornFromAWish => {
+                sh2_core::lighting::ShadowChapter::BornFromAWish
+            }
+        };
+        let flashlight_active = state.sim_core.scenario.is_flashlight_active();
+        let darkness =
+            sh2_core::lighting::evaluate_room_darkness(&sh2_core::lighting::RoomDarknessInput {
+                packed_map_id,
+                room_id: None,
+                chapter,
+                is_dark_room,
+                has_flashlight: state.sim_core.scenario.has_flashlight(),
+                flashlight_on: flashlight_active,
+                flag_625_set: state.sim_core.scenario.has_flag(u32::from(
+                    sh2_core::lighting::FLAG_WOODSIDE_FLASHLIGHT_PICKUP,
+                )),
+                world_color_rgb,
+                lighting_profile: video.lighting_profile,
+            });
 
-        if state.sim_core.scenario.flashlight_on {
+        // Scale PS2 DrawEnvData.ambient (0.15..0.90) by authentic `0.5 + 0.25 * s_flash_level`
+        // (`sh2pc.exe` `0x47a090..0x47a18b`), keeping sunlit rooms naturally lit.
+        let base_amb_scale = (env_lum * 2.2).clamp(0.25, 2.2);
+        let modulated_ambient = if is_dark_room {
+            base_amb_scale * darkness.ambient_scale
+        } else {
+            base_amb_scale
+        };
+
+        if flashlight_active {
             // Flashlight ON: chest-pocket forward spotlight (`Calculate_Jms_Spot` @ 0x0028e940,
-            // `PS2FlashlightBrightness` = 1.2x from `EnhancedFlashlight.cpp:49`).
+            // PS2 brightness ratio `1.2 / 4.0` and reach `6000` / `8500` mm from `EnhancedFlashlight.cpp`).
             let fl_mul =
                 sh2_core::lighting::flashlight_wall_brightness_multiplier(video.lighting_profile);
             SpotlightUniforms {
@@ -212,17 +249,19 @@ pub(crate) fn update_spotlight_uniforms(
                     ambient_tint[0],
                     ambient_tint[1],
                     ambient_tint[2],
-                    base_amb_scale,
+                    modulated_ambient,
+                ],
+                fill_and_range: [
+                    darkness.camera_fill_k,
+                    darkness.flashlight_reach_mm,
+                    darkness.flash_level,
+                    0.0,
                 ],
             }
         } else {
-            // Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`).
-            // Dark rooms drop by `env_flash_off_level` (`0x50a010`: 0.3), while sunlit/lit rooms remain lit.
-            let off_scale = if env_lum < 0.45 {
-                sh2_core::lighting::env_flash_off_level(true, false)
-            } else {
-                1.0
-            };
+            // Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`), while dark rooms receive
+            // authentic `s_flash_level` ambient modulation (`0.75` pre-pickup -> `0.575` post-pickup)
+            // and camera view-space directional fill (`0.075` pre-pickup -> `0.0225` post-pickup).
             SpotlightUniforms {
                 position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
                 direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
@@ -231,7 +270,13 @@ pub(crate) fn update_spotlight_uniforms(
                     ambient_tint[0],
                     ambient_tint[1],
                     ambient_tint[2],
-                    (base_amb_scale * off_scale).max(0.12),
+                    modulated_ambient,
+                ],
+                fill_and_range: [
+                    darkness.camera_fill_k,
+                    darkness.flashlight_reach_mm,
+                    darkness.flash_level,
+                    0.0,
                 ],
             }
         }

@@ -7,10 +7,11 @@
 use crate::config::{ActionDifficulty, RiddleDifficulty};
 use crate::cutaway::CutawayOverlayEngine;
 use crate::events::{
-    init_new_game, init_new_game_wish, ClearData, EventFlags, PuzzleState, Sh2Rng,
-    StageProgramRunner,
+    init_new_game, init_new_game_wish, light_spot_on_off_check, ClearData, EventFlags, PuzzleState,
+    Sh2Rng, StageProgramRunner,
 };
 use crate::inventory::InventoryManager;
+use crate::lighting::{FLAG_WOODSIDE_FLASHLIGHT_PICKUP, ITEM_ID_FLASHLIGHT};
 use crate::room_loader::default_room_id_for_stage;
 use glam::Vec3;
 use std::collections::HashSet;
@@ -256,6 +257,45 @@ impl ScenarioState {
             .collect();
     }
 
+    /// Returns `true` when the player possesses the Flashlight (`item 0x12` = 18,
+    /// `sh2pc.exe` `0x50a48e`: `0x01f7a7e0 & 0x40000`, acquired in Wood Side Room 205).
+    #[inline]
+    #[must_use]
+    pub fn has_flashlight(&self) -> bool {
+        self.inventory_mgr.has_item(ITEM_ID_FLASHLIGHT)
+    }
+
+    /// Evaluates `LightSpotOnOffCheck` (`SLUS_202.28` `0x001aad70`): returns `true` only when
+    /// the player owns the Flashlight (`item 0x12`), the power switch is ON, and Event Flag `272`
+    /// (dead battery / disabled flashlight) is NOT set.
+    #[inline]
+    #[must_use]
+    pub fn is_flashlight_active(&self) -> bool {
+        light_spot_on_off_check(self.has_flashlight(), self.flashlight_on, &self.flags)
+    }
+
+    /// Grants the Flashlight (`item 0x12`) to the player's inventory, raises Event Flag `625`
+    /// (`FLAG_WOODSIDE_FLASHLIGHT_PICKUP`), and optionally switches it on (`SH2-33`).
+    pub fn acquire_flashlight(&mut self, turn_on: bool) {
+        if !self.has_flashlight() {
+            self.inventory_mgr.item_get_now(ITEM_ID_FLASHLIGHT);
+            self.sync_legacy_views();
+        }
+        self.set_flag(u32::from(FLAG_WOODSIDE_FLASHLIGHT_PICKUP));
+        self.flashlight_on = turn_on && !self.flags.get(272);
+    }
+
+    /// Toggles the flashlight power switch if the player owns the Flashlight (`item 0x12`) and
+    /// its battery is not depleted (`!flags.get(272)`). Returns the resulting active beam state.
+    pub fn toggle_flashlight(&mut self) -> bool {
+        if !self.has_flashlight() || self.flags.get(272) {
+            self.flashlight_on = false;
+            return false;
+        }
+        self.flashlight_on = !self.flashlight_on;
+        self.is_flashlight_active()
+    }
+
     /// Transition to a new stage/room cleanly.
     pub fn transition_stage(
         &mut self,
@@ -355,5 +395,32 @@ mod tests {
 
         // Invalid stage check
         assert!(state.progress_wish_stage(99).is_err());
+    }
+
+    #[test]
+    fn test_flashlight_acquisition_and_toggle_gating() {
+        let mut state = ScenarioState::new(ScenarioKind::LetterFromSilentHeaven);
+        // Before Room 205 pickup: James does not own item 0x12 and cannot toggle flashlight ON
+        assert!(!state.has_flashlight());
+        assert!(!state.is_flashlight_active());
+        assert!(!state.toggle_flashlight());
+        assert!(!state.flashlight_on);
+
+        // Acquire flashlight in Room 205 (item 0x12 + Flag 625)
+        state.acquire_flashlight(true);
+        assert!(state.has_flashlight());
+        assert!(state.has_flag(u32::from(FLAG_WOODSIDE_FLASHLIGHT_PICKUP)));
+        assert!(state.is_flashlight_active());
+
+        // Toggle OFF and back ON
+        assert!(!state.toggle_flashlight());
+        assert!(!state.is_flashlight_active());
+        assert!(state.toggle_flashlight());
+        assert!(state.is_flashlight_active());
+
+        // Dead battery (Flag 272) suppresses beam and prevents toggle
+        state.set_flag(272);
+        assert!(!state.is_flashlight_active());
+        assert!(!state.toggle_flashlight());
     }
 }

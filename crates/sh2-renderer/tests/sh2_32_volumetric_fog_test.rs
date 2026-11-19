@@ -206,6 +206,7 @@ fn test_sh2_32_volumetric_fog_drift_curves_god_rays_and_particles() {
         direction_inner: [0.0, 0.0, -1.0, 0.96],
         color_outer: [3.5, 3.2, 2.6, 0.82],
         ambient_tint: [1.0, 1.0, 1.0, 1.0],
+        ..Default::default()
     };
     ctx.update_spotlight(&spot);
 

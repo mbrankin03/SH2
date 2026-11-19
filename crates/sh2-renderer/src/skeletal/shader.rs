@@ -16,6 +16,7 @@ struct SpotlightUniforms {
     direction_inner: vec4<f32>,
     color_outer: vec4<f32>,
     ambient_tint: vec4<f32>,
+    fill_and_range: vec4<f32>,
 };
 
 struct SkeletonBones {
@@ -155,12 +156,16 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     );
 
     let dist_m = dist * 0.001;
-    let attenuation = 1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m);
+    let reach = select(8500.0, spotlight.fill_and_range.y, spotlight.fill_and_range.y > 1.0);
+    let reach_ratio = clamp(dist / reach, 0.0, 1.0);
+    let reach_window = (1.0 - reach_ratio * reach_ratio);
+    let attenuation = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
     let n_dot_l = max(dot(norm, -l_dir), 0.0);
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
 
     let base_ambient = vec3<f32>(0.06, 0.06, 0.068);
     let spot_diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation * pcss_vis);
+    let camera_fill = vec3<f32>(spotlight.fill_and_range.x * max(dot(norm, view_dir), 0.0));
 
     // 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used in Model Viewer modes (1 and 3)
     let key_dir = normalize(vec3<f32>(0.45, -0.65, 0.60));
@@ -194,7 +199,7 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
     let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
 
-    let game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale + mat_diffuse * spot_diffuse) * env_tint_rgb;
+    let game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
     let studio_diffuse_light = (mat_ambient * studio_amb + mat_diffuse * studio_direct) * env_tint_rgb;
     let total_diffuse_light = select(game_diffuse_light, studio_diffuse_light, shade_mode == 3);
 

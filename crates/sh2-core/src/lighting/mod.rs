@@ -2,6 +2,7 @@
 //! 7-sprite lens flares, and Hyper Spray mist particle simulation (`SH2-81`).
 
 pub mod character_light;
+pub mod darkness;
 pub mod draw_env;
 pub mod draw_env_tables;
 pub mod fixes;
@@ -13,6 +14,13 @@ pub use character_light::{
     CharacterLightingResult, SelectedCharacterLight, CHAR_LIGHT_AMBIENT_WEIGHT,
     CHAR_LIGHT_DIRECT_WEIGHT, CHAR_LIGHT_FLASHLIGHT_AMBIENT_SCALE, CHAR_LIGHT_ROOM_AMBIENT_SCALE,
     MAX_CHARACTER_ACTIVE_LIGHTS,
+};
+pub use darkness::{
+    env_ee_room_level, env_flash_off_level_for_map, evaluate_room_darkness,
+    packed_map_id_from_draw_env, room_ids, RoomDarknessInput, RoomDarknessModulation,
+    AMBIENT_SCALE_BASE, AMBIENT_SCALE_FLASH_COEFF, CAMERA_FILL_BASE, CAMERA_FILL_NORM,
+    FLASH_LEVEL_OFF_POST_PICKUP, FLASH_LEVEL_OFF_PRE_PICKUP, FLASH_LEVEL_ON, FLASH_LEVEL_ROOM_MID,
+    ITEM_ID_FLASHLIGHT, PS2_FLASHLIGHT_COLOR_SCALE,
 };
 pub use draw_env::{
     env_flash_off_level, lookup_draw_env, DrawEnvData, DrawEnvDirectionalLight, DrawEnvPointLight,

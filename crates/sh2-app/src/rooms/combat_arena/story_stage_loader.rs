@@ -114,7 +114,7 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
         state.fog_uniforms = fog_for_checkpoint_room(cp.room_id);
         state.render_ctx.update_fog(&state.fog_uniforms);
         if is_indoor_story_checkpoint_room(cp.room_id) && cp.room_id != "er01" {
-            state.sim_core.scenario.flashlight_on = true;
+            state.sim_core.scenario.acquire_flashlight(true);
         }
     }
 

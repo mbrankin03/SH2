@@ -55,6 +55,7 @@ struct SpotlightUniforms {
     direction_inner: vec4<f32>,
     color_outer: vec4<f32>,
     ambient_tint: vec4<f32>,
+    fill_and_range: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
@@ -121,18 +122,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let outer_cos = spotlight.color_outer.w;
     let spot_intensity = clamp((cos_theta - outer_cos) / (inner_cos - outer_cos), 0.0, 1.0);
 
-    // Inverse square distance attenuation
-    let atten = 1.0 / max(1.0, 0.00001 * dist * dist);
+    // Distance attenuation (world units are PS2 mm: `1000.0 == 1.0 m`) with calibrated
+    // PS2 (6000 mm) / SH2:EE (8500 mm) flashlight reach windowing (`EnhancedFlashlight.cpp:162-164`).
+    let dist_m = dist * 0.001;
+    let reach = select(8500.0, spotlight.fill_and_range.y, spotlight.fill_and_range.y > 1.0);
+    let reach_ratio = clamp(dist / reach, 0.0, 1.0);
+    let reach_window = (1.0 - reach_ratio * reach_ratio);
+    let atten = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
     let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, has_normal);
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
     let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten * pcss_vis);
 
+    // Authentic camera view-space directional fill light (`sh2pc.exe` `0x50b036`, `k = 0.3 * s_flash_level * 0.25`)
+    let cam_vec = camera.cam_pos.xyz - in.world_pos;
+    let cam_len = length(cam_vec);
+    let view_dir = select(vec3<f32>(0.0, 0.0, 1.0), cam_vec / cam_len, cam_len > 1e-4);
+    let cam_fill_ndotl = select(1.0, max(dot(norm, view_dir), 0.0), has_normal);
+    let camera_fill = vec3<f32>(spotlight.fill_and_range.x * cam_fill_ndotl);
+
     let shade_mode = i32(round(camera.cam_pos.w));
     let studio_ambient = select(base_ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
     let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
-    let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient * env_tint_rgb * env_ambient_scale + diffuse * env_tint_rgb);
+    let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient * env_tint_rgb * env_ambient_scale + camera_fill * env_tint_rgb + diffuse * env_tint_rgb);
     return vec4<f32>(lit_color, out_alpha);
 }
 "#;

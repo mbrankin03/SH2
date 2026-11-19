@@ -215,7 +215,7 @@ pub(crate) fn update_spotlight_uniforms(
         let darkness =
             sh2_core::lighting::evaluate_room_darkness(&sh2_core::lighting::RoomDarknessInput {
                 packed_map_id,
-                room_id: None,
+                room_id: sh2_core::lighting::darkness_room_id_from_code(room_code),
                 chapter,
                 is_dark_room,
                 has_flashlight: state.sim_core.scenario.has_flashlight(),
@@ -237,8 +237,9 @@ pub(crate) fn update_spotlight_uniforms(
         };
 
         if flashlight_active {
-            // Flashlight ON: chest-pocket forward spotlight (`Calculate_Jms_Spot` @ 0x0028e940,
-            // PS2 brightness ratio `1.2 / 4.0` and reach `6000` / `8500` mm from `EnhancedFlashlight.cpp`).
+            // Flashlight ON: chest-pocket forward spotlight (`Calculate_Jms_Spot` @ 0x0028e940).
+            // `fl_mul = 1.2` (`EnhancedFlashlight.cpp:49`) is unit-normalized relative to the
+            // 4.0 PC wall scale (`PS2_FLASHLIGHT_COLOR_SCALE = 1.2 / 4.0`), with reach `6000` / `8500` mm.
             let fl_mul =
                 sh2_core::lighting::flashlight_wall_brightness_multiplier(video.lighting_profile);
             SpotlightUniforms {

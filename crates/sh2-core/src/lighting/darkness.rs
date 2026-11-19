@@ -214,6 +214,26 @@ pub const fn packed_map_id_from_draw_env(env: &DrawEnvData) -> Option<u32> {
     }
 }
 
+/// Resolves a runtime room code (e.g. `"tw01"`, `"ap07"`, `"ma01"`) into the corresponding
+/// SH2:EE `Patches.h` room ID (`room_ids::R_*`) for [`env_ee_room_level`], delegating first to
+/// [`crate::fog::room_id_from_stage_code`] and supplementing motorhome, lake, and Born From a Wish
+/// mansion entrance room codes.
+#[must_use]
+pub fn darkness_room_id_from_code(room_code: &str) -> Option<u32> {
+    let fog_id = crate::fog::room_id_from_stage_code(room_code);
+    if fog_id != 0 {
+        return Some(fog_id);
+    }
+    let lower = room_code.to_ascii_lowercase();
+    match lower.as_str() {
+        "mh01" | "saul_mh" => Some(room_ids::R_MOTORHOME),
+        "lk01" | "tl01" => Some(room_ids::R_TOWN_LAKE),
+        "ma01" => Some(room_ids::R_MAN_OUTSIDE_ENTRANCE),
+        "ma02" => Some(room_ids::R_MAN_BLUE_CREEK_ENTRANCE),
+        _ => None,
+    }
+}
+
 /// Evaluates authentic 1:1 room darkness modulation, ambient scaling (`c19`), camera fill
 /// intensity (`k`), and PS2/SH2:EE flashlight calibration (`SH2-33`).
 #[must_use]
@@ -370,5 +390,38 @@ mod tests {
         assert!((m.flashlight_reach_mm - 6000.0).abs() < 1e-3);
         // Without EE override, post-pickup dark room is 0.3f
         assert!((m.flash_level - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn darkness_room_id_from_code_maps_ee_override_rooms() {
+        assert_eq!(
+            darkness_room_id_from_code("tw01"),
+            Some(room_ids::R_TOWN_EAST)
+        );
+        assert_eq!(
+            darkness_room_id_from_code("tw11"),
+            Some(room_ids::R_TOWN_WEST)
+        );
+        assert_eq!(
+            darkness_room_id_from_code("ap07"),
+            Some(room_ids::R_APT_E_COURTYARD)
+        );
+        assert_eq!(
+            darkness_room_id_from_code("mh01"),
+            Some(room_ids::R_MOTORHOME)
+        );
+        assert_eq!(
+            darkness_room_id_from_code("lk01"),
+            Some(room_ids::R_TOWN_LAKE)
+        );
+        assert_eq!(
+            darkness_room_id_from_code("ma01"),
+            Some(room_ids::R_MAN_OUTSIDE_ENTRANCE)
+        );
+        assert_eq!(
+            darkness_room_id_from_code("ma02"),
+            Some(room_ids::R_MAN_BLUE_CREEK_ENTRANCE)
+        );
+        assert_eq!(darkness_room_id_from_code("ap34"), None);
     }
 }

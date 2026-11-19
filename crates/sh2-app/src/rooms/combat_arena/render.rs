@@ -457,7 +457,7 @@ fn build_cutscene_spotlight_uniforms(
         ),
         DemoLightKind::Directional => {
             let safe_d = (-l_pos).normalize_or(glam::Vec3::Y);
-            (player_pos - safe_d * 1800.0, safe_d, 0.25, -0.65)
+            (player_pos - safe_d * 50_000.0, safe_d, -1.0, -1.0)
         }
     };
     sh2_renderer::light::SpotlightUniforms {

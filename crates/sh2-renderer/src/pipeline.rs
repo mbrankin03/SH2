@@ -120,15 +120,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let inner_cos = spotlight.direction_inner.w;
     let outer_cos = spotlight.color_outer.w;
-    let spot_intensity = clamp((cos_theta - outer_cos) / (inner_cos - outer_cos), 0.0, 1.0);
+    let spot_intensity = select(
+        clamp((cos_theta - outer_cos) / max(inner_cos - outer_cos, 0.0001), 0.0, 1.0),
+        1.0,
+        inner_cos <= -0.99 && outer_cos <= -0.99,
+    );
 
     // Distance attenuation (world units are PS2 mm: `1000.0 == 1.0 m`) with calibrated
     // PS2 (6000 mm) / SH2:EE (8500 mm) flashlight reach windowing (`EnhancedFlashlight.cpp:162-164`).
+    // Parallel directional lights (`inner_cos <= -0.99 && outer_cos <= -0.99`, `sh2gfw_setparal3LGT_blk`
+    // at `SLUS_202.28` `0x0017d7f0`) have no distance falloff.
     let dist_m = dist * 0.001;
     let reach = select(8500.0, spotlight.fill_and_range.y, spotlight.fill_and_range.y > 1.0);
     let reach_ratio = clamp(dist / reach, 0.0, 1.0);
     let reach_window = (1.0 - reach_ratio * reach_ratio);
-    let atten = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
+    let local_atten = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
+    let atten = select(local_atten, 1.0, inner_cos <= -0.99 && outer_cos <= -0.99);
     let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, has_normal);
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);

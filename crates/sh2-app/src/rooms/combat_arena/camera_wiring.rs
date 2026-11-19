@@ -188,6 +188,28 @@ pub(crate) fn update_spotlight_uniforms(
         }
     } else if let Some(mut cs_spot) = cutscene_spotlight_override {
         cs_spot.ambient_tint[3] *= base_amb_scale;
+        // Exact PS2 `sh2gfw_LightSet_ForBG` (`SLUS_202.28` `0x0017db4c..0x0017db88`):
+        // When `sh2gfw_Get_NightOrDay() == 0` (lit daytime/indoor rooms like `er01`, `ob01`, `ca`),
+        // background geometry uses `sh2gfw_setparal3LGT_blk` (parallel directional lights, ZERO
+        // spotlight cone or local distance falloff).
+        if !is_dark_room {
+            let dir = glam::Vec3::new(
+                cs_spot.direction_inner[0],
+                cs_spot.direction_inner[1],
+                cs_spot.direction_inner[2],
+            )
+            .normalize_or(glam::Vec3::new(0.0, 1.0, 0.0));
+            let far_pos = spot_pos - dir * 50_000.0;
+            cs_spot.position = [far_pos.x, far_pos.y, far_pos.z, 1.0];
+            cs_spot.direction_inner = [dir.x, dir.y, dir.z, -1.0];
+            cs_spot.color_outer = [
+                cs_spot.color_outer[0] * 0.35,
+                cs_spot.color_outer[1] * 0.35,
+                cs_spot.color_outer[2] * 0.35,
+                -1.0,
+            ];
+            cs_spot.fill_and_range[1] = 1_000_000.0;
+        }
         cs_spot
     } else if let Some(session) = active_demo {
         let key_pos = session.player.camera.eye + glam::Vec3::new(0.0, -600.0, 0.0);

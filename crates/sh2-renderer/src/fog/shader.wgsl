@@ -234,10 +234,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let step_sigma = effective_density * curve_weight * plane_mod * height_atten * (step_len * inv_span);
 
             // Flashlight volumetric inscattering / shadow-tested god rays
+            // Scaled strictly by physical optical depth (`step_len * inv_span`) so close-range surfaces
+            // (e.g. inspecting James's car in First-Person) never blow out, and subtly attenuated in daylight fog.
             if (volumetric_light_enabled) {
                 let scatter = eval_spotlight_scatter(sample_world, ray_dir);
-                let scatter_weight = max(0.015, step_sigma) * (0.45 + 0.55 * local_n);
-                inscatter_rgb = inscatter_rgb + transmittance * scatter * scatter_weight * 0.85;
+                let optical_step = (step_len * inv_span) * effective_density * (0.45 + 0.55 * local_n);
+                let env_gain = select(0.32, 0.08, outdoor_enabled);
+                inscatter_rgb = inscatter_rgb + transmittance * scatter * optical_step * env_gain;
             }
 
             transmittance = transmittance * exp(-step_sigma * 1.45);

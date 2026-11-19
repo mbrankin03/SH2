@@ -310,6 +310,30 @@ fn fmv_overlay_gameover_and_ending_credits_lifecycle() {
 }
 
 #[test]
+fn delayed_fade_in_option_integrates_with_enhanced_presets() {
+    let mut cfg = sh2_core::config::AppConfig::default();
+    cfg.apply_enhanced_preset(sh2_core::config::EnhancedPreset::Ps2Authentic);
+    assert!(!cfg.game.enable_delayed_fade_in);
+    assert_eq!(
+        cfg.detect_enhanced_preset(),
+        sh2_core::config::EnhancedPreset::Ps2Authentic
+    );
+
+    cfg.game.enable_delayed_fade_in = true;
+    assert_eq!(
+        cfg.detect_enhanced_preset(),
+        sh2_core::config::EnhancedPreset::Custom
+    );
+
+    cfg.apply_enhanced_preset(sh2_core::config::EnhancedPreset::Sh2ee);
+    assert!(cfg.game.enable_delayed_fade_in);
+    assert_eq!(
+        cfg.detect_enhanced_preset(),
+        sh2_core::config::EnhancedPreset::Sh2ee
+    );
+}
+
+#[test]
 fn all_58_retail_stages_resolve_valid_manifests() {
     assert_eq!(room_area_dir("ma01"), "bg2/ma");
     assert_eq!(room_area_dir("er01"), "bg/er");

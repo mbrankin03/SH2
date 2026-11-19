@@ -10,6 +10,7 @@
 
 pub(crate) mod connect;
 pub mod cutscene_handoff;
+pub(crate) mod gameplay;
 pub mod io;
 pub mod orchestrator;
 pub mod stage_loader;

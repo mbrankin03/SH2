@@ -75,7 +75,9 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         state.map_vanilla_texture_bind_groups = bgs;
         state.fog_uniforms = fb_fog;
     } else {
-        state.fog_uniforms = fog_for_campaign_manifest(manifest);
+        let video = &state.menu_ctrl.options_menu.draft_config.video;
+        state.fog_uniforms =
+            fog_for_campaign_manifest(manifest, video.fog_quality, video.volumetric_light);
     }
 
     // Load retail `.cld` collision world, falling back gracefully if absent in headless/CI builds.
@@ -106,22 +108,15 @@ fn fallback_test_room_for_stage(stage_id: u16) -> TestRoomKind {
     }
 }
 
-fn fog_for_campaign_manifest(manifest: &RoomLoadManifest) -> FogUniforms {
-    if manifest.is_outdoor {
-        FogUniforms {
-            fog_color: [0.58, 0.62, 0.66, 1.0],
-            fog_near: 1_500.0,
-            fog_far: 18_000.0,
-            density: 0.00018,
-            ..FogUniforms::default()
-        }
-    } else {
-        FogUniforms {
-            fog_color: [0.06, 0.07, 0.08, 1.0],
-            fog_near: 800.0,
-            fog_far: 9_500.0,
-            density: 0.00032,
-            ..FogUniforms::default()
-        }
-    }
+fn fog_for_campaign_manifest(
+    manifest: &RoomLoadManifest,
+    fog_quality: sh2_core::config::FogQuality,
+    volumetric_light: bool,
+) -> FogUniforms {
+    let ps2_room_id = sh2_core::fog::room_id_from_stage_code(&manifest.room_id);
+    let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
+        room_id: ps2_room_id,
+        ..Default::default()
+    });
+    FogUniforms::from_room_evaluation(&eval, fog_quality, volumetric_light)
 }

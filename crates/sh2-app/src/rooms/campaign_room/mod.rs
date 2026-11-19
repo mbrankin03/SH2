@@ -122,6 +122,40 @@ impl CampaignRoomController {
             state.bgm_stage_override = Some(stage_id);
         }
 
+        // Dispatch 2D non-positional SFX (`shSdCall` / `SeCall`) and 3D positional SFX (`SeCallPos`).
+        if !effects.sound_effects.is_empty() {
+            if let (Some(eng), Some(bank)) =
+                (state.audio_engine.as_mut(), state.audio_bank.as_ref())
+            {
+                for se_id in &effects.sound_effects {
+                    let _ = bank.play_se_id(eng, *se_id, 1.0);
+                }
+            }
+        }
+        if !effects.positional_sounds.is_empty() {
+            let p_local = state.sim_core.scenario.player_position;
+            let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
+            if let (Some(eng), Some(bank)) =
+                (state.audio_engine.as_mut(), state.audio_bank.as_mut())
+            {
+                for ps in &effects.positional_sounds {
+                    if ps.se_id > 0 {
+                        let _ = bank.play_se_id_3d_tracked_with_occlusion(
+                            eng,
+                            ps.se_id as u32,
+                            p_local,
+                            listener_yaw,
+                            listener_pitch,
+                            state.active_maria,
+                            glam::Vec3::from_array(ps.pos),
+                            ps.volume,
+                            Some(&state.sim_core.collision),
+                        );
+                    }
+                }
+            }
+        }
+
         if let Some(demo) = effects.start_drama_demo {
             let catalog_idx = DRAMA_DEMO_CATALOG
                 .iter()
@@ -221,7 +255,13 @@ impl RoomController for CampaignRoomController {
             .enable_delayed_fade_in;
 
         let mut tick_input = std::mem::take(&mut state.campaign_pending_input);
-        tick_input.prefer_sh2ee = true;
+        tick_input.prefer_sh2ee = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .video
+            .texture_quality
+            != sh2_core::config::WorldTextureQuality::OriginalPs2;
         tick_input.drama_demo_finished = state
             .drama_demo_session
             .as_ref()
@@ -282,36 +322,47 @@ impl RoomController for CampaignRoomController {
         let Some(ref orch) = state.campaign_orchestrator else {
             return;
         };
-        let status_line = match &orch.phase {
+        let fade_alpha = orch.fade.black_alpha();
+        let status_line: Option<String> = match &orch.phase {
             CampaignPhase::OverlayMenu(kind) => {
-                format!("CAMPAIGN OVERLAY: {:?}  [M/I/ESC to Resume]", kind)
+                Some(format!("CAMPAIGN OVERLAY: {:?}  [M/I/ESC to Resume]", kind))
             }
             CampaignPhase::GameOver => {
-                "GAME OVER — Press [ENTER] / [E] to return to Title".to_string()
+                Some("GAME OVER — Press [ENTER] / [E] to return to Title".to_string())
             }
             CampaignPhase::EndingCredits {
                 ending_stage,
                 showing_results,
-            } => {
-                if *showing_results {
-                    format!(
-                        "RESULTS (Stage {}) — Press [ENTER] to return to Title",
-                        ending_stage
-                    )
-                } else {
-                    format!(
-                        "ENDING CREDITS (Stage {}) — Press [ENTER] for Results",
-                        ending_stage
-                    )
-                }
-            }
-            _ => return,
+            } => Some(if *showing_results {
+                format!(
+                    "RESULTS (Stage {}) — Press [ENTER] to return to Title",
+                    ending_stage
+                )
+            } else {
+                format!(
+                    "ENDING CREDITS (Stage {}) — Press [ENTER] for Results",
+                    ending_stage
+                )
+            }),
+            _ => None,
         };
 
+        if fade_alpha <= 0.005 && status_line.is_none() {
+            return;
+        }
+
         state.begin_hud_overlay();
-        state
-            .menu_rasterizer
-            .draw_text(&status_line, 40, 40, 2, [235, 225, 200, 255], true);
+        if fade_alpha > 0.005 {
+            let w = state.menu_rasterizer.width;
+            let h = state.menu_rasterizer.height;
+            let a = (fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+            state.menu_rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
+        }
+        if let Some(ref line) = status_line {
+            state
+                .menu_rasterizer
+                .draw_text(line, 40, 40, 2, [235, 225, 200, 255], true);
+        }
         state.finish_hud_overlay(encoder, surface_view);
     }
 }

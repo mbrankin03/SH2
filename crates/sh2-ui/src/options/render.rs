@@ -299,6 +299,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Game, "Save Anywhere") => {
             "Allow saving anytime via pause menu (PC) or restrict to Red Squares (PS2)"
         }
+        (OptionsTab::Game, "Delayed Fade-In (SH2:EE)") => {
+            "Hold black ~4 frames after room transitions (SH2:EE) or fade immediately (PS2 1:1)"
+        }
         (OptionsTab::Game, "Test Rooms") => {
             "Select debug sandbox stage, fog calibration, or model viewer"
         }

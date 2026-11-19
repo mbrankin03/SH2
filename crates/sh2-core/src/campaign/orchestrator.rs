@@ -10,24 +10,20 @@ use std::collections::HashSet;
 use crate::config::{ActionDifficulty, OutdoorStreamingMode, RiddleDifficulty};
 use crate::event_camera::{EventCameraSystem, PostSequenceRestorePolicy};
 use crate::events::engine::{EventEngine, StageTransitionCommand};
-use crate::events::stages_act1::act1_stage_descriptor;
-use crate::events::stages_act2::stage_table_act2;
-use crate::events::triggers::EventEvalInput;
-use crate::events::{is_connected_stage_pair, ClearData, Sh2Rng};
+use crate::events::is_connected_stage_pair;
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
-use crate::types::ItemListEntry;
 use crate::world::OutdoorTileStreamer;
 
 use super::connect::{step_connect_pipeline, ConnectRequest, ConnectStepOutcome};
 use super::cutscene_handoff::{
     apply_post_cutscene_handoff, DramaDemoTrigger, FmvTrigger, AUTO_STAGE_DEMO_RULES,
 };
+use super::gameplay::{run_active_gameplay, run_prologue, GameplayStepOutcome};
 use super::io::{CampaignEffects, CampaignTickInput};
 use super::stage_loader::{resolve_stage_manifest, RoomLoadManifest};
 use super::state::{
-    CampaignPhase, ConnectStep, RoomLoadTarget, ScreenFadeState, MAIN_SCENARIO_START_STAGE,
-    PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER, WISH_SCENARIO_START_STAGE,
+    CampaignPhase, ConnectStep, RoomLoadTarget, ScreenFadeState, PS2_DEFAULT_FADE_SPEED,
 };
 
 /// Unified start-to-credits Campaign Game Loop orchestrator (`gamemain.c` / `PlayableMain`
@@ -220,8 +216,11 @@ impl CampaignOrchestrator {
                 action_difficulty,
                 riddle_difficulty,
             } => {
-                self.step_prologue(
+                self.phase = run_prologue(
                     sim,
+                    &mut self.event_engine,
+                    &mut self.outdoor_streamer,
+                    &mut self.fade,
                     scenario,
                     action_difficulty,
                     riddle_difficulty,
@@ -265,7 +264,32 @@ impl CampaignOrchestrator {
                 });
             }
             CampaignPhase::ActiveGameplay => {
-                self.step_active_gameplay(sim, input, dt_sec, &mut effects);
+                let outcome = run_active_gameplay(
+                    sim,
+                    &mut self.event_engine,
+                    &mut self.outdoor_streamer,
+                    &mut self.fade,
+                    &mut self.play_time_secs,
+                    &mut self.player_locked,
+                    input,
+                    dt_sec,
+                    &mut effects,
+                );
+                match outcome {
+                    GameplayStepOutcome::Continue => {}
+                    GameplayStepOutcome::EnterGameOver => {
+                        self.phase = CampaignPhase::GameOver;
+                    }
+                    GameplayStepOutcome::OpenOverlay(kind) => {
+                        self.phase = CampaignPhase::OverlayMenu(kind);
+                    }
+                    GameplayStepOutcome::RequestTransition {
+                        current_stage,
+                        command,
+                    } => {
+                        self.request_transition(current_stage, command, None);
+                    }
+                }
             }
             CampaignPhase::DoorTransition {
                 command,
@@ -442,164 +466,5 @@ impl CampaignOrchestrator {
                 effects.allow_gameplay_sim = true;
             }
         }
-    }
-
-    fn step_prologue(
-        &mut self,
-        sim: &mut SimulationCore,
-        scenario: ScenarioKind,
-        action_difficulty: ActionDifficulty,
-        riddle_difficulty: RiddleDifficulty,
-        effects: &mut CampaignEffects,
-    ) {
-        sim.select_scenario(scenario);
-        sim.scenario.action_difficulty = action_difficulty;
-        sim.scenario.riddle_difficulty = riddle_difficulty;
-        if scenario == ScenarioKind::LetterFromSilentHeaven {
-            let mut rng = Sh2Rng::new(0x1999_0901);
-            let _ = crate::events::init_new_game(
-                &mut sim.scenario.flags,
-                &mut sim.scenario.puzzle_state,
-                &mut rng,
-                riddle_difficulty,
-                action_difficulty,
-                ClearData::default(),
-            );
-        }
-
-        let start_stage = match scenario {
-            ScenarioKind::LetterFromSilentHeaven => MAIN_SCENARIO_START_STAGE,
-            ScenarioKind::BornFromAWish => WISH_SCENARIO_START_STAGE,
-        };
-        let manifest = resolve_stage_manifest(start_stage, None, false, true);
-        self.event_engine.reset();
-        self.outdoor_streamer.reset();
-        self.fade.set_black_immediate();
-        effects.show_loading_screen = Some(manifest.stage_name.to_string());
-        self.phase = CampaignPhase::RoomLoading {
-            target: RoomLoadTarget {
-                stage_id: start_stage,
-                room_override: Some(manifest.room_id),
-                spawn_pos: sim.scenario.player_position.to_array(),
-                spawn_yaw: sim.scenario.player_yaw,
-                is_connected_stage: false,
-                show_loading_screen: true,
-            },
-            connect_step: ConnectStep::StageOverlay,
-            assets_ready: false,
-        };
-    }
-
-    fn step_active_gameplay(
-        &mut self,
-        sim: &mut SimulationCore,
-        input: &CampaignTickInput,
-        dt_sec: f32,
-        effects: &mut CampaignEffects,
-    ) {
-        if dt_sec > 0.0 {
-            self.play_time_secs += f64::from(dt_sec);
-        }
-
-        if sim.scenario.health <= 0.0 {
-            self.player_locked = true;
-            self.fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);
-            effects.sound_effects.push(SE_GAME_OVER);
-            effects.clear_message = true;
-            self.phase = CampaignPhase::GameOver;
-            return;
-        }
-
-        if let Some(menu_kind) = input.overlay_toggle {
-            self.phase = CampaignPhase::OverlayMenu(menu_kind);
-            return;
-        }
-
-        let stage_id = sim.scenario.current_stage;
-        let eval_input = EventEvalInput {
-            player_pos: sim.scenario.player_position.to_array(),
-            player_rot_y: sim.scenario.player_yaw,
-            action_pressed: input.action_pressed,
-            used_item_id: (input.item_use_id != 0).then_some(input.item_use_id),
-            action_difficulty: sim.scenario.action_difficulty,
-            ..EventEvalInput::default()
-        };
-
-        let ev_effects = self.tick_stage_events(sim, stage_id, &eval_input, input);
-        if let Some(lock) = ev_effects.player_lock_change {
-            self.player_locked = lock;
-        }
-        effects.common_message = ev_effects.common_message;
-        effects.stage_message = ev_effects.stage_message;
-        effects.clear_message = ev_effects.clear_message;
-        effects.sound_effects.extend(ev_effects.sound_effects);
-        effects
-            .positional_sounds
-            .extend(ev_effects.positional_sounds);
-
-        if let Some(cmd) = ev_effects.stage_transition {
-            self.request_transition(stage_id, cmd, None);
-            return;
-        }
-
-        let plan = self.outdoor_streamer.plan(
-            stage_id,
-            sim.scenario.player_position.x,
-            sim.scenario.player_position.z,
-        );
-        if plan.area.is_some() {
-            effects.outdoor_plan = Some(plan);
-        }
-
-        effects.allow_gameplay_sim = !self.player_locked;
-    }
-
-    fn tick_stage_events(
-        &mut self,
-        sim: &mut SimulationCore,
-        stage_id: u16,
-        eval_input: &EventEvalInput,
-        input: &CampaignTickInput,
-    ) -> crate::events::EventEngineEffects {
-        if stage_id <= 27 {
-            if let Some(act1) = act1_stage_descriptor(stage_id as u8) {
-                let items: Vec<ItemListEntry> = act1
-                    .item_list
-                    .iter()
-                    .map(|gi| gi.to_item_list_entry())
-                    .collect();
-                return self.event_engine.tick_standard(
-                    act1.event_list,
-                    &items,
-                    act1.ev_pos,
-                    stage_id as u8,
-                    eval_input,
-                    input.message_dismissed,
-                    false,
-                    false,
-                    true,
-                    &mut sim.scenario.flags,
-                    &mut sim.scenario.inventory_mgr,
-                );
-            }
-        }
-        if let Some(act2) = stage_table_act2(stage_id) {
-            let ev_list = act2.engine_event_list_for_input(eval_input, &sim.scenario.inventory_mgr);
-            let items = act2.ps2_item_list_with_sentinel();
-            return self.event_engine.tick_standard(
-                &ev_list,
-                &items,
-                act2.pos_list,
-                stage_id as u8,
-                eval_input,
-                input.message_dismissed,
-                false,
-                false,
-                true,
-                &mut sim.scenario.flags,
-                &mut sim.scenario.inventory_mgr,
-            );
-        }
-        crate::events::EventEngineEffects::default()
     }
 }

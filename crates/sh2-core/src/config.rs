@@ -573,6 +573,96 @@ impl WorldTextureQuality {
     }
 }
 
+/// Shadow rendering backend mode (`SH2-81`).
+///
+/// Allows purist players to select authentic 1:1 PS2 `.kg1`/`.kg2` stencil & drop shadows,
+/// SH2:EE soft-opacity stencil shadows, or Native Enhanced GPU PCSS contact-hardening soft
+/// self-shadows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ShadowQualityMode {
+    /// Authentic PS2 `.kg1`/`.kg2` two-pass stencil shadow volumes + lit-room drop shadows (`sh2shd_shadow_model.c`).
+    ClassicPs2Stencil,
+    /// SH2:EE per-room opacity (`170/255` default) + `~33`-frame fade-in soft stencil shadows (`EnableSoftShadows`).
+    EnhancedEditionSoft,
+    /// Native `wgpu` Percentage-Closer Soft Shadows (PCSS) with contact-hardening penumbras & true self-shadowing.
+    #[default]
+    NativePcss,
+}
+
+impl ShadowQualityMode {
+    /// User-facing label for the Video Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ClassicPs2Stencil => "Classic PS2 (.kg1/.kg2 Stencil)",
+            Self::EnhancedEditionSoft => "SH2:EE Soft Stencil",
+            Self::NativePcss => "Native PCSS (Soft Self-Shadow)",
+        }
+    }
+
+    /// Cycles to the next shadow mode.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::ClassicPs2Stencil => Self::EnhancedEditionSoft,
+            Self::EnhancedEditionSoft => Self::NativePcss,
+            Self::NativePcss => Self::ClassicPs2Stencil,
+        }
+    }
+
+    /// Cycles to the previous shadow mode.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::ClassicPs2Stencil => Self::NativePcss,
+            Self::EnhancedEditionSoft => Self::ClassicPs2Stencil,
+            Self::NativePcss => Self::EnhancedEditionSoft,
+        }
+    }
+}
+
+/// Room & character lighting parity profile (`SH2-81`).
+///
+/// Controls whether SH2:EE lighting patches (`PS2FlashlightBrightness`, `HalogenLightFix`,
+/// `CatacombsMeatRoomFix`, `EnemyRevealLighting`, `SpecularFix`) are applied over raw PS2
+/// `DrawEnvData` tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum LightingProfile {
+    /// Strict 1:1 original PS2 `DrawEnvData` lighting without SH2:EE overrides.
+    Ps2Authentic,
+    /// PS2 `DrawEnvData` plus SH2:EE lighting parity fixes (`EnhancedFlashlight`, `CatacombsMeatRoom`, `SpecularFix`).
+    EnhancedEdition,
+    /// SH2:EE lighting parity fixes combined with Native Enhanced PCSS self-shadowing.
+    #[default]
+    NativeEnhanced,
+}
+
+impl LightingProfile {
+    /// User-facing label for the Video Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ps2Authentic => "PS2 Authentic (1:1 Original)",
+            Self::EnhancedEdition => "SH2:EE (Lighting Fixes)",
+            Self::NativeEnhanced => "Native Enhanced (Fixes + PCSS)",
+        }
+    }
+
+    /// Cycles to the next lighting profile.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Ps2Authentic => Self::EnhancedEdition,
+            Self::EnhancedEdition => Self::NativeEnhanced,
+            Self::NativeEnhanced => Self::Ps2Authentic,
+        }
+    }
+
+    /// Cycles to the previous lighting profile.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Ps2Authentic => Self::NativeEnhanced,
+            Self::EnhancedEdition => Self::Ps2Authentic,
+            Self::NativeEnhanced => Self::EnhancedEdition,
+        }
+    }
+}
+
 /// Video and graphics options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoOptions {
@@ -589,6 +679,12 @@ pub struct VideoOptions {
     /// 3-tier World (`.map`) & Character (`.mdl`) texture quality (`SH2-92`).
     #[serde(default)]
     pub texture_quality: WorldTextureQuality,
+    /// Shadow rendering mode: Classic PS2 `.kg1`/`.kg2` stencil, SH2:EE soft stencil, or Native PCSS (`SH2-81`).
+    #[serde(default)]
+    pub shadow_quality: ShadowQualityMode,
+    /// Room & character lighting parity profile (`SH2-81`).
+    #[serde(default)]
+    pub lighting_profile: LightingProfile,
 }
 
 impl Default for VideoOptions {
@@ -604,6 +700,8 @@ impl Default for VideoOptions {
             lens_flare: true,
             depth_of_field: true,
             texture_quality: WorldTextureQuality::default(),
+            shadow_quality: ShadowQualityMode::default(),
+            lighting_profile: LightingProfile::default(),
         }
     }
 }
@@ -904,6 +1002,51 @@ impl Default for GameOptions {
     }
 }
 
+/// Master version preset collating all enhanced graphics, audio, and camera toggles so players
+/// can instantly swap between PS2 Authentic, SH2:EE, and Native Enhanced profiles to compare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum EnhancedPreset {
+    /// Strict 1:1 PlayStation 2 original visuals, audio, and camera behavior.
+    Ps2Authentic,
+    /// Silent Hill 2: Enhanced Edition (HD textures, soft stencil shadows, lighting fixes, lossless audio).
+    Sh2ee,
+    /// Full native Rust engine upgrades (4K AI textures, volumetric fog/lighting, PCSS self-shadows, HRTF, wall occlusion, OTS camera).
+    #[default]
+    NativeEnhanced,
+    /// Mixed user-customized combination of individual enhanced toggles.
+    Custom,
+}
+
+impl EnhancedPreset {
+    /// User-facing label for the Enhanced Mode options tab.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ps2Authentic => "PS2 Authentic (1:1 Original)",
+            Self::Sh2ee => "SH2:EE (Enhanced Edition)",
+            Self::NativeEnhanced => "Native Enhanced (All Upgrades)",
+            Self::Custom => "Custom (Mixed)",
+        }
+    }
+
+    /// Next selectable preset (skips `Custom`, snapping to the next full version profile).
+    pub const fn next_selectable(self) -> Self {
+        match self {
+            Self::Ps2Authentic => Self::Sh2ee,
+            Self::Sh2ee => Self::NativeEnhanced,
+            Self::NativeEnhanced | Self::Custom => Self::Ps2Authentic,
+        }
+    }
+
+    /// Previous selectable preset (skips `Custom`, snapping to the previous full version profile).
+    pub const fn prev_selectable(self) -> Self {
+        match self {
+            Self::Ps2Authentic | Self::Custom => Self::NativeEnhanced,
+            Self::Sh2ee => Self::Ps2Authentic,
+            Self::NativeEnhanced => Self::Sh2ee,
+        }
+    }
+}
+
 /// Complete game configuration structure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct AppConfig {
@@ -916,6 +1059,95 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    /// Applies one of the 3 full version presets (`Ps2Authentic`, `Sh2ee`, `NativeEnhanced`) across
+    /// all enhanced video, audio, and camera toggles in a single atomic operation.
+    pub fn apply_enhanced_preset(&mut self, preset: EnhancedPreset) {
+        match preset {
+            EnhancedPreset::Ps2Authentic => {
+                self.video.texture_quality = WorldTextureQuality::OriginalPs2;
+                self.video.fog_quality = FogQuality::ClassicPs2;
+                self.video.volumetric_light = false;
+                self.video.shadow_quality = ShadowQualityMode::ClassicPs2Stencil;
+                self.video.lighting_profile = LightingProfile::Ps2Authentic;
+                self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
+                self.audio.enable_acoustic_occlusion = false;
+                self.audio.enable_restored_cut_audio = false;
+                self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
+                self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+            }
+            EnhancedPreset::Sh2ee => {
+                self.video.texture_quality = WorldTextureQuality::Sh2eeHd;
+                self.video.fog_quality = FogQuality::ClassicPs2;
+                self.video.volumetric_light = false;
+                self.video.shadow_quality = ShadowQualityMode::EnhancedEditionSoft;
+                self.video.lighting_profile = LightingProfile::EnhancedEdition;
+                self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
+                self.audio.enable_acoustic_occlusion = false;
+                self.audio.enable_restored_cut_audio = true;
+                self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
+                self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+            }
+            EnhancedPreset::NativeEnhanced => {
+                self.video.texture_quality = WorldTextureQuality::Ai4kMaster;
+                self.video.fog_quality = FogQuality::ModernVolumetric;
+                self.video.volumetric_light = true;
+                self.video.shadow_quality = ShadowQualityMode::NativePcss;
+                self.video.lighting_profile = LightingProfile::NativeEnhanced;
+                self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
+                self.audio.enable_acoustic_occlusion = true;
+                self.audio.enable_restored_cut_audio = true;
+                self.audio.audio_pack_source = AudioPackPreference::Auto;
+                self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
+            }
+            EnhancedPreset::Custom => {}
+        }
+    }
+
+    /// Inspects all enhanced toggles and returns the matching [`EnhancedPreset`], or
+    /// [`EnhancedPreset::Custom`] if the user has mixed individual settings.
+    #[must_use]
+    pub fn detect_enhanced_preset(&self) -> EnhancedPreset {
+        let is_ps2 = self.video.texture_quality == WorldTextureQuality::OriginalPs2
+            && self.video.fog_quality == FogQuality::ClassicPs2
+            && !self.video.volumetric_light
+            && self.video.shadow_quality == ShadowQualityMode::ClassicPs2Stencil
+            && self.video.lighting_profile == LightingProfile::Ps2Authentic
+            && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
+            && !self.audio.enable_acoustic_occlusion
+            && !self.audio.enable_restored_cut_audio
+            && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail;
+        if is_ps2 {
+            return EnhancedPreset::Ps2Authentic;
+        }
+
+        let is_sh2ee = self.video.texture_quality == WorldTextureQuality::Sh2eeHd
+            && self.video.fog_quality == FogQuality::ClassicPs2
+            && !self.video.volumetric_light
+            && self.video.shadow_quality == ShadowQualityMode::EnhancedEditionSoft
+            && self.video.lighting_profile == LightingProfile::EnhancedEdition
+            && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
+            && !self.audio.enable_acoustic_occlusion
+            && self.audio.enable_restored_cut_audio
+            && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail;
+        if is_sh2ee {
+            return EnhancedPreset::Sh2ee;
+        }
+
+        let is_native = self.video.texture_quality == WorldTextureQuality::Ai4kMaster
+            && self.video.fog_quality == FogQuality::ModernVolumetric
+            && self.video.volumetric_light
+            && self.video.shadow_quality == ShadowQualityMode::NativePcss
+            && self.video.lighting_profile == LightingProfile::NativeEnhanced
+            && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
+            && self.audio.enable_acoustic_occlusion
+            && self.audio.enable_restored_cut_audio
+            && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder;
+        if is_native {
+            return EnhancedPreset::NativeEnhanced;
+        }
+
+        EnhancedPreset::Custom
+    }
     /// Serialize and write configuration to disk atomically.
     ///
     /// Writes to a temporary `.tmp` sibling file, flushes to disk, and renames over the target path.

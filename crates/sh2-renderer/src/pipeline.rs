@@ -59,6 +59,8 @@ struct SpotlightUniforms {
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
+@group(0) @binding(2) var<uniform> pcss_u: PcssShadowUniforms;
+@group(0) @binding(3) var pcss_shadow_map: texture_depth_2d;
 
 @group(1) @binding(0) var diffuse_texture: texture_2d<f32>;
 @group(1) @binding(1) var diffuse_sampler: sampler;
@@ -123,7 +125,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let atten = 1.0 / max(1.0, 0.00001 * dist * dist);
     let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, has_normal);
     let n_dot_l = max(0.0, dot(norm, -l_dir));
-    let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten);
+    let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
+    let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten * pcss_vis);
 
     let shade_mode = i32(round(camera.cam_pos.w));
     let studio_ambient = select(base_ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
@@ -139,9 +142,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) -> Self {
+        let shader_src = format!(
+            "{}\n{}",
+            crate::shadow::WGSL_PCSS_FUNCTIONS,
+            Self::WGSL_SHADER
+        );
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Geometry Shader Module"),
-            source: wgpu::ShaderSource::Wgsl(Self::WGSL_SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(shader_src.into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -164,6 +172,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },

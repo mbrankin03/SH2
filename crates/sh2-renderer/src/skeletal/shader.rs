@@ -31,6 +31,8 @@ struct SkeletalMaterialUniforms {
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
+@group(0) @binding(2) var<uniform> pcss_u: PcssShadowUniforms;
+@group(0) @binding(3) var pcss_shadow_map: texture_depth_2d;
 @group(1) @binding(0) var<uniform> skeleton: SkeletonBones;
 @group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
 @group(2) @binding(1) var diffuse_sampler: sampler;
@@ -155,9 +157,10 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let dist_m = dist * 0.001;
     let attenuation = 1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m);
     let n_dot_l = max(dot(norm, -l_dir), 0.0);
+    let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
 
     let base_ambient = vec3<f32>(0.06, 0.06, 0.068);
-    let spot_diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation);
+    let spot_diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation * pcss_vis);
 
     // 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used in Model Viewer modes (1 and 3)
     let key_dir = normalize(vec3<f32>(0.45, -0.65, 0.60));
@@ -209,6 +212,7 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         let spec_spot = pow(max(dot(norm, h_spot), 0.0), shininess)
             * spot_cone
             * attenuation
+            * pcss_vis
             * select(0.0, 1.0, n_dot_l > 0.0)
             * spotlight.color_outer.xyz;
 
@@ -220,7 +224,8 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
             + pow(max(dot(norm, h_rim), 0.0), max(shininess * 0.50, 12.0)) * vec3<f32>(0.48, 0.52, 0.60) * select(0.0, 1.0, r_ndotl > 0.0)
             + spec_spot * 0.65;
 
-        let active_spec = select(spec_spot, spec_studio, shade_mode == 3) * env_tint_rgb;
+        let spec_scale = select(1.0, pcss_u.params.w, pcss_u.params.w > 0.01);
+        let active_spec = select(spec_spot, spec_studio, shade_mode == 3) * env_tint_rgb * spec_scale;
         final_rgb = final_rgb + active_spec * spec_rgb * gloss_mask;
     }
 

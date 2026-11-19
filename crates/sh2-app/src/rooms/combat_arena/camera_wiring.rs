@@ -176,36 +176,94 @@ pub(crate) fn update_spotlight_uniforms(
             ambient_tint,
         }
     } else {
-        let is_indoor_cp = super::story_stage_loader::is_indoor_story_checkpoint_room(
-            &state.sim_core.scenario.current_room,
-        );
+        let video = &state.menu_ctrl.options_menu.draft_config.video;
+        let room_code = state.sim_core.scenario.current_room.as_str();
+        let (stage_code, room_num) = parse_ps2_stage_and_room(room_code);
+        let draw_env = sh2_core::lighting::lookup_draw_env(stage_code, room_num).map(|raw| {
+            sh2_core::lighting::apply_draw_env_fixes(raw, room_code, video.lighting_profile)
+        });
+
+        // 1:1 PS2 `DrawEnvData.ambient` (+0x1b0) & `sh2pc.exe` `0x50a010` (`env_flash_off_level`):
+        // - Naturally lit stages (OB 0.9, ER 0.65, daytime streets) stay visible when flashlight is off.
+        // - Dark interiors (AP/HP/PS/RR, ambient ~0.15) dim by `env_flash_off_level` (0.3) when off
+        //   and emit ZERO spotlight — never substituting a fake overhead room floodlight!
+        let (env_amb_rgb, outer_cos) = if let Some(env) = draw_env {
+            (
+                env.ambient,
+                env.flashlight_outer_rad.cos().clamp(0.45, 0.92),
+            )
+        } else {
+            ([0.15, 0.15, 0.15], std::f32::consts::FRAC_PI_4.cos())
+        };
+        let env_lum = env_amb_rgb[0].max(env_amb_rgb[1]).max(env_amb_rgb[2]);
+        // Scale PS2 DrawEnvData.ambient (0.15..0.90) into HDR shader ambient_tint multiplier
+        let base_amb_scale = (env_lum * 2.2).clamp(0.25, 2.2);
+
         if state.sim_core.scenario.flashlight_on {
-            let eff_ambient = if is_indoor_cp {
-                [1.22, 1.24, 1.28, 1.35]
+            // Flashlight ON: chest-pocket forward spotlight (`Calculate_Jms_Spot` @ 0x0028e940,
+            // `PS2FlashlightBrightness` = 1.2x from `EnhancedFlashlight.cpp:49`).
+            let fl_mul =
+                sh2_core::lighting::flashlight_wall_brightness_multiplier(video.lighting_profile);
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+                color_outer: [1.18 * fl_mul, 1.12 * fl_mul, 0.96 * fl_mul, outer_cos],
+                ambient_tint: [
+                    ambient_tint[0],
+                    ambient_tint[1],
+                    ambient_tint[2],
+                    base_amb_scale,
+                ],
+            }
+        } else {
+            // Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`).
+            // Dark rooms drop by `env_flash_off_level` (`0x50a010`: 0.3), while sunlit/lit rooms remain lit.
+            let off_scale = if env_lum < 0.45 {
+                sh2_core::lighting::env_flash_off_level(true, false)
             } else {
-                ambient_tint
+                1.0
             };
             SpotlightUniforms {
                 position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
                 direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-                color_outer: [2.5, 2.3, 1.8, 0.70],
-                ambient_tint: eff_ambient,
-            }
-        } else if is_indoor_cp {
-            SpotlightUniforms {
-                position: [spot_pos.x, spot_pos.y - 750.0, spot_pos.z, 1.0],
-                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.35],
-                color_outer: [1.65, 1.62, 1.55, -0.55],
-                ambient_tint: [1.45, 1.48, 1.52, 1.55],
-            }
-        } else {
-            SpotlightUniforms {
-                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
-                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-                color_outer: [0.0, 0.0, 0.0, 0.70],
-                ambient_tint,
+                color_outer: [0.0, 0.0, 0.0, outer_cos],
+                ambient_tint: [
+                    ambient_tint[0],
+                    ambient_tint[1],
+                    ambient_tint[2],
+                    (base_amb_scale * off_scale).max(0.12),
+                ],
             }
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
+    let specular_scale =
+        sh2_core::lighting::specular_intensity_scale("", 0, video.lighting_profile);
+    let opacity = f32::from(sh2_core::lighting::SH2EE_DEFAULT_SHADOW_OPACITY_U8) / 255.0;
+    // Only cast directional PCSS spotlight shadows when an actual forward spotlight cone is active
+    // (`outer_cos > 0` and non-zero intensity), not on wide omnidirectional indoor ambient fill lights.
+    let has_active_spotlight_cone = spot_uniforms.color_outer[3] > 0.0
+        && (spot_uniforms.color_outer[0]
+            + spot_uniforms.color_outer[1]
+            + spot_uniforms.color_outer[2])
+            > 0.01;
+    let effective_shadow_mode = if has_active_spotlight_cone {
+        video.shadow_quality
+    } else {
+        sh2_core::config::ShadowQualityMode::ClassicPs2Stencil
+    };
+    state
+        .render_ctx
+        .update_shadow_config(effective_shadow_mode, opacity, specular_scale);
+}
+
+/// Splits a PS2 room code like `"rr21"` or `"ap108"` into `("rr", 21)` for `DrawEnvData` lookup.
+fn parse_ps2_stage_and_room(room_code: &str) -> (&str, u16) {
+    let split_idx = room_code
+        .find(|c: char| c.is_ascii_digit())
+        .unwrap_or(room_code.len());
+    let stage = &room_code[..split_idx];
+    let num = room_code[split_idx..].parse::<u16>().unwrap_or(0);
+    (stage, num)
 }

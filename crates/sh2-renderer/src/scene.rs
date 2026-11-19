@@ -66,13 +66,37 @@ impl RenderContext {
             None
         };
 
-        // 0. Spotlight Shadow Depth Pass for volumetric flashlight god-ray occlusion (`SH2-32`)
+        // Upload skeletal bone matrices up-front so BOTH the PCSS spotlight shadow pass and main scene pass
+        // observe the exact posed character skeletons for self-shadowing (`SH2-81`).
+        for (i, (mesh, matrices, _)) in skeletal_meshes.iter().enumerate() {
+            let is_mirror_duplicate = skeletal_meshes[..i]
+                .iter()
+                .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
+            if is_mirror_duplicate {
+                mesh.update_mirror_bone_matrices(&self.queue, matrices);
+            } else {
+                mesh.update_bone_matrices(&self.queue, matrices);
+            }
+        }
+
+        // 0. Spotlight Shadow Depth Passes:
+        //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`)
         if self.config.enable_fog {
             self.spotlight_shadow_pipeline.encode_pass(
                 &mut encoder,
                 &self.shadow_depth_view,
                 &self.spotlight_shadow_bind_group,
                 gpu_map,
+            );
+        }
+        //    0b. 2048x2048 Native PCSS spotlight shadow map (static map + animated skeletal self-shadowing, `SH2-81`)
+        if self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            self.pcss_shadow_pipeline.encode_pass(
+                &mut encoder,
+                &self.pcss_shadow_depth_view,
+                &self.pcss_shadow_bind_group,
+                gpu_map,
+                skeletal_meshes,
             );
         }
 
@@ -146,7 +170,22 @@ impl RenderContext {
                 );
             }
 
-            // 1d-2. Render localized 3D proximity fog particle billboards (`fogMakePacket` @ 0x0016bb70)
+            // 1d-2. Render flattened PS2 `.kg1` floor drop shadows (`0x5a7c90`) when active (`SH2-81`)
+            let drop_verts = self
+                .drop_shadow_vertex_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if drop_verts > 0 {
+                let byte_len = (drop_verts as usize
+                    * std::mem::size_of::<crate::shadow::ShadowVolumeVertex>())
+                    as wgpu::BufferAddress;
+                rpass.set_pipeline(&self.stencil_shadow_pipeline.drop_shadow_pipeline);
+                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                rpass.set_bind_group(1, &self.shadow_darken_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.drop_shadow_buffer.slice(0..byte_len));
+                rpass.draw(0..drop_verts, 0..1);
+            }
+
+            // 1d-3. Render localized 3D proximity fog particle billboards (`fogMakePacket` @ 0x0016bb70)
             if self.config.enable_fog {
                 let particle_count = self
                     .fog_particle_count
@@ -162,6 +201,20 @@ impl RenderContext {
                 }
             }
 
+            // 1d-4. Render Hyper Spray / Lying Figure 3D mist billboards (`enEfctDrawSpray`, `SH2-81`)
+            let spray_count = self
+                .spray_mist_particle_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if spray_count > 0 {
+                let byte_len = (spray_count as usize
+                    * std::mem::size_of::<crate::effects::GpuSprayParticle>())
+                    as wgpu::BufferAddress;
+                rpass.set_pipeline(&self.spray_mist_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.spray_mist_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.spray_mist_buffer.slice(0..byte_len));
+                rpass.draw(0..6, 0..spray_count);
+            }
+
             // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
             if !debug_lines.is_empty() {
                 let line_buf = overflow_debug_line_buffer
@@ -175,6 +228,51 @@ impl RenderContext {
             }
         }
 
+        // 1.5. PS2 / SH2:EE Two-Pass Stencil Shadow Volume + Darkening Quad (`0x445540`, `SH2-81`)
+        let stencil_verts = self
+            .shadow_volume_vertex_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if stencil_verts > 0 && !self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            self.stencil_shadow_pipeline.encode_stencil_volume_pass(
+                &mut encoder,
+                &self.hdr_color_view,
+                &self.stencil_depth_view,
+                &self.geometry_bind_group,
+                &self.shadow_darken_bind_group,
+                gpu_map,
+                &self.shadow_volume_buffer,
+                stencil_verts,
+            );
+        }
+
+        // 1.75. Additive 7-Sprite Screen-Space Lens Flares (`Lens/lens_flare.c`, `SH2-81`)
+        let flare_count = self
+            .lens_flare_quad_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if flare_count > 0 {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Lens Flare Additive Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.hdr_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            let byte_len = (flare_count as usize
+                * std::mem::size_of::<crate::effects::GpuLensFlareQuad>())
+                as wgpu::BufferAddress;
+            rpass.set_pipeline(&self.lens_flare_pipeline.pipeline);
+            rpass.set_bind_group(0, &self.lens_flare_bind_group, &[]);
+            rpass.set_vertex_buffer(0, self.lens_flare_buffer.slice(0..byte_len));
+            rpass.draw(0..6, 0..flare_count);
+        }
+
         // 2. Volumetric Fog & Post-Processing Compute Passes
         self.dispatch_compute_passes(&mut encoder);
 
@@ -186,17 +284,6 @@ impl RenderContext {
         rpass: &mut wgpu::RenderPass<'a>,
         skeletal_meshes: &'a [SkeletalDrawItem<'a>],
     ) {
-        for (i, (mesh, matrices, _)) in skeletal_meshes.iter().enumerate() {
-            let is_mirror_duplicate = skeletal_meshes[..i]
-                .iter()
-                .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
-            if is_mirror_duplicate {
-                mesh.update_mirror_bone_matrices(&self.queue, matrices);
-            } else {
-                mesh.update_bone_matrices(&self.queue, matrices);
-            }
-        }
-
         let stages = [
             SkeletalPassStage::Opaque,
             SkeletalPassStage::TransparentCore,

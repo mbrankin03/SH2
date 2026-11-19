@@ -16,6 +16,13 @@ impl OptionsMenu {
             }
             OptionsTab::Controls => 11,
             OptionsTab::Game => 7,
+            OptionsTab::Enhanced => {
+                if self.audio_pack_status.both_detected() {
+                    11
+                } else {
+                    10
+                }
+            }
             OptionsTab::Debug => 6,
         }
     }
@@ -43,6 +50,7 @@ impl OptionsMenu {
             OptionsTab::Audio => self.audio_item_display(index),
             OptionsTab::Controls => self.controls_item_display(index),
             OptionsTab::Game => self.game_item_display(index),
+            OptionsTab::Enhanced => self.enhanced_item_display(index),
             OptionsTab::Debug => self.debug_item_display(index),
         }
     }
@@ -217,6 +225,55 @@ impl OptionsMenu {
         }
     }
 
+    fn enhanced_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+        let v = &self.draft_config.video;
+        let a = &self.draft_config.audio;
+        let c = &self.draft_config.controls;
+        match index {
+            0 => Some((
+                "Version Preset",
+                self.draft_config
+                    .detect_enhanced_preset()
+                    .label()
+                    .to_string(),
+            )),
+            1 => Some(("Textures", v.texture_quality.label().to_string())),
+            2 => Some(("Fog Engine", v.fog_quality.label().to_string())),
+            3 => Some((
+                "Volumetric Lighting",
+                if v.volumetric_light {
+                    "ON".into()
+                } else {
+                    "OFF".into()
+                },
+            )),
+            4 => Some(("Shadow Mode", v.shadow_quality.label().to_string())),
+            5 => Some(("Lighting Profile", v.lighting_profile.label().to_string())),
+            6 => Some(("3D Spatial Audio", a.spatial_audio_mode.label().to_string())),
+            7 => Some((
+                "Wall Occlusion",
+                if a.enable_acoustic_occlusion {
+                    "ON (.cld Raycast)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            8 => Some((
+                "Restored Cut Audio",
+                if a.enable_restored_cut_audio {
+                    "ON (Restored)".into()
+                } else {
+                    "OFF (Vanilla)".into()
+                },
+            )),
+            9 => Some(("Camera Mode", c.default_camera_mode.label().to_string())),
+            10 if self.audio_pack_status.both_detected() => {
+                Some(("Audio Pack", a.audio_pack_source.label().to_string()))
+            }
+            _ => None,
+        }
+    }
+
     fn debug_item_display(&self, index: usize) -> Option<(&'static str, String)> {
         let d = &self.draft_config.debug;
         match index {
@@ -263,6 +320,7 @@ impl OptionsMenu {
             OptionsTab::Audio => self.adjust_audio_value(forward),
             OptionsTab::Controls => self.adjust_controls_value(forward),
             OptionsTab::Game => self.adjust_game_value(forward),
+            OptionsTab::Enhanced => self.adjust_enhanced_value(forward),
             OptionsTab::Debug => self.adjust_debug_value(forward),
         };
 
@@ -315,6 +373,81 @@ impl OptionsMenu {
                 };
             }
             10 => return Some(OptionsSoundCue::LaunchFmvViewer),
+            _ => return Some(OptionsSoundCue::None),
+        }
+        None
+    }
+
+    fn adjust_enhanced_value(&mut self, forward: bool) -> Option<OptionsSoundCue> {
+        match self.selected_index {
+            0 => {
+                let current = self.draft_config.detect_enhanced_preset();
+                let next = if forward {
+                    current.next_selectable()
+                } else {
+                    current.prev_selectable()
+                };
+                self.draft_config.apply_enhanced_preset(next);
+            }
+            1 => {
+                let v = &mut self.draft_config.video;
+                v.texture_quality = if forward {
+                    v.texture_quality.next()
+                } else {
+                    v.texture_quality.prev()
+                };
+            }
+            2 => {
+                self.draft_config.video.fog_quality = self.draft_config.video.fog_quality.toggle();
+            }
+            3 => {
+                self.draft_config.video.volumetric_light =
+                    !self.draft_config.video.volumetric_light;
+            }
+            4 => {
+                let v = &mut self.draft_config.video;
+                v.shadow_quality = if forward {
+                    v.shadow_quality.next()
+                } else {
+                    v.shadow_quality.prev()
+                };
+            }
+            5 => {
+                let v = &mut self.draft_config.video;
+                v.lighting_profile = if forward {
+                    v.lighting_profile.next()
+                } else {
+                    v.lighting_profile.prev()
+                };
+            }
+            6 => {
+                self.draft_config.audio.spatial_audio_mode =
+                    self.draft_config.audio.spatial_audio_mode.toggle();
+            }
+            7 => {
+                self.draft_config.audio.enable_acoustic_occlusion =
+                    !self.draft_config.audio.enable_acoustic_occlusion;
+            }
+            8 => {
+                self.draft_config.audio.enable_restored_cut_audio =
+                    !self.draft_config.audio.enable_restored_cut_audio;
+            }
+            9 => {
+                let c = &mut self.draft_config.controls;
+                c.default_camera_mode = if forward {
+                    c.default_camera_mode.next()
+                } else {
+                    c.default_camera_mode.prev()
+                };
+            }
+            10 if self.audio_pack_status.both_detected() => {
+                let a = &mut self.draft_config.audio;
+                a.audio_pack_source = if forward {
+                    a.audio_pack_source.next()
+                } else {
+                    a.audio_pack_source.prev()
+                };
+            }
             _ => return Some(OptionsSoundCue::None),
         }
         None

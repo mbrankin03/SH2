@@ -303,6 +303,40 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
             "Select debug sandbox stage, fog calibration, or model viewer"
         }
 
+        (OptionsTab::Enhanced, "Version Preset") => {
+            "Instantly swap ALL enhanced toggles between PS2 Authentic, SH2:EE, and Native Enhanced"
+        }
+        (OptionsTab::Enhanced, "Textures") => {
+            "3-tier world (.map) & character (.mdl) textures (4K AI Master / SH2:EE HD / PS2)"
+        }
+        (OptionsTab::Enhanced, "Fog Engine") => {
+            "Modern 3D volumetric compute raymarched fog vs Classic PS2 atmospheric fog"
+        }
+        (OptionsTab::Enhanced, "Volumetric Lighting") => {
+            "Dynamic volumetric flashlight god-rays & streetlamp scattering"
+        }
+        (OptionsTab::Enhanced, "Shadow Mode") => {
+            "Native PCSS soft self-shadows vs SH2:EE soft stencil vs Classic PS2 .kg1/.kg2 stencil"
+        }
+        (OptionsTab::Enhanced, "Lighting Profile") => {
+            "PS2 Authentic DrawEnvData vs SH2:EE lighting fixes vs Native Enhanced"
+        }
+        (OptionsTab::Enhanced, "3D Spatial Audio") => {
+            "Binaural HRTF 3D headphone spatialization vs Classic PS2 Stereo panning"
+        }
+        (OptionsTab::Enhanced, "Wall Occlusion") => {
+            "Real-time .cld wall/door/slab LPF muffling + corridor reverb vs Original PS2"
+        }
+        (OptionsTab::Enhanced, "Restored Cut Audio") => {
+            "Restore cut audio cues (Mary's Laura letter voiceover, closet & street bonus SFX)"
+        }
+        (OptionsTab::Enhanced, "Camera Mode") => {
+            "Classic PS2 Rail camera vs Over-the-Shoulder 3D vs First-Person immersion"
+        }
+        (OptionsTab::Enhanced, "Audio Pack") => {
+            "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"
+        }
+
         (OptionsTab::Debug, "Instant Room Cuts") => {
             "Speedrunner mode: cut instantly between rooms without loading screen"
         }
@@ -410,6 +444,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         OptionsTab::Audio => "<   A U D I O   O P T I O N S   >",
         OptionsTab::Controls => "<   C O N T R O L   O P T I O N S   >",
         OptionsTab::Game => "<   G A M E   O P T I O N S   >",
+        OptionsTab::Enhanced => "<   E N H A N C E D   M O D E   >",
         OptionsTab::Debug => "<   D E B U G   T O O L S   >",
     };
 

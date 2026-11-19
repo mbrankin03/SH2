@@ -91,7 +91,7 @@ pub(super) fn handle_combat_arena_key_input(
             state.sim_core.input.press_quick_turn();
             tracing::info!("[Camera] Triggered 180° Quick Turn");
         }
-        KeyCode::KeyF if pressed => {
+        KeyCode::KeyF if pressed && !repeat => {
             state.sim_core.scenario.flashlight_on = !state.sim_core.scenario.flashlight_on;
             if let (Some(eng), Some(bank)) =
                 (state.audio_engine.as_mut(), state.audio_bank.as_ref())

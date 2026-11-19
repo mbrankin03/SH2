@@ -15,6 +15,7 @@ pub mod events;
 pub mod fog;
 pub mod input;
 pub mod inventory;
+pub mod lighting;
 pub mod locomotion;
 pub mod math;
 pub mod modern_camera;
@@ -47,9 +48,10 @@ pub use combat::{
 };
 pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
-    AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, FogQuality, FrameRateCap,
-    GameLanguage, GameOptions, InternalResolution, RiddleDifficulty, SpatialAudioMode,
-    SpeakerConfiguration, VideoOptions, WindowDisplayMode, WorldTextureQuality,
+    AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, EnhancedPreset,
+    FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution, LightingProfile,
+    RiddleDifficulty, ShadowQualityMode, SpatialAudioMode, SpeakerConfiguration, VideoOptions,
+    WindowDisplayMode, WorldTextureQuality,
 };
 pub use cutaway::{
     original_sheet_dimensions, ClippedQuadUv, CutawayOverlayEngine, CutsceneBorderBars,

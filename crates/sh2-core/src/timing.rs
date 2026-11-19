@@ -112,12 +112,13 @@ impl Default for FlashlightSweepState {
 }
 
 impl FlashlightSweepState {
-    /// Chest pocket vertical offset in SH2 world units (`-Y` is up; `-1250.0` is upper chest).
-    pub const CHEST_HEIGHT_OFFSET: f32 = -1250.0;
+    /// Chest pocket vertical offset in SH2 world units (`-Y` is up; `-700.0` aligns with James's
+    /// jacket pocket below `JAMES_HEAD_OFFSET_Y = -844.6`, matching `ModernCameraRig::chest_pocket`).
+    pub const CHEST_HEIGHT_OFFSET: f32 = -700.0;
     /// Forward offset from torso centerline in SH2 world units.
     pub const CHEST_FORWARD_OFFSET: f32 = 45.0;
-    /// Default downward beam pitch (`+0.05` radians along `+Y` down).
-    pub const BASE_BEAM_PITCH: f32 = 0.05;
+    /// Default downward beam pitch (`-0.05` rad around `+X`, so `rot * Vec3::Z` yields `+Y` downward in PS2 Y-down space).
+    pub const BASE_BEAM_PITCH: f32 = -0.05;
 
     /// Creates a new flashlight sweep state aligned to the character's initial pose.
     pub fn new(player_position: Vec3, player_yaw: f32) -> Self {

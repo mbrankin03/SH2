@@ -212,20 +212,29 @@ pub(crate) fn update_spotlight_uniforms(
         }
         cs_spot
     } else if let Some(session) = active_demo {
-        let key_pos = session.player.camera.eye + glam::Vec3::new(0.0, -600.0, 0.0);
-        let safe_dir = (session.player.camera.interest - key_pos)
+        // Fallback when a `.dds` cutscene has no active light track at the current frame:
+        // In lit rooms (`!is_dark_room`, `sh2gfw_Get_NightOrDay() == 0`), use room `DrawEnvData`
+        // ambient with ZERO fake camera-mounted spotlight (`color_outer = 0`).
+        // In dark rooms, use a subtle parallel directional fill (never a camera spotlight cone).
+        let dir = (session.player.camera.interest - session.player.camera.eye)
             .normalize_or(glam::Vec3::new(0.0, 0.5, 0.86));
+        let far_pos = session.player.camera.interest - dir * 50_000.0;
+        let color = if is_dark_room {
+            [0.30, 0.29, 0.28, -1.0]
+        } else {
+            [0.0, 0.0, 0.0, -1.0]
+        };
         SpotlightUniforms {
-            position: [key_pos.x, key_pos.y, key_pos.z, 1.0],
-            direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
-            color_outer: [0.45, 0.44, 0.42, -0.50],
+            position: [far_pos.x, far_pos.y, far_pos.z, 1.0],
+            direction_inner: [dir.x, dir.y, dir.z, -1.0],
+            color_outer: color,
             ambient_tint: [
                 ambient_tint[0],
                 ambient_tint[1],
                 ambient_tint[2],
                 ambient_tint[3] * base_amb_scale,
             ],
-            ..Default::default()
+            fill_and_range: [0.0, 1_000_000.0, 0.0, 0.0],
         }
     } else {
         let room_code = state.sim_core.scenario.current_room.as_str();

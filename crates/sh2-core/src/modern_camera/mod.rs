@@ -359,8 +359,13 @@ impl ModernCameraRig {
         }
         let (sy, cy) = input.player_yaw.sin_cos();
         let chest_pocket = input.player_pos + Vec3::new(sy * 45.0, -700.0, cy * 45.0);
-        let flashlight_origin = match self.active_mode {
-            GameplayCameraMode::FirstPerson => final_snap.eye.lerp(chest_pocket, 0.35),
+        // Only blend the flashlight emitter toward the FPS eye once the camera has arrived inside
+        // James's head (`HideHeadOnly`); while transitioning from behind (`FullBody`), keep it at
+        // the front chest pocket so the beam never shines onto James's back.
+        let flashlight_origin = match (self.active_mode, player_visibility) {
+            (GameplayCameraMode::FirstPerson, PlayerMeshVisibility::HideHeadOnly) => {
+                final_snap.eye.lerp(chest_pocket, 0.35)
+            }
             _ => chest_pocket,
         };
 

@@ -285,6 +285,17 @@ impl ScenarioState {
         self.flashlight_on = turn_on && !self.flags.get(272);
     }
 
+    /// Removes the Flashlight (`item 0x12`), clears Event Flag `625`, and switches the beam off,
+    /// restoring the authentic pre-Room-205 pickup state (`s_flash_level = 1.0`, `SH2-33`).
+    pub fn revoke_flashlight(&mut self) {
+        if self.has_flashlight() {
+            self.inventory_mgr.item_lose(ITEM_ID_FLASHLIGHT);
+            self.sync_legacy_views();
+        }
+        self.clear_flag(u32::from(FLAG_WOODSIDE_FLASHLIGHT_PICKUP));
+        self.flashlight_on = false;
+    }
+
     /// Toggles the flashlight power switch if the player owns the Flashlight (`item 0x12`) and
     /// its battery is not depleted (`!flags.get(272)`). Returns the resulting active beam state.
     pub fn toggle_flashlight(&mut self) -> bool {
@@ -422,5 +433,12 @@ mod tests {
         state.set_flag(272);
         assert!(!state.is_flashlight_active());
         assert!(!state.toggle_flashlight());
+
+        // Revoking flashlight restores authentic pre-pickup state
+        state.clear_flag(272);
+        state.revoke_flashlight();
+        assert!(!state.has_flashlight());
+        assert!(!state.has_flag(u32::from(FLAG_WOODSIDE_FLASHLIGHT_PICKUP)));
+        assert!(!state.is_flashlight_active());
     }
 }

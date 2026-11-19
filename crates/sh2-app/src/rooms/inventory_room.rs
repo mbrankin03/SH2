@@ -404,6 +404,7 @@ impl RoomController for InventoryRoomController {
                 direction_inner: [to_target.x, to_target.y, to_target.z, 0.75],
                 color_outer: [2.2, 2.15, 2.0, 0.45],
                 ambient_tint: [1.0, 1.0, 1.0, 1.0],
+                ..Default::default()
             });
 
         state.skin_matrices_scratch.clear();

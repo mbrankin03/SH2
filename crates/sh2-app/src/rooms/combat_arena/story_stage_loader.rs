@@ -110,11 +110,15 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
             .sim_core
             .transition_to_room(cp.room_id, spawn_pos, spawn_yaw, true);
 
-        // 4. Configure atmospheric fog and turn on pocket flashlight for indoor stages
+        // 4. Configure atmospheric fog and authentic pre-/post-Room-205 flashlight possession (`SH2-33`)
         state.fog_uniforms = fog_for_checkpoint_room(cp.room_id);
         state.render_ctx.update_fog(&state.fog_uniforms);
-        if is_indoor_story_checkpoint_room(cp.room_id) && cp.room_id != "er01" {
-            state.sim_core.scenario.flashlight_on = true;
+        if is_pre_flashlight_checkpoint_room(cp.room_id) {
+            state.sim_core.scenario.revoke_flashlight();
+        } else if is_indoor_story_checkpoint_room(cp.room_id) {
+            state.sim_core.scenario.acquire_flashlight(true);
+        } else {
+            state.sim_core.scenario.acquire_flashlight(false);
         }
     }
 
@@ -125,6 +129,13 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
         .video
         .texture_quality;
     state.apply_texture_quality(active_tex_quality);
+}
+
+/// Returns `true` for Story Checkpoints that occur before James picks up the flashlight
+/// (`item 0x12`) in Wood Side Apartments Room 205 (`er01`, `ob01`, `ca11`, `ap34`).
+#[must_use]
+pub(crate) fn is_pre_flashlight_checkpoint_room(room_id: &str) -> bool {
+    matches!(room_id, "er01" | "ob01" | "ca11" | "ap34")
 }
 
 /// Returns `true` when `room_id` is an indoor Story Checkpoint stage (`ap34`, `ap84`, `hp25`,

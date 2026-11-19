@@ -470,6 +470,7 @@ fn build_cutscene_spotlight_uniforms(
             outer_cos,
         ],
         ambient_tint,
+        ..Default::default()
     }
 }
 
@@ -507,7 +508,7 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             room_id: ps2_room_id,
             james_pos_y_mm: player_pos.y,
             camera_pos_y_mm: state.sim_core.active_camera_eye(alpha).y,
-            flashlight_on: state.sim_core.scenario.flashlight_on,
+            flashlight_on: state.sim_core.scenario.is_flashlight_active(),
             extended_observation_deck_range: true,
         });
         let target_count = if room_eval.particle_count > 0 {

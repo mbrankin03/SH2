@@ -12,6 +12,7 @@ mod render;
 pub(crate) mod story_input;
 pub(crate) mod story_overlay;
 pub(crate) mod story_progression_3d;
+pub(crate) mod story_stage_loader;
 
 use std::time::Duration;
 use winit::keyboard::KeyCode;

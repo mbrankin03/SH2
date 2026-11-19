@@ -176,16 +176,35 @@ pub(crate) fn update_spotlight_uniforms(
             ambient_tint,
         }
     } else {
-        let rgb = if state.sim_core.scenario.flashlight_on {
-            [2.5, 2.3, 1.8]
+        let is_indoor_cp = super::story_stage_loader::is_indoor_story_checkpoint_room(
+            &state.sim_core.scenario.current_room,
+        );
+        if state.sim_core.scenario.flashlight_on {
+            let eff_ambient = if is_indoor_cp {
+                [1.22, 1.24, 1.28, 1.35]
+            } else {
+                ambient_tint
+            };
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+                color_outer: [2.5, 2.3, 1.8, 0.70],
+                ambient_tint: eff_ambient,
+            }
+        } else if is_indoor_cp {
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y - 750.0, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.35],
+                color_outer: [1.65, 1.62, 1.55, -0.55],
+                ambient_tint: [1.45, 1.48, 1.52, 1.55],
+            }
         } else {
-            [0.0, 0.0, 0.0]
-        };
-        SpotlightUniforms {
-            position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
-            direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-            color_outer: [rgb[0], rgb[1], rgb[2], 0.70],
-            ambient_tint,
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+                color_outer: [0.0, 0.0, 0.0, 0.70],
+                ambient_tint,
+            }
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);

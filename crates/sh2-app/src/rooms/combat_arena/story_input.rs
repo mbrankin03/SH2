@@ -6,6 +6,7 @@ use winit::keyboard::KeyCode;
 use super::story_progression_3d::{
     configure_checkpoint_tab_and_puzzle, STORY_3D_CHECKPOINTS, STORY_3D_CHECKPOINT_COUNT,
 };
+use super::story_stage_loader::load_story_checkpoint_3d_stage;
 use crate::rooms::story_progression_room::{
     ensure_demo_scenario_seeded, ensure_ufo_texture_cached,
     input::{handle_endings_key, handle_ufo_letter_key, reroll_riddle_difficulty},
@@ -67,7 +68,7 @@ pub(crate) fn handle_3d_story_key_input(
             return true;
         }
         KeyCode::KeyL if !state.key_look_right => {
-            state.story_progression_room.checkpoint_3d_idx = 11;
+            apply_3d_checkpoint_selection(state, 11);
             open_checkpoint_modal(state, 11);
             return true;
         }
@@ -94,8 +95,10 @@ fn apply_3d_checkpoint_selection(state: &mut AppState, next_idx: usize) {
     let spec = &STORY_3D_CHECKPOINTS[next_idx];
     configure_checkpoint_tab_and_puzzle(state, next_idx);
 
-    if state.active_test_room != spec.target_room {
-        state.menu_ctrl.title_sm.selected_test_room = spec.target_room;
+    if state.sim_core.scenario.current_room != spec.room_id
+        || state.active_test_room != spec.target_room
+    {
+        load_story_checkpoint_3d_stage(state, next_idx);
     }
     state.story_progression_room.status_banner = format!(
         "Checkpoint [{:02}/12] {}: {} — {}",
@@ -122,8 +125,7 @@ fn trigger_active_checkpoint_action(state: &mut AppState) {
             return;
         }
         state.story_progression_room.restroom_mirror_inspected = true;
-        state.story_progression_room.checkpoint_3d_idx = 1;
-        state.menu_ctrl.title_sm.selected_test_room = TestRoomKind::ObservationDeck;
+        apply_3d_checkpoint_selection(state, 1);
         state.story_progression_room.status_banner =
             "Exiting Restroom (er01.map) -> Observation Deck (ob01.map) [Stage 3 stg_ovservation]! Press [E] at Blue Car to inspect Map!".to_string();
         if let (Some(eng), Some(bank)) = (state.audio_engine.as_mut(), state.audio_bank.as_ref()) {
@@ -136,8 +138,7 @@ fn trigger_active_checkpoint_action(state: &mut AppState) {
 
     let cp_idx = state.story_progression_room.checkpoint_3d_idx % STORY_3D_CHECKPOINT_COUNT;
     if cp_idx == 0 {
-        state.story_progression_room.checkpoint_3d_idx = 1;
-        state.menu_ctrl.title_sm.selected_test_room = TestRoomKind::ObservationDeck;
+        apply_3d_checkpoint_selection(state, 1);
         state.story_progression_room.status_banner =
             "Exiting Restroom (er01.map) -> Observation Deck (ob01.map) [Stage 3 stg_ovservation]!"
                 .to_string();
@@ -332,7 +333,7 @@ fn handle_open_modal_key(state: &mut AppState, key_code: KeyCode) -> bool {
 
 fn trigger_3d_chainsaw_action(state: &mut AppState) {
     state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::Chainsaw;
-    state.story_progression_room.checkpoint_3d_idx = 10;
+    apply_3d_checkpoint_selection(state, 10);
     handle_endings_key(state, KeyCode::KeyC);
     let spec = &CHAINSAW_ATTACK_SPECS[state.story_progression_room.chainsaw_attack_idx];
     if let (Some(eng), Some(bank)) = (state.audio_engine.as_mut(), state.audio_bank.as_ref()) {
@@ -342,12 +343,12 @@ fn trigger_3d_chainsaw_action(state: &mut AppState) {
 
 fn trigger_3d_hyper_spray_action(state: &mut AppState) {
     state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::HyperSpray;
-    state.story_progression_room.checkpoint_3d_idx = 10;
+    apply_3d_checkpoint_selection(state, 10);
     handle_endings_key(state, KeyCode::KeyH);
 }
 
 fn trigger_3d_blue_gem_ufo_modal(state: &mut AppState) {
-    state.story_progression_room.checkpoint_3d_idx = 10;
+    apply_3d_checkpoint_selection(state, 10);
     handle_endings_key(state, KeyCode::Digit8);
     if state.sim_core.scenario.flags.get(727) || state.story_progression_room.blue_gem_step == 0 {
         state.sim_core.scenario.flags.set(FLAG_SPAWN_BLUE_GEM, true);

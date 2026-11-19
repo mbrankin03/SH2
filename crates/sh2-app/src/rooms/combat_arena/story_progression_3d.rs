@@ -19,6 +19,10 @@ pub(crate) struct Story3dCheckpointSpec {
     pub title: &'static str,
     pub prompt_hint: &'static str,
     pub target_room: TestRoomKind,
+    pub room_id: &'static str,
+    pub map_rel_path: &'static str,
+    pub cld_rel_path: &'static str,
+    pub room_display_label: &'static str,
 }
 
 pub(crate) const STORY_3D_CHECKPOINTS: [Story3dCheckpointSpec; STORY_3D_CHECKPOINT_COUNT] = [
@@ -28,6 +32,10 @@ pub(crate) const STORY_3D_CHECKPOINTS: [Story3dCheckpointSpec; STORY_3D_CHECKPOI
         title: "Opening Restroom Overlook (stg_toilet)",
         prompt_hint: "[E] Inspect Mirror / Exit Restroom Door -> Observation Deck (ob01.map)",
         target_room: TestRoomKind::RestroomStart,
+        room_id: "er01",
+        map_rel_path: "bg/er/er01.map",
+        cld_rel_path: "bg/er/er01.cld",
+        room_display_label: "Opening Restroom (er01.map)",
     },
     Story3dCheckpointSpec {
         index: 1,
@@ -36,83 +44,127 @@ pub(crate) const STORY_3D_CHECKPOINTS: [Story3dCheckpointSpec; STORY_3D_CHECKPOI
         prompt_hint:
             "[E / Enter] Inspect Blue Car Seat (out_p_incar.tex) & Take Map of Silent Hill",
         target_room: TestRoomKind::ObservationDeck,
+        room_id: "ob01",
+        map_rel_path: "bg/ob/ob01.map",
+        cld_rel_path: "bg/ob/ob01.cld",
+        room_display_label: "Observation Deck (ob01.map)",
     },
     Story3dCheckpointSpec {
         index: 2,
-        stage_badge: "Stage 7/11 (apt_p_safe_close.tex)",
+        stage_badge: "Stage 7/11 (ap34.map / apt_p_safe_close.tex)",
         title: "Wood Side / Blue Creek Rm 203 Safe & Wallet Clue",
         prompt_hint: "[E / Enter] Open Safe Dial Cutaway ([Left/Right] / [Space] turn dial)",
         target_room: TestRoomKind::ObservationDeck,
+        room_id: "ap34",
+        map_rel_path: "bg/ap/ap34.map",
+        cld_rel_path: "bg/ap/ap34.cld",
+        room_display_label: "Wood Side Apartments 2F (ap34.map)",
     },
     Story3dCheckpointSpec {
         index: 3,
-        stage_badge: "Stage 10 (apt_p_desk_coin.tex)",
+        stage_badge: "Stage 10 (ap84.map / apt_p_desk_coin.tex)",
         title: "Blue Creek Rm 105 Five-Hole Coin Desk Riddle",
         prompt_hint:
             "[E / Enter] Open 5-Hole Coin Desk ([Z/X/C] place coin, [V] Vanilla vs SH2:EE)",
         target_room: TestRoomKind::ObservationDeck,
+        room_id: "ap84",
+        map_rel_path: "bg/ap/ap84.map",
+        cld_rel_path: "bg/ap/ap84.cld",
+        room_display_label: "Blue Creek Apartments 1F (ap84.map)",
     },
     Story3dCheckpointSpec {
         index: 4,
-        stage_badge: "Stage 19/20 (hsp_p_box.tex)",
+        stage_badge: "Stage 19/20 (hp25.map / hsp_p_box.tex)",
         title: "Brookhaven Hospital 2F Rm S14 Louise Locked Box",
         prompt_hint:
             "[E / Enter] Open 4-Wheel Louise Box ([Up/Down] wheel, [B] Blood, [P] Roof PH)",
         target_room: TestRoomKind::CombatArena,
+        room_id: "hp25",
+        map_rel_path: "bg/hp/hp25.map",
+        cld_rel_path: "bg/hp/hp25.cld",
+        room_display_label: "Brookhaven Hospital 2F (hp25.map)",
     },
     Story3dCheckpointSpec {
         index: 5,
-        stage_badge: "Stage 25/27 (hsp_p_quiz.tex)",
+        stage_badge: "Stage 25/27 (hp150.map / hsp_p_quiz.tex)",
         title: "Otherworld Hospital Elevator Radio Quiz & 3F Trick Chest",
         prompt_hint:
             "[E / Enter] Open 3x3 Trick Chest Quiz ((3,1,3) vs Poison Gas + Radio Subtitles)",
         target_room: TestRoomKind::CombatArena,
+        room_id: "hp150",
+        map_rel_path: "bg/hp/hp150.map",
+        cld_rel_path: "bg/hp/hp150.cld",
+        room_display_label: "Otherworld Hospital 3F (hp150.map)",
     },
     Story3dCheckpointSpec {
         index: 6,
-        stage_badge: "Stage 31/34 (dls_p_manacles_on.tex)",
+        stage_badge: "Stage 31/34 (ps66.map / dls_p_manacles_on.tex)",
         title: "Toluca Prison Gallows & Labyrinth Rotating Face Cube",
         prompt_hint: "[E / Enter] Open Face Cube (0x008d14d4 OPEN/SEALED), 6 Hanged Men & Gallows",
         target_room: TestRoomKind::HotelBoilerRoom,
+        room_id: "ps66",
+        map_rel_path: "bg/ps/ps66.map",
+        cld_rel_path: "bg/ps/ps66.cld",
+        room_display_label: "Toluca Prison South (ps66.map)",
     },
     Story3dCheckpointSpec {
         index: 7,
-        stage_badge: "Stage 40/41 (htl_p_trank.tex / rr21.map)",
+        stage_badge: "Stage 40/41 (rr49.map / htl_p_trank.tex)",
         title: "Lakeview Hotel 9 Key-Doors (trg == 10) & Rm 204 Briefcase",
         prompt_hint:
             "[E / Enter] Open 4-Drum Briefcase | [K] Toggle Key | [A] Action Unlock trg==10",
         target_room: TestRoomKind::HotelBoilerRoom,
+        room_id: "rr49",
+        map_rel_path: "bg/rr/rr49.map",
+        cld_rel_path: "bg/rr/rr49.cld",
+        room_display_label: "Lakeview Hotel 2F (rr49.map)",
     },
     Story3dCheckpointSpec {
         index: 8,
-        stage_badge: "Stage 42/45 (htl_p_video.tex / htl_p_egghollow.tex)",
+        stage_badge: "Stage 42/45 (rr91.map / htl_p_video.tex)",
         title: "Hotel Rm 312 VCR Tape, Egg Doors & 2F Weight Cupboard",
         prompt_hint:
             "[E / Enter] Open VCR & Egg Doors Cutaway | [W] Transfer Inventory to Cupboard",
         target_room: TestRoomKind::HotelBoilerRoom,
+        room_id: "rr91",
+        map_rel_path: "bg/rr/rr91.map",
+        cld_rel_path: "bg/rr/rr91.cld",
+        room_display_label: "Lakeview Hotel 3F Rm 312 (rr91.map)",
     },
     Story3dCheckpointSpec {
         index: 9,
-        stage_badge: "Stage 55 (add_p_teien.tex)",
+        stage_badge: "Stage 55 (ma01.map / add_p_teien.tex)",
         title: "Born from a Wish: Baldwin Mansion 3-Board Gravestone",
         prompt_hint: "[E / Enter] Open 3-Board Tombstone ([Z/X/C] rotate, [V] 0x008c4670 vs Fix)",
         target_room: TestRoomKind::HotelBoilerRoom,
+        room_id: "ma01",
+        map_rel_path: "bg2/ma/ma01.map",
+        cld_rel_path: "bg2/ma/ma01.cld",
+        room_display_label: "Baldwin Mansion 1F (ma01.map)",
     },
     Story3dCheckpointSpec {
         index: 10,
-        stage_badge: "NG+ Secret Weapons & UFO (ufo/hj01..07.tex)",
-        title: "Chainsaw, Hyper Spray & 35-Slide Blue Gem UFO Comic",
+        stage_badge: "Stage 4 NG+ & UFO (ca11.map / ufo/hj01..07.tex)",
+        title: "Chainsaw Log Stage, Hyper Spray & 35-Slide Blue Gem UFO Comic",
         prompt_hint:
             "[7] Equip/Swing Chainsaw | [8] Hyper Spray | [U / E] Channel Blue Gem & UFO Comic",
         target_room: TestRoomKind::CombatArena,
+        room_id: "ca11",
+        map_rel_path: "bg/ca/ca11.map",
+        cld_rel_path: "bg/ca/ca11.cld",
+        room_display_label: "Forest Trail Chainsaw Stage (ca11.map)",
     },
     Story3dCheckpointSpec {
         index: 11,
-        stage_badge: "Final Ending Judge (playing_info.c)",
+        stage_badge: "Stage 47..52 Final Ending Judge (ru73.map)",
         title: "EvProgEndingJudge, 10-Star Rank & Mary's Scrolling Letter",
         prompt_hint:
             "[E / L] Open Live Ending Judge (Leave/Maria/InWater + 10-Star) & Mary's Letter",
         target_room: TestRoomKind::ObservationDeck,
+        room_id: "ru73",
+        map_rel_path: "bg/ru/ru73.map",
+        cld_rel_path: "bg/ru/ru73.cld",
+        room_display_label: "Lakeview Hotel Final Boss Roof (ru73.map)",
     },
 ];
 
@@ -125,13 +177,9 @@ pub(crate) fn active_3d_checkpoint(state: &AppState) -> &'static Story3dCheckpoi
 /// Synchronizes `checkpoint_3d_idx` when entering `RestroomStart` or `ObservationDeck` directly.
 pub(crate) fn sync_checkpoint_with_room_entry(state: &mut AppState, new_room: TestRoomKind) {
     ensure_demo_scenario_seeded(state);
-    if new_room == TestRoomKind::RestroomStart
-        && state.story_progression_room.checkpoint_3d_idx <= 1
-    {
+    if new_room == TestRoomKind::RestroomStart {
         state.story_progression_room.checkpoint_3d_idx = 0;
-    } else if new_room == TestRoomKind::ObservationDeck
-        && state.story_progression_room.checkpoint_3d_idx == 0
-    {
+    } else if new_room == TestRoomKind::ObservationDeck {
         state.story_progression_room.checkpoint_3d_idx = 1;
     }
 }

@@ -83,7 +83,14 @@ fn render_camera_and_player_telemetry(
     let active_mode = state.sim_core.active_camera_mode();
     let active_rec = state.sim_core.camera.active_road_index;
     let mv_type = state.sim_core.camera.mv_type;
-    let room_label = state.active_test_room.label();
+    let cp = super::story_progression_3d::active_3d_checkpoint(state);
+    let room_label = if state.story_progression_room.checkpoint_3d_idx >= 2
+        || state.sim_core.scenario.current_room == cp.room_id
+    {
+        cp.room_display_label
+    } else {
+        state.active_test_room.label()
+    };
 
     let mode_badge = match active_mode {
         GameplayCameraMode::ClassicPs2Rail => "PS2 Rail".to_string(),

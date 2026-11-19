@@ -1,10 +1,12 @@
 //! sh2-app: Cross-platform entry point and Android NativeActivity presentation layer.
 
 pub mod app;
+pub mod cli;
 pub mod menu_controller;
 pub mod synthetic_geometry;
 
 pub use app::SilentHill2App;
+pub use cli::CliArgs;
 pub use menu_controller::AppMenuController;
 
 #[cfg(target_os = "android")]

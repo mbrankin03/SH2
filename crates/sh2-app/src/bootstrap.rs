@@ -505,6 +505,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         inventory_room: rooms::inventory_room::InventoryDebugRoomState::default(),
         puzzle_cutaway_room: rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default(),
         horror_triggers_room: rooms::horror_triggers_room::HorrorTriggersRoomState::default(),
+        story_progression_room: rooms::story_progression_room::StoryProgressionRoomState::default(),
         sim_core,
         gpu_map,
         map_hd_texture_bind_groups,

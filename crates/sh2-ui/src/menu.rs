@@ -99,10 +99,12 @@ pub enum TestRoomKind {
     PuzzleAndCutawayRoom,
     /// Interactive Scripted Sequence System, `ev_pos` Trigger Zones & Environmental Horror Triggers Chamber (`SH2-47`).
     HorrorTriggersRoom,
+    /// Interactive Act 1 & Act 2 Story Stage Tables (`1..=58`), Riddles, Live Ending Judge, 10-Star Ranking, UFO Comic & Mary's Letter Studio (`SH2-65` / `SH2-113` / `SH2-114` / `SH2-118`).
+    StoryStagesAndEndingsRoom,
 }
 
 impl TestRoomKind {
-    pub const ALL: [TestRoomKind; 15] = [
+    pub const ALL: [TestRoomKind; 16] = [
         TestRoomKind::ObservationDeck,
         TestRoomKind::RestroomStart,
         TestRoomKind::HotelBoilerRoom,
@@ -118,6 +120,7 @@ impl TestRoomKind {
         TestRoomKind::InventoryAndItemsRoom,
         TestRoomKind::PuzzleAndCutawayRoom,
         TestRoomKind::HorrorTriggersRoom,
+        TestRoomKind::StoryStagesAndEndingsRoom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -137,6 +140,7 @@ impl TestRoomKind {
             Self::InventoryAndItemsRoom => "Inventory & 3D/2D Item Inspect Room",
             Self::PuzzleAndCutawayRoom => "Puzzle Logic & Cutaway Overlays Room",
             Self::HorrorTriggersRoom => "Stage Events & Horror Triggers Room",
+            Self::StoryStagesAndEndingsRoom => "Story Stages, Riddles & Endings (SH2-65)",
         }
     }
 
@@ -176,6 +180,9 @@ impl TestRoomKind {
             }
             Self::HorrorTriggersRoom => {
                 "Prison bathroom stall jumpscare (0x427D), Room 209 orbiting whisper (0x9C70), 3F footsteps & ev_pos zones"
+            }
+            Self::StoryStagesAndEndingsRoom => {
+                "Stages 1-58 tables, Act 1/2 Riddles, Ending Judge, 10-Star Rank, Chainsaw/Spray, UFO Comic & Mary's Letter"
             }
         }
     }
@@ -393,7 +400,9 @@ impl TitleStateMachine {
                     sound = MenuSoundCue::CursorMove;
                 }
                 MenuNavAction::Confirm => {
-                    // Match PS2 `titleFadeOutNewGame`
+                    // Match PS2 `titleFadeOutNewGame`: begin in Stage 2 Restroom (`er01.map`, `R_BEGIN_BATHROOM = 0x01`)
+                    self.selected_test_room = TestRoomKind::RestroomStart;
+                    self.test_room_index = 1;
                     self.phase = TitlePhase::TransitionToGame;
                     self.start_fade_out();
                     sound = MenuSoundCue::GameStartTransition;

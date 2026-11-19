@@ -9,6 +9,10 @@ pub(crate) mod camera_wiring;
 mod hud;
 mod input;
 mod render;
+pub(crate) mod story_input;
+pub(crate) mod story_overlay;
+pub(crate) mod story_progression_3d;
+pub(crate) mod story_stage_loader;
 
 use std::time::Duration;
 use winit::keyboard::KeyCode;
@@ -26,12 +30,13 @@ impl RoomController for CombatArenaRoomController {
     fn tick_and_render_3d(
         state: &mut AppState,
         dt: Duration,
-        _dt_sec: f32,
+        dt_sec: f32,
         aspect: f32,
         _grain_pct: u32,
         is_paused: bool,
         is_in_game: bool,
     ) {
+        story_progression_3d::tick_3d_story_progression(state, dt_sec, is_paused);
         render::tick_and_render_combat_arena_3d(state, dt, aspect, is_paused, is_in_game);
     }
 

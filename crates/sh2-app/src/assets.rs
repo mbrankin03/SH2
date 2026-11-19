@@ -318,7 +318,8 @@ pub(crate) fn find_map_file_for_room(
         | TestRoomKind::LoadingScreenTest
         | TestRoomKind::GrappleAnimationRoom
         | TestRoomKind::InventoryAndItemsRoom
-        | TestRoomKind::PuzzleAndCutawayRoom => {
+        | TestRoomKind::PuzzleAndCutawayRoom
+        | TestRoomKind::StoryStagesAndEndingsRoom => {
             let fog = sh2_renderer::fog::FogUniforms {
                 fog_color: [0.06, 0.07, 0.08, 1.0],
                 fog_near: 5000.0,

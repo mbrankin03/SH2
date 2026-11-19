@@ -153,8 +153,6 @@ pub(crate) fn update_spotlight_uniforms(
             color_outer: [0.0, 0.0, 0.0, 0.0],
             ambient_tint,
         }
-    } else if let Some(cs_spot) = cutscene_spotlight_override {
-        cs_spot
     } else if active_demo.is_some_and(|s| s.player.info.stage_name == "er01")
         || (state.active_test_room == TestRoomKind::RestroomStart
             && !state.sim_core.scenario.flashlight_on)
@@ -162,9 +160,11 @@ pub(crate) fn update_spotlight_uniforms(
         SpotlightUniforms {
             position: [-19200.0, -1950.0, 20429.5, 1.0],
             direction_inner: [-0.65, 0.76, 0.0, 0.35],
-            color_outer: [1.85, 1.90, 1.80, -0.25],
-            ambient_tint,
+            color_outer: [1.85, 1.90, 1.80, -0.65],
+            ambient_tint: [1.65, 1.68, 1.62, 1.85],
         }
+    } else if let Some(cs_spot) = cutscene_spotlight_override {
+        cs_spot
     } else if let Some(session) = active_demo {
         let key_pos = session.player.camera.eye + glam::Vec3::new(0.0, -600.0, 0.0);
         let safe_dir = (session.player.camera.interest - key_pos)
@@ -176,16 +176,35 @@ pub(crate) fn update_spotlight_uniforms(
             ambient_tint,
         }
     } else {
-        let rgb = if state.sim_core.scenario.flashlight_on {
-            [2.5, 2.3, 1.8]
+        let is_indoor_cp = super::story_stage_loader::is_indoor_story_checkpoint_room(
+            &state.sim_core.scenario.current_room,
+        );
+        if state.sim_core.scenario.flashlight_on {
+            let eff_ambient = if is_indoor_cp {
+                [1.22, 1.24, 1.28, 1.35]
+            } else {
+                ambient_tint
+            };
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+                color_outer: [2.5, 2.3, 1.8, 0.70],
+                ambient_tint: eff_ambient,
+            }
+        } else if is_indoor_cp {
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y - 750.0, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.35],
+                color_outer: [1.65, 1.62, 1.55, -0.55],
+                ambient_tint: [1.45, 1.48, 1.52, 1.55],
+            }
         } else {
-            [0.0, 0.0, 0.0]
-        };
-        SpotlightUniforms {
-            position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
-            direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
-            color_outer: [rgb[0], rgb[1], rgb[2], 0.70],
-            ambient_tint,
+            SpotlightUniforms {
+                position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
+                direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
+                color_outer: [0.0, 0.0, 0.0, 0.70],
+                ambient_tint,
+            }
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);

@@ -258,15 +258,23 @@ impl SimulationCore {
         );
     }
 
-    /// Snaps the player to `(pos, yaw)` at the end of a `.dds` cutscene while smoothly blending
-    /// `ModernCameraRig` out of the final cutscene shot back into `active_mode` (`SH2-63` / `SH2-93`).
+    /// Snaps the player to `(pos, yaw)` at the end of a `.dds` cutscene while grounding
+    /// root-bone vertical `.dds` offsets (e.g., `first_toilet.dds` `hhh_jms_pos` `Y = -543.2`)
+    /// onto the `.cld` floor and smoothly blending `ModernCameraRig` out of the final cutscene
+    /// shot back into `active_mode` (`SH2-63` / `SH2-65` / `SH2-93`).
     pub fn handoff_player_after_cutscene(&mut self, pos: Vec3, yaw: f32) {
-        self.snap_player_transform(pos, yaw);
-        self.camera.reset_to_player(pos, yaw);
-        self.modern_camera.ots.reset_to_player(pos, yaw);
+        let floor_y = self
+            .collision
+            .sample_floor_height(pos.x, pos.z, pos.y, 1500.0, 1500.0)
+            .or_else(|| self.collision.floors.first().map(|tri| tri.v[0][1]))
+            .unwrap_or(pos.y);
+        let grounded_pos = Vec3::new(pos.x, floor_y, pos.z);
+        self.snap_player_transform(grounded_pos, yaw);
+        self.camera.reset_to_player(grounded_pos, yaw);
+        self.modern_camera.ots.reset_to_player(grounded_pos, yaw);
         self.modern_camera
             .first_person
-            .reset_to_player(self.scenario.character, pos, yaw);
+            .reset_to_player(self.scenario.character, grounded_pos, yaw);
         self.modern_camera.sync_cutscene(None);
     }
 
@@ -630,5 +638,39 @@ mod sim_bridge_tests {
         let (ots_yaw, ots_pitch) = sim.active_listener_yaw_pitch(1.0);
         assert!((ots_yaw - std::f32::consts::FRAC_PI_2).abs() < 0.05);
         assert!((ots_pitch - 0.30).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_sh2_65_handoff_player_after_cutscene_grounds_dds_root_offset_to_cld_floor() {
+        use sh2_assets::formats::cld::FloorTriangle;
+
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        // Opening Restroom (`er01.cld`) walkable floor quad at Y = 0.0 around (-19110.6, 19765.3)
+        sim.collision.floors.push(FloorTriangle::new(
+            [
+                [-21000.0, 0.0, 18000.0],
+                [-17000.0, 0.0, 18000.0],
+                [-17000.0, 0.0, 22000.0],
+            ],
+            0,
+        ));
+        sim.collision.floors.push(FloorTriangle::new(
+            [
+                [-21000.0, 0.0, 18000.0],
+                [-17000.0, 0.0, 22000.0],
+                [-21000.0, 0.0, 22000.0],
+            ],
+            0,
+        ));
+
+        // `first_toilet.dds` `hhh_jms_pos` ends with a root-bone vertical offset Y = -543.2 (> max_step_down 350.0)
+        sim.handoff_player_after_cutscene(Vec3::new(-19110.6, -543.2, 19765.3), 3.0);
+        assert!(
+            sim.scenario.player_position.y.abs() < 1e-4,
+            "handoff_player_after_cutscene must ground Y=-543.2 onto floor Y=0.0, got {:?}",
+            sim.scenario.player_position
+        );
+        assert!((sim.prev_player_position.y).abs() < 1e-4);
+        assert!((sim.scenario.player_yaw - 3.0).abs() < 1e-4);
     }
 }

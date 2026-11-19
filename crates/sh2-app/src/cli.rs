@@ -2,8 +2,8 @@
 
 use sh2_ui::menu::TestRoomKind;
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct CliArgs {
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CliArgs {
     pub initial_test_room: Option<TestRoomKind>,
     pub initial_fog_debug: bool,
     pub initial_viewer_model: Option<String>,
@@ -11,8 +11,13 @@ pub(crate) struct CliArgs {
 }
 
 impl CliArgs {
-    pub(crate) fn parse_from_env() -> Self {
+    pub fn parse_from_env() -> Self {
         let args: Vec<String> = std::env::args().collect();
+        Self::parse_from_slice(&args)
+    }
+
+    /// Parses command-line arguments from a slice (including `argv[0]`).
+    pub fn parse_from_slice<S: AsRef<str>>(args: &[S]) -> Self {
         let mut initial_test_room = None;
         let mut initial_fog_debug = false;
         let mut initial_viewer_model = None;
@@ -20,7 +25,7 @@ impl CliArgs {
 
         let mut i = 1;
         while i < args.len() {
-            let arg = &args[i];
+            let arg = args[i].as_ref();
             if arg == "--test-fog" {
                 initial_fog_debug = true;
                 if initial_test_room.is_none() {
@@ -28,8 +33,8 @@ impl CliArgs {
                 }
             } else if arg == "--model-viewer" {
                 initial_test_room = Some(TestRoomKind::ModelAndTextureViewer);
-                if i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                    initial_viewer_model = Some(args[i + 1].clone());
+                if i + 1 < args.len() && !args[i + 1].as_ref().starts_with("--") {
+                    initial_viewer_model = Some(args[i + 1].as_ref().to_string());
                     i += 1;
                 }
             } else if let Some(model_str) = arg.strip_prefix("--model-viewer=") {
@@ -39,8 +44,8 @@ impl CliArgs {
                 }
             } else if arg == "--fmv-viewer" || arg == "--fmv" {
                 initial_test_room = Some(TestRoomKind::FmvCutsceneViewer);
-                if i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                    initial_fmv_movie = Some(args[i + 1].clone());
+                if i + 1 < args.len() && !args[i + 1].as_ref().starts_with("--") {
+                    initial_fmv_movie = Some(args[i + 1].as_ref().to_string());
                     i += 1;
                 }
             } else if let Some(movie_str) = arg.strip_prefix("--fmv-viewer=") {
@@ -65,13 +70,23 @@ impl CliArgs {
                 || arg == "--whispers"
             {
                 initial_test_room = Some(TestRoomKind::HorrorTriggersRoom);
+            } else if arg == "--story"
+                || arg == "--story-demo"
+                || arg == "--stages"
+                || arg == "--endings"
+                || arg == "--sh2-65"
+            {
+                initial_test_room = Some(TestRoomKind::StoryStagesAndEndingsRoom);
             } else if let Some(room_str) = arg
                 .strip_prefix("--test-room=")
                 .or_else(|| arg.strip_prefix("--room="))
             {
                 initial_test_room = Some(Self::parse_room_alias(room_str, true));
-            } else if arg == "--room" && i + 1 < args.len() && !args[i + 1].starts_with("--") {
-                initial_test_room = Some(Self::parse_room_alias(&args[i + 1], false));
+            } else if arg == "--room"
+                && i + 1 < args.len()
+                && !args[i + 1].as_ref().starts_with("--")
+            {
+                initial_test_room = Some(Self::parse_room_alias(args[i + 1].as_ref(), false));
                 i += 1;
             }
             i += 1;
@@ -95,7 +110,7 @@ impl CliArgs {
         }
     }
 
-    fn parse_room_alias(room_str: &str, warn_unknown: bool) -> TestRoomKind {
+    pub fn parse_room_alias(room_str: &str, warn_unknown: bool) -> TestRoomKind {
         match room_str {
             "ob01" | "observation" | "outdoor" => TestRoomKind::ObservationDeck,
             "er01" | "restroom" | "toilet" => TestRoomKind::RestroomStart,
@@ -116,6 +131,9 @@ impl CliArgs {
             "puzzles" | "puzzle" | "cutaway" | "overlays" => TestRoomKind::PuzzleAndCutawayRoom,
             "horror" | "horror-triggers" | "events" | "jumpscare" | "whispers" => {
                 TestRoomKind::HorrorTriggersRoom
+            }
+            "story" | "story-demo" | "stages" | "endings" | "sh2-65" => {
+                TestRoomKind::StoryStagesAndEndingsRoom
             }
             _ => {
                 if warn_unknown {

@@ -345,7 +345,12 @@ fn step_cutscene_player(
                 session.player.pending_voice_stop = false;
                 stop_voice_now = true;
             }
-            if let Some((actor_pos, actor_yaw)) = session.player.player_handoff_transform() {
+            if let Some((mut actor_pos, actor_yaw)) = session.player.player_handoff_transform() {
+                actor_pos.y = state
+                    .sim_core
+                    .collision
+                    .sample_floor_height(actor_pos.x, actor_pos.z, actor_pos.y, 1500.0, 1500.0)
+                    .unwrap_or(actor_pos.y);
                 state.sim_core.snap_player_transform(actor_pos, actor_yaw);
             }
             if !session.player.locks_gameplay_input() {

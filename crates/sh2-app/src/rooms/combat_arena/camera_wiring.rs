@@ -297,8 +297,38 @@ pub(crate) fn update_spotlight_uniforms(
                     0.0,
                 ],
             }
+        } else if !is_dark_room {
+            // Daytime / lit room (`sh2gfw_Get_NightOrDay() == 0`): emit authentic PS2 parallel
+            // directional sky light (`sh2gfw_setparal3LGT_blk` @ `SLUS_202.28` `0x0017d7f0`,
+            // `DrawEnvData.directional_lights[0]`, e.g. `OB_DrawEnvData` `dir=[0,1,0], color=[0.1,0.1,0.1]`).
+            let (dir, color) = draw_env
+                .map(|env| {
+                    let dl = env.directional_lights[0];
+                    let d = glam::Vec3::from_array(dl.direction)
+                        .normalize_or(glam::Vec3::new(0.0, 1.0, 0.0));
+                    (d, [dl.color[0], dl.color[1], dl.color[2], -1.0])
+                })
+                .unwrap_or((glam::Vec3::new(0.0, 1.0, 0.0), [0.0, 0.0, 0.0, -1.0]));
+            let far_pos = spot_pos - dir * 50_000.0;
+            SpotlightUniforms {
+                position: [far_pos.x, far_pos.y, far_pos.z, 1.0],
+                direction_inner: [dir.x, dir.y, dir.z, -1.0],
+                color_outer: color,
+                ambient_tint: [
+                    ambient_tint[0],
+                    ambient_tint[1],
+                    ambient_tint[2],
+                    modulated_ambient,
+                ],
+                fill_and_range: [
+                    darkness.camera_fill_k,
+                    1_000_000.0,
+                    darkness.flash_level,
+                    0.0,
+                ],
+            }
         } else {
-            // Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`), while dark rooms receive
+            // Dark room, Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`), while dark rooms receive
             // authentic `s_flash_level` ambient modulation (`0.75` pre-pickup -> `0.575` post-pickup)
             // and camera view-space directional fill (`0.075` pre-pickup -> `0.0225` post-pickup).
             SpotlightUniforms {

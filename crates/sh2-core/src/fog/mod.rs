@@ -286,12 +286,14 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                     PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 )
             };
+            // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00366e60`, `draw_env_tables.rs`):
+            // `fog_near = 19000.0` mm, `fog_far = 33000.0` mm, linear depth-fog ramp.
             RoomFogEvaluation {
                 fog_color: [0.65, 0.68, 0.72, 1.0],
-                fog_near_mm: 2000.0,
-                fog_far_mm: 32000.0,
+                fog_near_mm: 19_000.0,
+                fog_far_mm: 33_000.0,
                 density: 1.0,
-                curve: FogFalloffCurve::Exponential,
+                curve: FogFalloffCurve::Linear,
                 speed_mult: FOG_SPEED_OUTDOOR_SLOW,
                 layers: base_layers,
                 particle_count: count,

@@ -498,11 +498,19 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`)
     if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
         let player_pos = state.sim_core.scenario.player_position;
-        let ps2_room_id = match state.active_test_room {
-            TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway => {
+        let ps2_room_id = {
+            let from_room =
+                sh2_core::fog::room_id_from_stage_code(&state.sim_core.scenario.current_room);
+            if from_room != 0 {
+                from_room
+            } else if matches!(
+                state.active_test_room,
+                TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway
+            ) {
                 sh2_core::fog::R_OBSV_DECK_ID
+            } else {
+                0
             }
-            _ => 0,
         };
         let room_eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
             room_id: ps2_room_id,

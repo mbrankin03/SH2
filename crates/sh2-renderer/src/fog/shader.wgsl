@@ -204,7 +204,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Discrete-step 3D Volumetric Raymarching (`step_count` steps)
         let steps = clamp(fog.step_count, 4u, 64u);
         let march_end = min(view_dist, fog.fog_far);
-        let march_start = min(fog.fog_near * 0.15, march_end);
+        let march_start = min(fog.fog_near, march_end);
         let march_len = max(0.0, march_end - march_start);
         let step_len = march_len / f32(steps);
         let jitter = interleaved_gradient_noise(vec2<f32>(pixel_coords));

@@ -68,6 +68,10 @@ pub(crate) fn sync_player_pose_and_visibility(state: &mut AppState) {
             visibility
         };
         jms.gpu_mesh.set_player_visibility(vis);
+        // `PlayerCheckModelParts` (`SLUS_202.28` `0x00109958`): pocket flashlight (`pose_index == 0x15` = 21)
+        // is only shown when James possesses the flashlight item (`item 0x12`, Wood Side Apt Rm 205).
+        jms.gpu_mesh
+            .set_pose_visible(0x15, state.sim_core.scenario.has_flashlight());
     }
     if let Some(ref mut mar) = state.maria {
         let vis = if state.active_maria {

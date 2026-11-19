@@ -718,6 +718,7 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
     let build_mirror = state.active_test_room == TestRoomKind::RestroomStart
         || session.player.info.stage_name == "er01";
 
+    let has_flashlight = state.sim_core.scenario.has_flashlight();
     let scene_frame = session.player.scene_frame.max(0.0);
     for (idx, (actor, asset_opt)) in session
         .player
@@ -731,6 +732,11 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
         };
         if !actor.visible {
             continue;
+        }
+        // `DemoJamesCheckModelParts` (`SLUS_202.28` `0x00104514`): hide pocket flashlight (`0x15` = 21)
+        // on cutscene James when the player does not possess the flashlight item yet.
+        if actor.actor_name.to_ascii_lowercase().contains("jms") {
+            asset.gpu_mesh.set_pose_visible(0x15, has_flashlight);
         }
 
         // 1. Evaluate `.cls` facial morph cluster weights & upload morphed vertices if present (`clani.c`)

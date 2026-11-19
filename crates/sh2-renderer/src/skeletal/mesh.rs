@@ -346,6 +346,18 @@ impl GpuSkeletalMesh {
         self.player_visibility = visibility;
     }
 
+    /// Toggles visibility of all primitives matching `pose_index` (equipment bit in
+    /// `sh2gfw_Set_JMSequip` `SLUS_202.28` `0x00128090`, e.g. `pose_index == 0x15` (`21`) for
+    /// James's breast-pocket flashlight in `PlayerCheckModelParts` `0x00109958` and
+    /// `DemoJamesCheckModelParts` `0x00104514`).
+    pub fn set_pose_visible(&mut self, pose_index: u8, visible: bool) {
+        for prim in &mut self.primitives {
+            if prim.pose_index == pose_index {
+                prim.is_active = visible;
+            }
+        }
+    }
+
     /// Uploads newly evaluated skinning matrices to the GPU bone uniform buffer.
     pub fn update_bone_matrices(&self, queue: &wgpu::Queue, matrices: &[[[f32; 4]; 4]]) {
         let uniforms = SkeletonBoneUniforms::from_matrices(matrices);

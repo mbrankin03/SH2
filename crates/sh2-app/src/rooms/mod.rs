@@ -8,6 +8,7 @@ pub(crate) mod horror_triggers_room;
 pub(crate) mod inventory_room;
 pub(crate) mod model_viewer;
 pub(crate) mod puzzle_cutaway_room;
+pub(crate) mod story_progression_room;
 pub(crate) mod surface_sfx_room;
 
 use std::time::Duration;
@@ -91,6 +92,11 @@ pub(crate) fn dispatch_key_input(
                 state, key_code, pressed, repeat,
             );
         }
+        TestRoomKind::StoryStagesAndEndingsRoom => {
+            story_progression_room::StoryProgressionRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
+        }
         _ => {
             combat_arena::CombatArenaRoomController::handle_key_input(
                 state, key_code, pressed, repeat,
@@ -159,6 +165,12 @@ pub(crate) fn dispatch_tick_and_render_3d(
                 );
                 return;
             }
+            TestRoomKind::StoryStagesAndEndingsRoom => {
+                story_progression_room::StoryProgressionRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
             _ => {}
         }
     }
@@ -202,6 +214,13 @@ pub(crate) fn dispatch_render_hud(
         }
         TestRoomKind::HorrorTriggersRoom => {
             horror_triggers_room::HorrorTriggersRoomController::render_hud(
+                state,
+                encoder,
+                surface_view,
+            );
+        }
+        TestRoomKind::StoryStagesAndEndingsRoom => {
+            story_progression_room::StoryProgressionRoomController::render_hud(
                 state,
                 encoder,
                 surface_view,

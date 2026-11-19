@@ -11,6 +11,7 @@ use crate::rooms::fmv_room::ActiveFmvSession;
 use crate::rooms::horror_triggers_room::HorrorTriggersRoomState;
 use crate::rooms::inventory_room::InventoryDebugRoomState;
 use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
+use crate::rooms::story_progression_room::StoryProgressionRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
@@ -46,6 +47,7 @@ pub(crate) struct AppState {
     pub inventory_room: InventoryDebugRoomState,
     pub puzzle_cutaway_room: PuzzleCutawayRoomState,
     pub horror_triggers_room: HorrorTriggersRoomState,
+    pub story_progression_room: StoryProgressionRoomState,
     pub sim_core: SimulationCore,
     pub gpu_map: GpuMap,
     pub map_hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
@@ -171,6 +173,7 @@ impl AppState {
                 | TestRoomKind::GrappleAnimationRoom
                 | TestRoomKind::InventoryAndItemsRoom
                 | TestRoomKind::PuzzleAndCutawayRoom
+                | TestRoomKind::StoryStagesAndEndingsRoom
         )
     }
 
@@ -422,7 +425,8 @@ impl AppState {
             | TestRoomKind::SurfaceSfxTestRoom
             | TestRoomKind::InventoryAndItemsRoom
             | TestRoomKind::PuzzleAndCutawayRoom
-            | TestRoomKind::HorrorTriggersRoom => 0,
+            | TestRoomKind::HorrorTriggersRoom
+            | TestRoomKind::StoryStagesAndEndingsRoom => 0,
         };
         (stage_id, flags)
     }

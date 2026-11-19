@@ -241,12 +241,24 @@ fn test_sh2_18_full_menu_and_options_flow() {
         sh2_ui::menu::TestRoomKind::ObservationDeck
     );
 
-    // Navigate up to wrap to the last entry ("STAGE EVENTS & HORROR TRIGGERS ROOM", SH2-47),
-    // then up through "PUZZLE LOGIC & CUTAWAY OVERLAYS ROOM" (SH2-15),
+    // Navigate up to wrap to the last entry ("Story Stages, Riddles & Endings (SH2-65)"),
+    // then up through "STAGE EVENTS & HORROR TRIGGERS ROOM" (SH2-47),
+    // "PUZZLE LOGIC & CUTAWAY OVERLAYS ROOM" (SH2-15),
     // "INVENTORY & 3D/2D ITEM INSPECT ROOM" (SH2-15),
     // "SURFACE FOOTSTEP & 3D SFX ROOM" (SH2-61), "AUDIO & AIX MIXING DEBUG ROOM" (SH2-60),
     // "GRAPPLE ANIMATION ROOM" (SH2-57), "COMBAT & WEAPON TESTING ARENA" (SH2-13),
     // and "LOADING SCREEN PREVIEW" (SH2-44)
+    let cue = debug_controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(cue, MenuSoundCue::CursorMove);
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index],
+        sh2_ui::menu::TestRoomKind::StoryStagesAndEndingsRoom
+    );
+    assert_eq!(
+        sh2_ui::menu::TestRoomKind::ALL[debug_controller.title_sm.test_room_index].label(),
+        "Story Stages, Riddles & Endings (SH2-65)"
+    );
+
     let cue = debug_controller.handle_nav(MenuNavAction::Up);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(
@@ -628,6 +640,64 @@ fn test_sh2_15_inventory_and_puzzle_cutaway_debug_rooms_and_rasterizer() {
     }
     assert_eq!(ctrl.title_sm.phase, TitlePhase::TestRoomsSelect);
     assert!((ctrl.title_sm.fade_alpha - 1.0).abs() < 1e-5);
+
+    let _ = fs::remove_dir_all(&test_dir);
+}
+
+#[test]
+fn test_sh2_65_cli_flags_and_story_stages_and_endings_room_menu_selection() {
+    use sh2_app::CliArgs;
+    use sh2_ui::menu::{TestRoomKind, TitlePhase};
+
+    for flag in [
+        "--story",
+        "--story-demo",
+        "--stages",
+        "--endings",
+        "--sh2-65",
+        "--room=story",
+        "--room=endings",
+        "--room=stages",
+        "--test-room=sh2-65",
+    ] {
+        let parsed = CliArgs::parse_from_slice(&["sh2-app", flag]);
+        assert_eq!(
+            parsed.initial_test_room,
+            Some(TestRoomKind::StoryStagesAndEndingsRoom),
+            "flag {flag} failed"
+        );
+    }
+
+    for alias in ["story", "story-demo", "stages", "endings", "sh2-65"] {
+        let parsed = CliArgs::parse_from_slice(&["sh2-app", "--room", alias]);
+        assert_eq!(
+            parsed.initial_test_room,
+            Some(TestRoomKind::StoryStagesAndEndingsRoom),
+            "--room {alias} failed"
+        );
+    }
+
+    let test_dir = std::env::temp_dir().join("sh2_65_menu_story_room_test");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).unwrap();
+    let config_path = test_dir.join("test_config.json");
+
+    let mut ctrl = AppMenuController::new(&config_path);
+    ctrl.title_sm.phase = TitlePhase::TestRoomsSelect;
+    ctrl.title_sm.test_room_index = TestRoomKind::ALL
+        .iter()
+        .position(|&r| r == TestRoomKind::StoryStagesAndEndingsRoom)
+        .unwrap();
+    assert_eq!(
+        TestRoomKind::StoryStagesAndEndingsRoom.label(),
+        "Story Stages, Riddles & Endings (SH2-65)"
+    );
+    let cue = ctrl.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(
+        ctrl.title_sm.selected_test_room,
+        TestRoomKind::StoryStagesAndEndingsRoom
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }

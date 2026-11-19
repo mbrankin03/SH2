@@ -248,6 +248,10 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             state.horror_triggers_room =
                 rooms::horror_triggers_room::HorrorTriggersRoomState::default();
         }
+        if new_room == TestRoomKind::StoryStagesAndEndingsRoom {
+            state.story_progression_room =
+                rooms::story_progression_room::StoryProgressionRoomState::default();
+        }
         if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
             let mut asset = load_viewer_entry_asset(
                 &state.render_ctx,

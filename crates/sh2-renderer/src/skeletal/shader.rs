@@ -8,6 +8,7 @@ struct CameraUniforms {
     view_proj: mat4x4<f32>,
     inv_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
 };
 
 struct SpotlightUniforms {

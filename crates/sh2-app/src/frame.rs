@@ -76,7 +76,9 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
         .sim_core
         .deterministic_fog_time(state.sim_core.interpolation_alpha());
     state.fog_uniforms.time = det_fog_time;
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
     let mut effective_fog = state.fog_uniforms;
+    effective_fog.apply_video_options(video.fog_quality, video.volumetric_light);
     if let Some(ref session) = state.drama_demo_session {
         if session.player.locks_gameplay_input() {
             if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {

@@ -60,6 +60,7 @@ pub(crate) struct AppState {
     pub active_maria: bool,
     pub active_test_room: TestRoomKind,
     pub fog_uniforms: sh2_renderer::fog::FogUniforms,
+    pub fog_particles: sh2_core::fog::FogParticleVolume,
     pub menu_ctrl: AppMenuController,
     pub combat_arena: sh2_core::combat::CombatArena,
     pub enemy_scu_asset: Option<CharacterAsset>,

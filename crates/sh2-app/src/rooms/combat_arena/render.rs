@@ -476,7 +476,9 @@ fn build_cutscene_spotlight_uniforms(
 fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     let det_fog_time = state.sim_core.deterministic_fog_time(alpha);
     state.fog_uniforms.time = det_fog_time;
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
     let mut effective_fog = state.fog_uniforms;
+    effective_fog.apply_video_options(video.fog_quality, video.volumetric_light);
     if let Some(ref session) = state.drama_demo_session {
         if session.player.locks_gameplay_input() {
             if let Some(rgb) = session.player.atmosphere.horizon_fog_rgb_override {
@@ -488,6 +490,42 @@ fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         }
     }
     state.render_ctx.update_fog(&effective_fog);
+
+    // Step and upload localized 3D proximity fog sprites on outdoor stages (`SH2-32`)
+    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
+        let player_pos = state.sim_core.scenario.player_position;
+        let anchor = [player_pos.x, player_pos.y + 80.0, player_pos.z];
+        let player_arr = [player_pos.x, player_pos.y, player_pos.z];
+        state.fog_particles.step(
+            1.0 / 60.0,
+            effective_fog.speed_mult,
+            anchor,
+            player_arr,
+            sh2_core::fog::PS2_DEFAULT_JAMES_FOG_INFLUENCE_MM,
+        );
+        let fog_rgb = [
+            effective_fog.fog_color[0],
+            effective_fog.fog_color[1],
+            effective_fog.fog_color[2],
+        ];
+        let gpu_particles: Vec<sh2_renderer::fog::GpuFogParticle> = state
+            .fog_particles
+            .particles()
+            .iter()
+            .map(|p| sh2_renderer::fog::GpuFogParticle {
+                world_pos_radius: [
+                    anchor[0] + p.local_pos[0],
+                    anchor[1] + p.local_pos[1],
+                    anchor[2] + p.local_pos[2],
+                    p.radius_mm,
+                ],
+                color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
+            })
+            .collect();
+        state.render_ctx.update_fog_particles(&gpu_particles);
+    } else {
+        state.render_ctx.update_fog_particles(&[]);
+    }
 }
 
 fn evaluate_player_skinning(

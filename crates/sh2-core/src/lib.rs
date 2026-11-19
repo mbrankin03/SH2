@@ -12,6 +12,7 @@ pub mod cutscene;
 pub mod endings;
 pub mod event_camera;
 pub mod events;
+pub mod fog;
 pub mod input;
 pub mod inventory;
 pub mod locomotion;
@@ -148,6 +149,17 @@ pub use events::{
     SE_APART_ROOM205_TV_STATIC, SE_APART_ROOM209_WHISPER, SE_APART_STAIR_WATER_DRAIN,
     SE_APART_W2F_CORRIDOR, SE_PRISON_BATHROOM_STALL_BANG, SE_PRISON_INVISIBLE_PRISONER,
     SE_PRISON_ROOM68_MECHANISM, SE_SOCIETY_ROOM_5C_HORROR, SE_SOCIETY_STAIRCASE_AMBIENT,
+};
+pub use fog::{
+    evaluate_room_fog, ps2_depth_fog_linear_coeffs, room_id_from_stage_code, FogFalloffCurve,
+    FogParticle, FogParticleVolume, Ps2FogLayerParams, RoomFogContext, RoomFogEvaluation,
+    BLUE_CREEK_FLASHLIGHT_FOG_NEAR_MM, BLUE_CREEK_ORIGINAL_FOG_NEAR_MM,
+    FINAL_BOSS_CAMERA_Y_THRESHOLD_MM, FOG_SPEED_COURTYARD_MEDIUM, FOG_SPEED_OUTDOOR_SLOW,
+    FOREST_TRAIL_MAX_Y_MM, FOREST_TRAIL_MIN_Y_MM, PS2_DEFAULT_FOG_HEIGHT_BAND_MM,
+    PS2_DEFAULT_FOG_PARTICLE_COUNT, PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+    PS2_DEFAULT_JAMES_FOG_INFLUENCE_MM, PS2_FOREST_TRAIL_JAMES_FOG_INFLUENCE_MM,
+    R_APT_E_COURTYARD_ID, R_APT_W_RM_208_209_ID, R_EDI_BOSS_RM_1_ID, R_EDI_BOSS_RM_2_ID,
+    R_FOREST_CEMETERY_ID, R_OBSV_DECK_ID, R_TOWN_EAST_ID, R_TOWN_WEST_ID,
 };
 pub use input::{
     ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,

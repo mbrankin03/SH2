@@ -66,6 +66,16 @@ impl RenderContext {
             None
         };
 
+        // 0. Spotlight Shadow Depth Pass for volumetric flashlight god-ray occlusion (`SH2-32`)
+        if self.config.enable_fog {
+            self.spotlight_shadow_pipeline.encode_pass(
+                &mut encoder,
+                &self.shadow_depth_view,
+                &self.spotlight_shadow_bind_group,
+                gpu_map,
+            );
+        }
+
         // 1. Geometry & Skeletal Meshes Render Pass
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -134,6 +144,22 @@ impl RenderContext {
                     BatchGroup::Transparent,
                     &self.geometry_pipeline.transparent_pipeline,
                 );
+            }
+
+            // 1d-2. Render localized 3D proximity fog particle billboards (`fogMakePacket` @ 0x0016bb70)
+            if self.config.enable_fog {
+                let particle_count = self
+                    .fog_particle_count
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if particle_count > 0 {
+                    let byte_len = (particle_count as usize
+                        * std::mem::size_of::<crate::fog::GpuFogParticle>())
+                        as wgpu::BufferAddress;
+                    rpass.set_pipeline(&self.fog_particle_pipeline.pipeline);
+                    rpass.set_bind_group(0, &self.fog_particle_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, self.fog_particle_buffer.slice(0..byte_len));
+                    rpass.draw(0..6, 0..particle_count);
+                }
             }
 
             // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)

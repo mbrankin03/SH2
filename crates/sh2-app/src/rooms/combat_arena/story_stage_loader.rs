@@ -285,41 +285,12 @@ fn min_wall_clearance_xz(walls: &[WallSegment], px: f32, pz: f32) -> f32 {
 }
 
 fn fog_for_checkpoint_room(room_id: &str) -> FogUniforms {
-    match room_id {
-        "ob01" | "ca11" => FogUniforms {
-            fog_color: [0.65, 0.68, 0.72, 1.0],
-            fog_near: 2000.0,
-            fog_far: 32000.0,
-            density: 0.85,
-            time: 0.0,
-            step_count: 32,
-            curve_type: 1,
-            speed_mult: 1.0,
-            _padding: 0.0,
-        },
-        "ru73" => FogUniforms {
-            fog_color: [0.32, 0.35, 0.40, 1.0],
-            fog_near: 2500.0,
-            fog_far: 28000.0,
-            density: 0.45,
-            time: 0.0,
-            step_count: 28,
-            curve_type: 1,
-            speed_mult: 0.8,
-            _padding: 0.0,
-        },
-        _ => FogUniforms {
-            fog_color: [0.10, 0.11, 0.13, 1.0],
-            fog_near: 1200.0,
-            fog_far: 9000.0,
-            density: 0.22,
-            time: 0.0,
-            step_count: 24,
-            curve_type: 0,
-            speed_mult: 0.5,
-            _padding: 0.0,
-        },
-    }
+    let ps2_room_id = sh2_core::fog::room_id_from_stage_code(room_id);
+    let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
+        room_id: ps2_room_id,
+        ..Default::default()
+    });
+    FogUniforms::from_room_evaluation(&eval, sh2_core::config::FogQuality::ModernVolumetric, true)
 }
 
 #[cfg(test)]

@@ -154,17 +154,6 @@ pub(crate) fn update_spotlight_uniforms(
             ambient_tint,
             ..Default::default()
         }
-    } else if active_demo.is_some_and(|s| s.player.info.stage_name == "er01")
-        || (state.active_test_room == TestRoomKind::RestroomStart
-            && !state.sim_core.scenario.is_flashlight_active())
-    {
-        SpotlightUniforms {
-            position: [-19200.0, -1950.0, 20429.5, 1.0],
-            direction_inner: [-0.65, 0.76, 0.0, 0.35],
-            color_outer: [1.85, 1.90, 1.80, -0.65],
-            ambient_tint: [1.65, 1.68, 1.62, 1.85],
-            ..Default::default()
-        }
     } else if let Some(cs_spot) = cutscene_spotlight_override {
         cs_spot
     } else if let Some(session) = active_demo {
@@ -174,7 +163,7 @@ pub(crate) fn update_spotlight_uniforms(
         SpotlightUniforms {
             position: [key_pos.x, key_pos.y, key_pos.z, 1.0],
             direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
-            color_outer: [1.75, 1.72, 1.68, -0.50],
+            color_outer: [0.95, 0.93, 0.90, -0.50],
             ambient_tint,
             ..Default::default()
         }

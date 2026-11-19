@@ -369,6 +369,41 @@ fn walking_into_restroom_exit_trigger_transitions_to_observation_deck() {
 }
 
 #[test]
+fn retail_er01_cld_allows_james_to_walk_through_restroom_exit_corridor() {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let Some(cld_path) = resolver.resolve_file("bg/er/er01.cld") else {
+        return; // Skip gracefully in CI without retail assets
+    };
+    let bytes = std::fs::read(&cld_path).expect("read er01.cld");
+    let cld = sh2_assets::formats::cld::parse_cld(&bytes).expect("parse er01.cld");
+    let world = sh2_core::collision::CollisionWorld::from_cld(&cld);
+    let cfg = sh2_core::collision::CollisionConfig::default();
+    assert_eq!(cfg.radius, 200.0);
+
+    // Walk in 30 mm increments along the L-shaped exit corridor:
+    // 1. North from (-19025, 20600) -> (-19025, 21250) through 450 mm entrance (X=-19250..-18800)
+    let mut pos = glam::Vec3::new(-19_025.0, 0.0, 20_600.0);
+    for _ in 0..30 {
+        pos = world.resolve_character_movement(pos, pos + glam::Vec3::new(0.0, 0.0, 30.0), &cfg);
+    }
+    assert!(
+        pos.z >= 21_200.0,
+        "James must pass through er01.cld 450mm entrance (stuck at {:?})",
+        pos
+    );
+
+    // 2. West from (-19025, 21250) -> (-19650, 21250) through 400 mm exit hallway (Z=21050..21450)
+    for _ in 0..30 {
+        pos = world.resolve_character_movement(pos, pos + glam::Vec3::new(-30.0, 0.0, 0.0), &cfg);
+    }
+    assert!(
+        pos.x <= -19_550.0 && pos.z >= 21_000.0 && pos.z <= 21_500.0,
+        "James must reach ev[1] exit trigger rect [-20000..-19500, 21000..21500] (stuck at {:?})",
+        pos
+    );
+}
+
+#[test]
 fn all_58_retail_stages_resolve_valid_manifests() {
     assert_eq!(room_area_dir("ma01"), "bg2/ma");
     assert_eq!(room_area_dir("er01"), "bg/er");

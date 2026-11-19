@@ -10,7 +10,7 @@
 
 #![warn(missing_docs)]
 
-mod retail_ctors;
+pub mod retail_ctors;
 pub mod retail_decode;
 pub mod riddles_hotel_2f;
 pub mod riddles_hotel_lobby_bar;
@@ -32,6 +32,7 @@ pub mod tables_wish_a;
 pub mod tables_wish_b;
 pub mod wish_gravestone_render;
 
+pub use retail_ctors::*;
 pub use retail_decode::*;
 pub use riddles_hotel_2f::*;
 pub use riddles_hotel_lobby_bar::*;
@@ -53,6 +54,8 @@ pub use tables_wish_a::*;
 pub use tables_wish_b::*;
 pub use wish_gravestone_render::*;
 
+use crate::events::triggers::EventEvalInput;
+use crate::inventory::InventoryManager;
 use crate::types::{EventListEntry, ItemListEntry, StageDataHeader};
 
 pub(crate) use retail_ctors::{en, ev, gi, hdr};
@@ -271,12 +274,27 @@ impl StageTableAct2 {
     ///
     /// Flag-, button-, item- and `Always`-gated entries evaluate correctly; spatial shapes still
     /// reference [`Self::pos_list`] in the retail layout and must be resolved with
-    /// [`decode_retail_ev_pos_shape`].
+    /// [`decode_retail_ev_pos_shape`]. For carried-item triggers (`trg 7..=10`), use
+    /// [`Self::engine_event_list_for_input`].
     pub fn engine_event_list(&self) -> Vec<EventListEntry> {
         self.event_list
             .iter()
             .copied()
             .map(normalize_retail_event_entry)
+            .collect()
+    }
+
+    /// Adapts `self.event_list` for the current frame's `input` and `inventory`, preserving the
+    /// retail `trg == 10` action-while-carrying auto-key-use path (`0x0048e1ee`).
+    pub fn engine_event_list_for_input(
+        &self,
+        input: &EventEvalInput,
+        inventory: &InventoryManager,
+    ) -> Vec<EventListEntry> {
+        self.event_list
+            .iter()
+            .copied()
+            .map(|e| normalize_retail_event_entry_for_input(e, input, inventory))
             .collect()
     }
 

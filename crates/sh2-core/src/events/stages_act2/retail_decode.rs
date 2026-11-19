@@ -306,45 +306,6 @@ pub fn decode_retail_ev_pos_shape(
     }
 }
 
-/// Maps a retail `sh2pc.exe` [`EventListEntry`] (`0x0048e5b4` & `0x0048e7a4`) onto `SLUS_202.28`
-/// trigger and result discriminants expected by [`crate::events::EventEngine::tick_standard`].
-///
-/// Retail `trg == 1` maps to `Always` (`9`): in `EventCheck` (`0x0048e1db..0x0048e2cb`) it falls
-/// through both the button/item jump (`ecx = trg - 2 > 8u` -> `ja 0x0048e219`) and the spatial
-/// jump (`ja 0x0048e572`), firing every frame whenever `flag_0`/`flag_1` hold.
-///
-/// Note: only the trigger/result nibbles are normalized. The `ev_pos` offsets still index the
-/// retail 10-byte `f32`/`f16` geometry in [`super::StageTableAct2::pos_list`], which must be
-/// decoded with [`decode_retail_ev_pos_shape`] (the PS2 `tick_standard` `i16` decoder does not
-/// understand that layout).
-pub const fn normalize_retail_event_entry(entry: EventListEntry) -> EventListEntry {
-    if entry.is_sentinel() {
-        return entry;
-    }
-    let trg = match (entry.cond >> 28) & 0xf {
-        0 => 5,
-        1 => 9,
-        2 | 7 => 2,
-        3 | 4 | 8 | 9 => 0,
-        5 | 10 => 6,
-        6 => 8,
-        other => other,
-    };
-    let rslt = match (entry.rslt0 >> 28) & 0xf {
-        3 => 5,
-        4 => 3,
-        5 => 6,
-        6 => 4,
-        other => other,
-    };
-    EventListEntry {
-        flag: entry.flag,
-        cond: (entry.cond & 0x0fff_ffff) | (trg << 28),
-        rslt0: (entry.rslt0 & 0x0fff_ffff) | (rslt << 28),
-        rslt1: entry.rslt1,
-    }
-}
-
 #[inline]
 const fn clamp_i32_to_i16(v: i32) -> i16 {
     if v < i16::MIN as i32 {

@@ -4,8 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
+use sh2_core::config::ActionDifficulty;
 use sh2_core::events::*;
-use sh2_core::types::EventListEntry;
+use sh2_core::inventory::InventoryManager;
+use sh2_core::types::{EventListEntry, EventTriggerKind};
 
 /// Resolves `rel` under the workspace-root retail rip symlink (`CARGO_MANIFEST_DIR/../..`).
 fn retail_path(rel: &str) -> Option<PathBuf> {
@@ -160,5 +162,138 @@ fn retail_sh2pc_binary_and_stage_assets_match_static_tables_bit_for_bit() {
         if let Some(p) = retail_path(&format!("Silent Hill 2/data/bg/{dir}")) {
             assert!(p.is_dir());
         }
+    }
+}
+
+#[test]
+fn retail_trg10_key_doors_fire_on_action_while_carrying_key_or_menu_item_use() {
+    // All 9 retail `trg == 10` (`UseOrActionCarryingItem`, `0x0048e1c1` & `0x0048e1ee`) doors across Act 2:
+    let expected_trg10_doors: [(u16, usize, u8); 9] = [
+        (26, 12, 38), // Hospital BF_B: Basement storeroom key (38)
+        (39, 6, 46),  // Hotel BF_F: Bar key (46, lantern lit)
+        (39, 7, 46),  // Hotel BF_F: Bar key (46, lantern unlit message)
+        (41, 27, 44), // Hotel 2F_F: Room 204 key (44)
+        (41, 53, 45), // Hotel 2F_F: Employee elevator key (45)
+        (42, 6, 48),  // Hotel 3F_F: Hotel stairway key (48)
+        (42, 10, 43), // Hotel 3F_F: Room 312 key (43)
+        (46, 8, 25),  // Hotel 3F_B: Dog key (25)
+        (56, 33, 82), // Wish 2F: Acacia key (82)
+    ];
+
+    // 8-byte PS2 point at `(0, 0, 0)` with `radius = 400` (`[0x90, 0x01]`) and player at `(0, 0, -200)`.
+    let ps2_origin_point = [0u8, 0, 0, 0, 0, 0, 0x90, 0x01];
+    let action_no_item = EventEvalInput {
+        player_pos: [0.0, 0.0, -200.0],
+        player_rot_y: 0.0,
+        ev_active: 0,
+        action_pressed: true,
+        map_disabled_pressed: false,
+        room_changed: false,
+        stage_changed: false,
+        used_item_id: None,
+        is_demo_mode: false,
+        action_difficulty: ActionDifficulty::Normal,
+        player_can_search: true,
+    };
+
+    for (stage_id, ev_idx, key_id) in expected_trg10_doors {
+        let table = stage_table_act2(stage_id).expect("stage table");
+        let raw = table.event_list[ev_idx];
+        assert_eq!(
+            RetailTriggerKind::from_entry(&raw),
+            Some(RetailTriggerKind::UseOrActionCarryingItem)
+        );
+        assert_eq!(raw.required_item_id(), key_id);
+
+        // Pin `ev_pos_offset = 0` and `shape = Point (0)` so `evaluate_event_entry` tests the point at origin.
+        let mut raw_at_origin = raw;
+        raw_at_origin.cond &= !0x0fff_f000;
+
+        let mut flags = EventFlags::new();
+        if raw.flag_0() != 0 {
+            flags.set(raw.flag_0() as usize, !raw.flag_0_inverted());
+        }
+        if raw.flag_1() != 0 {
+            flags.set(raw.flag_1() as usize, !raw.flag_1_inverted());
+        }
+
+        // 1. Without carrying the key, pressing Action must NOT fire.
+        let empty_inv = InventoryManager::new();
+        assert!(!RetailTriggerKind::UseOrActionCarryingItem.matches_input(
+            key_id,
+            &action_no_item,
+            &empty_inv
+        ));
+        let norm_missing =
+            normalize_retail_event_entry_for_input(raw_at_origin, &action_no_item, &empty_inv);
+        assert_eq!(
+            norm_missing.trigger_kind(),
+            Some(EventTriggerKind::UseItemLook)
+        );
+        let mut ts = EventTriggerState::new();
+        assert_eq!(
+            evaluate_event_entry(
+                0,
+                &norm_missing,
+                &ps2_origin_point,
+                &flags,
+                &action_no_item,
+                &mut ts
+            ),
+            0.0
+        );
+
+        // 2. Carrying the key and pressing Action with `used_item_id == None` MUST fire (`ActionLook`).
+        let mut carried_inv = InventoryManager::new();
+        carried_inv.give_raw(key_id, 1);
+        assert!(RetailTriggerKind::UseOrActionCarryingItem.matches_input(
+            key_id,
+            &action_no_item,
+            &carried_inv
+        ));
+        let norm_carried =
+            normalize_retail_event_entry_for_input(raw_at_origin, &action_no_item, &carried_inv);
+        assert_eq!(
+            norm_carried.trigger_kind(),
+            Some(EventTriggerKind::ActionLook)
+        );
+        assert!(
+            evaluate_event_entry(
+                0,
+                &norm_carried,
+                &ps2_origin_point,
+                &flags,
+                &action_no_item,
+                &mut ts
+            ) > 0.0,
+            "stage {stage_id} ev[{ev_idx}] key {key_id} failed action-while-carrying fire"
+        );
+        let adapted_list = table.engine_event_list_for_input(&action_no_item, &carried_inv);
+        assert_eq!(
+            adapted_list[ev_idx].trigger_kind(),
+            Some(EventTriggerKind::ActionLook)
+        );
+
+        // 3. Explicit menu item use (`used_item_id == Some(key_id)`, `action_pressed == false`) MUST also fire (`UseItemLook`).
+        let menu_use = EventEvalInput {
+            action_pressed: false,
+            used_item_id: Some(key_id),
+            ..action_no_item
+        };
+        assert!(RetailTriggerKind::UseOrActionCarryingItem.matches_input(
+            key_id,
+            &menu_use,
+            &carried_inv
+        ));
+        let norm_menu =
+            normalize_retail_event_entry_for_input(raw_at_origin, &menu_use, &carried_inv);
+        assert_eq!(
+            norm_menu.trigger_kind(),
+            Some(EventTriggerKind::UseItemLook)
+        );
+        assert!(
+            evaluate_event_entry(0, &norm_menu, &ps2_origin_point, &flags, &menu_use, &mut ts)
+                > 0.0
+        );
     }
 }

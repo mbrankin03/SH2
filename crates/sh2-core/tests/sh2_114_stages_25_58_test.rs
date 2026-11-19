@@ -385,13 +385,23 @@ fn hotel_otherworld_and_born_from_a_wish_gravestone_and_mansion_triggers() {
 
 #[test]
 fn retail_trg1_always_events_fire_mid_room_and_gravestone_verts_toggle() {
-    // Retail `trg == 1` (`EventCheck` `0x0048e1db`) fires every frame without room/stage change.
+    // Retail `trg == 0` and `trg == 1` (`EventCheck` `0x0048e1db`) both fire every frame (`Always`).
+    let raw0 = EventListEntry {
+        flag: 0,
+        cond: 0x0000_0000,
+        rslt0: 0x1000_0000,
+        rslt1: 0,
+    };
     let raw = EventListEntry {
         flag: 0,
         cond: 0x1000_0000,
         rslt0: 0x1000_0000,
         rslt1: 0,
     };
+    assert_eq!(
+        normalize_retail_event_entry(raw0).trigger_kind(),
+        Some(EventTriggerKind::Always)
+    );
     let norm = normalize_retail_event_entry(raw);
     assert_eq!(norm.trigger_kind(), Some(EventTriggerKind::Always));
     let eval = EventEvalInput {
@@ -418,10 +428,11 @@ fn retail_trg1_always_events_fire_mid_room_and_gravestone_verts_toggle() {
     // Gravestone quad vertices: vanilla `0x008c4670` orderings vs SH2:EE `GravestoneBoardsFix`.
     let [x0, y0, x1, y1] = GRAVESTONE_BOARD_VERT_EXTENTS;
     assert_eq!([x0, y0, x1, y1], [-1285, -2110, 1275, 1218]);
-    assert_eq!(
+    let (v0_fix, v0_van) = (
         gravestone_board_verts(BoardRotation::Deg0, true),
-        gravestone_board_verts(BoardRotation::Deg0, false)
+        gravestone_board_verts(BoardRotation::Deg0, false),
     );
+    assert_eq!(v0_fix, v0_van);
     assert_eq!(
         gravestone_board_verts(BoardRotation::Left90, false),
         [[x0, y1], [x0, y0], [x1, y1], [x1, y0]]

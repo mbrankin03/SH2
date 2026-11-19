@@ -6,8 +6,8 @@ use crate::rooms::story_progression_room::{
     hud_act1::render_act1_tab,
     hud_act2::render_act2_tab,
     hud_common::{
-        blit_cutaway_viewport, draw_card, draw_progress_bar, draw_text_clipped, txt_left,
-        txt_right, CYAN, GREEN, MUTED, ORANGE, WHITE, YELLOW,
+        blit_cutaway_viewport, draw_card, draw_progress_bar, draw_text_clipped, txt_right, CYAN,
+        GREEN, MUTED, ORANGE, WHITE, YELLOW,
     },
     hud_endings::render_endings_judge_tab,
     hud_ufo_letter::render_ufo_and_letter_tab,
@@ -274,9 +274,9 @@ fn draw_stage3_incar_map_modal(state: &mut AppState) {
     );
 
     let msg = if map_taken {
-        "\"Got the map of Silent Hill.\" (Flag 28=true, Item #19 in Inventory, SE 0x2b17)"
+        "\"Got the map of Silent Hill.\" (Flag 28=true, Item #19, SE 0x2b17)"
     } else {
-        "Map of Silent Hill sits on the driver's seat (out/p_incar_map sprite overlay)."
+        "Map of Silent Hill on the seat (out/p_incar_map @ -48.375, -31.625)."
     };
     draw_text_clipped(
         state,
@@ -293,9 +293,9 @@ fn draw_stage3_incar_map_modal(state: &mut AppState) {
         74,
         WHITE,
         if map_taken {
-            "Press [E / Enter / Esc] to Close Modal & Return to 3D Observation Deck (or [S] Reset Flag 28)"
+            "Press [E / Enter / Esc] to Return to 3D Deck (or [S] Reset Flag 28)"
         } else {
-            "Press [E / Enter / Space] to Take Map of Silent Hill! (Plays SE 0x2b17 & sets Flag 28)"
+            "Press [E / Enter / Space] to Take Map! (Plays SE 0x2b17 & Flag 28)"
         },
     );
     draw_progress_bar(
@@ -308,12 +308,13 @@ fn draw_stage3_incar_map_modal(state: &mut AppState) {
         GREEN,
         CYAN,
     );
-    txt_left(
+    draw_text_clipped(
         state,
         mx + 24,
         my + 534,
+        74,
         MUTED,
-        "[ESC] Close Overlay & Return to 3D Walking | [PgDn] Advance to Next Story Checkpoint",
+        "[ESC] Close Overlay & Return to 3D | [PgDn] Next Story Checkpoint",
     );
 }
 

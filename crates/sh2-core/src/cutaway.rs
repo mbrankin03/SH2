@@ -388,13 +388,19 @@ impl CutawayOverlayEngine {
             }
             OverlayKind::InCar => {
                 if self.incar_alpha > 0.0 {
-                    // 0x5a0b80: (-127, -234) size (256, 256)
+                    // Ground truth: `sh2pc.exe @ 0x005a0b18..0x005a0b38` (`.data @ 0x008e7b48..0x008e7b4c`):
+                    //   x0_q4 = -774 (-48.375), y0_q4 = -506 (-31.625)
+                    //   x1_q4 = -774 + 0x1000 = 3322 (207.625), y1_q4 = -506 + 0x1000 = 3590 (224.375)
+                    const INCAR_MAP_X0: f32 = -774.0 / 16.0;
+                    const INCAR_MAP_Y0: f32 = -506.0 / 16.0;
+                    const INCAR_MAP_X1: f32 = (-774.0 + 4096.0) / 16.0;
+                    const INCAR_MAP_Y1: f32 = (-506.0 + 4096.0) / 16.0;
                     self.emit_rect(
                         "out/p_incar_map",
-                        -127.0,
-                        -234.0,
-                        129.0,
-                        22.0,
+                        INCAR_MAP_X0,
+                        INCAR_MAP_Y0,
+                        INCAR_MAP_X1,
+                        INCAR_MAP_Y1,
                         0.0,
                         0.0,
                         256.0,

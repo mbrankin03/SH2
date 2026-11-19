@@ -465,7 +465,29 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
     assert_eq!(state.cutaway_overlay.active_picture(), Some("out_p_incar"));
     assert_eq!(state.cutaway_overlay.kind(), OverlayKind::InCar);
     assert_eq!(state.cutaway_overlay.frame_sprites().len(), 1);
-    assert!((state.cutaway_overlay.frame_sprites()[0].alpha - 1.0).abs() < 1e-5);
+    let incar_quad = &state.cutaway_overlay.frame_sprites()[0];
+    assert_eq!(incar_quad.sheet_name, "out/p_incar_map");
+    assert!((incar_quad.alpha - 1.0).abs() < 1e-5);
+    assert!((incar_quad.vertices[0].0 - (-48.375)).abs() < 1e-5);
+    assert!((incar_quad.vertices[0].1 - (-31.625)).abs() < 1e-5);
+    assert!((incar_quad.vertices[2].0 - 207.625).abs() < 1e-5);
+    assert!((incar_quad.vertices[2].1 - 224.375).abs() < 1e-5);
+
+    // Verify 1:1 binary parity with `sh2pc.exe @ 0x008e7b48..0x008e7b4c` (file offset `0x004e7b48..0x004e7b50`)
+    let sh2pc_path = std::path::Path::new(
+        "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2pc.exe",
+    );
+    if sh2pc_path.exists() {
+        let exe_bytes = std::fs::read(sh2pc_path).expect("read sh2pc.exe");
+        let x0_q4 = i32::from_le_bytes(exe_bytes[0x004e7b48..0x004e7b4c].try_into().unwrap());
+        let y0_q4 = i32::from_le_bytes(exe_bytes[0x004e7b4c..0x004e7b50].try_into().unwrap());
+        assert_eq!(x0_q4, -774);
+        assert_eq!(y0_q4, -506);
+        assert!((incar_quad.vertices[0].0 - (x0_q4 as f32 / 16.0)).abs() < 1e-5);
+        assert!((incar_quad.vertices[0].1 - (y0_q4 as f32 / 16.0)).abs() < 1e-5);
+        assert!((incar_quad.vertices[2].0 - ((x0_q4 + 0x1000) as f32 / 16.0)).abs() < 1e-5);
+        assert!((incar_quad.vertices[2].1 - ((y0_q4 + 0x1000) as f32 / 16.0)).abs() < 1e-5);
+    }
 
     // Press A -> triggers SE 0x2b17 and begins 1.0s map fade
     assert!(state.prog_runner.tick(

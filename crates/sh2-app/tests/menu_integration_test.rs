@@ -605,8 +605,8 @@ fn test_sh2_15_inventory_and_puzzle_cutaway_debug_rooms_and_rasterizer() {
     let tris = sprites[0].to_viewport_triangles(0.0, 0.0, 512.0, 512.0);
     let map_rgba = vec![255u8; 32 * 32 * 4];
     rast.blit_overlay_triangles(&tris, &map_rgba, 32, 32, 1.0);
-    // Sprite covers x: -127..129 -> screen x: 129..385, y: -234..22 -> screen y: 22..278
-    let sprite_ofs = (150 * 640 + 250) * 4;
+    // Sprite covers x: -48.375..207.625 -> screen x: 207.625..463.625, y: -31.625..224.375 -> screen y: 224.375..480.375
+    let sprite_ofs = (350 * 640 + 335) * 4;
     assert_eq!(rast.pixels[sprite_ofs], 255);
     assert_eq!(rast.pixels[sprite_ofs + 3], 255);
 

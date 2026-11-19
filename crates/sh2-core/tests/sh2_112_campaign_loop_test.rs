@@ -334,6 +334,41 @@ fn delayed_fade_in_option_integrates_with_enhanced_presets() {
 }
 
 #[test]
+fn walking_into_restroom_exit_trigger_transitions_to_observation_deck() {
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        2,
+        Some("er01".to_string()),
+        [-19_606.6, 0.0, 20_429.55],
+        -std::f32::consts::FRAC_PI_2,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        false,
+    );
+    sim.scenario.flags.set(0x0020, true);
+    let _ = drive_connect_to_completion(&mut orch, &mut sim, 0.1);
+    assert_eq!(orch.phase, CampaignPhase::ActiveGameplay);
+
+    // Walk James through the open restroom exit archway (`ev[1]` rectangle: x=[-20000,-19500], z=[21000,21500]).
+    sim.snap_player_transform(glam::Vec3::new(-19_750.0, 0.0, 21_100.0), 0.0);
+    let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+    assert!(
+        matches!(
+            orch.phase,
+            CampaignPhase::DoorTransition { command, .. } if command.dest_stage == 3
+        ),
+        "Walking into retail ev[1] exit rect must trigger DoorTransition to Stage 3 (ob01), got {:?}",
+        orch.phase
+    );
+
+    let (_, saw_load_room, loaded_stage) = drive_connect_to_completion(&mut orch, &mut sim, 0.1);
+    assert!(saw_load_room);
+    assert_eq!(loaded_stage, Some(3));
+    assert_eq!(sim.scenario.current_room, "ob01");
+    assert!((sim.scenario.player_position.x - 21_350.0).abs() < 1.0);
+    assert!((sim.scenario.player_position.z - (-4_550.0)).abs() < 1.0);
+}
+
+#[test]
 fn all_58_retail_stages_resolve_valid_manifests() {
     assert_eq!(room_area_dir("ma01"), "bg2/ma");
     assert_eq!(room_area_dir("er01"), "bg/er");

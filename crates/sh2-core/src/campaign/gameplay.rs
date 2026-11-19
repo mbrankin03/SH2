@@ -9,10 +9,10 @@ use crate::events::triggers::EventEvalInput;
 use crate::events::{ClearData, Sh2Rng};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
-use crate::types::ItemListEntry;
 use crate::world::OutdoorTileStreamer;
 
 use super::io::{CampaignEffects, CampaignTickInput};
+use super::retail_events::evaluate_retail_stage_events;
 use super::stage_loader::resolve_stage_manifest;
 use super::state::{
     CampaignPhase, ConnectStep, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
@@ -162,49 +162,32 @@ pub(crate) fn run_active_gameplay(
 }
 
 fn tick_stage_events(
-    event_engine: &mut EventEngine,
+    _event_engine: &mut EventEngine,
     sim: &mut SimulationCore,
     stage_id: u16,
     eval_input: &EventEvalInput,
-    input: &CampaignTickInput,
+    _input: &CampaignTickInput,
 ) -> EventEngineEffects {
     if stage_id <= 27 {
         if let Some(act1) = act1_stage_descriptor(stage_id as u8) {
-            let items: Vec<ItemListEntry> = act1
-                .item_list
-                .iter()
-                .map(|gi| gi.to_item_list_entry())
-                .collect();
-            return event_engine.tick_standard(
+            return evaluate_retail_stage_events(
                 act1.event_list,
-                &items,
                 act1.ev_pos,
                 stage_id as u8,
                 eval_input,
-                input.message_dismissed,
-                false,
-                false,
-                true,
                 &mut sim.scenario.flags,
-                &mut sim.scenario.inventory_mgr,
+                &sim.scenario.inventory_mgr,
             );
         }
     }
     if let Some(act2) = stage_table_act2(stage_id) {
-        let ev_list = act2.engine_event_list_for_input(eval_input, &sim.scenario.inventory_mgr);
-        let items = act2.ps2_item_list_with_sentinel();
-        return event_engine.tick_standard(
-            &ev_list,
-            &items,
+        return evaluate_retail_stage_events(
+            act2.event_list,
             act2.pos_list,
             stage_id as u8,
             eval_input,
-            input.message_dismissed,
-            false,
-            false,
-            true,
             &mut sim.scenario.flags,
-            &mut sim.scenario.inventory_mgr,
+            &sim.scenario.inventory_mgr,
         );
     }
     EventEngineEffects::default()

@@ -13,6 +13,7 @@ pub mod cutscene_handoff;
 pub(crate) mod gameplay;
 pub mod io;
 pub mod orchestrator;
+pub mod retail_events;
 pub mod stage_loader;
 pub mod state;
 

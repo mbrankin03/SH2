@@ -2,6 +2,7 @@
 
 pub mod atlas_font;
 pub mod button_atlas;
+pub mod credits;
 pub mod font;
 pub mod loading;
 pub mod map;
@@ -12,6 +13,11 @@ pub mod quickslots;
 
 pub use atlas_font::{draw_subtitle, AtlasFont, Sh2TextColor};
 pub use button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
+pub use credits::{
+    CreditsSequencePhase, EndingCreditsSequence, CREDITS_BIK_DURATION_SECS, END_BIK_DURATION_SECS,
+    END_DOG_BIK_DURATION_SECS, END_WISH_BIK_DURATION_SECS, IN_WATER_BEDSIDE_DURATION_SECS,
+    IN_WATER_CLOSING_SCROLL_DURATION_SECS, WATER_BIK_DURATION_SECS,
+};
 pub use font::TextRasterizer;
 pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
 pub use map::{MapCanvasClipper, MapDescriptor, MapPlayerMarker};

@@ -5,6 +5,7 @@ pub mod acoustics;
 pub mod beta_audio_catalog;
 pub mod bgm_data;
 pub mod bgm_manager;
+pub mod chainsaw_sfx;
 pub mod cutscene_bgm;
 pub mod device_routing;
 pub mod dialogue;
@@ -43,6 +44,14 @@ pub use bgm_manager::{
     BgmTrackStatus, SoundAreaEvaluation, BGM_MAX_TRACKS, ENEMY_NEAR_DIST_SQ, FADE_PRIO,
     FADE_TIME_SECS, LOW_HEALTH_RATIO_THRESHOLD, MAX_MATCHED_SOUND_AREAS, SITUATION_PRESETS_6_TO_15,
     SOUND_AREA_HALF_WIDTH,
+};
+pub use chainsaw_sfx::{
+    compute_chainsaw_wav_slice, ChainsawAudioOutput, ChainsawIdleState, ChainsawSoundController,
+    ChainsawTickInput, ChainsawWavSlice, CHAINSAW_IDLE_FADE_DURATION_SECS,
+    CHAINSAW_IDLE_FADE_START_TIME_SECS, CHAINSAW_MIN_ACTIVE_VOLUME, CRANK_LEFT_SIDE_TRIM_BYTES_48K,
+    IDLE_LOOP_TRIM_BYTES_48K, IDLE_LOOP_TRIM_BYTES_ORIGINAL, SAMPLE_RATE_48KHZ, SE_CHAINSAW_ATTACK,
+    SE_CHAINSAW_CRANK, SE_CHAINSAW_HIT, SE_CHAINSAW_IDLE_LOOP, SE_CHAINSAW_IDLE_START,
+    WAV_RIFF_HEADER_BYTES,
 };
 pub use cutscene_bgm::{
     find_cutscene_audio_mapping, master_volume_for_start_id, resolve_bgm_stream_path,

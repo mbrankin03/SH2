@@ -55,13 +55,6 @@ pub(crate) enum StoryDemoTab {
 }
 
 impl StoryDemoTab {
-    pub const ALL: [Self; 4] = [
-        Self::Act1StagesAndRiddles,
-        Self::Act2StagesAndRiddles,
-        Self::EndingJudgeAndRanking,
-        Self::UfoAndMaryLetterCredits,
-    ];
-
     pub const fn next(self) -> Self {
         match self {
             Self::Act1StagesAndRiddles => Self::Act2StagesAndRiddles,
@@ -97,7 +90,6 @@ pub(crate) struct StoryProgressionRoomState {
     pub act1_wing_keypad: Act1HospitalWingKeypad,
     pub act1_louise_box: Act1LouiseBoxState,
     pub act1_radio_quiz_ticks: f32,
-    pub act1_poison_timer_secs: f32,
     pub act1_james_hp: f32,
     pub act1_ph_hp_ratio: f32,
     pub act1_ph_zone: u8,
@@ -147,7 +139,6 @@ impl Default for StoryProgressionRoomState {
             act1_wing_keypad: Act1HospitalWingKeypad::new(),
             act1_louise_box: Act1LouiseBoxState::new(),
             act1_radio_quiz_ticks: 220.0,
-            act1_poison_timer_secs: 0.0,
             act1_james_hp: 100.0,
             act1_ph_hp_ratio: 1.0,
             act1_ph_zone: 1,
@@ -411,7 +402,6 @@ pub(super) fn play_confirm_se(state: &mut AppState) {
     }
 }
 
-#[allow(dead_code)]
 pub(super) fn cycle_riddle_difficulty(d: RiddleDifficulty) -> RiddleDifficulty {
     match d {
         RiddleDifficulty::Easy => RiddleDifficulty::Normal,

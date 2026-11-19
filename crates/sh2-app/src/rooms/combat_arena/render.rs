@@ -676,7 +676,12 @@ fn evaluate_player_skinning(
 
             state.skin_matrices_scratch.reserve(c.skin_scratch.len());
             state.mirror_skin_matrices_scratch.clear();
-            let build_mirror = state.active_test_room == TestRoomKind::RestroomStart;
+            let build_mirror = state.active_test_room == TestRoomKind::RestroomStart
+                || state
+                    .sim_core
+                    .scenario
+                    .current_room
+                    .eq_ignore_ascii_case("er01");
             if build_mirror {
                 state
                     .mirror_skin_matrices_scratch
@@ -903,6 +908,11 @@ fn submit_scene_draw(
 ) {
     let mut skeletal_draw = Vec::new();
     let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart
+        || state
+            .sim_core
+            .scenario
+            .current_room
+            .eq_ignore_ascii_case("er01")
         || state
             .drama_demo_session
             .as_ref()

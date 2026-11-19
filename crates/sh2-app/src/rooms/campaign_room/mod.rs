@@ -262,10 +262,15 @@ impl RoomController for CampaignRoomController {
             .video
             .texture_quality
             != sh2_core::config::WorldTextureQuality::OriginalPs2;
-        tick_input.drama_demo_finished = state
-            .drama_demo_session
-            .as_ref()
-            .is_some_and(|s| s.player.step == DramaDemoStep::Finished);
+        let in_drama_demo = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::DramaDemo { .. })
+        );
+        tick_input.drama_demo_finished = in_drama_demo
+            && state
+                .drama_demo_session
+                .as_ref()
+                .is_none_or(|s| s.player.step == DramaDemoStep::Finished);
         tick_input.fmv_finished = state.fmv_session.is_none()
             && matches!(
                 state.campaign_orchestrator.as_ref().map(|o| &o.phase),
@@ -293,6 +298,17 @@ impl RoomController for CampaignRoomController {
         let allow_sim = effects.allow_gameplay_sim;
         Self::apply_effects(state, effects);
 
+        let now_in_drama_demo = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::DramaDemo { .. })
+        );
+        if in_drama_demo && !now_in_drama_demo {
+            state.drama_demo_session = None;
+            if let Some(ref mut eng) = state.audio_engine {
+                eng.stop_voice(Duration::from_millis(50));
+            }
+        }
+
         let is_fmv = matches!(
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::FmvPlayback { .. })
@@ -302,13 +318,21 @@ impl RoomController for CampaignRoomController {
                 state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
             );
         } else {
+            // During `DramaDemo`, keep `is_paused` false (unless user opened Pause Menu) so
+            // `step_cutscene_player` advances the `.dds` cutscene while `locks_gameplay_input()`
+            // suppresses player locomotion.
+            let render_paused = if now_in_drama_demo {
+                is_paused
+            } else {
+                is_paused || !allow_sim
+            };
             CombatArenaRoomController::tick_and_render_3d(
                 state,
                 dt,
                 dt_sec,
                 aspect,
                 grain_pct,
-                is_paused || !allow_sim,
+                render_paused,
                 is_in_game,
             );
         }
@@ -348,6 +372,7 @@ impl RoomController for CampaignRoomController {
         };
 
         if fade_alpha <= 0.005 && status_line.is_none() {
+            CombatArenaRoomController::render_hud(state, encoder, surface_view);
             return;
         }
 

@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::assets::{
     build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
     find_sh2e_map_file_for_room, find_vanilla_map_file_for_room, load_viewer_entry_asset,
-    room_cam_id_for_test_room,
+    open_drama_demo_session, room_cam_id_for_test_room,
 };
 use crate::menu_events::apply_pending_engine_config;
 use crate::rooms;
@@ -209,6 +209,7 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             state.sim_core.reset_cameras_to_player(new_pos, new_yaw);
         }
         state.active_test_room = new_room;
+        rooms::combat_arena::story_progression_3d::sync_checkpoint_with_room_entry(state, new_room);
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());
         if let Some(ref mut bank) = state.audio_bank {
@@ -224,6 +225,13 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             TestRoomKind::ObservationDeck => 1, // `tenbou` (demo_no = 2)
             _ => state.selected_drama_demo_idx,
         };
+        if new_room == TestRoomKind::RestroomStart
+            && state.story_progression_room.checkpoint_3d_idx == 0
+            && !state.story_progression_room.restroom_mirror_inspected
+        {
+            state.drama_demo_session = open_drama_demo_session(&state.render_ctx, 0, false);
+            state.apply_texture_quality(active_tex_quality);
+        }
         if new_room == TestRoomKind::CombatArena {
             state.combat_arena = sh2_core::combat::CombatArena::new();
             state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;

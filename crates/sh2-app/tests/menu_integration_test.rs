@@ -699,5 +699,21 @@ fn test_sh2_65_cli_flags_and_story_stages_and_endings_room_menu_selection() {
         TestRoomKind::StoryStagesAndEndingsRoom
     );
 
+    // Verify NEW GAME (`MainMenuOption::NewGame` -> `RiddleDifficultySelect` -> `Confirm`)
+    // automatically sets `selected_test_room` to `TestRoomKind::RestroomStart` (`er01.map`, Stage 2 `stg_toilet`)
+    let mut ng_ctrl = AppMenuController::new(&config_path);
+    ng_ctrl.handle_nav(MenuNavAction::Confirm); // Splash -> TitleLogo
+    ng_ctrl.handle_nav(MenuNavAction::Confirm); // TitleLogo -> MainMenu
+    ng_ctrl.handle_nav(MenuNavAction::Confirm); // NewGame -> ScenarioSelect
+    ng_ctrl.handle_nav(MenuNavAction::Confirm); // ScenarioSelect -> ActionDifficultySelect
+    ng_ctrl.handle_nav(MenuNavAction::Confirm); // ActionDifficultySelect -> RiddleDifficultySelect
+    let ng_cue = ng_ctrl.handle_nav(MenuNavAction::Confirm); // RiddleDifficultySelect -> TransitionToGame
+    assert_eq!(ng_cue, MenuSoundCue::GameStartTransition);
+    assert_eq!(ng_ctrl.title_sm.phase, TitlePhase::TransitionToGame);
+    assert_eq!(
+        ng_ctrl.title_sm.selected_test_room,
+        TestRoomKind::RestroomStart
+    );
+
     let _ = fs::remove_dir_all(&test_dir);
 }

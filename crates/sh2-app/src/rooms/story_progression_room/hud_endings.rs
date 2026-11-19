@@ -12,7 +12,7 @@ use sh2_core::endings::{
     EndingEvalFlags, HyperSprayColor, CHAINSAW_ATTACK_SPECS, REBIRTH_RITUAL_ITEM_IDS,
 };
 
-pub(super) fn render_endings_judge_tab(state: &mut AppState) {
+pub(crate) fn render_endings_judge_tab(state: &mut AppState) {
     // Small top-left 3D Controls pill so the user knows they can walk around in 3D while leaving x=0..720 clear
     draw_card(
         state,

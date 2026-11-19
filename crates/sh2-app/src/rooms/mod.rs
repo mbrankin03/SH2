@@ -227,13 +227,7 @@ pub(crate) fn dispatch_render_hud(
             );
         }
         _ => {
-            if state.debug_camera_hud
-                || state.drama_demo_session.is_some()
-                || state.sim_core.active_reticle_state()
-                    != sh2_core::modern_camera::OtsReticleState::Hidden
-            {
-                combat_arena::CombatArenaRoomController::render_hud(state, encoder, surface_view);
-            }
+            combat_arena::CombatArenaRoomController::render_hud(state, encoder, surface_view);
         }
     }
 }

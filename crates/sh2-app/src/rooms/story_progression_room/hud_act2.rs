@@ -15,7 +15,7 @@ use sh2_core::events::stages_act2::{
 use sh2_core::events::PZ_DRUM;
 use sh2_core::{original_sheet_dimensions, riddle_level_index, OverlaySpriteQuad};
 
-pub(super) fn render_act2_tab(state: &mut AppState) {
+pub(crate) fn render_act2_tab(state: &mut AppState) {
     let active_pz = state.story_progression_room.act2_puzzle;
     let pref = state.story_progression_room.prefer_sh2ee_cutaways;
 

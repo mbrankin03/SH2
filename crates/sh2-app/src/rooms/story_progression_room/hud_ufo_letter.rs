@@ -16,7 +16,7 @@ use sh2_core::endings::{
     LETTER_W1_MSG_E_ENTRIES, UFO_SLIDE_TABLE, WATER_BIK_DURATION_SECS,
 };
 
-pub(super) fn render_ufo_and_letter_tab(state: &mut AppState) {
+pub(crate) fn render_ufo_and_letter_tab(state: &mut AppState) {
     let slide_idx = state.story_progression_room.ufo_player.slide_index;
     let slide = state.story_progression_room.ufo_player.current_slide();
     let tex_path = state

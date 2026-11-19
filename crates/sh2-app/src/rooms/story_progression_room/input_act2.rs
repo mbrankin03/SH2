@@ -18,7 +18,7 @@ use sh2_core::events::stages_act2::{
 use sh2_core::events::{evaluate_event_entry, EventEvalInput, EventTriggerState, PZ_DRUM};
 use sh2_core::InventoryManager;
 
-pub(super) fn handle_act2_key(state: &mut AppState, key_code: KeyCode) {
+pub(crate) fn handle_act2_key(state: &mut AppState, key_code: KeyCode) {
     if let Some((pz, msg)) = match key_code {
         KeyCode::Digit1 => Some((
             Act2VisualPuzzle::WishGravestone,

@@ -154,6 +154,12 @@ pub(crate) struct StoryProgressionRoomState {
     pub credits_paused: bool,
     pub extended_cemetery_draw_dist: bool,
     pub status_banner: String,
+    /// Current 3D story progression checkpoint index (`0..12`, stepped with `[PgUp]` / `[PgDn]` in 3D gameplay).
+    pub checkpoint_3d_idx: usize,
+    /// Whether the interactive `.tex` cutaway / UFO / Ending Judge modal is currently popped up over the 3D world (`[E]` / `[Enter]` / `[ESC]`).
+    pub modal_3d_open: bool,
+    /// Whether James has inspected the dirty restroom mirror in `RestroomStart` (`er01.map`) before exiting.
+    pub restroom_mirror_inspected: bool,
 }
 
 impl Default for StoryProgressionRoomState {
@@ -220,7 +226,10 @@ impl Default for StoryProgressionRoomState {
             credits_paused: false,
             extended_cemetery_draw_dist: true,
             status_banner:
-                "SH2-65 Visual Studio: [F1] Act 1 Puzzles | [F2] Act 2 Puzzles | [F3] 3D Arena & Ending Judge | [F4] UFO & Letter".to_string(),
+                "Stage 2 (er01.map): Press [E] to Inspect Mirror / Exit Restroom -> Observation Deck | [PgUp/PgDn] 12 Story Checkpoints".to_string(),
+            checkpoint_3d_idx: 0,
+            modal_3d_open: false,
+            restroom_mirror_inspected: false,
         };
         s.playing_info.time = 7_200.0;
         s.playing_info.boat_clear_time = 75.0;
@@ -340,7 +349,7 @@ impl RoomController for StoryProgressionRoomController {
     }
 }
 
-fn ensure_demo_scenario_seeded(state: &mut AppState) {
+pub(crate) fn ensure_demo_scenario_seeded(state: &mut AppState) {
     if state.sim_core.scenario.flags.get(405) {
         return;
     }
@@ -378,7 +387,7 @@ fn ensure_demo_scenario_seeded(state: &mut AppState) {
     }
 }
 
-pub(super) fn ensure_ufo_texture_cached(
+pub(crate) fn ensure_ufo_texture_cached(
     rm: &mut StoryProgressionRoomState,
     rel_path: &'static str,
 ) {
@@ -400,19 +409,19 @@ pub(super) fn ensure_ufo_texture_cached(
     }
 }
 
-pub(super) fn play_cursor_se(state: &mut AppState) {
+pub(crate) fn play_cursor_se(state: &mut AppState) {
     if let Some(eng) = state.audio_engine.as_mut() {
         let _ = play_menu_sound(eng, state.audio_bank.as_ref(), SoundCueKind::CursorMove);
     }
 }
 
-pub(super) fn play_confirm_se(state: &mut AppState) {
+pub(crate) fn play_confirm_se(state: &mut AppState) {
     if let Some(eng) = state.audio_engine.as_mut() {
         let _ = play_menu_sound(eng, state.audio_bank.as_ref(), SoundCueKind::Confirm);
     }
 }
 
-pub(super) fn cycle_riddle_difficulty(d: RiddleDifficulty) -> RiddleDifficulty {
+pub(crate) fn cycle_riddle_difficulty(d: RiddleDifficulty) -> RiddleDifficulty {
     match d {
         RiddleDifficulty::Easy => RiddleDifficulty::Normal,
         RiddleDifficulty::Normal => RiddleDifficulty::Hard,

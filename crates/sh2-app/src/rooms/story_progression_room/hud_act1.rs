@@ -18,7 +18,7 @@ use sh2_core::{
     is_coin_desk_solved, original_sheet_dimensions, riddle_level_index, OverlaySpriteQuad,
 };
 
-pub(super) fn render_act1_tab(state: &mut AppState) {
+pub(crate) fn render_act1_tab(state: &mut AppState) {
     let active_pz = state.story_progression_room.act1_puzzle;
     let pref = state.story_progression_room.prefer_sh2ee_cutaways;
     let fixes = state.story_progression_room.act1_fixes;

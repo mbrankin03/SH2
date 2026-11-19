@@ -400,7 +400,9 @@ impl TitleStateMachine {
                     sound = MenuSoundCue::CursorMove;
                 }
                 MenuNavAction::Confirm => {
-                    // Match PS2 `titleFadeOutNewGame`
+                    // Match PS2 `titleFadeOutNewGame`: begin in Stage 2 Restroom (`er01.map`, `R_BEGIN_BATHROOM = 0x01`)
+                    self.selected_test_room = TestRoomKind::RestroomStart;
+                    self.test_room_index = 1;
                     self.phase = TitlePhase::TransitionToGame;
                     self.start_fade_out();
                     sound = MenuSoundCue::GameStartTransition;

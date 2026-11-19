@@ -26,6 +26,13 @@ pub(super) fn handle_combat_arena_key_input(
         return;
     }
 
+    // Route 3D Story Progression Checkpoints (`[PgUp/PgDn]`), interactive cutaway modal (`[E/Enter]`),
+    // and NG+ Secret Weapon / UFO / Ending Judge shortcuts (`[7/8/U/L]`) (`SH2-65`).
+    if super::story_input::handle_3d_story_key_input(state, key_code, pressed, repeat) {
+        update_accumulated_directional_input(state);
+        return;
+    }
+
     match key_code {
         KeyCode::Escape | KeyCode::Backspace if pressed => {
             state.clear_held_gameplay_keys();
@@ -47,30 +54,14 @@ pub(super) fn handle_combat_arena_key_input(
             tracing::info!("Paused gameplay -> In-Game Pause Menu opened.");
             return;
         }
-        KeyCode::KeyW | KeyCode::ArrowUp => {
-            state.key_forward = pressed;
-        }
-        KeyCode::KeyS | KeyCode::ArrowDown => {
-            state.key_backward = pressed;
-        }
-        KeyCode::KeyA | KeyCode::ArrowLeft => {
-            state.key_left = pressed;
-        }
-        KeyCode::KeyD | KeyCode::ArrowRight => {
-            state.key_right = pressed;
-        }
-        KeyCode::KeyI => {
-            state.key_look_up = pressed;
-        }
-        KeyCode::KeyK => {
-            state.key_look_down = pressed;
-        }
-        KeyCode::KeyJ => {
-            state.key_look_left = pressed;
-        }
-        KeyCode::KeyL => {
-            state.key_look_right = pressed;
-        }
+        KeyCode::KeyW | KeyCode::ArrowUp => state.key_forward = pressed,
+        KeyCode::KeyS | KeyCode::ArrowDown => state.key_backward = pressed,
+        KeyCode::KeyA | KeyCode::ArrowLeft => state.key_left = pressed,
+        KeyCode::KeyD | KeyCode::ArrowRight => state.key_right = pressed,
+        KeyCode::KeyI => state.key_look_up = pressed,
+        KeyCode::KeyK => state.key_look_down = pressed,
+        KeyCode::KeyJ => state.key_look_left = pressed,
+        KeyCode::KeyL => state.key_look_right = pressed,
         KeyCode::ShiftLeft | KeyCode::ShiftRight => {
             state.key_run_held = pressed;
             state.sim_core.input.state.is_running = pressed;
@@ -127,50 +118,36 @@ pub(super) fn handle_combat_arena_key_input(
             );
         }
         // Volumetric Fog calibration shortcuts (matching PS2 dbg_fogparm_ctl / dbg_ambifog_ctl)
-        KeyCode::BracketLeft if pressed => {
-            state.fog_uniforms.density = (state.fog_uniforms.density - 0.05).max(0.0);
+        KeyCode::BracketLeft | KeyCode::BracketRight if pressed => {
+            let delta = if key_code == KeyCode::BracketRight {
+                0.05
+            } else {
+                -0.05
+            };
+            state.fog_uniforms.density = (state.fog_uniforms.density + delta).clamp(0.0, 2.0);
             state.render_ctx.update_fog(&state.fog_uniforms);
             tracing::info!("[Fog Tweak] Density: {:.2}", state.fog_uniforms.density);
         }
-        KeyCode::BracketRight if pressed => {
-            state.fog_uniforms.density = (state.fog_uniforms.density + 0.05).min(2.0);
-            state.render_ctx.update_fog(&state.fog_uniforms);
-            tracing::info!("[Fog Tweak] Density: {:.2}", state.fog_uniforms.density);
-        }
-        KeyCode::Minus if pressed => {
-            state.fog_uniforms.fog_far =
-                (state.fog_uniforms.fog_far - 1000.0).max(state.fog_uniforms.fog_near + 500.0);
-            state.render_ctx.update_fog(&state.fog_uniforms);
-            tracing::info!("[Fog Tweak] fog_far: {:.0}", state.fog_uniforms.fog_far);
-        }
-        KeyCode::Equal if pressed => {
-            state.fog_uniforms.fog_far = (state.fog_uniforms.fog_far + 1000.0).min(60000.0);
+        KeyCode::Minus | KeyCode::Equal if pressed => {
+            let delta = if key_code == KeyCode::Equal {
+                1000.0
+            } else {
+                -1000.0
+            };
+            state.fog_uniforms.fog_far = (state.fog_uniforms.fog_far + delta)
+                .clamp(state.fog_uniforms.fog_near + 500.0, 60000.0);
             state.render_ctx.update_fog(&state.fog_uniforms);
             tracing::info!("[Fog Tweak] fog_far: {:.0}", state.fog_uniforms.fog_far);
         }
         KeyCode::KeyM if pressed => {
             state.fog_uniforms.curve_type = (state.fog_uniforms.curve_type + 1) % 3;
             state.render_ctx.update_fog(&state.fog_uniforms);
-            let curve_name = match state.fog_uniforms.curve_type {
-                0 => "Linear",
-                1 => "Exponential",
-                _ => "Exponential Squared",
-            };
-            tracing::info!("[Fog Tweak] Falloff curve: {}", curve_name);
         }
         KeyCode::F2 if pressed && !repeat => {
             state.debug_collision_overlay = !state.debug_collision_overlay;
-            tracing::info!(
-                "[Debug] Collision wireframe overlay (clDbgDrawBGColiPoly): {}",
-                state.debug_collision_overlay
-            );
         }
         KeyCode::F1 | KeyCode::F3 if pressed => {
             state.debug_camera_hud = !state.debug_camera_hud;
-            tracing::info!(
-                "[Debug] Camera & Player telemetry HUD: {}",
-                state.debug_camera_hud
-            );
         }
         // Authentic Combat controls (Space to Attack, R to Ready, 1..6 to switch weapons)
         KeyCode::KeyR => {
@@ -198,31 +175,7 @@ pub(super) fn handle_combat_arena_key_input(
         }
         // Toggle between 4K AI Master (2048x2048) and Original PS2 (512x512) world & character textures (`SH2-92`)
         KeyCode::KeyT if pressed && !repeat => {
-            let next_quality = state
-                .menu_ctrl
-                .options_menu
-                .draft_config
-                .video
-                .texture_quality
-                .next();
-            state
-                .menu_ctrl
-                .options_menu
-                .draft_config
-                .video
-                .texture_quality = next_quality;
-            state
-                .menu_ctrl
-                .options_menu
-                .original_config
-                .video
-                .texture_quality = next_quality;
-            state.apply_texture_quality(next_quality);
-            tracing::info!(
-                "[4K Textures] Switched World & Character Textures -> {:?} ({})",
-                next_quality,
-                next_quality.label()
-            );
+            cycle_world_texture_quality(state);
         }
         // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) BGM & SFX packs (`SH2-60` / `SH2-61`)
         KeyCode::KeyB if pressed && !repeat => {
@@ -234,41 +187,10 @@ pub(super) fn handle_combat_arena_key_input(
         }
         // Launch or cycle in-engine real-time 3D cutscene (`DramaDemoPlayer`, `SH2-63`)
         KeyCode::KeyG if pressed && !repeat => {
-            if let Some(ref mut eng) = state.audio_engine {
-                eng.stop_voice(Duration::from_millis(30));
-            }
-            state.drama_demo_session =
-                open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false);
-            let active_tex_quality = state
-                .menu_ctrl
-                .options_menu
-                .draft_config
-                .video
-                .texture_quality;
-            state.apply_texture_quality(active_tex_quality);
+            open_current_drama_demo(state);
         }
-        KeyCode::Period if pressed && !repeat => {
-            state.selected_drama_demo_idx =
-                (state.selected_drama_demo_idx + 1) % DRAMA_DEMO_CATALOG.len();
-            tracing::info!(
-                "[Cutscene Player] Selected DramaDemo [{}/{}]: {} (Press [G] to Play)",
-                state.selected_drama_demo_idx + 1,
-                DRAMA_DEMO_CATALOG.len(),
-                DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx].title
-            );
-        }
-        KeyCode::Comma if pressed && !repeat => {
-            state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
-                DRAMA_DEMO_CATALOG.len() - 1
-            } else {
-                state.selected_drama_demo_idx - 1
-            };
-            tracing::info!(
-                "[Cutscene Player] Selected DramaDemo [{}/{}]: {} (Press [G] to Play)",
-                state.selected_drama_demo_idx + 1,
-                DRAMA_DEMO_CATALOG.len(),
-                DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx].title
-            );
+        KeyCode::Period | KeyCode::Comma if pressed && !repeat => {
+            step_selected_drama_demo(state, key_code == KeyCode::Period, false);
         }
         _ => {}
     }
@@ -313,73 +235,11 @@ fn handle_cutscene_locked_input(
                     );
                 }
             }
-            KeyCode::Period if !repeat => {
-                state.selected_drama_demo_idx =
-                    (state.selected_drama_demo_idx + 1) % DRAMA_DEMO_CATALOG.len();
-                if let Some(ref mut eng) = state.audio_engine {
-                    eng.stop_voice(Duration::from_millis(30));
-                }
-                state.drama_demo_session = open_drama_demo_session(
-                    &state.render_ctx,
-                    state.selected_drama_demo_idx,
-                    false,
-                );
-                let active_tex_quality = state
-                    .menu_ctrl
-                    .options_menu
-                    .draft_config
-                    .video
-                    .texture_quality;
-                state.apply_texture_quality(active_tex_quality);
-            }
-            KeyCode::Comma if !repeat => {
-                state.selected_drama_demo_idx = if state.selected_drama_demo_idx == 0 {
-                    DRAMA_DEMO_CATALOG.len() - 1
-                } else {
-                    state.selected_drama_demo_idx - 1
-                };
-                if let Some(ref mut eng) = state.audio_engine {
-                    eng.stop_voice(Duration::from_millis(30));
-                }
-                state.drama_demo_session = open_drama_demo_session(
-                    &state.render_ctx,
-                    state.selected_drama_demo_idx,
-                    false,
-                );
-                let active_tex_quality = state
-                    .menu_ctrl
-                    .options_menu
-                    .draft_config
-                    .video
-                    .texture_quality;
-                state.apply_texture_quality(active_tex_quality);
+            KeyCode::Period | KeyCode::Comma if !repeat => {
+                step_selected_drama_demo(state, key_code == KeyCode::Period, true);
             }
             KeyCode::KeyT if !repeat => {
-                let next_quality = state
-                    .menu_ctrl
-                    .options_menu
-                    .draft_config
-                    .video
-                    .texture_quality
-                    .next();
-                state
-                    .menu_ctrl
-                    .options_menu
-                    .draft_config
-                    .video
-                    .texture_quality = next_quality;
-                state
-                    .menu_ctrl
-                    .options_menu
-                    .original_config
-                    .video
-                    .texture_quality = next_quality;
-                state.apply_texture_quality(next_quality);
-                tracing::info!(
-                    "[4K Textures] Switched Cutscene & World Textures -> {:?} ({})",
-                    next_quality,
-                    next_quality.label()
-                );
+                cycle_world_texture_quality(state);
             }
             KeyCode::KeyV if !repeat => {
                 if let Some(ref mut session) = state.drama_demo_session {
@@ -414,39 +274,27 @@ fn handle_cutscene_locked_input(
 }
 
 fn equip_weapon_shortcut(state: &mut AppState, key_code: KeyCode) {
+    use sh2_core::combat::WeaponGrip;
+    let p = &mut state.combat_arena.player;
     match key_code {
-        KeyCode::Digit1 => {
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
-            tracing::info!("[Combat] Equipped Wooden Plank");
-        }
-        KeyCode::Digit2 => {
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::SteelPipe;
-            tracing::info!("[Combat] Equipped Steel Pipe");
-        }
+        KeyCode::Digit1 => p.weapon = WeaponGrip::WoodenPlank,
+        KeyCode::Digit2 => p.weapon = WeaponGrip::SteelPipe,
         KeyCode::Digit3 => {
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::Handgun;
-            state.combat_arena.player.loaded_rounds[0] = 10;
-            state.combat_arena.player.spare_rounds[0] = 50;
-            tracing::info!("[Combat] Equipped Handgun (10/50)");
+            p.weapon = WeaponGrip::Handgun;
+            (p.loaded_rounds[0], p.spare_rounds[0]) = (10, 50);
         }
         KeyCode::Digit4 => {
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::Shotgun;
-            state.combat_arena.player.loaded_rounds[1] = 6;
-            state.combat_arena.player.spare_rounds[1] = 30;
-            tracing::info!("[Combat] Equipped Shotgun (6/30)");
+            p.weapon = WeaponGrip::Shotgun;
+            (p.loaded_rounds[1], p.spare_rounds[1]) = (6, 30);
         }
         KeyCode::Digit5 => {
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::HuntingRifle;
-            state.combat_arena.player.loaded_rounds[2] = 4;
-            state.combat_arena.player.spare_rounds[2] = 20;
-            tracing::info!("[Combat] Equipped Hunting Rifle (4/20)");
+            p.weapon = WeaponGrip::HuntingRifle;
+            (p.loaded_rounds[2], p.spare_rounds[2]) = (4, 20);
         }
-        KeyCode::Digit6 => {
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::GreatKnife;
-            tracing::info!("[Combat] Equipped Great Knife");
-        }
+        KeyCode::Digit6 => p.weapon = WeaponGrip::GreatKnife,
         _ => {}
     }
+    tracing::info!("[Combat] Equipped {:?}", p.weapon);
 }
 
 fn cycle_and_teleport_active_enemy(state: &mut AppState) {
@@ -528,6 +376,70 @@ fn cycle_bgm_stage_preset(state: &mut AppState) {
         stg,
         page
     );
+}
+
+fn cycle_world_texture_quality(state: &mut AppState) {
+    let next = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality
+        .next();
+    state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality = next;
+    state
+        .menu_ctrl
+        .options_menu
+        .original_config
+        .video
+        .texture_quality = next;
+    state.apply_texture_quality(next);
+    tracing::info!(
+        "[4K Textures] Switched Textures -> {:?} ({})",
+        next,
+        next.label()
+    );
+}
+
+fn open_current_drama_demo(state: &mut AppState) {
+    if let Some(ref mut eng) = state.audio_engine {
+        eng.stop_voice(Duration::from_millis(30));
+    }
+    state.drama_demo_session =
+        open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false);
+    let q = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality;
+    state.apply_texture_quality(q);
+}
+
+fn step_selected_drama_demo(state: &mut AppState, forward: bool, reopen_now: bool) {
+    let len = DRAMA_DEMO_CATALOG.len();
+    state.selected_drama_demo_idx = if forward {
+        (state.selected_drama_demo_idx + 1) % len
+    } else if state.selected_drama_demo_idx == 0 {
+        len - 1
+    } else {
+        state.selected_drama_demo_idx - 1
+    };
+    if reopen_now {
+        open_current_drama_demo(state);
+    } else {
+        tracing::info!(
+            "[Cutscene Player] Selected DramaDemo [{}/{}]: {} (Press [G] to Play)",
+            state.selected_drama_demo_idx + 1,
+            len,
+            DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx].title
+        );
+    }
 }
 
 fn update_accumulated_directional_input(state: &mut AppState) {

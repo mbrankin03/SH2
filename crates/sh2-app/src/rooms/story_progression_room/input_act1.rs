@@ -17,7 +17,7 @@ use sh2_core::events::stages_act1::{
 };
 use sh2_core::events::{place_coin_in_desk, PZ_SAFE_CODE, PZ_SAFE_PROG, PZ_WHEEL, PZ_WHEEL_GOAL};
 
-pub(super) fn handle_act1_key(state: &mut AppState, key_code: KeyCode) {
+pub(crate) fn handle_act1_key(state: &mut AppState, key_code: KeyCode) {
     match key_code {
         KeyCode::Digit1 => {
             state.story_progression_room.act1_puzzle = Act1VisualPuzzle::SafeDial;

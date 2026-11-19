@@ -24,7 +24,7 @@ use sh2_core::{init_new_game, ClearData, Sh2Rng};
 use sh2_ui::credits::EndingCreditsSequence;
 use sh2_ui::menu::TitlePhase;
 
-pub(super) fn handle_story_room_key_input(
+pub(crate) fn handle_story_room_key_input(
     state: &mut AppState,
     key_code: KeyCode,
     pressed: bool,
@@ -104,7 +104,7 @@ pub(super) fn handle_story_room_key_input(
     }
 }
 
-fn reroll_riddle_difficulty(state: &mut AppState) {
+pub(crate) fn reroll_riddle_difficulty(state: &mut AppState) {
     let next = cycle_riddle_difficulty(state.sim_core.scenario.riddle_difficulty);
     let rm = &mut state.story_progression_room;
     rm.seed_counter = rm.seed_counter.wrapping_add(1);
@@ -140,7 +140,7 @@ fn reroll_riddle_difficulty(state: &mut AppState) {
     play_confirm_se(state);
 }
 
-fn handle_endings_key(state: &mut AppState, key_code: KeyCode) {
+pub(crate) fn handle_endings_key(state: &mut AppState, key_code: KeyCode) {
     let s = &mut state.sim_core.scenario;
     let rm = &mut state.story_progression_room;
     match key_code {
@@ -368,7 +368,7 @@ fn handle_endings_key(state: &mut AppState, key_code: KeyCode) {
     }
 }
 
-fn handle_ufo_letter_key(state: &mut AppState, key_code: KeyCode) {
+pub(crate) fn handle_ufo_letter_key(state: &mut AppState, key_code: KeyCode) {
     let rm = &mut state.story_progression_room;
     const ALL_ENDINGS: [GameEnding; 7] = [
         GameEnding::Leave,

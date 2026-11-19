@@ -20,7 +20,12 @@ pub(super) fn render_combat_arena_hud(
     let white = [225, 225, 225, 255];
     let muted = [165, 165, 170, 255];
 
-    if state.debug_camera_hud {
+    let cutscene_locked = state
+        .drama_demo_session
+        .as_ref()
+        .is_some_and(|s| s.player.locks_gameplay_input());
+
+    if state.debug_camera_hud && !state.story_progression_room.modal_3d_open && !cutscene_locked {
         render_camera_and_player_telemetry(state, yellow, green, cyan, white, muted);
 
         if state.active_test_room == TestRoomKind::CombatArena {
@@ -31,6 +36,8 @@ pub(super) fn render_combat_arena_hud(
     if state.debug_camera_hud || state.drama_demo_session.is_some() {
         render_cutscene_telemetry_and_subtitles(state, yellow, cyan, muted);
     }
+
+    super::story_overlay::render_3d_story_overlay(state);
 
     state.finish_hud_overlay(encoder, surface_view);
 }
@@ -44,26 +51,18 @@ fn render_subtle_aim_reticle(state: &mut AppState) {
     if alpha == 0 {
         return;
     }
-    let cx = state.menu_rasterizer.width / 2;
-    let cy = state.menu_rasterizer.height / 2;
+    let (cx, cy) = (
+        state.menu_rasterizer.width / 2,
+        state.menu_rasterizer.height / 2,
+    );
     let gap = (3.0 + spread.clamp(0.0, 1.0) * 6.0).round() as usize;
-    let col = [235, 232, 220, alpha];
-    state
-        .menu_rasterizer
-        .fill_rect(cx.saturating_sub(1), cy.saturating_sub(1), 3, 3, col);
-    let tick_col = [220, 215, 200, alpha / 2];
-    state
-        .menu_rasterizer
-        .fill_rect(cx.saturating_sub(gap + 2), cy, 2, 1, tick_col);
-    state
-        .menu_rasterizer
-        .fill_rect(cx + gap, cy, 2, 1, tick_col);
-    state
-        .menu_rasterizer
-        .fill_rect(cx, cy.saturating_sub(gap + 2), 1, 2, tick_col);
-    state
-        .menu_rasterizer
-        .fill_rect(cx, cy + gap, 1, 2, tick_col);
+    let (col, tick_col) = ([235, 232, 220, alpha], [220, 215, 200, alpha / 2]);
+    let r = &mut state.menu_rasterizer;
+    r.fill_rect(cx.saturating_sub(1), cy.saturating_sub(1), 3, 3, col);
+    r.fill_rect(cx.saturating_sub(gap + 2), cy, 2, 1, tick_col);
+    r.fill_rect(cx + gap, cy, 2, 1, tick_col);
+    r.fill_rect(cx, cy.saturating_sub(gap + 2), 1, 2, tick_col);
+    r.fill_rect(cx, cy + gap, 1, 2, tick_col);
 }
 
 fn render_camera_and_player_telemetry(
@@ -147,26 +146,22 @@ fn render_camera_and_player_telemetry(
         white,
         true,
     );
-    let rec_str = match active_rec {
-        Some(idx) => format!("Record #{}", idx),
-        None => "Fallback (None)".to_string(),
-    };
+    let rec_str = active_rec.map_or_else(
+        || "Fallback (None)".to_string(),
+        |idx| format!("Record #{idx}"),
+    );
     let cam_src_str = match (
         state.sim_core.camera.active_room_id.as_deref(),
         state.sim_core.camera.active_cam_source,
     ) {
-        (Some(room), Some(src)) => format!("{}.cam ({})", room, src.label()),
-        (Some(room), None) => format!("{}.cam", room),
+        (Some(room), Some(src)) => format!("{room}.cam ({})", src.label()),
+        (Some(room), None) => format!("{room}.cam"),
         _ => "Synthetic".to_string(),
     };
     state.menu_rasterizer.draw_text(
         &format!(
-            "CAM: {} | ACTIVE: {} (PS2 {:?}, {}) | FOV: {:.1}°",
-            cam_src_str,
-            active_mode.label(),
-            mv_type,
-            rec_str,
-            cam_fov
+            "CAM: {cam_src_str} | ACTIVE: {} (PS2 {mv_type:?}, {rec_str}) | FOV: {cam_fov:.1}°",
+            active_mode.label()
         ),
         20,
         98,
@@ -244,36 +239,29 @@ fn render_combat_status_panel(
     if !state.combat_arena.enemies.is_empty() {
         let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
         let enemy = &state.combat_arena.enemies[active_idx];
-        let status_str = if enemy.is_dead {
-            "DEAD (Dispatched)".to_string()
+        let (status_str, color) = if enemy.is_dead {
+            ("DEAD (Dispatched)".to_string(), muted)
         } else if enemy.is_downed {
-            format!(
-                "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
-                enemy.down_timer.max(0.0)
+            (
+                format!(
+                    "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
+                    enemy.down_timer.max(0.0)
+                ),
+                cyan,
             )
         } else if enemy.flinch_timer > 0.0 {
-            "STAGGERED / FLINCHING".to_string()
+            ("STAGGERED / FLINCHING".to_string(), muted)
         } else if enemy.is_attacking {
-            "ATTACKING / GRAPPLING".to_string()
+            ("ATTACKING / GRAPPLING".to_string(), green)
         } else if enemy.is_aggroed {
-            "ENGAGED (Approaching)".to_string()
+            ("ENGAGED (Approaching)".to_string(), green)
         } else {
-            "STANDBY (In Section)".to_string()
-        };
-
-        let color = if enemy.is_dead {
-            muted
-        } else if enemy.is_downed {
-            cyan
-        } else if enemy.is_attacking || enemy.is_aggroed {
-            green
-        } else {
-            muted
+            ("STANDBY (In Section)".to_string(), muted)
         };
 
         state.menu_rasterizer.draw_text(
             &format!(
-                "ACTIVE TARGET [{}/{}]: Enemy #{}: {} | HP: {:.0}/{:.0} | STATUS: {}",
+                "ACTIVE TARGET [{}/{}]: Enemy #{}: {} | HP: {:.0}/{:.0} | STATUS: {} [TAB: Cycle]",
                 active_idx + 1,
                 state.combat_arena.enemies.len(),
                 enemy.id,
@@ -286,15 +274,6 @@ fn render_combat_status_panel(
             174,
             1,
             color,
-            true,
-        );
-
-        state.menu_rasterizer.draw_text(
-            "[Press TAB to Cycle Active Test Creature]",
-            20,
-            194,
-            1,
-            yellow,
             true,
         );
     }
@@ -311,7 +290,7 @@ fn render_combat_status_panel(
             state.sim_core.animation.clip_time()
         ),
         20,
-        625,
+        592,
         1,
         cyan,
         true,
@@ -331,22 +310,13 @@ fn render_combat_status_panel(
                 enemy_clip.fps,
                 enemy.anim.clip_time()
             ),
-            20,
-            645,
+            620,
+            592,
             1,
             green,
             true,
         );
     }
-
-    state.menu_rasterizer.draw_text(
-        "[Controls: WASD: Move | V: Camera Mode | X: Shoulder | Mouse/IJKL: Look | Right-Click/R: Ready | Space: Attack | 1..6: Weapons]",
-        20,
-        670,
-        1,
-        muted,
-        true,
-    );
 }
 
 fn render_cutscene_telemetry_and_subtitles(
@@ -449,7 +419,7 @@ fn render_cutscene_telemetry_and_subtitles(
                 [240, 240, 240, 255],
             );
         }
-    } else {
+    } else if !state.story_progression_room.modal_3d_open {
         let demo_entry =
             &DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx % DRAMA_DEMO_CATALOG.len()];
         state.menu_rasterizer.draw_text(
@@ -461,7 +431,7 @@ fn render_cutscene_telemetry_and_subtitles(
                 demo_entry.demo_no
             ),
             20,
-            692,
+            612,
             1,
             muted,
             true,

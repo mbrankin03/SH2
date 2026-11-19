@@ -8,13 +8,13 @@ use crate::state::AppState;
 use sh2_assets::{CutawayTextureAsset, CutawayViewportTransform, DecodedTexture, TextureLoader};
 use sh2_core::{OverlaySpriteQuad, PillarboxViewportLayout};
 
-pub(super) const YELLOW: [u8; 4] = [245, 210, 65, 255];
-pub(super) const CYAN: [u8; 4] = [105, 215, 235, 255];
-pub(super) const GREEN: [u8; 4] = [120, 230, 150, 255];
-pub(super) const WHITE: [u8; 4] = [235, 235, 235, 255];
-pub(super) const ORANGE: [u8; 4] = [255, 170, 80, 255];
-pub(super) const RED: [u8; 4] = [245, 95, 95, 255];
-pub(super) const MUTED: [u8; 4] = [165, 170, 185, 255];
+pub(crate) const YELLOW: [u8; 4] = [245, 210, 65, 255];
+pub(crate) const CYAN: [u8; 4] = [105, 215, 235, 255];
+pub(crate) const GREEN: [u8; 4] = [120, 230, 150, 255];
+pub(crate) const WHITE: [u8; 4] = [235, 235, 235, 255];
+pub(crate) const ORANGE: [u8; 4] = [255, 170, 80, 255];
+pub(crate) const RED: [u8; 4] = [245, 95, 95, 255];
+pub(crate) const MUTED: [u8; 4] = [165, 170, 185, 255];
 
 /// Left column maximum character count (`560px / 8px = 70` max; capped at `66` so `x=24..552 < 592`).
 pub(super) const LEFT_COL_MAX_CHARS: usize = 66;
@@ -34,7 +34,7 @@ pub(super) fn clip_str(text: &str, max_chars: usize) -> String {
 }
 
 /// Draws a single `scale=1` (`8x8`) text line strictly truncated to `max_chars`.
-pub(super) fn draw_text_clipped(
+pub(crate) fn draw_text_clipped(
     state: &mut AppState,
     x: usize,
     y: usize,
@@ -49,25 +49,25 @@ pub(super) fn draw_text_clipped(
 }
 
 /// Draws a left-column (`x=24..592`) text line strictly capped at [`LEFT_COL_MAX_CHARS`].
-pub(super) fn txt_left(state: &mut AppState, x: usize, y: usize, color: [u8; 4], text: &str) {
+pub(crate) fn txt_left(state: &mut AppState, x: usize, y: usize, color: [u8; 4], text: &str) {
     let avail = 588usize.saturating_sub(x) / 8;
     draw_text_clipped(state, x, y, avail.min(LEFT_COL_MAX_CHARS), color, text);
 }
 
 /// Draws a right-column (`x=612..1256`) text line strictly capped at [`RIGHT_COL_MAX_CHARS`].
-pub(super) fn txt_right(state: &mut AppState, x: usize, y: usize, color: [u8; 4], text: &str) {
+pub(crate) fn txt_right(state: &mut AppState, x: usize, y: usize, color: [u8; 4], text: &str) {
     let avail = 1252usize.saturating_sub(x) / 8;
     draw_text_clipped(state, x, y, avail.min(RIGHT_COL_MAX_CHARS), color, text);
 }
 
 /// Draws a Tab 3 right-HUD (`x=730..1265`) text line strictly capped at [`TAB3_HUD_MAX_CHARS`].
-pub(super) fn txt_tab3(state: &mut AppState, x: usize, y: usize, color: [u8; 4], text: &str) {
+pub(crate) fn txt_tab3(state: &mut AppState, x: usize, y: usize, color: [u8; 4], text: &str) {
     let avail = 1252usize.saturating_sub(x) / 8;
     draw_text_clipped(state, x, y, avail.min(TAB3_HUD_MAX_CHARS), color, text);
 }
 
 /// Draws a styled card panel with background fill and 1px or 2px border.
-pub(super) fn draw_card(
+pub(crate) fn draw_card(
     state: &mut AppState,
     x: usize,
     y: usize,
@@ -83,7 +83,7 @@ pub(super) fn draw_card(
 }
 
 /// Draws a multi-line stack of left-column (`x=24..588`) text rows separated by `step_y` px.
-pub(super) fn txt_left_lines(
+pub(crate) fn txt_left_lines(
     state: &mut AppState,
     x: usize,
     start_y: usize,
@@ -97,7 +97,7 @@ pub(super) fn txt_left_lines(
 
 /// Draws a horizontal progress bar inside `(x, y, w, h)` with fill ratio `ratio` (`0.0..=1.0`).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn draw_progress_bar(
+pub(crate) fn draw_progress_bar(
     state: &mut AppState,
     x: usize,
     y: usize,
@@ -166,7 +166,7 @@ pub(super) fn ensure_cutaway_cached(
 /// Blits a `560x420` cutaway still (`base_pic`) at `(vp_x, vp_y, vp_w, vp_h)` along with
 /// custom `OverlaySpriteQuad` overlays and SH2:EE pillarbox bars.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn blit_cutaway_viewport(
+pub(crate) fn blit_cutaway_viewport(
     state: &mut AppState,
     vp_x: usize,
     vp_y: usize,

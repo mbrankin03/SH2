@@ -153,8 +153,6 @@ pub(crate) fn update_spotlight_uniforms(
             color_outer: [0.0, 0.0, 0.0, 0.0],
             ambient_tint,
         }
-    } else if let Some(cs_spot) = cutscene_spotlight_override {
-        cs_spot
     } else if active_demo.is_some_and(|s| s.player.info.stage_name == "er01")
         || (state.active_test_room == TestRoomKind::RestroomStart
             && !state.sim_core.scenario.flashlight_on)
@@ -162,9 +160,11 @@ pub(crate) fn update_spotlight_uniforms(
         SpotlightUniforms {
             position: [-19200.0, -1950.0, 20429.5, 1.0],
             direction_inner: [-0.65, 0.76, 0.0, 0.35],
-            color_outer: [1.85, 1.90, 1.80, -0.25],
-            ambient_tint,
+            color_outer: [1.85, 1.90, 1.80, -0.65],
+            ambient_tint: [1.65, 1.68, 1.62, 1.85],
         }
+    } else if let Some(cs_spot) = cutscene_spotlight_override {
+        cs_spot
     } else if let Some(session) = active_demo {
         let key_pos = session.player.camera.eye + glam::Vec3::new(0.0, -600.0, 0.0);
         let safe_dir = (session.player.camera.interest - key_pos)

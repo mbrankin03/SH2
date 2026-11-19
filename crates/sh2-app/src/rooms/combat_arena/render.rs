@@ -441,7 +441,7 @@ fn build_cutscene_spotlight_uniforms(
         }
         DemoLightKind::Directional => (3000.0, 7500.0),
     };
-    let boost = (far_decay / 3500.0).clamp(0.45, 1.15);
+    let boost = (far_decay / 3500.0).clamp(0.25, 0.55);
     let (pos, dir, inner_cos, outer_cos) = match cs_light.kind {
         DemoLightKind::Spot => (
             l_pos,

@@ -146,15 +146,48 @@ pub(crate) fn update_spotlight_uniforms(
         .map(|s| s.player.atmosphere.ambient_tint_rgba)
         .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
+    let effective_room_code = active_demo
+        .map(|s| s.player.info.stage_name)
+        .unwrap_or(state.sim_core.scenario.current_room.as_str());
+    let (stage_code, room_num) = parse_ps2_stage_and_room(effective_room_code);
+    let draw_env = sh2_core::lighting::lookup_draw_env(stage_code, room_num).map(|raw| {
+        sh2_core::lighting::apply_draw_env_fixes(raw, effective_room_code, video.lighting_profile)
+    });
+    let (env_amb_rgb, outer_cos, packed_map_id, world_color_rgb) = if let Some(env) = draw_env {
+        (
+            env.ambient,
+            env.flashlight_outer_rad.cos().clamp(0.45, 0.92),
+            sh2_core::lighting::packed_map_id_from_draw_env(&env),
+            Some(env.clear_color_rgb),
+        )
+    } else {
+        (
+            [0.15, 0.15, 0.15],
+            std::f32::consts::FRAC_PI_4.cos(),
+            None,
+            None,
+        )
+    };
+    let env_lum = env_amb_rgb[0].max(env_amb_rgb[1]).max(env_amb_rgb[2]);
+    let is_dark_room = env_lum < 0.45;
+    let base_amb_scale = (env_lum * 2.2).clamp(0.25, 2.2);
+
     let spot_uniforms = if active_demo.is_some_and(|s| s.player.closet_fix.flashlight_suppressed) {
         SpotlightUniforms {
             position: [spot_pos.x, spot_pos.y, spot_pos.z, 0.0],
             direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
             color_outer: [0.0, 0.0, 0.0, 0.0],
-            ambient_tint,
+            ambient_tint: [
+                ambient_tint[0],
+                ambient_tint[1],
+                ambient_tint[2],
+                ambient_tint[3] * base_amb_scale,
+            ],
             ..Default::default()
         }
-    } else if let Some(cs_spot) = cutscene_spotlight_override {
+    } else if let Some(mut cs_spot) = cutscene_spotlight_override {
+        cs_spot.ambient_tint[3] *= base_amb_scale;
         cs_spot
     } else if let Some(session) = active_demo {
         let key_pos = session.player.camera.eye + glam::Vec3::new(0.0, -600.0, 0.0);
@@ -163,35 +196,17 @@ pub(crate) fn update_spotlight_uniforms(
         SpotlightUniforms {
             position: [key_pos.x, key_pos.y, key_pos.z, 1.0],
             direction_inner: [safe_dir.x, safe_dir.y, safe_dir.z, 0.25],
-            color_outer: [0.95, 0.93, 0.90, -0.50],
-            ambient_tint,
+            color_outer: [0.45, 0.44, 0.42, -0.50],
+            ambient_tint: [
+                ambient_tint[0],
+                ambient_tint[1],
+                ambient_tint[2],
+                ambient_tint[3] * base_amb_scale,
+            ],
             ..Default::default()
         }
     } else {
-        let video = &state.menu_ctrl.options_menu.draft_config.video;
         let room_code = state.sim_core.scenario.current_room.as_str();
-        let (stage_code, room_num) = parse_ps2_stage_and_room(room_code);
-        let draw_env = sh2_core::lighting::lookup_draw_env(stage_code, room_num).map(|raw| {
-            sh2_core::lighting::apply_draw_env_fixes(raw, room_code, video.lighting_profile)
-        });
-
-        let (env_amb_rgb, outer_cos, packed_map_id, world_color_rgb) = if let Some(env) = draw_env {
-            (
-                env.ambient,
-                env.flashlight_outer_rad.cos().clamp(0.45, 0.92),
-                sh2_core::lighting::packed_map_id_from_draw_env(&env),
-                Some(env.clear_color_rgb),
-            )
-        } else {
-            (
-                [0.15, 0.15, 0.15],
-                std::f32::consts::FRAC_PI_4.cos(),
-                None,
-                None,
-            )
-        };
-        let env_lum = env_amb_rgb[0].max(env_amb_rgb[1]).max(env_amb_rgb[2]);
-        let is_dark_room = env_lum < 0.45;
         let chapter = match state.sim_core.scenario.scenario {
             sh2_core::scenario::ScenarioKind::LetterFromSilentHeaven => {
                 sh2_core::lighting::ShadowChapter::MainScenario
@@ -218,7 +233,6 @@ pub(crate) fn update_spotlight_uniforms(
 
         // Scale PS2 DrawEnvData.ambient (0.15..0.90) by authentic `0.5 + 0.25 * s_flash_level`
         // (`sh2pc.exe` `0x47a090..0x47a18b`), keeping sunlit rooms naturally lit.
-        let base_amb_scale = (env_lum * 2.2).clamp(0.25, 2.2);
         let modulated_ambient = if is_dark_room {
             base_amb_scale * darkness.ambient_scale
         } else {

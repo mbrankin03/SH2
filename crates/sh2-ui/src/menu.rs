@@ -213,6 +213,26 @@ pub enum MenuNavAction {
     Cancel,
 }
 
+/// Target runtime session launched when exiting [`TitlePhase::TransitionToGame`] (`SH2-112`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchTarget {
+    /// Unified start-to-credits Campaign Game Loop (`gamemain.c` / `connect.c`).
+    Campaign {
+        /// Selected scenario (`LetterFromSilentHeaven` or `BornFromAWish`).
+        scenario: ScenarioKind,
+        /// `true` when launched via `Continue` (save resume), `false` for `NewGame`.
+        is_continue: bool,
+    },
+    /// Isolated per-subsystem debug / inspection test room.
+    TestRoom(TestRoomKind),
+}
+
+impl Default for LaunchTarget {
+    fn default() -> Self {
+        Self::TestRoom(TestRoomKind::ObservationDeck)
+    }
+}
+
 /// Title state machine coordinator.
 #[derive(Debug, Clone)]
 pub struct TitleStateMachine {
@@ -224,6 +244,8 @@ pub struct TitleStateMachine {
     pub selected_scenario: ScenarioKind,
     /// Currently selected test room / sandbox stage.
     pub selected_test_room: TestRoomKind,
+    /// Target session mode (`Campaign` vs `TestRoom`) resolved when entering `TransitionToGame` (`SH2-112`).
+    pub launch_target: LaunchTarget,
     pub test_room_index: usize,
     /// Visual fade opacity: 0.0 (fully transparent / black) to 1.0 (fully visible).
     pub fade_alpha: f32,
@@ -253,6 +275,7 @@ impl TitleStateMachine {
             riddle_difficulty: RiddleDifficulty::Normal,
             selected_scenario: ScenarioKind::LetterFromSilentHeaven,
             selected_test_room: TestRoomKind::ObservationDeck,
+            launch_target: LaunchTarget::TestRoom(TestRoomKind::ObservationDeck),
             test_room_index: 0,
             fade_alpha: 0.0,
             fade_speed: 1.5,
@@ -332,7 +355,11 @@ impl TitleStateMachine {
                         sound = MenuSoundCue::Confirm;
                     }
                     MainMenuOption::Continue => {
-                        // In prototype / vanilla SH2, launches into last saved state
+                        // In prototype / vanilla SH2, launches into last saved state via Campaign Loop
+                        self.launch_target = LaunchTarget::Campaign {
+                            scenario: self.selected_scenario,
+                            is_continue: true,
+                        };
                         self.phase = TitlePhase::TransitionToGame;
                         self.start_fade_out();
                         sound = MenuSoundCue::GameStartTransition;
@@ -400,9 +427,13 @@ impl TitleStateMachine {
                     sound = MenuSoundCue::CursorMove;
                 }
                 MenuNavAction::Confirm => {
-                    // Match PS2 `titleFadeOutNewGame`: begin in Stage 2 Restroom (`er01.map`, `R_BEGIN_BATHROOM = 0x01`)
+                    // Match PS2 `titleFadeOutNewGame`: route into unified Campaign Game Loop (`SH2-112`)
                     self.selected_test_room = TestRoomKind::RestroomStart;
                     self.test_room_index = 1;
+                    self.launch_target = LaunchTarget::Campaign {
+                        scenario: self.selected_scenario,
+                        is_continue: false,
+                    };
                     self.phase = TitlePhase::TransitionToGame;
                     self.start_fade_out();
                     sound = MenuSoundCue::GameStartTransition;
@@ -434,6 +465,7 @@ impl TitleStateMachine {
                 }
                 MenuNavAction::Confirm => {
                     self.selected_test_room = TestRoomKind::ALL[self.test_room_index];
+                    self.launch_target = LaunchTarget::TestRoom(self.selected_test_room);
                     self.phase = TitlePhase::TransitionToGame;
                     self.start_fade_out();
                     sound = MenuSoundCue::GameStartTransition;

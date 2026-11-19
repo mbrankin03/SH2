@@ -196,6 +196,10 @@ impl BulletMultiplier {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Gameplay and puzzle difficulty preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameOptions {
@@ -206,6 +210,9 @@ pub struct GameOptions {
     pub bullet_multiplier: BulletMultiplier,
     /// Allow saving anywhere from the pause menu (Retail PC behavior) vs Red Squares only (PS2 original behavior).
     pub save_anywhere: bool,
+    /// SH2:EE `DelayedFadeIn.cpp` (`-0.133334f` black pre-roll on room fade-in) vs 1:1 vanilla PS2 fade-in (`0.0`).
+    #[serde(default = "default_true")]
+    pub enable_delayed_fade_in: bool,
 }
 
 /// Debug and development options.
@@ -244,6 +251,7 @@ impl Default for GameOptions {
             language: GameLanguage::default(),
             bullet_multiplier: BulletMultiplier::default(),
             save_anywhere: true,
+            enable_delayed_fade_in: true,
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::rooms;
 use crate::rooms::fmv_room::open_fmv_session;
 use crate::state::AppState;
 use sh2_renderer::GpuMap;
-use sh2_ui::menu::{TestRoomKind, TitlePhase};
+use sh2_ui::menu::{LaunchTarget, TestRoomKind, TitlePhase};
 use sh2_ui::pause::PauseSubPhase;
 use sh2_ui::LoadingScreen;
 
@@ -139,7 +139,15 @@ fn tick_menu_and_loading_screen(state: &mut AppState, dt_sec: f32) {
             state.menu_ctrl.tick(dt_sec);
         } else {
             if state.loading_screen.is_none() {
-                let label = state.menu_ctrl.title_sm.selected_test_room.label();
+                let label = match state.menu_ctrl.title_sm.launch_target {
+                    LaunchTarget::Campaign { scenario, .. } => match scenario {
+                        sh2_core::ScenarioKind::LetterFromSilentHeaven => {
+                            "Letter from Silent Heaven"
+                        }
+                        sh2_core::ScenarioKind::BornFromAWish => "Born from a Wish",
+                    },
+                    LaunchTarget::TestRoom(room) => room.label(),
+                };
                 let mut ls = LoadingScreen::new(label, min_dur, require_press);
                 ls.mark_completed();
                 state.loading_screen = Some(ls);
@@ -160,6 +168,20 @@ fn tick_menu_and_loading_screen(state: &mut AppState, dt_sec: f32) {
 }
 
 fn sync_active_room_and_viewers(state: &mut AppState) {
+    if state.menu_ctrl.in_game_active {
+        let requested_target = state.menu_ctrl.title_sm.launch_target;
+        if let LaunchTarget::Campaign { is_continue, .. } = requested_target {
+            if state.active_launch_target != requested_target
+                || state.campaign_orchestrator.is_none()
+            {
+                state.active_launch_target = requested_target;
+                rooms::campaign_room::CampaignRoomController::start_session(state, is_continue);
+            }
+            return;
+        }
+        state.active_launch_target = requested_target;
+    }
+
     // If user transitioned into game from Test Rooms menu, switch level map if needed
     if state.menu_ctrl.in_game_active
         && state.active_test_room != state.menu_ctrl.title_sm.selected_test_room

@@ -23,7 +23,7 @@ pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
 pub use map::{MapCanvasClipper, MapDescriptor, MapPlayerMarker};
 pub use menu::{
     draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
-    MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,
+    LaunchTarget, MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,
 };
 pub use options::{draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsTab};
 pub use pause::{draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase};

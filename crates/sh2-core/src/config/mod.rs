@@ -54,6 +54,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = false;
                 self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.game.enable_delayed_fade_in = false;
             }
             EnhancedPreset::Sh2ee => {
                 self.video.texture_quality = WorldTextureQuality::Sh2eeHd;
@@ -67,6 +68,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.game.enable_delayed_fade_in = true;
             }
             EnhancedPreset::NativeEnhanced => {
                 self.video.texture_quality = WorldTextureQuality::Ai4kMaster;
@@ -80,6 +82,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Auto;
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
+                self.game.enable_delayed_fade_in = true;
             }
             EnhancedPreset::Custom => {}
         }

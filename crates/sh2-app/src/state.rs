@@ -16,12 +16,13 @@ use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
 use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank};
+use sh2_core::campaign::{CampaignOrchestrator, CampaignTickInput};
 use sh2_core::{FramePacer, SimulationCore};
 use sh2_debug::{
     FmvVideoSource, FmvViewerState, GrappleViewerState, JamesAnmSource, ModelViewerState,
 };
 use sh2_renderer::{FmvVideoPipeline, GpuMap, RenderContext, SurfaceBlitter};
-use sh2_ui::menu::TestRoomKind;
+use sh2_ui::menu::{LaunchTarget, TestRoomKind};
 use sh2_ui::{ButtonSpriteSheet, LoadingScreen, TextRasterizer};
 
 pub(crate) struct AppState {
@@ -59,6 +60,12 @@ pub(crate) struct AppState {
     pub james_anm_cache: HashMap<JamesAnmSource, AnimationFile>,
     pub active_maria: bool,
     pub active_test_room: TestRoomKind,
+    /// Active session launch target (`Campaign` vs `TestRoom`, `SH2-112`).
+    pub active_launch_target: LaunchTarget,
+    /// Unified Campaign Game Loop orchestrator when `active_launch_target` is `LaunchTarget::Campaign`.
+    pub campaign_orchestrator: Option<CampaignOrchestrator>,
+    /// Per-frame campaign input latch consumed by `CampaignRoomController`.
+    pub campaign_pending_input: CampaignTickInput,
     pub fog_uniforms: sh2_renderer::fog::FogUniforms,
     pub fog_particles: sh2_core::fog::FogParticleVolume,
     pub fog_particle_scratch: Vec<sh2_renderer::fog::GpuFogParticle>,
@@ -169,6 +176,9 @@ impl AppState {
 
     /// Returns `true` when `active_test_room` is a 3D exploration/gameplay room driven by `SimulationCore` (`SH2-93`).
     pub fn is_3d_gameplay_room(&self) -> bool {
+        if matches!(self.active_launch_target, LaunchTarget::Campaign { .. }) {
+            return true;
+        }
         !matches!(
             self.active_test_room,
             TestRoomKind::ModelAndTextureViewer
@@ -244,6 +254,8 @@ impl AppState {
     /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
     pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
         self.clear_held_gameplay_keys();
+        self.campaign_orchestrator = None;
+        self.campaign_pending_input = CampaignTickInput::default();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
         if let Some(ref mut bank) = self.audio_bank {
             bank.stop_all_spatial_handles();

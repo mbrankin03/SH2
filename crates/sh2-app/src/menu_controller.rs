@@ -137,6 +137,9 @@ impl AppMenuController {
                     if cue == OptionsSoundCue::LaunchFmvViewer {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
+                        self.title_sm.launch_target = sh2_ui::menu::LaunchTarget::TestRoom(
+                            sh2_ui::menu::TestRoomKind::FmvCutsceneViewer,
+                        );
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         MenuSoundCue::GameStartTransition
@@ -147,6 +150,9 @@ impl AppMenuController {
                     } else if cue == OptionsSoundCue::LaunchLoadingTest {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::LoadingScreenTest;
+                        self.title_sm.launch_target = sh2_ui::menu::LaunchTarget::TestRoom(
+                            sh2_ui::menu::TestRoomKind::LoadingScreenTest,
+                        );
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         MenuSoundCue::GameStartTransition
@@ -162,6 +168,9 @@ impl AppMenuController {
                     if cue == OptionsSoundCue::LaunchFmvViewer {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
+                        self.title_sm.launch_target = sh2_ui::menu::LaunchTarget::TestRoom(
+                            sh2_ui::menu::TestRoomKind::FmvCutsceneViewer,
+                        );
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         MenuSoundCue::GameStartTransition
@@ -172,6 +181,9 @@ impl AppMenuController {
                     } else if cue == OptionsSoundCue::LaunchLoadingTest {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::LoadingScreenTest;
+                        self.title_sm.launch_target = sh2_ui::menu::LaunchTarget::TestRoom(
+                            sh2_ui::menu::TestRoomKind::LoadingScreenTest,
+                        );
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         MenuSoundCue::GameStartTransition
@@ -183,6 +195,9 @@ impl AppMenuController {
                     if self.options_menu.is_fmv_viewer_selected() {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
+                        self.title_sm.launch_target = sh2_ui::menu::LaunchTarget::TestRoom(
+                            sh2_ui::menu::TestRoomKind::FmvCutsceneViewer,
+                        );
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         return MenuSoundCue::GameStartTransition;
@@ -190,6 +205,9 @@ impl AppMenuController {
                     if self.options_menu.is_loading_test_selected() {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::LoadingScreenTest;
+                        self.title_sm.launch_target = sh2_ui::menu::LaunchTarget::TestRoom(
+                            sh2_ui::menu::TestRoomKind::LoadingScreenTest,
+                        );
                         self.title_sm.phase = TitlePhase::TransitionToGame;
                         self.title_sm.start_fade_out();
                         return MenuSoundCue::GameStartTransition;

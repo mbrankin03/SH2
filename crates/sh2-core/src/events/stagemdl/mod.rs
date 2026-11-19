@@ -33,8 +33,25 @@ pub const MODEL_KIND_MARIA_RESTING: u16 = 0x0106;
 /// Flag `186` (`0xba`): Maria is resting on the bed in Brookhaven Hospital Room S3 (`Stage 20`).
 pub const FLAG_MARIA_RESTING_ROOM_S3: usize = 186;
 
-/// Hotel Music Box total angular span (`5 * PI` rad = `15.707964`, `sh2pc.exe` `0x00715cf8`).
+/// Hotel Music Box base & figurine angular span (`5 * PI` rad = `15.707964`, `sh2pc.exe` `0x00715cf8`).
 pub const MUSIC_BOX_ROTATION_SPAN_RAD: f32 = 5.0 * PI;
+/// Hotel Music Box lid/crank (bone 2) angular span (`3.75 * PI` rad = `11.7809725`, `sh2pc.exe` `0x00715cf4`).
+pub const MUSIC_BOX_LID_SPAN_RAD: f32 = 3.75 * PI;
+/// Hotel Music Box opening phase end ratio (`0.1`, `sh2pc.exe` `0x0069e7e8`).
+pub const MUSIC_BOX_PHASE_OPEN_END: f32 = 0.1;
+/// Hotel Music Box closing phase start ratio (`0.9`, `sh2pc.exe` `0x0069f3a8`).
+pub const MUSIC_BOX_PHASE_CLOSE_START: f32 = 0.9;
+
+/// Hotel Lobby Music Box world placement in PS2 mm (`sh2pc.exe` `0x008cb970`).
+pub const HOTEL_MUSIC_BOX_POS_MM: [f32; 3] = [-20_000.0, 0.0, 24_000.0];
+/// Labyrinth Rotating Cube world placement in PS2 mm (`sh2pc.exe` `0x008d1368`).
+pub const LABYRINTH_CUBE_POS_MM: [f32; 3] = [20_000.0, -400.0, -24_050.0];
+/// Labyrinth Elevator Gate world placement in PS2 mm (`sh2pc.exe` `0x008d12c8`).
+pub const LABYRINTH_ELEVATOR_GATE_POS_MM: [f32; 3] = [-19_062.5, 0.0, -100_000.0];
+/// Old Man Coin world placement in PS2 mm (`sh2pc.exe` `0x008de900` + `0x08`).
+pub const OLD_MAN_COIN_POS_MM: [f32; 3] = [-103_369.96, -495.0, 9_170.001];
+/// Old Man Coin world yaw in radians (`0x3ffafb5d`, `sh2pc.exe` `0x008de900` + `0x18`).
+pub const OLD_MAN_COIN_YAW_RAD: f32 = 1.960_796;
 
 /// Labyrinth Rotating Cube quarter-turn angle (`PI / 2` rad = `1.5707964`, `sh2pc.exe` `0x006a14e4`).
 pub const LABYRINTH_CUBE_STEP_RAD: f32 = FRAC_PI_2;
@@ -154,7 +171,7 @@ pub struct StageModelInstance {
     pub bone_overrides: Vec<BoneTransformOverride>,
 }
 
-/// Hotel Lobby Music Box runtime animation state (`Stage 40`, `sh2pc.exe` `0x0057b5b0`).
+/// Hotel Lobby Music Box runtime animation state (`Stage 40`, `sh2pc.exe` `0x0057b400..0x0057b720`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct MusicBoxAnimState {
     /// Whether the music box tune is currently playing.
@@ -163,8 +180,10 @@ pub struct MusicBoxAnimState {
     pub elapsed_secs: f32,
     /// Total tune duration in seconds.
     pub duration_secs: f32,
-    /// Cylinder rotation angle in radians.
+    /// Base/cylinder bone `0` rotation angle in radians (`0x01d83354`).
     pub cylinder_angle_rad: f32,
+    /// Lid/crank bone `2` rotation angle in radians (`0x01d8335c`, clamps to `PI` at `>= 0.9 * dur`).
+    pub lid_angle_rad: f32,
     /// Per-figurine Y rotation angles for bones `6`, `7`, `8` (`0x01d8336c`, `0x01d83370`, `0x01d83374`).
     pub figurine_angles_rad: [f32; 3],
 }
@@ -197,6 +216,8 @@ pub struct LabyrinthElevatorState {
     pub gate_travel_mm: f32,
     /// Tracks whether the arrival stop sound (`0x4654`) has already fired.
     pub arrived: bool,
+    /// Accumulated audio fade time in seconds (`0x01d835e4`, stepped by `LabyrinthElevatorVolumeFix` `1/60` vs `1/30`).
+    pub audio_fade_secs: f32,
 }
 
 impl Default for LabyrinthElevatorState {
@@ -208,6 +229,7 @@ impl Default for LabyrinthElevatorState {
             gate_target_open: false,
             gate_travel_mm: LABYRINTH_ELEVATOR_GATE_TRAVEL_MM,
             arrived: false,
+            audio_fade_secs: 0.0,
         }
     }
 }
@@ -317,8 +339,8 @@ impl StageModelManager {
                     model_kind_id: MODEL_KIND_OLD_MAN_COIN,
                     asset_rel_path: StageModelKind::OldManCoin.asset_rel_path(),
                     visible,
-                    position_mm: [0.0, 0.0, 0.0],
-                    rotation_rad: [0.0, 0.0, 0.0],
+                    position_mm: OLD_MAN_COIN_POS_MM,
+                    rotation_rad: [0.0, OLD_MAN_COIN_YAW_RAD, 0.0],
                     anim_id: None,
                     bone_overrides: Vec::new(),
                 });
@@ -344,8 +366,8 @@ impl StageModelManager {
                 // SH2:EE `LabyrinthElevatorVolumeFix` (`Patches/LabyrinthElevatorVolumeFix.cpp:24, 65`):
                 // Uses 1/60 s (60 FPS) vs 1/30 s (30 FPS) frame time for audio fade and full `1.0`
                 // volume instead of vanilla `0.8`, while physical gate & cabin motion uses real `dt`.
-                let audio_volume = if input.enable_sh2ee_fixes { 1.0 } else { 0.8 };
-                let _audio_fade_dt = if input.enable_sh2ee_fixes {
+                let base_volume = if input.enable_sh2ee_fixes { 1.0 } else { 0.8 };
+                let audio_fade_dt = if input.enable_sh2ee_fixes {
                     if input.sixty_fps_mode {
                         1.0 / 60.0
                     } else {
@@ -366,8 +388,13 @@ impl StageModelManager {
                         (self.labyrinth_elevator.gate_open_ratio - ratio_step).max(0.0);
                 }
 
-                // Animate elevator descent toward -45600.0 mm (`sh2pc.exe` `0x00583164..0x005831c4`).
+                // Animate elevator descent toward -45600.0 mm (`sh2pc.exe` `0x00583164..0x005832a2`).
                 if self.labyrinth_elevator.descending {
+                    self.labyrinth_elevator.audio_fade_secs += audio_fade_dt;
+                    // `sh2pc.exe` `0x00583224..0x00583230`: fade ramp `0.2 + 0.3 * progress` clamped to `1.0`.
+                    let fade_gain = (0.2 + 0.3 * self.labyrinth_elevator.audio_fade_secs).min(1.0);
+                    let loop_volume = base_volume * fade_gain;
+
                     self.labyrinth_elevator.cabin_y_mm -= LABYRINTH_ELEVATOR_SPEED_MM_PER_SEC * dt;
                     if self.labyrinth_elevator.cabin_y_mm <= LABYRINTH_ELEVATOR_BOTTOM_Y_MM {
                         self.labyrinth_elevator.cabin_y_mm = LABYRINTH_ELEVATOR_BOTTOM_Y_MM;
@@ -376,13 +403,13 @@ impl StageModelManager {
                             self.labyrinth_elevator.arrived = true;
                             out.audio_cues.push(StageModelAudioCue {
                                 sound_id: SE_LABYRINTH_ELEVATOR_STOP,
-                                volume: audio_volume,
+                                volume: base_volume,
                             });
                         }
                     } else {
                         out.audio_cues.push(StageModelAudioCue {
                             sound_id: SE_LABYRINTH_ELEVATOR_LOOP,
-                            volume: audio_volume,
+                            volume: loop_volume,
                         });
                     }
                 }
@@ -394,7 +421,11 @@ impl StageModelManager {
                     model_kind_id: MODEL_KIND_LABYRINTH_ELEVATOR_GATE,
                     asset_rel_path: StageModelKind::LabyrinthElevatorGate.asset_rel_path(),
                     visible: true,
-                    position_mm: [0.0, self.labyrinth_elevator.cabin_y_mm, 0.0],
+                    position_mm: [
+                        LABYRINTH_ELEVATOR_GATE_POS_MM[0],
+                        LABYRINTH_ELEVATOR_GATE_POS_MM[1] + self.labyrinth_elevator.cabin_y_mm,
+                        LABYRINTH_ELEVATOR_GATE_POS_MM[2],
+                    ],
                     rotation_rad: [0.0, 0.0, 0.0],
                     anim_id: None,
                     bone_overrides: vec![BoneTransformOverride {
@@ -415,7 +446,7 @@ impl StageModelManager {
                         model_kind_id: MODEL_KIND_LABYRINTH_CUBE,
                         asset_rel_path: StageModelKind::LabyrinthRotatingCube.asset_rel_path(),
                         visible: true,
-                        position_mm: [0.0, 0.0, 0.0],
+                        position_mm: LABYRINTH_CUBE_POS_MM,
                         rotation_rad: [rx, ry, 0.0],
                         anim_id: None,
                         bone_overrides: vec![BoneTransformOverride {
@@ -427,29 +458,52 @@ impl StageModelManager {
                 }
             }
 
-            // Stage 40: Lakeview Hotel 1F Lobby — Music Box (`0x0524`, `data/chr/item/org.mdl`, `0x0057b5b0`)
+            // Stage 40: Lakeview Hotel 1F Lobby — Music Box (`0x0524`, `data/chr/item/org.mdl`, `0x0057b400..0x0057b720`)
             40 => {
                 if self.music_box.playing {
                     let dur = self.music_box.duration_secs.max(0.1);
                     self.music_box.elapsed_secs += dt;
-                    let omega = MUSIC_BOX_ROTATION_SPAN_RAD / dur;
-                    self.music_box.cylinder_angle_rad =
-                        (self.music_box.cylinder_angle_rad + omega * dt).rem_euclid(TAU);
+                    let t = self.music_box.elapsed_secs;
+                    let t_open_end = dur * MUSIC_BOX_PHASE_OPEN_END;
+                    let t_close_start = dur * MUSIC_BOX_PHASE_CLOSE_START;
 
-                    // `sh2pc.exe` `0x0057b5ba..0x0057b716`: bones 6, 7, 8 rotate forward during
-                    // first half of tune and reverse during second half.
-                    let half = dur * 0.5;
-                    let dir = if self.music_box.elapsed_secs <= half {
-                        1.0
-                    } else {
-                        -1.0
-                    };
-                    for angle in &mut self.music_box.figurine_angles_rad {
-                        *angle = (*angle + dir * omega * dt).rem_euclid(TAU);
+                    let base_omega = MUSIC_BOX_ROTATION_SPAN_RAD / dur;
+                    let lid_omega = MUSIC_BOX_LID_SPAN_RAD / dur;
+
+                    // Bone 0 (`sh2pc.exe` `0x0057b435..0x0057b4cf`): `-5*PI*dt/dur` on [0, 0.1*dur],
+                    // `+5*PI*dt/dur` on [0.9*dur, dur], resets to 0.0 at `t >= dur`.
+                    if t <= t_open_end {
+                        self.music_box.cylinder_angle_rad =
+                            (self.music_box.cylinder_angle_rad - base_omega * dt).rem_euclid(TAU);
+                    } else if t >= t_close_start && t <= dur {
+                        self.music_box.cylinder_angle_rad =
+                            (self.music_box.cylinder_angle_rad + base_omega * dt).rem_euclid(TAU);
                     }
 
-                    if self.music_box.elapsed_secs >= dur {
+                    // Bone 2 (`sh2pc.exe` `0x0057b4f3..0x0057b58f`): `+3.75*PI*dt/dur` on (0.1*dur, 0.9*dur],
+                    // clamped to `PI` (`0x40490fdb`) at `t >= 0.9*dur`.
+                    if t > t_open_end && t <= t_close_start {
+                        self.music_box.lid_angle_rad =
+                            (self.music_box.lid_angle_rad + lid_omega * dt).rem_euclid(TAU);
+                    } else if t >= t_close_start {
+                        self.music_box.lid_angle_rad = PI;
+                    }
+
+                    // Bones 6, 7, 8 (`sh2pc.exe` `0x0057b5a6..0x0057b720`): `+5*PI*dt/dur` on [0, 0.1*dur],
+                    // `-5*PI*dt/dur` on [0.9*dur, dur], resets to 0.0 at `t >= dur`.
+                    if t <= t_open_end {
+                        for angle in &mut self.music_box.figurine_angles_rad {
+                            *angle = (*angle + base_omega * dt).rem_euclid(TAU);
+                        }
+                    } else if t >= t_close_start && t <= dur {
+                        for angle in &mut self.music_box.figurine_angles_rad {
+                            *angle = (*angle - base_omega * dt).rem_euclid(TAU);
+                        }
+                    }
+
+                    if t >= dur {
                         self.music_box.playing = false;
+                        self.music_box.cylinder_angle_rad = 0.0;
                         self.music_box.figurine_angles_rad = [0.0; 3];
                     }
                 }
@@ -459,7 +513,7 @@ impl StageModelManager {
                     model_kind_id: MODEL_KIND_HOTEL_MUSIC_BOX,
                     asset_rel_path: StageModelKind::HotelMusicBox.asset_rel_path(),
                     visible: true,
-                    position_mm: [0.0, 0.0, 0.0],
+                    position_mm: HOTEL_MUSIC_BOX_POS_MM,
                     rotation_rad: [0.0, 0.0, 0.0],
                     anim_id: None,
                     bone_overrides: vec![
@@ -472,7 +526,7 @@ impl StageModelManager {
                         BoneTransformOverride {
                             bone_index: 2,
                             translation_mm: [0.0, 0.0, 0.0],
-                            rotation_rad: [if self.music_box.playing { PI } else { 0.0 }, 0.0, 0.0],
+                            rotation_rad: [self.music_box.lid_angle_rad, 0.0, 0.0],
                         },
                         // 3 Princess figurines: bones 6, 7, 8 (`sh2pc.exe` `0x0057b646`, `0x0057b658`, `0x0057b713`)
                         BoneTransformOverride {

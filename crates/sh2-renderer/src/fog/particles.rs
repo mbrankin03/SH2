@@ -71,12 +71,14 @@ fn vs_main(
     );
     let corner = corners[vid % 6u];
 
-    // Camera-facing basis vectors derived from world position to camera eye
+    // Camera-facing basis vectors with near-zero distance and pole-alignment NaN guards
     let center = inst.world_pos_radius.xyz;
     let radius = inst.world_pos_radius.w;
-    let to_cam = normalize(camera.cam_pos.xyz - center);
-    let world_up = vec3<f32>(0.0, 1.0, 0.0);
-    let right = normalize(cross(world_up, to_cam));
+    let to_cam_raw = camera.cam_pos.xyz - center;
+    let to_cam_len = length(to_cam_raw);
+    let to_cam = select(vec3<f32>(0.0, 0.0, 1.0), to_cam_raw / to_cam_len, to_cam_len > 1e-4);
+    let ref_up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(to_cam.y) > 0.99);
+    let right = normalize(cross(ref_up, to_cam));
     let up = cross(to_cam, right);
 
     let world_vertex = center + (right * corner.x + up * corner.y) * radius;

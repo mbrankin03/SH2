@@ -537,6 +537,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
             sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
         ),
+        fog_particle_scratch: Vec::with_capacity(sh2_renderer::fog::MAX_GPU_FOG_PARTICLES),
+        last_fog_time: 0.0,
         menu_ctrl,
         combat_arena,
         enemy_scu_asset,

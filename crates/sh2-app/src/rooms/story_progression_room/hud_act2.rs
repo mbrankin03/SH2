@@ -1,390 +1,400 @@
-//! Tab 2 (`[F2]`): Act 2 & *Born from a Wish* Stages 25–58 & Riddles (`SH2-114`) HUD overlay.
+//! Tab 2 (`[F2]`): Act 2 & *Born from a Wish* Visual Puzzles (`SH2-114`).
 
-use super::ACT2_TRG10_KEY_DOORS;
+use super::hud_act2_panel::{draw_labyrinth_and_gallows_card, render_act2_right_panel};
+use super::hud_common::{
+    blit_cutaway_viewport, draw_card, txt_left, txt_left_lines, CYAN, GREEN, MUTED, ORANGE, WHITE,
+    YELLOW,
+};
+use super::Act2VisualPuzzle;
 use crate::state::AppState;
 use sh2_core::events::stages_act2::{
-    decode_hangman_digits, decode_retail_ev_pos_shape, effective_prisoner_step_threshold,
-    gravestone_board_uv, gravestone_board_verts, hangman_innocent_slot,
-    is_hotel_2f_teleport_corridor_room, selected_briefcase_word, stage_table_act2,
-    sync_labyrinth_face_cube, GravestoneBoard, RetailTriggerKind, ALL_ACT2_STAGE_IDS,
+    gravestone_board_uv, gravestone_board_verts, selected_briefcase_word, GravestoneBoard,
     BRIEFCASE_TRUNK_DRUMS, FLAG_BRIEFCASE_UNLOCKED, FLAG_ELEVATOR_WEIGHT_OK, FLAG_MUSIC_BOX_SOLVED,
-    FLAG_SCAFFOLD_ALL_SET, FLAG_WISH_GRAVESTONE_SOLVED,
+    FLAG_SCAFFOLD_ALL_SET, FLAG_WISH_GRAVESTONE_SOLVED, GRAVESTONE_BOARD_VERT_EXTENTS,
 };
 use sh2_core::events::PZ_DRUM;
-
-const YELLOW: [u8; 4] = [245, 210, 65, 255];
-const CYAN: [u8; 4] = [105, 215, 235, 255];
-const GREEN: [u8; 4] = [120, 230, 150, 255];
-const WHITE: [u8; 4] = [235, 235, 235, 255];
-const ORANGE: [u8; 4] = [255, 170, 80, 255];
-const MUTED: [u8; 4] = [165, 170, 185, 255];
-
-fn txt(state: &mut AppState, x: usize, y: usize, color: [u8; 4], s: &str) {
-    state.menu_rasterizer.draw_text(s, x, y, 1, color, true);
-}
+use sh2_core::{original_sheet_dimensions, riddle_level_index, OverlaySpriteQuad};
 
 pub(super) fn render_act2_tab(state: &mut AppState) {
-    let idx = state.story_progression_room.act2_stage_idx % ALL_ACT2_STAGE_IDS.len();
-    let stage_id = ALL_ACT2_STAGE_IDS[idx];
-    let Some(stg) = stage_table_act2(stage_id) else {
-        return;
-    };
-    let h = &stg.header;
+    let active_pz = state.story_progression_room.act2_puzzle;
+    let pref = state.story_progression_room.prefer_sh2ee_cutaways;
 
-    let lx = 22usize;
-    txt(
-        state,
-        lx,
-        74,
-        YELLOW,
-        &format!(
-            "--- ACT 2 & WISH STAGE [PgUp/PgDn]: Stage {:02} ({} / {:?}) ---",
-            stg.stage_id, stg.name, stg.stage_kind
-        ),
-    );
-    txt(
-        state,
-        lx,
-        92,
-        CYAN,
-        &format!(
-            "64B Stage_Data : PC VA=0x{:08X} | PS2 VA=0x{:08X} | glb_crd={}",
-            stg.retail_stage_data_va, stg.ps2_stage_data_va, h.glb_crd
-        ),
-    );
-    txt(
-        state,
-        lx,
-        108,
-        WHITE,
-        &format!(
-            "Words [0..5]   : ev_list=0x{:08X} | ev_pos=0x{:08X} | ev_prog=0x{:08X}",
-            h.ev_list_ptr, h.ev_pos_ptr, h.ev_prog_ptr
-        ),
-    );
-    txt(
-        state,
-        lx,
-        124,
-        WHITE,
-        &format!(
-            "Entity Ptrs    : gi_list=0x{:08X} | mdl_list=0x{:08X} | en_list=0x{:08X}",
-            h.item_list_ptr, h.model_list_ptr, h.enemy_list_ptr
-        ),
-    );
-    txt(
-        state,
-        lx,
-        140,
-        WHITE,
-        &format!(
-            "Words [6..8]   : stage_init=0x{:08X} | room_init=0x{:08X} | all_time=0x{:08X}",
-            h.stage_init_fn, h.room_init_fn, h.all_time_fn
-        ),
-    );
-    txt(
-        state,
-        lx,
-        156,
-        GREEN,
-        &format!(
-            "Words [15,12,14]: sound_load(+0x3c)=0x{:08X} | bgm(+0x30)=0x{:08X} | clr(+0x38)=0x{:08X}",
-            h.sound_call_after_load_fn, h.bgm_control_fn, h.chara_data_clear_fn
-        ),
-    );
-    txt(
-        state,
-        lx,
-        174,
-        WHITE,
-        &format!(
-            "Counts         : Event_List={} (+sentinel) | ev_pos={}B | ev_prog={} | Items={} | Enemies={}",
-            stg.active_event_count(),
-            stg.pos_list.len(),
-            stg.ev_prog_vas.len(),
-            stg.retail_items.len(),
-            stg.retail_enemies.len()
-        ),
-    );
-
-    txt(
-        state,
-        lx,
-        196,
-        YELLOW,
-        "Sample Event_List & Half-Float ev_pos Shapes (decode_retail_ev_pos_shape):",
-    );
-    for (i, ev) in stg.event_list.iter().take(3).enumerate() {
-        if ev.is_sentinel() {
-            break;
-        }
-        let r_trg = RetailTriggerKind::from_entry(ev);
-        let sh_ok = ev
-            .shape_kind()
-            .and_then(|sh| decode_retail_ev_pos_shape(stg.pos_list, ev.ev_pos_offset(), sh))
-            .is_some();
-        txt(
-            state,
-            lx,
-            212 + i * 16,
-            WHITE,
-            &format!(
-                "  ev[{i:02}]: cond=0x{:08X} (trg={r_trg:?}) rslt0=0x{:08X} shape_ok={sh_ok}",
-                ev.cond, ev.rslt0
-            ),
-        );
+    let puzzles = [
+        (Act2VisualPuzzle::WishGravestone, "[1] Wish Gravestone"),
+        (Act2VisualPuzzle::HotelBriefcase, "[2] 204 Briefcase"),
+        (Act2VisualPuzzle::HotelEggsAndVcr, "[3] Egg Doors & VCR"),
+        (Act2VisualPuzzle::LabyrinthAndGallows, "[4] Cube & Gallows"),
+    ];
+    for (i, (pz, label)) in puzzles.iter().enumerate() {
+        let bx = 24 + i * 141;
+        let sel = active_pz == *pz;
+        let bg = if sel {
+            [34, 62, 88, 255]
+        } else {
+            [16, 20, 28, 255]
+        };
+        let fg = if sel { YELLOW } else { [60, 70, 90, 255] };
+        draw_card(state, bx, 58, 137, 18, bg, fg);
+        txt_left(state, bx + 4, 63, if sel { YELLOW } else { MUTED }, label);
     }
 
-    txt(
-        state,
-        lx,
-        264,
-        YELLOW,
-        "Sample RetailItemSpawn (16B) & RetailEnemySpawn (20B):",
-    );
-    for (i, it) in stg.retail_items.iter().take(2).enumerate() {
-        txt(
-            state,
-            lx,
-            280 + i * 16,
-            CYAN,
-            &format!(
-                "  gi[{i:02}]: pos=({:.0},{:.0},{:.0})mm mdl={:?} kind={} flag={}",
-                it.pos_x(),
-                it.pos_y(),
-                it.pos_z(),
-                it.pickup_model_kind(),
-                it.item_kind_index(),
-                it.flag_id()
-            ),
-        );
-    }
-    for (i, en) in stg.retail_enemies.iter().take(2).enumerate() {
-        txt(
-            state,
-            lx,
-            314 + i * 16,
-            WHITE,
-            &format!(
-                "  en[{i:02}]: kind=0x{:04X} id={} defeat_flag={:?} pos=({},{},{})mm",
-                en.kind,
-                en.id,
-                en.defeat_flag_id(),
-                en.pos_x,
-                en.pos_y,
-                en.pos_z
-            ),
-        );
-    }
+    let (base_pic, quads) = build_act2_cutaway_quads(state, active_pz);
+    let (vp_x, vp_y, vp_w, vp_h) = (24usize, 78usize, 560usize, 420usize);
+    blit_cutaway_viewport(state, vp_x, vp_y, vp_w, vp_h, base_pic, pref, &quads);
 
-    let door_idx = state.story_progression_room.act2_trg10_door_idx;
-    let carrying = state.story_progression_room.act2_carrying_key;
-    let last_res = state.story_progression_room.act2_trg10_last_result.clone();
-    let (_, _, key_id, door_label) = ACT2_TRG10_KEY_DOORS[door_idx];
-    txt(
-        state,
-        lx,
-        356,
-        YELLOW,
-        "--- INTERACTIVE TRG==10 KEY-DOOR TESTER (All 9 Act 2 Key Doors) ---",
-    );
-    txt(
-        state,
-        lx,
-        374,
-        CYAN,
-        &format!("Selected [Left/Right] ({}/9): {door_label}", door_idx + 1),
-    );
-    txt(
-        state,
-        lx,
-        392,
-        if carrying { GREEN } else { ORANGE },
-        &format!(
-            "Carrying Key #{key_id} [K]: {carrying} | [A] Test Action Press (0x0048e1ee) | [U] Test Menu Use (0x0048e1c1)"
-        ),
-    );
-    txt(state, lx, 410, WHITE, &format!("Result: {last_res}"));
-
-    render_act2_riddles_panel(state, idx);
+    draw_act2_viewport_hud_overlays(state, active_pz, vp_x, vp_y);
+    render_act2_right_panel(state, active_pz);
 }
 
-fn render_act2_riddles_panel(state: &mut AppState, idx: usize) {
-    let rx = 636usize;
-    let mut fl_copy = state.sim_core.scenario.flags.clone();
-    let cube = sync_labyrinth_face_cube(&mut fl_copy);
+fn build_act2_cutaway_quads(
+    state: &mut AppState,
+    active_pz: Act2VisualPuzzle,
+) -> (&'static str, Vec<OverlaySpriteQuad>) {
+    match active_pz {
+        Act2VisualPuzzle::WishGravestone => {
+            let fix = state
+                .story_progression_room
+                .act2_toggles
+                .gravestone_boards_alignment_fix;
+            let (sw, sh) = original_sheet_dimensions("add/teien2");
+            let (sw, sh) = (sw as f32, sh as f32);
+            let mut quads = Vec::new();
+            let [x0, y0, x1, y1] = GRAVESTONE_BOARD_VERT_EXTENTS.map(|v| (v as f32) / 16.0);
+
+            if !state
+                .sim_core
+                .scenario
+                .flags
+                .get(FLAG_WISH_GRAVESTONE_SOLVED)
+            {
+                let (u0, v0, u1, v1) = (160.0 / sw, 0.0 / sh, 319.0 / sw, 207.0 / sh);
+                quads.push(OverlaySpriteQuad {
+                    sheet_name: "add/teien2",
+                    vertices: [
+                        (x0, y0, u0, v0),
+                        (x1, y0, u1, v0),
+                        (x1, y1, u1, v1),
+                        (x0, y1, u0, v1),
+                    ],
+                    alpha: 1.0,
+                });
+            }
+
+            let boards = [
+                (0usize, GravestoneBoard::White),
+                (1, GravestoneBoard::Black),
+                (2, GravestoneBoard::Red),
+            ];
+            for &(idx, board) in &boards {
+                if state
+                    .sim_core
+                    .scenario
+                    .inventory_mgr
+                    .has_item(board.item_id())
+                {
+                    continue;
+                }
+                let rot = state.story_progression_room.act2_gravestone_rotations[idx];
+                let uv = gravestone_board_uv(board, fix);
+                let verts = gravestone_board_verts(rot, fix);
+                let [tl, tr, bl, br] =
+                    verts.map(|[vx, vy]| ((vx as f32) / 16.0, (vy as f32) / 16.0));
+                let (u0, v0, u1, v1) = (
+                    (uv.u1 / 16.0) / sw,
+                    (uv.v1 / 16.0) / sh,
+                    (uv.u2 / 16.0) / sw,
+                    (uv.v2 / 16.0) / sh,
+                );
+                quads.push(OverlaySpriteQuad {
+                    sheet_name: "add/teien2",
+                    vertices: [
+                        (tl.0, tl.1, u0, v0),
+                        (tr.0, tr.1, u1, v0),
+                        (br.0, br.1, u1, v1),
+                        (bl.0, bl.1, u0, v1),
+                    ],
+                    alpha: 1.0,
+                });
+            }
+            ("add_p_teien", quads)
+        }
+        Act2VisualPuzzle::HotelBriefcase => {
+            let pic = if state.story_progression_room.act2_show_marker_still {
+                "htl_p_marker"
+            } else {
+                "htl_p_trank"
+            };
+            state.sim_core.scenario.flags.set(405, true);
+            eval_act2_overlay(state, pic, 0)
+        }
+        Act2VisualPuzzle::HotelEggsAndVcr => {
+            let pic = if state.story_progression_room.act2_show_vcr_still {
+                "htl_p_video"
+            } else {
+                "htl_p_egghollow"
+            };
+            eval_act2_overlay(state, pic, 1)
+        }
+        Act2VisualPuzzle::LabyrinthAndGallows => {
+            let pic = if state.story_progression_room.act2_show_manacles_still {
+                "dls_p_manacles_on"
+            } else {
+                "htl_p_hanging"
+            };
+            let s = &mut state.sim_core.scenario;
+            let r_idx = riddle_level_index(s.riddle_difficulty);
+            s.cutaway_overlay.set_picture(Some(pic), &s.flags);
+            let alpha = if s.flags.get(FLAG_SCAFFOLD_ALL_SET) {
+                1.0
+            } else {
+                0.0
+            };
+            s.cutaway_overlay.set_manacles_alpha(alpha);
+            let q = s
+                .cutaway_overlay
+                .evaluate_frame(&s.flags, &s.puzzle_state, r_idx, 0)
+                .to_vec();
+            (pic, q)
+        }
+    }
+}
+
+fn eval_act2_overlay(
+    state: &mut AppState,
+    pic: &'static str,
+    extra: i32,
+) -> (&'static str, Vec<OverlaySpriteQuad>) {
+    let s = &mut state.sim_core.scenario;
+    let r_idx = riddle_level_index(s.riddle_difficulty);
+    s.cutaway_overlay.set_picture(Some(pic), &s.flags);
+    let q = s
+        .cutaway_overlay
+        .evaluate_frame(&s.flags, &s.puzzle_state, r_idx, extra)
+        .to_vec();
+    (pic, q)
+}
+
+fn draw_act2_viewport_hud_overlays(
+    state: &mut AppState,
+    active_pz: Act2VisualPuzzle,
+    vp_x: usize,
+    vp_y: usize,
+) {
+    draw_card(
+        state,
+        24,
+        506,
+        560,
+        150,
+        [14, 18, 28, 245],
+        [70, 90, 120, 255],
+    );
     let toggles = state.story_progression_room.act2_toggles;
-    let prisoner_thresh =
-        effective_prisoner_step_threshold(45, 60, toggles.prisoner_timer_60fps_fix);
-    let fl_301 = state.sim_core.scenario.flags.get(301);
-    let fl_302 = state.sim_core.scenario.flags.get(302);
-    let fl_303 = state.sim_core.scenario.flags.get(303);
-    let fl_304 = state.sim_core.scenario.flags.get(FLAG_SCAFFOLD_ALL_SET);
 
-    txt(
-        state,
-        rx,
-        74,
-        YELLOW,
-        "--- ACT 2 & BORN FROM A WISH INTERACTIVE RIDDLES ([1]..[8], [V]) ---",
-    );
-    txt(
-        state,
-        rx,
-        98,
-        if fl_304 { GREEN } else { WHITE },
-        &format!(
-            "[1] PRISON GALLOWS : Tablets(301..303)=[{fl_301},{fl_302},{fl_303}] AllSet(304)={fl_304} | PrisonerTimer(60Hz)={prisoner_thresh} ticks (Fix={})",
-            toggles.prisoner_timer_60fps_fix
-        ),
-    );
-    txt(
-        state,
-        rx,
-        122,
-        if cube.passage_open { GREEN } else { ORANGE },
-        &format!(
-            "[2] LABYRINTH CUBE : plane={} roll={} itr={} pitch={:.2} yaw={:.2} | check={} -> Flag325={} Flag326={}",
-            cube.plane,
-            cube.roll,
-            cube.itr,
-            cube.pitch_rad,
-            cube.yaw_rad,
-            cube.connectivity_level,
-            cube.passage_open,
-            cube.maria_path_open
-        ),
-    );
-
-    let digits = decode_hangman_digits(&state.sim_core.scenario.puzzle_state);
-    let innocent = hangman_innocent_slot(&state.sim_core.scenario.puzzle_state);
-    let solved_hangman = (0..6).any(|i| state.sim_core.scenario.flags.get(343 + i));
-    txt(
-        state,
-        rx,
-        146,
-        if solved_hangman { GREEN } else { WHITE },
-        &format!(
-            "[3] 6 HANGED MEN   : PZ_HANGMAN={digits:?} | Innocent(digit==5)=Slot {innocent:?} | Solved={solved_hangman}"
-        ),
-    );
-
-    let riddle = state.sim_core.scenario.riddle_difficulty;
-    let fl_472 = state.sim_core.scenario.flags.get(FLAG_MUSIC_BOX_SOLVED);
-    txt(
-        state,
-        rx,
-        170,
-        if fl_472 { GREEN } else { WHITE },
-        &format!(
-            "[4] HOTEL MUSIC BOX: Level={riddle:?} | Solved(Flag 472)={fl_472} | MusicBoxVolumeFix={} (Bank={})",
-            toggles.music_box_volume_fix,
-            if toggles.music_box_volume_fix { 4 } else { 0 }
-        ),
-    );
-
-    let fl_446 = state.sim_core.scenario.flags.get(446);
-    let fl_400 = state.sim_core.scenario.flags.get(FLAG_ELEVATOR_WEIGHT_OK);
-    let ammo = state.sim_core.scenario.inventory_mgr.count(5);
-    txt(
-        state,
-        rx,
-        194,
-        if fl_400 { GREEN } else { ORANGE },
-        &format!(
-            "[5] 2F CUPBOARD    : ShelfHasItems(446)={fl_446} | WeightOK(Flag 400)={fl_400} | HandgunAmmo={ammo}"
-        ),
-    );
-
-    let word = selected_briefcase_word(&state.sim_core.scenario.flags);
-    let raw_drums: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()[PZ_DRUM..PZ_DRUM + 4]
-        .try_into()
-        .unwrap_or([0; 4]);
-    let cur_chars = [
-        BRIEFCASE_TRUNK_DRUMS[0][(raw_drums[0] & 7) as usize] as char,
-        BRIEFCASE_TRUNK_DRUMS[1][(raw_drums[1] & 7) as usize] as char,
-        BRIEFCASE_TRUNK_DRUMS[2][(raw_drums[2] & 7) as usize] as char,
-        BRIEFCASE_TRUNK_DRUMS[3][(raw_drums[3] & 7) as usize] as char,
-    ];
-    let fl_413 = state.sim_core.scenario.flags.get(FLAG_BRIEFCASE_UNLOCKED);
-    txt(
-        state,
-        rx,
-        218,
-        if fl_413 { GREEN } else { WHITE },
-        &format!(
-            "[6] 204 BRIEFCASE  : Target=\"{word}\" | Drums=\"{}{}{}{}\" ({raw_drums:?}) | Open(413)={fl_413}",
-            cur_chars[0], cur_chars[1], cur_chars[2], cur_chars[3]
-        ),
-    );
-
-    let room_byte = 0x29 + (state.story_progression_room.act2_corridor_room_idx as u8);
-    let teleports = is_hotel_2f_teleport_corridor_room(room_byte);
-    txt(
-        state,
-        rx,
-        242,
-        if teleports { GREEN } else { WHITE },
-        &format!(
-            "[7] 2F_B TELEPORT  : Room 0x{room_byte:02X} Teleports={teleports} (Active rooms: 0x29, 0x2D, 0x31, 0x39)"
-        ),
-    );
-
-    let fix = toggles.gravestone_boards_alignment_fix;
-    let rot = state.story_progression_room.act2_gravestone_rot;
-    let uv_w = gravestone_board_uv(GravestoneBoard::White, fix);
-    let verts = gravestone_board_verts(rot, fix);
-    let fl_704 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(FLAG_WISH_GRAVESTONE_SOLVED);
-    let has_acacia = state.sim_core.scenario.inventory_mgr.has_item(82);
-    txt(
-        state,
-        rx,
-        266,
-        if fl_704 { GREEN } else { WHITE },
-        &format!(
-            "[8] WISH GRAVESTONE: Solved(704)={fl_704} | AcaciaKey(82)={has_acacia} | GravestoneBoardsFix[V]={fix}"
-        ),
-    );
-    txt(
-        state,
-        rx,
-        284,
-        CYAN,
-        &format!(
-            "    White UV=({:.0},{:.0})..({:.0},{:.0}) | Rot={rot:?} Verts={verts:?}",
-            uv_w.u1, uv_w.v1, uv_w.u2, uv_w.v2
-        ),
-    );
-
-    txt(
-        state,
-        22,
-        438,
-        YELLOW,
-        "--- ALL 35 ACT 2 & BORN FROM A WISH STAGES ([PgUp / PgDn] to Inspect) ---",
-    );
-    for (i, &sid) in ALL_ACT2_STAGE_IDS.iter().enumerate() {
-        let sel = i == idx;
-        if let Some(t) = stage_table_act2(sid) {
-            txt(
+    match active_pz {
+        Act2VisualPuzzle::WishGravestone => {
+            let fix = toggles.gravestone_boards_alignment_fix;
+            let solved = state
+                .sim_core
+                .scenario
+                .flags
+                .get(FLAG_WISH_GRAVESTONE_SOLVED);
+            let rots = state.story_progression_room.act2_gravestone_rotations;
+            draw_card(
                 state,
-                22 + (i / 12) * 415,
-                456 + (i % 12) * 17,
-                if sel { GREEN } else { MUTED },
-                &format!(
-                    "{} {:02}: {:<22} (ev={:02} gi={:02} en={:02})",
-                    if sel { ">>" } else { "  " },
-                    sid,
-                    t.name,
-                    t.active_event_count(),
-                    t.retail_items.len(),
-                    t.retail_enemies.len()
-                ),
+                vp_x + 12,
+                vp_y + 10,
+                420,
+                28,
+                [10, 14, 22, 225],
+                CYAN,
             );
+            let align_lbl = if fix {
+                "ALIGNMENT [V]: SH2:EE GravestoneBoardsFix (Rotated Quads Aligned)"
+            } else {
+                "ALIGNMENT [V]: Vanilla PC 0x008c4670 (Rotated Quads Shifted)"
+            };
+            txt_left(
+                state,
+                vp_x + 20,
+                vp_y + 18,
+                if fix { GREEN } else { ORANGE },
+                align_lbl,
+            );
+            let l1 = format!(
+                "  Placed Boards: White={:?} | Black={:?} | Red={:?}",
+                rots[0], rots[1], rots[2]
+            );
+            let l2 = format!(
+                "  Cavity Status: {} | Acacia Key (#82) in Inventory={}",
+                if solved {
+                    "SOLVED (Flag 704 Unlocked!)"
+                } else {
+                    "Unsolved (Match Black==White & Red==Left90)"
+                },
+                state.sim_core.scenario.inventory_mgr.has_item(82)
+            );
+            txt_left_lines(
+                state,
+                34,
+                514,
+                20,
+                &[
+                    (
+                        YELLOW,
+                        "BORN FROM A WISH: BALDWIN MANSION 3-BOARD GRAVESTONE:",
+                    ),
+                    (WHITE, &l1),
+                    (if solved { GREEN } else { ORANGE }, &l2),
+                    (
+                        CYAN,
+                        "  Press [V] to watch rotated board quads snap into alignment!",
+                    ),
+                    (
+                        WHITE,
+                        "  [Z] Place/Rotate White | [X] Black | [C] Red | [B] Pop Top (LIFO)",
+                    ),
+                    (
+                        MUTED,
+                        "  [Space] Auto-Solve 3 Boards & Claim Acacia Key (#82)",
+                    ),
+                ],
+            );
+        }
+        Act2VisualPuzzle::HotelBriefcase => {
+            let sel_d = state.story_progression_room.act2_drum_idx;
+            let show_marker = state.story_progression_room.act2_show_marker_still;
+            let word = selected_briefcase_word(&state.sim_core.scenario.flags);
+            let raw: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()[PZ_DRUM..PZ_DRUM + 4]
+                .try_into()
+                .unwrap_or([0; 4]);
+            let cur = [0, 1, 2, 3].map(|i| BRIEFCASE_TRUNK_DRUMS[i][(raw[i] & 7) as usize] as char);
+            let open = state.sim_core.scenario.flags.get(FLAG_BRIEFCASE_UNLOCKED);
+
+            draw_card(
+                state,
+                vp_x + 12,
+                vp_y + 10,
+                410,
+                28,
+                [10, 14, 22, 225],
+                YELLOW,
+            );
+            txt_left(
+                state,
+                vp_x + 20,
+                vp_y + 18,
+                YELLOW,
+                if show_marker {
+                    "VIEWING: Rm 204 Photo & Thinner Code (htl_p_marker + maker)"
+                } else {
+                    "VIEWING: Rm 204 Briefcase 4-Drum Lock (htl_p_trank + dram)"
+                },
+            );
+            let l0 = format!(
+                "HOTEL RM 204 BRIEFCASE 4-DRUM LOCK (Selected Drum #{}/4):",
+                sel_d + 1
+            );
+            let l1 = format!(
+                "  Target Photo Word: \"{word}\"  |  Current Drums: \"{} {} {} {}\"",
+                cur[0], cur[1], cur[2], cur[3]
+            );
+            let l2 = format!(
+                "  Briefcase Lock(413)={} | Thinner Wiped Photo(411)={}",
+                open,
+                state.sim_core.scenario.flags.get(411)
+            );
+            txt_left_lines(
+                state,
+                34,
+                514,
+                20,
+                &[
+                    (YELLOW, &l0),
+                    (GREEN, &l1),
+                    (if open { GREEN } else { ORANGE }, &l2),
+                    (
+                        WHITE,
+                        "  [Up/Down] Select Drum 1..4 | [Left/Right] Rotate Drum Letter",
+                    ),
+                    (
+                        CYAN,
+                        "  [B] Toggle Briefcase Drums vs Photo Marker Still (htl_p_marker)",
+                    ),
+                    (
+                        MUTED,
+                        "  [Space] Snap All 4 Drums to Target Word & Unlock Cinderella Box",
+                    ),
+                ],
+            );
+        }
+        Act2VisualPuzzle::HotelEggsAndVcr => {
+            let show_vcr = state.story_progression_room.act2_show_vcr_still;
+            let fl = &state.sim_core.scenario.flags;
+            let (rust_egg, scarlet_egg, vhs_in, mb_solved, shelf_has, weight_ok) = (
+                fl.get(380),
+                fl.get(381),
+                fl.get(388),
+                fl.get(FLAG_MUSIC_BOX_SOLVED),
+                fl.get(446),
+                fl.get(FLAG_ELEVATOR_WEIGHT_OK),
+            );
+            draw_card(
+                state,
+                vp_x + 12,
+                vp_y + 10,
+                410,
+                28,
+                [10, 14, 22, 225],
+                CYAN,
+            );
+            txt_left(
+                state,
+                vp_x + 20,
+                vp_y + 18,
+                CYAN,
+                if show_vcr {
+                    "VIEWING: Hotel Rm 312 VCR Deck (htl_p_video + p_video02)"
+                } else {
+                    "VIEWING: Otherworld Hotel Egg Doors (htl_p_egghollow + egg)"
+                },
+            );
+            let l1 = format!(
+                "  Egg Doors [Z/X]: RustEgg={rust_egg} | ScarletEgg={scarlet_egg} | VCR Tape [C]={vhs_in}"
+            );
+            let l2 = format!(
+                "  Lobby 3-Seat Music Box [M]: Solved(Flag 472)={mb_solved} (VolFix={})",
+                toggles.music_box_volume_fix
+            );
+            let l3 = format!(
+                "  2F Elevator Weight Cupboard [W]: ItemsOnShelf(446)={shelf_has} -> WeightOK={weight_ok}"
+            );
+            txt_left_lines(
+                state,
+                34,
+                514,
+                20,
+                &[
+                    (
+                        YELLOW,
+                        "HOTEL EGG DOORS, RM 312 VCR, MUSIC BOX & ELEVATOR CUPBOARD:",
+                    ),
+                    (WHITE, &l1),
+                    (if mb_solved { GREEN } else { WHITE }, &l2),
+                    (if weight_ok { GREEN } else { ORANGE }, &l3),
+                    (
+                        WHITE,
+                        "  [Z] Toggle Rust Egg | [X] Scarlet Egg | [C] VCR Tape | [B] Swap Still",
+                    ),
+                    (
+                        MUTED,
+                        "  [M] Solve 3 Music Boxes | [W] Transfer All Inventory to/from Cupboard",
+                    ),
+                ],
+            );
+        }
+        Act2VisualPuzzle::LabyrinthAndGallows => {
+            draw_labyrinth_and_gallows_card(state, vp_x, vp_y);
         }
     }
 }

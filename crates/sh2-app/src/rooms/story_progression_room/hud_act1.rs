@@ -1,370 +1,387 @@
-//! Tab 1 (`[F1]`): Act 1 Stages 1–27 & Riddles (`SH2-113`) HUD overlay.
+//! Tab 1 (`[F1]`): Act 1 Visual Cutaway Puzzles & Stage Riddles (`SH2-113`).
 
+use super::hud_act1_panel::{draw_quiz_chest_bottom_card, render_act1_right_panel};
+use super::hud_common::{
+    blit_cutaway_viewport, draw_card, draw_progress_bar, txt_left, txt_left_lines, CYAN, GREEN,
+    MUTED, ORANGE, WHITE, YELLOW,
+};
+use super::Act1VisualPuzzle;
 use crate::state::AppState;
 use sh2_core::events::stages_act1::{
-    act1_coin_puzzle_quad_layout, act1_eval_red_pyramid_walk_speed_q12,
-    act1_hospital_wing_keypad_goal, act1_is_old_man_coin_prop_visible, act1_read_safe_dial_pos,
-    act1_should_james_look_at_prop, act1_step_elevator_radio_quiz, decode_act1_enemy_spawn,
-    decode_act1_ev_pos_anchor, format_act1_carbon_paper_code, format_act1_wallet_safe_memo,
-    Act1DeskCoinKind, Act1VanillaFixesConfig, ACT1_ALL_STAGES, ACT1_FLAG_FIRE_ESCAPE_UNLOCKED,
-    ACT1_FLAG_LOUISE_WHEEL_OPEN, ACT1_FLAG_OLD_MAN_COIN_SUB, ACT1_FLAG_OLD_MAN_COIN_TAKEN,
-    ACT1_FLAG_QUIZ_CHEST_SOLVED, ACT1_FLAG_QUIZ_CHEST_WRONG, ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED,
-    ACT1_FLAG_SAFE_UNLOCKED, ACT1_FLAG_WALL_BLOOD_CODE_READ, ACT1_FLAG_WING_KEYPAD_UNLOCKED,
-    ACT1_PROP_KIND_TEDDY_BEAR,
+    act1_coin_puzzle_quad_layout, act1_read_safe_dial_pos, format_act1_carbon_paper_code,
+    format_act1_wallet_safe_memo, Act1DeskCoinKind, ACT1_FLAG_LOUISE_KEY1_OPEN,
+    ACT1_FLAG_LOUISE_KEY2_OPEN, ACT1_FLAG_LOUISE_KEYPAD_OPEN, ACT1_FLAG_LOUISE_WHEEL_OPEN,
+    ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED, ACT1_FLAG_SAFE_UNLOCKED, ACT1_FLAG_WALL_BLOOD_CODE_READ,
 };
 use sh2_core::events::{PZ_SAFE_CODE, PZ_SAFE_PROG, PZ_WHEEL, PZ_WHEEL_GOAL};
-
-const YELLOW: [u8; 4] = [245, 210, 65, 255];
-const CYAN: [u8; 4] = [105, 215, 235, 255];
-const GREEN: [u8; 4] = [120, 230, 150, 255];
-const WHITE: [u8; 4] = [235, 235, 235, 255];
-const ORANGE: [u8; 4] = [255, 170, 80, 255];
-const MUTED: [u8; 4] = [165, 170, 185, 255];
-
-fn txt(state: &mut AppState, x: usize, y: usize, color: [u8; 4], s: &str) {
-    state.menu_rasterizer.draw_text(s, x, y, 1, color, true);
-}
+use sh2_core::{
+    is_coin_desk_solved, original_sheet_dimensions, riddle_level_index, OverlaySpriteQuad,
+};
 
 pub(super) fn render_act1_tab(state: &mut AppState) {
-    let idx = state.story_progression_room.act1_stage_idx % ACT1_ALL_STAGES.len();
-    let stg = &ACT1_ALL_STAGES[idx];
-    let h = &stg.header;
+    let active_pz = state.story_progression_room.act1_puzzle;
+    let pref = state.story_progression_room.prefer_sh2ee_cutaways;
+    let fixes = state.story_progression_room.act1_fixes;
 
-    let lx = 22usize;
-    txt(
-        state,
-        lx,
-        74,
-        YELLOW,
-        &format!(
-            "--- ACT 1 STAGE TABLE [PgUp/PgDn]: Stage {:02}/27 ({:?}) ---",
-            stg.stage_id as u8, stg.stage_id
-        ),
-    );
-    txt(
-        state,
-        lx,
-        92,
-        CYAN,
-        &format!(
-            "Stage_Data VAs : PS2 SLUS_202.28=0x{:08X} | PC sh2pc.exe=0x{:08X}",
-            stg.ps2_stage_data_addr, stg.pc_stage_data_addr
-        ),
-    );
-    txt(
-        state,
-        lx,
-        108,
-        WHITE,
-        &format!(
-            "Header Ptrs    : ev_list=0x{:08X} | ev_pos=0x{:08X} | ev_prog=0x{:08X}",
-            h.ev_list_ptr, h.ev_pos_ptr, h.ev_prog_ptr
-        ),
-    );
-    txt(
-        state,
-        lx,
-        124,
-        WHITE,
-        &format!(
-            "Entity Ptrs    : gi_list=0x{:08X} | mdl_list=0x{:08X} | en_list=0x{:08X}",
-            h.item_list_ptr, h.model_list_ptr, h.enemy_list_ptr
-        ),
-    );
-    txt(
-        state,
-        lx,
-        140,
-        WHITE,
-        &format!(
-            "Callbacks      : stage_init=0x{:08X} | room_init=0x{:08X} | all_time=0x{:08X}",
-            h.stage_init_fn, h.room_init_fn, h.all_time_fn
-        ),
-    );
-    txt(state, lx, 156, MUTED, &format!("Audio/Clear    : sound_load=0x{:08X} | bgm_ctrl=0x{:08X} | chara_clr=0x{:08X} | glb_crd={}", h.sound_call_after_load_fn, h.bgm_control_fn, h.chara_data_clear_fn, h.glb_crd));
-    txt(state, lx, 174, GREEN, &format!("Counts         : Event_List={} (+sentinel) | ev_pos={}B | ev_prog={} | Items={} | Models={} | Enemies={}", stg.event_list.len().saturating_sub(1), stg.ev_pos.len(), stg.ev_prog_addrs.len(), stg.item_list.len(), stg.model_list.len(), stg.enemy_list.len()));
-
-    txt(
-        state,
-        lx,
-        196,
-        YELLOW,
-        "Sample Event_List & Decoded ev_pos Anchors (decode_act1_ev_pos_anchor):",
-    );
-    for (i, ev) in stg.event_list.iter().take(4).enumerate() {
-        if ev.is_sentinel() {
-            break;
-        }
-        let anchor_str = ev
-            .shape_kind()
-            .and_then(|sh| decode_act1_ev_pos_anchor(stg.ev_pos, ev.ev_pos_offset(), sh))
-            .map(|([x, y, z], p)| format!("pos=({x:.0},{y:.0},{z:.0}) p={p:.0}"))
-            .unwrap_or_else(|| "no-shape".to_string());
-        txt(
-            state,
-            lx,
-            212 + i * 16,
-            WHITE,
-            &format!(
-                "  ev[{i:02}]: flag=0x{:08X} cond=0x{:08X} rslt0=0x{:08X} | {anchor_str}",
-                ev.flag, ev.cond, ev.rslt0
-            ),
-        );
+    let puzzles = [
+        (Act1VisualPuzzle::SafeDial, "[1] W2F Safe Dial"),
+        (Act1VisualPuzzle::CoinDesk, "[2] 105 Coin Desk"),
+        (Act1VisualPuzzle::LouiseBox, "[3] S14 Louise Box"),
+        (Act1VisualPuzzle::QuizChest, "[4] Quiz & Radio"),
+    ];
+    for (i, (pz, label)) in puzzles.iter().enumerate() {
+        let bx = 24 + i * 141;
+        let sel = active_pz == *pz;
+        let bg = if sel {
+            [34, 62, 88, 255]
+        } else {
+            [16, 20, 28, 255]
+        };
+        let fg = if sel { YELLOW } else { [60, 70, 90, 255] };
+        draw_card(state, bx, 58, 137, 18, bg, fg);
+        txt_left(state, bx + 4, 63, if sel { YELLOW } else { MUTED }, label);
     }
 
-    txt(
-        state,
-        lx,
-        282,
-        YELLOW,
-        "Decoded 20B Enemy_List Spawns (decode_act1_enemy_spawn):",
-    );
-    if stg.enemy_list.is_empty() {
-        txt(state, lx, 298, MUTED, "  (No enemy spawns in this stage)");
-    } else {
-        for (i, raw_en) in stg.enemy_list.iter().take(4).enumerate() {
-            let d = decode_act1_enemy_spawn(raw_en);
-            txt(state, lx, 298 + i * 16, CYAN, &format!("  en[{i:02}]: kind=0x{:04X} id={:02} pos=({}, {}, {})mm rot={} st=0x{:04X} cond=0x{:04X}", d.kind, d.id, d.pos_x_mm, d.pos_y_mm, d.pos_z_mm, d.rot_y, d.status, d.condition));
-        }
-    }
+    let (base_pic, quads) = build_act1_cutaway_quads(state, active_pz);
+    let (vp_x, vp_y, vp_w, vp_h) = (24usize, 78usize, 560usize, 420usize);
+    blit_cutaway_viewport(state, vp_x, vp_y, vp_w, vp_h, base_pic, pref, &quads);
 
-    txt(
-        state,
-        lx,
-        368,
-        YELLOW,
-        "Sample Item_List (gi_list) & Model_List (mdl_list):",
-    );
-    for (i, it) in stg.item_list.iter().take(3).enumerate() {
-        txt(
-            state,
-            lx,
-            384 + i * 16,
-            WHITE,
-            &format!(
-                "  gi[{i:02}]: pos=({:.0}, {}, {:.0})mm kind_idx={} diff={} extra={} flag={}",
-                it.pos_x,
-                it.pos_y,
-                it.pos_z,
-                it.item_kind_index(),
-                it.difficulty_condition(),
-                it.extra_condition(),
-                it.flag_id()
-            ),
-        );
-    }
-    for (i, m) in stg.model_list.iter().take(2).enumerate() {
-        txt(
-            state,
-            lx,
-            434 + i * 16,
-            MUTED,
-            &format!(
-                "  mdl[{i:02}]: kind=0x{:04X} flag_off={} flag_on={} pos=({:.0},{:.0},{:.0})",
-                m.kind, m.flag_0, m.flag_1, m.pos[0], m.pos[1], m.pos[2]
-            ),
-        );
-    }
-
-    render_act1_riddles_panel(state, idx);
+    draw_act1_viewport_hud_overlays(state, active_pz, vp_x, vp_y, vp_w, vp_h, fixes);
+    render_act1_right_panel(state, active_pz);
 }
 
-fn render_act1_riddles_panel(state: &mut AppState, idx: usize) {
-    let rx = 636usize;
-    let riddle = state.sim_core.scenario.riddle_difficulty;
-    let fixes = state.story_progression_room.act1_fixes;
-    let memo = format_act1_wallet_safe_memo(&state.sim_core.scenario.puzzle_state, riddle);
-    let dial = act1_read_safe_dial_pos(&state.sim_core.scenario.flags);
-    let raw_code: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()
-        [PZ_SAFE_CODE..PZ_SAFE_CODE + 4]
-        .try_into()
-        .unwrap_or([0; 4]);
-    let raw_prog: [i8; 4] = [
-        state.sim_core.scenario.puzzle_state.raw()[PZ_SAFE_PROG] as i8,
-        state.sim_core.scenario.puzzle_state.raw()[PZ_SAFE_PROG + 1] as i8,
-        state.sim_core.scenario.puzzle_state.raw()[PZ_SAFE_PROG + 2] as i8,
-        state.sim_core.scenario.puzzle_state.raw()[PZ_SAFE_PROG + 3] as i8,
-    ];
-    let safe_open = state.sim_core.scenario.flags.get(ACT1_FLAG_SAFE_UNLOCKED);
-
-    txt(
-        state,
-        rx,
-        74,
-        YELLOW,
-        &format!("--- ACT 1 INTERACTIVE RIDDLES (Riddle={riddle:?}, Fixes=[V]) ---"),
-    );
-    txt(
-        state,
-        rx,
-        98,
-        CYAN,
-        "1. W2F RM 203 SAFE DIAL ([Left/Right] Rotate | [Space] Step Target | [R] Difficulty):",
-    );
-    txt(
-        state,
-        rx,
-        116,
-        WHITE,
-        &format!(
-            "   Wallet Memo : \"{memo}\" (1-based notches: [{}, {}, {}, {}])",
-            raw_code[0] + 1,
-            raw_code[1] + 1,
-            raw_code[2] + 1,
-            raw_code[3] + 1
-        ),
-    );
-    txt(state, rx, 134, if safe_open { GREEN } else { ORANGE }, &format!("   Active Dial : Notch {:02} (0-based {:02}) | i8[4] PZ_SAFE_PROG={raw_prog:?} | Open(108)={safe_open}", dial + 1, dial));
-
-    let van_snake = act1_coin_puzzle_quad_layout(
-        Act1DeskCoinKind::Snake,
-        0,
-        Act1VanillaFixesConfig::vanilla_ps2(),
-    );
-    let act_snake = act1_coin_puzzle_quad_layout(Act1DeskCoinKind::Snake, 0, fixes);
-    let coin_vis = act1_is_old_man_coin_prop_visible(&state.sim_core.scenario.flags, fixes);
-    let teddy_look = act1_should_james_look_at_prop(
-        ACT1_PROP_KIND_TEDDY_BEAR,
-        &state.sim_core.scenario.flags,
-        fixes,
-    );
-    let ph_zone = state.story_progression_room.act1_ph_zone;
-    let ph_hp = state.story_progression_room.act1_ph_hp_ratio;
-    let ph_q12 = act1_eval_red_pyramid_walk_speed_q12(ph_hp * 500.0, 500.0, 1.0, ph_zone);
-
-    txt(
-        state,
-        rx,
-        162,
-        CYAN,
-        "2. RM 105 COIN DESK QUADS (0x008e0538), OLD MAN COIN FIX & PH SPEED ([V] / [C]):",
-    );
-    if let (Some(v), Some(a)) = (van_snake, act_snake) {
-        txt(
-            state,
-            rx,
-            180,
-            WHITE,
-            &format!(
-                "   Snake Slot0 : Vanilla={:?} UV={:.0}..{:.0} | Active={:?} (Fix={})",
-                v.bounds, v.uv[1], v.uv[3], a.bounds, fixes.coin_puzzle_alignment_fix
-            ),
-        );
+fn build_act1_cutaway_quads(
+    state: &mut AppState,
+    active_pz: Act1VisualPuzzle,
+) -> (&'static str, Vec<OverlaySpriteQuad>) {
+    match active_pz {
+        Act1VisualPuzzle::SafeDial => eval_standard_overlay(state, "apt_p_safe_close"),
+        Act1VisualPuzzle::CoinDesk => {
+            let fixes = state.story_progression_room.act1_fixes;
+            let (sw, sh) = original_sheet_dimensions("apt/p_desk_coin_coin");
+            let (sw, sh) = (sw as f32, sh as f32);
+            let mut quads = Vec::new();
+            let coins = [
+                (0usize, Act1DeskCoinKind::Snake),
+                (1, Act1DeskCoinKind::OldMan),
+                (2, Act1DeskCoinKind::Prisoner),
+            ];
+            for slot in 0..5usize {
+                for &(c_idx, coin_kind) in &coins {
+                    if !state.sim_core.scenario.flags.get(126 + 5 * c_idx + slot) {
+                        continue;
+                    }
+                    if let Some(l) = act1_coin_puzzle_quad_layout(coin_kind, slot, fixes) {
+                        let [x0, y0, x1, y1] = l.bounds.map(|b| (b as f32) / 16.0);
+                        let (u0, v0, u1, v1) = (
+                            (l.uv[0] / 16.0) / sw,
+                            (l.uv[1] / 16.0) / sh,
+                            (l.uv[2] / 16.0) / sw,
+                            (l.uv[3] / 16.0) / sh,
+                        );
+                        quads.push(OverlaySpriteQuad {
+                            sheet_name: "apt/p_desk_coin_coin",
+                            vertices: [
+                                (x0, y0, u0, v0),
+                                (x1, y0, u1, v0),
+                                (x1, y1, u1, v1),
+                                (x0, y1, u0, v1),
+                            ],
+                            alpha: 1.0,
+                        });
+                    }
+                }
+            }
+            ("apt_p_desk_coin", quads)
+        }
+        Act1VisualPuzzle::LouiseBox => {
+            let pic = if state.story_progression_room.act1_show_wall_blood_still {
+                "hsp_p_boxnumber"
+            } else {
+                "hsp_p_box"
+            };
+            eval_standard_overlay(state, pic)
+        }
+        Act1VisualPuzzle::QuizChest => eval_standard_overlay(state, "hsp_p_quiz"),
     }
-    let fl_95 = state.sim_core.scenario.flags.get(95);
-    let fl_96 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_OLD_MAN_COIN_TAKEN);
-    let fl_118 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_OLD_MAN_COIN_SUB);
-    let fl_93 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_FIRE_ESCAPE_UNLOCKED);
-    txt(state, rx, 198, WHITE, &format!("   OldManCoin  : PropVisible={coin_vis} (Fix={}, Juice95={fl_95}, Taken96={fl_96}, Sub118={fl_118})", fixes.old_man_coin_fix));
-    txt(state, rx, 216, GREEN, &format!("   FireEscape  : Key(30)->Flag 93={fl_93} | TeddyLook={teddy_look} | enREDGetWalkSpeed(Zone{ph_zone}, HP={:.0}%)=Q12 {ph_q12}", ph_hp * 100.0));
+}
 
-    let wing_goal = act1_hospital_wing_keypad_goal(riddle);
-    let wing_digits = state.story_progression_room.act1_wing_keypad.digits;
-    let wing_unl = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_WING_KEYPAD_UNLOCKED);
-    let carbon = format_act1_carbon_paper_code(&state.sim_core.scenario.puzzle_state);
-    let wheels: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()[PZ_WHEEL..PZ_WHEEL + 4]
-        .try_into()
-        .unwrap_or([0; 4]);
-    let wheel_goals: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()
-        [PZ_WHEEL_GOAL..PZ_WHEEL_GOAL + 4]
-        .try_into()
-        .unwrap_or([0; 4]);
-    let fl_192 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_WALL_BLOOD_CODE_READ);
-    let fl_203 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED);
-    let fl_197 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_LOUISE_WHEEL_OPEN);
-    let mut fl_prev = state.sim_core.scenario.flags.clone();
-    let quiz_ticks = state.story_progression_room.act1_radio_quiz_ticks;
-    let (active_sub, _) = act1_step_elevator_radio_quiz(quiz_ticks, false, &mut fl_prev);
-    let q1 = u8::from(state.sim_core.scenario.flags.get(234))
-        | (u8::from(state.sim_core.scenario.flags.get(235)) << 1);
-    let q2 = u8::from(state.sim_core.scenario.flags.get(236))
-        | (u8::from(state.sim_core.scenario.flags.get(237)) << 1);
-    let q3 = u8::from(state.sim_core.scenario.flags.get(238))
-        | (u8::from(state.sim_core.scenario.flags.get(239)) << 1);
-    let fl_240 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_QUIZ_CHEST_SOLVED);
-    let fl_241 = state
-        .sim_core
-        .scenario
-        .flags
-        .get(ACT1_FLAG_QUIZ_CHEST_WRONG);
-    let jms_hp = state.story_progression_room.act1_james_hp;
+fn eval_standard_overlay(
+    state: &mut AppState,
+    pic: &'static str,
+) -> (&'static str, Vec<OverlaySpriteQuad>) {
+    let s = &mut state.sim_core.scenario;
+    let r_idx = riddle_level_index(s.riddle_difficulty);
+    s.cutaway_overlay.set_picture(Some(pic), &s.flags);
+    let q = s
+        .cutaway_overlay
+        .evaluate_frame(&s.flags, &s.puzzle_state, r_idx, 0)
+        .to_vec();
+    (pic, q)
+}
 
-    txt(
+fn draw_act1_viewport_hud_overlays(
+    state: &mut AppState,
+    active_pz: Act1VisualPuzzle,
+    vp_x: usize,
+    vp_y: usize,
+    vp_w: usize,
+    vp_h: usize,
+    fixes: sh2_core::events::stages_act1::Act1VanillaFixesConfig,
+) {
+    draw_card(
         state,
-        rx,
-        246,
-        CYAN,
-        "3. BROOKHAVEN HOSPITAL NORMAL & OTHERWORLD RIDDLES ([1] [2] [3] [4]):",
+        24,
+        506,
+        560,
+        150,
+        [14, 18, 28, 245],
+        [70, 90, 120, 255],
     );
-    txt(state, rx, 266, if wing_unl { GREEN } else { WHITE }, &format!("   [1] 3F Wing Keypad : Goal={wing_goal:?} | Buffer={wing_digits:?} | Unlocked(Flag 181)={wing_unl}"));
-    txt(
-        state,
-        rx,
-        286,
-        WHITE,
-        &format!(
-            "   [2] S14 Louise Box : Carbon={carbon} | Wheel={wheels:?} vs Goal={wheel_goals:?}"
-        ),
-    );
-    txt(state, rx, 304, if fl_197 { GREEN } else { ORANGE }, &format!("       WallBlood(Flag 192)={fl_192} | RoofPHPush(Flag 203)={fl_203} | WheelOpen(Flag 197)={fl_197}"));
-    txt(state, rx, 326, WHITE, &format!("   [3] Elevator Quiz  : Tick={quiz_ticks:.0}/5175.0 (42 Subtitle Windows @ 0x008d5618) | ActiveMsg={active_sub:?}"));
-    txt(state, rx, 346, if fl_240 { GREEN } else { ORANGE }, &format!("   [4] 3F Quiz Chest  : Buttons=({q1}, {q2}, {q3}) vs Target=(3, 1, 3) | Solved(240)={fl_240} | Poison(241)={fl_241} | HP={jms_hp:.0}"));
 
-    txt(
-        state,
-        22,
-        482,
-        YELLOW,
-        "--- ALL 27 ACT 1 STAGES ([PgUp / PgDn] to Inspect) ---",
-    );
-    for (i, d) in ACT1_ALL_STAGES.iter().enumerate() {
-        let sel = i == idx;
-        txt(
-            state,
-            22 + (i / 9) * 415,
-            500 + (i % 9) * 18,
-            if sel { GREEN } else { MUTED },
-            &format!(
-                "{} {:02}: {:<22} (ev={:02} gi={:02} en={:02})",
-                if sel { ">>" } else { "  " },
-                d.stage_id as u8,
-                format!("{:?}", d.stage_id),
-                d.event_list.len().saturating_sub(1),
-                d.item_list.len(),
-                d.enemy_list.len()
-            ),
-        );
+    match active_pz {
+        Act1VisualPuzzle::SafeDial => {
+            let riddle = state.sim_core.scenario.riddle_difficulty;
+            let memo = format_act1_wallet_safe_memo(&state.sim_core.scenario.puzzle_state, riddle);
+            let dial = act1_read_safe_dial_pos(&state.sim_core.scenario.flags);
+            let open = state.sim_core.scenario.flags.get(ACT1_FLAG_SAFE_UNLOCKED);
+            let raw: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()
+                [PZ_SAFE_CODE..PZ_SAFE_CODE + 4]
+                .try_into()
+                .unwrap_or([0; 4]);
+            let prog = [0, 1, 2, 3]
+                .map(|i| state.sim_core.scenario.puzzle_state.raw()[PZ_SAFE_PROG + i] as i8);
+            draw_card(
+                state,
+                vp_x + 12,
+                vp_y + 10,
+                260,
+                44,
+                [10, 14, 22, 220],
+                YELLOW,
+            );
+            let notch_str = format!("DIAL NOTCH: {:02} / 20", dial + 1);
+            let hint_str = if open {
+                "SAFE UNLOCKED! (+40 Ammo)"
+            } else {
+                "Turn [Left/Right] or [Space]"
+            };
+            txt_left_lines(
+                state,
+                vp_x + 20,
+                vp_y + 16,
+                18,
+                &[
+                    (YELLOW, &notch_str),
+                    (if open { GREEN } else { CYAN }, hint_str),
+                ],
+            );
+            let done = prog.iter().filter(|&&v| v >= 0).count();
+            draw_progress_bar(state, 34, 576, 536, 16, done as f32 / 4.0, GREEN, CYAN);
+            let l1 = format!("  Clue ({riddle:?}): \"{memo}\"");
+            let l2 = format!(
+                "  Target Notches: {:02} >> {:02} << {:02} >> {:02}",
+                raw[0] + 1,
+                raw[1] + 1,
+                raw[2] + 1,
+                raw[3] + 1
+            );
+            let l3 = format!("  Progress Stage: {done}/4 tumblers matched ({prog:?})");
+            txt_left_lines(
+                state,
+                34,
+                514,
+                20,
+                &[
+                    (YELLOW, "WALLET MEMO CLUE CARD (Rm 203 Toilet):"),
+                    (GREEN, &l1),
+                    (WHITE, &l2),
+                ],
+            );
+            txt_left_lines(
+                state,
+                34,
+                600,
+                20,
+                &[
+                    (CYAN, &l3),
+                    (
+                        MUTED,
+                        "  [Left/Right] Rotate Dial | [Space] Step Next Target | [R] Re-seed",
+                    ),
+                ],
+            );
+        }
+        Act1VisualPuzzle::CoinDesk => {
+            let sel_slot = state.story_progression_room.act1_coin_slot;
+            let solved = is_coin_desk_solved(
+                &state.sim_core.scenario.flags,
+                state.sim_core.scenario.riddle_difficulty,
+            );
+            state.menu_rasterizer.draw_rect_outline(
+                vp_x + 76 + sel_slot * 84,
+                vp_y + 150,
+                74,
+                96,
+                2,
+                YELLOW,
+            );
+            draw_card(
+                state,
+                vp_x + 12,
+                vp_y + 10,
+                390,
+                28,
+                [10, 14, 22, 225],
+                CYAN,
+            );
+            let align_lbl = if fixes.coin_puzzle_alignment_fix {
+                "ALIGNMENT [V]: SH2:EE CoinPuzzleFix (Centered Slots)"
+            } else {
+                "ALIGNMENT [V]: Vanilla PS2 0x008e0538 (Per-Coin Offset)"
+            };
+            txt_left(
+                state,
+                vp_x + 20,
+                vp_y + 18,
+                if fixes.coin_puzzle_alignment_fix {
+                    GREEN
+                } else {
+                    ORANGE
+                },
+                align_lbl,
+            );
+            let s_names: [&str; 5] = std::array::from_fn(|h| {
+                if state.sim_core.scenario.flags.get(126 + h) {
+                    "Snake"
+                } else if state.sim_core.scenario.flags.get(131 + h) {
+                    "OldMan"
+                } else if state.sim_core.scenario.flags.get(136 + h) {
+                    "Prisoner"
+                } else {
+                    "Empty"
+                }
+            });
+            let l0 = format!(
+                "RM 105 FIVE-HOLE COIN DESK (Selected Slot #{}/5):",
+                sel_slot + 1
+            );
+            let l1 = format!(
+                "  Slots: [1:{}] [2:{}] [3:{}] [4:{}] [5:{}]",
+                s_names[0], s_names[1], s_names[2], s_names[3], s_names[4]
+            );
+            let l2 = format!(
+                "  Desk Status: {} | Lyne House Key (#31)={}",
+                if solved {
+                    "SOLVED (Flag 142)"
+                } else {
+                    "Unsolved"
+                },
+                state.sim_core.scenario.inventory_mgr.has_item(31)
+            );
+            txt_left_lines(
+                state,
+                34,
+                514,
+                20,
+                &[
+                    (YELLOW, &l0),
+                    (WHITE, &l1),
+                    (if solved { GREEN } else { ORANGE }, &l2),
+                    (
+                        CYAN,
+                        "  Press [V] to watch coin quads visually shift on the desk!",
+                    ),
+                    (
+                        WHITE,
+                        "  [Left/Right] Select Slot 1..5 | [Z] Snake | [X] OldMan | [C] Prisoner",
+                    ),
+                    (
+                        MUTED,
+                        "  [Space] Auto-Solve for Active Riddle Level | [BackSpace/D] Clear Slot",
+                    ),
+                ],
+            );
+        }
+        Act1VisualPuzzle::LouiseBox => {
+            let sel_w = state.story_progression_room.act1_louise_wheel_idx;
+            let show_wall = state.story_progression_room.act1_show_wall_blood_still;
+            let carbon = format_act1_carbon_paper_code(&state.sim_core.scenario.puzzle_state);
+            let w: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()[PZ_WHEEL..PZ_WHEEL + 4]
+                .try_into()
+                .unwrap_or([0; 4]);
+            let g: [u8; 4] = state.sim_core.scenario.puzzle_state.raw()
+                [PZ_WHEEL_GOAL..PZ_WHEEL_GOAL + 4]
+                .try_into()
+                .unwrap_or([0; 4]);
+            let fl = &state.sim_core.scenario.flags;
+            let (f192, f203, f197, f198, f193, f195) = (
+                fl.get(ACT1_FLAG_WALL_BLOOD_CODE_READ),
+                fl.get(ACT1_FLAG_ROOF_PYRAMID_HEAD_PUSHED),
+                fl.get(ACT1_FLAG_LOUISE_WHEEL_OPEN),
+                fl.get(ACT1_FLAG_LOUISE_KEYPAD_OPEN),
+                fl.get(ACT1_FLAG_LOUISE_KEY1_OPEN),
+                fl.get(ACT1_FLAG_LOUISE_KEY2_OPEN),
+            );
+            draw_card(
+                state,
+                vp_x + 12,
+                vp_y + 10,
+                410,
+                28,
+                [10, 14, 22, 225],
+                YELLOW,
+            );
+            txt_left(
+                state,
+                vp_x + 20,
+                vp_y + 18,
+                YELLOW,
+                if show_wall {
+                    "VIEWING: 3F Special Treatment Wall Blood Code (hsp_p_boxnumber)"
+                } else {
+                    "VIEWING: 2F Rm S14 Louise Locked Box (hsp_p_box + pboxkey01)"
+                },
+            );
+            let l0 = format!(
+                "BROOKHAVEN S14 LOUISE BOX (Selected Wheel #{}/4):",
+                sel_w + 1
+            );
+            let l1 = format!(
+                "  Rotary Wheels: [{}, {}, {}, {}] vs Wall Blood Goal: [{}, {}, {}, {}]",
+                w[0] + 1,
+                w[1] + 1,
+                w[2] + 1,
+                w[3] + 1,
+                g[0] + 1,
+                g[1] + 1,
+                g[2] + 1,
+                g[3] + 1
+            );
+            let l2 = format!(
+                "  Carbon Paper Keypad: \"{carbon}\" (Lock={f198}) | Keys(193/195)={f193}/{f195}"
+            );
+            let l3 = format!(
+                "  WallBlood(192)={f192} | RoofPHPush(203)={f203} (HP={:.0}) | WheelLock={f197}",
+                state.story_progression_room.act1_james_hp
+            );
+            txt_left_lines(
+                state,
+                34,
+                514,
+                20,
+                &[
+                    (YELLOW, &l0),
+                    (WHITE, &l1),
+                    (CYAN, &l2),
+                    (if f197 { GREEN } else { ORANGE }, &l3),
+                    (WHITE, "  [Up/Down] Wheel 1..4 | [Left/Right] Turn Digit | [B] Wall Blood Still"),
+                    (MUTED, "  [P] Roof PH Push (Flag 203) | [E] Exit Anti-Bruteforce Scramble | [Space] Unlock All"),
+                ],
+            );
+        }
+        Act1VisualPuzzle::QuizChest => {
+            draw_quiz_chest_bottom_card(state, vp_x, vp_y, vp_w, vp_h);
+        }
     }
 }

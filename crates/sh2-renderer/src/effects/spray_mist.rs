@@ -68,10 +68,14 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: InstanceInput) -> VertexOutput
     );
     let c = corners[vid];
 
-    // Camera-facing billboard basis in PS2 Y-down space
-    let to_cam = normalize(camera.cam_pos.xyz - inst.pos_radius.xyz);
-    let world_up = vec3<f32>(0.0, -1.0, 0.0);
-    let right = normalize(cross(world_up, to_cam));
+    // Camera-facing billboard basis in PS2 Y-down space (guarded against collinear/zero vectors)
+    let raw_to_cam = camera.cam_pos.xyz - inst.pos_radius.xyz;
+    let to_cam_len = length(raw_to_cam);
+    let to_cam = select(vec3<f32>(0.0, 0.0, 1.0), raw_to_cam / to_cam_len, to_cam_len > 1e-4);
+    let world_up = select(vec3<f32>(0.0, -1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(to_cam.y) > 0.99);
+    let raw_right = cross(world_up, to_cam);
+    let right_len = length(raw_right);
+    let right = select(vec3<f32>(1.0, 0.0, 0.0), raw_right / right_len, right_len > 1e-4);
     let up = cross(to_cam, right);
 
     let r = inst.pos_radius.w;

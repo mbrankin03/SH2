@@ -117,8 +117,8 @@ pub fn evaluate_character_lighting(
         }
     }
 
-    // 2. Room point lights from DrawEnvData (+0xb0..+0x1af)
-    for pt in &draw_env.point_lights {
+    // 2. Room point lights from DrawEnvData (`+0xb0..+0x19f`, `point_light_count` @ `+0x07`)
+    for pt in draw_env.active_point_lights() {
         if !pt.is_active() {
             continue;
         }

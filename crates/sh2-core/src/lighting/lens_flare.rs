@@ -9,79 +9,89 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 /// Number of halo flare sprites emitted per visible light source (`0x0018519c`: `addiu $4, $zero, 7`).
 pub const LENS_FLARE_SPRITE_COUNT: usize = 7;
 
-/// Static UV rectangle and RGB base tint for one of the 7 halo sprites in `lens_flare.tbn2`
-/// (`SLUS_202.28` `0x002ae0e0` & `0x002ae230`).
+/// PS2 half-screen vertical resolution (`448 / 2 = 224.0` px) used to normalize `0x002ae1e0`
+/// pixel radii into NDC half-heights.
+pub const PS2_LENS_FLARE_HALF_HEIGHT_PX: f32 = 224.0;
+
+/// Static UV rectangle, axis position, pixel radius, and RGB base tint for one of the 7 halo
+/// sprites in `lens_flare.tbn2` (`SLUS_202.28` `0x002ae0e0`, `0x002ae1c0`, `0x002ae1e0`, `0x002ae230`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LensFlareSpriteSpec {
-    /// Minimum `(u, v)` in `lens_flare.tbn2`.
+    /// Minimum `(u, v)` in `lens_flare.tbn2` (`0x002ae0e0`).
     pub uv_min: [f32; 2],
-    /// Maximum `(u, v)` in `lens_flare.tbn2`.
+    /// Maximum `(u, v)` in `lens_flare.tbn2` (`0x002ae0e0`).
     pub uv_max: [f32; 2],
     /// Base PS2 RGB tint (`0..255` from `0x002ae230`, normalized to `0.0..1.0`).
     pub color_rgb: [f32; 3],
-    /// Position along the flare axis (`1.0` = light source screen position, `-1.0` = mirrored across screen center).
+    /// Axis multiplier from `SLUS_202.28` `0x002ae1c0` (`[0.4, 0.2, -0.3, -0.7, -1.4, -2.2, -2.5]`).
     pub axis_t: f32,
-    /// Relative screen-height radius scale.
-    pub radius_scale: f32,
+    /// Sprite radius in PS2 screen pixels from `SLUS_202.28` `0x002ae1e0` (`[12, 10, 28, 20, 20, 58, 50]`).
+    pub radius_px: f32,
 }
 
-/// Exact 7-sprite `lens_flare.tbn2` table extracted from `SLUS_202.28` (`0x002ae0e0` & `0x002ae230`).
+/// Exact 7-sprite `lens_flare.tbn2` table extracted verbatim from `SLUS_202.28`:
+/// - UVs @ `0x002ae0e0` (7 × 32 bytes)
+/// - `axis_t` @ `0x002ae1c0` (`[0.4, 0.2, -0.3, -0.7, -1.4, -2.2, -2.5]`)
+/// - `radius_px` @ `0x002ae1e0` (`[12.0, 10.0, 28.0, 20.0, 20.0, 58.0, 50.0]`)
+/// - RGB @ `0x002ae230` (7 × 16 bytes)
 pub const LENS_FLARE_SPRITES: [LensFlareSpriteSpec; LENS_FLARE_SPRITE_COUNT] = [
-    // [0]: UV (0.0, 0.0)..(0.5, 0.5), RGB (72, 48, 72)
+    // [0]: UV (0.0, 0.0)..(0.5, 0.5), axis=0.4, r=12px, RGB (72, 48, 72)
     LensFlareSpriteSpec {
         uv_min: [0.0, 0.0],
         uv_max: [0.5, 0.5],
         color_rgb: [72.0 / 255.0, 48.0 / 255.0, 72.0 / 255.0],
-        axis_t: -0.75,
-        radius_scale: 0.14,
+        axis_t: 0.4,
+        radius_px: 12.0,
     },
-    // [1]: UV (0.5, 0.0)..(1.0, 0.5), RGB (40, 44, 44)
+    // [1]: UV (0.5, 0.0)..(1.0, 0.5), axis=0.2, r=10px, RGB (40, 44, 44)
     LensFlareSpriteSpec {
         uv_min: [0.5, 0.0],
         uv_max: [1.0, 0.5],
         color_rgb: [40.0 / 255.0, 44.0 / 255.0, 44.0 / 255.0],
-        axis_t: -0.45,
-        radius_scale: 0.09,
+        axis_t: 0.2,
+        radius_px: 10.0,
     },
-    // [2]: UV (0.25, 0.5)..(0.625, 1.0), RGB (40, 46, 40)
+    // [2]: UV (0.25, 0.5)..(0.625, 1.0), axis=-0.3, r=28px, RGB (40, 46, 40)
     LensFlareSpriteSpec {
         uv_min: [0.25, 0.5],
         uv_max: [0.625, 1.0],
         color_rgb: [40.0 / 255.0, 46.0 / 255.0, 40.0 / 255.0],
-        axis_t: -0.15,
-        radius_scale: 0.07,
+        axis_t: -0.3,
+        radius_px: 28.0,
     },
-    // [3]: UV (0.625, 0.5)..(1.0, 1.0), RGB (36, 36, 36)
+    // [3]: UV (0.625, 0.5)..(1.0, 1.0), axis=-0.7, r=20px, RGB (36, 36, 36)
     LensFlareSpriteSpec {
         uv_min: [0.625, 0.5],
         uv_max: [1.0, 1.0],
         color_rgb: [36.0 / 255.0, 36.0 / 255.0, 36.0 / 255.0],
-        axis_t: 0.25,
-        radius_scale: 0.08,
+        axis_t: -0.7,
+        radius_px: 20.0,
     },
-    // [4]: UV (0.055, 0.555)..(0.25, 0.75), RGB (40, 40, 32)
+    // [4]: UV (7/128 = 0.0546875, 71/128 = 0.5546875)..(0.25, 1.0) from 0x002ae160..0x002ae190,
+    //      axis=-1.4, r=20px, RGB (40, 40, 32)
     LensFlareSpriteSpec {
-        uv_min: [0.055, 0.555],
-        uv_max: [0.25, 0.75],
+        uv_min: [7.0 / 128.0, 71.0 / 128.0],
+        uv_max: [0.25, 1.0],
         color_rgb: [40.0 / 255.0, 40.0 / 255.0, 32.0 / 255.0],
-        axis_t: 0.55,
-        radius_scale: 0.06,
+        axis_t: -1.4,
+        radius_px: 20.0,
     },
-    // [5]: UV (0.055, 0.75)..(0.25, 1.0), RGB (64, 48, 40)
+    // [5]: UV (7/128 = 0.0546875, 71/128 = 0.5546875)..(0.25, 1.0) from 0x002ae180..0x002ae190,
+    //      axis=-2.2, r=58px, RGB (64, 48, 40)
     LensFlareSpriteSpec {
-        uv_min: [0.055, 0.75],
+        uv_min: [7.0 / 128.0, 71.0 / 128.0],
         uv_max: [0.25, 1.0],
         color_rgb: [64.0 / 255.0, 48.0 / 255.0, 40.0 / 255.0],
-        axis_t: 0.80,
-        radius_scale: 0.11,
+        axis_t: -2.2,
+        radius_px: 58.0,
     },
-    // [6]: Primary core glow — UV (0.0, 0.5)..(0.25, 1.0), RGB (128, 128, 128)
+    // [6]: UV (0.0, 0.5)..(0.25, 1.0), axis=-2.5, r=50px, RGB (128, 128, 128)
     LensFlareSpriteSpec {
         uv_min: [0.0, 0.5],
         uv_max: [0.25, 1.0],
         color_rgb: [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0],
-        axis_t: 1.0,
-        radius_scale: 0.22,
+        axis_t: -2.5,
+        radius_px: 50.0,
     },
 ];
 
@@ -153,7 +163,7 @@ pub fn evaluate_lens_flares(
 
         for spec in &LENS_FLARE_SPRITES {
             let center = ndc * spec.axis_t;
-            let half_h = spec.radius_scale * (0.5 + 0.5 * dist_fade);
+            let half_h = (spec.radius_px / PS2_LENS_FLARE_HALF_HEIGHT_PX) * (0.5 + 0.5 * dist_fade);
             let half_w = half_h / aspect;
             quads.push(LensFlareQuad {
                 ndc_center: [center.x, center.y],
@@ -189,8 +199,8 @@ mod tests {
         };
         let quads = evaluate_lens_flares(&[src], proj * view, Vec3::ZERO, 16.0 / 9.0);
         assert_eq!(quads.len(), LENS_FLARE_SPRITE_COUNT);
-        // Primary core sprite [6] sits directly on the light's NDC position
-        assert!((quads[6].ndc_center[0] - quads[0].ndc_center[0] / -0.75).abs() < 1e-3);
+        // Verify exact SLUS_202.28 0x002ae1c0 axis ratio between sprite [0] (0.4) and sprite [6] (-2.5)
+        assert!((quads[6].ndc_center[0] / -2.5 - quads[0].ndc_center[0] / 0.4).abs() < 1e-3);
     }
 
     #[test]

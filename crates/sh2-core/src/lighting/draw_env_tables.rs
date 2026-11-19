@@ -1,6 +1,7 @@
 #![allow(clippy::approx_constant, clippy::excessive_precision)]
 //! Verbatim PS2 `DrawEnvData` stage lighting tables extracted directly from `SLUS_202.28`
 //! (`GFW/sh2_DrawEnvData.c`, `sizeof(DrawEnvData) == 0x1f0` = 496 bytes, 97 entries across 14 stages).
+//! Point lights: 5 slots of 48 bytes (`0x30`) each at `+0xb0, +0xe0, +0x110, +0x140, +0x170`.
 
 use super::draw_env::{DrawEnvData, DrawEnvDirectionalLight, DrawEnvPointLight};
 
@@ -18,9 +19,10 @@ pub struct StageDrawEnvTable {
 /// `AP_DrawEnvData` @ `0x003641d0` in `SLUS_202.28` (18 entries).
 pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 18,
-        room_end: 9,
-        flags: 0x01000000,
+        room_no: 18,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -71,6 +73,12 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -80,9 +88,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 22,
-        room_end: 9,
-        flags: 0x05000000,
+        room_no: 22,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 5,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -116,16 +125,22 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-100000.0, -3000.0, -23500.0],
             },
             DrawEnvPointLight {
-                color: [750.0, 1250.0, 0.0],
-                near_dist: -100000.0,
-                far_dist: -4750.0,
-                position: [1.2, 1.2, 1.2],
+                color: [1.4, 1.4, 1.4],
+                near_dist: 750.0,
+                far_dist: 1250.0,
+                position: [-100000.0, -4750.0, -20000.0],
             },
             DrawEnvPointLight {
-                color: [-99600.0, -3000.0, -19800.0],
-                near_dist: 1.0,
-                far_dist: 1.0,
-                position: [250.0, 750.0, 0.0],
+                color: [1.2, 1.2, 1.2],
+                near_dist: 500.0,
+                far_dist: 1000.0,
+                position: [-99600.0, -3000.0, -19800.0],
+            },
+            DrawEnvPointLight {
+                color: [1.0, 1.0, 1.0],
+                near_dist: 250.0,
+                far_dist: 750.0,
+                position: [-99800.0, -1000.0, -20000.0],
             },
             DrawEnvPointLight {
                 color: [1.2, 1.2, 1.2],
@@ -142,9 +157,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 26,
-        room_end: 9,
-        flags: 0x05000000,
+        room_no: 26,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 5,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -178,16 +194,22 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-80000.0, -3400.0, -64225.0],
             },
             DrawEnvPointLight {
-                color: [750.0, 1500.0, 0.0],
-                near_dist: -78800.0,
-                far_dist: -1750.0,
-                position: [1.4, 1.4, 1.4],
+                color: [1.2, 1.2, 1.2],
+                near_dist: 750.0,
+                far_dist: 1500.0,
+                position: [-78800.0, -1750.0, -46900.0],
             },
             DrawEnvPointLight {
-                color: [-80000.0, -4800.0, -60000.0],
-                near_dist: 1.2,
-                far_dist: 1.2,
-                position: [500.0, 1000.0, 0.0],
+                color: [1.4, 1.4, 1.4],
+                near_dist: 750.0,
+                far_dist: 1250.0,
+                position: [-80000.0, -4800.0, -60000.0],
+            },
+            DrawEnvPointLight {
+                color: [1.2, 1.2, 1.2],
+                near_dist: 500.0,
+                far_dist: 1000.0,
+                position: [-79800.0, -2900.0, -59800.0],
             },
             DrawEnvPointLight {
                 color: [1.4, 1.4, 1.4],
@@ -204,9 +226,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 30,
-        room_end: 9,
-        flags: 0x00000000,
+        room_no: 30,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [0, 255, 255],
         directional_lights: [
@@ -240,6 +263,12 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-20000.0, -720.0, 20000.0],
             },
             DrawEnvPointLight {
+                color: [0.0, 0.1788, 0.9839],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
+            DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
@@ -266,9 +295,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 34,
-        room_end: 9,
-        flags: 0x03000000,
+        room_no: 34,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 3,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -302,13 +332,19 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-22908.5, -664.0, 59392.5],
             },
             DrawEnvPointLight {
-                color: [300.0, 600.0, 0.0],
-                near_dist: -17980.0,
-                far_dist: -665.0,
-                position: [0.8, 1.68, 0.78],
+                color: [1.74, 0.58, 0.4],
+                near_dist: 300.0,
+                far_dist: 600.0,
+                position: [-17980.0, -665.0, 61315.003906],
             },
             DrawEnvPointLight {
-                color: [-20680.0, -710.0, 58250.0],
+                color: [0.8, 1.68, 0.78],
+                near_dist: 250.0,
+                far_dist: 500.0,
+                position: [-20680.0, -710.0, 58250.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
@@ -328,9 +364,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 38,
-        room_end: 9,
-        flags: 0x01000000,
+        room_no: 38,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -364,9 +401,15 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-21850.0, -250.0, 101900.0],
             },
             DrawEnvPointLight {
-                color: [400.0, 500.0, 0.0],
-                near_dist: 99725.0,
-                far_dist: -985.000061,
+                color: [-1464.99939, 514.999939, 14.99939],
+                near_dist: 400.0,
+                far_dist: 500.0,
+                position: [99725.0, -985.000061, -18900.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -390,9 +433,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 42,
-        room_end: 9,
-        flags: 0x01000000,
+        room_no: 42,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -443,6 +487,12 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -452,9 +502,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 50,
-        room_end: 9,
-        flags: 0x05000000,
+        room_no: 50,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 5,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -488,16 +539,22 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-99400.0, -1271.5, 21800.0],
             },
             DrawEnvPointLight {
-                color: [750.0, 1500.0, 0.0],
-                near_dist: -80600.0,
-                far_dist: -1271.5,
-                position: [1.2, 1.2, 1.2],
+                color: [1.2, 1.1, 1.1],
+                near_dist: 750.0,
+                far_dist: 1500.0,
+                position: [-80600.0, -1271.5, 18600.0],
             },
             DrawEnvPointLight {
-                color: [-108000.0, -1196.5, 11400.0],
-                near_dist: 1.04,
-                far_dist: 1.1,
-                position: [750.0, 1000.0, 0.0],
+                color: [1.2, 1.2, 1.2],
+                near_dist: 1000.0,
+                far_dist: 1350.0,
+                position: [-108000.0, -1196.5, 11400.0],
+            },
+            DrawEnvPointLight {
+                color: [1.04, 1.1, 1.02],
+                near_dist: 750.0,
+                far_dist: 1000.0,
+                position: [-102800.0, -1271.400024, 9725.0],
             },
             DrawEnvPointLight {
                 color: [5.0, 1.1, 1.02],
@@ -514,9 +571,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 64,
-        room_end: 9,
-        flags: 0x00000000,
+        room_no: 64,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -550,9 +608,15 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [23600.0, -1240.0, -21200.0],
             },
             DrawEnvPointLight {
-                color: [400.0, 500.0, 0.0],
-                near_dist: 99725.0,
-                far_dist: -985.000061,
+                color: [-1464.99939, 514.999939, 14.99939],
+                near_dist: 400.0,
+                far_dist: 500.0,
+                position: [99725.0, -985.000061, -18900.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -576,9 +640,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 72,
-        room_end: 9,
-        flags: 0x00000001,
+        room_no: 72,
+        stage_id: 9,
+        flags: 0x000001,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -612,16 +677,22 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-80600.0, -1271.0, 14200.0],
             },
             DrawEnvPointLight {
-                color: [1250.0, 4000.0, 0.0],
-                near_dist: -108000.0,
-                far_dist: -1196.5,
-                position: [0.9, 0.3, 0.3],
+                color: [0.3, 0.3, 0.9],
+                near_dist: 1250.0,
+                far_dist: 4000.0,
+                position: [-108000.0, -1196.5, 11400.0],
             },
             DrawEnvPointLight {
-                color: [-99400.0, -1271.5, 15400.0],
-                near_dist: 1.0,
-                far_dist: 1.32,
-                position: [750.0, 4000.0, 0.0],
+                color: [0.9, 0.3, 0.3],
+                near_dist: 1250.0,
+                far_dist: 4000.0,
+                position: [-99400.0, -1271.5, 15400.0],
+            },
+            DrawEnvPointLight {
+                color: [1.0, 1.32, 1.31],
+                near_dist: 750.0,
+                far_dist: 4000.0,
+                position: [-102800.0, -1271.400024, 9725.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -638,9 +709,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 84,
-        room_end: 9,
-        flags: 0x01000001,
+        room_no: 84,
+        stage_id: 9,
+        flags: 0x000001,
+        point_light_count: 1,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -691,6 +763,12 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.7, 0.7, 0.7],
         ambient_scale: 31.5,
@@ -700,9 +778,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 88,
-        room_end: 9,
-        flags: 0x01000000,
+        room_no: 88,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 50, 0],
         directional_lights: [
@@ -753,6 +832,12 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -762,9 +847,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 92,
-        room_end: 9,
-        flags: 0x02000000,
+        room_no: 92,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -798,16 +884,22 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [100400.0, -1350.0, -61200.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 1000.0, 0.0],
-                near_dist: 100000.0,
-                far_dist: -1350.0,
-                position: [0.9, 0.3, 0.3],
+                color: [1.0, 0.8, 0.8],
+                near_dist: 500.0,
+                far_dist: 1000.0,
+                position: [100000.0, -1350.0, -48400.0],
             },
             DrawEnvPointLight {
-                color: [-99400.0, -1271.5, 15400.0],
-                near_dist: 1.0,
-                far_dist: 1.32,
-                position: [750.0, 4000.0, 0.0],
+                color: [0.9, 0.3, 0.3],
+                near_dist: 1250.0,
+                far_dist: 4000.0,
+                position: [-99400.0, -1271.5, 15400.0],
+            },
+            DrawEnvPointLight {
+                color: [1.0, 1.32, 1.31],
+                near_dist: 750.0,
+                far_dist: 4000.0,
+                position: [-102800.0, -1271.400024, 9725.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -824,9 +916,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 96,
-        room_end: 9,
-        flags: 0x02000000,
+        room_no: 96,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -860,9 +953,15 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [100163.0, -1283.280029, -13250.674805],
             },
             DrawEnvPointLight {
-                color: [500.0, 1000.0, 0.0],
-                near_dist: 100400.0,
-                far_dist: -1350.0,
+                color: [1.0, 0.8, 0.8],
+                near_dist: 500.0,
+                far_dist: 1000.0,
+                position: [100400.0, -1350.0, -18850.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -886,9 +985,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 104,
-        room_end: 9,
-        flags: 0x03000000,
+        room_no: 104,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 3,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -922,13 +1022,19 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [57000.0, -2000.0, 10000.0],
             },
             DrawEnvPointLight {
-                color: [750.0, 2000.0, 0.0],
-                near_dist: 60400.0,
-                far_dist: -1290.0,
-                position: [0.8, 0.74, 0.7],
+                color: [1.1, 1.1, 1.1],
+                near_dist: 750.0,
+                far_dist: 2000.0,
+                position: [60400.0, -1290.0, 15600.0],
             },
             DrawEnvPointLight {
-                color: [64200.0, -1290.0, 11398.5],
+                color: [0.8, 0.74, 0.7],
+                near_dist: 1000.0,
+                far_dist: 1750.0,
+                position: [64200.0, -1290.0, 11398.5],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
@@ -948,9 +1054,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 108,
-        room_end: 9,
-        flags: 0x02000000,
+        room_no: 108,
+        stage_id: 9,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -984,9 +1091,15 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [139600.0, -3450.0, -18545.0],
             },
             DrawEnvPointLight {
-                color: [250.0, 1000.0, 0.0],
-                near_dist: 141540.0,
-                far_dist: -2775.0,
+                color: [1.0, 1.0, 1.04],
+                near_dist: 250.0,
+                far_dist: 1000.0,
+                position: [141540.0, -2775.0, -19200.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -1010,9 +1123,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 199,
-        room_end: 9,
-        flags: 0x02000001,
+        room_no: 199,
+        stage_id: 9,
+        flags: 0x000001,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1046,16 +1160,22 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [58925.0, -750.0, -99400.0],
             },
             DrawEnvPointLight {
-                color: [1000.0, 4000.0, 0.0],
-                near_dist: 58925.0,
-                far_dist: -750.0,
-                position: [2.0, 1.5, 1.5],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 1000.0,
+                far_dist: 4000.0,
+                position: [58925.0, -750.0, -100600.0],
             },
             DrawEnvPointLight {
-                color: [-19425.0, -1400.0, 22200.0],
-                near_dist: 2.0,
-                far_dist: 1.5,
-                position: [500.0, 1500.0, 0.0],
+                color: [2.0, 1.5, 1.5],
+                near_dist: 500.0,
+                far_dist: 1500.0,
+                position: [-19425.0, -1400.0, 22200.0],
+            },
+            DrawEnvPointLight {
+                color: [2.0, 1.5, 1.5],
+                near_dist: 500.0,
+                far_dist: 1500.0,
+                position: [-19425.0, -1400.0, 22200.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1072,9 +1192,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1101,6 +1222,12 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         fog_near: 0.0,
         fog_far: 0.0,
         point_lights: [
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
@@ -1138,9 +1265,10 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `BW_DrawEnvData` @ `0x00363820` in `SLUS_202.28` (2 entries).
 pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 1,
-        room_end: 7,
-        flags: 0x02000000,
+        room_no: 1,
+        stage_id: 7,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 45, 0],
         directional_lights: [
@@ -1174,9 +1302,15 @@ pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [15250.0, -1700.0, 18600.0],
             },
             DrawEnvPointLight {
-                color: [1000.0, 3500.0, 0.0],
-                near_dist: 19014.599609,
-                far_dist: -1199.599976,
+                color: [1.4, 1.4, 1.2],
+                near_dist: 1000.0,
+                far_dist: 3500.0,
+                position: [19014.599609, -1199.599976, 14247.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -1200,9 +1334,10 @@ pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1253,6 +1388,12 @@ pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -1266,9 +1407,10 @@ pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `CA_DrawEnvData` @ `0x00361b10` in `SLUS_202.28` (2 entries).
 pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 14,
-        room_end: 1,
-        flags: 0x00000000,
+        room_no: 14,
+        stage_id: 1,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1319,6 +1461,12 @@ pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.9, 0.9, 0.9],
         ambient_scale: 31.5,
@@ -1328,9 +1476,10 @@ pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1381,6 +1530,12 @@ pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.65, 0.65, 0.65],
         ambient_scale: 16.0,
@@ -1394,9 +1549,10 @@ pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `CB_DrawEnvData` @ `0x00361ef0` in `SLUS_202.28` (2 entries).
 pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 65534,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65534,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1447,6 +1603,12 @@ pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.65, 0.65, 0.65],
         ambient_scale: 16.0,
@@ -1456,9 +1618,10 @@ pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1509,6 +1672,12 @@ pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -1522,9 +1691,10 @@ pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `CC_DrawEnvData` @ `0x003622d0` in `SLUS_202.28` (5 entries).
 pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 65534,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65534,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1575,6 +1745,12 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.65, 0.65, 0.65],
         ambient_scale: 16.0,
@@ -1584,9 +1760,10 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 49,
-        room_end: 3,
-        flags: 0x00000000,
+        room_no: 49,
+        stage_id: 3,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1637,6 +1814,12 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.6, 0.55, 0.5],
         ambient_scale: 16.0,
@@ -1646,9 +1829,10 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 50,
-        room_end: 3,
-        flags: 0x00000000,
+        room_no: 50,
+        stage_id: 3,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1699,6 +1883,12 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.6, 0.55, 0.5],
         ambient_scale: 16.0,
@@ -1708,9 +1898,10 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65534,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65534,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1761,6 +1952,12 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.65, 0.65, 0.65],
         ambient_scale: 16.0,
@@ -1770,9 +1967,10 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1823,6 +2021,12 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -1835,9 +2039,10 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
 
 /// `CD_DrawEnvData` @ `0x00362c80` in `SLUS_202.28` (1 entries).
 pub const CD_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
-    room_start: 65535,
-    room_end: 65535,
-    flags: 0x00000000,
+    room_no: 65535,
+    stage_id: 65535,
+    flags: 0x000000,
+    point_light_count: 0,
     shadow_darkness: 0,
     clear_color_rgb: [255, 255, 255],
     directional_lights: [
@@ -1888,6 +2093,12 @@ pub const CD_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
             far_dist: 0.0,
             position: [0.0, 0.0, 0.0],
         },
+        DrawEnvPointLight {
+            color: [0.0, 0.0, 0.0],
+            near_dist: 0.0,
+            far_dist: 0.0,
+            position: [0.0, 0.0, 0.0],
+        },
     ],
     ambient: [0.65, 0.65, 0.65],
     ambient_scale: 16.0,
@@ -1900,9 +2111,10 @@ pub const CD_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
 /// `ER_DrawEnvData` @ `0x00363060` in `SLUS_202.28` (4 entries).
 pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 9,
-        room_end: 6,
-        flags: 0x01000000,
+        room_no: 9,
+        stage_id: 6,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -1953,6 +2165,12 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.65, 0.65, 0.65],
         ambient_scale: 16.0,
@@ -1962,9 +2180,10 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 4.0,
     },
     DrawEnvData {
-        room_start: 9,
-        room_end: 6,
-        flags: 0x01000000,
+        room_no: 9,
+        stage_id: 6,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2015,6 +2234,12 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 16.0,
@@ -2024,9 +2249,10 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 4.0,
     },
     DrawEnvData {
-        room_start: 1,
-        room_end: 6,
-        flags: 0x01000100,
+        room_no: 1,
+        stage_id: 6,
+        flags: 0x000100,
+        point_light_count: 1,
         shadow_darkness: 0,
         clear_color_rgb: [0, 255, 255],
         directional_lights: [
@@ -2060,10 +2286,16 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-19250.0, -1450.0, 19750.0],
             },
             DrawEnvPointLight {
-                color: [0.988, 0.0, 3200.0],
-                near_dist: -21300.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 0.988,
                 far_dist: 0.0,
-                position: [1.0, 0.0, 0.0],
+                position: [-21300.0, 0.0, 21000.0],
+            },
+            DrawEnvPointLight {
+                color: [1.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -2086,9 +2318,10 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 4.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x01000100,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000100,
+        point_light_count: 1,
         shadow_darkness: 0,
         clear_color_rgb: [0, 255, 255],
         directional_lights: [
@@ -2122,10 +2355,16 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-19250.0, -1450.0, 19750.0],
             },
             DrawEnvPointLight {
-                color: [0.988, 0.0, 3200.0],
-                near_dist: -21300.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 0.988,
                 far_dist: 0.0,
-                position: [1.0, 0.0, 0.0],
+                position: [-21300.0, 0.0, 21000.0],
+            },
+            DrawEnvPointLight {
+                color: [1.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -2152,9 +2391,10 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `HP_DrawEnvData` @ `0x003664b0` in `SLUS_202.28` (6 entries).
 pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 61,
-        room_end: 10,
-        flags: 0x00000000,
+        room_no: 61,
+        stage_id: 10,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -2205,6 +2445,12 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -2214,9 +2460,10 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 145,
-        room_end: 10,
-        flags: 0x01000000,
+        room_no: 145,
+        stage_id: 10,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2267,6 +2514,12 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -2276,9 +2529,10 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 125,
-        room_end: 10,
-        flags: 0x01000000,
+        room_no: 125,
+        stage_id: 10,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2329,6 +2583,12 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.5, 0.5, 0.5],
         ambient_scale: 31.5,
@@ -2338,9 +2598,10 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 137,
-        room_end: 10,
-        flags: 0x01000000,
+        room_no: 137,
+        stage_id: 10,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2391,6 +2652,12 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -2400,9 +2667,10 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 230,
-        room_end: 10,
-        flags: 0x02000000,
+        room_no: 230,
+        stage_id: 10,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2436,9 +2704,15 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [18000.0, -1675.0, -254400.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2500.0, 0.0],
-                near_dist: 18400.0,
-                far_dist: -1725.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2500.0,
+                position: [18400.0, -1725.0, -251600.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -2462,9 +2736,10 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2515,6 +2790,12 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -2527,9 +2808,10 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
 
 /// `OB_DrawEnvData` @ `0x00362e70` in `SLUS_202.28` (1 entries).
 pub const OB_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
-    room_start: 65535,
-    room_end: 65535,
-    flags: 0x00000000,
+    room_no: 65535,
+    stage_id: 65535,
+    flags: 0x000000,
+    point_light_count: 0,
     shadow_darkness: 0,
     clear_color_rgb: [255, 255, 255],
     directional_lights: [
@@ -2580,6 +2862,12 @@ pub const OB_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
             far_dist: 0.0,
             position: [0.0, 0.0, 0.0],
         },
+        DrawEnvPointLight {
+            color: [0.0, 0.0, 0.0],
+            near_dist: 0.0,
+            far_dist: 0.0,
+            position: [0.0, 0.0, 0.0],
+        },
     ],
     ambient: [0.9, 0.9, 0.9],
     ambient_scale: 31.5,
@@ -2592,9 +2880,10 @@ pub const OB_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
 /// `PS_DrawEnvData` @ `0x00367050` in `SLUS_202.28` (19 entries).
 pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 1,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 1,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2628,9 +2917,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-20597.150391, -1600.0, 21388.400391],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -2654,9 +2949,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 15,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 15,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2707,6 +3003,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -2716,9 +3018,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 21,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 21,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2769,6 +3072,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -2778,9 +3087,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 47,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 47,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2814,9 +3124,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-100000.0, -1398.560059, 110000.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -2840,9 +3156,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 49,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 49,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2876,9 +3193,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-20000.0, -1250.0, -10000.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -2902,9 +3225,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 51,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 51,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -2938,9 +3262,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-20000.0, -1250.0, -30000.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -2964,9 +3294,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 53,
-        room_end: 11,
-        flags: 0x02000000,
+        room_no: 53,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3000,9 +3331,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-58375.0, -2200.0, -10000.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3026,9 +3363,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 55,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 55,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3079,6 +3417,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -3088,9 +3432,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 57,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 57,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3124,9 +3469,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-20000.0, -1400.0, -50825.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3150,9 +3501,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 59,
-        room_end: 11,
-        flags: 0x02000000,
+        room_no: 59,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3186,9 +3538,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-20000.0, -850.0, -70600.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: -58375.0,
-                far_dist: 600.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-58375.0, 600.0, -10000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3212,9 +3570,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 66,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 66,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3265,6 +3624,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -3274,9 +3639,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 85,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 85,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 35, 0],
         directional_lights: [
@@ -3327,6 +3693,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.35, 0.35, 0.35],
         ambient_scale: 31.5,
@@ -3336,9 +3708,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 97,
-        room_end: 11,
-        flags: 0x00010000,
+        room_no: 97,
+        stage_id: 11,
+        flags: 0x010000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3389,6 +3762,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -3398,9 +3777,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 109,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 109,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3451,6 +3831,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -3460,9 +3846,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 113,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 113,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3513,6 +3900,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -3522,9 +3915,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 145,
-        room_end: 11,
-        flags: 0x01000000,
+        room_no: 145,
+        stage_id: 11,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3558,9 +3952,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [20000.0, -1300.0, -101350.0],
             },
             DrawEnvPointLight {
-                color: [25000.0, 50000.0, 0.0],
-                near_dist: 20000.0,
-                far_dist: 255.664993,
+                color: [0.4, 0.2, 0.0],
+                near_dist: 25000.0,
+                far_dist: 50000.0,
+                position: [20000.0, 255.664993, -99188.5],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3584,9 +3984,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 189,
-        room_end: 11,
-        flags: 0x00010000,
+        room_no: 189,
+        stage_id: 11,
+        flags: 0x010000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3620,9 +4021,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [100000.0, -1450.0, -100000.0],
             },
             DrawEnvPointLight {
-                color: [100000.0, 150000.0, 0.0],
+                color: [0.8, 2.0, 1.6],
                 near_dist: 100000.0,
-                far_dist: -1450.0,
+                far_dist: 150000.0,
+                position: [100000.0, -1450.0, -100550.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3646,9 +4053,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 193,
-        room_end: 11,
-        flags: 0x00010000,
+        room_no: 193,
+        stage_id: 11,
+        flags: 0x010000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3682,9 +4090,15 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [140000.0, -1450.0, -100200.0],
             },
             DrawEnvPointLight {
-                color: [100000.0, 150000.0, 0.0],
-                near_dist: 140000.0,
-                far_dist: -1450.0,
+                color: [0.8, 2.0, 1.6],
+                near_dist: 100000.0,
+                far_dist: 150000.0,
+                position: [140000.0, -1450.0, -101850.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3708,9 +4122,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 1.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x01000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3761,6 +4176,12 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -3773,9 +4194,10 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
 
 /// `QP_DrawEnvData` @ `0x0036d510` in `SLUS_202.28` (1 entries).
 pub const QP_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
-    room_start: 65535,
-    room_end: 65535,
-    flags: 0x00000000,
+    room_no: 65535,
+    stage_id: 65535,
+    flags: 0x000000,
+    point_light_count: 0,
     shadow_darkness: 1,
     clear_color_rgb: [255, 255, 255],
     directional_lights: [
@@ -3826,6 +4248,12 @@ pub const QP_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
             far_dist: 0.0,
             position: [0.0, 0.0, 0.0],
         },
+        DrawEnvPointLight {
+            color: [0.0, 0.0, 0.0],
+            near_dist: 0.0,
+            far_dist: 0.0,
+            position: [0.0, 0.0, 0.0],
+        },
     ],
     ambient: [0.15, 0.15, 0.15],
     ambient_scale: 31.5,
@@ -3838,9 +4266,10 @@ pub const QP_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
 /// `RR_DrawEnvData` @ `0x00369520` in `SLUS_202.28` (21 entries).
 pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 1,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 1,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3874,10 +4303,16 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-19700.0, -750.0, -20800.0],
             },
             DrawEnvPointLight {
-                color: [0.866, 0.0, 500.0],
-                near_dist: -19725.0,
-                far_dist: -650.0,
-                position: [125.0, -25.0, 1175.0],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 0.866,
+                far_dist: 0.0,
+                position: [-19725.0, -650.0, -19600.0],
+            },
+            DrawEnvPointLight {
+                color: [125.0, -25.0, 1175.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -3900,9 +4335,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 5,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 5,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -3936,9 +4372,15 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-60000.0, -775.0, -19300.0],
             },
             DrawEnvPointLight {
-                color: [1750.0, 6000.0, 0.0],
-                near_dist: -60000.0,
-                far_dist: -775.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 1750.0,
+                far_dist: 6000.0,
+                position: [-60000.0, -775.0, -20650.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -3962,9 +4404,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 13,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 13,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4015,6 +4458,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4024,9 +4473,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 17,
-        room_end: 12,
-        flags: 0x02000000,
+        room_no: 17,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4060,9 +4510,15 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-60000.0, -1492.5, -62200.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 1250.0, 0.0],
-                near_dist: -62200.0,
-                far_dist: -1492.5,
+                color: [1.6, 1.6, 1.6],
+                near_dist: 500.0,
+                far_dist: 1250.0,
+                position: [-62200.0, -1492.5, -64400.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -4086,9 +4542,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 21,
-        room_end: 12,
-        flags: 0x02000000,
+        room_no: 21,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4122,9 +4579,15 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-100400.0, -1800.0, -59400.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 750.0, 0.0],
-                near_dist: -100500.0,
-                far_dist: -850.0,
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 750.0,
+                position: [-100500.0, -850.0, -60400.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -4148,9 +4611,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 25,
-        room_end: 12,
-        flags: 0x05000000,
+        room_no: 25,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 5,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4184,16 +4648,22 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-17800.0, -1014.999939, 25550.0],
             },
             DrawEnvPointLight {
-                color: [250.0, 1250.0, 0.0],
-                near_dist: -22200.0,
-                far_dist: -1014.999939,
-                position: [1.0, 1.0, 1.0],
+                color: [1.0, 1.0, 1.0],
+                near_dist: 250.0,
+                far_dist: 1250.0,
+                position: [-22200.0, -1014.999939, 25550.0],
             },
             DrawEnvPointLight {
-                color: [-20000.0, -1155.0, 25500.0],
-                near_dist: 0.8,
-                far_dist: 0.8,
-                position: [500.0, 2000.0, 0.0],
+                color: [1.0, 1.0, 1.0],
+                near_dist: 250.0,
+                far_dist: 1000.0,
+                position: [-20000.0, -1155.0, 25500.0],
+            },
+            DrawEnvPointLight {
+                color: [0.8, 0.8, 0.8],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [-17000.0, -2000.0, 20870.0],
             },
             DrawEnvPointLight {
                 color: [0.8, 0.8, 0.8],
@@ -4210,9 +4680,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 29,
-        room_end: 12,
-        flags: 0x03000000,
+        room_no: 29,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 3,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4246,13 +4717,19 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-56200.0, -1075.0, 21400.0],
             },
             DrawEnvPointLight {
-                color: [1250.0, 1750.0, 0.0],
-                near_dist: -60000.0,
-                far_dist: -1075.0,
-                position: [1.76, 1.7, 1.44],
+                color: [1.76, 1.7, 1.44],
+                near_dist: 1250.0,
+                far_dist: 1750.0,
+                position: [-60000.0, -1075.0, 20000.0],
             },
             DrawEnvPointLight {
-                color: [-63600.0, -1075.0, 20000.0],
+                color: [1.76, 1.7, 1.44],
+                near_dist: 750.0,
+                far_dist: 1250.0,
+                position: [-63600.0, -1075.0, 20000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
@@ -4272,9 +4749,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 33,
-        room_end: 12,
-        flags: 0x03000000,
+        room_no: 33,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 3,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4308,13 +4786,19 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-92400.0, -1255.0, 19850.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 1250.0, 0.0],
-                near_dist: -99250.0,
-                far_dist: -1125.0,
-                position: [2.0, 2.0, 2.0],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 1250.0,
+                position: [-99250.0, -1125.0, 21200.0],
             },
             DrawEnvPointLight {
-                color: [-97700.0, -750.0, 22725.0],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 750.0,
+                far_dist: 1250.0,
+                position: [-97700.0, -750.0, 22725.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
@@ -4334,9 +4818,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 37,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 37,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4387,6 +4872,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4396,9 +4887,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 41,
-        room_end: 12,
-        flags: 0x00000100,
+        room_no: 41,
+        stage_id: 12,
+        flags: 0x000100,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4432,6 +4924,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-60000.0, -1180.0, 57050.0],
             },
             DrawEnvPointLight {
+                color: [0.0, 1180.0, 3320.001221],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
+            DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
@@ -4458,9 +4956,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 45,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 45,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4511,6 +5010,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4520,9 +5025,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 49,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 49,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4573,6 +5079,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4582,9 +5094,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 51,
-        room_end: 12,
-        flags: 0x02000000,
+        room_no: 51,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4618,9 +5131,15 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-21175.0, -950.0, 99900.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 1000.0, 0.0],
-                near_dist: -21175.0,
-                far_dist: -950.0,
+                color: [0.8, 0.8, 0.8],
+                near_dist: 500.0,
+                far_dist: 1000.0,
+                position: [-21175.0, -950.0, 100600.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -4644,9 +5163,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 55,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 55,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4697,6 +5217,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4706,9 +5232,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 59,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 59,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4759,6 +5286,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4768,9 +5301,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 63,
-        room_end: 12,
-        flags: 0x00000000,
+        room_no: 63,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -4804,6 +5338,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [59200.0, -1425.0, -26450.0],
             },
             DrawEnvPointLight {
+                color: [0.0, 1300.0, 3700.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
+            DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
@@ -4830,9 +5370,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 71,
-        room_end: 12,
-        flags: 0x00000200,
+        room_no: 71,
+        stage_id: 12,
+        flags: 0x000200,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4866,10 +5407,16 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [20600.0, -1220.0, -62540.003906],
             },
             DrawEnvPointLight {
-                color: [1.4, 1.4, 1.4],
-                near_dist: 0.9063,
-                far_dist: 0.0,
-                position: [19400.0, -1150.0, -62420.0],
+                color: [0.0, 587.5, 2145.001221],
+                near_dist: 1.4,
+                far_dist: 1.4,
+                position: [0.9063, 0.0, 2000.0],
+            },
+            DrawEnvPointLight {
+                color: [19400.0, -1150.0, -62420.0],
+                near_dist: 0.0,
+                far_dist: 685.0,
+                position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -4892,9 +5439,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 75,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 75,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -4945,6 +5493,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -4954,9 +5508,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 83,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 83,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -4990,6 +5545,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [20110.0, -750.0, -98600.0],
             },
             DrawEnvPointLight {
+                color: [-1160.00061, 750.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
+            DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
@@ -5016,9 +5577,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 91,
-        room_end: 12,
-        flags: 0x01000000,
+        room_no: 91,
+        stage_id: 12,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 30, 0],
         directional_lights: [
@@ -5069,6 +5631,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.65, 0.65, 0.65],
         ambient_scale: 1.0,
@@ -5078,9 +5646,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5107,6 +5676,12 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         fog_near: 0.0,
         fog_far: 0.0,
         point_lights: [
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
@@ -5144,9 +5719,10 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `RU_DrawEnvData` @ `0x0036bdd0` in `SLUS_202.28` (12 entries).
 pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 5,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 5,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [0, 255, 255],
         directional_lights: [
@@ -5180,6 +5756,12 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-60000.0, -1620.000122, -19187.5],
             },
             DrawEnvPointLight {
+                color: [0.0, 1.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
+            DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
@@ -5206,9 +5788,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 9,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 9,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [0, 255, 255],
         directional_lights: [
@@ -5242,6 +5825,12 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-100000.0, -3800.0, -20000.0],
             },
             DrawEnvPointLight {
+                color: [0.0, 1.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
+            DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
@@ -5268,9 +5857,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 21,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 21,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5321,6 +5911,12 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.6, 0.6, 0.6],
         ambient_scale: 31.5,
@@ -5330,9 +5926,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 25,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 25,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5383,6 +5980,12 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.25, 0.25, 0.25],
         ambient_scale: 31.5,
@@ -5392,9 +5995,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 37,
-        room_end: 13,
-        flags: 0x01000100,
+        room_no: 37,
+        stage_id: 13,
+        flags: 0x000100,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5428,10 +6032,16 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-27200.0, -1550.0, 58950.0],
             },
             DrawEnvPointLight {
-                color: [0.93, 0.0, 19000.0],
-                near_dist: -18270.0,
-                far_dist: 19000.0,
-                position: [0.0, -20000.0, 0.0],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 0.93,
+                far_dist: 0.0,
+                position: [-18270.0, 19000.0, 59200.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, -20000.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -5454,9 +6064,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 41,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 41,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -5490,9 +6101,15 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [19600.0, -1350.0, -12900.0],
             },
             DrawEnvPointLight {
-                color: [400.0, 500.0, 0.0],
-                near_dist: 99725.0,
-                far_dist: -985.000061,
+                color: [0.0, 1729.999878, -5400.0],
+                near_dist: 400.0,
+                far_dist: 500.0,
+                position: [99725.0, -985.000061, -18900.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -5516,9 +6133,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 45,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 45,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -5552,9 +6170,15 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [59200.0, -1425.0, -26450.0],
             },
             DrawEnvPointLight {
-                color: [400.0, 500.0, 0.0],
-                near_dist: 99725.0,
-                far_dist: -985.000061,
+                color: [0.0, 1300.0, 3700.0],
+                near_dist: 400.0,
+                far_dist: 500.0,
+                position: [99725.0, -985.000061, -18900.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -5578,9 +6202,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 49,
-        room_end: 13,
-        flags: 0x01000000,
+        room_no: 49,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 1,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5631,6 +6256,12 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
         ],
         ambient: [0.15, 0.15, 0.15],
         ambient_scale: 31.5,
@@ -5640,9 +6271,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 53,
-        room_end: 13,
-        flags: 0x00000200,
+        room_no: 53,
+        stage_id: 13,
+        flags: 0x000200,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5676,10 +6308,16 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [20600.0, -1220.0, -62540.003906],
             },
             DrawEnvPointLight {
-                color: [1.0, 1.0, 1.0],
-                near_dist: 0.9063,
-                far_dist: 0.0,
-                position: [19400.0, -1150.0, -62420.0],
+                color: [0.0, 587.5, 2145.001221],
+                near_dist: 1.0,
+                far_dist: 1.0,
+                position: [0.9063, 0.0, 2000.0],
+            },
+            DrawEnvPointLight {
+                color: [19400.0, -1150.0, -62420.0],
+                near_dist: 0.0,
+                far_dist: 685.0,
+                position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -5702,9 +6340,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 57,
-        room_end: 13,
-        flags: 0x00000000,
+        room_no: 57,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [1, 255, 255],
         directional_lights: [
@@ -5738,9 +6377,15 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [60350.0, -1325.0, -53000.0],
             },
             DrawEnvPointLight {
-                color: [400.0, 500.0, 0.0],
-                near_dist: 99725.0,
-                far_dist: -985.000061,
+                color: [150.0, 2780.0, -12600.0],
+                near_dist: 400.0,
+                far_dist: 500.0,
+                position: [99725.0, -985.000061, -18900.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -5764,9 +6409,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 73,
-        room_end: 13,
-        flags: 0x02000000,
+        room_no: 73,
+        stage_id: 13,
+        flags: 0x000000,
+        point_light_count: 2,
         shadow_darkness: 0,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5800,9 +6446,15 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [60000.0, -25000.0, 60000.0],
             },
             DrawEnvPointLight {
-                color: [4000.0, 8000.0, 0.0],
-                near_dist: 60000.0,
-                far_dist: 600.0,
+                color: [0.4, 0.42, 0.46],
+                near_dist: 4000.0,
+                far_dist: 8000.0,
+                position: [60000.0, 600.0, 60000.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
             },
             DrawEnvPointLight {
@@ -5826,9 +6478,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5855,6 +6508,12 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         fog_near: 0.0,
         fog_far: 0.0,
         point_lights: [
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
@@ -5892,9 +6551,10 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
 /// `TH_DrawEnvData` @ `0x00363c00` in `SLUS_202.28` (3 entries).
 pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
     DrawEnvData {
-        room_start: 1,
-        room_end: 8,
-        flags: 0x03000000,
+        room_no: 1,
+        stage_id: 8,
+        flags: 0x000000,
+        point_light_count: 3,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5928,13 +6588,19 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [-19400.0, -1100.0, 22200.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 1500.0, 0.0],
-                near_dist: -17400.0,
-                far_dist: -1100.0,
-                position: [1.0, 2.0, 2.0],
+                color: [2.0, 1.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 1500.0,
+                position: [-17400.0, -1100.0, 20600.0],
             },
             DrawEnvPointLight {
-                color: [-22625.0, -1350.0, 21900.0],
+                color: [1.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 1500.0,
+                position: [-22625.0, -1350.0, 21900.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
@@ -5954,9 +6620,10 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 5,
-        room_end: 8,
-        flags: 0x03000000,
+        room_no: 5,
+        stage_id: 8,
+        flags: 0x000000,
+        point_light_count: 3,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -5990,13 +6657,19 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
                 position: [19625.0, -2300.0, 17800.0],
             },
             DrawEnvPointLight {
-                color: [500.0, 2000.0, 0.0],
-                near_dist: 20825.0,
-                far_dist: -2800.0,
-                position: [2.0, 2.0, 2.0],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 2000.0,
+                position: [20825.0, -2800.0, 17800.0],
             },
             DrawEnvPointLight {
-                color: [22275.0, -3250.0, 17800.0],
+                color: [2.0, 2.0, 2.0],
+                near_dist: 500.0,
+                far_dist: 1000.0,
+                position: [22275.0, -3250.0, 17800.0],
+            },
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,
                 far_dist: 0.0,
                 position: [0.0, 0.0, 0.0],
@@ -6016,9 +6689,10 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
         vertex_ambient_w: 127.0,
     },
     DrawEnvData {
-        room_start: 65535,
-        room_end: 65535,
-        flags: 0x00000000,
+        room_no: 65535,
+        stage_id: 65535,
+        flags: 0x000000,
+        point_light_count: 0,
         shadow_darkness: 1,
         clear_color_rgb: [255, 255, 255],
         directional_lights: [
@@ -6045,6 +6719,12 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
         fog_near: 0.0,
         fog_far: 0.0,
         point_lights: [
+            DrawEnvPointLight {
+                color: [0.0, 0.0, 0.0],
+                near_dist: 0.0,
+                far_dist: 0.0,
+                position: [0.0, 0.0, 0.0],
+            },
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
                 near_dist: 0.0,

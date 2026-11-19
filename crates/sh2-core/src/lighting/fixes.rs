@@ -320,13 +320,13 @@ pub fn should_disable_cutscene_shadows(cutscene_id: u32, camera_pos_x: f32) -> b
     }
 }
 
-/// Evaluates `BFaWAtticFix` (`Patches/AtticShadowFixes.cpp:73-89`):
-/// returns the attic shadow caster cutoff Y coordinate (`-10.0` hides the dead shadow caster in
-/// Baldwin Mansion attic when `camera_pos_y == -1450.0` or outside `R_MAN_ATTIC`; `10.0` otherwise).
+/// Evaluates `BFaWAtticFix` (`Patches/AtticShadowFixes.cpp:73-83`):
+/// returns `-10.0` in Baldwin Mansion attic (`R_MAN_ATTIC = 0xD8`) when `camera_pos_y == -1450.0`
+/// to hide the dead shadow caster, and `10.0` otherwise.
 #[must_use]
 pub fn bfaw_attic_shadow_cutoff_y(room_id: u32, camera_pos_y: f32) -> f32 {
     const R_MAN_ATTIC: u32 = 0xD8;
-    if room_id != R_MAN_ATTIC || (camera_pos_y - (-1450.0)).abs() < 1.0 {
+    if room_id == R_MAN_ATTIC && (camera_pos_y - (-1450.0)).abs() < 1.0 {
         -10.0
     } else {
         10.0

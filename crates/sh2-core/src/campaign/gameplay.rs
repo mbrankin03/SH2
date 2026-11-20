@@ -148,7 +148,7 @@ pub(crate) fn run_active_gameplay(
     }
 
     // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240`) and switch active outdoor
-    //    tile (`.map`, `.cld`, `.cam`) seamlessly when crossing a 40,000 mm `BlockNumber` cell.
+    //    tile (`.map`, `.cld`, `.cam`) seamlessly when crossing a 20,000 mm `BlockNumber` cell.
     let plan = outdoor_streamer.plan(
         stage_id,
         sim.scenario.player_position.x,

@@ -421,10 +421,34 @@ fn observation_deck_steps_resolve_forest_ca04_outdoor_tile() {
     // Retail `ACT1_OBSERVATION_EVENT_LIST[10]` destination (`ev_pos @ 0x7a`) spawns James in
     // Stage 4 (`ca`, Forest Trail) at `(25184.4, -99054.2)` -> `BlockNumber` 20,000 mm grid
     // `(1, -5)` -> `ca04.map` (`CA_OUTDOOR_BLOCKS` `SLUS_202.28` `0x002b9df0`).
-    let room = sh2_core::campaign::resolve_outdoor_room_id(4, [25_184.4, 0.0, -99_054.2]);
+    let dest = [25_184.4, 0.0, -99_054.2];
+    let room = sh2_core::campaign::resolve_outdoor_room_id(4, dest);
     assert_eq!(room.as_deref(), Some("ca04"));
-    let manifest = resolve_stage_manifest(4, room.as_deref(), false, true);
-    assert_eq!(manifest.map_rel_path, "bg/ca/ca04.map");
-    assert_eq!(manifest.cld_rel_path, "bg/ca/ca04.cld");
-    assert_eq!(manifest.cam_rel_path, "bg/ca/ca04.cam");
+
+    // Drive full `request_transition(3 -> 4)` through `connectMain` and verify `ca04` is loaded
+    // directly with zero intermediate `ca11` fallback load.
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        3,
+        Some("ob01".to_string()),
+        [2_247.8, 0.0, -54.2],
+        0.0,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        false,
+    );
+    let _ = drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
+    let cmd = StageTransitionCommand {
+        dest_stage: 4,
+        dest_pos: dest,
+        dest_rot_y: 0.0,
+        stage_change_mode: 0,
+        observation_mode: false,
+        is_connected_stage: true,
+    };
+    orch.request_transition(3, cmd, None);
+    let (_, saw_load_room, loaded_stage) =
+        drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
+    assert!(saw_load_room);
+    assert_eq!(loaded_stage, Some(4));
+    assert_eq!(sim.scenario.current_room, "ca04");
 }

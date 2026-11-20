@@ -529,9 +529,13 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             room_eval.particle_range_x_mm,
             room_eval.particle_range_z_mm,
         );
-        // PS2 Y-down coordinate system: -Y is UP above the floor; center mist puffs 520 mm above ground
-        // (height band ±100 mm, radius 300..440 mm) so radial alpha reaches 0 before touching the floor.
-        let anchor = [player_pos.x, player_pos.y - 520.0, player_pos.z];
+        // PS2 Y-down coordinate system: when `.fcl` specifies a fixed Y altitude (`fogSetLocalPosV`
+        // `SLUS_202.28` `0x0016c7c8..0x0016c7e4`, e.g. `obGB.fcl` `+10,000 mm` below the cliff),
+        // anchor particles at that exact altitude; otherwise center mist puffs 520 mm above floor.
+        let anchor_y = room_eval
+            .particle_fixed_y_mm
+            .unwrap_or(player_pos.y - 520.0);
+        let anchor = [player_pos.x, anchor_y, player_pos.z];
         let player_arr = [player_pos.x, player_pos.y, player_pos.z];
         state.fog_particles.step(
             fog_dt,

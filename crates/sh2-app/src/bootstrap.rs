@@ -533,6 +533,10 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         james_anm_cache,
         active_maria: false,
         active_test_room: initial_room,
+        active_launch_target: sh2_ui::menu::LaunchTarget::TestRoom(initial_room),
+        campaign_orchestrator: None,
+        campaign_loaded_room: None,
+        campaign_pending_input: sh2_core::campaign::CampaignTickInput::default(),
         fog_uniforms,
         fog_particles: sh2_core::fog::FogParticleVolume::new(
             sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_COUNT,

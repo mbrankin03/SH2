@@ -129,13 +129,13 @@ impl EventShapeKind {
 pub enum EventDestShapeKind {
     /// `0`: Explicit point + yaw angle in degrees (`(x, y, z, deg)` = 8 bytes).
     PointWithAngle = 0,
-    /// `1`: Door line along `-Z`: places player at `(x - 250, y, z - len/2)` facing `-PI/2`.
+    /// `1` (`SLUS_202.28` `0x001a97f0`, `sh2pc.exe` `0x0048b855`): places player at `(x + len/2, y, z + 250)` facing `0.0`.
     DoorLineNegZ = 1,
-    /// `2`: Door line along `+X`: places player at `(x + len/2, y, z - 250)` facing `PI`.
+    /// `2` (`SLUS_202.28` `0x001a983c`, `sh2pc.exe` `0x0048b888`): places player at `(x - len/2, y, z - 250)` facing `PI`.
     DoorLinePosX = 2,
-    /// `3`: Door line along `+Z`: places player at `(x + 250, y, z + len/2)` facing `+PI/2`.
+    /// `3` (`SLUS_202.28` `0x001a9890`, `sh2pc.exe` `0x0048b8bb`): places player at `(x + 250, y, z - len/2)` facing `+PI/2`.
     DoorLinePosZ = 3,
-    /// `4`: Door line along `-X`: places player at `(x - len/2, y, z + 250)` facing `0.0`.
+    /// `4` (`SLUS_202.28` `0x001a98e4`, `sh2pc.exe` `0x0048b8ee`): places player at `(x - 250, y, z + len/2)` facing `-PI/2`.
     DoorLineNegX = 4,
     /// `5`: Arbitrary door segment `(x, y, z, r, dx, dz)`: places player at midpoint + `250.0` normal offset.
     DoorSegment = 5,

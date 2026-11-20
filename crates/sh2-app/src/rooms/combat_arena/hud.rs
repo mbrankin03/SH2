@@ -84,12 +84,14 @@ fn render_camera_and_player_telemetry(
     let active_rec = state.sim_core.camera.active_road_index;
     let mv_type = state.sim_core.camera.mv_type;
     let cp = super::story_progression_3d::active_3d_checkpoint(state);
-    let room_label = if state.story_progression_room.checkpoint_3d_idx >= 2
+    let room_label = if let Some((ref manifest, _)) = state.campaign_loaded_room {
+        format!("{} ({}.map)", manifest.stage_name, manifest.room_id)
+    } else if state.story_progression_room.checkpoint_3d_idx >= 2
         || state.sim_core.scenario.current_room == cp.room_id
     {
-        cp.room_display_label
+        cp.room_display_label.to_string()
     } else {
-        state.active_test_room.label()
+        state.active_test_room.label().to_string()
     };
 
     let mode_badge = match active_mode {

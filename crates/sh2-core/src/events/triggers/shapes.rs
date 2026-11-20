@@ -263,27 +263,34 @@ pub fn event_result_move_position(
     let y = read_f32_i16(ev_pos, dest_offset + 2)?;
     let z0 = read_f32_i16(ev_pos, dest_offset + 4)?;
 
+    // Exact 1:1 parity with `EventResultMovePosition` (`SLUS_202.28` `0x001a9730`, jump table
+    // `0x00391060`; `sh2pc.exe` `0x0048b7e0`, jump table `0x0048ba04`).
     let (pos, angle) = match dest_shape {
         EventDestShapeKind::PointWithAngle => {
             let deg = read_f32_i16(ev_pos, dest_offset + 6)?;
             ([x0, y, z0], deg * PI / 180.0)
         }
+        // Case 1 (`0x001a97f0` / `0x0048b855`): x = x0 + len/2, z = z0 + 250, rot_y = 0.0
         EventDestShapeKind::DoorLineNegZ => {
             let len = read_f32_i16(ev_pos, dest_offset + 8)?;
-            ([x0 - 250.0, y, z0 - len * 0.5], -FRAC_PI_2)
+            ([x0 + len * 0.5, y, z0 + 250.0], 0.0)
         }
+        // Case 2 (`0x001a983c` / `0x0048b888`): x = x0 - len/2, z = z0 - 250, rot_y = PI
         EventDestShapeKind::DoorLinePosX => {
             let len = read_f32_i16(ev_pos, dest_offset + 8)?;
-            ([x0 + len * 0.5, y, z0 - 250.0], PI)
+            ([x0 - len * 0.5, y, z0 - 250.0], PI)
         }
+        // Case 3 (`0x001a9890` / `0x0048b8bb`): x = x0 + 250, z = z0 - len/2, rot_y = +PI/2
         EventDestShapeKind::DoorLinePosZ => {
             let len = read_f32_i16(ev_pos, dest_offset + 8)?;
-            ([x0 + 250.0, y, z0 + len * 0.5], FRAC_PI_2)
+            ([x0 + 250.0, y, z0 - len * 0.5], FRAC_PI_2)
         }
+        // Case 4 (`0x001a98e4` / `0x0048b8ee`): x = x0 - 250, z = z0 + len/2, rot_y = -PI/2
         EventDestShapeKind::DoorLineNegX => {
             let len = read_f32_i16(ev_pos, dest_offset + 8)?;
-            ([x0 - len * 0.5, y, z0 + 250.0], 0.0)
+            ([x0 - 250.0, y, z0 + len * 0.5], -FRAC_PI_2)
         }
+        // Case 5 (`0x001a9938` / `0x0048b921`): midpoint + 250 along normal
         EventDestShapeKind::DoorSegment => {
             let dx = read_f32_i16(ev_pos, dest_offset + 10)?;
             let dz = read_f32_i16(ev_pos, dest_offset + 12)?;

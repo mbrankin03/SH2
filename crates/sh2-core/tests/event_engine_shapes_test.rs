@@ -212,6 +212,7 @@ fn spatial_trigger_geometry_look_point_line_and_polygons() {
     );
     let (dest_p, dest_rot) =
         event_result_move_position(&move_pos, 0, EventDestShapeKind::DoorLinePosZ).unwrap();
-    assert_eq!(dest_p, [1250.0, 0.0, 2400.0]);
+    // Case 3 (`SLUS_202.28` `0x001a9890`, `sh2pc.exe` `0x0048b8bb`): x = x0 + 250, z = z0 - len/2
+    assert_eq!(dest_p, [1250.0, 0.0, 1600.0]);
     assert!((dest_rot - FRAC_PI_2).abs() < 1e-5);
 }

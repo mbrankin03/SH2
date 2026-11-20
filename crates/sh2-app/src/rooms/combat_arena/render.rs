@@ -498,11 +498,19 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`)
     if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
         let player_pos = state.sim_core.scenario.player_position;
-        let ps2_room_id = match state.active_test_room {
-            TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway => {
+        let ps2_room_id = {
+            let from_room =
+                sh2_core::fog::room_id_from_stage_code(&state.sim_core.scenario.current_room);
+            if from_room != 0 {
+                from_room
+            } else if matches!(
+                state.active_test_room,
+                TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway
+            ) {
                 sh2_core::fog::R_OBSV_DECK_ID
+            } else {
+                0
             }
-            _ => 0,
         };
         let room_eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
             room_id: ps2_room_id,
@@ -521,9 +529,13 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             room_eval.particle_range_x_mm,
             room_eval.particle_range_z_mm,
         );
-        // PS2 Y-down coordinate system: -Y is UP above the floor; center mist puffs 520 mm above ground
-        // (height band ±100 mm, radius 300..440 mm) so radial alpha reaches 0 before touching the floor.
-        let anchor = [player_pos.x, player_pos.y - 520.0, player_pos.z];
+        // PS2 Y-down coordinate system: when `.fcl` specifies a fixed Y altitude (`fogSetLocalPosV`
+        // `SLUS_202.28` `0x0016c7c8..0x0016c7e4`, e.g. `obGB.fcl` `+10,000 mm` below the cliff),
+        // anchor particles at that exact altitude; otherwise center mist puffs 520 mm above floor.
+        let anchor_y = room_eval
+            .particle_fixed_y_mm
+            .unwrap_or(player_pos.y - 520.0);
+        let anchor = [player_pos.x, anchor_y, player_pos.z];
         let player_arr = [player_pos.x, player_pos.y, player_pos.z];
         state.fog_particles.step(
             fog_dt,
@@ -676,7 +688,12 @@ fn evaluate_player_skinning(
 
             state.skin_matrices_scratch.reserve(c.skin_scratch.len());
             state.mirror_skin_matrices_scratch.clear();
-            let build_mirror = state.active_test_room == TestRoomKind::RestroomStart;
+            let build_mirror = state.active_test_room == TestRoomKind::RestroomStart
+                || state
+                    .sim_core
+                    .scenario
+                    .current_room
+                    .eq_ignore_ascii_case("er01");
             if build_mirror {
                 state
                     .mirror_skin_matrices_scratch
@@ -713,6 +730,7 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
     let build_mirror = state.active_test_room == TestRoomKind::RestroomStart
         || session.player.info.stage_name == "er01";
 
+    let has_flashlight = state.sim_core.scenario.has_flashlight();
     let scene_frame = session.player.scene_frame.max(0.0);
     for (idx, (actor, asset_opt)) in session
         .player
@@ -726,6 +744,11 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
         };
         if !actor.visible {
             continue;
+        }
+        // `DemoJamesCheckModelParts` (`SLUS_202.28` `0x00104514`): hide pocket flashlight (`0x15` = 21)
+        // on cutscene James when the player does not possess the flashlight item yet.
+        if actor.actor_name.to_ascii_lowercase().contains("jms") {
+            asset.gpu_mesh.set_pose_visible(0x15, has_flashlight);
         }
 
         // 1. Evaluate `.cls` facial morph cluster weights & upload morphed vertices if present (`clani.c`)
@@ -903,6 +926,11 @@ fn submit_scene_draw(
 ) {
     let mut skeletal_draw = Vec::new();
     let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart
+        || state
+            .sim_core
+            .scenario
+            .current_room
+            .eq_ignore_ascii_case("er01")
         || state
             .drama_demo_session
             .as_ref()

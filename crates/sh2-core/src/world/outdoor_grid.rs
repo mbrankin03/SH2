@@ -217,7 +217,7 @@ impl OutdoorArea {
         match stage_id {
             4 => Some(Self::Ca),
             5 => Some(Self::Cb),
-            14 | 54 => Some(Self::Cc),
+            13 | 14 | 54 => Some(Self::Cc),
             29 => Some(Self::Cd),
             38 => Some(Self::Qt),
             _ => None,

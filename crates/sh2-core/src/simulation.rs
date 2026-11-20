@@ -287,9 +287,9 @@ impl SimulationCore {
         // 1. Poll and update gamepad state
         self.input.update();
 
-        // 2. Handle flashlight toggle
+        // 2. Handle flashlight toggle (`LightSpotOnOffCheck` @ `SLUS_202.28` `0x001aad70`)
         if self.input.state.light_toggle_pressed {
-            self.scenario.flashlight_on = !self.scenario.flashlight_on;
+            let _ = self.scenario.toggle_flashlight();
         }
 
         // 3. Update character position and turning via authentic PS2 locomotion controller + SH2-93 camera bridge
@@ -363,11 +363,19 @@ impl SimulationCore {
             ps2_ry,
         );
 
-        let eye_target = self.scenario.player_position + Vec3::new(0.0, -1200.0, 0.0);
-        let filter = crate::collision::RaycastFilter::default();
-        self.camera.curr_snapshot.eye =
-            self.collision
-                .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
+        // `SLUS_202.28` `vcMoveAndSetCamera` (`0x0019df50`) and all `vc*` camera functions make
+        // zero `cl*` / `clCheckHitEyes` collision calls — authored `.cam` `lim_rd` rail volumes
+        // already guarantee valid camera placement (clamping an authored rail against `.cld`
+        // walls yanks alcove/doorway shots like `er01.cam` Record #1 onto James's body). Only
+        // apply `.cld` ray clamping to the synthetic fallback chase camera when no `.cam` file
+        // is loaded.
+        if self.camera.cam_file.is_none() {
+            let eye_target = self.scenario.player_position + Vec3::new(0.0, -1200.0, 0.0);
+            let filter = crate::collision::RaycastFilter::default();
+            self.camera.curr_snapshot.eye =
+                self.collision
+                    .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
+        }
 
         // 4b. Step Over-the-Shoulder 3D / First-Person rig, .cld spring-arm, and look-coupled aiming (`SH2-93`)
         self.step_modern_camera_after_ps2_rail(&out);

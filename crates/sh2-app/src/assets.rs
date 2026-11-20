@@ -888,36 +888,79 @@ pub(crate) fn find_sh2e_map_file_for_room(room: TestRoomKind) -> Option<MapFile>
 }
 
 /// Builds GPU diffuse texture bind groups for every material in a [`MapFile`], caching by `texture_id`
-/// to avoid redundant VRAM allocations and falling back to [`RenderContext::default_texture_bind_group`].
+/// to avoid redundant VRAM allocations and parallelizing CPU RGBA conversion, mipmap generation,
+/// and BC1/BC3 compression across available CPU threads.
 pub(crate) fn build_map_texture_bind_groups(
     render_ctx: &RenderContext,
     map_file: &MapFile,
 ) -> Vec<Arc<wgpu::BindGroup>> {
-    let mut map_texture_bind_groups = Vec::with_capacity(map_file.materials.len());
-    let mut tex_bg_cache: std::collections::HashMap<u32, Arc<wgpu::BindGroup>> =
-        std::collections::HashMap::new();
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
+    // Collect unique texture IDs referenced by materials so each texture is processed once.
+    let mut unique_tids: Vec<(usize, u32)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for (m_idx, mat) in map_file.materials.iter().enumerate() {
+        let tex_id = mat.texture_id as u32;
+        if seen.insert(tex_id) && map_file.textures.contains_key(&tex_id) {
+            unique_tids.push((m_idx, tex_id));
+        }
+    }
+
+    let supports_bc = render_ctx.supports_bc_compression();
+    let worker_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(unique_tids.len().max(1));
+    let next_idx = AtomicUsize::new(0);
+    let prepared_map: Mutex<Vec<(usize, u32, sh2_renderer::PreparedGpuTexture)>> =
+        Mutex::new(Vec::with_capacity(unique_tids.len()));
+
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| loop {
+                let idx = next_idx.fetch_add(1, Ordering::Relaxed);
+                if idx >= unique_tids.len() {
+                    break;
+                }
+                let (m_idx, tex_id) = unique_tids[idx];
+                if let Some(tex) = map_file.textures.get(&tex_id) {
+                    if let Ok(rgba) = tex.to_rgba() {
+                        let prepared = sh2_renderer::prepare_mipmapped_texture_cpu(
+                            tex.width as u32,
+                            tex.height as u32,
+                            &rgba,
+                            supports_bc,
+                        );
+                        if let Ok(mut guard) = prepared_map.lock() {
+                            guard.push((m_idx, tex_id, prepared));
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    let mut tex_bg_cache: std::collections::HashMap<u32, Arc<wgpu::BindGroup>> =
+        std::collections::HashMap::with_capacity(unique_tids.len());
+    if let Ok(entries) = prepared_map.into_inner() {
+        for (m_idx, tex_id, prepared) in entries {
+            let bg = render_ctx.upload_prepared_texture_bind_group(
+                &prepared,
+                Some(&format!("Map Material {m_idx} Texture {tex_id}")),
+            );
+            tex_bg_cache.insert(tex_id, bg);
+        }
+    }
+
+    let mut map_texture_bind_groups = Vec::with_capacity(map_file.materials.len());
+    for mat in &map_file.materials {
         let tex_id = mat.texture_id as u32;
         if let Some(bg) = tex_bg_cache.get(&tex_id) {
             map_texture_bind_groups.push(Arc::clone(bg));
-            continue;
+        } else {
+            map_texture_bind_groups.push(Arc::clone(&render_ctx.default_texture_bind_group));
         }
-
-        if let Some(tex) = map_file.textures.get(&tex_id) {
-            if let Ok(rgba) = tex.to_rgba() {
-                let bg = render_ctx.create_texture_bind_group(
-                    tex.width as u32,
-                    tex.height as u32,
-                    &rgba,
-                    Some(&format!("Map Material {m_idx} Texture {tex_id}")),
-                );
-                tex_bg_cache.insert(tex_id, Arc::clone(&bg));
-                map_texture_bind_groups.push(bg);
-                continue;
-            }
-        }
-        map_texture_bind_groups.push(Arc::clone(&render_ctx.default_texture_bind_group));
     }
 
     map_texture_bind_groups

@@ -204,7 +204,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Discrete-step 3D Volumetric Raymarching (`step_count` steps)
         let steps = clamp(fog.step_count, 4u, 64u);
         let march_end = min(view_dist, fog.fog_far);
-        let march_start = min(fog.fog_near * 0.15, march_end);
+        let march_start = min(fog.fog_near, march_end);
         let march_len = max(0.0, march_end - march_start);
         let step_len = march_len / f32(steps);
         let jitter = interleaved_gradient_noise(vec2<f32>(pixel_coords));
@@ -257,11 +257,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         fog_factor = clamp(layered * effective_density, 0.0, 1.0);
     }
 
-    // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into mist color
-    if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
+    // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into mist color.
+    // Pre-lit opaque vista/skybox geometry (`stride == 0x14`, e.g. Toluca Lake & hills in `ob01.map`)
+    // encodes PS2 GS `PRIM.FGE = 0` (`original_color.a < 0.5` with `depth_val < 0.99999`) so it
+    // bypasses depth-fog whiteout exactly like PS2 hardware.
+    if (depth_val < 0.99999 && original_color.a < 0.5) {
+        fog_factor = 0.0;
+    } else if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
         fog_factor = 1.0;
     }
 
     let fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
-    textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, original_color.a));
+    textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, 1.0));
 }

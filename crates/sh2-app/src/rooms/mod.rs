@@ -1,6 +1,7 @@
 //! Modular per-room controllers (`audio_room`, `combat_arena`, `grapple_room`, `model_viewer`, `fmv_room`).
 
 pub(crate) mod audio_room;
+pub(crate) mod campaign_room;
 pub(crate) mod combat_arena;
 pub(crate) mod fmv_room;
 pub(crate) mod grapple_room;
@@ -15,7 +16,7 @@ use std::time::Duration;
 use winit::keyboard::KeyCode;
 
 use crate::state::AppState;
-use sh2_ui::menu::TestRoomKind;
+use sh2_ui::menu::{LaunchTarget, TestRoomKind};
 
 /// Default perspective camera near clip plane in Silent Hill 2 world units (`25.0` = ~5 cm)
 /// used by studio viewer rooms (`model_viewer`, `grapple_room`, `inventory_room`).
@@ -55,6 +56,10 @@ pub(crate) fn dispatch_key_input(
     pressed: bool,
     repeat: bool,
 ) {
+    if matches!(state.active_launch_target, LaunchTarget::Campaign { .. }) {
+        campaign_room::CampaignRoomController::handle_key_input(state, key_code, pressed, repeat);
+        return;
+    }
     match state.active_test_room {
         TestRoomKind::FmvCutsceneViewer => {
             fmv_room::FmvRoomController::handle_key_input(state, key_code, pressed, repeat);
@@ -116,6 +121,12 @@ pub(crate) fn dispatch_tick_and_render_3d(
     is_in_game: bool,
 ) {
     if is_in_game {
+        if matches!(state.active_launch_target, LaunchTarget::Campaign { .. }) {
+            campaign_room::CampaignRoomController::tick_and_render_3d(
+                state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+            );
+            return;
+        }
         match state.active_test_room {
             TestRoomKind::FmvCutsceneViewer => {
                 fmv_room::FmvRoomController::tick_and_render_3d(
@@ -186,6 +197,10 @@ pub(crate) fn dispatch_render_hud(
     encoder: &mut wgpu::CommandEncoder,
     surface_view: &wgpu::TextureView,
 ) {
+    if matches!(state.active_launch_target, LaunchTarget::Campaign { .. }) {
+        campaign_room::CampaignRoomController::render_hud(state, encoder, surface_view);
+        return;
+    }
     match state.active_test_room {
         TestRoomKind::ModelAndTextureViewer => {
             model_viewer::ModelViewerRoomController::render_hud(state, encoder, surface_view);

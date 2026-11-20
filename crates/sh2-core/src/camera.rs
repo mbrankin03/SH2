@@ -302,7 +302,10 @@ impl Ps2CameraController {
             tgt_chara2watch_dist = (min_cam2watch_dist + tgt_watch_cir_r) - cam2chr_dist;
         }
 
-        let cam2chr_ang = dz.atan2(dx);
+        // `SLUS_202.28` `vcSetWatchTgtXzPos` (`0x00199ca0`, `0x00199cdc..0x00199cf8`) calls
+        // `shAtan2(dz, dx)` (`0x0016e9e0`), where Team Silent's `shAtan2(z, x)` returns the yaw
+        // measured from `+Z` toward `+X` (`sin = dx/r`, `cos = dz/r`), i.e. Rust `dx.atan2(dz)`.
+        let cam2chr_ang = dx.atan2(dz);
         let chr2watch_x =
             player_yaw.sin() * tgt_watch_cir_r + cam2chr_ang.sin() * tgt_chara2watch_dist;
         let chr2watch_z =
@@ -767,5 +770,31 @@ mod tests {
         assert!((controller.prev_snapshot.eye.x - 500.0).abs() < 1e-3);
         assert!((controller.curr_snapshot.eye.y - (-2200.0)).abs() < 1e-3);
         assert!((controller.prev_snapshot.eye.y - (-2200.0)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_vc_set_watch_tgt_xz_pos_aligns_with_camera_to_player_ray() {
+        // Regression test for `SLUS_202.28` `vcSetWatchTgtXzPos` (`0x00199ca0`, `shAtan2(dz, dx)`
+        // = `dx.atan2(dz)`): when James faces `+Z` (`yaw = 0`) and the chase camera sits directly
+        // behind him in `-Z`, the watch target must project ahead along `+Z`, not 90° sideways
+        // along `+X`.
+        let mut controller = Ps2CameraController::new();
+        if !controller.load_room_cam("ca04", true) {
+            return; // Skip gracefully in CI without retail assets
+        }
+
+        let player_pos = Vec3::new(26_547.9, -13_319.5, -95_962.2);
+        let player_yaw = -0.03f32;
+        controller.reset_to_player(player_pos, player_yaw);
+
+        let eye = controller.curr_snapshot.eye;
+        let tgt = controller.curr_snapshot.target;
+        let to_player = Vec3::new(player_pos.x - eye.x, 0.0, player_pos.z - eye.z).normalize();
+        let to_tgt = Vec3::new(tgt.x - eye.x, 0.0, tgt.z - eye.z).normalize();
+        let alignment = to_player.dot(to_tgt);
+        assert!(
+            alignment > 0.95,
+            "camera target must align with camera->player ray (dot={alignment:.3}, eye={eye:?}, tgt={tgt:?})"
+        );
     }
 }

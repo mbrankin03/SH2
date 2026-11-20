@@ -54,6 +54,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = false;
                 self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.game.enable_delayed_fade_in = false;
             }
             EnhancedPreset::Sh2ee => {
                 self.video.texture_quality = WorldTextureQuality::Sh2eeHd;
@@ -67,6 +68,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.game.enable_delayed_fade_in = true;
             }
             EnhancedPreset::NativeEnhanced => {
                 self.video.texture_quality = WorldTextureQuality::Ai4kMaster;
@@ -80,6 +82,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Auto;
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
+                self.game.enable_delayed_fade_in = true;
             }
             EnhancedPreset::Custom => {}
         }
@@ -98,7 +101,8 @@ impl AppConfig {
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_restored_cut_audio
-            && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail;
+            && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
+            && !self.game.enable_delayed_fade_in;
         if is_ps2 {
             return EnhancedPreset::Ps2Authentic;
         }
@@ -112,7 +116,8 @@ impl AppConfig {
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && self.audio.enable_restored_cut_audio
-            && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail;
+            && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
+            && self.game.enable_delayed_fade_in;
         if is_sh2ee {
             return EnhancedPreset::Sh2ee;
         }
@@ -126,7 +131,8 @@ impl AppConfig {
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion
             && self.audio.enable_restored_cut_audio
-            && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder;
+            && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder
+            && self.game.enable_delayed_fade_in;
         if is_native {
             return EnhancedPreset::NativeEnhanced;
         }

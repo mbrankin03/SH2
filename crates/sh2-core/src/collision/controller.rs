@@ -144,7 +144,8 @@ pub struct FloorSample {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollisionConfig {
     /// Character cylinder collision radius in world units (mm).
-    /// James/Maria collision radius is ~250.0 - 260.0 mm.
+    /// Exact PS2 James collision radius from `PlayerInitOnConnect` (`SLUS_202.28` `0x00110ff0`:
+    /// `0x4348_0000` = `200.0f` mm, matching narrow `400 mm` retail doorways such as `er01.cld`).
     pub radius: f32,
     /// Character cylinder height from feet to head in world units (~1800.0 mm).
     pub height: f32,
@@ -159,7 +160,7 @@ pub struct CollisionConfig {
 impl Default for CollisionConfig {
     fn default() -> Self {
         Self {
-            radius: 260.0,
+            radius: 200.0,
             height: 1800.0,
             max_step_up: 250.0,
             max_step_down: 350.0,
@@ -713,18 +714,19 @@ mod tests {
     fn test_wall_pushback_and_sliding() {
         // Enclosed square room 2000x2000 (X: -1000..1000, Z: -1000..1000)
         let world = CollisionWorld::create_synthetic_room(2000.0, 2000.0, 3000.0, 0.0, 0.0);
-        let config = CollisionConfig::default(); // radius = 260.0
+        let config = CollisionConfig::default(); // radius = 200.0 (`PlayerInitOnConnect` 0x00110ff0)
 
         // Move player towards east wall (X = 1000.0) beyond the boundary
         let current_pos = Vec3::new(900.0, 0.0, 0.0);
-        let desired_pos = Vec3::new(980.0, 0.0, 100.0); // should be pushed back to X <= 1000 - 260 = 740
+        let desired_pos = Vec3::new(980.0, 0.0, 100.0); // should be pushed back to X <= 1000 - 200 = 800
 
         let final_pos = world.resolve_character_movement(current_pos, desired_pos, &config);
 
         assert!(
-            final_pos.x <= 740.01,
-            "Player X ({}) must be clamped by wall radius boundary 740.0",
-            final_pos.x
+            final_pos.x <= 1000.0 - config.radius + 0.01,
+            "Player X ({}) must be clamped by wall radius boundary {}",
+            final_pos.x,
+            1000.0 - config.radius
         );
         // Z motion should slide freely
         assert_eq!(final_pos.z, 100.0);
@@ -735,7 +737,7 @@ mod tests {
     fn test_center_pillar_collision() {
         // 4000x4000 room with center pillar 600x600 (-300..300, -300..300)
         let world = CollisionWorld::create_synthetic_room(4000.0, 4000.0, 3000.0, 600.0, 600.0);
-        let config = CollisionConfig::default(); // radius = 260.0
+        let config = CollisionConfig::default(); // radius = 200.0 (`PlayerInitOnConnect` 0x00110ff0)
 
         // Try walking into the pillar from the west
         let current_pos = Vec3::new(-500.0, 0.0, 0.0);
@@ -743,9 +745,9 @@ mod tests {
 
         let final_pos = world.resolve_character_movement(current_pos, desired_pos, &config);
 
-        // West wall of pillar is at X = -300, so cylinder center should be pushed to <= -300 - 260 = -560
+        // West wall of pillar is at X = -300, so cylinder center should be pushed to <= -300 - 200 = -500
         assert!(
-            final_pos.x <= -559.9,
+            final_pos.x <= -300.0 - config.radius + 0.1,
             "Player should be pushed outside pillar boundary: pos.x={}",
             final_pos.x
         );
@@ -884,7 +886,7 @@ mod tests {
 
         let resolved = world.resolve_character_movement(current_pos, desired_pos, &config);
         assert!(
-            resolved.x <= 500.0 - 260.0 + 0.1,
+            resolved.x <= 500.0 - config.radius + 0.1,
             "Dynamic wall must push character back: pos.x={}",
             resolved.x
         );

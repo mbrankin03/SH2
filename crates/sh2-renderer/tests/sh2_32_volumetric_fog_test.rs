@@ -166,6 +166,7 @@ fn test_sh2_32_volumetric_fog_drift_curves_god_rays_and_particles() {
         ..Default::default()
     });
     let mut fog_t0 = FogUniforms::from_room_evaluation(&eval, FogQuality::ModernVolumetric, false);
+    fog_t0.fog_near = 2000.0;
     fog_t0.fog_far = 14000.0;
     fog_t0.time = 0.0;
     ctx.update_spotlight(&SpotlightUniforms {
@@ -190,6 +191,7 @@ fn test_sh2_32_volumetric_fog_drift_curves_god_rays_and_particles() {
     for curve in 0..=2u32 {
         let mut classic = FogUniforms::from_room_evaluation(&eval, FogQuality::ClassicPs2, false);
         classic.curve_type = curve;
+        classic.fog_near = 2000.0;
         classic.fog_far = 14000.0;
         ctx.update_fog(&classic);
         ctx.render_gpu_map(&gpu_map);

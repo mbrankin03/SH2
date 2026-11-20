@@ -15,7 +15,7 @@ impl OptionsMenu {
                 }
             }
             OptionsTab::Controls => 11,
-            OptionsTab::Game => 7,
+            OptionsTab::Game => 8,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
                     11
@@ -34,7 +34,7 @@ impl OptionsMenu {
 
     /// Returns true if the currently selected row is the Test Rooms launcher.
     pub fn is_test_rooms_selected(&self) -> bool {
-        (self.active_tab == OptionsTab::Game && self.selected_index == 6)
+        (self.active_tab == OptionsTab::Game && self.selected_index == 7)
             || (self.active_tab == OptionsTab::Debug && self.selected_index == 4)
     }
 
@@ -220,7 +220,15 @@ impl OptionsMenu {
                     "DISABLED (PS2)".into()
                 },
             )),
-            6 => Some(("Test Rooms", "[Press Enter to Select]".into())),
+            6 => Some((
+                "Delayed Fade-In (SH2:EE)",
+                if g.enable_delayed_fade_in {
+                    "ON (SH2:EE)".into()
+                } else {
+                    "OFF (PS2 1:1)".into()
+                },
+            )),
+            7 => Some(("Test Rooms", "[Press Enter to Select]".into())),
             _ => None,
         }
     }
@@ -624,7 +632,8 @@ impl OptionsMenu {
                 };
             }
             5 => g.save_anywhere = !g.save_anywhere,
-            6 => return Some(OptionsSoundCue::LaunchTestRooms),
+            6 => g.enable_delayed_fade_in = !g.enable_delayed_fade_in,
+            7 => return Some(OptionsSoundCue::LaunchTestRooms),
             _ => return Some(OptionsSoundCue::None),
         }
         None

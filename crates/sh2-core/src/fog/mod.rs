@@ -33,6 +33,18 @@ use crate::cutscene::{
 
 /// Room ID for Toluca Lake Observation Deck (`R_OBSV_DECK = 0x02` in `Patches.h`).
 pub const R_OBSV_DECK_ID: u32 = 0x02;
+/// Exact PS2 fixed Y altitude (`+10,000.0` mm, PS2 Y-down = 10 m below the parking lot cliff)
+/// for Observation Deck (`ob01`) 3D fog particles from retail `data/bg/ob/obGB.fcl`
+/// (`FogEnv +0x08` at file offset `0x8c`, `subdiv (+0x12) = 4 != 0`), applied to
+/// `fog_work.local_pos.y` (`0x00581484`) in `fogSetLocalPosV` (`SLUS_202.28` `0x0016c7c8..0x0016c7e4`).
+pub const OB_FOG_ENV_FIXED_Y_MM: f32 = 10_000.0;
+/// Exact PS2 daytime default GS `FOGCOL` RGB byte (`0x46` = `70` / `255.0` ≈ `0.2745`) written by
+/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251804..0x00251838`) when `sh2gfw_Get_NightOrDay() == 0`
+/// and `DrawEnvData +0x9c == 0.0f` (as in `OB_DrawEnvData` `0x00362e70` / `sh2pc.exe` `0x3f5530`).
+pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_U8: u8 = 0x46;
+/// Normalized `[0.0..=1.0]` channel value of [`PS2_DAYTIME_DEFAULT_FOG_COLOR_U8`] (`70.0 / 255.0`).
+pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_F32: f32 =
+    (PS2_DAYTIME_DEFAULT_FOG_COLOR_U8 as f32) / 255.0;
 /// Room ID for Forest Trail & Cemetery (`R_FOREST_CEMETERY = 0x03` in `Patches.h`).
 pub const R_FOREST_CEMETERY_ID: u32 = 0x03;
 /// Room ID for Silent Hill Town East (`R_TOWN_EAST = 0x04` in `Patches.h`).
@@ -234,6 +246,11 @@ pub struct RoomFogEvaluation {
     pub particle_range_x_mm: f32,
     /// Z half-extent of the localized proximity particle volume in PS2 mm.
     pub particle_range_z_mm: f32,
+    /// Optional fixed world Y altitude (PS2 mm, Y-down) overriding player Y when `.fcl`
+    /// `FogEnv.subdiv (+0x12) != 0` (`fogSetLocalPosV` `SLUS_202.28` `0x0016c7c8..0x0016c7e4`),
+    /// e.g. `Some(10_000.0)` from `data/bg/ob/obGB.fcl` `+0x8c` placing Observation Deck mist
+    /// 10 m below the parking lot cliff over Toluca Lake.
+    pub particle_fixed_y_mm: Option<f32>,
     /// James radial parting influence in PS2 mm (`FogAdjustments.cpp:317-334`).
     pub james_fog_influence_mm: f32,
     /// Whether outdoor dual-layer sky/mist planes are active (`true` outdoors, `false` dark interiors).
@@ -286,17 +303,27 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                     PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 )
             };
+            // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `sh2pc.exe` `0x3f5530`):
+            // `fog_near = 19000.0` mm, `fog_far = 33000.0` mm, linear depth-fog ramp
+            // (`sh2gfw_Set_DepthFog` `0x00175df0`), and daytime GS `FOGCOL = (0x46, 0x46, 0x46)`
+            // (`SetupDrawEnvData` `0x00251804..0x00251838` when `+0x9c == 0.0f`).
             RoomFogEvaluation {
-                fog_color: [0.65, 0.68, 0.72, 1.0],
-                fog_near_mm: 2000.0,
-                fog_far_mm: 32000.0,
+                fog_color: [
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    1.0,
+                ],
+                fog_near_mm: 19_000.0,
+                fog_far_mm: 33_000.0,
                 density: 1.0,
-                curve: FogFalloffCurve::Exponential,
+                curve: FogFalloffCurve::Linear,
                 speed_mult: FOG_SPEED_OUTDOOR_SLOW,
                 layers: base_layers,
                 particle_count: count,
                 particle_range_x_mm: range_x,
                 particle_range_z_mm: range_z,
+                particle_fixed_y_mm: Some(OB_FOG_ENV_FIXED_Y_MM),
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: false,
@@ -313,6 +340,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
             particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
             particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
             particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+            particle_fixed_y_mm: None,
             james_fog_influence_mm,
             outdoor_layers_enabled: true,
             final_boss_upper_override: false,
@@ -328,6 +356,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
             particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT / 2,
             particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
             particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+            particle_fixed_y_mm: None,
             james_fog_influence_mm,
             outdoor_layers_enabled: true,
             final_boss_upper_override: false,
@@ -349,6 +378,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                 particle_count: 0,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_fixed_y_mm: None,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: false,
                 final_boss_upper_override: false,
@@ -371,6 +401,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                 particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_fixed_y_mm: None,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: upper,
@@ -387,6 +418,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
             particle_count: 0,
             particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
             particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+            particle_fixed_y_mm: None,
             james_fog_influence_mm,
             outdoor_layers_enabled: false,
             final_boss_upper_override: false,
@@ -402,6 +434,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
             particle_count: 0,
             particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
             particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+            particle_fixed_y_mm: None,
             james_fog_influence_mm,
             outdoor_layers_enabled: false,
             final_boss_upper_override: false,
@@ -491,6 +524,16 @@ mod tests {
             OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X
         );
         assert_eq!(eval.particle_count, OBSERVATION_DECK_FOG_PARTICLE_MAX);
+        assert_eq!(eval.particle_fixed_y_mm, Some(OB_FOG_ENV_FIXED_Y_MM));
+        assert_eq!(
+            eval.fog_color,
+            [
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                1.0,
+            ]
+        );
         assert!(eval.outdoor_layers_enabled);
     }
 }

@@ -101,7 +101,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let radial = pow(1.0 - r2, 2.4);
     let tex_n = textureSample(fog_tex, fog_sampler, in.uv).r;
-    // Soft PS2 GS mist puff alpha to blend seamlessly without hard disc edges
+    // Soft PS2 GS mist puff alpha to blend seamlessly without hard billboard edges
     let alpha = radial * (0.40 + 0.60 * tex_n) * in.color_alpha.a * 0.14;
     if (alpha < 0.003) {
         discard;

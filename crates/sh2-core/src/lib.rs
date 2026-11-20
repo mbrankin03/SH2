@@ -3,6 +3,7 @@
 pub mod ai;
 pub mod animation;
 pub mod camera;
+pub mod campaign;
 pub mod clock;
 pub mod collision;
 pub mod combat;
@@ -36,6 +37,14 @@ pub use animation::{
     LocomotionAnimationSync, MariaLocomotionClips,
 };
 pub use camera::{CameraMovementType, CameraSnapshot, CameraSourceKind, Ps2CameraController};
+pub use campaign::{
+    apply_post_cutscene_handoff, evaluate_auto_stage_demo, resolve_stage_manifest, room_area_dir,
+    AutoDemoRule, CampaignEffects, CampaignEnemySpawn, CampaignOrchestrator, CampaignPhase,
+    CampaignPickupSpawn, CampaignTickInput, ConnectStep, DramaDemoTrigger, FadeDirection,
+    FmvTrigger, OverlayMenuKind, RoomLoadManifest, RoomLoadTarget, ScreenFadeState,
+    AUTO_STAGE_DEMO_RULES, MAIN_SCENARIO_START_STAGE, PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER,
+    SH2EE_DELAYED_FADE_IN_START, WISH_SCENARIO_START_STAGE,
+};
 pub use clock::{EngineClock, FramePacer, DEFAULT_MAX_ACCUMULATED};
 pub use collision::{
     listener_head_position, AcousticOcclusionHit, FloorSample, SurfaceMaterial,

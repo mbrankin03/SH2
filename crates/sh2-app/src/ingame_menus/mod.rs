@@ -11,8 +11,8 @@ mod actions;
 
 pub(crate) use actions::build_player_snapshot;
 use actions::{
-    apply_inventory_action, ensure_map_sheet_loaded, ensure_memo_assets_loaded,
-    handle_options_from_inventory_key,
+    apply_inventory_action, ensure_examine_tex_loaded, ensure_item_atlas_loaded,
+    ensure_map_sheet_loaded, ensure_memo_assets_loaded, handle_options_from_inventory_key,
 };
 
 use winit::keyboard::KeyCode;
@@ -50,6 +50,12 @@ pub(crate) struct InGameMenuState {
     pub(crate) cached_map_marks: Option<(u8, usize, usize, Vec<u8>)>,
     /// Cached decoded memo backdrop `(rel_path, width, height, rgba)`.
     pub(crate) cached_memo_backdrop: Option<(&'static str, usize, usize, Vec<u8>)>,
+    /// Whether `pic/etc/itemmenu2.tex` has been attempted to load from disk.
+    pub(crate) item_atlas_loaded: bool,
+    /// Cached decoded `itemmenu2.tex` (`4096x4096` SH2:EE HD or `1024x1024` PS2/PC) `(width, height, rgba)`.
+    pub(crate) cached_item_atlas: Option<(usize, usize, Vec<u8>)>,
+    /// Cached decoded close-up examine `.tex` `(item_id, width, height, rgba)`.
+    pub(crate) cached_examine_tex: Option<(u8, usize, usize, Vec<u8>)>,
 }
 
 impl InGameMenuState {
@@ -87,6 +93,7 @@ impl InGameMenuState {
 /// while keeping room BGM active (`PatchInventoryBGM.cpp`).
 pub(crate) fn open_inventory(state: &mut AppState) {
     state.clear_held_gameplay_keys();
+    ensure_item_atlas_loaded(state);
     state
         .ingame_menus
         .inventory
@@ -331,12 +338,35 @@ pub(crate) fn render_overlay(
             &mut state.menu_rasterizer,
         );
     } else if state.ingame_menus.inventory.is_open {
+        if state.ingame_menus.inventory.focus == sh2_ui::inventory::InventoryFocus::ExamineOverlay {
+            if let Some(id) = state.ingame_menus.inventory.selected_item_id() {
+                ensure_examine_tex_loaded(state, id);
+            }
+        }
         let snapshot = build_player_snapshot(state);
+        let item_atlas = state
+            .ingame_menus
+            .cached_item_atlas
+            .as_ref()
+            .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
+        let examine_tex = state
+            .ingame_menus
+            .inventory
+            .selected_item_id()
+            .and_then(|sel_id| {
+                state
+                    .ingame_menus
+                    .cached_examine_tex
+                    .as_ref()
+                    .filter(|(id, _, _, _)| *id == sel_id)
+                    .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h))
+            });
         draw_inventory_screen(
             &state.ingame_menus.inventory,
             &state.sim_core.scenario.inventory_mgr,
             &snapshot,
-            false,
+            item_atlas,
+            examine_tex,
             font,
             &mut state.menu_rasterizer,
         );

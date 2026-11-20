@@ -287,3 +287,48 @@ pub(crate) fn ensure_memo_assets_loaded(state: &mut AppState, backdrop_path: &'s
             Some((backdrop_path, tex.width, tex.height, tex.rgba));
     }
 }
+
+/// Lazily loads `pic/etc/itemmenu2.tex` (automatically preferring 4K HD `sh2e/pic/etc/itemmenu2.tex`
+/// over original `data/pic/etc/itemmenu2.tex`) for the 1:1 PS2 `TgsItemPitureDraw` item carousel.
+pub(crate) fn ensure_item_atlas_loaded(state: &mut AppState) {
+    if state.ingame_menus.item_atlas_loaded {
+        return;
+    }
+    state.ingame_menus.item_atlas_loaded = true;
+    let resolver = AssetPathResolver::resolve();
+    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    if let Ok(tex) = loader.load_texture("pic/etc/itemmenu2.tex") {
+        tracing::info!(
+            "Loaded authentic itemmenu2.tex sprite atlas ({}x{}).",
+            tex.width,
+            tex.height
+        );
+        state.ingame_menus.cached_item_atlas = Some((tex.width, tex.height, tex.rgba));
+    }
+}
+
+/// Lazily loads the close-up 2D inspection still (`meta.inspect_texture_path`) when `Look` is opened.
+pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
+    if state
+        .ingame_menus
+        .cached_examine_tex
+        .as_ref()
+        .is_some_and(|(id, _, _, _)| *id == item_id)
+    {
+        return;
+    }
+    let Some(tex_path) = sh2_core::item_metadata(item_id).and_then(|m| m.inspect_texture_path)
+    else {
+        return;
+    };
+    let resolver = AssetPathResolver::resolve();
+    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    if let Ok(cut) = loader.load_cutaway_texture(tex_path, true) {
+        state.ingame_menus.cached_examine_tex = Some((
+            item_id,
+            cut.texture.width,
+            cut.texture.height,
+            cut.texture.rgba,
+        ));
+    }
+}

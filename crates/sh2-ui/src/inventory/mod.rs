@@ -17,10 +17,12 @@
 //!   - `PatchInventoryBGM.cpp` (`0x005166e8`): keep room BGM playing while in `EVENT_INVENTORY`,
 //!     `EVENT_MAP`, `EVENT_MEMO_LIST`, and `EVENT_OPTIONS_FMV`.
 
+pub mod atlas;
 pub mod health_ecg;
 pub mod render;
 pub mod state;
 
+pub use atlas::{item_icon_rect, project_carousel_slot, CarouselSlotProjection, ItemIconRect};
 pub use health_ecg::{HealthEcgState, HealthStatus};
 pub use render::draw_inventory_screen;
 pub use state::InventoryScreen;

@@ -2,38 +2,72 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Game action difficulty level.
+/// Game action difficulty level (`sh2pc.exe` `DAT_01dbbff4` / `titleGetBattleLevelFromCursor`
+/// `0x00495b70`: `0 = Beginner`, `1 = Easy`, `2 = Normal`, `3 = Hard`).
+///
+/// Prototype drift: Jul 13, 2001 `SLUS_202.28` (`0x001c2a40`) only exposes 3 levels
+/// (`Easy = 1`, `Normal = 2`, `Hard = 3`); retail PS2 & PC add `Beginner = 0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ActionDifficulty {
+    /// Retail code `0` (`sh2pc.exe` `0x00495b70`, cursor row 4).
+    Beginner,
+    /// Retail code `1` (`SLUS_202.28` `0x001c2a40` / `sh2pc.exe` `0x00495b70`, cursor row 3).
     Easy,
+    /// Retail code `2` (default in `PlayingInfoColdInit` `0x0020a680`, cursor row 2).
     #[default]
     Normal,
+    /// Retail code `3` (`SLUS_202.28` `0x001c2a40` / `sh2pc.exe` `0x00495b70`, cursor row 1).
     Hard,
 }
 
 impl ActionDifficulty {
+    /// Retail numeric code (`DAT_01dbbff4`: `0 = Beginner`, `1 = Easy`, `2 = Normal`, `3 = Hard`).
+    #[must_use]
+    pub const fn to_retail_code(self) -> u8 {
+        match self {
+            Self::Beginner => 0,
+            Self::Easy => 1,
+            Self::Normal => 2,
+            Self::Hard => 3,
+        }
+    }
+
+    /// Decodes a retail numeric code (`DAT_01dbbff4`) into [`ActionDifficulty`].
+    #[must_use]
+    pub const fn from_retail_code(code: u8) -> Self {
+        match code {
+            0 => Self::Beginner,
+            1 => Self::Easy,
+            3 => Self::Hard,
+            _ => Self::Normal,
+        }
+    }
+
     /// User-facing label.
     pub fn label(&self) -> &'static str {
         match self {
+            Self::Beginner => "Beginner",
             Self::Easy => "Easy",
             Self::Normal => "Normal",
             Self::Hard => "Hard",
         }
     }
 
-    /// Cycle to next difficulty.
+    /// Cycle to next difficulty (`Beginner -> Easy -> Normal -> Hard -> Beginner`).
     pub fn next(&self) -> Self {
         match self {
+            Self::Beginner => Self::Easy,
             Self::Easy => Self::Normal,
             Self::Normal => Self::Hard,
-            Self::Hard => Self::Easy,
+            Self::Hard => Self::Beginner,
         }
     }
 
-    /// Cycle to previous difficulty.
+    /// Cycle to previous difficulty (`Beginner -> Hard -> Normal -> Easy -> Beginner`).
     pub fn prev(&self) -> Self {
         match self {
-            Self::Easy => Self::Hard,
+            Self::Beginner => Self::Hard,
+            Self::Easy => Self::Beginner,
             Self::Normal => Self::Easy,
             Self::Hard => Self::Normal,
         }
@@ -200,6 +234,174 @@ fn default_true() -> bool {
     true
 }
 
+fn default_brightness_level() -> u8 {
+    PS2_DEFAULT_BRIGHTNESS_LEVEL
+}
+
+/// Default PS2 brightness level (`PlayingInfoColdInit` `0x0020a680`, `DAT_0122b386 = 3`).
+pub const PS2_DEFAULT_BRIGHTNESS_LEVEL: u8 = 3;
+
+/// Maximum PS2 brightness level (`bright_main` `0x00212ec0`, range `0..=7`).
+pub const PS2_MAX_BRIGHTNESS_LEVEL: u8 = 7;
+
+/// Retail PC brightness multiplier LUT for `level = 0..=7` (`sh2pc.exe` `FUN_0047b770` `0x0047b770`).
+pub const PS2_BRIGHTNESS_MULTIPLIERS: [f32; 8] = [0.5, 0.6, 0.7, 1.0, 1.2, 1.4, 1.7, 2.0];
+
+/// Screen Position X clamp bound in `position_main` (`SLUS_202.28` `0x00214c60`, `DAT_0122b387` in `[-22, +22]`).
+pub const PS2_SCREEN_POS_X_LIMIT: i8 = 22;
+
+/// Screen Position Y clamp bound in `position_main` (`SLUS_202.28` `0x00214c60`, `DAT_0122b388` in `[-24, +24]`, step `3`).
+pub const PS2_SCREEN_POS_Y_LIMIT: i8 = 24;
+
+/// PS2 Extra Options Blood Color (`Item/otn_option.c` `0x00210d50`, `DAT_0122b38f`, msgs `0x30/0x46/0x32/0x33/0x34`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BloodColor {
+    /// `0` = Normal red (`msg 0x46`, default in `PlayingInfoColdInit` `0x0020a680`).
+    #[default]
+    Normal = 0,
+    /// `1` = Green (`msg 0x32`).
+    Green = 1,
+    /// `2` = Violet (`msg 0x33`).
+    Violet = 2,
+    /// `3` = Black (`msg 0x34`).
+    Black = 3,
+}
+
+impl BloodColor {
+    /// User-facing label matching `option_msg_e.mes`.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Green => "Green",
+            Self::Violet => "Violet",
+            Self::Black => "Black",
+        }
+    }
+
+    /// Cycle forward (`0 -> 1 -> 2 -> 3 -> 0`).
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Normal => Self::Green,
+            Self::Green => Self::Violet,
+            Self::Violet => Self::Black,
+            Self::Black => Self::Normal,
+        }
+    }
+
+    /// Cycle backward (`0 -> 3 -> 2 -> 1 -> 0`).
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Normal => Self::Black,
+            Self::Green => Self::Normal,
+            Self::Violet => Self::Green,
+            Self::Black => Self::Violet,
+        }
+    }
+}
+
+/// PS2 Extra Options View Control (`Item/otn_option.c` `0x00210d50`, `DAT_0122b390`, msgs `0x35/0x46/0x47`).
+///
+/// Retail PC drift: `sh2pc.exe` (`0x00462e50`, `DAT_01dbc000`) labels mode `1` as `"Switch"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ViewControlMode {
+    /// `0` = Normal (default).
+    #[default]
+    Normal = 0,
+    /// `1` = Reverse (PS2 `msg 0x47`) / Switch (PC `msg 0x2f`).
+    Reverse = 1,
+}
+
+impl ViewControlMode {
+    /// User-facing label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Reverse => "Reverse",
+        }
+    }
+
+    /// Toggle between `Normal` and `Reverse`.
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Normal => Self::Reverse,
+            Self::Reverse => Self::Normal,
+        }
+    }
+}
+
+/// PS2 Extra Options Retreat Turn (`Item/otn_option.c` `0x00210d50`, `DAT_0122b391`, msgs `0x37/0x46/0x47`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RetreatTurnMode {
+    /// `0` = Normal (default).
+    #[default]
+    Normal = 0,
+    /// `1` = Reverse (`msg 0x47`).
+    Reverse = 1,
+}
+
+impl RetreatTurnMode {
+    /// User-facing label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Reverse => "Reverse",
+        }
+    }
+
+    /// Toggle between `Normal` and `Reverse`.
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Normal => Self::Reverse,
+            Self::Reverse => Self::Normal,
+        }
+    }
+}
+
+/// PS2/PC Extra Options Walk/Run Control (`Item/otn_option.c` `0x00210d50`, `DAT_0122b392`,
+/// retail PC `sh2pc.exe` `0x00462e50` `DAT_01dbc002`).
+///
+/// Prototype drift: `SLUS_202.28` has 2 states (`Normal = 0`, `Reverse = 1`); retail PC expands
+/// to 3 states (`Walk = 0`, `Run = 1`, `Analog = 2`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum WalkRunControlMode {
+    /// `0` = Normal (Walk default, hold Run).
+    #[default]
+    Normal = 0,
+    /// `1` = Reverse (Run default, hold Walk).
+    Reverse = 1,
+    /// `2` = Analog (Retail PC `sh2pc.exe` `0x01dbc002 == 2`).
+    Analog = 2,
+}
+
+impl WalkRunControlMode {
+    /// User-facing label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal (Walk)",
+            Self::Reverse => "Reverse (Run)",
+            Self::Analog => "Analog",
+        }
+    }
+
+    /// Cycle forward (`Normal -> Reverse -> Analog -> Normal`).
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Normal => Self::Reverse,
+            Self::Reverse => Self::Analog,
+            Self::Analog => Self::Normal,
+        }
+    }
+
+    /// Cycle backward (`Normal -> Analog -> Reverse -> Normal`).
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Normal => Self::Analog,
+            Self::Reverse => Self::Normal,
+            Self::Analog => Self::Reverse,
+        }
+    }
+}
+
 /// Gameplay and puzzle difficulty preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameOptions {
@@ -213,6 +415,30 @@ pub struct GameOptions {
     /// SH2:EE `DelayedFadeIn.cpp` (`-0.133334f` black pre-roll on room fade-in) vs 1:1 vanilla PS2 fade-in (`0.0`).
     #[serde(default = "default_true")]
     pub enable_delayed_fade_in: bool,
+    /// PS2 Main Options Auto Load (`SLUS_202.28` `0x0122b38a`, default `false`).
+    #[serde(default)]
+    pub auto_load: bool,
+    /// PS2 Extra Options Blood Color (`SLUS_202.28` `0x0122b38f`, default `Normal`).
+    #[serde(default)]
+    pub blood_color: BloodColor,
+    /// PS2 Extra Options View Control (`SLUS_202.28` `0x0122b390`, default `Normal`).
+    #[serde(default)]
+    pub view_control: ViewControlMode,
+    /// PS2 Extra Options Retreat Turn (`SLUS_202.28` `0x0122b391`, default `Normal`).
+    #[serde(default)]
+    pub retreat_turn: RetreatTurnMode,
+    /// PS2/PC Extra Options Walk/Run Control (`SLUS_202.28` `0x0122b392` / `sh2pc` `0x01dbc002`, default `Normal`).
+    #[serde(default)]
+    pub walk_run_control: WalkRunControlMode,
+    /// PS2 Brightness calibration level `0..=7` (`bright_main` `0x00212ec0`, `DAT_0122b386`, default `3`).
+    #[serde(default = "default_brightness_level")]
+    pub brightness_level: u8,
+    /// PS2 Screen Position horizontal trim `[-22, +22]` (`position_main` `0x00214c60`, `DAT_0122b387`, default `0`).
+    #[serde(default)]
+    pub screen_offset_x: i8,
+    /// PS2 Screen Position vertical trim `[-24, +24]` in steps of `3` (`position_main` `0x00214c60`, `DAT_0122b388`, default `0`).
+    #[serde(default)]
+    pub screen_offset_y: i8,
 }
 
 /// Debug and development options.
@@ -252,6 +478,14 @@ impl Default for GameOptions {
             bullet_multiplier: BulletMultiplier::default(),
             save_anywhere: true,
             enable_delayed_fade_in: true,
+            auto_load: false,
+            blood_color: BloodColor::default(),
+            view_control: ViewControlMode::default(),
+            retreat_turn: RetreatTurnMode::default(),
+            walk_run_control: WalkRunControlMode::default(),
+            brightness_level: PS2_DEFAULT_BRIGHTNESS_LEVEL,
+            screen_offset_x: 0,
+            screen_offset_y: 0,
         }
     }
 }

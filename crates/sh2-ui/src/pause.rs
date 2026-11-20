@@ -77,6 +77,8 @@ pub struct PauseMenu {
     pub location_name: String,
     /// Play time in elapsed seconds
     pub play_time_secs: f64,
+    /// Transient feedback banner (e.g. `"GAME SAVED"`, `"NO SAVE DATA FOUND"`).
+    pub status_message: Option<String>,
 }
 
 impl Default for PauseMenu {
@@ -95,6 +97,7 @@ impl PauseMenu {
             can_save: false,
             location_name: String::new(),
             play_time_secs: 0.0,
+            status_message: None,
         }
     }
 
@@ -107,12 +110,19 @@ impl PauseMenu {
         self.can_save = can_save;
         self.location_name = location.to_string();
         self.play_time_secs = play_time;
+        self.status_message = None;
+    }
+
+    /// Sets a transient status message displayed below the pause menu items.
+    pub fn set_status_message(&mut self, msg: impl Into<String>) {
+        self.status_message = Some(msg.into());
     }
 
     /// Close the pause menu and return to gameplay.
     pub fn close(&mut self) {
         self.is_open = false;
         self.sub_phase = PauseSubPhase::Main;
+        self.status_message = None;
     }
 
     /// Handle directional and action inputs.
@@ -214,13 +224,23 @@ impl PauseMenu {
     }
 }
 
-/// Renders the authentic Pause Menu overlay into the given `TextRasterizer`.
-///
-/// Matches retail PC / PS2 styling:
-/// - 50% black alpha scrim over the frozen game world
-/// - Centered "PAUSED" title header in authentic large typography
-/// - Location and formatted play time (HH:MM:SS) display
-/// - Authentic cursor highlight and disabled option styling
+/// Retail PC `sh2pc.exe` Pause Menu 512×448 virtual coordinates (`FUN_00407300` `0x00407300`
+/// and `FUN_00407610` `0x00407610`).
+pub const PAUSE_VIRTUAL_W: f32 = 512.0;
+pub const PAUSE_VIRTUAL_H: f32 = 448.0;
+/// `"PAUSED"` header position `(0x100, 0xa4)` in `FUN_00407300` (`0x00407300`).
+pub const PAUSE_HEADER_XY: (f32, f32) = (256.0, 164.0);
+/// First pause item Y (`0xe6` = `230`) and row pitch (`0x1e` = `30`) in `FUN_00407300` (`0x00407300`).
+pub const PAUSE_ITEM_START_Y: f32 = 230.0;
+pub const PAUSE_ITEM_PITCH_Y: f32 = 30.0;
+/// Quit-confirm prompt `(0x100, 0xe8)` and Yes/No `(0xe2/0x11e, 0x10a)` in `FUN_00407610` (`0x00407610`).
+pub const PAUSE_QUIT_PROMPT_XY: (f32, f32) = (256.0, 232.0);
+pub const PAUSE_QUIT_YES_XY: (f32, f32) = (226.0, 266.0);
+pub const PAUSE_QUIT_NO_XY: (f32, f32) = (286.0, 266.0);
+
+/// Renders the authentic Pause Menu overlay into `rasterizer`, scaled cleanly into a 4:3
+/// pillarboxed viewport using exact retail `sh2pc.exe` 512×448 virtual coordinates
+/// (`FUN_00407300` `0x00407300`, `FUN_00407610` `0x00407610`).
 pub fn draw_pause_screen(
     pause_menu: &PauseMenu,
     font: &AtlasFont,
@@ -232,9 +252,24 @@ pub fn draw_pause_screen(
 
     let w = rasterizer.width;
     let h = rasterizer.height;
-    let center_x = w / 2;
 
-    // 1. Semi-transparent dark background overlay (50% scrim = [0, 0, 0, 160])
+    // 4:3 pillarboxed projection from 512×448 retail PC virtual coordinates
+    let target_4_3_w = h as f32 * (4.0 / 3.0);
+    let (x_offset, base_w) = if target_4_3_w <= w as f32 {
+        ((w as f32 - target_4_3_w) * 0.5, target_4_3_w)
+    } else {
+        (0.0, w as f32)
+    };
+    let scale_x = base_w / PAUSE_VIRTUAL_W;
+    let scale_y = h as f32 / PAUSE_VIRTUAL_H;
+    let to_px = |vx: f32, vy: f32| -> (usize, usize) {
+        (
+            (x_offset + vx * scale_x).round().max(0.0) as usize,
+            (vy * scale_y).round().max(0.0) as usize,
+        )
+    };
+
+    // 1. Semi-transparent dark backdrop scrim over paused frame (`sh2gfw_Set_PauseRetain` / `0x00407610`)
     let dim_color = [0u8, 0, 0, 165];
     for y in 0..h {
         for x in 0..w {
@@ -242,149 +277,129 @@ pub fn draw_pause_screen(
         }
     }
 
+    let hdr_size = (22.0 * scale_y).round().max(14.0) as usize;
+    let item_size = (18.0 * scale_y).round().max(12.0) as usize;
+    let sub_size = (13.0 * scale_y).round().max(10.0) as usize;
+    let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
+    let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
+
     match pause_menu.sub_phase {
         PauseSubPhase::Main => {
-            // Main PAUSED title
+            // `"PAUSED"` at `(0x100, 0xa4)` (`256, 164`) — `FUN_00407300` `0x00407300`
             font.draw_line_centered(
                 rasterizer,
                 "PAUSED",
-                (center_x, 150),
-                36,
-                Sh2TextColor::AmberHeader,
-                true,
-            );
-
-            // Optional location text & elapsed play time
-            let s = pause_menu.play_time_secs as u64;
-            let hours = s / 3600;
-            let mins = (s / 60) % 60;
-            let secs = s % 60;
-            let time_str = format!("{:02}:{:02}:{:02}", hours, mins, secs);
-
-            if !pause_menu.location_name.is_empty() {
-                font.draw_line_centered(
-                    rasterizer,
-                    &pause_menu.location_name,
-                    (center_x, 195),
-                    20,
-                    Sh2TextColor::SilverUnselected,
-                    true,
-                );
-                font.draw_line_centered(
-                    rasterizer,
-                    &time_str,
-                    (center_x, 220),
-                    18,
-                    Sh2TextColor::MutedFooter,
-                    true,
-                );
-            } else {
-                font.draw_line_centered(
-                    rasterizer,
-                    &time_str,
-                    (center_x, 200),
-                    18,
-                    Sh2TextColor::MutedFooter,
-                    true,
-                );
-            }
-
-            // Draw 5 pause menu choices: CONTINUE, SAVE, LOAD, OPTIONS, QUIT
-            let start_y = 280;
-            let step_y = 48;
-
-            for (idx, opt) in PauseMenuOption::ALL.iter().enumerate() {
-                let y = start_y + (idx * step_y);
-                let is_selected = idx == pause_menu.selected_index;
-                let is_disabled = *opt == PauseMenuOption::Save && !pause_menu.can_save;
-
-                let (color, text_scale) = if is_disabled {
-                    (Sh2TextColor::MutedFooter, 24)
-                } else if is_selected {
-                    (Sh2TextColor::GoldSelected, 26)
-                } else {
-                    (Sh2TextColor::SilverUnselected, 24)
-                };
-
-                // Draw indicator arrow or brackets for selected item
-                let label = if is_selected {
-                    format!("> {} <", opt.label())
-                } else {
-                    opt.label().to_string()
-                };
-
-                font.draw_line_centered(rasterizer, &label, (center_x, y), text_scale, color, true);
-            }
-
-            // Footer prompt
-            font.draw_line_centered(
-                rasterizer,
-                "[ENTER / CROSS] Select   [ESC / CIRCLE] Resume Gameplay",
-                (center_x, 660),
-                16,
-                Sh2TextColor::MutedFooter,
-                true,
-            );
-        }
-        PauseSubPhase::QuitConfirm => {
-            // "Exit to Main Menu?" prompt
-            font.draw_line_centered(
-                rasterizer,
-                "Exit to Main Menu?",
-                (center_x, 260),
-                32,
+                to_px(PAUSE_HEADER_XY.0, PAUSE_HEADER_XY.1),
+                hdr_size,
                 Sh2TextColor::White,
                 true,
             );
 
-            // Subtitle warning
+            // Optional location & play time above menu items
+            let s = pause_menu.play_time_secs as u64;
+            let time_str = format!("{:02}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60);
+            if !pause_menu.location_name.is_empty() {
+                font.draw_line_centered(
+                    rasterizer,
+                    &format!("{}  {}", pause_menu.location_name, time_str),
+                    to_px(256.0, 198.0),
+                    sub_size,
+                    Sh2TextColor::SilverUnselected,
+                    true,
+                );
+            }
+
+            // 5 items at `(256, 230 + idx * 30)` (`0xe6, 0x104, 0x122, 0x140, 0x15e`)
+            for (idx, opt) in PauseMenuOption::ALL.iter().enumerate() {
+                let vy = PAUSE_ITEM_START_Y + idx as f32 * PAUSE_ITEM_PITCH_Y;
+                let pos = to_px(256.0, vy);
+                let is_selected = idx == pause_menu.selected_index;
+                let is_disabled = *opt == PauseMenuOption::Save && !pause_menu.can_save;
+
+                let base_color = if is_disabled {
+                    Sh2TextColor::MutedFooter
+                } else {
+                    Sh2TextColor::SilverUnselected
+                };
+
+                // Unselected base pass (`alpha = 0x60`)
+                font.draw_line_centered(rasterizer, opt.label(), pos, item_size, base_color, true);
+
+                // Selected double-draw pop pass at `(-2, -2)` (`0xfe, vy - 2`, `alpha = 0xff`)
+                if is_selected && !is_disabled {
+                    font.draw_line_centered(
+                        rasterizer,
+                        opt.label(),
+                        (pos.0.saturating_sub(pop_dx), pos.1.saturating_sub(pop_dy)),
+                        item_size,
+                        Sh2TextColor::White,
+                        false,
+                    );
+                }
+            }
+
+            if let Some(ref msg) = pause_menu.status_message {
+                font.draw_line_centered(
+                    rasterizer,
+                    msg,
+                    to_px(256.0, 392.0),
+                    sub_size,
+                    Sh2TextColor::GoldSelected,
+                    true,
+                );
+            }
+        }
+        PauseSubPhase::QuitConfirm => {
+            // `"Exit to main menu?"` at `(0x100, 0xe8)` (`256, 232`) — `FUN_00407610` `0x00407610`
             font.draw_line_centered(
                 rasterizer,
-                "Any unsaved progress will be lost.",
-                (center_x, 310),
-                18,
+                "Exit to main menu?",
+                to_px(PAUSE_QUIT_PROMPT_XY.0, PAUSE_QUIT_PROMPT_XY.1),
+                hdr_size,
+                Sh2TextColor::White,
+                true,
+            );
+
+            let yes_pos = to_px(PAUSE_QUIT_YES_XY.0, PAUSE_QUIT_YES_XY.1);
+            let no_pos = to_px(PAUSE_QUIT_NO_XY.0, PAUSE_QUIT_NO_XY.1);
+
+            // Base unselected pass (`alpha = 0x60`)
+            font.draw_line_centered(
+                rasterizer,
+                "Yes",
+                yes_pos,
+                item_size,
+                Sh2TextColor::SilverUnselected,
+                true,
+            );
+            font.draw_line_centered(
+                rasterizer,
+                "No",
+                no_pos,
+                item_size,
                 Sh2TextColor::SilverUnselected,
                 true,
             );
 
-            // YES / NO options centered horizontally
-            let yes_selected = pause_menu.quit_confirm_index == 0;
-            let no_selected = pause_menu.quit_confirm_index == 1;
-
-            let yes_label = if yes_selected { "> YES <" } else { "YES" };
-            let no_label = if no_selected { "> NO <" } else { "NO" };
-
-            let yes_color = if yes_selected {
-                Sh2TextColor::GoldSelected
+            // Selected pop pass at `(-2, -2)` (`0xe0, 0x108` or `0x11c, 0x108`, `alpha = 0xff`)
+            let (sel_label, sel_pos) = if pause_menu.quit_confirm_index == 0 {
+                ("Yes", yes_pos)
             } else {
-                Sh2TextColor::SilverUnselected
+                ("No", no_pos)
             };
-            let no_color = if no_selected {
-                Sh2TextColor::GoldSelected
-            } else {
-                Sh2TextColor::SilverUnselected
-            };
-
-            let left_x = center_x - 120;
-            let right_x = center_x + 120;
-            let opt_y = 400;
-
-            font.draw_line_centered(rasterizer, yes_label, (left_x, opt_y), 28, yes_color, true);
-            font.draw_line_centered(rasterizer, no_label, (right_x, opt_y), 28, no_color, true);
-
-            // Footer prompt
             font.draw_line_centered(
                 rasterizer,
-                "[ENTER / CROSS] Confirm   [ESC / CIRCLE] Back",
-                (center_x, 660),
-                16,
-                Sh2TextColor::MutedFooter,
-                true,
+                sel_label,
+                (
+                    sel_pos.0.saturating_sub(pop_dx),
+                    sel_pos.1.saturating_sub(pop_dy),
+                ),
+                item_size,
+                Sh2TextColor::White,
+                false,
             );
         }
-        PauseSubPhase::InOptionsMenu => {
-            // Options menu renders its own full UI
-        }
+        PauseSubPhase::InOptionsMenu => {}
     }
 }
 

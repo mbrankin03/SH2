@@ -10,16 +10,19 @@ use std::fs;
 use std::path::Path;
 
 pub use audio::{
-    AudioOptions, AudioPackDetectionStatus, AudioPackPreference, AudioPackSource, SpatialAudioMode,
-    SpeakerConfiguration,
+    ps2_level_to_sd_arg, ps2_level_to_volume_gain, volume_gain_to_ps2_level, AudioOptions,
+    AudioPackDetectionStatus, AudioPackPreference, AudioPackSource, SpatialAudioMode,
+    SpeakerConfiguration, PS2_VOLUME_MAX_LEVEL,
 };
 pub use controls::{
-    ButtonGlyphStyle, CameraCyclePreset, ControlOptions, GameplayCameraMode, OtsShoulderSide,
-    ReticleMode,
+    ButtonGlyphStyle, CameraCyclePreset, ControlOptions, ControllerPreset, GameplayCameraMode,
+    OtsShoulderSide, Ps2ControllerBindings, ReticleMode,
 };
 pub use game::{
-    ActionDifficulty, BulletMultiplier, DebugOptions, EnhancedPreset, GameLanguage, GameOptions,
-    RiddleDifficulty,
+    ActionDifficulty, BloodColor, BulletMultiplier, DebugOptions, EnhancedPreset, GameLanguage,
+    GameOptions, RetreatTurnMode, RiddleDifficulty, ViewControlMode, WalkRunControlMode,
+    PS2_BRIGHTNESS_MULTIPLIERS, PS2_DEFAULT_BRIGHTNESS_LEVEL, PS2_MAX_BRIGHTNESS_LEVEL,
+    PS2_SCREEN_POS_X_LIMIT, PS2_SCREEN_POS_Y_LIMIT,
 };
 pub use video::{
     FogQuality, FrameRateCap, InternalResolution, LightingProfile, OutdoorStreamingMode,

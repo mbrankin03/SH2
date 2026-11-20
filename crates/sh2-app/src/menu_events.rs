@@ -142,17 +142,101 @@ pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCod
     }
     emit_menu_sound(state, sound, "Pause menu");
 
-    if action == PauseAction::Resume {
-        if let Some(ref mut engine) = state.audio_engine {
-            engine.set_bgm_paused(false);
+    match action {
+        PauseAction::Resume => {
+            if let Some(ref mut engine) = state.audio_engine {
+                engine.set_bgm_paused(false);
+            }
+            if let Some(ref mut bank) = state.audio_bank {
+                bank.set_spatial_handles_paused(false);
+            }
+            tracing::info!("Pause Menu: Resumed active gameplay.");
         }
-        if let Some(ref mut bank) = state.audio_bank {
-            bank.set_spatial_handles_paused(false);
+        PauseAction::Save => {
+            let save_path = state.menu_ctrl.save_slot_path();
+            let prev_count = sh2_core::campaign::CampaignSaveSnapshot::load_from_file(&save_path)
+                .map(|s| s.save_count)
+                .unwrap_or(0);
+            let snapshot = sh2_core::campaign::CampaignSaveSnapshot {
+                scenario: state.menu_ctrl.title_sm.selected_scenario,
+                stage_id: state.sim_core.scenario.current_stage.max(2),
+                room_id: state.sim_core.scenario.current_room.clone(),
+                player_position: state.sim_core.scenario.player_position.to_array(),
+                player_yaw: state.sim_core.scenario.player_yaw,
+                action_difficulty: state.menu_ctrl.title_sm.action_difficulty,
+                riddle_difficulty: state.menu_ctrl.title_sm.riddle_difficulty,
+                play_time_secs: state.menu_ctrl.pause_menu.play_time_secs,
+                save_count: prev_count.saturating_add(1),
+            };
+            match snapshot.save_to_file(&save_path) {
+                Ok(()) => {
+                    state
+                        .menu_ctrl
+                        .title_sm
+                        .set_save_availability(sh2_ui::menu::SaveAvailability::LoadAndContinue);
+                    state.menu_ctrl.pause_menu.set_status_message("GAME SAVED");
+                    state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+                    tracing::info!(
+                        "Pause Menu: Saved campaign snapshot to {:?} (stage={}, room={}, saves={}).",
+                        save_path,
+                        snapshot.stage_id,
+                        snapshot.room_id,
+                        snapshot.save_count
+                    );
+                }
+                Err(e) => {
+                    state.menu_ctrl.pause_menu.set_status_message("SAVE FAILED");
+                    tracing::warn!("Pause Menu: Failed to save to {:?}: {}", save_path, e);
+                }
+            }
         }
-        tracing::info!("Pause Menu: Resumed active gameplay.");
-    } else if action == PauseAction::QuitToTitle {
-        state.exit_room_to_menu(TitlePhase::MainMenu);
-        tracing::info!("Pause Menu: Exited to Main Menu.");
+        PauseAction::Load => {
+            let save_path = state.menu_ctrl.save_slot_path();
+            match sh2_core::campaign::CampaignSaveSnapshot::load_from_file(&save_path) {
+                Ok(snapshot) => {
+                    state.sim_core.scenario.current_stage = snapshot.stage_id;
+                    state.sim_core.scenario.current_room = snapshot.room_id.clone();
+                    state.sim_core.scenario.player_position =
+                        glam::Vec3::from_array(snapshot.player_position);
+                    state.sim_core.scenario.player_yaw = snapshot.player_yaw;
+                    state.menu_ctrl.title_sm.selected_scenario = snapshot.scenario;
+                    state.menu_ctrl.title_sm.action_difficulty = snapshot.action_difficulty;
+                    state.menu_ctrl.title_sm.riddle_difficulty = snapshot.riddle_difficulty;
+                    state.menu_ctrl.pause_menu.close();
+                    if let Some(ref mut engine) = state.audio_engine {
+                        engine.set_bgm_paused(false);
+                    }
+                    if let Some(ref mut bank) = state.audio_bank {
+                        bank.set_spatial_handles_paused(false);
+                    }
+                    crate::rooms::campaign_room::CampaignRoomController::start_session(state, true);
+                    state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+                    tracing::info!(
+                        "Pause Menu: Loaded campaign snapshot from {:?} (stage={}, room={}).",
+                        save_path,
+                        snapshot.stage_id,
+                        snapshot.room_id
+                    );
+                }
+                Err(e) => {
+                    state
+                        .menu_ctrl
+                        .pause_menu
+                        .set_status_message("NO SAVE DATA FOUND");
+                    state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+                    tracing::warn!(
+                        "Pause Menu: Could not load save from {:?}: {}",
+                        save_path,
+                        e
+                    );
+                }
+            }
+        }
+        PauseAction::QuitToTitle => {
+            state.exit_room_to_menu(TitlePhase::MainMenu);
+            tracing::info!("Pause Menu: Exited to Main Menu.");
+        }
+        PauseAction::None | PauseAction::OpenOptions => {}
     }
 }
 

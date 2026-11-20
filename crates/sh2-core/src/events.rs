@@ -275,6 +275,7 @@ impl ClearData {
             return;
         }
         let action_bit = match action {
+            ActionDifficulty::Beginner => 0,
             ActionDifficulty::Easy => Self::ACTION_EASY_CLEARED,
             ActionDifficulty::Normal => Self::ACTION_NORMAL_CLEARED,
             ActionDifficulty::Hard => Self::ACTION_HARD_CLEARED,

@@ -1,12 +1,13 @@
 //! Category tab definitions, display formatting, and value adjustment logic for [`super::OptionsMenu`].
 
-use super::{OptionsMenu, OptionsSoundCue, OptionsTab};
+use super::{OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab};
+use sh2_core::config::{ps2_level_to_volume_gain, volume_gain_to_ps2_level, PS2_VOLUME_MAX_LEVEL};
 
 impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 11,
+            OptionsTab::Video => 13,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     11
@@ -14,8 +15,8 @@ impl OptionsMenu {
                     10
                 }
             }
-            OptionsTab::Controls => 11,
-            OptionsTab::Game => 8,
+            OptionsTab::Controls => 12,
+            OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
                     11
@@ -102,6 +103,18 @@ impl OptionsMenu {
             10 => Some((
                 "FMV Cutscene Viewer",
                 "[Press Enter / Right to Launch]".into(),
+            )),
+            11 => Some((
+                "Brightness Calibration",
+                format!("Level {} (0..7)", self.draft_config.game.brightness_level),
+            )),
+            12 => Some((
+                "Screen Position",
+                format!(
+                    "X:{:+} Y:{:+}",
+                    self.draft_config.game.screen_offset_x / 2,
+                    self.draft_config.game.screen_offset_y / 3
+                ),
             )),
             _ => None,
         }
@@ -193,6 +206,10 @@ impl OptionsMenu {
                     "Disabled".into()
                 },
             )),
+            11 => Some((
+                "Controller Config (PS2)",
+                format!("{} [Right/Enter]", c.ps2_bindings.preset.label()),
+            )),
             _ => None,
         }
     }
@@ -229,6 +246,18 @@ impl OptionsMenu {
                 },
             )),
             7 => Some(("Test Rooms", "[Press Enter to Select]".into())),
+            8 => Some((
+                "Auto Load",
+                if g.auto_load {
+                    "ON".into()
+                } else {
+                    "OFF".into()
+                },
+            )),
+            9 => Some(("Blood Color", g.blood_color.label().to_string())),
+            10 => Some(("View Control", g.view_control.label().to_string())),
+            11 => Some(("Retreat Turn", g.retreat_turn.label().to_string())),
+            12 => Some(("Walk/Run Control", g.walk_run_control.label().to_string())),
             _ => None,
         }
     }
@@ -323,6 +352,10 @@ impl OptionsMenu {
     pub fn adjust_value(&mut self, direction: i32) -> OptionsSoundCue {
         let forward = direction >= 0;
 
+        if let Some(sub_cue) = self.adjust_subscreen_horizontal(forward) {
+            return sub_cue;
+        }
+
         let special_cue = match self.active_tab {
             OptionsTab::Video => self.adjust_video_value(forward),
             OptionsTab::Audio => self.adjust_audio_value(forward),
@@ -381,6 +414,14 @@ impl OptionsMenu {
                 };
             }
             10 => return Some(OptionsSoundCue::LaunchFmvViewer),
+            11 => {
+                self.open_sub_screen(OptionsSubScreen::BrightnessCalibration);
+                return Some(OptionsSoundCue::CursorMove);
+            }
+            12 => {
+                self.open_sub_screen(OptionsSubScreen::ScreenPosition);
+                return Some(OptionsSoundCue::CursorMove);
+            }
             _ => return Some(OptionsSoundCue::None),
         }
         None
@@ -462,24 +503,18 @@ impl OptionsMenu {
     }
 
     fn adjust_audio_value(&mut self, forward: bool) -> Option<OptionsSoundCue> {
+        let step_ps2_vol = |current: f32| -> f32 {
+            let level = volume_gain_to_ps2_level(current) as i16;
+            let next =
+                (level + if forward { 1 } else { -1 }).clamp(0, PS2_VOLUME_MAX_LEVEL as i16) as u8;
+            ps2_level_to_volume_gain(next)
+        };
         let a = &mut self.draft_config.audio;
         match self.selected_index {
-            0 => {
-                let step = if forward { 0.05 } else { -0.05 };
-                a.master_volume = (a.master_volume + step).clamp(0.0, 1.0);
-            }
-            1 => {
-                let step = if forward { 0.05 } else { -0.05 };
-                a.bgm_volume = (a.bgm_volume + step).clamp(0.0, 1.0);
-            }
-            2 => {
-                let step = if forward { 0.05 } else { -0.05 };
-                a.sfx_volume = (a.sfx_volume + step).clamp(0.0, 1.0);
-            }
-            3 => {
-                let step = if forward { 0.05 } else { -0.05 };
-                a.dialogue_volume = (a.dialogue_volume + step).clamp(0.0, 1.0);
-            }
+            0 => a.master_volume = step_ps2_vol(a.master_volume),
+            1 => a.bgm_volume = step_ps2_vol(a.bgm_volume),
+            2 => a.sfx_volume = step_ps2_vol(a.sfx_volume),
+            3 => a.dialogue_volume = step_ps2_vol(a.dialogue_volume),
             4 => {
                 if !self.audio_devices.is_empty() {
                     let cur_name = a
@@ -594,6 +629,10 @@ impl OptionsMenu {
             10 => {
                 c.first_person_head_bob = !c.first_person_head_bob;
             }
+            11 => {
+                self.open_sub_screen(OptionsSubScreen::ControllerConfig);
+                return Some(OptionsSoundCue::CursorMove);
+            }
             _ => return Some(OptionsSoundCue::None),
         }
         None
@@ -634,6 +673,23 @@ impl OptionsMenu {
             5 => g.save_anywhere = !g.save_anywhere,
             6 => g.enable_delayed_fade_in = !g.enable_delayed_fade_in,
             7 => return Some(OptionsSoundCue::LaunchTestRooms),
+            8 => g.auto_load = !g.auto_load,
+            9 => {
+                g.blood_color = if forward {
+                    g.blood_color.next()
+                } else {
+                    g.blood_color.prev()
+                };
+            }
+            10 => g.view_control = g.view_control.toggle(),
+            11 => g.retreat_turn = g.retreat_turn.toggle(),
+            12 => {
+                g.walk_run_control = if forward {
+                    g.walk_run_control.next()
+                } else {
+                    g.walk_run_control.prev()
+                };
+            }
             _ => return Some(OptionsSoundCue::None),
         }
         None

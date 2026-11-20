@@ -15,6 +15,7 @@ pub mod indoor_rooms;
 pub mod io;
 pub mod orchestrator;
 pub mod retail_events;
+pub mod save;
 pub mod stage_loader;
 pub mod state;
 
@@ -25,6 +26,7 @@ pub use cutscene_handoff::{
 pub use indoor_rooms::resolve_indoor_room_id;
 pub use io::{CampaignEffects, CampaignTickInput};
 pub use orchestrator::CampaignOrchestrator;
+pub use save::CampaignSaveSnapshot;
 pub use stage_loader::{
     resolve_outdoor_room_id, resolve_room_id_for_stage_pos, resolve_stage_manifest, room_area_dir,
     CampaignEnemySpawn, CampaignPickupSpawn, RoomLoadManifest,

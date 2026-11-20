@@ -6,11 +6,20 @@
 //! - [`render`]: Authentic PS2 `optmenu.c` (`0x45e750`, `0x461600`, `0x45bf10`) screen rasterization and polygon drawing.
 
 mod render;
+pub mod subscreens;
 mod tabs;
 
 pub use render::{draw_options_screen, draw_polygon};
+pub use subscreens::{
+    arrow_pulse_alpha, draw_brightness_subscreen, draw_controller_config_subscreen,
+    draw_option_arrow, draw_screen_position_subscreen, format_ps2_button_mask, ArrowDir,
+    OptionsSubScreen,
+};
 
-use sh2_core::config::{AppConfig, AudioPackDetectionStatus};
+use sh2_core::config::{
+    AppConfig, AudioPackDetectionStatus, ControllerPreset, PS2_MAX_BRIGHTNESS_LEVEL,
+    PS2_SCREEN_POS_X_LIMIT, PS2_SCREEN_POS_Y_LIMIT,
+};
 
 /// High-level Options category tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -100,6 +109,14 @@ pub struct OptionsMenu {
     pub audio_devices: Vec<String>,
     /// Filesystem detection status for SH2:EE Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) audio packs (`SH2-59`).
     pub audio_pack_status: AudioPackDetectionStatus,
+    /// Active PS2 Options subscreen (`bright_main` / `config_main` / `position_main`).
+    pub sub_screen: OptionsSubScreen,
+    /// Active row inside `config_main` (`0` = top preset bar, `1..=13` = 13 actions).
+    pub config_row: usize,
+    /// Active column on top preset bar of `config_main` (`0=EXIT, 1=Type 1, 2=Type 2, 3=Type 3, 4=RESET`).
+    pub config_preset_col: usize,
+    /// Frame counter driving pulsing `allow_u/d/l/r` arrows (`frame % 40`).
+    pub anim_frame: u32,
 }
 
 impl OptionsMenu {
@@ -119,6 +136,94 @@ impl OptionsMenu {
             is_dirty: false,
             audio_devices: vec!["Default (System)".into()],
             audio_pack_status,
+            sub_screen: OptionsSubScreen::None,
+            config_row: 0,
+            config_preset_col: 1,
+            anim_frame: 0,
+        }
+    }
+
+    /// Advances the options animation frame counter (for pulsing `allow_u/d/l/r` arrows).
+    pub fn tick_frame(&mut self) {
+        self.anim_frame = self.anim_frame.wrapping_add(1);
+    }
+
+    /// Opens a PS2 Options subscreen (`bright_main`, `config_main`, or `position_main`).
+    pub fn open_sub_screen(&mut self, sub: OptionsSubScreen) {
+        self.sub_screen = sub;
+        if sub == OptionsSubScreen::ControllerConfig {
+            self.config_row = 0;
+            self.config_preset_col = match self.draft_config.controls.ps2_bindings.preset {
+                ControllerPreset::Type1 => 1,
+                ControllerPreset::Type2 => 2,
+                ControllerPreset::Type3 => 3,
+            };
+        }
+    }
+
+    /// Closes any active PS2 Options subscreen back to the main tabbed options view.
+    pub fn close_sub_screen(&mut self) -> bool {
+        if self.sub_screen != OptionsSubScreen::None {
+            self.sub_screen = OptionsSubScreen::None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Handles Confirm inside an active PS2 subscreen. Returns `Some(cue)` if consumed.
+    pub fn handle_subscreen_confirm(&mut self) -> Option<OptionsSoundCue> {
+        match self.sub_screen {
+            OptionsSubScreen::None => None,
+            OptionsSubScreen::BrightnessCalibration | OptionsSubScreen::ScreenPosition => {
+                self.sub_screen = OptionsSubScreen::None;
+                Some(OptionsSoundCue::ConfirmSave)
+            }
+            OptionsSubScreen::ControllerConfig => {
+                if self.config_row == 0 {
+                    match self.config_preset_col {
+                        0 => {
+                            self.sub_screen = OptionsSubScreen::None;
+                            Some(OptionsSoundCue::ConfirmSave)
+                        }
+                        1 => {
+                            self.draft_config
+                                .controls
+                                .ps2_bindings
+                                .apply_preset(ControllerPreset::Type1);
+                            self.is_dirty = self.draft_config != self.original_config;
+                            Some(OptionsSoundCue::ValueChange)
+                        }
+                        2 => {
+                            self.draft_config
+                                .controls
+                                .ps2_bindings
+                                .apply_preset(ControllerPreset::Type2);
+                            self.is_dirty = self.draft_config != self.original_config;
+                            Some(OptionsSoundCue::ValueChange)
+                        }
+                        3 => {
+                            self.draft_config
+                                .controls
+                                .ps2_bindings
+                                .apply_preset(ControllerPreset::Type3);
+                            self.is_dirty = self.draft_config != self.original_config;
+                            Some(OptionsSoundCue::ValueChange)
+                        }
+                        4 => {
+                            self.draft_config
+                                .controls
+                                .ps2_bindings
+                                .apply_preset(ControllerPreset::Type1);
+                            self.is_dirty = self.draft_config != self.original_config;
+                            Some(OptionsSoundCue::ValueChange)
+                        }
+                        _ => Some(OptionsSoundCue::None),
+                    }
+                } else {
+                    Some(OptionsSoundCue::None)
+                }
+            }
         }
     }
 
@@ -135,8 +240,37 @@ impl OptionsMenu {
         self.audio_devices = devices;
     }
 
-    /// Navigate up / down within active tab.
+    /// Navigate up / down within active tab or active PS2 subscreen.
     pub fn navigate_vertical(&mut self, delta: i32) -> OptionsSoundCue {
+        match self.sub_screen {
+            OptionsSubScreen::BrightnessCalibration => return OptionsSoundCue::None,
+            OptionsSubScreen::ScreenPosition => {
+                // `position_main` (`0x00214c60`): Y steps by ±3, clamped `[-24, +24]`.
+                let step = if delta > 0 { 3i16 } else { -3i16 };
+                let next = (self.draft_config.game.screen_offset_y as i16 + step).clamp(
+                    -(PS2_SCREEN_POS_Y_LIMIT as i16),
+                    PS2_SCREEN_POS_Y_LIMIT as i16,
+                ) as i8;
+                self.draft_config.game.screen_offset_y = next;
+                self.is_dirty = self.draft_config != self.original_config;
+                return OptionsSoundCue::ValueChange;
+            }
+            OptionsSubScreen::ControllerConfig => {
+                // `config_main` (`0x00213a50`): `key_cur ∈ 0..=13` wrapping.
+                if delta < 0 {
+                    self.config_row = if self.config_row == 0 {
+                        13
+                    } else {
+                        self.config_row - 1
+                    };
+                } else if delta > 0 {
+                    self.config_row = (self.config_row + 1) % 14;
+                }
+                return OptionsSoundCue::CursorMove;
+            }
+            OptionsSubScreen::None => {}
+        }
+
         let count = self.item_count();
         if count == 0 {
             return OptionsSoundCue::None;
@@ -152,6 +286,48 @@ impl OptionsMenu {
             self.selected_index = (self.selected_index + 1) % count;
         }
         OptionsSoundCue::CursorMove
+    }
+
+    /// Adjusts active PS2 subscreen horizontal parameter (`bright_main`, `position_main`,
+    /// `config_main`). Returns `Some(cue)` if consumed by a subscreen.
+    pub(crate) fn adjust_subscreen_horizontal(&mut self, forward: bool) -> Option<OptionsSoundCue> {
+        match self.sub_screen {
+            OptionsSubScreen::None => None,
+            OptionsSubScreen::BrightnessCalibration => {
+                let cur = self.draft_config.game.brightness_level as i16;
+                let next = (cur + if forward { 1 } else { -1 })
+                    .clamp(0, PS2_MAX_BRIGHTNESS_LEVEL as i16) as u8;
+                self.draft_config.game.brightness_level = next;
+                self.is_dirty = self.draft_config != self.original_config;
+                Some(OptionsSoundCue::ValueChange)
+            }
+            OptionsSubScreen::ScreenPosition => {
+                let cur = self.draft_config.game.screen_offset_x as i16;
+                let next = (cur + if forward { 2 } else { -2 }).clamp(
+                    -(PS2_SCREEN_POS_X_LIMIT as i16),
+                    PS2_SCREEN_POS_X_LIMIT as i16,
+                ) as i8;
+                self.draft_config.game.screen_offset_x = next;
+                self.is_dirty = self.draft_config != self.original_config;
+                Some(OptionsSoundCue::ValueChange)
+            }
+            OptionsSubScreen::ControllerConfig => {
+                if self.config_row == 0 {
+                    if forward {
+                        self.config_preset_col = (self.config_preset_col + 1) % 5;
+                    } else {
+                        self.config_preset_col = if self.config_preset_col == 0 {
+                            4
+                        } else {
+                            self.config_preset_col - 1
+                        };
+                    }
+                    Some(OptionsSoundCue::CursorMove)
+                } else {
+                    Some(OptionsSoundCue::None)
+                }
+            }
+        }
     }
 
     /// Switch active tab left or right.
@@ -200,7 +376,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 11);
+        assert_eq!(menu.item_count(), 13);
 
         // Adjust Resolution
         menu.adjust_value(1);
@@ -215,9 +391,9 @@ mod tests {
         assert_eq!(menu.active_tab, OptionsTab::Audio);
         assert_eq!(menu.selected_index, 0);
 
-        // Adjust Master Volume
+        // Adjust Master Volume: 16 discrete PS2 levels (15 -> 14 = 14/15)
         menu.adjust_value(-1);
-        assert!((menu.draft_config.audio.master_volume - 0.95).abs() < 0.001);
+        assert!((menu.draft_config.audio.master_volume - (14.0 / 15.0)).abs() < 0.001);
 
         // Discard changes
         menu.discard_changes();
@@ -225,6 +401,76 @@ mod tests {
         assert_eq!(
             menu.draft_config.video.resolution,
             InternalResolution::Native
+        );
+    }
+
+    #[test]
+    fn test_ps2_options_subscreens_and_extra_options() {
+        use sh2_core::config::{BloodColor, RetreatTurnMode, ViewControlMode, WalkRunControlMode};
+
+        let mut menu = OptionsMenu::new(AppConfig::default());
+        let font = AtlasFont::load_embedded();
+        let mut rast = TextRasterizer::new(640, 480);
+
+        // 1. Brightness Calibration (`bright_main` 0x00212ec0, 0..=7, default 3)
+        menu.open_sub_screen(OptionsSubScreen::BrightnessCalibration);
+        assert_eq!(menu.draft_config.game.brightness_level, 3);
+        menu.adjust_value(1);
+        assert_eq!(menu.draft_config.game.brightness_level, 4);
+        draw_options_screen(&menu, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+        menu.handle_subscreen_confirm();
+        assert_eq!(menu.sub_screen, OptionsSubScreen::None);
+
+        // 2. Controller Config (`config_main` 0x00213a50, Type 1/2/3 + conflict check)
+        menu.open_sub_screen(OptionsSubScreen::ControllerConfig);
+        menu.adjust_value(1); // Type 2
+        menu.handle_subscreen_confirm();
+        assert_eq!(
+            menu.draft_config.controls.ps2_bindings.preset,
+            ControllerPreset::Type2
+        );
+        rast.clear();
+        draw_options_screen(&menu, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+        assert!(menu.close_sub_screen());
+
+        // 3. Screen Position (`position_main` 0x00214c60)
+        menu.open_sub_screen(OptionsSubScreen::ScreenPosition);
+        menu.adjust_value(1); // X +2
+        menu.navigate_vertical(1); // Y +3
+        assert_eq!(menu.draft_config.game.screen_offset_x, 2);
+        assert_eq!(menu.draft_config.game.screen_offset_y, 3);
+        rast.clear();
+        draw_options_screen(&menu, &font, &mut rast);
+        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
+        assert!(menu.close_sub_screen());
+
+        // 4. PS2 Extra Options in Game tab (Auto Load, Blood Color, View Control, Retreat Turn, Walk/Run)
+        menu.active_tab = OptionsTab::Game;
+        menu.selected_index = 8;
+        menu.adjust_value(1);
+        assert!(menu.draft_config.game.auto_load);
+        menu.selected_index = 9;
+        menu.adjust_value(1);
+        assert_eq!(menu.draft_config.game.blood_color, BloodColor::Green);
+        menu.selected_index = 10;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.game.view_control,
+            ViewControlMode::Reverse
+        );
+        menu.selected_index = 11;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.game.retreat_turn,
+            RetreatTurnMode::Reverse
+        );
+        menu.selected_index = 12;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.game.walk_run_control,
+            WalkRunControlMode::Reverse
         );
     }
 
@@ -253,7 +499,7 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Controls;
-        assert_eq!(menu.item_count(), 11);
+        assert_eq!(menu.item_count(), 12);
 
         // Camera Mode: ClassicPs2Rail -> OverTheShoulder -> FirstPerson
         menu.selected_index = 5;

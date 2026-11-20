@@ -14,11 +14,12 @@ use crate::inventory::InventoryManager;
 use crate::lighting::{FLAG_WOODSIDE_FLASHLIGHT_PICKUP, ITEM_ID_FLASHLIGHT};
 use crate::room_loader::default_room_id_for_stage;
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::f32::consts::PI;
 
 /// Active playable game scenario.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ScenarioKind {
     /// Main Campaign: James Sunderland (*Letter from Silent Heaven*, Stages 1–52).
     #[default]

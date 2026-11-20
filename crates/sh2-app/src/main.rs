@@ -5,6 +5,7 @@ mod assets;
 mod bootstrap;
 mod cli;
 mod frame;
+mod ingame_menus;
 mod menu_events;
 mod rooms;
 mod state;
@@ -64,6 +65,29 @@ impl ApplicationHandler for SilentHillApp {
                         return;
                     }
 
+                    if state.menu_ctrl.in_game_active && state.ingame_menus.is_any_open() {
+                        ingame_menus::handle_key_input(state, key_code, pressed);
+                        return;
+                    }
+
+                    if pressed
+                        && !key_event.repeat
+                        && state.menu_ctrl.in_game_active
+                        && state.is_3d_gameplay_room()
+                    {
+                        match key_code {
+                            winit::keyboard::KeyCode::Tab | winit::keyboard::KeyCode::KeyI => {
+                                ingame_menus::open_inventory(state);
+                                return;
+                            }
+                            winit::keyboard::KeyCode::KeyM => {
+                                ingame_menus::open_map_direct(state, false);
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     rooms::dispatch_key_input(state, key_code, pressed, key_event.repeat);
                 }
             }
@@ -82,8 +106,17 @@ impl ApplicationHandler for SilentHillApp {
                 if pressed && !state.menu_ctrl.in_game_active {
                     let sound = state.menu_ctrl.handle_nav(MenuNavAction::Confirm);
                     emit_menu_sound(state, sound, "Menu");
+                } else if pressed
+                    && button == winit::event::MouseButton::Left
+                    && state.menu_ctrl.in_game_active
+                    && state.ingame_menus.is_any_open()
+                {
+                    if let Some((mx, my)) = state.last_cursor_pos {
+                        ingame_menus::handle_mouse_click(state, mx as f32, my as f32);
+                    }
                 } else if state.menu_ctrl.in_game_active
                     && !state.menu_ctrl.pause_menu.is_open
+                    && !state.ingame_menus.is_any_open()
                     && state.is_3d_gameplay_room()
                 {
                     if button == winit::event::MouseButton::Right {
@@ -105,6 +138,9 @@ impl ApplicationHandler for SilentHillApp {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                if state.menu_ctrl.in_game_active && state.ingame_menus.is_any_open() {
+                    ingame_menus::handle_mouse_move(state, position.x as f32, position.y as f32);
+                }
                 if let Some((last_x, last_y)) = state.last_cursor_pos {
                     let dx = (position.x - last_x) as f32;
                     let dy = (position.y - last_y) as f32;
@@ -210,6 +246,7 @@ impl ApplicationHandler for SilentHillApp {
             if state.window_focused
                 && state.menu_ctrl.in_game_active
                 && !state.menu_ctrl.pause_menu.is_open
+                && !state.ingame_menus.is_any_open()
                 && state.is_3d_gameplay_room()
             {
                 state

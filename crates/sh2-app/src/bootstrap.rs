@@ -546,6 +546,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         fog_particle_scratch: Vec::with_capacity(sh2_renderer::fog::MAX_GPU_FOG_PARTICLES),
         last_fog_time: 0.0,
         menu_ctrl,
+        ingame_menus: crate::ingame_menus::InGameMenuState::default(),
         combat_arena,
         enemy_scu_asset,
         enemy_mkn_asset,

@@ -45,7 +45,13 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     let is_viewer = is_in_game && state.active_test_room == TestRoomKind::ModelAndTextureViewer;
     let is_grapple_room =
         is_in_game && state.active_test_room == TestRoomKind::GrappleAnimationRoom;
-    let is_paused = is_in_game && state.menu_ctrl.pause_menu.is_open;
+    let is_paused =
+        is_in_game && (state.menu_ctrl.pause_menu.is_open || state.ingame_menus.is_any_open());
+
+    if is_in_game && state.ingame_menus.is_any_open() {
+        let snapshot = crate::ingame_menus::build_player_snapshot(state);
+        state.ingame_menus.tick(dt.as_secs_f32(), &snapshot);
+    }
 
     // 5. Advance simulation time and frame counter for animated post-processing
     let dt_sec = if is_paused { 0.0 } else { dt.as_secs_f32() };
@@ -369,8 +375,15 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             .blitter
             .render_with_bind_group(&mut encoder, &state.blit_bind_group, &surface_view);
 
-        // Render room-specific 2D HUD overlay
-        rooms::dispatch_render_hud(state, &mut encoder, &surface_view);
+        // Render room-specific 2D HUD overlay (suppressed while single-screen menus are open)
+        if !state.ingame_menus.is_any_open() {
+            rooms::dispatch_render_hud(state, &mut encoder, &surface_view);
+        }
+
+        // If single-screen Status/Inventory, Paper Map, or Memo Reader is active, render it
+        if state.ingame_menus.is_any_open() && !state.menu_ctrl.pause_menu.is_open {
+            crate::ingame_menus::render_overlay(state, &mut encoder, &surface_view);
+        }
 
         // If in-game pause menu is active, render authentic pause overlay
         if state.menu_ctrl.pause_menu.is_open {

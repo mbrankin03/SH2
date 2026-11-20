@@ -364,4 +364,77 @@ impl TextRasterizer {
             }
         }
     }
+
+    /// Draws an integer Bresenham line segment from `(x0, y0)` to `(x1, y1)` with `thickness` pixels.
+    pub fn draw_line(
+        &mut self,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        thickness: usize,
+        color: [u8; 4],
+    ) {
+        let mut x = x0;
+        let mut y = y0;
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let half = (thickness.max(1) / 2) as i32;
+        let t = thickness.max(1);
+
+        loop {
+            let px = (x - half).max(0) as usize;
+            let py = (y - half).max(0) as usize;
+            if x >= -half && y >= -half {
+                self.fill_rect(px, py, t, t, color);
+            }
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    /// Rasterizes a solid-color 2D triangle given screen-space vertices `[(x, y); 3]`.
+    pub fn fill_triangle(&mut self, verts: [(f32, f32); 3], color: [u8; 4]) {
+        let [p0, p1, p2] = verts;
+        let min_x = p0.0.min(p1.0).min(p2.0).floor().max(0.0) as usize;
+        let max_x = (p0.0.max(p1.0).max(p2.0).ceil().max(0.0) as usize).min(self.width);
+        let min_y = p0.1.min(p1.1).min(p2.1).floor().max(0.0) as usize;
+        let max_y = (p0.1.max(p1.1).max(p2.1).ceil().max(0.0) as usize).min(self.height);
+        if min_x >= max_x || min_y >= max_y {
+            return;
+        }
+        let edge = |ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32| -> f32 {
+            (px - ax) * (by - ay) - (py - ay) * (bx - ax)
+        };
+        let area = edge(p0.0, p0.1, p1.0, p1.1, p2.0, p2.1);
+        if area.abs() < 1e-4 {
+            return;
+        }
+        let inv_area = 1.0 / area;
+        for y in min_y..max_y {
+            let py = (y as f32) + 0.5;
+            for x in min_x..max_x {
+                let px = (x as f32) + 0.5;
+                let w0 = edge(p1.0, p1.1, p2.0, p2.1, px, py) * inv_area;
+                let w1 = edge(p2.0, p2.1, p0.0, p0.1, px, py) * inv_area;
+                let w2 = 1.0 - w0 - w1;
+                if w0 >= -1e-4 && w1 >= -1e-4 && w2 >= -1e-4 {
+                    self.blend_pixel(x, y, color);
+                }
+            }
+        }
+    }
 }

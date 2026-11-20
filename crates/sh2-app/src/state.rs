@@ -76,6 +76,7 @@ pub(crate) struct AppState {
     pub fog_particle_scratch: Vec<sh2_renderer::fog::GpuFogParticle>,
     pub last_fog_time: f32,
     pub menu_ctrl: AppMenuController,
+    pub ingame_menus: crate::ingame_menus::InGameMenuState,
     pub combat_arena: sh2_core::combat::CombatArena,
     pub enemy_scu_asset: Option<CharacterAsset>,
     pub enemy_mkn_asset: Option<CharacterAsset>,
@@ -228,6 +229,7 @@ impl AppState {
             && self.is_3d_gameplay_room()
             && !cutscene_locked
             && self.sim_core.active_camera_mode().is_modern()
+            && !self.ingame_menus.is_any_open()
             && !self.sim_core.modern_camera.handoff.locks_camera_controls();
 
         if want_grab == self.cursor_grabbed_for_camera {
@@ -259,6 +261,7 @@ impl AppState {
     /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
     pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
         self.clear_held_gameplay_keys();
+        self.ingame_menus.close_all();
         self.campaign_orchestrator = None;
         self.campaign_loaded_room = None;
         self.campaign_pending_input = CampaignTickInput::default();

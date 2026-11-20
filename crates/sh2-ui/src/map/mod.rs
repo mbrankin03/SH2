@@ -1,15 +1,24 @@
-//! Dynamic map companion system supporting James's maps (1-35), Maria's Baldwin Mansion map (36),
-//! and SH2:EE `SetBlackPillarBoxes` (`Fix2D`) widescreen/ultrawide (`16:9` / `21:9` / `32:9`)
-//! map decal & green player marker boundary clipping (`SH2-77`).
+//! Dynamic map companion & 1:1 PS2 Fullscreen Paper Map (`Event/chizu.c`).
 //!
-//! # Map Architecture
-//! - Top screen: Primary 3D horror gameplay.
-//! - Bottom / Fullscreen Map: Real-time map displaying current floor, room bounds, green player
-//!   position triangle marker, and red circle/cross annotation decals extracted from `data/pic/map/*.tex`.
-//! - On widescreen (`16:9`) and ultrawide (`21:9`, `32:9`) monitors, `MapCanvasClipper` enforces
-//!   `SetBlackPillarBoxes` (`Wrappers/d3d8/IDirect3DDevice8.cpp:2330..2835`), clipping map markings
-//!   and the green player marker at the active `4:3` or `16:9` map canvas borders and masking the
-//!   side margins with pure black pillarboxes (`RGBA(0, 0, 0, 255)`).
+//! Supports James's maps (`1..=35`), Maria's Baldwin Mansion map (`36`), `ChizuPossessionCheck`
+//! (`0x001c7890`), `ChizuConnectCheck` (`0x001c8ce0`), `ChizuControl` (`0x001c8360`),
+//! `MapTranscription.cpp` (`0x0049c644`) 60 FPS red-pen transcription animations, and SH2:EE
+//! `SetBlackPillarBoxes` (`Fix2D`) widescreen/ultrawide (`16:9` / `21:9` / `32:9`) map decal &
+//! green player marker boundary clipping (`SH2-77`).
+
+pub mod tables;
+pub mod viewer;
+
+pub use tables::{
+    annotations_for_map, chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check,
+    map_spec, MapAnnotation, MapDirection, MapMarkerKind, MapReadCheck, MapSheetSpec,
+    CHIZU_CONNECT, MAP_COUNT, MAP_SPECS,
+};
+pub use viewer::{
+    draw_paper_map, MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
+    TRANSCRIBE_FADE_TARGET_ALPHA, TRANSCRIBE_WAIT_AFTER_FADE_TICKS,
+    TRANSCRIBE_WAIT_BEFORE_PAN_TICKS, TRANSCRIBE_WAIT_INIT_TICKS, TRANSCRIBE_WAIT_ZOOM_CHECK_TICKS,
+};
 
 use sh2_core::{ClippedQuadUv, PillarboxMaskRect, PillarboxViewportLayout, AUTHORED_4X3_ASPECT};
 
@@ -18,16 +27,16 @@ use crate::font::TextRasterizer;
 /// Identifying descriptor for active level map and floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapDescriptor {
-    /// Numerical map identifier (1 = Town East, 2 = Apartments, etc., 36 = Baldwin Mansion).
+    /// Numerical map identifier (`1` = Town Overall, `2` = Town East, ..., `36` = Baldwin Mansion).
     pub map_id: u8,
-    /// Current building floor (-1 = Basement, 1 = 1F, 2 = 2F, 3 = 3F, 4 = Roof).
+    /// Current building floor (`-1` = Basement, `1` = 1F, `2` = 2F, `3` = 3F, `4` = Roof).
     pub floor: i8,
 }
 
 impl Default for MapDescriptor {
     fn default() -> Self {
         Self {
-            map_id: 1, // Town East
+            map_id: 1, // Town Overall
             floor: 1,
         }
     }
@@ -174,10 +183,8 @@ mod tests {
         rast.fill_rect(0, 0, 344, 144, [200, 180, 160, 255]);
         let small_clipper = MapCanvasClipper::new_4x3(344.0, 144.0);
         small_clipper.draw_black_pillarbox_bars(&mut rast);
-        // Left pillarbox pixel (10, 72) must be masked to pure black (0, 0, 0, 255)
         let left_ofs = (72 * 344 + 10) * 4;
         assert_eq!(&rast.pixels[left_ofs..left_ofs + 4], &[0, 0, 0, 255]);
-        // Center canvas pixel (172, 72) must retain the map color
         let mid_ofs = (72 * 344 + 172) * 4;
         assert_eq!(&rast.pixels[mid_ofs..mid_ofs + 4], &[200, 180, 160, 255]);
     }

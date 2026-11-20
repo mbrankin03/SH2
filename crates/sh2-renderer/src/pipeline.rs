@@ -92,7 +92,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
+fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
     // Sample diffuse texture in uniform control flow before alpha-test discard
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let out_alpha = in.color.a * tex_color.a;
@@ -103,6 +103,12 @@ fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
     // Ambient term (with pre-lit skybox/vista boost when vertex normal is zero-length, stride == 0x14)
     let n_len = length(in.normal);
     let has_normal = n_len > 1e-4;
+    // Hardware geometric backface culling for lit single-sided surfaces (`stride >= 0x20`, e.g.
+    // coplanar interior dumpster walls in `ob01.map`) while keeping pre-lit `stride == 0x14`
+    // skybox/foliage cards double-sided and never discarding grazing corners via vertex normals.
+    if (has_normal && !is_front) {
+        discard;
+    }
     let base_ambient = select(vec3<f32>(0.18, 0.19, 0.21), vec3<f32>(0.07, 0.075, 0.085), has_normal);
 
     // Dynamic Spotlight calculation matching dbg_spotL_ctl
@@ -151,16 +157,16 @@ fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return shade_geometry_fragment(in);
+fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    return shade_geometry_fragment(in, is_front);
 }
 
 // Opaque geometry entry point (`BlendState::REPLACE`): encodes PS2 GS `PRIM.FGE` (Fog Enable)
 // in `color_in.a` (`1.0` for lit 3D world geometry `stride >= 0x20`, `0.0` for pre-lit
 // skybox/vista geometry `stride == 0x14` such as Toluca Lake & distant hills in `ob01.map`).
 @fragment
-fn fs_opaque(in: VertexOutput) -> @location(0) vec4<f32> {
-    let shaded = shade_geometry_fragment(in);
+fn fs_opaque(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    let shaded = shade_geometry_fragment(in, is_front);
     let fge = select(0.0, 1.0, length(in.normal) > 1e-4);
     return vec4<f32>(shaded.rgb, fge);
 }

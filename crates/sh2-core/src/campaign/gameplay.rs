@@ -13,7 +13,7 @@ use crate::world::OutdoorTileStreamer;
 
 use super::io::{CampaignEffects, CampaignTickInput};
 use super::retail_events::evaluate_retail_stage_events;
-use super::stage_loader::resolve_stage_manifest;
+use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest};
 use super::state::{
     CampaignPhase, ConnectStep, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
     MAIN_SCENARIO_START_STAGE, PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER, WISH_SCENARIO_START_STAGE,
@@ -147,13 +147,34 @@ pub(crate) fn run_active_gameplay(
         };
     }
 
-    // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240`)
+    // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240`) and switch active outdoor
+    //    tile (`.map`, `.cld`, `.cam`) seamlessly when crossing a 40,000 mm `BlockNumber` cell.
     let plan = outdoor_streamer.plan(
         stage_id,
         sim.scenario.player_position.x,
         sim.scenario.player_position.z,
     );
     if plan.area.is_some() {
+        if let Some(tile_room_id) =
+            resolve_outdoor_room_id(stage_id, sim.scenario.player_position.to_array())
+        {
+            if !sim
+                .scenario
+                .current_room
+                .eq_ignore_ascii_case(&tile_room_id)
+            {
+                let manifest = resolve_stage_manifest(stage_id, Some(&tile_room_id), true, false);
+                let _ = sim.transition_stage_with_camera(
+                    stage_id,
+                    manifest.stage_name,
+                    Some(&tile_room_id),
+                    sim.scenario.player_position,
+                    sim.scenario.player_yaw,
+                    input.prefer_sh2ee,
+                );
+                effects.load_room = Some(manifest);
+            }
+        }
         effects.outdoor_plan = Some(plan);
     }
 

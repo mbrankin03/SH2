@@ -24,8 +24,8 @@ pub use cutscene_handoff::{
 pub use io::{CampaignEffects, CampaignTickInput};
 pub use orchestrator::CampaignOrchestrator;
 pub use stage_loader::{
-    resolve_stage_manifest, room_area_dir, CampaignEnemySpawn, CampaignPickupSpawn,
-    RoomLoadManifest,
+    resolve_outdoor_room_id, resolve_stage_manifest, room_area_dir, CampaignEnemySpawn,
+    CampaignPickupSpawn, RoomLoadManifest,
 };
 pub use state::{
     CampaignPhase, ConnectStep, FadeDirection, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,

@@ -91,6 +91,19 @@ pub fn room_area_dir(room_id: &str) -> String {
     }
 }
 
+/// Resolves the exact PS2 outdoor tile room identifier (e.g. `"ca09"`, `"cb29"`) for an outdoor
+/// multi-tile stage (`BgIsOut` `0x001b0cd0`) from world coordinates `pos` (PS2 mm) using exact
+/// `SLUS_202.28` `BlockNumber` (`0x001b0ae0..0x001b0b8c`) and area block tables (`0x002b9df0`+).
+///
+/// Returns `None` for indoor single-room stages or when `(gx, gz)` is outside the area's block table.
+#[must_use]
+pub fn resolve_outdoor_room_id(stage_id: u16, pos: [f32; 3]) -> Option<String> {
+    let area = OutdoorArea::from_stage_id(stage_id)?;
+    let (gx, gz) = OutdoorArea::world_to_grid(pos[0], pos[2]);
+    let block_no = area.block_no_at(gx, gz)?;
+    Some(format!("{}{block_no:02}", area.prefix()))
+}
+
 /// Resolves the unified [`RoomLoadManifest`] for `stage_id` (`1..=58`) and optional `room_override`.
 ///
 /// Aggregates `stage_room_descriptor` (`.cam`), `.map`/`.cld` relative paths, outdoor area status

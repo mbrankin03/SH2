@@ -415,3 +415,16 @@ fn all_58_retail_stages_resolve_valid_manifests() {
         assert!(m.cam_rel_path.ends_with(".cam"));
     }
 }
+
+#[test]
+fn observation_deck_steps_resolve_forest_ca04_outdoor_tile() {
+    // Retail `ACT1_OBSERVATION_EVENT_LIST[10]` destination (`ev_pos @ 0x7a`) spawns James in
+    // Stage 4 (`ca`, Forest Trail) at `(25184.4, -99054.2)` -> `BlockNumber` 20,000 mm grid
+    // `(1, -5)` -> `ca04.map` (`CA_OUTDOOR_BLOCKS` `SLUS_202.28` `0x002b9df0`).
+    let room = sh2_core::campaign::resolve_outdoor_room_id(4, [25_184.4, 0.0, -99_054.2]);
+    assert_eq!(room.as_deref(), Some("ca04"));
+    let manifest = resolve_stage_manifest(4, room.as_deref(), false, true);
+    assert_eq!(manifest.map_rel_path, "bg/ca/ca04.map");
+    assert_eq!(manifest.cld_rel_path, "bg/ca/ca04.cld");
+    assert_eq!(manifest.cam_rel_path, "bg/ca/ca04.cam");
+}

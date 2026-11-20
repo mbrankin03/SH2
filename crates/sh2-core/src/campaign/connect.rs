@@ -9,7 +9,7 @@ use crate::events::engine::{EventEngine, StageTransitionCommand};
 use crate::simulation::SimulationCore;
 
 use super::cutscene_handoff::{evaluate_auto_stage_demo, DramaDemoTrigger};
-use super::stage_loader::{resolve_stage_manifest, RoomLoadManifest};
+use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest, RoomLoadManifest};
 use super::state::{ConnectStep, ScreenFadeState, PS2_DEFAULT_FADE_SPEED};
 use super::CampaignEffects;
 
@@ -59,9 +59,15 @@ pub(crate) fn step_connect_pipeline(
 ) -> ConnectStepOutcome {
     match connect_step {
         ConnectStep::StageOverlay => {
+            let outdoor_room = req
+                .room_override
+                .is_none()
+                .then(|| resolve_outdoor_room_id(req.target_stage, req.spawn_pos))
+                .flatten();
+            let effective_room = req.room_override.or(outdoor_room.as_deref());
             let manifest = resolve_stage_manifest(
                 req.target_stage,
-                req.room_override,
+                effective_room,
                 req.is_connected_stage,
                 req.show_loading_screen,
             );
@@ -96,9 +102,15 @@ pub(crate) fn step_connect_pipeline(
         }
         ConnectStep::RoomInit => {
             let manifest = active_manifest.clone().unwrap_or_else(|| {
+                let outdoor_room = req
+                    .room_override
+                    .is_none()
+                    .then(|| resolve_outdoor_room_id(req.target_stage, req.spawn_pos))
+                    .flatten();
+                let effective_room = req.room_override.or(outdoor_room.as_deref());
                 resolve_stage_manifest(
                     req.target_stage,
-                    req.room_override,
+                    effective_room,
                     req.is_connected_stage,
                     req.show_loading_screen,
                 )

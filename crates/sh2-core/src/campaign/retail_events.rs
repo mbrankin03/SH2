@@ -13,11 +13,10 @@ use crate::events::engine::{
 };
 use crate::events::stages_act2::{
     char_to_float2_retail, decode_retail_ev_pos_shape, normalize_retail_event_entry_for_input,
-    RETAIL_LOOK_RADIUS_MM,
 };
 use crate::events::triggers::{
-    check_event_flag_conditions, event_exec_sub_flag_set, player_height_matches_event_y,
-    EvPosShape, EventEvalInput,
+    check_event_flag_conditions, event_check_look_line, event_check_look_point,
+    event_exec_sub_flag_set, player_height_matches_event_y, EvPosShape, EventEvalInput,
 };
 use crate::events::EventFlags;
 use crate::inventory::InventoryManager;
@@ -286,20 +285,32 @@ fn point_in_retail_shape(player_pos: [f32; 3], shape: &EvPosShape) -> bool {
 
 fn player_can_interact_with_shape(input: &EventEvalInput, shape: &EvPosShape) -> bool {
     let [px, py, pz] = input.player_pos;
-    // Retail `EventCheckLook` checks both proximity (`RETAIL_LOOK_RADIUS_MM = 400.0` mm, extended
-    // by player look ray reach ~700 mm) and that the target is in front of the player.
-    let reach = RETAIL_LOOK_RADIUS_MM + 300.0;
+    // Exact 1:1 PS2 `EventCheckLookPoint` (`SLUS_202.28` `0x001a8a30`) and
+    // `EventCheckLookLine` (`SLUS_202.28` `0x001a8b10`) using the decoded shape radius
+    // (`RETAIL_LOOK_RADIUS_MM = 400.0` mm) and facing-cone check.
     match *shape {
-        EvPosShape::Point { x, y, z, .. } => {
-            player_height_matches_event_y(py, y) && (px - x).hypot(pz - z) <= reach
+        EvPosShape::Point { x, y, z, radius } => {
+            player_height_matches_event_y(py, y)
+                && event_check_look_point(px, pz, input.player_rot_y, x, z, radius) > 0.0
         }
         EvPosShape::Polyline {
-            y, ref vertices, ..
+            y,
+            radius,
+            ref vertices,
         } => {
             player_height_matches_event_y(py, y)
-                && vertices
-                    .windows(2)
-                    .any(|seg| dist_to_segment(px, pz, seg[0], seg[1]) <= reach)
+                && vertices.windows(2).any(|seg| {
+                    event_check_look_line(
+                        px,
+                        pz,
+                        input.player_rot_y,
+                        seg[0][0],
+                        seg[0][1],
+                        seg[1][0],
+                        seg[1][1],
+                        radius,
+                    ) > 0.0
+                })
         }
         _ => point_in_retail_shape(input.player_pos, shape),
     }

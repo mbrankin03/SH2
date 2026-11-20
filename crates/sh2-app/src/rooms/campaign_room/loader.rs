@@ -109,13 +109,8 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
     state.render_ctx.update_fog(&state.fog_uniforms);
     state.active_maria = state.sim_core.scenario.character == PlayableCharacter::Maria;
 
-    let active_tex_quality = state
-        .menu_ctrl
-        .options_menu
-        .draft_config
-        .video
-        .texture_quality;
     state.apply_texture_quality(active_tex_quality);
+    state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
 }
 
 fn fallback_test_room_for_stage(stage_id: u16) -> TestRoomKind {

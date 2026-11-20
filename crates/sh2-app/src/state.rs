@@ -64,6 +64,11 @@ pub(crate) struct AppState {
     pub active_launch_target: LaunchTarget,
     /// Unified Campaign Game Loop orchestrator when `active_launch_target` is `LaunchTarget::Campaign`.
     pub campaign_orchestrator: Option<CampaignOrchestrator>,
+    /// Active campaign room manifest + loaded texture tier for on-demand reload when Options change.
+    pub campaign_loaded_room: Option<(
+        sh2_core::campaign::RoomLoadManifest,
+        sh2_core::config::WorldTextureQuality,
+    )>,
     /// Per-frame campaign input latch consumed by `CampaignRoomController`.
     pub campaign_pending_input: CampaignTickInput,
     pub fog_uniforms: sh2_renderer::fog::FogUniforms,
@@ -255,6 +260,7 @@ impl AppState {
     pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
         self.clear_held_gameplay_keys();
         self.campaign_orchestrator = None;
+        self.campaign_loaded_room = None;
         self.campaign_pending_input = CampaignTickInput::default();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
         if let Some(ref mut bank) = self.audio_bank {

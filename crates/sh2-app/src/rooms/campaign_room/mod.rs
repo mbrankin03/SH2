@@ -71,6 +71,7 @@ impl CampaignRoomController {
         };
 
         state.campaign_orchestrator = Some(orchestrator);
+        state.campaign_loaded_room = None;
         state.campaign_pending_input = Default::default();
         tracing::info!(
             "[Campaign] Started unified campaign session (scenario={:?}, continue={})",
@@ -198,6 +199,7 @@ impl CampaignRoomController {
 
         if effects.return_to_title {
             state.campaign_orchestrator = None;
+            state.campaign_loaded_room = None;
             state.exit_room_to_menu(TitlePhase::MainMenu);
         }
     }
@@ -240,7 +242,19 @@ impl RoomController for CampaignRoomController {
             Self::start_session(state, false);
         }
 
-        // Sync live options toggles into the orchestrator.
+        // Sync live options toggles into the orchestrator and reload active room textures on demand
+        // if the player switches `WorldTextureQuality` in Options mid-campaign.
+        let current_tex_quality = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .video
+            .texture_quality;
+        if let Some((manifest, loaded_quality)) = state.campaign_loaded_room.clone() {
+            if loaded_quality != current_tex_quality {
+                loader::load_manifest_into_app_state(state, &manifest);
+            }
+        }
         let streaming_mode = state
             .menu_ctrl
             .options_menu

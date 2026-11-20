@@ -364,7 +364,9 @@ fn walking_into_restroom_exit_trigger_transitions_to_observation_deck() {
     assert!(saw_load_room);
     assert_eq!(loaded_stage, Some(3));
     assert_eq!(sim.scenario.current_room, "ob01");
-    assert!((sim.scenario.player_position.x - 21_350.0).abs() < 1.0);
+    // Case 2 (`SLUS_202.28` `0x001a983c`, `sh2pc.exe` `0x0048b888`):
+    // `x = x0 - p0/2 = 21100 - 250 = 20850`, `z = z0 - 250 = -4300 - 250 = -4550`.
+    assert!((sim.scenario.player_position.x - 20_850.0).abs() < 1.0);
     assert!((sim.scenario.player_position.z - (-4_550.0)).abs() < 1.0);
 }
 
@@ -451,4 +453,59 @@ fn observation_deck_steps_resolve_forest_ca04_outdoor_tile() {
     assert!(saw_load_room);
     assert_eq!(loaded_stage, Some(4));
     assert_eq!(sim.scenario.current_room, "ca04");
+}
+
+#[test]
+fn observation_forest_event_result_move_position_matches_ps2_1to1() {
+    use sh2_core::campaign::retail_events::decode_retail_move_destination;
+    use sh2_core::events::stages_act1::{act1_stage_descriptor, Act1StageId};
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    let obs = act1_stage_descriptor(Act1StageId::Observation as u8).unwrap();
+    let forest = act1_stage_descriptor(Act1StageId::Forest as u8).unwrap();
+
+    // 1. Observation Deck -> Forest (`ACT1_OBSERVATION_EVENT_LIST[10]`, `ev_pos @ 0x7a`,
+    //    `dest_shape = 3`, `SLUS_202.28` `0x001a9890`, `sh2pc.exe` `0x0048b8bb`):
+    //    `x = x0 + 250 = 25434.43`, `y = -13616.0`, `z = z0 - p0/2 = -99554.23` (dead-center on
+    //    `ca04.cld` stairs `floor[0]` `Z = -99988..-99018`), `rot_y = +PI/2`.
+    let obs_to_forest = obs.event_list[10];
+    let (pos, yaw) = decode_retail_move_destination(
+        obs.ev_pos,
+        obs_to_forest.dest_ev_pos_offset(),
+        obs_to_forest.dest_shape_kind().unwrap(),
+    )
+    .unwrap();
+    assert!((pos[0] - 25_434.43).abs() < 0.1, "x={}", pos[0]);
+    assert!((pos[1] - (-13_616.0)).abs() < 0.1, "y={}", pos[1]);
+    assert!((pos[2] - (-99_554.23)).abs() < 0.1, "z={}", pos[2]);
+    assert!((yaw - FRAC_PI_2).abs() < 1e-4, "yaw={yaw}");
+
+    // 2. Observation Deck -> Restroom (`ACT1_OBSERVATION_EVENT_LIST[9]`, `ev_pos @ 0x60`,
+    //    `dest_shape = 3`): `(-19250.0, 0.0, 21250.0)`, `rot_y = +PI/2`.
+    let obs_to_restroom = obs.event_list[9];
+    let (pos, yaw) = decode_retail_move_destination(
+        obs.ev_pos,
+        obs_to_restroom.dest_ev_pos_offset(),
+        obs_to_restroom.dest_shape_kind().unwrap(),
+    )
+    .unwrap();
+    assert!((pos[0] - (-19_250.0)).abs() < 0.1, "x={}", pos[0]);
+    assert!((pos[1] - 0.0).abs() < 0.1, "y={}", pos[1]);
+    assert!((pos[2] - 21_250.0).abs() < 0.1, "z={}", pos[2]);
+    assert!((yaw - FRAC_PI_2).abs() < 1e-4, "yaw={yaw}");
+
+    // 3. Forest -> Observation Deck (`ACT1_FOREST_EVENT_LIST[0]`, `ev_pos @ 0x0e`,
+    //    `dest_shape = 2`, `SLUS_202.28` `0x001a983c`, `sh2pc.exe` `0x0048b888`):
+    //    `x = x0 - p0/2 = 2741.18`, `y = 690.0`, `z = z0 - 250 = -304.25`, `rot_y = PI`.
+    let forest_to_obs = forest.event_list[0];
+    let (pos, yaw) = decode_retail_move_destination(
+        forest.ev_pos,
+        forest_to_obs.dest_ev_pos_offset(),
+        forest_to_obs.dest_shape_kind().unwrap(),
+    )
+    .unwrap();
+    assert!((pos[0] - 2_741.18).abs() < 0.1, "x={}", pos[0]);
+    assert!((pos[1] - 690.0).abs() < 0.1, "y={}", pos[1]);
+    assert!((pos[2] - (-304.25)).abs() < 0.1, "z={}", pos[2]);
+    assert!((yaw.abs() - PI).abs() < 1e-4, "yaw={yaw}");
 }

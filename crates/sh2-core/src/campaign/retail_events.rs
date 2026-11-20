@@ -44,12 +44,19 @@ pub fn decode_retail_move_destination(
     let z0 = char_to_float4([s[6], s[7], s[8], s[9]]);
     let p0 = char_to_float2_retail([s[10], s[11]]);
 
+    // Exact 1:1 parity with `EventResultMovePosition` (`SLUS_202.28` `0x001a9730`, jump table
+    // `0x00391060`; `sh2pc.exe` `0x0048b7e0`, jump table `0x0048ba04`).
     let (pos, angle) = match dest_shape {
         EventDestShapeKind::PointWithAngle => ([x0, y, z0], p0 * PI / 180.0),
-        EventDestShapeKind::DoorLineNegZ => ([x0 - 250.0, y, z0 - p0 * 0.5], -FRAC_PI_2),
-        EventDestShapeKind::DoorLinePosX => ([x0 + p0 * 0.5, y, z0 - 250.0], PI),
-        EventDestShapeKind::DoorLinePosZ => ([x0 + 250.0, y, z0 + p0 * 0.5], FRAC_PI_2),
-        EventDestShapeKind::DoorLineNegX => ([x0 - p0 * 0.5, y, z0 + 250.0], 0.0),
+        // Case 1 (`0x001a97f0` / `0x0048b855`): x = x0 + p0/2, z = z0 + 250, rot_y = 0.0
+        EventDestShapeKind::DoorLineNegZ => ([x0 + p0 * 0.5, y, z0 + 250.0], 0.0),
+        // Case 2 (`0x001a983c` / `0x0048b888`): x = x0 - p0/2, z = z0 - 250, rot_y = PI
+        EventDestShapeKind::DoorLinePosX => ([x0 - p0 * 0.5, y, z0 - 250.0], PI),
+        // Case 3 (`0x001a9890` / `0x0048b8bb`): x = x0 + 250, z = z0 - p0/2, rot_y = +PI/2
+        EventDestShapeKind::DoorLinePosZ => ([x0 + 250.0, y, z0 - p0 * 0.5], FRAC_PI_2),
+        // Case 4 (`0x001a98e4` / `0x0048b8ee`): x = x0 - 250, z = z0 + p0/2, rot_y = -PI/2
+        EventDestShapeKind::DoorLineNegX => ([x0 - 250.0, y, z0 + p0 * 0.5], -FRAC_PI_2),
+        // Case 5 (`0x001a9938` / `0x0048b921`): midpoint + 250 along normal (atan2(dz, p0) - PI/2)
         EventDestShapeKind::DoorSegment => {
             let dz = char_to_float2_retail([s[12], s[13]]);
             let mid_x = x0 + p0 * 0.5;

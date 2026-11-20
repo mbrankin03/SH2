@@ -509,3 +509,35 @@ fn observation_forest_event_result_move_position_matches_ps2_1to1() {
     assert!((pos[2] - (-304.25)).abs() < 0.1, "z={}", pos[2]);
     assert!((yaw.abs() - PI).abs() < 1e-4, "yaw={yaw}");
 }
+
+#[test]
+fn retail_er01_cam_rail_is_not_clamped_onto_player_in_doorway_alcove() {
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let Some(cld_path) = resolver.resolve_file("bg/er/er01.cld") else {
+        return; // Skip gracefully in CI without retail assets
+    };
+    let cld = sh2_assets::formats::cld::parse_cld(&std::fs::read(&cld_path).unwrap()).unwrap();
+
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    sim.collision = sh2_core::collision::CollisionWorld::from_cld(&cld);
+    let loaded_cam = sim.transition_stage_with_camera(
+        2,
+        "stg_toilet",
+        Some("er01"),
+        glam::Vec3::new(-19_390.2, 0.0, 21_250.0),
+        -1.39,
+        true,
+    );
+    assert!(loaded_cam, "er01.cam must load from retail assets");
+
+    sim.tick();
+    let eye = sim.camera.curr_snapshot.eye;
+    // `SLUS_202.28` `vcMoveAndSetCamera` (`0x0019df50`) makes zero `clCheckHitEyes` calls:
+    // `er01.cam` Record #1's authored `lim_rd` (`X=[-19700..-19591]`, `Z=[18618..18735]`, `Y=-213`)
+    // must NOT be yanked onto James's doorway position `(-19390.2, 0.0, 21250.0)`.
+    assert!(
+        (-19_705.0..=-19_585.0).contains(&eye.x) && (18_610.0..=18_740.0).contains(&eye.z),
+        "er01.cam Record #1 eye must stay inside authored lim_rd rail, got {eye:?}"
+    );
+    assert!((eye.y - (-213.0)).abs() < 1.0, "eye.y={}", eye.y);
+}

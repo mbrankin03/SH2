@@ -38,6 +38,13 @@ pub const R_OBSV_DECK_ID: u32 = 0x02;
 /// (`FogEnv +0x08` at file offset `0x8c`, `subdiv (+0x12) = 4 != 0`), applied to
 /// `fog_work.local_pos.y` (`0x00581484`) in `fogSetLocalPosV` (`SLUS_202.28` `0x0016c7c8..0x0016c7e4`).
 pub const OB_FOG_ENV_FIXED_Y_MM: f32 = 10_000.0;
+/// Exact PS2 daytime default GS `FOGCOL` RGB byte (`0x46` = `70` / `255.0` ≈ `0.2745`) written by
+/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251804..0x00251838`) when `sh2gfw_Get_NightOrDay() == 0`
+/// and `DrawEnvData +0x9c == 0.0f` (as in `OB_DrawEnvData` `0x00362e70` / `sh2pc.exe` `0x3f5530`).
+pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_U8: u8 = 0x46;
+/// Normalized `[0.0..=1.0]` channel value of [`PS2_DAYTIME_DEFAULT_FOG_COLOR_U8`] (`70.0 / 255.0`).
+pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_F32: f32 =
+    (PS2_DAYTIME_DEFAULT_FOG_COLOR_U8 as f32) / 255.0;
 /// Room ID for Forest Trail & Cemetery (`R_FOREST_CEMETERY = 0x03` in `Patches.h`).
 pub const R_FOREST_CEMETERY_ID: u32 = 0x03;
 /// Room ID for Silent Hill Town East (`R_TOWN_EAST = 0x04` in `Patches.h`).
@@ -296,14 +303,17 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                     PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 )
             };
-            // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `draw_env_tables.rs`):
+            // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `sh2pc.exe` `0x3f5530`):
             // `fog_near = 19000.0` mm, `fog_far = 33000.0` mm, linear depth-fog ramp
-            // (`sh2gfw_Set_DepthFog` `0x00175df0`). Pre-lit Toluca Lake & hills vista geometry
-            // (`ob01.map` `stride == 0x14`) sets PS2 GS `PRIM.FGE = 0` (fog disabled) in the
-            // geometry shader so distant hills remain visible while foreground/midground
-            // `stride == 0x20` geometry receives the exact `19000..33000` mm linear ramp.
+            // (`sh2gfw_Set_DepthFog` `0x00175df0`), and daytime GS `FOGCOL = (0x46, 0x46, 0x46)`
+            // (`SetupDrawEnvData` `0x00251804..0x00251838` when `+0x9c == 0.0f`).
             RoomFogEvaluation {
-                fog_color: [0.65, 0.68, 0.72, 1.0],
+                fog_color: [
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    1.0,
+                ],
                 fog_near_mm: 19_000.0,
                 fog_far_mm: 33_000.0,
                 density: 1.0,
@@ -515,6 +525,15 @@ mod tests {
         );
         assert_eq!(eval.particle_count, OBSERVATION_DECK_FOG_PARTICLE_MAX);
         assert_eq!(eval.particle_fixed_y_mm, Some(OB_FOG_ENV_FIXED_Y_MM));
+        assert_eq!(
+            eval.fog_color,
+            [
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                1.0,
+            ]
+        );
         assert!(eval.outdoor_layers_enabled);
     }
 }

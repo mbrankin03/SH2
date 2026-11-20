@@ -561,7 +561,7 @@ impl CombatController {
         false
     }
 
-    /// Perform ammo transfer for reload.
+    /// Perform ammo transfer for reload from combat reserve (`spare_rounds`).
     pub fn execute_reload(&mut self) -> u32 {
         if let Some(idx) = Self::gun_index(self.weapon) {
             let cap = self.weapon.magazine_capacity();
@@ -572,6 +572,55 @@ impl CombatController {
             return transfer;
         }
         0
+    }
+
+    /// Directly loads up to `available_rounds` from the inventory into `grip`'s magazine
+    /// without altering the currently equipped weapon or touching `spare_rounds`.
+    /// Returns the exact number of rounds loaded (`0..=available_rounds`) so the caller can
+    /// deduct that exact amount from `InventoryManager`.
+    pub fn load_magazine_rounds(&mut self, grip: WeaponGrip, available_rounds: u32) -> u32 {
+        let Some(idx) = Self::gun_index(grip) else {
+            return 0;
+        };
+        let cap = grip.magazine_capacity();
+        let needed = cap.saturating_sub(self.loaded_rounds[idx]);
+        let loaded = needed.min(available_rounds);
+        self.loaded_rounds[idx] += loaded;
+        loaded
+    }
+
+    /// Maps a Director's Cut inventory item ID (`ITEM_CATALOG` `sh2pc.exe` `0x892640`) to `WeaponGrip`.
+    pub const fn weapon_grip_from_item_id(item_id: u8) -> Option<WeaponGrip> {
+        match item_id {
+            4 => Some(WeaponGrip::Handgun),
+            6 => Some(WeaponGrip::Shotgun),
+            8 => Some(WeaponGrip::HuntingRifle),
+            10 => Some(WeaponGrip::MariaRevolver),
+            12 => Some(WeaponGrip::HyperSpray),
+            13 => Some(WeaponGrip::WoodenPlank),
+            14 => Some(WeaponGrip::SteelPipe),
+            15 => Some(WeaponGrip::GreatKnife),
+            16 => Some(WeaponGrip::Chainsaw),
+            17 => Some(WeaponGrip::MariaChineseCleaver),
+            _ => None,
+        }
+    }
+
+    /// Maps a `WeaponGrip` back to its canonical Director's Cut inventory item ID.
+    pub const fn weapon_grip_to_item_id(grip: WeaponGrip) -> Option<u8> {
+        match grip {
+            WeaponGrip::None => None,
+            WeaponGrip::Handgun => Some(4),
+            WeaponGrip::Shotgun => Some(6),
+            WeaponGrip::HuntingRifle => Some(8),
+            WeaponGrip::MariaRevolver => Some(10),
+            WeaponGrip::HyperSpray => Some(12),
+            WeaponGrip::WoodenPlank => Some(13),
+            WeaponGrip::SteelPipe => Some(14),
+            WeaponGrip::GreatKnife => Some(15),
+            WeaponGrip::Chainsaw => Some(16),
+            WeaponGrip::MariaChineseCleaver => Some(17),
+        }
     }
 
     /// Equip specified weapon.
@@ -2826,5 +2875,49 @@ mod tests {
                 expected_id
             );
         }
+    }
+
+    #[test]
+    fn test_weapon_item_id_mappings_and_magazine_reload_conservation() {
+        use crate::inventory::{ammo_for_firearm, firearm_for_ammo, item_metadata};
+
+        let expected: &[(u8, WeaponGrip, &str)] = &[
+            (4, WeaponGrip::Handgun, "Handgun"),
+            (6, WeaponGrip::Shotgun, "Shotgun"),
+            (8, WeaponGrip::HuntingRifle, "Hunting rifle"),
+            (10, WeaponGrip::MariaRevolver, "Revolver"),
+            (12, WeaponGrip::HyperSpray, "Hyper spray"),
+            (13, WeaponGrip::WoodenPlank, "Wooden plank"),
+            (14, WeaponGrip::SteelPipe, "Steel pipe"),
+            (15, WeaponGrip::GreatKnife, "Great knife"),
+            (16, WeaponGrip::Chainsaw, "Chainsaw"),
+            (17, WeaponGrip::MariaChineseCleaver, "Chinese cleaver"),
+        ];
+        for &(id, grip, name) in expected {
+            assert_eq!(CombatController::weapon_grip_from_item_id(id), Some(grip));
+            assert_eq!(CombatController::weapon_grip_to_item_id(grip), Some(id));
+            assert_eq!(item_metadata(id).unwrap().name, name);
+        }
+
+        // Verify firearm <-> ammo pairing against ITEM_CATALOG
+        for (gun_id, ammo_id) in [(4, 5), (6, 7), (8, 9), (10, 11)] {
+            assert_eq!(ammo_for_firearm(gun_id), Some(ammo_id));
+            assert_eq!(firearm_for_ammo(ammo_id), Some(gun_id));
+        }
+
+        // Verify load_magazine_rounds conserves rounds without altering equipped weapon
+        let mut ctrl = CombatController::new(false, false);
+        ctrl.equip_weapon(WeaponGrip::None);
+        ctrl.loaded_rounds[0] = 3; // Handgun has 3/10 loaded
+        ctrl.spare_rounds[0] = 0; // Combat spare_rounds is 0
+        let loaded = ctrl.load_magazine_rounds(WeaponGrip::Handgun, 5);
+        assert_eq!(loaded, 5);
+        assert_eq!(ctrl.loaded_rounds[0], 8);
+        assert_eq!(ctrl.weapon, WeaponGrip::None); // Did not alter equipped weapon!
+
+        // Loading more than remaining capacity caps at magazine_capacity (10)
+        let loaded2 = ctrl.load_magazine_rounds(WeaponGrip::Handgun, 10);
+        assert_eq!(loaded2, 2);
+        assert_eq!(ctrl.loaded_rounds[0], 10);
     }
 }

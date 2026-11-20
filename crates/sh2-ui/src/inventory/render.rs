@@ -261,10 +261,10 @@ fn draw_carousel_strip(
             let sy0 = cy.saturating_sub(sh / 2);
             rasterizer.fill_rect(sx0, sy0, sw, sh, [14, 16, 18, 175]);
             rasterizer.draw_rect_outline(sx0, sy0, sw, sh, 1, [85, 85, 85, 160]);
-            let short = if name.len() > 11 { &name[..11] } else { name };
+            let short: String = name.chars().take(11).collect();
             font.draw_line_centered(
                 rasterizer,
-                short,
+                &short,
                 (slot_x, cy.saturating_sub(font_px / 2)),
                 ((11.0 * sy).round() as usize).clamp(9, 18),
                 Sh2TextColor::MutedFooter,

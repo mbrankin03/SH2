@@ -22,6 +22,38 @@ pub const LAST_COMBO_ITEM_ID: u8 = 96;
 /// Ampoule stamina buff duration in seconds (`0x1f7d40c` in `0x49e7e0`).
 pub const AMPOULE_STAMINA_DURATION_SECS: f32 = 600.0;
 
+/// Director's Cut catalog ID for the Pocket Radio (`ITEM_CATALOG[18]`, `id: 19`).
+pub const ITEM_ID_RADIO: u8 = 19;
+
+/// Maps an ammunition item ID (`5, 7, 9, 11`) to its matching firearm item ID (`4, 6, 8, 10`)
+/// per `ITEM_CATALOG` (`sh2pc.exe` `0x892640`) and `SLUS_202.28` `command_kind` (`0x001d3610`).
+pub const fn firearm_for_ammo(ammo_id: u8) -> Option<u8> {
+    match ammo_id {
+        5 => Some(4),   // Handgun bullets -> Handgun
+        7 => Some(6),   // Shotgun shells -> Shotgun
+        9 => Some(8),   // Rifle shells -> Hunting rifle
+        11 => Some(10), // Revolver bullets -> Revolver (Maria)
+        _ => None,
+    }
+}
+
+/// Maps a firearm item ID (`4, 6, 8, 10`) to its matching ammunition item ID (`5, 7, 9, 11`).
+pub const fn ammo_for_firearm(firearm_id: u8) -> Option<u8> {
+    match firearm_id {
+        4 => Some(5),
+        6 => Some(7),
+        8 => Some(9),
+        10 => Some(11),
+        _ => None,
+    }
+}
+
+/// Returns `true` if `item_id` is an equippable weapon (including Secret weapons `12` Hyper Spray
+/// and `16` Chainsaw, and Maria's `10` Revolver / `17` Chinese Cleaver).
+pub const fn is_equippable_weapon_item(item_id: u8) -> bool {
+    matches!(item_id, 4 | 6 | 8 | 10 | 12 | 13 | 14 | 15 | 16 | 17)
+}
+
 /// High-level functional classification for Silent Hill 2 inventory items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemCategory {

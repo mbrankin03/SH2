@@ -2,20 +2,24 @@
 //!
 //! Supports James's maps (`1..=35`), Maria's Baldwin Mansion map (`36`), `ChizuPossessionCheck`
 //! (`0x001c7890`), `ChizuConnectCheck` (`0x001c8ce0`), `ChizuControl` (`0x001c8360`),
-//! `MapTranscription.cpp` (`0x0049c644`) 60 FPS red-pen transcription animations, and SH2:EE
-//! `SetBlackPillarBoxes` (`Fix2D`) widescreen/ultrawide (`16:9` / `21:9` / `32:9`) map decal &
-//! green player marker boundary clipping (`SH2-77`).
+//! `ChizuMarkerDraw` (`0x001c7e90`), `MapTranscription.cpp` (`0x0049c644`) 60 FPS red-pen
+//! transcription animations, and SH2:EE `SetBlackPillarBoxes` (`Fix2D`) widescreen/ultrawide
+//! (`16:9` / `21:9` / `32:9`) map decal & green player marker boundary clipping (`SH2-77`).
 
+pub mod markers;
+pub mod render;
 pub mod tables;
 pub mod viewer;
 
+pub use markers::{active_markers_for_map, ChizuDecodedMarker, ChizuPackedMarker, CHIZU_MARKERS};
+pub use render::draw_paper_map;
 pub use tables::{
-    annotations_for_map, chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check,
-    map_spec, MapAnnotation, MapDirection, MapMarkerKind, MapReadCheck, MapSheetSpec,
-    CHIZU_CONNECT, MAP_COUNT, MAP_SPECS,
+    chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check, chizu_world_to_sheet_norm,
+    map_spec, MapDirection, MapReadCheck, MapSheetSpec, CHIZU_CONNECT, CHIZU_WORLD_SCALE_X,
+    CHIZU_WORLD_SCALE_Z, MAP_COUNT, MAP_SPECS,
 };
 pub use viewer::{
-    draw_paper_map, MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
+    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
     TRANSCRIBE_FADE_TARGET_ALPHA, TRANSCRIBE_WAIT_AFTER_FADE_TICKS,
     TRANSCRIBE_WAIT_BEFORE_PAN_TICKS, TRANSCRIBE_WAIT_INIT_TICKS, TRANSCRIBE_WAIT_ZOOM_CHECK_TICKS,
 };
@@ -36,7 +40,7 @@ pub struct MapDescriptor {
 impl Default for MapDescriptor {
     fn default() -> Self {
         Self {
-            map_id: 1, // Town Overall
+            map_id: 1,
             floor: 1,
         }
     }
@@ -159,7 +163,6 @@ mod tests {
     #[test]
     fn test_map_canvas_clipper_21x9_and_32x9_pillarboxes() {
         let clipper_21_9 = MapCanvasClipper::new_4x3(3440.0, 1440.0);
-        // 4:3 map on 3440x1440 has active width 1920 -> [760.0 .. 2680.0]
         assert!((clipper_21_9.layout.canvas_left - 760.0).abs() < 1e-3);
         assert!((clipper_21_9.layout.canvas_right - 2680.0).abs() < 1e-3);
 

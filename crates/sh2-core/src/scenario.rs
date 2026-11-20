@@ -307,6 +307,21 @@ impl ScenarioState {
         self.is_flashlight_active()
     }
 
+    /// Toggles the pocket radio power state if owned (`ITEM_ID_RADIO = 19`).
+    pub fn toggle_radio(&mut self) -> bool {
+        self.radio_on = !self.radio_on;
+        self.radio_on
+    }
+
+    /// Returns `true` when the active stage is an indoor/night area requiring the pocket
+    /// flashlight to read the paper map (`EventExecChizuFail` @ `SLUS_202.28` `0x001aae40`).
+    /// Bright daytime outdoor stages (Stages `1..=6`: Restroom, Observation Deck, Forest, Town Day)
+    /// return `false`; indoor/night stages (Apartments, Hospital, Prison, Labyrinth, Hotel, Mansion)
+    /// return `true`.
+    pub fn is_current_stage_dark(&self) -> bool {
+        !matches!(self.current_stage, 0..=6)
+    }
+
     /// Transition to a new stage/room cleanly.
     pub fn transition_stage(
         &mut self,

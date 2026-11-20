@@ -389,7 +389,7 @@ pub const MEMO_CATALOG: [MemoEntry; MEMO_CATALOG_COUNT] = [
         index: 44,
         flag_id: 412,
         title_msg_idx: 36,
-        body_msg_idx: 36,
+        body_msg_idx: 0,
         fallback_title: "Book: Lost Memories",
         backdrop_tex_path: "pic/etc/p_lostmemory.tex",
     },

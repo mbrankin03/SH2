@@ -1,24 +1,17 @@
-//! 1:1 PS2 / SH2:EE Fullscreen Paper Map viewer state machine & renderer (`Event/chizu.c`).
+//! 1:1 PS2 / SH2:EE Fullscreen Paper Map state machine (`Event/chizu.c`).
 //!
 //! # Ground Truth References
 //! - `ChizuMain` (`0x001c6b90`), `ChizuControl` (`0x001c8360`):
 //!   - `chizu_disp_step` (`0x0116dbb0`): `0` = FullSheet, `1` = ZoomingIn, `2` = ZoomedPan, `3` = ZoomingOut.
-//!   - Analog pan deadzone: `0x9b` (`155` / `255` -> `0.21` normalized stick threshold, `0x001c8508`).
 //! - `MapTranscription.cpp` (`0x0049c644`):
-//!   - Exact 60 FPS transcription state durations:
-//!     - State 0 init pause: `0x02` ticks (`1/30` s at 60 Hz)
-//!     - State 1 pre-zoom pause: `0x22` (`34`) ticks (`17/30` s at 60 Hz)
-//!     - State 2 zoom-complete check pause: `0x02` ticks (`1/30` s at 60 Hz)
-//!     - State 3 fade-in alpha: `+4` (`delta_frame << 2`) per 60 Hz tick up to `0x80` (`128`)
-//!     - State 4 post-fade hold: `0x32` (`50`) ticks (`5/6` s at 60 Hz).
+//!   - State 0 init pause: `0x02` ticks (`1/30` s at 60 Hz)
+//!   - State 1 pre-zoom pause: `0x22` (`34`) ticks (`17/30` s at 60 Hz)
+//!   - State 2 zoom-complete check pause: `0x02` ticks (`1/30` s at 60 Hz)
+//!   - State 3 fade-in alpha: `+4` (`delta_frame << 2`) per 60 Hz tick up to `0x80` (`128`)
+//!   - State 4 post-fade hold: `0x32` (`50`) ticks (`5/6` s at 60 Hz).
 
-use crate::atlas_font::{AtlasFont, Sh2TextColor};
-use crate::font::TextRasterizer;
-use crate::map::tables::{
-    annotations_for_map, chizu_connect_neighbor, map_spec, MapAnnotation, MapDirection,
-    MapMarkerKind,
-};
-use crate::map::{MapCanvasClipper, MapPlayerMarker};
+use crate::map::tables::{chizu_connect_neighbor, MapDirection};
+use crate::map::MapCanvasClipper;
 use crate::menu::{MenuNavAction, MenuSoundCue};
 use sh2_core::events::EventFlags;
 
@@ -32,6 +25,8 @@ pub const TRANSCRIBE_WAIT_ZOOM_CHECK_TICKS: u32 = 0x02;
 pub const TRANSCRIBE_FADE_TARGET_ALPHA: u8 = 0x80;
 /// State 4 post-fade hold in 60 Hz frames (`MapTranscription.cpp:119`, `push 0x32`).
 pub const TRANSCRIBE_WAIT_AFTER_FADE_TICKS: u32 = 0x32;
+/// Zoom/pan timer completion cap (`MapTranscription.cpp:32`, `ZoomPanTimerMaxValue = 0.99999f`).
+pub const ZOOM_PAN_TIMER_MAX: f32 = 0.99999;
 
 /// Zoom state machine matching `chizu_disp_step` (`0x0116dbb0` in `ChizuControl` `0x001c8360`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,14 +162,14 @@ impl PaperMapViewer {
         match self.zoom_step {
             MapZoomStep::ZoomingIn => {
                 self.zoom_t = (self.zoom_t + dt * 3.5).min(1.0);
-                if self.zoom_t >= 0.99999 {
+                if self.zoom_t >= ZOOM_PAN_TIMER_MAX {
                     self.zoom_t = 1.0;
                     self.zoom_step = MapZoomStep::ZoomedPan;
                 }
             }
             MapZoomStep::ZoomingOut => {
                 self.zoom_t = (self.zoom_t - dt * 3.5).max(0.0);
-                if self.zoom_t <= 0.00001 {
+                if self.zoom_t <= 1.0 - ZOOM_PAN_TIMER_MAX {
                     self.zoom_t = 0.0;
                     self.center_x = 0.5;
                     self.center_y = 0.5;
@@ -184,7 +179,6 @@ impl PaperMapViewer {
             _ => {}
         }
 
-        // Advance `MapTranscription.cpp` 60 Hz animation ticks
         let delta_frames = ((dt * 60.0).round() as u32).max(1);
         match self.transcription_phase {
             MapTranscriptionPhase::Idle => {}
@@ -249,7 +243,6 @@ impl PaperMapViewer {
                 (MenuSoundCue::Cancel, PaperMapAction::Close)
             }
             MenuNavAction::Confirm => {
-                // `ChizuControl` (`0x001c8394..0x001c84ec`): toggle ZoomingIn <-> ZoomingOut
                 self.zoom_step = match self.zoom_step {
                     MapZoomStep::FullSheet | MapZoomStep::ZoomingOut => MapZoomStep::ZoomingIn,
                     MapZoomStep::ZoomingIn | MapZoomStep::ZoomedPan => MapZoomStep::ZoomingOut,
@@ -278,7 +271,6 @@ impl PaperMapViewer {
                         (MenuSoundCue::None, PaperMapAction::None)
                     }
                 } else {
-                    // Pan inside zoomed map (`chizu_center_x` / `chizu_center_y`)
                     const PAN_STEP: f32 = 0.08;
                     match nav {
                         MenuNavAction::Up => {
@@ -315,196 +307,6 @@ impl PaperMapViewer {
     }
 }
 
-/// Renders the authentic `4:3` pillarboxed Fullscreen Paper Map with:
-/// - Loaded retail `data/pic/map/*.tex` RGBA sheet (or aged paper fallback if missing),
-/// - `EventFlags`-driven red marker pen annotations (`ChizuMarkerDraw`),
-/// - Clipped green player heading triangle (`MapCanvasClipper::clip_player_marker`),
-/// - Pure black widescreen/ultrawide pillarboxes (`SetBlackPillarBoxes`).
-#[allow(clippy::too_many_arguments)]
-pub fn draw_paper_map(
-    viewer: &PaperMapViewer,
-    flags: &EventFlags,
-    player_norm_pos: (f32, f32),
-    player_yaw_rad: f32,
-    sheet_rgba: Option<(&[u8], usize, usize)>,
-    font: &AtlasFont,
-    rasterizer: &mut TextRasterizer,
-) {
-    if !viewer.is_open {
-        return;
-    }
-    let vw = rasterizer.width as f32;
-    let vh = rasterizer.height as f32;
-    let clipper = MapCanvasClipper::new_4x3(vw, vh);
-
-    // 1. Clear full screen to black
-    rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, 255]);
-
-    // 2. Draw paper map sheet inside active 4:3 canvas (with zoom & pan)
-    let (x0, y0) = viewer.project_to_viewport(0.0, 0.0, &clipper);
-    let (x1, y1) = viewer.project_to_viewport(1.0, 1.0, &clipper);
-    if let Some((cx0, cy0, cx1, cy1, cu0, cv0, cu1, cv1)) =
-        clipper.clip_decal_quad(x0, y0, x1, y1, 0.0, 0.0, 1.0, 1.0)
-    {
-        let dx = cx0.floor().max(0.0) as usize;
-        let dy = cy0.floor().max(0.0) as usize;
-        let dw = (cx1 - cx0).ceil().max(1.0) as usize;
-        let dh = (cy1 - cy0).ceil().max(1.0) as usize;
-        if let Some((rgba, sw, sh)) = sheet_rgba {
-            let tris = [
-                (cx0, cy0, cu0, cv0),
-                (cx1, cy0, cu1, cv0),
-                (cx1, cy1, cu1, cv1),
-                (cx0, cy0, cu0, cv0),
-                (cx1, cy1, cu1, cv1),
-                (cx0, cy1, cu0, cv1),
-            ];
-            rasterizer.blit_overlay_triangles(&tris, rgba, sw, sh, 1.0);
-        } else {
-            // Aged parchment paper fallback when retail `.tex` is unavailable
-            rasterizer.fill_rect(dx, dy, dw, dh, [186, 172, 142, 255]);
-            rasterizer.draw_rect_outline(
-                dx + 8,
-                dy + 8,
-                dw.saturating_sub(16),
-                dh.saturating_sub(16),
-                2,
-                [92, 76, 56, 220],
-            );
-        }
-    }
-
-    // 3. Draw `EventFlags`-driven red marker pen annotations (`ChizuMarkerDraw`)
-    let annotations = annotations_for_map(viewer.current_map_id, flags);
-    for mark in &annotations {
-        draw_red_pen_annotation(viewer, mark, &clipper, font, rasterizer);
-    }
-
-    // 4. Draw clipped green player heading triangle (`MapCanvasClipper`)
-    let (px, py) = viewer.project_to_viewport(player_norm_pos.0, player_norm_pos.1, &clipper);
-    let marker = MapPlayerMarker {
-        x: px,
-        y: py,
-        yaw_radians: player_yaw_rad,
-        radius: 9.0 * (1.0 + viewer.zoom_t * 0.35),
-    };
-    if let Some(verts) = clipper.clip_player_marker(&marker) {
-        rasterizer.fill_triangle(verts, [32, 224, 72, 245]);
-    }
-
-    // 5. Enforce pure black widescreen/ultrawide pillarboxes (`SetBlackPillarBoxes`)
-    clipper.draw_black_pillarbox_bars(rasterizer);
-
-    // 6. Subtle header & controls bar inside canvas bounds
-    let left_px = clipper.layout.canvas_left.round().max(0.0) as usize;
-    let cw_px = (clipper.layout.canvas_right - clipper.layout.canvas_left)
-        .round()
-        .max(1.0) as usize;
-    let title = map_spec(viewer.current_map_id)
-        .map(|s| s.title)
-        .unwrap_or("Silent Hill Map");
-    let zoom_label = if viewer.zoom_step == MapZoomStep::FullSheet {
-        "[Confirm] Zoom In   [Arrows] Floors/Areas   [Cancel/M] Close"
-    } else {
-        "[Confirm] Zoom Out   [Arrows] Pan   [Cancel/M] Close"
-    };
-    rasterizer.fill_rect(left_px, 0, cw_px, 34, [0, 0, 0, 175]);
-    font.draw_line_centered(
-        rasterizer,
-        title,
-        (left_px + cw_px / 2, 8),
-        16,
-        Sh2TextColor::GoldSelected,
-        true,
-    );
-    let bottom_y = rasterizer.height.saturating_sub(28);
-    rasterizer.fill_rect(left_px, bottom_y, cw_px, 28, [0, 0, 0, 175]);
-    font.draw_line_centered(
-        rasterizer,
-        zoom_label,
-        (left_px + cw_px / 2, bottom_y + 6),
-        13,
-        Sh2TextColor::White,
-        true,
-    );
-}
-
-fn draw_red_pen_annotation(
-    viewer: &PaperMapViewer,
-    mark: &MapAnnotation,
-    clipper: &MapCanvasClipper,
-    font: &AtlasFont,
-    rasterizer: &mut TextRasterizer,
-) {
-    let (mx, my) = viewer.project_to_viewport(mark.norm_x, mark.norm_y, clipper);
-    if mx < clipper.layout.canvas_left
-        || mx > clipper.layout.canvas_right
-        || my < clipper.layout.canvas_top
-        || my > clipper.layout.canvas_bottom
-    {
-        return;
-    }
-    let alpha = if viewer.transcribing_flag_id == Some(mark.flag_id) {
-        ((viewer.transcription_alpha as u32) * 255 / (TRANSCRIBE_FADE_TARGET_ALPHA as u32)).min(255)
-            as u8
-    } else {
-        225
-    };
-    let red = [195, 24, 24, alpha];
-    let ix = mx.round() as i32;
-    let iy = my.round() as i32;
-
-    match mark.kind {
-        MapMarkerKind::LockedDoor => {
-            rasterizer.draw_line(ix - 8, iy, ix + 8, iy, 3, red);
-        }
-        MapMarkerKind::JammedDoor => {
-            rasterizer.draw_line(ix - 7, iy - 7, ix + 7, iy + 7, 2, red);
-            rasterizer.draw_line(ix + 7, iy - 7, ix - 7, iy + 7, 2, red);
-        }
-        MapMarkerKind::UnlockedDoor => {
-            rasterizer.draw_line(ix - 6, iy + 1, ix - 1, iy + 6, 2, red);
-            rasterizer.draw_line(ix - 1, iy + 6, ix + 7, iy - 6, 2, red);
-        }
-        MapMarkerKind::CircledObjective => {
-            rasterizer.draw_rect_outline(
-                (ix - 10).max(0) as usize,
-                (iy - 10).max(0) as usize,
-                20,
-                20,
-                2,
-                red,
-            );
-        }
-        MapMarkerKind::Arrow => {
-            rasterizer.draw_line(ix - 8, iy, ix + 8, iy, 2, red);
-            rasterizer.draw_line(ix + 3, iy - 5, ix + 8, iy, 2, red);
-            rasterizer.draw_line(ix + 3, iy + 5, ix + 8, iy, 2, red);
-        }
-        MapMarkerKind::QuestionMark | MapMarkerKind::TranscriptionNote => {
-            font.draw_line(
-                rasterizer,
-                "?",
-                ((ix - 4).max(0) as usize, (iy - 8).max(0) as usize),
-                16,
-                red,
-                false,
-            );
-        }
-    }
-
-    if let Some(caption) = mark.caption {
-        font.draw_line(
-            rasterizer,
-            caption,
-            ((ix + 10).max(0) as usize, (iy - 6).max(0) as usize),
-            12,
-            red,
-            true,
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,12 +314,11 @@ mod tests {
     #[test]
     fn test_paper_map_zoom_pan_and_transcription_timing() {
         let mut flags = EventFlags::new();
-        flags.set(24, true); // Town Map
+        flags.set(24, true);
         let mut viewer = PaperMapViewer::new();
         viewer.open(1, false);
         assert_eq!(viewer.zoom_step, MapZoomStep::FullSheet);
 
-        // Confirm toggles into ZoomingIn -> reaches ZoomedPan
         viewer.handle_nav(MenuNavAction::Confirm, &flags);
         assert_eq!(viewer.zoom_step, MapZoomStep::ZoomingIn);
         for _ in 0..30 {
@@ -525,13 +326,11 @@ mod tests {
         }
         assert_eq!(viewer.zoom_step, MapZoomStep::ZoomedPan);
 
-        // Pan while zoomed
         let before_x = viewer.center_x;
         viewer.handle_nav(MenuNavAction::Right, &flags);
         assert!(viewer.center_x > before_x);
 
-        // Test MapTranscription 60 Hz state machine
-        viewer.start_transcription(0x04e9);
+        viewer.start_transcription(0x04ea);
         assert_eq!(viewer.transcription_phase, MapTranscriptionPhase::WaitInit);
         for _ in 0..160 {
             viewer.tick(1.0 / 60.0);

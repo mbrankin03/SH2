@@ -27,10 +27,10 @@ pub use inventory::{
 };
 pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
 pub use map::{
-    annotations_for_map, chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check,
-    draw_paper_map, map_spec, MapAnnotation, MapCanvasClipper, MapDescriptor, MapDirection,
-    MapMarkerKind, MapPlayerMarker, MapReadCheck, MapSheetSpec, MapTranscriptionPhase, MapZoomStep,
-    PaperMapAction, PaperMapViewer,
+    active_markers_for_map, chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check,
+    chizu_world_to_sheet_norm, draw_paper_map, map_spec, ChizuDecodedMarker, ChizuPackedMarker,
+    MapCanvasClipper, MapDescriptor, MapDirection, MapPlayerMarker, MapReadCheck, MapSheetSpec,
+    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
 };
 pub use memo::{
     collected_memos, draw_memo_reader, memo_command_check, MemoAction, MemoEntry, MemoPhase,

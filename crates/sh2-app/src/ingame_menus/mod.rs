@@ -361,6 +361,7 @@ pub(crate) fn render_overlay(
                     .filter(|(id, _, _, _)| *id == sel_id)
                     .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h))
             });
+        state.inventory_rasterizer.clear();
         draw_inventory_screen(
             &state.ingame_menus.inventory,
             &state.sim_core.scenario.inventory_mgr,
@@ -368,16 +369,16 @@ pub(crate) fn render_overlay(
             item_atlas,
             examine_tex,
             font,
-            &mut state.menu_rasterizer,
+            &mut state.inventory_rasterizer,
         );
-        // Blit the 4:3 PS2 inventory texture into the exact centered 4:3 swapchain viewport so
-        // the overlay aligns 1:1 with `HealthEcgState::snapshot_viewport_rect` on ALL monitors
-        // (4:3, 16:10, 16:9, 21:9, 32:9, and portrait).
+        // Blit the dedicated 4:3 (`1280x960`) inventory texture into the exact centered 4:3
+        // swapchain viewport so glyphs have 1:1 square pixels and align bit-for-bit with
+        // `HealthEcgState::snapshot_viewport_rect` on ALL monitors (4:3, 16:10, 16:9, 21:9, 32:9, portrait).
         let vp = sh2_ui::inventory::ps2_ui_canvas_rect(
-            state.render_ctx.config.width as f32,
-            state.render_ctx.config.height as f32,
+            state.surface_config.width as f32,
+            state.surface_config.height as f32,
         );
-        state.finish_hud_overlay_in_viewport(encoder, surface_view, vp);
+        state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
         return;
     }
 

@@ -217,9 +217,11 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
 
     let mut combat_arena = sh2_core::combat::CombatArena::new();
     // Only pre-equip the Wooden Plank inside the CombatArena test room; Campaign starts unarmed.
-    if initial_room == TestRoomKind::CombatArena {
-        combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
-    }
+    combat_arena.player.weapon = if initial_room == TestRoomKind::CombatArena {
+        sh2_core::combat::WeaponGrip::WoodenPlank
+    } else {
+        sh2_core::combat::WeaponGrip::None
+    };
 
     let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
     sim_core.collision = find_cld_file_for_room(initial_room);
@@ -320,6 +322,33 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     let menu_text_bind_group = blitter.create_bind_group_with_uniform_buffer(
         &device,
         &menu_text_view,
+        &menu_uniform_buffer,
+    );
+
+    // Dedicated exact 4:3 (`1280x960`) software rasterizer & texture for PS2 Status/Inventory so
+    // `AtlasFont` glyphs and `itemmenu2.tex` sprites have 1:1 square pixels with zero horizontal
+    // squish when blitted into `ps2_ui_canvas_rect` on any monitor aspect ratio.
+    let inv_w = 1280u32;
+    let inv_h = 960u32;
+    let inventory_rasterizer = TextRasterizer::new(inv_w as usize, inv_h as usize);
+    let inventory_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Inventory 4:3 Overlay Texture"),
+        size: wgpu::Extent3d {
+            width: inv_w,
+            height: inv_h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let inventory_view = inventory_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let inventory_bind_group = blitter.create_bind_group_with_uniform_buffer(
+        &device,
+        &inventory_view,
         &menu_uniform_buffer,
     );
 
@@ -512,6 +541,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         menu_uniform_buffer,
         menu_text_texture,
         menu_text_bind_group,
+        inventory_rasterizer,
+        inventory_texture,
+        inventory_bind_group,
         menu_rasterizer,
         button_sprites,
         audio_bank,

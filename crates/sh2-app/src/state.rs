@@ -37,6 +37,9 @@ pub(crate) struct AppState {
     pub menu_uniform_buffer: wgpu::Buffer,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
+    pub inventory_rasterizer: TextRasterizer,
+    pub inventory_texture: wgpu::Texture,
+    pub inventory_bind_group: wgpu::BindGroup,
     pub menu_rasterizer: TextRasterizer,
     pub button_sprites: Option<ButtonSpriteSheet>,
     pub audio_bank: Option<MenuAudioBank>,
@@ -322,18 +325,36 @@ impl AppState {
         );
     }
 
-    /// Uploads the software text rasterizer buffer and blits it into a specific swapchain
-    /// sub-viewport `(x, y, width, height)` so 4:3 PS2 menus align 1:1 on any monitor aspect ratio.
-    pub fn finish_hud_overlay_in_viewport(
+    /// Uploads the dedicated 4:3 (`1280x960`) inventory rasterizer buffer and blits it into
+    /// `viewport` (`ps2_ui_canvas_rect`) with 1:1 square pixels and zero horizontal font squish.
+    pub fn finish_inventory_overlay_in_viewport(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
         viewport: (f32, f32, f32, f32),
     ) {
-        self.upload_hud_overlay_texture();
+        self.render_ctx.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.inventory_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.inventory_rasterizer.pixels,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * self.inventory_rasterizer.width as u32),
+                rows_per_image: Some(self.inventory_rasterizer.height as u32),
+            },
+            wgpu::Extent3d {
+                width: self.inventory_rasterizer.width as u32,
+                height: self.inventory_rasterizer.height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
         self.blitter.render_with_bind_group_in_viewport(
             encoder,
-            &self.menu_text_bind_group,
+            &self.inventory_bind_group,
             surface_view,
             wgpu::LoadOp::Load,
             viewport,

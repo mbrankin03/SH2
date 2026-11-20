@@ -23,8 +23,7 @@ use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
 use crate::inventory::atlas::{item_icon_rect, project_carousel_slot};
 use crate::inventory::health_ecg::{
-    ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_W_512, STATUS_SNAPSHOT_X_512,
-    STATUS_SNAPSHOT_Y_448,
+    ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_W_512, STATUS_SNAPSHOT_Y_448,
 };
 use crate::inventory::{
     CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
@@ -125,6 +124,13 @@ pub fn draw_inventory_screen(
 
     let c = Ps2Canvas::from_viewport(rasterizer.width, rasterizer.height);
 
+    // Close-up Examine Overlay (`Look` command): render exclusively on pure black with zero
+    // bleed-through from the underlying Status/Command/Carousel screen.
+    if screen.focus == InventoryFocus::ExamineOverlay {
+        draw_examine_overlay(screen, examine_tex_rgba, font, rasterizer, c);
+        return;
+    }
+
     // 1. Top-left `Status` health tint wash over the live frozen 3D game snapshot (`look_hp` `0x001d9660`)
     screen
         .health_ecg
@@ -147,11 +153,6 @@ pub fn draw_inventory_screen(
 
     // 7. Bottom navigation row with glowing blue bars (`font_print` `y = 428`: Option | Map | Memo)
     draw_bottom_nav_bar(screen, snapshot, font, rasterizer, c);
-
-    // 8. Close-up Examine Overlay (when `Look` command was selected)
-    if screen.focus == InventoryFocus::ExamineOverlay {
-        draw_examine_overlay(screen, examine_tex_rgba, font, rasterizer, c);
-    }
 }
 
 /// Draws a Silent Hill 2 electric-blue horizontal glow bar (`lookline` `0x001d6d2c` `0x00f06030`).
@@ -186,25 +187,26 @@ fn draw_sh2_blue_bar(
 }
 
 fn draw_top_headers(font: &AtlasFont, rasterizer: &mut TextRasterizer, c: Ps2Canvas) {
-    // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` baseline in `512x448`):
-    // `0x0c` = "Status" (`0x45 = 69`), `0x0d` = "Equipment" (`0xcd = 205`), `0x0e` = "Command" (`0x170 = 368`)
-    let font_px = ((20.0 * c.sy).round() as usize).max(12);
-    let bar_h = ((8.0 * c.sy).round() as usize).max(4);
+    // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` in `512x448`) centered over each
+    // `sprite` (`0x001d8c80..0x001d8d58`) electric-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
+    let font_px = ((22.0 * c.sy).round() as usize).max(12);
+    let bar_h = ((12.0 * c.sy).round() as usize).max(6);
     let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
     let y_bar = c.yi(SPRITE_TOP_BAR_CY);
-    let y_text = c.yi(50.0).saturating_sub(font_px);
+    let y_text = y_bar.saturating_sub(font_px / 2);
 
-    let cols: [(&str, f32, f32); 3] = [
-        ("Status", 69.0, SPRITE_BAR_X0[0]),
-        ("Equipment", 205.0, SPRITE_BAR_X0[1]),
-        ("Command", 368.0, SPRITE_BAR_X0[2]),
+    let cols: [(&str, f32); 3] = [
+        ("Status", SPRITE_BAR_X0[0]),
+        ("Equipment", SPRITE_BAR_X0[1]),
+        ("Command", SPRITE_BAR_X0[2]),
     ];
-    for (label, text_x, bar_x) in cols {
-        draw_sh2_blue_bar(rasterizer, c.xi(bar_x), y_bar, bar_w, bar_h, false);
-        font.draw_line_styled(
+    for (label, bar_x) in cols {
+        draw_sh2_blue_bar(rasterizer, c.xi(bar_x), y_bar, bar_w, bar_h, true);
+        let cx = c.xi(bar_x + SPRITE_BAR_WIDTH * 0.5);
+        font.draw_line_centered(
             rasterizer,
             label,
-            (c.xi(text_x), y_text),
+            (cx, y_text),
             font_px,
             Sh2TextColor::White,
             true,
@@ -363,16 +365,24 @@ fn draw_carousel_arc(
     } else {
         ECG_GS_ALPHA
     };
-    let border = (c.sy * 0.6).round().max(1.0) as usize;
-    rasterizer.draw_rect_outline(rx, ry, ret_w, ret_h, border, [br, bg, bb, ret_a]);
-    let offset = (2.0 * c.sy).round().max(1.0) as usize;
+    let border = (c.sy * 0.8).round().max(1.0) as usize;
+    let offset = (4.0 * c.sy).round().max(2.0) as usize;
+    // Authentic SH2 interlocking double-offset electric-blue reticle (both frames crisp blue)
     rasterizer.draw_rect_outline(
-        rx.saturating_sub(offset),
-        ry.saturating_sub(offset),
+        rx.saturating_sub(offset / 2),
+        ry.saturating_sub(offset / 2),
         ret_w,
         ret_h,
         border,
-        [br, bg, bb, ret_a / 2],
+        [br, bg, bb, ret_a],
+    );
+    rasterizer.draw_rect_outline(
+        rx + offset / 2,
+        ry + offset / 2,
+        ret_w,
+        ret_h,
+        border,
+        [br, bg, bb, ret_a],
     );
 
     let total = screen.owned_items.len();
@@ -515,15 +525,13 @@ fn draw_bottom_nav_bar(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428` baseline in `512x448`):
-    // `0x09` = "Option" (`0x40 = 64`), `0x0a` = "Map" (`0xf0 = 240`), `0x0b` = "Memo" (`0x187 = 391`)
-    let font_px = ((20.0 * c.sy).round() as usize).max(12);
-    let bar_h = ((8.0 * c.sy).round() as usize).max(4);
+    // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`: `Option | Map | Memo`) centered
+    // over each `sprite` (`0x001d8c80..0x001d8d58`) electric-blue bar (`cy = 413`).
+    let font_px = ((22.0 * c.sy).round() as usize).max(12);
+    let bar_h = ((12.0 * c.sy).round() as usize).max(6);
     let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
     let y_bar = c.yi(SPRITE_BOT_BAR_CY);
-    let y_text = c.yi(428.0).saturating_sub(font_px);
-
-    let text_x: [f32; 3] = [64.0, 240.0, 391.0];
+    let y_text = y_bar.saturating_sub(font_px / 2);
 
     for (col_idx, btn) in CornerButton::ALL.iter().copied().enumerate() {
         let is_selected = screen.focus == InventoryFocus::Corner(btn);
@@ -535,7 +543,7 @@ fn draw_bottom_nav_bar(
             y_bar,
             bar_w,
             bar_h,
-            is_selected,
+            true,
         );
         let text_color = if disabled {
             Sh2TextColor::MutedFooter
@@ -544,10 +552,11 @@ fn draw_bottom_nav_bar(
         } else {
             Sh2TextColor::White
         };
-        font.draw_line_styled(
+        let cx = c.xi(SPRITE_BAR_X0[col_idx] + SPRITE_BAR_WIDTH * 0.5);
+        font.draw_line_centered(
             rasterizer,
             btn.label(),
-            (c.xi(text_x[col_idx]), y_text),
+            (cx, y_text),
             font_px,
             text_color,
             true,
@@ -564,18 +573,20 @@ fn draw_examine_overlay(
 ) {
     let w = rasterizer.width;
     let h = rasterizer.height;
-    rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, 240]);
+    rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, 255]);
 
     if let Some((rgba, tw, th)) = examine_tex_rgba {
-        let max_h = (300.0 * c.sy).round() as usize;
-        let max_w = ((max_h as f32) * (tw as f32 / th.max(1) as f32)).round() as usize;
+        let max_h = (270.0 * c.sy).round() as usize;
+        let max_w = c
+            .width_for_height(max_h as f32, tw as f32 / th.max(1) as f32)
+            .round() as usize;
         let dx = w.saturating_sub(max_w) / 2;
-        let dy = c.yi(STATUS_SNAPSHOT_X_512);
+        let dy = c.yi(36.0);
         rasterizer.blit_rgba_scaled(dx, dy, max_w, max_h, rgba, tw, th, 1.0);
     }
 
-    let title_px = ((18.0 * c.sy).round() as usize).clamp(12, 28);
-    let body_px = ((14.0 * c.sy).round() as usize).clamp(10, 22);
+    let title_px = ((20.0 * c.sy).round() as usize).max(12);
+    let body_px = ((16.0 * c.sy).round() as usize).max(10);
     let text_y0 = c.yi(325.0);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
@@ -592,11 +603,46 @@ fn draw_examine_overlay(
             font.draw_line_centered(
                 rasterizer,
                 line,
-                (w / 2, text_y0 + title_px + 8 + i * (body_px + 4)),
+                (
+                    w / 2,
+                    text_y0 + title_px + (8.0 * c.sy).round() as usize + i * (body_px + 6),
+                ),
                 body_px,
                 Sh2TextColor::SilverUnselected,
                 true,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_draw_inventory_and_examine_overlay_opaque_black() {
+        let mut inv = InventoryManager::new();
+        for id in [1u8, 2, 4, 20, 21] {
+            inv.item_get_now(id);
+        }
+        let mut screen = InventoryScreen::new();
+        screen.open(&inv);
+        let snap = InventoryPlayerSnapshot::default();
+        let font = AtlasFont::shared(None);
+
+        let mut rast = TextRasterizer::new(1280, 960);
+        draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
+        // Top-left Status snapshot area must stay transparent at 100% HP so 3D snapshot shows through
+        assert_eq!(rast.pixels[(200 * 1280 + 160) * 4 + 3], 0);
+
+        if let Ok(out_path) = std::env::var("SH2_PREVIEW_OUT") {
+            let _ = image::save_buffer(&out_path, &rast.pixels, 1280, 960, image::ColorType::Rgba8);
+        }
+
+        // Examine overlay must fill opaque black with zero bleed-through from inventory chrome
+        screen.focus = InventoryFocus::ExamineOverlay;
+        rast.clear();
+        draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
+        assert_eq!(rast.pixels[3], 255);
     }
 }

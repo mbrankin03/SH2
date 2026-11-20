@@ -1,8 +1,8 @@
 //! 1:1 PS2 Status & Inventory renderer (`Item/otn_itemmain.c` in `SLUS_202.28`).
 //!
 //! All layout coordinates are expressed directly in Silent Hill 2's native `512x448` PS2 logical
-//! coordinate space (`sx = width / 512.0`, `sy = height / 448.0`) so every position matches
-//! `SLUS_202.28` and `CommandWindowMouseFix.cpp` 1:1 without intermediate aspect distortion:
+//! coordinate space centered inside a 4:3 canvas (`ps2_ui_canvas_rect`) so every element matches
+//! `SLUS_202.28` and `CommandWindowMouseFix.cpp` 1:1 without horizontal stretching on 16:9/21:9:
 //! - **Top-left `Status` 3D snapshot (`look_hp` @ `0x001d9b6c..0x001d9bfc`):**
 //!   `(-230, -175)..(-90, -70)` centered → `(26, 49, 140, 105)` in `512x448`.
 //! - **Electric-blue horizontal glow bars (`lookline` @ `0x001d6d2c` `0x00f06030` = `RGB(48, 96, 240)`
@@ -27,7 +27,7 @@ use crate::inventory::health_ecg::{
     STATUS_SNAPSHOT_Y_448,
 };
 use crate::inventory::{
-    CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
+    ps2_ui_canvas_rect, CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
     CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_X_MAX, CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MIN,
 };
 use sh2_core::{item_metadata, InventoryManager};
@@ -54,6 +54,43 @@ const COMMAND_ROW_STEP_Y: f32 = 25.0;
 /// Command list text X in `512x448` space (`font_print` `0x001d5e14`: `0x168 = 360`).
 const COMMAND_TEXT_X: f32 = 360.0;
 
+/// Centered 4:3 PS2 UI coordinate transform (`512x448` -> viewport pixels).
+#[derive(Clone, Copy)]
+struct Ps2Canvas {
+    ox: f32,
+    oy: f32,
+    sx: f32,
+    sy: f32,
+}
+
+impl Ps2Canvas {
+    fn from_viewport(w: usize, h: usize) -> Self {
+        let (ox, oy, cw, ch) = ps2_ui_canvas_rect(w as f32, h as f32);
+        Self {
+            ox,
+            oy,
+            sx: cw / PS2_UI_WIDTH,
+            sy: ch / PS2_UI_HEIGHT,
+        }
+    }
+
+    fn x(&self, px: f32) -> f32 {
+        self.ox + px * self.sx
+    }
+
+    fn y(&self, py: f32) -> f32 {
+        self.oy + py * self.sy
+    }
+
+    fn xi(&self, px: f32) -> usize {
+        self.x(px).round().max(0.0) as usize
+    }
+
+    fn yi(&self, py: f32) -> usize {
+        self.y(py).round().max(0.0) as usize
+    }
+}
+
 /// Renders the authentic 1:1 PS2 Status & Inventory screen onto `rasterizer`.
 ///
 /// The rasterizer begins fully transparent so the frozen 3D gameplay snapshot blitted into
@@ -73,8 +110,7 @@ pub fn draw_inventory_screen(
         return;
     }
 
-    let sx = rasterizer.width as f32 / PS2_UI_WIDTH;
-    let sy = rasterizer.height as f32 / PS2_UI_HEIGHT;
+    let c = Ps2Canvas::from_viewport(rasterizer.width, rasterizer.height);
 
     // 1. Top-left `Status` health tint wash over the live frozen 3D game snapshot (`look_hp` `0x001d9660`)
     screen
@@ -82,26 +118,26 @@ pub fn draw_inventory_screen(
         .draw_snapshot_tint(snapshot.hp, snapshot.max_hp, rasterizer);
 
     // 2. Top row headers with glowing blue bars (`font_print` `y = 50`: Status | Equipment | Command)
-    draw_top_headers(font, rasterizer, sx, sy);
+    draw_top_headers(font, rasterizer, c);
 
     // 3. Equipped weapon icon from `itemmenu2.tex` + ammo count beneath `Equipment`
-    draw_equipped_weapon_panel(snapshot, item_atlas_rgba, font, rasterizer, sx, sy);
+    draw_equipped_weapon_panel(snapshot, item_atlas_rgba, font, rasterizer, c);
 
     // 4. Command list beneath `Command` (`font_print` `0x001d5e14` & `CommandWindowMouseFix.cpp`)
-    draw_command_column(screen, inventory, snapshot, font, rasterizer, sx, sy);
+    draw_command_column(screen, inventory, snapshot, font, rasterizer, c);
 
     // 5. 7-slot floating `itemmenu2.tex` circular carousel + electric-blue selection reticle
-    draw_carousel_arc(screen, inventory, item_atlas_rgba, font, rasterizer, sx, sy);
+    draw_carousel_arc(screen, inventory, item_atlas_rgba, font, rasterizer, c);
 
     // 6. Item Name (`20, 325`) & Multi-Line Description (`45, 360`) from `font_print` (`0x001d5b50`)
-    draw_item_footer(screen, font, rasterizer, sx, sy);
+    draw_item_footer(screen, font, rasterizer, c);
 
     // 7. Bottom navigation row with glowing blue bars (`font_print` `y = 428`: Option | Map | Memo)
-    draw_bottom_nav_bar(screen, snapshot, font, rasterizer, sx, sy);
+    draw_bottom_nav_bar(screen, snapshot, font, rasterizer, c);
 
     // 8. Close-up Examine Overlay (when `Look` command was selected)
     if screen.focus == InventoryFocus::ExamineOverlay {
-        draw_examine_overlay(screen, examine_tex_rgba, font, rasterizer, sy);
+        draw_examine_overlay(screen, examine_tex_rgba, font, rasterizer, c);
     }
 }
 
@@ -136,14 +172,14 @@ fn draw_sh2_blue_bar(
     }
 }
 
-fn draw_top_headers(font: &AtlasFont, rasterizer: &mut TextRasterizer, sx: f32, sy: f32) {
+fn draw_top_headers(font: &AtlasFont, rasterizer: &mut TextRasterizer, c: Ps2Canvas) {
     // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` baseline in `512x448`):
     // `0x0c` = "Status" (`0x45 = 69`), `0x0d` = "Equipment" (`0xcd = 205`), `0x0e` = "Command" (`0x170 = 368`)
-    let font_px = ((20.0 * sy).round() as usize).clamp(12, 34);
-    let bar_h = ((8.0 * sy).round() as usize).clamp(4, 16);
-    let bar_w = (SPRITE_BAR_WIDTH * sx).round() as usize;
-    let y_bar = (SPRITE_TOP_BAR_CY * sy).round() as usize;
-    let y_text = ((50.0 * sy).round() as usize).saturating_sub(font_px);
+    let font_px = ((20.0 * c.sy).round() as usize).clamp(12, 34);
+    let bar_h = ((8.0 * c.sy).round() as usize).clamp(4, 16);
+    let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
+    let y_bar = c.yi(SPRITE_TOP_BAR_CY);
+    let y_text = c.yi(50.0).saturating_sub(font_px);
 
     let cols: [(&str, f32, f32); 3] = [
         ("Status", 69.0, SPRITE_BAR_X0[0]),
@@ -151,18 +187,11 @@ fn draw_top_headers(font: &AtlasFont, rasterizer: &mut TextRasterizer, sx: f32, 
         ("Command", 368.0, SPRITE_BAR_X0[2]),
     ];
     for (label, text_x, bar_x) in cols {
-        draw_sh2_blue_bar(
-            rasterizer,
-            (bar_x * sx).round() as usize,
-            y_bar,
-            bar_w,
-            bar_h,
-            false,
-        );
+        draw_sh2_blue_bar(rasterizer, c.xi(bar_x), y_bar, bar_w, bar_h, false);
         font.draw_line_styled(
             rasterizer,
             label,
-            ((text_x * sx).round() as usize, y_text),
+            (c.xi(text_x), y_text),
             font_px,
             Sh2TextColor::White,
             true,
@@ -175,18 +204,17 @@ fn draw_equipped_weapon_panel(
     item_atlas_rgba: Option<(&[u8], usize, usize)>,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    sx: f32,
-    sy: f32,
+    c: Ps2Canvas,
 ) {
     // Center of middle `Equipment` column (`sprite` col 1: `186 + 140/2 = 256`, `look_hp` vertical center `49 + 105/2 = 101.5`)
-    let cx = (SPRITE_BAR_X0[1] + SPRITE_BAR_WIDTH * 0.5) * sx;
-    let cy = (STATUS_SNAPSHOT_Y_448 + STATUS_SNAPSHOT_H_448 * 0.5) * sy;
+    let cx = c.x(SPRITE_BAR_X0[1] + SPRITE_BAR_WIDTH * 0.5);
+    let cy = c.y(STATUS_SNAPSHOT_Y_448 + STATUS_SNAPSHOT_H_448 * 0.5);
     let Some(weapon_id) = snapshot.equipped_weapon_item_id else {
         return;
     };
 
     if let (Some((atlas, aw, ah)), Some(rect)) = (item_atlas_rgba, item_icon_rect(weapon_id)) {
-        let sprite_h = (STATUS_SNAPSHOT_H_448 * CAROUSEL_UNSELECTED_SCALE) * sy;
+        let sprite_h = (STATUS_SNAPSHOT_H_448 * CAROUSEL_UNSELECTED_SCALE) * c.sy;
         let sprite_w = sprite_h * rect.aspect();
         let (u0, v0, u1, v1) = rect.normalized_uv();
         let x0 = cx - sprite_w * 0.5;
@@ -203,7 +231,7 @@ fn draw_equipped_weapon_panel(
         ];
         rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, 1.0);
     } else if let Some(meta) = item_metadata(weapon_id) {
-        let font_sm = ((14.0 * sy).round() as usize).clamp(10, 22);
+        let font_sm = ((14.0 * c.sy).round() as usize).clamp(10, 22);
         font.draw_line_centered(
             rasterizer,
             meta.name,
@@ -215,16 +243,14 @@ fn draw_equipped_weapon_panel(
     }
 
     if let Some(loaded) = snapshot.equipped_magazine_rounds {
-        let font_sm = ((15.0 * sy).round() as usize).clamp(10, 24);
+        let font_sm = ((15.0 * c.sy).round() as usize).clamp(10, 24);
         font.draw_line_centered(
             rasterizer,
             &format!("- {} -", loaded),
             (
-                ((SPRITE_BAR_X0[1] + SPRITE_BAR_WIDTH) * sx).round() as usize,
-                ((STATUS_SNAPSHOT_Y_448 + STATUS_SNAPSHOT_H_448) * sy)
-                    .round()
-                    .max(0.0) as usize
-                    - font_sm,
+                c.xi(SPRITE_BAR_X0[1] + SPRITE_BAR_WIDTH),
+                c.yi(STATUS_SNAPSHOT_Y_448 + STATUS_SNAPSHOT_H_448)
+                    .saturating_sub(font_sm),
             ),
             font_sm,
             Sh2TextColor::White,
@@ -239,8 +265,7 @@ fn draw_command_column(
     snapshot: &InventoryPlayerSnapshot,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    sx: f32,
-    sy: f32,
+    c: Ps2Canvas,
 ) {
     let cmds = if screen.focus == InventoryFocus::CommandWindow {
         screen.active_commands.clone()
@@ -252,12 +277,12 @@ fn draw_command_column(
 
     // Exact `font_print` (`0x001d5e14`: `x = 360`, row step `25`) aligned strictly inside
     // `CommandWindowMouseFix.cpp` (`0x00472428`: `x in 356..439`, `y in 63..139`, rows `< 88`, `< 114`).
-    let text_x = (COMMAND_TEXT_X * sx).round() as usize;
-    let bar_x = (CMD_WIN_MOUSE_X_MIN * sx).round() as usize;
-    let bar_w = ((CMD_WIN_MOUSE_X_MAX - CMD_WIN_MOUSE_X_MIN) * sx).round() as usize;
-    let row_h = (COMMAND_ROW_STEP_Y * sy).round() as usize;
-    let y0 = (CMD_WIN_MOUSE_Y_MIN * sy).round() as usize;
-    let font_px = ((18.0 * sy).round() as usize).clamp(12, 28);
+    let text_x = c.xi(COMMAND_TEXT_X);
+    let bar_x = c.xi(CMD_WIN_MOUSE_X_MIN);
+    let bar_w = ((CMD_WIN_MOUSE_X_MAX - CMD_WIN_MOUSE_X_MIN) * c.sx).round() as usize;
+    let row_h = (COMMAND_ROW_STEP_Y * c.sy).round() as usize;
+    let y0 = c.yi(CMD_WIN_MOUSE_Y_MIN);
+    let font_px = ((18.0 * c.sy).round() as usize).clamp(12, 28);
     let in_cmd = screen.focus == InventoryFocus::CommandWindow;
 
     for (idx, cmd) in cmds.iter().enumerate() {
@@ -269,7 +294,7 @@ fn draw_command_column(
                 bar_x,
                 ry + font_px / 2,
                 bar_w,
-                ((8.0 * sy).round() as usize).clamp(4, 16),
+                ((8.0 * c.sy).round() as usize).clamp(4, 16),
                 true,
             );
         }
@@ -290,13 +315,12 @@ fn draw_carousel_arc(
     item_atlas_rgba: Option<(&[u8], usize, usize)>,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    sx: f32,
-    sy: f32,
+    c: Ps2Canvas,
 ) {
     // Center of `512x448` PS2 screen (`256, 224`)
-    let cx = (PS2_UI_WIDTH * 0.5) * sx;
-    let cy = (PS2_UI_HEIGHT * 0.5) * sy;
-    let font_px = ((16.0 * sy).round() as usize).clamp(10, 24);
+    let cx = c.x(PS2_UI_WIDTH * 0.5);
+    let cy = c.y(PS2_UI_HEIGHT * 0.5);
+    let font_px = ((16.0 * c.sy).round() as usize).clamp(10, 24);
 
     if screen.owned_items.is_empty() {
         font.draw_line_centered(
@@ -310,12 +334,11 @@ fn draw_carousel_arc(
         return;
     }
 
-    // Center selection reticle (`STATUS_SNAPSHOT_H_448 = 105` square in `512x448` space),
+    // Square center selection reticle (`STATUS_SNAPSHOT_H_448 = 105` tall/wide in pixel-square 4:3 space),
     // colored strictly with `SH2_BLUE_BAR_RGB` (`lookline` `0x00f06030`) and `ECG_GS_ALPHA` (`0xa0`).
-    let ret_w = (STATUS_SNAPSHOT_H_448 * sx).round() as usize;
-    let ret_h = (STATUS_SNAPSHOT_H_448 * sy).round() as usize;
-    let rx = (cx as usize).saturating_sub(ret_w / 2);
-    let ry = (cy as usize).saturating_sub(ret_h / 2);
+    let ret_size = (STATUS_SNAPSHOT_H_448 * c.sy).round() as usize;
+    let rx = (cx as usize).saturating_sub(ret_size / 2);
+    let ry = (cy as usize).saturating_sub(ret_size / 2);
     let [br, bg, bb] = SH2_BLUE_BAR_RGB;
     let ret_a = if matches!(
         screen.focus,
@@ -325,13 +348,13 @@ fn draw_carousel_arc(
     } else {
         ECG_GS_ALPHA
     };
-    rasterizer.draw_rect_outline(rx, ry, ret_w, ret_h, 1, [br, bg, bb, ret_a]);
-    let offset = (2.0 * sy).round().max(1.0) as usize;
+    rasterizer.draw_rect_outline(rx, ry, ret_size, ret_size, 1, [br, bg, bb, ret_a]);
+    let offset = (2.0 * c.sy).round().max(1.0) as usize;
     rasterizer.draw_rect_outline(
         rx.saturating_sub(offset),
         ry.saturating_sub(offset),
-        ret_w,
-        ret_h,
+        ret_size,
+        ret_size,
         1,
         [br, bg, bb, ret_a / 2],
     );
@@ -361,10 +384,10 @@ fn draw_carousel_arc(
             CAROUSEL_UNSELECTED_SCALE
         };
         let proj = project_carousel_slot(ofs as f32, slot_scale);
-        let px = cx + proj.offset_x_640 * x_640_to_512 * sx;
+        let px = cx + proj.offset_x_640 * x_640_to_512 * c.sx;
         let py = cy;
         let alpha = if ofs == 0 { 1.0 } else { proj.alpha };
-        let sprite_h = STATUS_SNAPSHOT_H_448 * proj.scale * sy;
+        let sprite_h = STATUS_SNAPSHOT_H_448 * proj.scale * c.sy;
 
         if let (Some((atlas, aw, ah)), Some(rect)) = (item_atlas_rgba, item_icon_rect(item_id)) {
             let sprite_w = sprite_h * rect.aspect();
@@ -409,7 +432,7 @@ fn draw_carousel_arc(
                 font.draw_line_centered(
                     rasterizer,
                     &format!("- {} -", count),
-                    (cx as usize, ry + ret_h.saturating_sub(font_px + 4)),
+                    (cx as usize, ry + ret_size.saturating_sub(font_px + 4)),
                     font_px,
                     Sh2TextColor::White,
                     true,
@@ -423,17 +446,16 @@ fn draw_item_footer(
     screen: &InventoryScreen,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    sx: f32,
-    sy: f32,
+    c: Ps2Canvas,
 ) {
     // Exact `SLUS_202.28` `font_print` (`0x001d5b50..0x001d5b90`) in `512x448`:
     // Item Name at `(0x14 = 20, 0x145 = 325)`, Description at `(0x2d = 45, 0x168 = 360)`
-    let title_px = ((18.0 * sy).round() as usize).clamp(12, 28);
-    let body_px = ((15.0 * sy).round() as usize).clamp(10, 24);
-    let name_x = (20.0 * sx).round() as usize;
-    let name_y = ((325.0 * sy).round() as usize).saturating_sub(title_px);
-    let desc_x = (45.0 * sx).round() as usize;
-    let desc_y = ((360.0 * sy).round() as usize).saturating_sub(body_px);
+    let title_px = ((18.0 * c.sy).round() as usize).clamp(12, 28);
+    let body_px = ((15.0 * c.sy).round() as usize).clamp(10, 24);
+    let name_x = c.xi(20.0);
+    let name_y = c.yi(325.0).saturating_sub(title_px);
+    let desc_x = c.xi(45.0);
+    let desc_y = c.yi(360.0).saturating_sub(body_px);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
         font.draw_line_styled(
@@ -445,7 +467,7 @@ fn draw_item_footer(
             true,
         );
         let mut line_y = desc_y;
-        for line in meta.description.lines().take(2) {
+        for line in meta.description.lines().take(3) {
             font.draw_line_styled(
                 rasterizer,
                 line,
@@ -462,8 +484,8 @@ fn draw_item_footer(
         font.draw_line_styled(
             rasterizer,
             toast,
-            (desc_x, (390.0 * sy).round() as usize),
-            ((14.0 * sy).round() as usize).clamp(10, 20),
+            (desc_x, c.yi(395.0)),
+            ((14.0 * c.sy).round() as usize).clamp(10, 20),
             Sh2TextColor::Green,
             true,
         );
@@ -475,16 +497,15 @@ fn draw_bottom_nav_bar(
     snapshot: &InventoryPlayerSnapshot,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    sx: f32,
-    sy: f32,
+    c: Ps2Canvas,
 ) {
     // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428` baseline in `512x448`):
     // `0x09` = "Option" (`0x40 = 64`), `0x0a` = "Map" (`0xf0 = 240`), `0x0b` = "Memo" (`0x187 = 391`)
-    let font_px = ((20.0 * sy).round() as usize).clamp(12, 34);
-    let bar_h = ((8.0 * sy).round() as usize).clamp(4, 16);
-    let bar_w = (SPRITE_BAR_WIDTH * sx).round() as usize;
-    let y_bar = (SPRITE_BOT_BAR_CY * sy).round() as usize;
-    let y_text = ((428.0 * sy).round() as usize).saturating_sub(font_px);
+    let font_px = ((20.0 * c.sy).round() as usize).clamp(12, 34);
+    let bar_h = ((8.0 * c.sy).round() as usize).clamp(4, 16);
+    let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
+    let y_bar = c.yi(SPRITE_BOT_BAR_CY);
+    let y_text = c.yi(428.0).saturating_sub(font_px);
 
     let text_x: [f32; 3] = [64.0, 240.0, 391.0];
 
@@ -494,7 +515,7 @@ fn draw_bottom_nav_bar(
 
         draw_sh2_blue_bar(
             rasterizer,
-            (SPRITE_BAR_X0[col_idx] * sx).round() as usize,
+            c.xi(SPRITE_BAR_X0[col_idx]),
             y_bar,
             bar_w,
             bar_h,
@@ -510,7 +531,7 @@ fn draw_bottom_nav_bar(
         font.draw_line_styled(
             rasterizer,
             btn.label(),
-            ((text_x[col_idx] * sx).round() as usize, y_text),
+            (c.xi(text_x[col_idx]), y_text),
             font_px,
             text_color,
             true,
@@ -523,23 +544,23 @@ fn draw_examine_overlay(
     examine_tex_rgba: Option<(&[u8], usize, usize)>,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    sy: f32,
+    c: Ps2Canvas,
 ) {
     let w = rasterizer.width;
     let h = rasterizer.height;
     rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, 240]);
 
     if let Some((rgba, tw, th)) = examine_tex_rgba {
-        let max_h = (300.0 * sy).round() as usize;
+        let max_h = (300.0 * c.sy).round() as usize;
         let max_w = ((max_h as f32) * (tw as f32 / th.max(1) as f32)).round() as usize;
         let dx = w.saturating_sub(max_w) / 2;
-        let dy = (STATUS_SNAPSHOT_X_512 * sy).round() as usize;
+        let dy = c.yi(STATUS_SNAPSHOT_X_512);
         rasterizer.blit_rgba_scaled(dx, dy, max_w, max_h, rgba, tw, th, 1.0);
     }
 
-    let title_px = ((18.0 * sy).round() as usize).clamp(12, 28);
-    let body_px = ((14.0 * sy).round() as usize).clamp(10, 22);
-    let text_y0 = (325.0 * sy).round() as usize;
+    let title_px = ((18.0 * c.sy).round() as usize).clamp(12, 28);
+    let body_px = ((14.0 * c.sy).round() as usize).clamp(10, 22);
+    let text_y0 = c.yi(325.0);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
         font.draw_line_centered(

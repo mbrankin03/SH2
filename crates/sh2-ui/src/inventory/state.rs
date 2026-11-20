@@ -253,10 +253,14 @@ impl InventoryScreen {
         if !self.is_open || viewport_w <= 0.0 || viewport_h <= 0.0 {
             return;
         }
-        // Authentic PS2/PC `512x448` logical coordinate space (`font_print` `0x001d4c00` &
-        // `CommandWindowMouseFix.cpp` `0x00472428`).
-        let ps2_x = mouse_x * 512.0 / viewport_w;
-        let ps2_y = mouse_y * 448.0 / viewport_h;
+        // Authentic PS2/PC `512x448` logical coordinate space inside the centered 4:3 UI canvas
+        // (`font_print` `0x001d4c00` & `CommandWindowMouseFix.cpp` `0x00472428`).
+        let (ox, oy, cw, ch) = super::ps2_ui_canvas_rect(viewport_w, viewport_h);
+        if cw <= 0.0 || ch <= 0.0 {
+            return;
+        }
+        let ps2_x = (mouse_x - ox) * 512.0 / cw;
+        let ps2_y = (mouse_y - oy) * 448.0 / ch;
 
         if self.focus == InventoryFocus::CommandWindow {
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
@@ -304,8 +308,12 @@ impl InventoryScreen {
             return (MenuSoundCue::None, InventoryAction::None);
         }
         self.handle_mouse_move(mouse_x, mouse_y, viewport_w, viewport_h);
-        let ps2_x = mouse_x * 512.0 / viewport_w;
-        let ps2_y = mouse_y * 448.0 / viewport_h;
+        let (ox, oy, cw, ch) = super::ps2_ui_canvas_rect(viewport_w, viewport_h);
+        if cw <= 0.0 || ch <= 0.0 {
+            return (MenuSoundCue::None, InventoryAction::None);
+        }
+        let ps2_x = (mouse_x - ox) * 512.0 / cw;
+        let ps2_y = (mouse_y - oy) * 448.0 / ch;
 
         if self.focus == InventoryFocus::CommandWindow {
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
@@ -625,15 +633,18 @@ mod tests {
         assert_eq!(screen.focus, InventoryFocus::CommandWindow);
         assert_eq!(screen.active_commands.len(), 3);
 
-        // SH2:EE CommandWindowMouseFix 3-option hitboxes (512x448 PS2/PC logical space)
-        screen.handle_mouse_move(390.0, 75.0, 512.0, 448.0);
+        // SH2:EE CommandWindowMouseFix 3-option hitboxes inside a 4:3 (640x480) viewport:
+        // PS2 `512x448` `(390, 75/100/128)` scales to `(487.5, 80.36/107.14/137.14)` in 640x480.
+        let sx = 640.0 / 512.0;
+        let sy = 480.0 / 448.0;
+        screen.handle_mouse_move(390.0 * sx, 75.0 * sy, 640.0, 480.0);
         assert_eq!(screen.command_index, 0);
-        screen.handle_mouse_move(390.0, 100.0, 512.0, 448.0);
+        screen.handle_mouse_move(390.0 * sx, 100.0 * sy, 640.0, 480.0);
         assert_eq!(screen.command_index, 1);
-        screen.handle_mouse_move(390.0, 128.0, 512.0, 448.0);
+        screen.handle_mouse_move(390.0 * sx, 128.0 * sy, 640.0, 480.0);
         assert_eq!(screen.command_index, 2);
 
-        let (cue, _) = screen.handle_mouse_click(390.0, 128.0, 512.0, 448.0, &inv, &snap);
+        let (cue, _) = screen.handle_mouse_click(390.0 * sx, 128.0 * sy, 640.0, 480.0, &inv, &snap);
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(screen.focus, InventoryFocus::CombineTarget);
         assert_eq!(screen.command_index, 2);

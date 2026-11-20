@@ -174,13 +174,14 @@ impl HealthEcgState {
 
     /// Computes the `(x, y, width, height)` viewport pixel rectangle for the live 3D game snapshot
     /// inside a swapchain of `(viewport_w, viewport_h)`, derived 1:1 from `SLUS_202.28` `look_hp`
-    /// (`0x001d9b6c..0x001d9bfc`) in `512x448` PS2 logical coordinates.
+    /// (`0x001d9b6c..0x001d9bfc`) inside the centered 4:3 PS2 UI canvas (`ps2_ui_canvas_rect`).
     pub fn snapshot_viewport_rect(viewport_w: f32, viewport_h: f32) -> (f32, f32, f32, f32) {
-        let sx = viewport_w / 512.0;
-        let sy = viewport_h / 448.0;
+        let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(viewport_w, viewport_h);
+        let sx = cw / 512.0;
+        let sy = ch / 448.0;
         (
-            STATUS_SNAPSHOT_X_512 * sx,
-            STATUS_SNAPSHOT_Y_448 * sy,
+            ox + STATUS_SNAPSHOT_X_512 * sx,
+            oy + STATUS_SNAPSHOT_Y_448 * sy,
             STATUS_SNAPSHOT_W_512 * sx,
             STATUS_SNAPSHOT_H_448 * sy,
         )

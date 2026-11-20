@@ -27,6 +27,27 @@ pub use health_ecg::{HealthEcgState, HealthStatus};
 pub use render::draw_inventory_screen;
 pub use state::InventoryScreen;
 
+/// Computes the centered 4:3 PS2 UI canvas `(origin_x, origin_y, canvas_w, canvas_h)` inside
+/// an arbitrary viewport `(viewport_w, viewport_h)` so `512x448` PS2 UI elements (the 4:3
+/// `Status` snapshot box, square reticle, and 3-column bars) never stretch horizontally on
+/// 16:9 / 21:9 widescreen displays (matching SH2:EE 4:3 menu pillarboxing).
+pub fn ps2_ui_canvas_rect(viewport_w: f32, viewport_h: f32) -> (f32, f32, f32, f32) {
+    if viewport_w <= 0.0 || viewport_h <= 0.0 {
+        return (0.0, 0.0, viewport_w.max(0.0), viewport_h.max(0.0));
+    }
+    let target_aspect = 4.0 / 3.0;
+    let current_aspect = viewport_w / viewport_h;
+    if current_aspect > target_aspect {
+        let canvas_h = viewport_h;
+        let canvas_w = viewport_h * target_aspect;
+        ((viewport_w - canvas_w) * 0.5, 0.0, canvas_w, canvas_h)
+    } else {
+        let canvas_w = viewport_w;
+        let canvas_h = viewport_w / target_aspect;
+        (0.0, (viewport_h - canvas_h) * 0.5, canvas_w, canvas_h)
+    }
+}
+
 /// Number of visible slots in the PS2 carousel (`item_turn` @ `0x001d3258`, `addiu $3, $8, 0xa`).
 pub const CAROUSEL_VISIBLE_SLOTS: usize = 10;
 /// Center selected slot index in the carousel (`itemmainmain` @ `0x001ce178`, `addiu $3, $zero, 0x5`).

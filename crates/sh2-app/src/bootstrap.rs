@@ -216,8 +216,10 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     );
 
     let mut combat_arena = sh2_core::combat::CombatArena::new();
-    // Give James his trusty wooden plank for the testing arena
-    combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
+    // Only pre-equip the Wooden Plank inside the CombatArena test room; Campaign starts unarmed.
+    if initial_room == TestRoomKind::CombatArena {
+        combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
+    }
 
     let mut sim_core = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
     sim_core.collision = find_cld_file_for_room(initial_room);

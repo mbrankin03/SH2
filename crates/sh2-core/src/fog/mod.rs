@@ -286,13 +286,16 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                     PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 )
             };
-            // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00366e60`, `draw_env_tables.rs`):
+            // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `draw_env_tables.rs`):
             // `fog_near = 19000.0` mm, `fog_far = 33000.0` mm, linear depth-fog ramp.
+            // On PS2, the Observation Deck overlooks Toluca Lake & the distant green hills
+            // (`ob01.map` `stride == 0x14` vista at `23,430..44,237 mm`) with only gentle
+            // atmospheric horizon haze (not heavy whiteout fog, which begins on the Forest Trail).
             RoomFogEvaluation {
                 fog_color: [0.65, 0.68, 0.72, 1.0],
                 fog_near_mm: 19_000.0,
                 fog_far_mm: 33_000.0,
-                density: 1.0,
+                density: 0.28,
                 curve: FogFalloffCurve::Linear,
                 speed_mult: FOG_SPEED_OUTDOOR_SLOW,
                 layers: base_layers,

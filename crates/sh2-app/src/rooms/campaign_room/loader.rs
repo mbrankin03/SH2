@@ -28,36 +28,54 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
     ];
 
+    let active_tex_quality = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality;
+
     let mut loaded_map = false;
     for base in &base_roots {
         let loader = TextureLoader::new(
             PathBuf::from(base).join("data"),
             Some(PathBuf::from(base).join("sh2e")),
         );
-        if let Ok(hd_map) =
-            loader.load_map_with_hd_overrides(&manifest.map_rel_path, &manifest.room_id)
-        {
-            state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &hd_map);
-            let hd_bgs = build_map_texture_bind_groups(&state.render_ctx, &hd_map);
-            let sh2e_bgs = loader
+        // Load ONLY the active `WorldTextureQuality` tier synchronously to avoid parsing the `.map`
+        // and decoding/uploading all 3 full texture tiers (including 4K AI Master PNGs) on every
+        // room transition.
+        let loaded = match active_tex_quality {
+            sh2_core::config::WorldTextureQuality::Ai4kMaster => {
+                loader.load_map_with_hd_overrides(&manifest.map_rel_path, &manifest.room_id)
+            }
+            sh2_core::config::WorldTextureQuality::Sh2eeHd => loader
                 .load_sh2e_map(&manifest.map_rel_path, &manifest.room_id)
-                .ok()
-                .map(|m| build_map_texture_bind_groups(&state.render_ctx, &m))
-                .unwrap_or_else(|| hd_bgs.clone());
-            let van_bgs = loader
+                .or_else(|_| {
+                    loader.load_map_with_hd_overrides(&manifest.map_rel_path, &manifest.room_id)
+                }),
+            sh2_core::config::WorldTextureQuality::OriginalPs2 => loader
                 .load_vanilla_map(&manifest.map_rel_path, &manifest.room_id)
-                .ok()
-                .map(|m| build_map_texture_bind_groups(&state.render_ctx, &m))
-                .unwrap_or_else(|| sh2e_bgs.clone());
-            state.map_hd_texture_bind_groups = hd_bgs;
-            state.map_sh2e_texture_bind_groups = sh2e_bgs;
-            state.map_vanilla_texture_bind_groups = van_bgs;
+                .or_else(|_| loader.load_sh2e_map(&manifest.map_rel_path, &manifest.room_id)),
+        };
+        if let Ok(active_map) = loaded {
+            state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &active_map);
+            let active_bgs = build_map_texture_bind_groups(&state.render_ctx, &active_map);
+            state.map_hd_texture_bind_groups = active_bgs.clone();
+            state.map_sh2e_texture_bind_groups = match active_tex_quality {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd => active_bgs.clone(),
+                _ => Vec::new(),
+            };
+            state.map_vanilla_texture_bind_groups = match active_tex_quality {
+                sh2_core::config::WorldTextureQuality::OriginalPs2 => active_bgs,
+                _ => Vec::new(),
+            };
             loaded_map = true;
             tracing::info!(
-                "[Campaign] Loaded Stage {} '{}' ({}, enemies={}, pickups={})",
+                "[Campaign] Loaded Stage {} '{}' ({}, tier={:?}, enemies={}, pickups={})",
                 manifest.stage_id,
                 manifest.stage_name,
                 manifest.map_rel_path,
+                active_tex_quality,
                 manifest.enemy_spawns.len(),
                 manifest.room_pickups.len()
             );

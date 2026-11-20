@@ -495,23 +495,30 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     }
     state.render_ctx.update_fog(&effective_fog);
 
-    // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`)
-    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
+    // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`).
+    // On PS2, the Observation Deck parking lot (`ob01`, `R_OBSV_DECK_ID`) overlooks Toluca Lake
+    // clearly without ground-level mist billboards blanketing the lot (thick mist begins down the
+    // forest trail); keep billboards active in `SyntheticFogRunway` and fogged town/forest areas.
+    let ps2_room_id = {
+        let from_room =
+            sh2_core::fog::room_id_from_stage_code(&state.sim_core.scenario.current_room);
+        if from_room != 0 {
+            from_room
+        } else if matches!(
+            state.active_test_room,
+            TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway
+        ) {
+            sh2_core::fog::R_OBSV_DECK_ID
+        } else {
+            0
+        }
+    };
+    let emit_proximity_fog_sprites = effective_fog.layer2_params[3] > 0.5
+        && effective_fog.density > 0.05
+        && (ps2_room_id != sh2_core::fog::R_OBSV_DECK_ID
+            || state.active_test_room == TestRoomKind::SyntheticFogRunway);
+    if emit_proximity_fog_sprites {
         let player_pos = state.sim_core.scenario.player_position;
-        let ps2_room_id = {
-            let from_room =
-                sh2_core::fog::room_id_from_stage_code(&state.sim_core.scenario.current_room);
-            if from_room != 0 {
-                from_room
-            } else if matches!(
-                state.active_test_room,
-                TestRoomKind::ObservationDeck | TestRoomKind::SyntheticFogRunway
-            ) {
-                sh2_core::fog::R_OBSV_DECK_ID
-            } else {
-                0
-            }
-        };
         let room_eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
             room_id: ps2_room_id,
             james_pos_y_mm: player_pos.y,

@@ -299,14 +299,26 @@ pub(crate) fn update_spotlight_uniforms(
             }
         } else if !is_dark_room {
             // Daytime / lit room (`sh2gfw_Get_NightOrDay() == 0`): emit authentic PS2 parallel
-            // directional sky light (`sh2gfw_setparal3LGT_blk` @ `SLUS_202.28` `0x0017d7f0`,
-            // `DrawEnvData.directional_lights[0]`, e.g. `OB_DrawEnvData` `dir=[0,1,0], color=[0.1,0.1,0.1]`).
+            // directional light (`sh2gfw_setparal3LGT_blk` @ `SLUS_202.28` `0x0017d7f0`,
+            // `DrawEnvData.directional_lights[0]`) scaled into the shader's `base_ambient * 2.2`
+            // linear unit space (`0.07 * 2.2 = 0.154`) so `ER_DrawEnvData[room=1]` (`col=[0.5,0.5,0.5]`)
+            // and `OB_DrawEnvData` (`col=[0.1,0.1,0.1]`) match their PS2 diffuse-to-ambient ratios
+            // without overexposing lit interiors or mirrors. Zero camera headlamp fill in lit rooms.
+            const PARALLEL_LIGHT_LINEAR_SCALE: f32 = 0.07 * 2.2;
             let (dir, color) = draw_env
                 .map(|env| {
                     let dl = env.directional_lights[0];
                     let d = glam::Vec3::from_array(dl.direction)
                         .normalize_or(glam::Vec3::new(0.0, 1.0, 0.0));
-                    (d, [dl.color[0], dl.color[1], dl.color[2], -1.0])
+                    (
+                        d,
+                        [
+                            dl.color[0] * PARALLEL_LIGHT_LINEAR_SCALE,
+                            dl.color[1] * PARALLEL_LIGHT_LINEAR_SCALE,
+                            dl.color[2] * PARALLEL_LIGHT_LINEAR_SCALE,
+                            -1.0,
+                        ],
+                    )
                 })
                 .unwrap_or((glam::Vec3::new(0.0, 1.0, 0.0), [0.0, 0.0, 0.0, -1.0]));
             let far_pos = spot_pos - dir * 50_000.0;
@@ -320,12 +332,7 @@ pub(crate) fn update_spotlight_uniforms(
                     ambient_tint[2],
                     modulated_ambient,
                 ],
-                fill_and_range: [
-                    darkness.camera_fill_k,
-                    1_000_000.0,
-                    darkness.flash_level,
-                    0.0,
-                ],
+                fill_and_range: [0.0, 1_000_000.0, darkness.flash_level, 0.0],
             }
         } else {
             // Dark room, Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`), while dark rooms receive

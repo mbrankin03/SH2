@@ -52,37 +52,39 @@ pub const CMD_WIN_ROW_0_MAX_Y: f32 = 88.0;
 pub const CMD_WIN_ROW_1_MAX_Y: f32 = 114.0;
 
 /// Three bottom-row navigation buttons on the Status / Inventory screen
-/// (`SLUS_202.28` `font_print` @ `0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428`: `Options | Memo | Map`).
+/// (`SLUS_202.28` `font_print` @ `0x001d5c50..0x001d5ca8` & retail `item_msg_e.mes` `0x09..0x0b`,
+/// `y = 0x1ac = 428` in `512x448` space: `Option | Map | Memo`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CornerButton {
-    /// Open in-game Options menu (`x = 0x40 = 64, y = 0x1ac = 428`).
+    /// Open in-game Options menu (`0x09` `"Option"` at `x = 0x40 = 64, y = 0x1ac = 428`).
     Option = 0,
-    /// Open collected Memo List (`x = 0xf0 = 240, y = 0x1ac = 428`, `Event/memo.c`).
-    Memo = 1,
-    /// Open Fullscreen Paper Map (`x = 0x187 = 391, y = 0x1ac = 428`, `Event/chizu.c`).
-    Map = 2,
+    /// Open Fullscreen Paper Map (`0x0a` `"Map"` at `x = 0xf0 = 240, y = 0x1ac = 428`, `Event/chizu.c`).
+    Map = 1,
+    /// Open collected Memo List (`0x0b` `"Memo"` at `x = 0x187 = 391, y = 0x1ac = 428`, gated by `MemoCommandCheck`).
+    Memo = 2,
 }
 
 impl CornerButton {
-    /// Ordered list of the three PS2 bottom-row buttons (`Options`, `Memo`, `Map`).
+    /// Ordered list of the three PS2 bottom-row buttons (`Option`, `Map`, `Memo`).
     pub const ALL: [CornerButton; 3] =
-        [CornerButton::Option, CornerButton::Memo, CornerButton::Map];
+        [CornerButton::Option, CornerButton::Map, CornerButton::Memo];
 
-    /// Authentic PS2 Final Release display label.
+    /// Authentic PS2 / retail `item_msg_e.mes` (`0x09..0x0b`) display label.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::Option => "Options",
-            Self::Memo => "Memo",
+            Self::Option => "Option",
             Self::Map => "Map",
+            Self::Memo => "Memo",
         }
     }
 
-    /// Logical 640x480 hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `font_print` (`y = 428`).
-    pub const fn hitbox_640x480(&self) -> (f32, f32, f32, f32) {
+    /// Logical `512x448` PS2 hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `sprite`
+    /// (`0x001d8c80..0x001d8d58`: column width `140` at `x = 26, 186, 346`) and `font_print` (`y = 428`).
+    pub const fn hitbox_512x448(&self) -> (f32, f32, f32, f32) {
         match self {
-            Self::Option => (44.0, 418.0, 218.0, 454.0),
-            Self::Memo => (232.0, 418.0, 406.0, 454.0),
-            Self::Map => (420.0, 418.0, 596.0, 454.0),
+            Self::Option => (26.0, 408.0, 166.0, 442.0),
+            Self::Map => (186.0, 408.0, 326.0, 442.0),
+            Self::Memo => (346.0, 408.0, 486.0, 442.0),
         }
     }
 }
@@ -130,7 +132,7 @@ pub enum InventoryFocus {
     /// Navigating the horizontal 3D item carousel.
     #[default]
     Carousel,
-    /// Navigating the 3 bottom-row buttons (`Options`, `Memo`, `Map`).
+    /// Navigating the 3 bottom-row buttons (`Option`, `Map`, `Memo`).
     Corner(CornerButton),
     /// Choosing an action inside the command pop-up window for the selected item.
     CommandWindow,

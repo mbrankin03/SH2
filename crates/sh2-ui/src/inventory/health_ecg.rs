@@ -39,16 +39,21 @@ pub const ECG_DANGER_COLOR_RATIO: f32 = 0.5;
 pub const ECG_CRITICAL_DANGER_RATIO: f32 = 0.25;
 /// Base RGB channel intensity in `look_hp` (`0x43200000` = `160.0` at `0x001d9a6c`).
 pub const ECG_BASE_COLOR_INTENSITY: f32 = 160.0;
+/// GS alpha byte emitted by `look_hp` (`0xa0` = `160` at `0x001d9ad0` and `0x001d9b30`).
+pub const ECG_GS_ALPHA: u8 = 0xa0;
 
-/// Top-left `Status` 3D snapshot rectangle in 640x480 logical space `(x, y, w, h)`
-/// matching PS2 Final Release layout (`look_hp` `0x001d9b6c..0x001d9b84` under `Status` `y = 50`).
-pub const STATUS_SNAPSHOT_X_640: f32 = 50.0;
-/// Top-left Y of the `Status` 3D snapshot box in 640x480 space.
-pub const STATUS_SNAPSHOT_Y_480: f32 = 64.0;
-/// Width of the `Status` 3D snapshot box in 640x480 space.
-pub const STATUS_SNAPSHOT_W_640: f32 = 166.0;
-/// Height of the `Status` 3D snapshot box in 640x480 space.
-pub const STATUS_SNAPSHOT_H_480: f32 = 108.0;
+/// Top-left `Status` 3D snapshot X in `512x448` PS2 logical space (`256 + (-230) = 26`,
+/// `SLUS_202.28` `look_hp` `0x001d9b6c`, `addiu $4, $zero, -0xe6`).
+pub const STATUS_SNAPSHOT_X_512: f32 = 26.0;
+/// Top-left `Status` 3D snapshot Y in `512x448` PS2 logical space (`224 + (-175) = 49`,
+/// `SLUS_202.28` `look_hp` `0x001d9b80`, `addiu $4, $zero, -0xaf`).
+pub const STATUS_SNAPSHOT_Y_448: f32 = 49.0;
+/// Width of the `Status` 3D snapshot box in `512x448` PS2 logical space (`-90 - (-230) = 140`,
+/// `SLUS_202.28` `look_hp` `0x001d9be8`, `addiu $4, $zero, -0x5a`).
+pub const STATUS_SNAPSHOT_W_512: f32 = 140.0;
+/// Height of the `Status` 3D snapshot box in `512x448` PS2 logical space (`-70 - (-175) = 105`,
+/// `SLUS_202.28` `look_hp` `0x001d9bfc`, `addiu $4, $zero, -0x46`).
+pub const STATUS_SNAPSHOT_H_448: f32 = 105.0;
 
 /// Coarse health status band reflected in the `Status` snapshot tint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +150,9 @@ impl HealthEcgState {
         self.static_frame = self.static_frame.wrapping_add(1);
     }
 
-    /// Computes the authentic RGBA tint for the `Status` snapshot box (`look_hp` `0x001d9a3c..0x001d9b50`).
+    /// Computes the exact `SLUS_202.28` `look_hp` (`0x001d9a3c..0x001d9b50`) GS RGBA vertex color:
+    /// - `hp >= 0.5 * max_hp` (`0x001d9afc`): `R = G = B = 160.0 * pulse`, `A = 0xa0`.
+    /// - `hp < 0.5 * max_hp` (`0x001d9a64`): `R = 160.0 * pulse`, `G = B = 160.0 * pulse * (2.0 * ratio)`, `A = 0xa0`.
     pub fn status_color_rgba(&self, hp: f32, max_hp: f32) -> [u8; 4] {
         let ratio = if max_hp > 0.0 {
             (hp / max_hp).clamp(0.0, 1.0)
@@ -153,71 +160,62 @@ impl HealthEcgState {
             0.0
         };
         let pulse = self.pulse_brightness;
-        if ratio >= ECG_PULSE_THRESHOLD_RATIO {
-            // Fine: authentic translucent green tint wash over frozen 3D snapshot
-            let g = (ECG_BASE_COLOR_INTENSITY * pulse).round().clamp(0.0, 255.0) as u8;
-            let r = (g as f32 * 0.30).round() as u8;
-            let b = (g as f32 * 0.35).round() as u8;
-            [r, g, b, 92]
-        } else if ratio >= ECG_DANGER_COLOR_RATIO {
-            // Upper Caution (50%..80%): green -> yellow/amber wash
-            let t = (ratio - ECG_DANGER_COLOR_RATIO)
-                / (ECG_PULSE_THRESHOLD_RATIO - ECG_DANGER_COLOR_RATIO);
-            let r = (ECG_BASE_COLOR_INTENSITY * pulse * (1.0 - 0.55 * t))
-                .round()
-                .clamp(0.0, 255.0) as u8;
-            let g = (ECG_BASE_COLOR_INTENSITY * pulse).round().clamp(0.0, 255.0) as u8;
-            let b = (ECG_BASE_COLOR_INTENSITY * pulse * 0.18)
-                .round()
-                .clamp(0.0, 255.0) as u8;
-            [r, g, b, 110]
+        if ratio >= ECG_DANGER_COLOR_RATIO {
+            let c = (ECG_BASE_COLOR_INTENSITY * pulse).round().clamp(0.0, 255.0) as u8;
+            [c, c, c, ECG_GS_ALPHA]
         } else {
-            // Lower Caution / Danger (< 50%): exact `look_hp` formula (`0x001d9a64..0x001d9ac4`)
             let r = (ECG_BASE_COLOR_INTENSITY * pulse).round().clamp(0.0, 255.0) as u8;
-            let g = (ECG_BASE_COLOR_INTENSITY * pulse * (2.0 * ratio))
+            let gb = (ECG_BASE_COLOR_INTENSITY * pulse * (2.0 * ratio))
                 .round()
                 .clamp(0.0, 255.0) as u8;
-            let b = (g as f32 * 0.25).round() as u8;
-            [r, g, b, 132]
+            [r, gb, gb, ECG_GS_ALPHA]
         }
     }
 
     /// Computes the `(x, y, width, height)` viewport pixel rectangle for the live 3D game snapshot
-    /// inside a swapchain of `(viewport_w, viewport_h)`.
+    /// inside a swapchain of `(viewport_w, viewport_h)`, derived 1:1 from `SLUS_202.28` `look_hp`
+    /// (`0x001d9b6c..0x001d9bfc`) in `512x448` PS2 logical coordinates.
     pub fn snapshot_viewport_rect(viewport_w: f32, viewport_h: f32) -> (f32, f32, f32, f32) {
-        let sx = viewport_w / 640.0;
-        let sy = viewport_h / 480.0;
+        let sx = viewport_w / 512.0;
+        let sy = viewport_h / 448.0;
         (
-            STATUS_SNAPSHOT_X_640 * sx,
-            STATUS_SNAPSHOT_Y_480 * sy,
-            STATUS_SNAPSHOT_W_640 * sx,
-            STATUS_SNAPSHOT_H_480 * sy,
+            STATUS_SNAPSHOT_X_512 * sx,
+            STATUS_SNAPSHOT_Y_448 * sy,
+            STATUS_SNAPSHOT_W_512 * sx,
+            STATUS_SNAPSHOT_H_448 * sy,
         )
     }
 
-    /// Renders the translucent `look_hp` health color wash over the live 3D snapshot cutout.
-    /// Leaves the underlying frozen 3D gameplay frame visible inside `(x0, y0, w, h)` with
-    /// **no ECG waveform line and no status text** (1:1 PS2 Final Release).
+    /// Renders the `SLUS_202.28` `look_hp` (`0x001d9a3c..0x001d9b50`) health tint wash over the live
+    /// frozen 3D snapshot cutout, with **no ECG waveform line and no status text**.
     pub fn draw_snapshot_tint(&self, hp: f32, max_hp: f32, rasterizer: &mut TextRasterizer) {
         let (fx, fy, fw, fh) =
             Self::snapshot_viewport_rect(rasterizer.width as f32, rasterizer.height as f32);
         let x0 = fx.round() as usize;
         let y0 = fy.round() as usize;
-        let w = fw.round().max(16.0) as usize;
-        let h = fh.round().max(16.0) as usize;
+        let w = fw.round().max(1.0) as usize;
+        let h = fh.round().max(1.0) as usize;
 
+        let ratio = if max_hp > 0.0 {
+            (hp / max_hp).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let color = self.status_color_rgba(hp, max_hp);
-        rasterizer.fill_rect(x0, y0, w, h, color);
-
-        // Subtle CRT pulse scanline interference only in Danger (< 25% HP)
-        if HealthStatus::from_hp(hp, max_hp) == HealthStatus::Danger {
-            let seed = self
-                .static_frame
-                .wrapping_mul(1664525)
-                .wrapping_add(1013904223);
-            for band in 0..4u32 {
-                let row = ((seed.wrapping_add(band * 7919)) as usize) % h.max(1);
-                rasterizer.fill_rect(x0, y0 + row, w, 2, [215, 25, 25, 85]);
+        if ratio >= ECG_DANGER_COLOR_RATIO {
+            // `look_hp` (`0x001d9afc`): neutral `R=G=B=160*pulse`; when `pulse < 1.0` (`hp < 0.8`),
+            // dim the snapshot proportionally to `(1.0 - pulse) * ECG_GS_ALPHA`.
+            let dim_a =
+                ((1.0 - self.pulse_brightness).clamp(0.0, 1.0) * ECG_GS_ALPHA as f32).round() as u8;
+            if dim_a > 0 {
+                rasterizer.fill_rect(x0, y0, w, h, [0, 0, 0, dim_a]);
+            }
+        } else {
+            // `look_hp` (`0x001d9a90`): red shift factor `1.0 - 2.0 * ratio`, scaled by `ECG_GS_ALPHA`.
+            let red_shift = (1.0 - 2.0 * ratio).clamp(0.0, 1.0);
+            let tint_a = (red_shift * ECG_GS_ALPHA as f32).round() as u8;
+            if tint_a > 0 {
+                rasterizer.fill_rect(x0, y0, w, h, [color[0], color[1], color[2], tint_a]);
             }
         }
     }

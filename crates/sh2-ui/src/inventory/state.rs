@@ -253,14 +253,12 @@ impl InventoryScreen {
         if !self.is_open || viewport_w <= 0.0 || viewport_h <= 0.0 {
             return;
         }
-        let lx = mouse_x * 640.0 / viewport_w;
-        let ly = mouse_y * 480.0 / viewport_h;
+        // Authentic PS2/PC `512x448` logical coordinate space (`font_print` `0x001d4c00` &
+        // `CommandWindowMouseFix.cpp` `0x00472428`).
+        let ps2_x = mouse_x * 512.0 / viewport_w;
+        let ps2_y = mouse_y * 448.0 / viewport_h;
 
         if self.focus == InventoryFocus::CommandWindow {
-            // `CommandWindowMouseFix.cpp` (`0x00472428`) uses 512x448 PS2/PC logical coordinates
-            // (`x in 356..439`, `y in 63..139`), which map directly onto the right-hand `Command` column.
-            let ps2_x = mouse_x * 512.0 / viewport_w;
-            let ps2_y = mouse_y * 448.0 / viewport_h;
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
                 && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ps2_y)
             {
@@ -283,8 +281,8 @@ impl InventoryScreen {
             InventoryFocus::Carousel | InventoryFocus::Corner(_)
         ) {
             for btn in CornerButton::ALL {
-                let (x0, y0, x1, y1) = btn.hitbox_640x480();
-                if lx >= x0 && lx <= x1 && ly >= y0 && ly <= y1 {
+                let (x0, y0, x1, y1) = btn.hitbox_512x448();
+                if ps2_x >= x0 && ps2_x <= x1 && ps2_y >= y0 && ps2_y <= y1 {
                     self.focus = InventoryFocus::Corner(btn);
                     return;
                 }
@@ -306,12 +304,10 @@ impl InventoryScreen {
             return (MenuSoundCue::None, InventoryAction::None);
         }
         self.handle_mouse_move(mouse_x, mouse_y, viewport_w, viewport_h);
-        let lx = mouse_x * 640.0 / viewport_w;
-        let ly = mouse_y * 480.0 / viewport_h;
+        let ps2_x = mouse_x * 512.0 / viewport_w;
+        let ps2_y = mouse_y * 448.0 / viewport_h;
 
         if self.focus == InventoryFocus::CommandWindow {
-            let ps2_x = mouse_x * 512.0 / viewport_w;
-            let ps2_y = mouse_y * 448.0 / viewport_h;
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
                 && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ps2_y)
             {
@@ -322,14 +318,14 @@ impl InventoryScreen {
         }
 
         for btn in CornerButton::ALL {
-            let (x0, y0, x1, y1) = btn.hitbox_640x480();
-            if lx >= x0 && lx <= x1 && ly >= y0 && ly <= y1 {
+            let (x0, y0, x1, y1) = btn.hitbox_512x448();
+            if ps2_x >= x0 && ps2_x <= x1 && ps2_y >= y0 && ps2_y <= y1 {
                 self.focus = InventoryFocus::Corner(btn);
                 return self.handle_corner_nav(btn, MenuNavAction::Confirm, snapshot);
             }
         }
 
-        if (150.0..=340.0).contains(&ly) && !self.owned_items.is_empty() {
+        if (154.0..=320.0).contains(&ps2_y) && !self.owned_items.is_empty() {
             return self.handle_carousel_nav(MenuNavAction::Confirm, inventory, snapshot);
         }
 
@@ -363,7 +359,8 @@ impl InventoryScreen {
                 }
             }
             MenuNavAction::Up | MenuNavAction::Down => {
-                self.focus = InventoryFocus::Corner(CornerButton::Memo);
+                // Enter center bottom-row button (`Map`, `0x0a` at `x = 0xf0 = 240`)
+                self.focus = InventoryFocus::Corner(CornerButton::Map);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
             }
             MenuNavAction::Confirm => {
@@ -391,19 +388,20 @@ impl InventoryScreen {
     ) -> (MenuSoundCue, InventoryAction) {
         match nav {
             MenuNavAction::Left => {
+                // Authentic `SLUS_202.28` `font_print` order: `Option | Map | Memo`
                 let next = match btn {
-                    CornerButton::Option => CornerButton::Map,
-                    CornerButton::Memo => CornerButton::Option,
-                    CornerButton::Map => CornerButton::Memo,
+                    CornerButton::Option => CornerButton::Memo,
+                    CornerButton::Map => CornerButton::Option,
+                    CornerButton::Memo => CornerButton::Map,
                 };
                 self.focus = InventoryFocus::Corner(next);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
             }
             MenuNavAction::Right => {
                 let next = match btn {
-                    CornerButton::Option => CornerButton::Memo,
-                    CornerButton::Memo => CornerButton::Map,
-                    CornerButton::Map => CornerButton::Option,
+                    CornerButton::Option => CornerButton::Map,
+                    CornerButton::Map => CornerButton::Memo,
+                    CornerButton::Memo => CornerButton::Option,
                 };
                 self.focus = InventoryFocus::Corner(next);
                 (MenuSoundCue::CursorMove, InventoryAction::None)

@@ -305,7 +305,9 @@ pub fn apply_chase_rail_clearance(
     let (dx, dz) = (player_pos.x - eye.x, player_pos.z - eye.z);
     let r_p = dx.hypot(dz);
     let extra = (min_d + cir_r - r_p).max(0.0);
-    let c2c = dz.atan2(dx);
+    // `SLUS_202.28` `vcSetWatchTgtXzPos` (`0x00199ca0`, `shAtan2(dz, dx)` `0x0016e9e0`):
+    // angle from `+Z` toward `+X` (`sin = dx/r`, `cos = dz/r`), i.e. Rust `dx.atan2(dz)`.
+    let c2c = dx.atan2(dz);
     let tgt = Vec3::new(
         player_pos.x + player_yaw.sin() * cir_r + c2c.sin() * extra,
         rec.ofs_watch_hy + (player_pos.y - 250.0),

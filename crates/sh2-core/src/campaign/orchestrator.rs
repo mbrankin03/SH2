@@ -21,7 +21,9 @@ use super::cutscene_handoff::{
 };
 use super::gameplay::{run_active_gameplay, run_prologue, GameplayStepOutcome};
 use super::io::{CampaignEffects, CampaignTickInput};
-use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest, RoomLoadManifest};
+use super::stage_loader::{
+    resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
+};
 use super::state::{
     CampaignPhase, ConnectStep, RoomLoadTarget, ScreenFadeState, PS2_DEFAULT_FADE_SPEED,
 };
@@ -144,11 +146,11 @@ impl CampaignOrchestrator {
         if cmd.dest_stage != 0 {
             cmd.is_connected_stage = is_connected_stage_pair(current_stage as u8, cmd.dest_stage);
         }
-        let outdoor_room = room_override
+        let resolved_room = room_override
             .is_none()
-            .then(|| resolve_outdoor_room_id(target_stage, cmd.dest_pos))
+            .then(|| resolve_room_id_for_stage_pos(target_stage, cmd.dest_pos))
             .flatten();
-        let effective_room = room_override.as_deref().or(outdoor_room.as_deref());
+        let effective_room = room_override.as_deref().or(resolved_room.as_deref());
         let manifest =
             resolve_stage_manifest(target_stage, effective_room, cmd.is_connected_stage, false);
         self.fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);

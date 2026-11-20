@@ -11,6 +11,7 @@
 pub(crate) mod connect;
 pub mod cutscene_handoff;
 pub(crate) mod gameplay;
+pub mod indoor_rooms;
 pub mod io;
 pub mod orchestrator;
 pub mod retail_events;
@@ -21,11 +22,12 @@ pub use cutscene_handoff::{
     apply_post_cutscene_handoff, evaluate_auto_stage_demo, AutoDemoRule, DramaDemoTrigger,
     FmvTrigger, AUTO_STAGE_DEMO_RULES,
 };
+pub use indoor_rooms::resolve_indoor_room_id;
 pub use io::{CampaignEffects, CampaignTickInput};
 pub use orchestrator::CampaignOrchestrator;
 pub use stage_loader::{
-    resolve_outdoor_room_id, resolve_stage_manifest, room_area_dir, CampaignEnemySpawn,
-    CampaignPickupSpawn, RoomLoadManifest,
+    resolve_outdoor_room_id, resolve_room_id_for_stage_pos, resolve_stage_manifest, room_area_dir,
+    CampaignEnemySpawn, CampaignPickupSpawn, RoomLoadManifest,
 };
 pub use state::{
     CampaignPhase, ConnectStep, FadeDirection, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,

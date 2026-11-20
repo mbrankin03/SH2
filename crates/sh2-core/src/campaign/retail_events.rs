@@ -25,8 +25,11 @@ use crate::types::{
     EventTriggerKind, DOOR_SE_TABLE,
 };
 
-/// Decodes a retail 10-byte `ev_pos` destination pose (`EventResultMovePosition` `0x001a9730`
-/// using `sh2pc.exe` `f32`/`f16` layout: `x0: f32@0`, `y: f16@4`, `z0: f32@6`, `param: f16@10`).
+/// Decodes a retail `ev_pos` destination pose (`EventResultMovePosition` `SLUS_202.28` `0x001a9730`,
+/// `sh2pc.exe` `0x0048b7e0`: `x0: f32@0`, `y: f16@4`, `z0: f32@6`, optional `p0: f16@10`, `dz: f16@12`).
+///
+/// Case 0 (`PointWithAngle`, `0x001a9a18` / `0x0048b9a6`) reads only 10 bytes (`x0, y, z0`) and
+/// preserves the player's current yaw (`0.0` here; callers with a live player pose keep `player_yaw`).
 #[must_use]
 pub fn decode_retail_move_destination(
     ev_pos: &[u8],
@@ -34,6 +37,7 @@ pub fn decode_retail_move_destination(
     dest_shape: EventDestShapeKind,
 ) -> Option<([f32; 3], f32)> {
     let min_len = match dest_shape {
+        EventDestShapeKind::PointWithAngle => 10,
         EventDestShapeKind::DoorSegment => 14,
         _ => 12,
     };
@@ -42,12 +46,17 @@ pub fn decode_retail_move_destination(
     let raw_y = char_to_float2_retail([s[4], s[5]]);
     let y = if raw_y == 0.0 { 0.0 } else { raw_y };
     let z0 = char_to_float4([s[6], s[7], s[8], s[9]]);
+
+    if dest_shape == EventDestShapeKind::PointWithAngle {
+        return Some(([x0, y, z0], 0.0));
+    }
+
     let p0 = char_to_float2_retail([s[10], s[11]]);
 
     // Exact 1:1 parity with `EventResultMovePosition` (`SLUS_202.28` `0x001a9730`, jump table
     // `0x00391060`; `sh2pc.exe` `0x0048b7e0`, jump table `0x0048ba04`).
     let (pos, angle) = match dest_shape {
-        EventDestShapeKind::PointWithAngle => ([x0, y, z0], p0 * PI / 180.0),
+        EventDestShapeKind::PointWithAngle => ([x0, y, z0], 0.0),
         // Case 1 (`0x001a97f0` / `0x0048b855`): x = x0 + p0/2, z = z0 + 250, rot_y = 0.0
         EventDestShapeKind::DoorLineNegZ => ([x0 + p0 * 0.5, y, z0 + 250.0], 0.0),
         // Case 2 (`0x001a983c` / `0x0048b888`): x = x0 - p0/2, z = z0 - 250, rot_y = PI
@@ -126,7 +135,14 @@ pub fn evaluate_retail_stage_events(
             continue;
         }
 
-        apply_retail_event_result(&entry, ev_pos, current_stage, flags, &mut effects);
+        apply_retail_event_result(
+            &entry,
+            ev_pos,
+            current_stage,
+            input.player_rot_y,
+            flags,
+            &mut effects,
+        );
         if effects.stage_transition.is_some()
             || effects.common_message.is_some()
             || effects.stage_message.is_some()
@@ -142,6 +158,7 @@ fn apply_retail_event_result(
     entry: &EventListEntry,
     ev_pos: &[u8],
     current_stage: u8,
+    current_player_yaw: f32,
     flags: &mut EventFlags,
     effects: &mut EventEngineEffects,
 ) {
@@ -155,12 +172,23 @@ fn apply_retail_event_result(
             if result_flag != 0 && rslt == EventResultKind::Move {
                 flags.set(result_flag, true);
             }
-            let (dest_pos, dest_rot_y) = entry
+            // `SLUS_202.28` `EventResultMovePosition` (`0x001a97c8`: `sltiu $1, $17, 6; beqz`)
+            // and `sh2pc.exe` (`0x0048b841`: `cmpl $4, %eax; ja 0x48b9a6`) treat both `0` and
+            // `>= 6` as Case 0: `[x0, y, z0]` preserving `player->rot.y`.
+            let ds = entry
                 .dest_shape_kind()
-                .and_then(|ds| {
-                    decode_retail_move_destination(ev_pos, entry.dest_ev_pos_offset(), ds)
-                })
-                .unwrap_or(([0.0, 0.0, 0.0], 0.0));
+                .unwrap_or(EventDestShapeKind::PointWithAngle);
+            let (dest_pos, dest_rot_y) =
+                decode_retail_move_destination(ev_pos, entry.dest_ev_pos_offset(), ds)
+                    .map(|(p, a)| {
+                        let yaw = if ds == EventDestShapeKind::PointWithAngle {
+                            wrap_angle(current_player_yaw)
+                        } else {
+                            a
+                        };
+                        (p, yaw)
+                    })
+                    .unwrap_or(([0.0, 0.0, 0.0], wrap_angle(current_player_yaw)));
 
             let door_idx = (entry.dest_stage_or_door_se() as usize).min(DOOR_SE_TABLE.len() - 1);
             let door_se = DOOR_SE_TABLE[door_idx];

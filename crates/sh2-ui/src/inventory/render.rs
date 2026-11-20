@@ -27,7 +27,7 @@ use crate::inventory::health_ecg::{
     STATUS_SNAPSHOT_Y_448,
 };
 use crate::inventory::{
-    ps2_ui_canvas_rect, CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
+    CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
     CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_X_MAX, CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MIN,
 };
 use sh2_core::{item_metadata, InventoryManager};
@@ -54,32 +54,38 @@ const COMMAND_ROW_STEP_Y: f32 = 25.0;
 /// Command list text X in `512x448` space (`font_print` `0x001d5e14`: `0x168 = 360`).
 const COMMAND_TEXT_X: f32 = 360.0;
 
-/// Centered 4:3 PS2 UI coordinate transform (`512x448` -> viewport pixels).
+/// Full-texture `512x448` PS2 UI coordinate transform.
+///
+/// The rasterizer texture itself represents the 4:3 PS2 frame and is blitted into
+/// `ps2_ui_canvas_rect(surface_w, surface_h)` by `sh2-app`, guaranteeing 1:1 alignment with
+/// `HealthEcgState::snapshot_viewport_rect` across every monitor aspect ratio (4:3, 16:10,
+/// 16:9, 21:9, 32:9, and portrait).
 #[derive(Clone, Copy)]
 struct Ps2Canvas {
-    ox: f32,
-    oy: f32,
+    tex_w: f32,
+    tex_h: f32,
     sx: f32,
     sy: f32,
 }
 
 impl Ps2Canvas {
     fn from_viewport(w: usize, h: usize) -> Self {
-        let (ox, oy, cw, ch) = ps2_ui_canvas_rect(w as f32, h as f32);
+        let tex_w = w.max(1) as f32;
+        let tex_h = h.max(1) as f32;
         Self {
-            ox,
-            oy,
-            sx: cw / PS2_UI_WIDTH,
-            sy: ch / PS2_UI_HEIGHT,
+            tex_w,
+            tex_h,
+            sx: tex_w / PS2_UI_WIDTH,
+            sy: tex_h / PS2_UI_HEIGHT,
         }
     }
 
     fn x(&self, px: f32) -> f32 {
-        self.ox + px * self.sx
+        px * self.sx
     }
 
     fn y(&self, py: f32) -> f32 {
-        self.oy + py * self.sy
+        py * self.sy
     }
 
     fn xi(&self, px: f32) -> usize {
@@ -88,6 +94,13 @@ impl Ps2Canvas {
 
     fn yi(&self, py: f32) -> usize {
         self.y(py).round().max(0.0) as usize
+    }
+
+    /// Converts a desired physical-square height (in texture pixels) and `aspect` (`w / h`) into
+    /// texture-space width so that when this texture is blitted into a 4:3 viewport, the rendered
+    /// element has exact `aspect` on screen regardless of `(tex_w, tex_h)`.
+    fn width_for_height(&self, height_px: f32, aspect: f32) -> f32 {
+        (height_px / self.tex_h) * (aspect * 0.75) * self.tex_w
     }
 }
 
@@ -175,8 +188,8 @@ fn draw_sh2_blue_bar(
 fn draw_top_headers(font: &AtlasFont, rasterizer: &mut TextRasterizer, c: Ps2Canvas) {
     // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` baseline in `512x448`):
     // `0x0c` = "Status" (`0x45 = 69`), `0x0d` = "Equipment" (`0xcd = 205`), `0x0e` = "Command" (`0x170 = 368`)
-    let font_px = ((20.0 * c.sy).round() as usize).clamp(12, 34);
-    let bar_h = ((8.0 * c.sy).round() as usize).clamp(4, 16);
+    let font_px = ((20.0 * c.sy).round() as usize).max(12);
+    let bar_h = ((8.0 * c.sy).round() as usize).max(4);
     let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
     let y_bar = c.yi(SPRITE_TOP_BAR_CY);
     let y_text = c.yi(50.0).saturating_sub(font_px);
@@ -215,7 +228,7 @@ fn draw_equipped_weapon_panel(
 
     if let (Some((atlas, aw, ah)), Some(rect)) = (item_atlas_rgba, item_icon_rect(weapon_id)) {
         let sprite_h = (STATUS_SNAPSHOT_H_448 * CAROUSEL_UNSELECTED_SCALE) * c.sy;
-        let sprite_w = sprite_h * rect.aspect();
+        let sprite_w = c.width_for_height(sprite_h, rect.aspect());
         let (u0, v0, u1, v1) = rect.normalized_uv();
         let x0 = cx - sprite_w * 0.5;
         let y0 = cy - sprite_h * 0.5;
@@ -282,7 +295,7 @@ fn draw_command_column(
     let bar_w = ((CMD_WIN_MOUSE_X_MAX - CMD_WIN_MOUSE_X_MIN) * c.sx).round() as usize;
     let row_h = (COMMAND_ROW_STEP_Y * c.sy).round() as usize;
     let y0 = c.yi(CMD_WIN_MOUSE_Y_MIN);
-    let font_px = ((18.0 * c.sy).round() as usize).clamp(12, 28);
+    let font_px = ((18.0 * c.sy).round() as usize).max(12);
     let in_cmd = screen.focus == InventoryFocus::CommandWindow;
 
     for (idx, cmd) in cmds.iter().enumerate() {
@@ -294,7 +307,7 @@ fn draw_command_column(
                 bar_x,
                 ry + font_px / 2,
                 bar_w,
-                ((8.0 * c.sy).round() as usize).clamp(4, 16),
+                ((8.0 * c.sy).round() as usize).max(4),
                 true,
             );
         }
@@ -334,11 +347,13 @@ fn draw_carousel_arc(
         return;
     }
 
-    // Square center selection reticle (`STATUS_SNAPSHOT_H_448 = 105` tall/wide in pixel-square 4:3 space),
+    // Square center selection reticle (`STATUS_SNAPSHOT_H_448 = 105` tall, aspect 1:1 on screen),
     // colored strictly with `SH2_BLUE_BAR_RGB` (`lookline` `0x00f06030`) and `ECG_GS_ALPHA` (`0xa0`).
-    let ret_size = (STATUS_SNAPSHOT_H_448 * c.sy).round() as usize;
-    let rx = (cx as usize).saturating_sub(ret_size / 2);
-    let ry = (cy as usize).saturating_sub(ret_size / 2);
+    let ret_h_f = STATUS_SNAPSHOT_H_448 * c.sy;
+    let ret_h = ret_h_f.round() as usize;
+    let ret_w = c.width_for_height(ret_h_f, 1.0).round() as usize;
+    let rx = (cx as usize).saturating_sub(ret_w / 2);
+    let ry = (cy as usize).saturating_sub(ret_h / 2);
     let [br, bg, bb] = SH2_BLUE_BAR_RGB;
     let ret_a = if matches!(
         screen.focus,
@@ -348,14 +363,15 @@ fn draw_carousel_arc(
     } else {
         ECG_GS_ALPHA
     };
-    rasterizer.draw_rect_outline(rx, ry, ret_size, ret_size, 1, [br, bg, bb, ret_a]);
+    let border = (c.sy * 0.6).round().max(1.0) as usize;
+    rasterizer.draw_rect_outline(rx, ry, ret_w, ret_h, border, [br, bg, bb, ret_a]);
     let offset = (2.0 * c.sy).round().max(1.0) as usize;
     rasterizer.draw_rect_outline(
         rx.saturating_sub(offset),
         ry.saturating_sub(offset),
-        ret_size,
-        ret_size,
-        1,
+        ret_w,
+        ret_h,
+        border,
         [br, bg, bb, ret_a / 2],
     );
 
@@ -390,7 +406,7 @@ fn draw_carousel_arc(
         let sprite_h = STATUS_SNAPSHOT_H_448 * proj.scale * c.sy;
 
         if let (Some((atlas, aw, ah)), Some(rect)) = (item_atlas_rgba, item_icon_rect(item_id)) {
-            let sprite_w = sprite_h * rect.aspect();
+            let sprite_w = c.width_for_height(sprite_h, rect.aspect());
             let (u0, v0, u1, v1) = rect.normalized_uv();
             let x0 = px - sprite_w * 0.5;
             let y0 = py - sprite_h * 0.5;
@@ -432,7 +448,7 @@ fn draw_carousel_arc(
                 font.draw_line_centered(
                     rasterizer,
                     &format!("- {} -", count),
-                    (cx as usize, ry + ret_size.saturating_sub(font_px + 4)),
+                    (cx as usize, ry + ret_h.saturating_sub(font_px + 4)),
                     font_px,
                     Sh2TextColor::White,
                     true,
@@ -450,8 +466,8 @@ fn draw_item_footer(
 ) {
     // Exact `SLUS_202.28` `font_print` (`0x001d5b50..0x001d5b90`) in `512x448`:
     // Item Name at `(0x14 = 20, 0x145 = 325)`, Description at `(0x2d = 45, 0x168 = 360)`
-    let title_px = ((18.0 * c.sy).round() as usize).clamp(12, 28);
-    let body_px = ((15.0 * c.sy).round() as usize).clamp(10, 24);
+    let title_px = ((18.0 * c.sy).round() as usize).max(12);
+    let body_px = ((15.0 * c.sy).round() as usize).max(10);
     let name_x = c.xi(20.0);
     let name_y = c.yi(325.0).saturating_sub(title_px);
     let desc_x = c.xi(45.0);
@@ -501,8 +517,8 @@ fn draw_bottom_nav_bar(
 ) {
     // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428` baseline in `512x448`):
     // `0x09` = "Option" (`0x40 = 64`), `0x0a` = "Map" (`0xf0 = 240`), `0x0b` = "Memo" (`0x187 = 391`)
-    let font_px = ((20.0 * c.sy).round() as usize).clamp(12, 34);
-    let bar_h = ((8.0 * c.sy).round() as usize).clamp(4, 16);
+    let font_px = ((20.0 * c.sy).round() as usize).max(12);
+    let bar_h = ((8.0 * c.sy).round() as usize).max(4);
     let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
     let y_bar = c.yi(SPRITE_BOT_BAR_CY);
     let y_text = c.yi(428.0).saturating_sub(font_px);

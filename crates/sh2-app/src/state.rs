@@ -285,12 +285,7 @@ impl AppState {
         self.sync_cursor_grab_for_camera();
     }
 
-    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
-    pub fn finish_hud_overlay(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        surface_view: &wgpu::TextureView,
-    ) {
+    fn upload_hud_overlay_texture(&self) {
         self.render_ctx.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.menu_text_texture,
@@ -310,12 +305,38 @@ impl AppState {
                 depth_or_array_layers: 1,
             },
         );
+    }
 
+    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
+    pub fn finish_hud_overlay(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+    ) {
+        self.upload_hud_overlay_texture();
         self.blitter.render_with_bind_group_and_load_op(
             encoder,
             &self.menu_text_bind_group,
             surface_view,
             wgpu::LoadOp::Load,
+        );
+    }
+
+    /// Uploads the software text rasterizer buffer and blits it into a specific swapchain
+    /// sub-viewport `(x, y, width, height)` so 4:3 PS2 menus align 1:1 on any monitor aspect ratio.
+    pub fn finish_hud_overlay_in_viewport(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+        viewport: (f32, f32, f32, f32),
+    ) {
+        self.upload_hud_overlay_texture();
+        self.blitter.render_with_bind_group_in_viewport(
+            encoder,
+            &self.menu_text_bind_group,
+            surface_view,
+            wgpu::LoadOp::Load,
+            viewport,
         );
     }
 

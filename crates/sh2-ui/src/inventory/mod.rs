@@ -236,3 +236,44 @@ impl Default for InventoryPlayerSnapshot {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ps2_ui_canvas_and_status_snapshot_all_monitor_aspects() {
+        let monitors: [(&str, f32, f32); 6] = [
+            ("4:3 640x480", 640.0, 480.0),
+            ("16:10 1920x1200", 1920.0, 1200.0),
+            ("16:9 4K 3840x2160", 3840.0, 2160.0),
+            ("21:9 3440x1440", 3440.0, 1440.0),
+            ("32:9 5120x1440", 5120.0, 1440.0),
+            ("Portrait 1080x1920", 1080.0, 1920.0),
+        ];
+
+        for (label, vw, vh) in monitors {
+            let (ox, oy, cw, ch) = ps2_ui_canvas_rect(vw, vh);
+            assert!(ox >= 0.0 && oy >= 0.0, "{label}: negative origin");
+            assert!(
+                ox + cw <= vw + 1e-3 && oy + ch <= vh + 1e-3,
+                "{label}: overflow"
+            );
+            assert!(
+                ((cw / ch) - (4.0 / 3.0)).abs() < 1e-3,
+                "{label}: canvas must preserve 4:3 aspect (got {})",
+                cw / ch
+            );
+
+            let (sx, sy, sw, sh) = HealthEcgState::snapshot_viewport_rect(vw, vh);
+            assert!(sx >= ox && sy >= oy, "{label}: snapshot outside canvas");
+            assert!(
+                sx + sw <= ox + cw + 1e-3 && sy + sh <= oy + ch + 1e-3,
+                "{label}: snapshot overflows canvas"
+            );
+            // `look_hp` (140x105 inside 512x448 -> 4:3): verify exact relative placement inside canvas
+            assert!(((sx - ox) / cw - (26.0 / 512.0)).abs() < 1e-4, "{label}");
+            assert!(((sy - oy) / ch - (49.0 / 448.0)).abs() < 1e-4, "{label}");
+        }
+    }
+}

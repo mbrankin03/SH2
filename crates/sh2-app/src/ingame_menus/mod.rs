@@ -370,6 +370,15 @@ pub(crate) fn render_overlay(
             font,
             &mut state.menu_rasterizer,
         );
+        // Blit the 4:3 PS2 inventory texture into the exact centered 4:3 swapchain viewport so
+        // the overlay aligns 1:1 with `HealthEcgState::snapshot_viewport_rect` on ALL monitors
+        // (4:3, 16:10, 16:9, 21:9, 32:9, and portrait).
+        let vp = sh2_ui::inventory::ps2_ui_canvas_rect(
+            state.render_ctx.config.width as f32,
+            state.render_ctx.config.height as f32,
+        );
+        state.finish_hud_overlay_in_viewport(encoder, surface_view, vp);
+        return;
     }
 
     state.finish_hud_overlay(encoder, surface_view);

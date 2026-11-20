@@ -188,14 +188,15 @@ impl HealthEcgState {
     }
 
     /// Renders the `SLUS_202.28` `look_hp` (`0x001d9a3c..0x001d9b50`) health tint wash over the live
-    /// frozen 3D snapshot cutout, with **no ECG waveform line and no status text**.
+    /// frozen 3D snapshot cutout inside the full `512x448` rasterizer canvas (which is blitted into
+    /// `ps2_ui_canvas_rect` by `sh2-app`), with **no ECG waveform line and no status text**.
     pub fn draw_snapshot_tint(&self, hp: f32, max_hp: f32, rasterizer: &mut TextRasterizer) {
-        let (fx, fy, fw, fh) =
-            Self::snapshot_viewport_rect(rasterizer.width as f32, rasterizer.height as f32);
-        let x0 = fx.round() as usize;
-        let y0 = fy.round() as usize;
-        let w = fw.round().max(1.0) as usize;
-        let h = fh.round().max(1.0) as usize;
+        let sx = rasterizer.width as f32 / 512.0;
+        let sy = rasterizer.height as f32 / 448.0;
+        let x0 = (STATUS_SNAPSHOT_X_512 * sx).round() as usize;
+        let y0 = (STATUS_SNAPSHOT_Y_448 * sy).round() as usize;
+        let w = (STATUS_SNAPSHOT_W_512 * sx).round().max(1.0) as usize;
+        let h = (STATUS_SNAPSHOT_H_448 * sy).round().max(1.0) as usize;
 
         let ratio = if max_hp > 0.0 {
             (hp / max_hp).clamp(0.0, 1.0)

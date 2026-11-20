@@ -89,9 +89,19 @@ pub(crate) fn handle_3d_story_key_input(
     false
 }
 
+fn close_story_modal(state: &mut AppState) {
+    state.story_progression_room.modal_3d_open = false;
+    let flags = state.sim_core.scenario.flags.clone();
+    state
+        .sim_core
+        .scenario
+        .cutaway_overlay
+        .set_picture(None, &flags);
+}
+
 fn apply_3d_checkpoint_selection(state: &mut AppState, next_idx: usize) {
     state.story_progression_room.checkpoint_3d_idx = next_idx;
-    state.story_progression_room.modal_3d_open = false;
+    close_story_modal(state);
     let spec = &STORY_3D_CHECKPOINTS[next_idx];
     configure_checkpoint_tab_and_puzzle(state, next_idx);
 
@@ -240,7 +250,7 @@ fn handle_open_modal_key(state: &mut AppState, key_code: KeyCode) -> bool {
     let cp_idx = state.story_progression_room.checkpoint_3d_idx % STORY_3D_CHECKPOINT_COUNT;
 
     if key_code == KeyCode::Escape || (key_code == KeyCode::KeyE && cp_idx != 1 && cp_idx != 4) {
-        state.story_progression_room.modal_3d_open = false;
+        close_story_modal(state);
         state.story_progression_room.status_banner =
             "Closed Story Cutaway Overlay -> Returned to 3D Walking! ([PgUp/PgDn] Step Checkpoints, [E] Open Cutaway)".to_string();
         play_cursor_se(state);
@@ -278,7 +288,7 @@ fn handle_open_modal_key(state: &mut AppState, key_code: KeyCode) -> bool {
                     state.story_progression_room.status_banner =
                         "Got the Map of Silent Hill! (Flag 28 set, SE 0x2b17) — Press [E / Enter / Esc] to close & advance!".to_string();
                 } else {
-                    state.story_progression_room.modal_3d_open = false;
+                    close_story_modal(state);
                     state.story_progression_room.status_banner =
                         "Map of Silent Hill in inventory (Flag 28)! Press [E] at Gate or [PgDn] for next Story Checkpoint!".to_string();
                     play_cursor_se(state);

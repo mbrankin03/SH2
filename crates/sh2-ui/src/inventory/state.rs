@@ -257,12 +257,16 @@ impl InventoryScreen {
         let ly = mouse_y * 480.0 / viewport_h;
 
         if self.focus == InventoryFocus::CommandWindow {
-            if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&lx)
-                && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ly)
+            // `CommandWindowMouseFix.cpp` (`0x00472428`) uses 512x448 PS2/PC logical coordinates
+            // (`x in 356..439`, `y in 63..139`), which map directly onto the right-hand `Command` column.
+            let ps2_x = mouse_x * 512.0 / viewport_w;
+            let ps2_y = mouse_y * 448.0 / viewport_h;
+            if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
+                && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ps2_y)
             {
-                let row = if ly < CMD_WIN_ROW_0_MAX_Y {
+                let row = if ps2_y < CMD_WIN_ROW_0_MAX_Y {
                     0
-                } else if ly < CMD_WIN_ROW_1_MAX_Y {
+                } else if ps2_y < CMD_WIN_ROW_1_MAX_Y {
                     1
                 } else {
                     2
@@ -306,8 +310,10 @@ impl InventoryScreen {
         let ly = mouse_y * 480.0 / viewport_h;
 
         if self.focus == InventoryFocus::CommandWindow {
-            if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&lx)
-                && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ly)
+            let ps2_x = mouse_x * 512.0 / viewport_w;
+            let ps2_y = mouse_y * 448.0 / viewport_h;
+            if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
+                && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ps2_y)
             {
                 return self.handle_command_window_nav(MenuNavAction::Confirm, inventory, true);
             }
@@ -356,12 +362,8 @@ impl InventoryScreen {
                     (MenuSoundCue::None, InventoryAction::None)
                 }
             }
-            MenuNavAction::Up => {
-                self.focus = InventoryFocus::Corner(CornerButton::Map);
-                (MenuSoundCue::CursorMove, InventoryAction::None)
-            }
-            MenuNavAction::Down => {
-                self.focus = InventoryFocus::Corner(CornerButton::Exit);
+            MenuNavAction::Up | MenuNavAction::Down => {
+                self.focus = InventoryFocus::Corner(CornerButton::Memo);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
             }
             MenuNavAction::Confirm => {
@@ -390,20 +392,18 @@ impl InventoryScreen {
         match nav {
             MenuNavAction::Left => {
                 let next = match btn {
+                    CornerButton::Option => CornerButton::Map,
+                    CornerButton::Memo => CornerButton::Option,
                     CornerButton::Map => CornerButton::Memo,
-                    CornerButton::Memo => CornerButton::Map,
-                    CornerButton::Exit => CornerButton::Option,
-                    CornerButton::Option => CornerButton::Exit,
                 };
                 self.focus = InventoryFocus::Corner(next);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
             }
             MenuNavAction::Right => {
                 let next = match btn {
+                    CornerButton::Option => CornerButton::Memo,
                     CornerButton::Memo => CornerButton::Map,
-                    CornerButton::Map => CornerButton::Memo,
-                    CornerButton::Option => CornerButton::Exit,
-                    CornerButton::Exit => CornerButton::Option,
+                    CornerButton::Map => CornerButton::Option,
                 };
                 self.focus = InventoryFocus::Corner(next);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
@@ -424,10 +424,6 @@ impl InventoryScreen {
                 }
                 CornerButton::Map => (MenuSoundCue::Confirm, InventoryAction::OpenMap),
                 CornerButton::Option => (MenuSoundCue::Confirm, InventoryAction::OpenOptions),
-                CornerButton::Exit => {
-                    self.close();
-                    (MenuSoundCue::Cancel, InventoryAction::Close)
-                }
             },
             MenuNavAction::Cancel => {
                 self.focus = InventoryFocus::Carousel;
@@ -631,15 +627,15 @@ mod tests {
         assert_eq!(screen.focus, InventoryFocus::CommandWindow);
         assert_eq!(screen.active_commands.len(), 3);
 
-        // SH2:EE CommandWindowMouseFix 3-option hitboxes (640x480 space)
-        screen.handle_mouse_move(390.0, 75.0, 640.0, 480.0);
+        // SH2:EE CommandWindowMouseFix 3-option hitboxes (512x448 PS2/PC logical space)
+        screen.handle_mouse_move(390.0, 75.0, 512.0, 448.0);
         assert_eq!(screen.command_index, 0);
-        screen.handle_mouse_move(390.0, 100.0, 640.0, 480.0);
+        screen.handle_mouse_move(390.0, 100.0, 512.0, 448.0);
         assert_eq!(screen.command_index, 1);
-        screen.handle_mouse_move(390.0, 128.0, 640.0, 480.0);
+        screen.handle_mouse_move(390.0, 128.0, 512.0, 448.0);
         assert_eq!(screen.command_index, 2);
 
-        let (cue, _) = screen.handle_mouse_click(390.0, 128.0, 640.0, 480.0, &inv, &snap);
+        let (cue, _) = screen.handle_mouse_click(390.0, 128.0, 512.0, 448.0, &inv, &snap);
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(screen.focus, InventoryFocus::CombineTarget);
         assert_eq!(screen.command_index, 2);

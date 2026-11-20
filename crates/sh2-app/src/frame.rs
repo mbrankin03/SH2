@@ -371,9 +371,27 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             });
 
     if is_in_game {
-        state
-            .blitter
-            .render_with_bind_group(&mut encoder, &state.blit_bind_group, &surface_view);
+        // 1:1 PS2 Status/Inventory (`look_hp` @ `0x001d9660`): pure black screen with the live
+        // frozen 3D gameplay snapshot blitted strictly into the top-left `Status` box.
+        if state.ingame_menus.inventory.is_open && !state.menu_ctrl.pause_menu.is_open {
+            let vp = sh2_ui::inventory::HealthEcgState::snapshot_viewport_rect(
+                state.surface_config.width as f32,
+                state.surface_config.height as f32,
+            );
+            state.blitter.render_with_bind_group_in_viewport(
+                &mut encoder,
+                &state.blit_bind_group,
+                &surface_view,
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                vp,
+            );
+        } else {
+            state.blitter.render_with_bind_group(
+                &mut encoder,
+                &state.blit_bind_group,
+                &surface_view,
+            );
+        }
 
         // Render room-specific 2D HUD overlay (suppressed while single-screen menus are open)
         if !state.ingame_menus.is_any_open() {

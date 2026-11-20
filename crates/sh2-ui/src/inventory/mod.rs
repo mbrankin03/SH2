@@ -38,58 +38,51 @@ pub const CAROUSEL_UNSELECTED_SCALE: f32 = 0.8;
 /// Per-tick scale transition step in `itemmainmain` (`0x3dcccccd` at `0x001ce1a4`).
 pub const CAROUSEL_SCALE_STEP: f32 = 0.1;
 
-/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 640x480 logical X min (exclusive `355`).
+/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 512x448 PS2/PC logical X min (exclusive `355`).
 pub const CMD_WIN_MOUSE_X_MIN: f32 = 356.0;
-/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 640x480 logical X max (exclusive `440`).
+/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 512x448 PS2/PC logical X max (exclusive `440`).
 pub const CMD_WIN_MOUSE_X_MAX: f32 = 439.0;
-/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 640x480 logical Y min (exclusive `62`).
+/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 512x448 PS2/PC logical Y min (exclusive `62`).
 pub const CMD_WIN_MOUSE_Y_MIN: f32 = 63.0;
-/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 640x480 logical Y max (exclusive `140`).
+/// SH2:EE `CommandWindowMouseFix.cpp` (`0x00472428`) 512x448 PS2/PC logical Y max (exclusive `140`).
 pub const CMD_WIN_MOUSE_Y_MAX: f32 = 139.0;
-/// Row 0/1 split Y boundary in 640x480 space (`CommandWindowMouseFix.cpp:45`, `MouseY < 88`).
+/// Row 0/1 split Y boundary in 512x448 PS2/PC space (`CommandWindowMouseFix.cpp:45`, `MouseY < 88`).
 pub const CMD_WIN_ROW_0_MAX_Y: f32 = 88.0;
-/// Row 1/2 split Y boundary in 640x480 space (`CommandWindowMouseFix.cpp:47`, `MouseY < 114`).
+/// Row 1/2 split Y boundary in 512x448 PS2/PC space (`CommandWindowMouseFix.cpp:47`, `MouseY < 114`).
 pub const CMD_WIN_ROW_1_MAX_Y: f32 = 114.0;
 
-/// Four corner navigation buttons on the Status / Inventory screen (`otn_itemmain.c`).
+/// Three bottom-row navigation buttons on the Status / Inventory screen
+/// (`SLUS_202.28` `font_print` @ `0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428`: `Options | Memo | Map`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CornerButton {
-    /// Open collected Memo List (`Event/memo.c`).
-    Memo = 0,
-    /// Open Fullscreen Paper Map (`Event/chizu.c`).
-    Map = 1,
-    /// Open in-game Options menu.
-    Option = 2,
-    /// Exit Status / Inventory menu back to gameplay.
-    Exit = 3,
+    /// Open in-game Options menu (`x = 0x40 = 64, y = 0x1ac = 428`).
+    Option = 0,
+    /// Open collected Memo List (`x = 0xf0 = 240, y = 0x1ac = 428`, `Event/memo.c`).
+    Memo = 1,
+    /// Open Fullscreen Paper Map (`x = 0x187 = 391, y = 0x1ac = 428`, `Event/chizu.c`).
+    Map = 2,
 }
 
 impl CornerButton {
-    /// Ordered list of the four corner buttons.
-    pub const ALL: [CornerButton; 4] = [
-        CornerButton::Memo,
-        CornerButton::Map,
-        CornerButton::Option,
-        CornerButton::Exit,
-    ];
+    /// Ordered list of the three PS2 bottom-row buttons (`Options`, `Memo`, `Map`).
+    pub const ALL: [CornerButton; 3] =
+        [CornerButton::Option, CornerButton::Memo, CornerButton::Map];
 
-    /// Display label on screen.
+    /// Authentic PS2 Final Release display label.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::Memo => "MEMO",
-            Self::Map => "MAP",
-            Self::Option => "OPTION",
-            Self::Exit => "EXIT",
+            Self::Option => "Options",
+            Self::Memo => "Memo",
+            Self::Map => "Map",
         }
     }
 
-    /// Logical 640x480 hitbox `(x0, y0, x1, y1)` for mouse hover/click.
+    /// Logical 640x480 hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `font_print` (`y = 428`).
     pub const fn hitbox_640x480(&self) -> (f32, f32, f32, f32) {
         match self {
-            Self::Memo => (470.0, 26.0, 550.0, 54.0),
-            Self::Map => (556.0, 26.0, 622.0, 54.0),
-            Self::Option => (470.0, 424.0, 550.0, 452.0),
-            Self::Exit => (556.0, 424.0, 622.0, 452.0),
+            Self::Option => (44.0, 418.0, 218.0, 454.0),
+            Self::Memo => (232.0, 418.0, 406.0, 454.0),
+            Self::Map => (420.0, 418.0, 596.0, 454.0),
         }
     }
 }
@@ -137,7 +130,7 @@ pub enum InventoryFocus {
     /// Navigating the horizontal 3D item carousel.
     #[default]
     Carousel,
-    /// Navigating the 4 corner buttons (`MEMO`, `MAP`, `OPTION`, `EXIT`).
+    /// Navigating the 3 bottom-row buttons (`Options`, `Memo`, `Map`).
     Corner(CornerButton),
     /// Choosing an action inside the command pop-up window for the selected item.
     CommandWindow,

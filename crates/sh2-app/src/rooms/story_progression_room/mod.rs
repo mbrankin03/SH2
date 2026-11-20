@@ -350,6 +350,13 @@ impl RoomController for StoryProgressionRoomController {
 }
 
 pub(crate) fn ensure_demo_scenario_seeded(state: &mut AppState) {
+    // Never pollute a real Campaign playthrough with debug-room puzzle boards or mid-game flags.
+    if matches!(
+        state.active_launch_target,
+        sh2_ui::menu::LaunchTarget::Campaign { .. }
+    ) {
+        return;
+    }
     if state.sim_core.scenario.flags.get(405) {
         return;
     }

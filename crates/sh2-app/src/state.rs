@@ -37,6 +37,9 @@ pub(crate) struct AppState {
     pub menu_uniform_buffer: wgpu::Buffer,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
+    pub inventory_rasterizer: TextRasterizer,
+    pub inventory_texture: wgpu::Texture,
+    pub inventory_bind_group: wgpu::BindGroup,
     pub menu_rasterizer: TextRasterizer,
     pub button_sprites: Option<ButtonSpriteSheet>,
     pub audio_bank: Option<MenuAudioBank>,
@@ -76,6 +79,7 @@ pub(crate) struct AppState {
     pub fog_particle_scratch: Vec<sh2_renderer::fog::GpuFogParticle>,
     pub last_fog_time: f32,
     pub menu_ctrl: AppMenuController,
+    pub ingame_menus: crate::ingame_menus::InGameMenuState,
     pub combat_arena: sh2_core::combat::CombatArena,
     pub enemy_scu_asset: Option<CharacterAsset>,
     pub enemy_mkn_asset: Option<CharacterAsset>,
@@ -228,6 +232,7 @@ impl AppState {
             && self.is_3d_gameplay_room()
             && !cutscene_locked
             && self.sim_core.active_camera_mode().is_modern()
+            && !self.ingame_menus.is_any_open()
             && !self.sim_core.modern_camera.handoff.locks_camera_controls();
 
         if want_grab == self.cursor_grabbed_for_camera {
@@ -259,6 +264,7 @@ impl AppState {
     /// with full menu opacity, resetting held input keys and stopping room-specific audio streams.
     pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
         self.clear_held_gameplay_keys();
+        self.ingame_menus.close_all();
         self.campaign_orchestrator = None;
         self.campaign_loaded_room = None;
         self.campaign_pending_input = CampaignTickInput::default();
@@ -282,12 +288,7 @@ impl AppState {
         self.sync_cursor_grab_for_camera();
     }
 
-    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
-    pub fn finish_hud_overlay(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        surface_view: &wgpu::TextureView,
-    ) {
+    fn upload_hud_overlay_texture(&self) {
         self.render_ctx.queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.menu_text_texture,
@@ -307,12 +308,56 @@ impl AppState {
                 depth_or_array_layers: 1,
             },
         );
+    }
 
+    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
+    pub fn finish_hud_overlay(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+    ) {
+        self.upload_hud_overlay_texture();
         self.blitter.render_with_bind_group_and_load_op(
             encoder,
             &self.menu_text_bind_group,
             surface_view,
             wgpu::LoadOp::Load,
+        );
+    }
+
+    /// Uploads the dedicated 4:3 (`1280x960`) inventory rasterizer buffer and blits it into
+    /// `viewport` (`ps2_ui_canvas_rect`) with 1:1 square pixels and zero horizontal font squish.
+    pub fn finish_inventory_overlay_in_viewport(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+        viewport: (f32, f32, f32, f32),
+    ) {
+        self.render_ctx.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.inventory_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.inventory_rasterizer.pixels,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * self.inventory_rasterizer.width as u32),
+                rows_per_image: Some(self.inventory_rasterizer.height as u32),
+            },
+            wgpu::Extent3d {
+                width: self.inventory_rasterizer.width as u32,
+                height: self.inventory_rasterizer.height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.blitter.render_with_bind_group_in_viewport(
+            encoder,
+            &self.inventory_bind_group,
+            surface_view,
+            wgpu::LoadOp::Load,
+            viewport,
         );
     }
 

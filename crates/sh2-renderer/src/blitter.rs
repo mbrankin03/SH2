@@ -188,6 +188,41 @@ impl SurfaceBlitter {
         rpass.draw(0..3, 0..1);
     }
 
+    /// Renders `bind_group` into a sub-rectangle `viewport = (x, y, width, height)` of `dst_view`.
+    /// Used by the 1:1 PS2 Status/Inventory screen (`look_hp` @ `SLUS_202.28` `0x001d9660`) to
+    /// display the live frozen 3D gameplay snapshot inside the top-left `Status` box over black.
+    pub fn render_with_bind_group_in_viewport(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        dst_view: &wgpu::TextureView,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+        viewport: (f32, f32, f32, f32),
+    ) {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Surface Viewport Blit Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: dst_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: load_op,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        let (vx, vy, vw, vh) = viewport;
+        if vw > 0.0 && vh > 0.0 {
+            rpass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
+            rpass.set_pipeline(&self.pipeline);
+            rpass.set_bind_group(0, bind_group, &[]);
+            rpass.draw(0..3, 0..1);
+        }
+    }
+
     /// Convenience render method that generates a bind group on demand.
     pub fn render(
         &self,

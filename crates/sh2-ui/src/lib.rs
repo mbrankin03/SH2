@@ -4,8 +4,10 @@ pub mod atlas_font;
 pub mod button_atlas;
 pub mod credits;
 pub mod font;
+pub mod inventory;
 pub mod loading;
 pub mod map;
+pub mod memo;
 pub mod menu;
 pub mod options;
 pub mod pause;
@@ -19,8 +21,21 @@ pub use credits::{
     IN_WATER_CLOSING_SCROLL_DURATION_SECS, WATER_BIK_DURATION_SECS,
 };
 pub use font::TextRasterizer;
+pub use inventory::{
+    draw_inventory_screen, CornerButton, HealthEcgState, HealthStatus, InventoryAction,
+    InventoryFocus, InventoryPlayerSnapshot, InventoryScreen, ItemCommand,
+};
 pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
-pub use map::{MapCanvasClipper, MapDescriptor, MapPlayerMarker};
+pub use map::{
+    active_markers_for_map, chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check,
+    chizu_world_to_sheet_norm, draw_paper_map, map_spec, ChizuDecodedMarker, ChizuPackedMarker,
+    MapCanvasClipper, MapDescriptor, MapDirection, MapPlayerMarker, MapReadCheck, MapSheetSpec,
+    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
+};
+pub use memo::{
+    collected_memos, draw_memo_reader, memo_command_check, MemoAction, MemoEntry, MemoPhase,
+    MemoReader,
+};
 pub use menu::{
     draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
     LaunchTarget, MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,

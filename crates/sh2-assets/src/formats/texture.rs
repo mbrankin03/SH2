@@ -323,31 +323,59 @@ impl TextureLoader {
             }
         }
 
-        for tid in candidate_tids {
-            if let Some(decoded) = self.load_4k_map_texture_override(tid) {
+        // Decode 4K AI Master PNG/DDS overrides in parallel across available CPU cores.
+        let worker_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(candidate_tids.len().max(1));
+        let next_idx = std::sync::atomic::AtomicUsize::new(0);
+        let decoded_entries: std::sync::Mutex<Vec<(u32, crate::formats::map::MapTexture)>> =
+            std::sync::Mutex::new(Vec::new());
+
+        std::thread::scope(|scope| {
+            for _ in 0..worker_count {
+                scope.spawn(|| loop {
+                    let idx = next_idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if idx >= candidate_tids.len() {
+                        break;
+                    }
+                    let tid = candidate_tids[idx];
+                    if let Some(decoded) = self.load_4k_map_texture_override(tid) {
+                        let new_area = decoded.width.saturating_mul(decoded.height);
+                        if new_area > 0 {
+                            let mut bgra = decoded.rgba;
+                            let (chunks, _) = bgra.as_chunks_mut::<4>();
+                            for px in chunks {
+                                px.swap(0, 2);
+                            }
+                            if let Ok(mut guard) = decoded_entries.lock() {
+                                guard.push((
+                                    tid,
+                                    crate::formats::map::MapTexture {
+                                        id: tid,
+                                        width: decoded.width,
+                                        height: decoded.height,
+                                        kind: 0,
+                                        data: bgra,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        if let Ok(entries) = decoded_entries.into_inner() {
+            for (tid, map_tex) in entries {
                 let existing_area = target_map
                     .textures
                     .get(&tid)
                     .map(|t| t.width.saturating_mul(t.height))
                     .unwrap_or(0);
-                let new_area = decoded.width.saturating_mul(decoded.height);
-                if new_area >= existing_area && new_area > 0 {
-                    // Convert RGBA8 to BGRA8 (`kind == 0`) for `MapTexture` storage
-                    let mut bgra = decoded.rgba;
-                    let (chunks, _) = bgra.as_chunks_mut::<4>();
-                    for px in chunks {
-                        px.swap(0, 2);
-                    }
-                    target_map.textures.insert(
-                        tid,
-                        crate::formats::map::MapTexture {
-                            id: tid,
-                            width: decoded.width,
-                            height: decoded.height,
-                            kind: 0,
-                            data: bgra,
-                        },
-                    );
+                let new_area = map_tex.width.saturating_mul(map_tex.height);
+                if new_area >= existing_area {
+                    target_map.textures.insert(tid, map_tex);
                     overridden_count += 1;
                 }
             }

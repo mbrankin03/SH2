@@ -246,6 +246,18 @@ pub fn draw_pause_screen(
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
 ) {
+    draw_pause_screen_with_scrim(pause_menu, font, rasterizer, true);
+}
+
+/// Same as [`draw_pause_screen`], allowing the caller (`sh2-app`) to disable the inner 4:3 dim
+/// scrim when a full-screen widescreen backdrop scrim has already been rendered across the
+/// entire swapchain.
+pub fn draw_pause_screen_with_scrim(
+    pause_menu: &PauseMenu,
+    font: &AtlasFont,
+    rasterizer: &mut TextRasterizer,
+    draw_scrim: bool,
+) {
     if !pause_menu.is_open {
         return;
     }
@@ -269,11 +281,13 @@ pub fn draw_pause_screen(
         )
     };
 
-    // 1. Semi-transparent dark backdrop scrim over paused frame (`sh2gfw_Set_PauseRetain` / `0x00407610`)
-    let dim_color = [0u8, 0, 0, 165];
-    for y in 0..h {
-        for x in 0..w {
-            rasterizer.blend_pixel(x, y, dim_color);
+    // 1. Optional semi-transparent dark backdrop scrim over paused frame (`sh2gfw_Set_PauseRetain`)
+    if draw_scrim {
+        let dim_color = [0u8, 0, 0, 165];
+        for y in 0..h {
+            for x in 0..w {
+                rasterizer.blend_pixel(x, y, dim_color);
+            }
         }
     }
 

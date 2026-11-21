@@ -423,8 +423,10 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             crate::ingame_menus::render_overlay(state, &mut encoder, &surface_view);
         }
 
-        // If in-game pause menu is active, render authentic pause/options overlay at 1920x1440 4:3
+        // If in-game pause menu is active, dim the full widescreen window edge-to-edge, then
+        // render the crisp 1920x1440 4:3 Pause/Options UI centered on top with 1:1 square pixels.
         if state.menu_ctrl.pause_menu.is_open {
+            state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 165);
             state.inventory_rasterizer.clear();
             let font = sh2_ui::AtlasFont::shared(None);
 
@@ -435,10 +437,11 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
                     &mut state.inventory_rasterizer,
                 );
             } else {
-                sh2_ui::draw_pause_screen(
+                sh2_ui::pause::draw_pause_screen_with_scrim(
                     &state.menu_ctrl.pause_menu,
                     font,
                     &mut state.inventory_rasterizer,
+                    false,
                 );
             }
 
@@ -486,7 +489,15 @@ fn render_title_menu_overlay(
     };
 
     let ui_vp = state.ps2_ui_viewport();
-    {
+    if let Some(bg) = bg_to_draw {
+        // Fill the full widescreen window with the SH2:EE title / splash artwork (zero black bars)
+        state.blitter.render_with_bind_group_and_load_op(
+            encoder,
+            bg,
+            surface_view,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+    } else {
         let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Menu Clear Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -501,15 +512,6 @@ fn render_title_menu_overlay(
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-    }
-    if let Some(bg) = bg_to_draw {
-        state.blitter.render_with_bind_group_in_viewport(
-            encoder,
-            bg,
-            surface_view,
-            wgpu::LoadOp::Load,
-            ui_vp,
-        );
     }
 
     // Render dynamic 2D overlay at 1920x1440 (exact 4:3) into centered `ps2_ui_viewport()`

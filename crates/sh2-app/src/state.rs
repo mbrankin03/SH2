@@ -338,6 +338,27 @@ impl AppState {
         }
     }
 
+    /// Blits a full-screen semi-transparent black dim scrim (`alpha` in `0..=255`) across the
+    /// entire swapchain (edge-to-edge on 16:9, 21:9, 32:9, and 4K windows) with no 4:3 seam.
+    pub fn draw_fullscreen_dim_scrim(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+        alpha: u8,
+    ) {
+        let (chunks, _) = self.menu_rasterizer.pixels.as_chunks_mut::<4>();
+        for px in chunks {
+            *px = [0, 0, 0, alpha];
+        }
+        self.upload_hud_overlay_texture();
+        self.blitter.render_with_bind_group_and_load_op(
+            encoder,
+            &self.menu_text_bind_group,
+            surface_view,
+            wgpu::LoadOp::Load,
+        );
+    }
+
     /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it into a
     /// centered 16:9 aspect-preserving viewport over `surface_view`.
     pub fn finish_hud_overlay(

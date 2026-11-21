@@ -62,10 +62,12 @@ impl AuthenticButtonSprite {
                 width: 422,
                 height: 98,
             },
+            // Verified from `sh2e/pic/etc/start01e.tex` (`sh2pc.exe` `TitleSpr[22]` right column:
+            // `x=1643..1969, y=669..746`, padded 10px for glow halo; `(252, 909)` is `PRISON`).
             Self::Movies => AtlasRect {
-                x: 252,
-                y: 909,
-                width: 265,
+                x: 1633,
+                y: 659,
+                width: 347,
                 height: 98,
             },
             Self::Exit => AtlasRect {

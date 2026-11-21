@@ -293,6 +293,7 @@ pub(crate) fn render_overlay(
     let font = AtlasFont::shared(None);
 
     if state.ingame_menus.options_from_inventory {
+        state.draw_fullscreen_dim_scrim(encoder, surface_view, 210);
         state.inventory_rasterizer.clear();
         draw_options_screen(
             &state.menu_ctrl.options_menu,

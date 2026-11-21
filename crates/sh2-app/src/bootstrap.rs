@@ -27,10 +27,19 @@ use sh2_ui::{ButtonSpriteSheet, TextRasterizer};
 /// Initializes the Vulkan window surface, `RenderContext`, audio engine, character skeletons,
 /// bestiary models, and UI pipelines into a ready-to-run [`AppState`].
 pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -> AppState {
-    let window_attributes = Window::default_attributes()
+    let startup_config = sh2_core::config::AppConfig::load_from_file("config.json");
+    let mut window_attributes = Window::default_attributes()
         .with_title("Silent Hill 2 Open Port - Interactive Character & Skeletal Animation")
         .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
         .with_visible(true);
+    if matches!(
+        startup_config.video.display_mode,
+        sh2_core::config::WindowDisplayMode::BorderlessFullscreen
+            | sh2_core::config::WindowDisplayMode::ExclusiveFullscreen
+    ) {
+        window_attributes =
+            window_attributes.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+    }
 
     let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
     let size = window.inner_size();

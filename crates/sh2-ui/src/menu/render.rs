@@ -85,8 +85,8 @@ pub fn draw_title_screen(
             }
         }
         TitlePhase::TitleLogo => {
-            // Driven by continuous `sm.elapsed_timer` (not frozen `splash_timer`!).
-            let pulse = (sm.elapsed_timer * 3.5).sin() * 0.15 + 0.85;
+            // Driven by continuous `sm.pulse_phase_rad` (`_DAT_0116d964`, not frozen `splash_timer`!).
+            let pulse = sm.selection_pulse_alpha();
             if let Some(atlas) = button_sprites {
                 let rect = AuthenticButtonSprite::StartPrompt.atlas_rect();
                 let scale = vp.hd_sprite_scale() * 1.1;

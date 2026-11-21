@@ -22,7 +22,6 @@ pub use game::{
     ActionDifficulty, BloodColor, BulletMultiplier, DebugOptions, EnhancedPreset, GameLanguage,
     GameOptions, RetreatTurnMode, RiddleDifficulty, ViewControlMode, WalkRunControlMode,
     PS2_BRIGHTNESS_MULTIPLIERS, PS2_DEFAULT_BRIGHTNESS_LEVEL, PS2_MAX_BRIGHTNESS_LEVEL,
-    PS2_SCREEN_POS_X_LIMIT, PS2_SCREEN_POS_Y_LIMIT,
 };
 pub use video::{
     FogQuality, FrameRateCap, InternalResolution, LightingProfile, OutdoorStreamingMode,

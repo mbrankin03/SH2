@@ -1,18 +1,16 @@
 //! PlayStation 2 Options Subscreens (`SLUS_202.28` `Item/otn_option.c`):
 //! - `bright_main` (`0x00212ec0`): 20-bar brightness calibration (`level ∈ 0..=7`).
 //! - `config_main` (`0x00213a50`): 13-action controller presets (`key_type1/2/3`) & remapping.
-//! - `position_main` (`0x00214c60`): Screen Position calibration grid (`x ∈ [-22,22], y ∈ [-24,24]`).
 //! - `allow_u/d/l/r` (`0x00218ca0..0x00219bd0`): Pulsing lavender selection arrows (`RGB(0xb0,0xa0,0xff)`).
+//!
+//! Note: PS2 CRT overscan `position_main` (`0x00214c60`) is intentionally omitted on this modern native port.
 
 use super::OptionsMenu;
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
-use sh2_core::config::{
-    ControllerPreset, Ps2ControllerBindings, PS2_MAX_BRIGHTNESS_LEVEL, PS2_SCREEN_POS_X_LIMIT,
-    PS2_SCREEN_POS_Y_LIMIT,
-};
+use sh2_core::config::{ControllerPreset, Ps2ControllerBindings, PS2_MAX_BRIGHTNESS_LEVEL};
 
-/// Active PS2 Options subscreen (`option_main` `0x002108c0`, `t = 3, 4, 5`).
+/// Active PS2 Options subscreen (`option_main` `0x002108c0`, `t = 3, 4`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptionsSubScreen {
     /// Main tabbed options screen (`t == 2`, `option_mainmain` `0x00210d50`).
@@ -22,8 +20,6 @@ pub enum OptionsSubScreen {
     BrightnessCalibration,
     /// `t == 4`: Controller presets & 13-action button config (`config_main` `0x00213a50`).
     ControllerConfig,
-    /// `t == 5`: Screen Position calibration grid (`position_main` `0x00214c60`).
-    ScreenPosition,
 }
 
 /// Direction for `allow_u/d/l/r` (`0x00218ca0..0x00219bd0`) pulsing arrow triangles.
@@ -261,83 +257,4 @@ pub fn draw_controller_config_subscreen(
         let mask_str = format_ps2_button_mask(menu.draft_config.controls.ps2_bindings.actions[idx]);
         font.draw_line_styled(rast, &mask_str, (bx, py), font_sz, color, true);
     }
-}
-
-/// Renders the PS2 Screen Position calibration subscreen (`position_main` `0x00214c60`).
-///
-/// Exact layout from `SLUS_202.28` `0x00214c60`:
-/// - `23` vertical lines (`x = i * 24 - 265`, red `RGBA(255,64,64,255)` when `i % 10 == 1`).
-/// - `17` horizontal lines (`y = i * 32 - 257`, red when `i % 6 == 2`).
-/// - Center white-bordered black box `[-122..+122, 48..112]` (`[-120..+120, 50..110]` inner).
-/// - 4 arrows: `allow_u(0, -165)`, `allow_d(0, +165)`, `allow_l(-230, 0)`, `allow_r(+230, 0)`.
-/// - Readout at `(155, 320)` displaying `(x / 2, y / 3)`.
-pub fn draw_screen_position_subscreen(
-    menu: &OptionsMenu,
-    font: &AtlasFont,
-    rast: &mut TextRasterizer,
-) {
-    let (x_off, sx, sy) = viewport_512_448(rast);
-    rast.fill_rect(0, 0, rast.width, rast.height, [0, 0, 0, 255]);
-
-    let ox = menu
-        .draft_config
-        .game
-        .screen_offset_x
-        .clamp(-PS2_SCREEN_POS_X_LIMIT, PS2_SCREEN_POS_X_LIMIT);
-    let oy = menu
-        .draft_config
-        .game
-        .screen_offset_y
-        .clamp(-PS2_SCREEN_POS_Y_LIMIT, PS2_SCREEN_POS_Y_LIMIT);
-
-    // 23 vertical grid lines
-    for i in 0..23 {
-        let cx = (i as f32) * 24.0 - 265.0 + (ox as f32);
-        let px = (x_off + (cx + 256.0) * sx).round() as i32;
-        let color = if i % 10 == 1 {
-            [0xff, 0x40, 0x40, 0xff]
-        } else {
-            [0x80, 0x80, 0x80, 0xff]
-        };
-        rast.draw_line(px, 0, px, rast.height as i32 - 1, 2, color);
-    }
-
-    // 17 horizontal grid lines
-    for i in 0..17 {
-        let cy = (i as f32) * 32.0 - 257.0 + (oy as f32);
-        let py = ((cy + 224.0) * sy).round() as i32;
-        let color = if i % 6 == 2 {
-            [0xff, 0x40, 0x40, 0xff]
-        } else {
-            [0x80, 0x80, 0x80, 0xff]
-        };
-        rast.draw_line(0, py, rast.width as i32 - 1, py, 2, color);
-    }
-
-    // Center white-bordered black box `[-122..+122, 48..112]`
-    let bx = (x_off + (-122.0 + 256.0) * sx).round().max(0.0) as usize;
-    let by = ((48.0 + 224.0) * sy).round().max(0.0) as usize;
-    let bw = (244.0 * sx).round().max(1.0) as usize;
-    let bh = (64.0 * sy).round().max(1.0) as usize;
-    rast.fill_rect(bx, by, bw, bh, [0, 0, 0, 255]);
-    rast.draw_rect_outline(bx, by, bw, bh, 2, [0xff, 0xff, 0xff, 0xff]);
-
-    // 4 pulsing arrows (`position_main` `0x00214c60`)
-    draw_option_arrow(rast, 0.0, -165.0, ArrowDir::Up, menu.anim_frame, false);
-    draw_option_arrow(rast, 0.0, 165.0, ArrowDir::Down, menu.anim_frame, false);
-    draw_option_arrow(rast, -230.0, 0.0, ArrowDir::Left, menu.anim_frame, false);
-    draw_option_arrow(rast, 230.0, 0.0, ArrowDir::Right, menu.anim_frame, false);
-
-    // Readout `(x/2, y/3)` at `(155, 320)`
-    let font_sz = (15.0 * sy).round().max(11.0) as usize;
-    let rx = (x_off + 155.0 * sx).round().max(0.0) as usize;
-    let ry = (300.0 * sy).round().max(0.0) as usize;
-    font.draw_line_styled(
-        rast,
-        &format!("X: {:+}   Y: {:+}", ox / 2, oy / 3),
-        (rx, ry),
-        font_sz,
-        Sh2TextColor::White,
-        true,
-    );
 }

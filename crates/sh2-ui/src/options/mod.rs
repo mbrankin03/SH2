@@ -12,13 +12,11 @@ mod tabs;
 pub use render::{draw_options_screen, draw_polygon};
 pub use subscreens::{
     arrow_pulse_alpha, draw_brightness_subscreen, draw_controller_config_subscreen,
-    draw_option_arrow, draw_screen_position_subscreen, format_ps2_button_mask, ArrowDir,
-    OptionsSubScreen,
+    draw_option_arrow, format_ps2_button_mask, ArrowDir, OptionsSubScreen,
 };
 
 use sh2_core::config::{
     AppConfig, AudioPackDetectionStatus, ControllerPreset, PS2_MAX_BRIGHTNESS_LEVEL,
-    PS2_SCREEN_POS_X_LIMIT, PS2_SCREEN_POS_Y_LIMIT,
 };
 
 /// High-level Options category tabs.
@@ -175,7 +173,7 @@ impl OptionsMenu {
     pub fn handle_subscreen_confirm(&mut self) -> Option<OptionsSoundCue> {
         match self.sub_screen {
             OptionsSubScreen::None => None,
-            OptionsSubScreen::BrightnessCalibration | OptionsSubScreen::ScreenPosition => {
+            OptionsSubScreen::BrightnessCalibration => {
                 self.sub_screen = OptionsSubScreen::None;
                 Some(OptionsSoundCue::ConfirmSave)
             }
@@ -244,17 +242,6 @@ impl OptionsMenu {
     pub fn navigate_vertical(&mut self, delta: i32) -> OptionsSoundCue {
         match self.sub_screen {
             OptionsSubScreen::BrightnessCalibration => return OptionsSoundCue::None,
-            OptionsSubScreen::ScreenPosition => {
-                // `position_main` (`0x00214c60`): Y steps by ±3, clamped `[-24, +24]`.
-                let step = if delta > 0 { 3i16 } else { -3i16 };
-                let next = (self.draft_config.game.screen_offset_y as i16 + step).clamp(
-                    -(PS2_SCREEN_POS_Y_LIMIT as i16),
-                    PS2_SCREEN_POS_Y_LIMIT as i16,
-                ) as i8;
-                self.draft_config.game.screen_offset_y = next;
-                self.is_dirty = self.draft_config != self.original_config;
-                return OptionsSoundCue::ValueChange;
-            }
             OptionsSubScreen::ControllerConfig => {
                 // `config_main` (`0x00213a50`): `key_cur ∈ 0..=13` wrapping.
                 if delta < 0 {
@@ -298,16 +285,6 @@ impl OptionsMenu {
                 let next = (cur + if forward { 1 } else { -1 })
                     .clamp(0, PS2_MAX_BRIGHTNESS_LEVEL as i16) as u8;
                 self.draft_config.game.brightness_level = next;
-                self.is_dirty = self.draft_config != self.original_config;
-                Some(OptionsSoundCue::ValueChange)
-            }
-            OptionsSubScreen::ScreenPosition => {
-                let cur = self.draft_config.game.screen_offset_x as i16;
-                let next = (cur + if forward { 2 } else { -2 }).clamp(
-                    -(PS2_SCREEN_POS_X_LIMIT as i16),
-                    PS2_SCREEN_POS_X_LIMIT as i16,
-                ) as i8;
-                self.draft_config.game.screen_offset_x = next;
                 self.is_dirty = self.draft_config != self.original_config;
                 Some(OptionsSoundCue::ValueChange)
             }
@@ -376,7 +353,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 13);
+        assert_eq!(menu.item_count(), 12);
 
         // Adjust Resolution
         menu.adjust_value(1);
@@ -435,18 +412,7 @@ mod tests {
         assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
         assert!(menu.close_sub_screen());
 
-        // 3. Screen Position (`position_main` 0x00214c60)
-        menu.open_sub_screen(OptionsSubScreen::ScreenPosition);
-        menu.adjust_value(1); // X +2
-        menu.navigate_vertical(1); // Y +3
-        assert_eq!(menu.draft_config.game.screen_offset_x, 2);
-        assert_eq!(menu.draft_config.game.screen_offset_y, 3);
-        rast.clear();
-        draw_options_screen(&menu, &font, &mut rast);
-        assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
-        assert!(menu.close_sub_screen());
-
-        // 4. PS2 Extra Options in Game tab (Auto Load, Blood Color, View Control, Retreat Turn, Walk/Run)
+        // 3. PS2 Extra Options in Game tab (Auto Load, Blood Color, View Control, Retreat Turn, Walk/Run)
         menu.active_tab = OptionsTab::Game;
         menu.selected_index = 8;
         menu.adjust_value(1);

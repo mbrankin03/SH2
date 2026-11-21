@@ -7,7 +7,7 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 13,
+            OptionsTab::Video => 12,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     11
@@ -107,14 +107,6 @@ impl OptionsMenu {
             11 => Some((
                 "Brightness Calibration",
                 format!("Level {} (0..7)", self.draft_config.game.brightness_level),
-            )),
-            12 => Some((
-                "Screen Position",
-                format!(
-                    "X:{:+} Y:{:+}",
-                    self.draft_config.game.screen_offset_x / 2,
-                    self.draft_config.game.screen_offset_y / 3
-                ),
             )),
             _ => None,
         }
@@ -416,10 +408,6 @@ impl OptionsMenu {
             10 => return Some(OptionsSoundCue::LaunchFmvViewer),
             11 => {
                 self.open_sub_screen(OptionsSubScreen::BrightnessCalibration);
-                return Some(OptionsSoundCue::CursorMove);
-            }
-            12 => {
-                self.open_sub_screen(OptionsSubScreen::ScreenPosition);
                 return Some(OptionsSoundCue::CursorMove);
             }
             _ => return Some(OptionsSoundCue::None),

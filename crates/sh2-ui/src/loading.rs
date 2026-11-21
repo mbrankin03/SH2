@@ -480,7 +480,11 @@ impl LoadingScreen {
 
     /// Renders the retail PC footstep loading screen (`FUN_00406be0`, `FUN_004c87e0`) onto `rast`.
     pub fn render(&self, font: &AtlasFont, rast: &mut TextRasterizer) {
-        rast.clear();
+        // Fill opaque pitch-black backdrop (`#000000`, `FUN_00406ab0`)
+        let (chunks, _) = rast.pixels.as_chunks_mut::<4>();
+        for px in chunks {
+            *px = [0, 0, 0, 255];
+        }
         let sprite = FootstepSprite::get();
         let scale_x = rast.width as f32 / 512.0;
         let scale_y = rast.height as f32 / 480.0;

@@ -247,12 +247,6 @@ pub const PS2_MAX_BRIGHTNESS_LEVEL: u8 = 7;
 /// Retail PC brightness multiplier LUT for `level = 0..=7` (`sh2pc.exe` `FUN_0047b770` `0x0047b770`).
 pub const PS2_BRIGHTNESS_MULTIPLIERS: [f32; 8] = [0.5, 0.6, 0.7, 1.0, 1.2, 1.4, 1.7, 2.0];
 
-/// Screen Position X clamp bound in `position_main` (`SLUS_202.28` `0x00214c60`, `DAT_0122b387` in `[-22, +22]`).
-pub const PS2_SCREEN_POS_X_LIMIT: i8 = 22;
-
-/// Screen Position Y clamp bound in `position_main` (`SLUS_202.28` `0x00214c60`, `DAT_0122b388` in `[-24, +24]`, step `3`).
-pub const PS2_SCREEN_POS_Y_LIMIT: i8 = 24;
-
 /// PS2 Extra Options Blood Color (`Item/otn_option.c` `0x00210d50`, `DAT_0122b38f`, msgs `0x30/0x46/0x32/0x33/0x34`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BloodColor {
@@ -433,12 +427,6 @@ pub struct GameOptions {
     /// PS2 Brightness calibration level `0..=7` (`bright_main` `0x00212ec0`, `DAT_0122b386`, default `3`).
     #[serde(default = "default_brightness_level")]
     pub brightness_level: u8,
-    /// PS2 Screen Position horizontal trim `[-22, +22]` (`position_main` `0x00214c60`, `DAT_0122b387`, default `0`).
-    #[serde(default)]
-    pub screen_offset_x: i8,
-    /// PS2 Screen Position vertical trim `[-24, +24]` in steps of `3` (`position_main` `0x00214c60`, `DAT_0122b388`, default `0`).
-    #[serde(default)]
-    pub screen_offset_y: i8,
 }
 
 /// Debug and development options.
@@ -484,8 +472,6 @@ impl Default for GameOptions {
             retreat_turn: RetreatTurnMode::default(),
             walk_run_control: WalkRunControlMode::default(),
             brightness_level: PS2_DEFAULT_BRIGHTNESS_LEVEL,
-            screen_offset_x: 0,
-            screen_offset_y: 0,
         }
     }
 }

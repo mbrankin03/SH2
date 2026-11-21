@@ -3,7 +3,7 @@
 
 use super::subscreens::{
     draw_brightness_subscreen, draw_controller_config_subscreen, draw_option_arrow,
-    draw_screen_position_subscreen, viewport_512_448, ArrowDir, OptionsSubScreen,
+    viewport_512_448, ArrowDir, OptionsSubScreen,
 };
 use super::{OptionsMenu, OptionsTab};
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
@@ -267,9 +267,6 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Video, "Brightness Calibration") => {
             "Open PS2 20-bar brightness calibration screen (bright_main 0..7)"
         }
-        (OptionsTab::Video, "Screen Position") => {
-            "Open PS2 screen overscan position calibration grid (position_main)"
-        }
 
         (OptionsTab::Audio, "Master Volume") => "Overall master sound and music volume level",
         (OptionsTab::Audio, "BGM Volume") => "Background music volume level",
@@ -439,10 +436,6 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
             draw_controller_config_subscreen(menu, font, rast);
             return;
         }
-        OptionsSubScreen::ScreenPosition => {
-            draw_screen_position_subscreen(menu, font, rast);
-            return;
-        }
         OptionsSubScreen::None => {}
     }
 
@@ -527,13 +520,14 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         true,
     );
 
-    // Exact `option_font` (`0x0021a320`): `base_y = 100` (`0x64`), `step_y = 27` (`0x1b`) in 512×448 space.
-    // For modern tabs with > 11 rows (up to 13), gently compress pitch so rows stay inside panel `y <= 375`.
+    // `option_font` (`0x0021a320`): PS2 baseline `y = 100` (`0x64`), pitch `27` (`0x1b`) in 512×448.
+    // Because `AtlasFont` draws from glyph top rather than baseline, shift top up by 12px (`88.0`)
+    // so row 10 sits cleanly above the bottom `look_board` border (`y = 379`).
     let item_count = menu.item_count();
     let (base_y_v, step_y_v) = if item_count <= 11 {
-        (100.0f32, 27.0f32)
+        (88.0f32, 27.0f32)
     } else {
-        (82.0f32, 22.5f32)
+        (80.0f32, 22.5f32)
     };
 
     // Draw `look_cur` (`0x002184e0`) dark gradient highlight bar behind active row

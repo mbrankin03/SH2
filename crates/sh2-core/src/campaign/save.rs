@@ -33,16 +33,19 @@ pub struct CampaignSaveSnapshot {
 }
 
 impl CampaignSaveSnapshot {
-    /// Serializes and writes this save snapshot to `path` as pretty-printed JSON.
+    /// Serializes and writes this save snapshot atomically to `path` via a temp file + rename.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
-        if let Some(parent) = path.as_ref().parent() {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent)?;
             }
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(path, json)
+        let tmp_path = path.with_extension("json.tmp");
+        fs::write(&tmp_path, json)?;
+        fs::rename(&tmp_path, path)
     }
 
     /// Reads and deserializes a [`CampaignSaveSnapshot`] from `path`.

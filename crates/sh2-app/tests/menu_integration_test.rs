@@ -39,18 +39,11 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert_eq!(controller.title_sm.phase, TitlePhase::MainMenu);
     assert_eq!(controller.title_sm.main_menu_index, 0);
 
-    // 2. Main Menu Navigation: Navigate down through options
+    // 2. Main Menu Navigation (SaveAvailability::None -> [NewGame=0, Options=1, Movies=2, Exit=3])
     let cue = controller.handle_nav(MenuNavAction::Down);
     assert_eq!(cue, MenuSoundCue::CursorMove);
     assert_eq!(
-        MainMenuOption::ALL[controller.title_sm.main_menu_index],
-        MainMenuOption::Continue
-    );
-
-    let cue = controller.handle_nav(MenuNavAction::Down);
-    assert_eq!(cue, MenuSoundCue::CursorMove);
-    assert_eq!(
-        MainMenuOption::ALL[controller.title_sm.main_menu_index],
+        controller.title_sm.selected_main_menu_option(),
         MainMenuOption::Options
     );
 
@@ -106,8 +99,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
     assert_eq!(controller.options_menu.selected_index, 0);
 
-    // Adjust Master Volume (100% -> 80%)
-    controller.handle_nav(MenuNavAction::Left);
+    // Adjust Master Volume (16 PS2 levels: 15 -> 12 = 12/15 = 0.80)
     controller.handle_nav(MenuNavAction::Left);
     controller.handle_nav(MenuNavAction::Left);
     controller.handle_nav(MenuNavAction::Left);
@@ -179,22 +171,21 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert_eq!(cue, MenuSoundCue::Confirm);
     assert_eq!(controller.title_sm.phase, TitlePhase::ScenarioSelect);
 
-    // Select "Born from a Wish" (Maria Sub-Scenario)
-    controller.handle_nav(MenuNavAction::Down);
-    assert_eq!(controller.title_sm.scenario_index, 1);
+    // Select "Letter From Silent Heaven" (Main Scenario -> Action + Riddle difficulties)
+    controller.title_sm.riddle_clear_mask = 0x07; // Cleared Easy + Normal + Hard -> Extra unlock
     let cue = controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(cue, MenuSoundCue::Confirm);
     assert_eq!(
         controller.title_sm.selected_scenario,
-        ScenarioKind::BornFromAWish
+        ScenarioKind::LetterFromSilentHeaven
     );
     assert_eq!(
         controller.title_sm.phase,
         TitlePhase::ActionDifficultySelect
     );
 
-    // Select Hard Action Difficulty
-    controller.handle_nav(MenuNavAction::Down);
+    // Select Hard Action Difficulty (Up from Normal in Hard/Normal/Easy/Beginner column)
+    controller.handle_nav(MenuNavAction::Up);
     assert_eq!(
         controller.title_sm.action_difficulty,
         ActionDifficulty::Hard
@@ -206,17 +197,20 @@ fn test_sh2_18_full_menu_and_options_flow() {
         TitlePhase::RiddleDifficultySelect
     );
 
-    // Select Extra Riddle Difficulty
-    controller.handle_nav(MenuNavAction::Down);
-    controller.handle_nav(MenuNavAction::Down);
+    // Select Hard Riddle Difficulty (Up from Normal); with 0x07 clear mask upgrades to Extra (`0x0048aa20`)
+    controller.handle_nav(MenuNavAction::Up);
+    assert_eq!(
+        controller.title_sm.riddle_difficulty,
+        RiddleDifficulty::Hard
+    );
+
+    // Confirm game launch: Emits authentic audio transition cue 15002 & upgrades Hard -> Extra
+    let cue = controller.handle_nav(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::GameStartTransition);
     assert_eq!(
         controller.title_sm.riddle_difficulty,
         RiddleDifficulty::Extra
     );
-
-    // Confirm game launch: Emits authentic audio transition cue 15002
-    let cue = controller.handle_nav(MenuNavAction::Confirm);
-    assert_eq!(cue, MenuSoundCue::GameStartTransition);
     assert_eq!(controller.title_sm.phase, TitlePhase::TransitionToGame);
 
     // Simulate transition fadeout completion

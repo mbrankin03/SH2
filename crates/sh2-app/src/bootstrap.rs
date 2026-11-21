@@ -27,10 +27,19 @@ use sh2_ui::{ButtonSpriteSheet, TextRasterizer};
 /// Initializes the Vulkan window surface, `RenderContext`, audio engine, character skeletons,
 /// bestiary models, and UI pipelines into a ready-to-run [`AppState`].
 pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -> AppState {
-    let window_attributes = Window::default_attributes()
+    let startup_config = sh2_core::config::AppConfig::load_from_file("config.json");
+    let mut window_attributes = Window::default_attributes()
         .with_title("Silent Hill 2 Open Port - Interactive Character & Skeletal Animation")
         .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
         .with_visible(true);
+    if matches!(
+        startup_config.video.display_mode,
+        sh2_core::config::WindowDisplayMode::BorderlessFullscreen
+            | sh2_core::config::WindowDisplayMode::ExclusiveFullscreen
+    ) {
+        window_attributes =
+            window_attributes.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+    }
 
     let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
     let size = window.inner_size();
@@ -325,11 +334,12 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         &menu_uniform_buffer,
     );
 
-    // Dedicated exact 4:3 (`1280x960`) software rasterizer & texture for PS2 Status/Inventory so
-    // `AtlasFont` glyphs and `itemmenu2.tex` sprites have 1:1 square pixels with zero horizontal
-    // squish when blitted into `ps2_ui_canvas_rect` on any monitor aspect ratio.
-    let inv_w = 1280u32;
-    let inv_h = 960u32;
+    // Dedicated exact 4:3 (`1920x1440`) software rasterizer & texture for authentic PS2 UI screens
+    // (Title, Difficulty, Pause, Options, Loading, Inventory) so `AtlasFont` glyphs and `.tex`
+    // sprites stay 4K-sharp with 1:1 square pixels and zero horizontal squish when blitted into
+    // `ps2_ui_canvas_rect` on any monitor aspect ratio (16:9, 16:10, 21:9, 32:9, 4K, resized).
+    let inv_w = 1920u32;
+    let inv_h = 1440u32;
     let inventory_rasterizer = TextRasterizer::new(inv_w as usize, inv_h as usize);
     let inventory_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Inventory 4:3 Overlay Texture"),

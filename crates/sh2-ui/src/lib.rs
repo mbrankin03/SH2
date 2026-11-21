@@ -9,6 +9,7 @@ pub mod loading;
 pub mod map;
 pub mod memo;
 pub mod menu;
+pub mod mes;
 pub mod options;
 pub mod pause;
 pub mod quickslots;
@@ -38,9 +39,18 @@ pub use memo::{
 };
 pub use menu::{
     draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
-    LaunchTarget, MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,
+    resolve_effective_riddle, BootLogoKind, BootLogoStage, BootProfile, BootSequenceState,
+    LaunchTarget, MainMenuOption, MenuNavAction, MenuSoundCue, SaveAvailability, TitlePhase,
+    TitleStateMachine,
 };
-pub use options::{draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsTab};
+pub use mes::{
+    font_set_color, yes_no_bar_alpha_gs, MesAlign, MesDrawCmd, MesFontType, MesInterpreter,
+    MesLayoutResult, MesWaitMode, FONT_COLOR_PALETTE_PS2, YES_NO_BAR_RGB, YES_NO_NO_CENTER_X,
+    YES_NO_YES_CENTER_X,
+};
+pub use options::{
+    draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab,
+};
 pub use pause::{draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

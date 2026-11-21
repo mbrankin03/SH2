@@ -57,6 +57,10 @@ impl ApplicationHandler for SilentHillApp {
 
                     if !state.menu_ctrl.in_game_active {
                         handle_title_menu_key_input(state, key_code, pressed);
+                        if state.menu_ctrl.title_sm.exit_requested {
+                            tracing::info!("Main Menu: Exit confirmed, closing application.");
+                            event_loop.exit();
+                        }
                         return;
                     }
 

@@ -231,6 +231,34 @@ impl AudioPackDetectionStatus {
     }
 }
 
+/// Maximum PS2/PC discrete volume slider level (`Item/otn_option.c` `look_bgm` `0x002159d0`,
+/// `look_se` `0x00216500`: 16 levels `0..=15`, 15 vertical bars).
+pub const PS2_VOLUME_MAX_LEVEL: u8 = 15;
+
+/// Converts a normalized `[0.0, 1.0]` volume gain to the discrete PS2/PC volume level `0..=15`.
+#[must_use]
+pub fn volume_gain_to_ps2_level(gain: f32) -> u8 {
+    (gain.clamp(0.0, 1.0) * PS2_VOLUME_MAX_LEVEL as f32).round() as u8
+}
+
+/// Converts a discrete PS2/PC volume level `0..=15` to a normalized `[0.0, 1.0]` gain.
+#[must_use]
+pub fn ps2_level_to_volume_gain(level: u8) -> f32 {
+    level.min(PS2_VOLUME_MAX_LEVEL) as f32 / PS2_VOLUME_MAX_LEVEL as f32
+}
+
+/// Converts a discrete PS2/PC volume level `0..=15` to the `shSdCall(0x401/0x402)` hardware
+/// argument (`level << 3` = `0..=120`, `sound/sh_sound.c` `SeMasterVolumeChange` `0x00194d20`).
+#[must_use]
+pub const fn ps2_level_to_sd_arg(level: u8) -> u32 {
+    let clamped = if level > PS2_VOLUME_MAX_LEVEL {
+        PS2_VOLUME_MAX_LEVEL
+    } else {
+        level
+    };
+    (clamped as u32) << 3
+}
+
 /// Audio volume and routing options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioOptions {

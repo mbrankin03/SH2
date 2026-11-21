@@ -310,7 +310,40 @@ impl AppState {
         );
     }
 
-    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
+    /// Computes the centered 4:3 PS2 UI viewport `(x, y, w, h)` inside the live swapchain surface
+    /// so authentic PS2 menus never stretch on 16:9, 16:10, 21:9, 32:9, 4K, or resized windows.
+    #[must_use]
+    pub fn ps2_ui_viewport(&self) -> (f32, f32, f32, f32) {
+        sh2_ui::inventory::ps2_ui_canvas_rect(
+            self.surface_config.width.max(1) as f32,
+            self.surface_config.height.max(1) as f32,
+        )
+    }
+
+    /// Blits a full-screen semi-transparent black dim scrim (`alpha` in `0..=255`) across the
+    /// entire swapchain (edge-to-edge on 16:9, 21:9, 32:9, and 4K windows) with no 4:3 seam.
+    pub fn draw_fullscreen_dim_scrim(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+        alpha: u8,
+    ) {
+        let (chunks, _) = self.menu_rasterizer.pixels.as_chunks_mut::<4>();
+        for px in chunks {
+            *px = [0, 0, 0, alpha];
+        }
+        self.upload_hud_overlay_texture();
+        self.blitter.render_with_bind_group_and_load_op(
+            encoder,
+            &self.menu_text_bind_group,
+            surface_view,
+            wgpu::LoadOp::Load,
+        );
+    }
+
+    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it
+    /// edge-to-edge over `surface_view` (ensuring full-window campaign fades, FMV subtitles, and
+    /// debug HUDs never leave 3D scene strips peeking out on non-16:9 maximized windows).
     pub fn finish_hud_overlay(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -325,7 +358,7 @@ impl AppState {
         );
     }
 
-    /// Uploads the dedicated 4:3 (`1280x960`) inventory rasterizer buffer and blits it into
+    /// Uploads the dedicated 4:3 (`1920x1440`) PS2 UI rasterizer buffer and blits it into
     /// `viewport` (`ps2_ui_canvas_rect`) with 1:1 square pixels and zero horizontal font squish.
     pub fn finish_inventory_overlay_in_viewport(
         &self,

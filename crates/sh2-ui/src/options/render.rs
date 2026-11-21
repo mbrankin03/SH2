@@ -1,9 +1,14 @@
 //! Authentic PS2 `optmenu.c` (`0x45e750`, `0x461600`, `0x45bf10`) screen rasterization,
 //! octagon panel geometry, volume slider blocks, and contextual help strings.
 
+use super::subscreens::{
+    draw_brightness_subscreen, draw_controller_config_subscreen, draw_option_arrow,
+    viewport_512_448, ArrowDir, OptionsSubScreen,
+};
 use super::{OptionsMenu, OptionsTab};
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
+use sh2_core::config::volume_gain_to_ps2_level;
 
 /// Draws a convex polygon with optional fill and outline colors directly onto `rast`.
 pub fn draw_polygon(
@@ -151,26 +156,40 @@ fn draw_thick_line(
     }
 }
 
-/// Draws an authentic 3D beveled volume block (15 total blocks matching `0x45bf10`).
-fn draw_volume_block(rast: &mut TextRasterizer, x: i32, y: i32, lit: bool) {
-    let w = 8;
-    let h = 23;
+/// Draws an authentic PS2 volume bar (`Item/otn_option.c` `look_bgm` `0x002159d0`, `look_se`
+/// `0x00216500`):
+/// - Active (`lit == true`): `9×23` outer bevel (`top-left 0xb0`, `bottom-right 0x40`) with
+///   `5×19` inner face (`0x80`).
+/// - Inactive (`lit == false`): `5×19` inner rect only (`0x50`), inset by `(2, 2)`.
+/// - When the row is unselected, alpha is halved (`0x40` in PS2 GS 0..128 = `128` in 8-bit).
+fn draw_volume_block(
+    rast: &mut TextRasterizer,
+    x: i32,
+    y: i32,
+    scale_x: f32,
+    scale_y: f32,
+    lit: bool,
+    row_selected: bool,
+) {
+    let w = (9.0 * scale_x).round().max(4.0) as i32;
+    let h = (23.0 * scale_y).round().max(8.0) as i32;
+    let bx = (2.0 * scale_x).round().max(1.0) as i32;
+    let by = (2.0 * scale_y).round().max(1.0) as i32;
+    let a = if row_selected { 255u8 } else { 128u8 };
 
-    let (top_fill, bottom_fill, border_light, border_dark) = if lit {
-        (
-            [176u8, 176, 176, 255],
-            [137u8, 137, 137, 255],
-            [220u8, 220, 220, 255],
-            [80u8, 80, 80, 255],
-        )
-    } else {
-        (
-            [80u8, 80, 80, 255],
-            [60u8, 60, 60, 255],
-            [100u8, 100, 100, 255],
-            [40u8, 40, 40, 255],
-        )
-    };
+    if !lit {
+        // Inactive bar: inner 5×19 rect only (`0x40505050`)
+        let ix = (x + bx).max(0) as usize;
+        let iy = (y + by).max(0) as usize;
+        let iw = (w - 2 * bx).max(1) as usize;
+        let ih = (h - 2 * by).max(1) as usize;
+        rast.fill_rect(ix, iy, iw, ih, [0x50, 0x50, 0x50, a]);
+        return;
+    }
+
+    let bevel_tl = [0xb0, 0xb0, 0xb0, a];
+    let bevel_br = [0x40, 0x40, 0x40, a];
+    let inner_fill = [0x80, 0x80, 0x80, a];
 
     for dy in 0..h {
         let py = y + dy;
@@ -182,22 +201,41 @@ fn draw_volume_block(rast: &mut TextRasterizer, x: i32, y: i32, lit: bool) {
             if px < 0 || px >= rast.width as i32 {
                 continue;
             }
-            let idx = (py as usize * rast.width + px as usize) * 4;
-
-            let c = if dx == 0 || dy == 0 {
-                border_light
-            } else if dx == w - 1 || dy == h - 1 {
-                border_dark
-            } else if dy < h / 2 {
-                top_fill
+            let c = if dx < bx || dy < by {
+                bevel_tl
+            } else if dx >= w - bx || dy >= h - by {
+                bevel_br
             } else {
-                bottom_fill
+                inner_fill
             };
+            rast.blend_pixel(px as usize, py as usize, c);
+        }
+    }
+}
 
-            rast.pixels[idx] = c[0];
-            rast.pixels[idx + 1] = c[1];
-            rast.pixels[idx + 2] = c[2];
-            rast.pixels[idx + 3] = c[3];
+/// Draws the PS2 dark gradient row selection highlight bar (`look_cur` `0x002184e0`):
+/// 15 pairs of 1px horizontal strips above & below `cy` spanning `x ∈ [-226, +226]`,
+/// pure black with alpha tapering from `15` at center to `1` at `±14px`.
+fn draw_look_cur_bar(rast: &mut TextRasterizer, cy_512: f32) {
+    let (x_off, sx, sy) = viewport_512_448(rast);
+    let x0 = (x_off + (-226.0 + 256.0) * sx).round().max(0.0) as usize;
+    let x1 = (x_off + (226.0 + 256.0) * sx)
+        .round()
+        .min(rast.width as f32) as usize;
+    let bar_w = x1.saturating_sub(x0);
+    if bar_w == 0 {
+        return;
+    }
+    let strip_h = sy.ceil().max(1.0) as usize;
+    for i in 0..15i32 {
+        // PS2 alpha `(15 - i)` in 0..128 scale -> `((15 - i) * 2)` in 0..255
+        let alpha = ((15 - i) * 2).min(255) as u8;
+        let color = [0, 0, 0, alpha];
+        let y_up = ((cy_512 - i as f32 + 224.0) * sy).round().max(0.0) as usize;
+        let y_dn = ((cy_512 + i as f32 + 224.0) * sy).round().max(0.0) as usize;
+        rast.fill_rect(x0, y_up, bar_w, strip_h, color);
+        if i > 0 {
+            rast.fill_rect(x0, y_dn, bar_w, strip_h, color);
         }
     }
 }
@@ -225,6 +263,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         }
         (OptionsTab::Video, "FMV Cutscene Viewer") => {
             "Launch the interactive 1080p60 cutscene theater"
+        }
+        (OptionsTab::Video, "Brightness Calibration") => {
+            "Open PS2 20-bar brightness calibration screen (bright_main 0..7)"
         }
 
         (OptionsTab::Audio, "Master Volume") => "Overall master sound and music volume level",
@@ -284,6 +325,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Controls, "First-Person Sway") => {
             "Subtle footstep and stride head-bob sway in First-Person mode"
         }
+        (OptionsTab::Controls, "Controller Config (PS2)") => {
+            "Open PS2 Controller Type 1/2/3 presets & 13-action remapping (config_main)"
+        }
 
         (OptionsTab::Game, "Action Difficulty") => {
             "Combat challenge and monster durability difficulty"
@@ -304,6 +348,21 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         }
         (OptionsTab::Game, "Test Rooms") => {
             "Select debug sandbox stage, fog calibration, or model viewer"
+        }
+        (OptionsTab::Game, "Auto Load") => {
+            "Automatically load the latest saved game on startup (PS2 Main Options)"
+        }
+        (OptionsTab::Game, "Blood Color") => {
+            "Change blood splatter color: Normal, Green, Violet, or Black (PS2 Extra Options)"
+        }
+        (OptionsTab::Game, "View Control") => {
+            "Search camera vertical/control inversion mode: Normal or Reverse (PS2 Extra Options)"
+        }
+        (OptionsTab::Game, "Retreat Turn") => {
+            "Quick-turn retreat input direction: Normal or Reverse (PS2 Extra Options)"
+        }
+        (OptionsTab::Game, "Walk/Run Control") => {
+            "Default movement speed: Normal (Walk), Reverse (Run), or Analog (PS2/PC Extra Options)"
         }
 
         (OptionsTab::Enhanced, "Version Preset") => {
@@ -363,84 +422,85 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
     }
 }
 
-/// Draws the authentic options screen matching retail PC / PS2 `optmenu.c` (`0x45e750`, `0x461600`)
-/// hosting our modern options (Resolution, Fog, Noise, Display Mode, Audio, Controls, Game).
+/// Draws the authentic options screen matching PS2 `Item/otn_option.c` (`look_board` `0x002171a0`,
+/// `option_font` `0x0021a320`, `look_cur` `0x002184e0`, `look_bgm`/`look_se` `0x002159d0`/`0x00216500`)
+/// and dispatches active PS2 subscreens (`bright_main`, `config_main`, `position_main`).
 #[allow(clippy::excessive_precision)]
 pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut TextRasterizer) {
-    // Keep 4:3 authentic aspect ratio inside widescreen rasterizer
-    let target_4_3_w = rast.height as f32 * (4.0 / 3.0);
-    let (x_offset, base_w) = if target_4_3_w <= rast.width as f32 {
-        ((rast.width as f32 - target_4_3_w) * 0.5, target_4_3_w)
-    } else {
-        (0.0, rast.width as f32)
+    match menu.sub_screen {
+        OptionsSubScreen::BrightnessCalibration => {
+            draw_brightness_subscreen(menu, font, rast);
+            return;
+        }
+        OptionsSubScreen::ControllerConfig => {
+            draw_controller_config_subscreen(menu, font, rast);
+            return;
+        }
+        OptionsSubScreen::None => {}
+    }
+
+    // 4:3 pillarboxed projection from PS2 512×448 centered space (`[-256..+256] × [-224..+224]`)
+    let (x_offset, scale_x, scale_y) = viewport_512_448(rast);
+    let to_centered = |cx: f32, cy: f32| -> (i32, i32) {
+        (
+            (x_offset + (cx + 256.0) * scale_x).round() as i32,
+            ((cy + 224.0) * scale_y).round() as i32,
+        )
     };
 
-    let scale_x = base_w / 640.0;
-    let scale_y = rast.height as f32 / 480.0;
-
-    // Authentic PS2 octagon containers calibrated from retail PS2 SLUS-20228 / optmenu.c 0x45e750
+    // Exact `look_board` (`0x002171a0`) chamfered panels in centered 512×448 coordinates:
+    // Top panel: (-210,-165), (+210,-165), (+227,-145), (+227,+155), (-227,+155), (-227,-145)
     let panel_pts: Vec<(i32, i32)> = [
-        (48.0, 64.0),
-        (593.0, 64.0),
-        (604.0, 76.0),
-        (604.0, 407.0),
-        (36.0, 407.0),
-        (36.0, 76.0),
+        (-210.0, -165.0),
+        (210.0, -165.0),
+        (227.0, -145.0),
+        (227.0, 155.0),
+        (-227.0, 155.0),
+        (-227.0, -145.0),
     ]
     .iter()
-    .map(|(x, y)| {
-        (
-            (x_offset + x * scale_x).round() as i32,
-            (y * scale_y).round() as i32,
-        )
-    })
+    .map(|&(x, y)| to_centered(x, y))
     .collect();
 
+    // Bottom description box: (-227,+161), (+227,+161), (+227,+185), (+210,+205), (-210,+205), (-227,+185)
     let box_pts: Vec<(i32, i32)> = [
-        (36.0, 414.0),
-        (604.0, 414.0),
-        (604.0, 436.0),
-        (580.0, 461.0),
-        (60.0, 461.0),
-        (36.0, 436.0),
+        (-227.0, 161.0),
+        (227.0, 161.0),
+        (227.0, 185.0),
+        (210.0, 205.0),
+        (-210.0, 205.0),
+        (-227.0, 185.0),
     ]
     .iter()
-    .map(|(x, y)| {
-        (
-            (x_offset + x * scale_x).round() as i32,
-            (y * scale_y).round() as i32,
-        )
-    })
+    .map(|&(x, y)| to_centered(x, y))
     .collect();
 
+    // Outer octagon border: (-212,-170), (+212,-170), (+232,-147), (+232,+187), (+212,+210), (-212,+210), (-232,+187), (-232,-147)
     let outline_pts: Vec<(i32, i32)> = [
-        (55.0, 58.0),
-        (586.0, 58.0),
-        (612.0, 83.0),
-        (612.0, 440.0),
-        (586.0, 467.0),
-        (55.0, 467.0),
-        (30.0, 440.0),
-        (30.0, 83.0),
+        (-212.0, -170.0),
+        (212.0, -170.0),
+        (232.0, -147.0),
+        (232.0, 187.0),
+        (212.0, 210.0),
+        (-212.0, 210.0),
+        (-232.0, 187.0),
+        (-232.0, -147.0),
     ]
     .iter()
-    .map(|(x, y)| {
-        (
-            (x_offset + x * scale_x).round() as i32,
-            (y * scale_y).round() as i32,
-        )
-    })
+    .map(|&(x, y)| to_centered(x, y))
     .collect();
 
-    let fill_color = [12, 12, 13, 255];
-    let border_color = [4, 4, 18, 255];
+    // Exact `look_board` (`0x002171a0`) colors (PS2 ABGR -> RGBA, alpha scaled from 0..128):
+    // Fill: `0x20808080` (RGB 0x80, 25% alpha -> 0x40); Border: `0x30d06060` (RGB 0x60,0x60,0xd0, alpha 0x60).
+    let fill_color = [0x80, 0x80, 0x80, 0x40];
+    let border_color = [0x60, 0x60, 0xd0, 0x60];
 
     draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &outline_pts, None, Some(border_color));
 
-    let title_x = rast.width / 2;
-    let title_y = (28.0 * scale_y).round() as usize;
+    let title_x = (x_offset + 256.0 * scale_x).round() as usize;
+    let title_y = (32.0 * scale_y).round() as usize;
 
     let category_header = match menu.active_tab {
         OptionsTab::Video => "<   V I D E O   O P T I O N S   >",
@@ -455,31 +515,49 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         rast,
         category_header,
         (title_x, title_y),
-        (22.0 * scale_y).round() as usize,
+        (19.0 * scale_y).round().max(12.0) as usize,
         Sh2TextColor::White,
         true,
     );
 
-    let base_y = 84.0 * scale_y;
-    let step_y = 29.5 * scale_y;
-
-    let center_panel_x = (x_offset + 320.0 * scale_x).round() as usize;
-    let label_right_x = (x_offset + 300.0 * scale_x).round() as usize;
-    let val_left_x = (x_offset + 336.0 * scale_x).round() as usize;
-    let font_size = (18.0 * scale_y).round() as usize;
-
+    // `option_font` (`0x0021a320`): PS2 baseline `y = 100` (`0x64`), pitch `27` (`0x1b`) in 512×448.
+    // Because `AtlasFont` draws from glyph top rather than baseline, shift top up by 12px (`88.0`)
+    // so row 10 sits cleanly above the bottom `look_board` border (`y = 379`).
     let item_count = menu.item_count();
+    let (base_y_v, step_y_v) = if item_count <= 11 {
+        (88.0f32, 27.0f32)
+    } else {
+        (80.0f32, 22.5f32)
+    };
+
+    // Draw `look_cur` (`0x002184e0`) dark gradient highlight bar behind active row
+    let sel_cy_512 = (base_y_v + menu.selected_index as f32 * step_y_v) - 224.0 + 7.0;
+    draw_look_cur_bar(rast, sel_cy_512);
+
+    let center_panel_x = (x_offset + 256.0 * scale_x).round() as usize;
+    let label_right_x = (x_offset + 240.0 * scale_x).round() as usize;
+    // `option_font` (`0x0021a320`): value column `x = 0x10e` (270) unselected, `0x10c` (268) selected
+    let val_left_x = (x_offset + 270.0 * scale_x).round() as usize;
+    let font_size = if item_count <= 11 {
+        (15.0 * scale_y).round().max(10.0) as usize
+    } else {
+        (13.0 * scale_y).round().max(9.0) as usize
+    };
+    let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
+    let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
+
+    // Exact `option_font` (`0x0021a320`) unselected pass color: `alpha = 0x60` soft grey so
+    // the selected `(-2, -2)` full-alpha white pass reads as a crisp pop with subtle shadow.
+    let unselected_color = Sh2TextColor::Custom {
+        top: [0x90, 0x90, 0x90, 0x60],
+        bottom: [0x90, 0x90, 0x90, 0x60],
+    };
 
     for idx in 0..item_count {
         if let Some((label, val)) = menu.item_display(idx) {
-            let y = (base_y + idx as f32 * step_y).round() as usize;
+            let y_v = base_y_v + idx as f32 * step_y_v;
+            let y = (y_v * scale_y).round() as usize;
             let is_selected = idx == menu.selected_index;
-
-            let style = if is_selected {
-                Sh2TextColor::White
-            } else {
-                Sh2TextColor::SilverUnselected
-            };
 
             let is_slider = menu.active_tab == OptionsTab::Audio
                 && (label == "BGM Volume"
@@ -492,32 +570,61 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                 || label == "Loading Screen Preview"
                 || label == "Test Rooms Launcher"
             {
+                font.draw_line_centered(
+                    rast,
+                    label,
+                    (center_panel_x, y),
+                    font_size,
+                    unselected_color,
+                    false,
+                );
                 if is_selected {
                     font.draw_line_centered(
                         rast,
                         label,
-                        (center_panel_x.saturating_sub(2), y.saturating_sub(2)),
+                        (
+                            center_panel_x.saturating_sub(pop_dx),
+                            y.saturating_sub(pop_dy),
+                        ),
                         font_size,
                         Sh2TextColor::White,
                         false,
                     );
                 }
-                font.draw_line_centered(rast, label, (center_panel_x, y), font_size, style, true);
             } else {
                 let label_w = font.text_width(label, font_size);
                 let lx = label_right_x.saturating_sub(label_w);
 
+                // Unselected base pass (`alpha = 0x60`)
+                font.draw_line_styled(rast, label, (lx, y), font_size, unselected_color, false);
                 if is_selected {
+                    // Selected crisp pass at `(-2, -2)` (`option_font` `0x0021a320`, `alpha = 0xff`)
                     font.draw_line_styled(
                         rast,
                         label,
-                        (lx.saturating_sub(2), y.saturating_sub(2)),
+                        (lx.saturating_sub(pop_dx), y.saturating_sub(pop_dy)),
                         font_size,
                         Sh2TextColor::White,
                         false,
                     );
+                    // Pulsing lavender `allow_l` (`x = -5`) & `allow_r` (`x = +197`)
+                    draw_option_arrow(
+                        rast,
+                        -5.0,
+                        y_v - 224.0 + 7.0,
+                        ArrowDir::Left,
+                        menu.anim_frame,
+                        false,
+                    );
+                    draw_option_arrow(
+                        rast,
+                        197.0,
+                        y_v - 224.0 + 7.0,
+                        ArrowDir::Right,
+                        menu.anim_frame,
+                        false,
+                    );
                 }
-                font.draw_line_styled(rast, label, (lx, y), font_size, style, true);
 
                 if is_slider {
                     let vol_pct = match label {
@@ -527,47 +634,61 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                         "Dialogue Volume" => menu.draft_config.audio.dialogue_volume,
                         _ => 1.0,
                     };
-                    let active_blocks = (vol_pct * 15.0).round() as usize;
-                    let block_x_start = val_left_x as i32;
-                    let block_y = (y as f32 + 1.0 * scale_y).round() as i32;
-
+                    // `look_bgm`/`look_se` (`0x002159d0`/`0x00216500`): 16 levels (`0..=15`),
+                    // 15 vertical bars starting at centered `x = 15` (`271` top-left), pitch `0xb` (11px).
+                    let active_blocks = volume_gain_to_ps2_level(vol_pct) as usize;
+                    let block_y = (y_v * scale_y).round() as i32;
                     for b in 0..15 {
-                        let bx = block_x_start + (b as f32 * 14.0 * scale_x).round() as i32;
-                        let lit = b < active_blocks;
-                        draw_volume_block(rast, bx, block_y, lit);
+                        let bx_v = 271.0 + (b as f32) * 11.0;
+                        let bx = (x_offset + bx_v * scale_x).round() as i32;
+                        draw_volume_block(
+                            rast,
+                            bx,
+                            block_y,
+                            scale_x,
+                            scale_y,
+                            b < active_blocks,
+                            is_selected,
+                        );
                     }
                 } else {
+                    font.draw_line_styled(
+                        rast,
+                        &val,
+                        (val_left_x, y),
+                        font_size,
+                        unselected_color,
+                        false,
+                    );
                     if is_selected {
                         font.draw_line_styled(
                             rast,
                             &val,
-                            (val_left_x.saturating_sub(2), y.saturating_sub(2)),
+                            (val_left_x.saturating_sub(pop_dx), y.saturating_sub(pop_dy)),
                             font_size,
                             Sh2TextColor::White,
                             false,
                         );
                     }
-                    font.draw_line_styled(rast, &val, (val_left_x, y), font_size, style, true);
                 }
             }
         }
     }
 
-    let help_x = (x_offset + 90.0 * scale_x).round() as usize;
-    let help_y = (436.0 * scale_y).round() as usize;
+    // Description text (`option_font` `0x0021a320`: `x = 0x46` (70), `y = 0x1a6` (422) in 512×448)
+    let help_x = (x_offset + 52.0 * scale_x).round() as usize;
+    let help_y = (398.0 * scale_y).round() as usize;
 
     let selected_label = menu
         .item_display(menu.selected_index)
         .map(|(l, _)| l)
         .unwrap_or("");
-
     let help_text = option_help_text(menu.active_tab, selected_label);
-
     font.draw_line_styled(
         rast,
         help_text,
         (help_x, help_y),
-        font_size,
+        (13.0 * scale_y).round().max(9.0) as usize,
         Sh2TextColor::White,
         true,
     );

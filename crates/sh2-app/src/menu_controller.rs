@@ -47,7 +47,11 @@ impl AppMenuController {
         let path = config_path.as_ref().to_path_buf();
         let loaded_config = AppConfig::load_from_file(&path);
         let options_menu = OptionsMenu::new_with_audio_packs(loaded_config, audio_pack_status);
-        let title_sm = TitleStateMachine::new();
+        let mut title_sm = TitleStateMachine::new();
+        let save_path = path.with_file_name("save_slot0.json");
+        if sh2_core::campaign::CampaignSaveSnapshot::exists_at(&save_path) {
+            title_sm.set_save_availability(sh2_ui::menu::SaveAvailability::LoadAndContinue);
+        }
         let pause_menu = PauseMenu::new();
 
         Self {
@@ -60,6 +64,12 @@ impl AppMenuController {
             revision: 0,
             audio_pack_status,
         }
+    }
+
+    /// Returns the path of the primary campaign save slot file (`save_slot0.json`) stored beside `config_path`.
+    #[must_use]
+    pub fn save_slot_path(&self) -> PathBuf {
+        self.config_path.with_file_name("save_slot0.json")
     }
 
     /// Updates the detected audio pack status on both the controller and the nested `OptionsMenu`.
@@ -192,6 +202,13 @@ impl AppMenuController {
                     }
                 }
                 MenuNavAction::Confirm => {
+                    if let Some(sub_cue) = self.options_menu.handle_subscreen_confirm() {
+                        return if sub_cue == OptionsSoundCue::None {
+                            MenuSoundCue::None
+                        } else {
+                            MenuSoundCue::Confirm
+                        };
+                    }
                     if self.options_menu.is_fmv_viewer_selected() {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
@@ -231,6 +248,9 @@ impl AppMenuController {
                     }
                 }
                 MenuNavAction::Cancel => {
+                    if self.options_menu.close_sub_screen() {
+                        return MenuSoundCue::Cancel;
+                    }
                     // Discard and return to Main Menu, restoring original audio config if live-previewed
                     self.options_menu.discard_changes();
                     self.config_applied_pending = Some(self.options_menu.original_config.clone());
@@ -311,6 +331,14 @@ impl AppMenuController {
                     (MenuSoundCue::CursorMove, PauseAction::None)
                 }
                 MenuNavAction::Confirm => {
+                    if let Some(sub_cue) = self.options_menu.handle_subscreen_confirm() {
+                        let s = if sub_cue == OptionsSoundCue::None {
+                            MenuSoundCue::None
+                        } else {
+                            MenuSoundCue::Confirm
+                        };
+                        return (s, PauseAction::None);
+                    }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
                     self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
@@ -326,6 +354,9 @@ impl AppMenuController {
                     (sound, PauseAction::None)
                 }
                 MenuNavAction::Cancel => {
+                    if self.options_menu.close_sub_screen() {
+                        return (MenuSoundCue::Cancel, PauseAction::None);
+                    }
                     self.options_menu.discard_changes();
                     self.config_applied_pending = Some(self.options_menu.original_config.clone());
                     self.pause_menu.sub_phase = PauseSubPhase::Main;
@@ -446,10 +477,19 @@ impl AppMenuController {
             }
             TitlePhase::Credits => {
                 lines.push("=== CREDITS ===".into());
-                lines.push("Director: Keiichiro Toyama".into());
+                lines.push("Director: Masashi Tsuboyama".into());
                 lines.push("CGI & Character Design: Takayoshi Sato".into());
                 lines.push("Music & Sound Design: Akira Yamaoka".into());
                 lines.push("[Press Cancel / Esc to Return]".into());
+            }
+            TitlePhase::ExitConfirm => {
+                lines.push("Exit the game?".into());
+                let choice = if self.title_sm.exit_confirm_index == 0 {
+                    "> Yes <   No"
+                } else {
+                    "  Yes   > No <"
+                };
+                lines.push(choice.into());
             }
             TitlePhase::TransitionToGame => {
                 lines.push(format!(
@@ -485,8 +525,7 @@ mod tests {
         controller.handle_nav(MenuNavAction::Confirm);
         assert_eq!(controller.title_sm.phase, TitlePhase::MainMenu);
 
-        // Navigate to Options
-        controller.handle_nav(MenuNavAction::Down); // Continue
+        // Navigate to Options (SaveAvailability::None -> [NewGame=0, Options=1, Movies=2, Exit=3])
         controller.handle_nav(MenuNavAction::Down); // Options
         controller.handle_nav(MenuNavAction::Confirm);
         assert_eq!(controller.title_sm.phase, TitlePhase::OptionsMenu);

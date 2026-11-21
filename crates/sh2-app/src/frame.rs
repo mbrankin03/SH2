@@ -413,8 +413,8 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             );
         }
 
-        // Render room-specific 2D HUD overlay (suppressed while single-screen menus are open)
-        if !state.ingame_menus.is_any_open() {
+        // Render room-specific 2D HUD overlay (suppressed while single-screen menus or pause are open)
+        if !state.ingame_menus.is_any_open() && !state.menu_ctrl.pause_menu.is_open {
             rooms::dispatch_render_hud(state, &mut encoder, &surface_view);
         }
 
@@ -423,26 +423,30 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             crate::ingame_menus::render_overlay(state, &mut encoder, &surface_view);
         }
 
-        // If in-game pause menu is active, render authentic pause overlay
+        // If in-game pause menu is active, dim the full widescreen window edge-to-edge, then
+        // render the crisp 1920x1440 4:3 Pause/Options UI centered on top with 1:1 square pixels.
         if state.menu_ctrl.pause_menu.is_open {
-            state.begin_hud_overlay();
+            state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 165);
+            state.inventory_rasterizer.clear();
             let font = sh2_ui::AtlasFont::shared(None);
 
             if state.menu_ctrl.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
                 sh2_ui::draw_options_screen(
                     &state.menu_ctrl.options_menu,
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
                 );
             } else {
-                sh2_ui::draw_pause_screen(
+                sh2_ui::pause::draw_pause_screen_with_scrim(
                     &state.menu_ctrl.pause_menu,
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
+                    false,
                 );
             }
 
-            state.finish_hud_overlay(&mut encoder, &surface_view);
+            let vp = state.ps2_ui_viewport();
+            state.finish_inventory_overlay_in_viewport(&mut encoder, &surface_view, vp);
         }
     } else {
         render_title_menu_overlay(state, &mut encoder, &surface_view);
@@ -484,7 +488,9 @@ fn render_title_menu_overlay(
             .or(state.splash_konami_bg.as_ref()),
     };
 
+    let ui_vp = state.ps2_ui_viewport();
     if let Some(bg) = bg_to_draw {
+        // Fill the full widescreen window with the SH2:EE title / splash artwork (zero black bars)
         state.blitter.render_with_bind_group_and_load_op(
             encoder,
             bg,
@@ -508,18 +514,25 @@ fn render_title_menu_overlay(
         });
     }
 
-    // Render dynamic 2D text overlay for interactive menus (Main Menu, Scenario Select, Options, Credits)
+    // Render dynamic 2D overlay at 1920x1440 (exact 4:3) into centered `ps2_ui_viewport()`
+    // so Title, Difficulty, Options, Credits, ExitConfirm, and Loading stay 4K-sharp with zero stretch on any monitor.
     if phase != TitlePhase::SplashIntro {
-        state.menu_rasterizer.clear();
+        if phase == TitlePhase::ExitConfirm {
+            state.draw_fullscreen_dim_scrim(encoder, surface_view, 165);
+        }
+        state.inventory_rasterizer.clear();
         let font = sh2_ui::AtlasFont::shared(None);
 
         match phase {
-            TitlePhase::TitleLogo | TitlePhase::MainMenu | TitlePhase::Credits => {
+            TitlePhase::TitleLogo
+            | TitlePhase::MainMenu
+            | TitlePhase::Credits
+            | TitlePhase::ExitConfirm => {
                 sh2_ui::draw_title_screen(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
                 );
             }
             TitlePhase::ScenarioSelect => {
@@ -527,7 +540,7 @@ fn render_title_menu_overlay(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
                 );
             }
             TitlePhase::ActionDifficultySelect | TitlePhase::RiddleDifficultySelect => {
@@ -535,34 +548,36 @@ fn render_title_menu_overlay(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
                 );
             }
             TitlePhase::OptionsMenu => {
                 sh2_ui::draw_options_screen(
                     &state.menu_ctrl.options_menu,
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
                 );
             }
             TitlePhase::TestRoomsSelect => {
                 sh2_ui::draw_test_rooms_screen(
                     &state.menu_ctrl.title_sm,
                     font,
-                    &mut state.menu_rasterizer,
+                    &mut state.inventory_rasterizer,
                 );
             }
             TitlePhase::TransitionToGame => {
                 if let Some(ref ls) = state.loading_screen {
-                    ls.render(font, &mut state.menu_rasterizer);
+                    ls.render(font, &mut state.inventory_rasterizer);
                 } else {
                     let label = state.menu_ctrl.title_sm.selected_test_room.label();
-                    let center_x = state.menu_rasterizer.width / 2;
+                    let center_x = state.inventory_rasterizer.width / 2;
+                    let center_y = (state.inventory_rasterizer.height * 7) / 10;
+                    let font_sz = (state.inventory_rasterizer.height / 30).max(16);
                     font.draw_line_centered(
-                        &mut state.menu_rasterizer,
+                        &mut state.inventory_rasterizer,
                         &format!("LOADING STAGE: {}...", label),
-                        (center_x, 500),
-                        24,
+                        (center_x, center_y),
+                        font_sz,
                         sh2_ui::Sh2TextColor::White,
                         true,
                     );
@@ -570,6 +585,6 @@ fn render_title_menu_overlay(
             }
             _ => {}
         }
-        state.finish_hud_overlay(encoder, surface_view);
+        state.finish_inventory_overlay_in_viewport(encoder, surface_view, ui_vp);
     }
 }

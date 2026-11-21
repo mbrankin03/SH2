@@ -79,7 +79,7 @@ pub fn event_item_condition_check(
 ) -> bool {
     let cond_diff = item.difficulty_condition();
     let diff_blocked = match action_difficulty {
-        ActionDifficulty::Easy => matches!(cond_diff, 2 | 3 | 6),
+        ActionDifficulty::Beginner | ActionDifficulty::Easy => matches!(cond_diff, 2 | 3 | 6),
         ActionDifficulty::Normal => matches!(cond_diff, 1 | 3 | 5),
         ActionDifficulty::Hard => matches!(cond_diff, 1 | 2 | 4),
     };

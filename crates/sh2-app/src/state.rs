@@ -310,22 +310,53 @@ impl AppState {
         );
     }
 
-    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it over `surface_view`.
+    /// Computes the centered 4:3 PS2 UI viewport `(x, y, w, h)` inside the live swapchain surface
+    /// so authentic PS2 menus never stretch on 16:9, 16:10, 21:9, 32:9, 4K, or resized windows.
+    #[must_use]
+    pub fn ps2_ui_viewport(&self) -> (f32, f32, f32, f32) {
+        sh2_ui::inventory::ps2_ui_canvas_rect(
+            self.surface_config.width.max(1) as f32,
+            self.surface_config.height.max(1) as f32,
+        )
+    }
+
+    /// Computes a centered 16:9 aspect-preserving viewport `(x, y, w, h)` inside the live swapchain
+    /// surface for `menu_rasterizer` (`1280x720` debug HUDs), preventing stretch on ultrawide or
+    /// narrow/resized windows.
+    #[must_use]
+    pub fn hud_16_9_viewport(&self) -> (f32, f32, f32, f32) {
+        let sw = self.surface_config.width.max(1) as f32;
+        let sh = self.surface_config.height.max(1) as f32;
+        let target_aspect = 16.0 / 9.0;
+        let surface_aspect = sw / sh;
+        if surface_aspect >= target_aspect {
+            let w = sh * target_aspect;
+            ((sw - w) * 0.5, 0.0, w, sh)
+        } else {
+            let h = sw / target_aspect;
+            (0.0, (sh - h) * 0.5, sw, h)
+        }
+    }
+
+    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it into a
+    /// centered 16:9 aspect-preserving viewport over `surface_view`.
     pub fn finish_hud_overlay(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
     ) {
         self.upload_hud_overlay_texture();
-        self.blitter.render_with_bind_group_and_load_op(
+        let vp = self.hud_16_9_viewport();
+        self.blitter.render_with_bind_group_in_viewport(
             encoder,
             &self.menu_text_bind_group,
             surface_view,
             wgpu::LoadOp::Load,
+            vp,
         );
     }
 
-    /// Uploads the dedicated 4:3 (`1280x960`) inventory rasterizer buffer and blits it into
+    /// Uploads the dedicated 4:3 (`1920x1440`) PS2 UI rasterizer buffer and blits it into
     /// `viewport` (`ps2_ui_canvas_rect`) with 1:1 square pixels and zero horizontal font squish.
     pub fn finish_inventory_overlay_in_viewport(
         &self,

@@ -325,11 +325,12 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         &menu_uniform_buffer,
     );
 
-    // Dedicated exact 4:3 (`1280x960`) software rasterizer & texture for PS2 Status/Inventory so
-    // `AtlasFont` glyphs and `itemmenu2.tex` sprites have 1:1 square pixels with zero horizontal
-    // squish when blitted into `ps2_ui_canvas_rect` on any monitor aspect ratio.
-    let inv_w = 1280u32;
-    let inv_h = 960u32;
+    // Dedicated exact 4:3 (`1920x1440`) software rasterizer & texture for authentic PS2 UI screens
+    // (Title, Difficulty, Pause, Options, Loading, Inventory) so `AtlasFont` glyphs and `.tex`
+    // sprites stay 4K-sharp with 1:1 square pixels and zero horizontal squish when blitted into
+    // `ps2_ui_canvas_rect` on any monitor aspect ratio (16:9, 16:10, 21:9, 32:9, 4K, resized).
+    let inv_w = 1920u32;
+    let inv_h = 1440u32;
     let inventory_rasterizer = TextRasterizer::new(inv_w as usize, inv_h as usize);
     let inventory_texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Inventory 4:3 Overlay Texture"),

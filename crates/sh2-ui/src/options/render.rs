@@ -546,6 +546,13 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
     let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
 
+    // Exact `option_font` (`0x0021a320`) unselected pass color: `alpha = 0x60` soft grey so
+    // the selected `(-2, -2)` full-alpha white pass reads as a crisp pop with subtle shadow.
+    let unselected_color = Sh2TextColor::Custom {
+        top: [0x90, 0x90, 0x90, 0x60],
+        bottom: [0x90, 0x90, 0x90, 0x60],
+    };
+
     for idx in 0..item_count {
         if let Some((label, val)) = menu.item_display(idx) {
             let y_v = base_y_v + idx as f32 * step_y_v;
@@ -568,8 +575,8 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                     label,
                     (center_panel_x, y),
                     font_size,
-                    Sh2TextColor::SilverUnselected,
-                    true,
+                    unselected_color,
+                    false,
                 );
                 if is_selected {
                     font.draw_line_centered(
@@ -589,14 +596,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                 let lx = label_right_x.saturating_sub(label_w);
 
                 // Unselected base pass (`alpha = 0x60`)
-                font.draw_line_styled(
-                    rast,
-                    label,
-                    (lx, y),
-                    font_size,
-                    Sh2TextColor::SilverUnselected,
-                    true,
-                );
+                font.draw_line_styled(rast, label, (lx, y), font_size, unselected_color, false);
                 if is_selected {
                     // Selected crisp pass at `(-2, -2)` (`option_font` `0x0021a320`, `alpha = 0xff`)
                     font.draw_line_styled(
@@ -657,8 +657,8 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                         &val,
                         (val_left_x, y),
                         font_size,
-                        Sh2TextColor::SilverUnselected,
-                        true,
+                        unselected_color,
+                        false,
                     );
                     if is_selected {
                         font.draw_line_styled(

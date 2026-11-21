@@ -413,8 +413,8 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             );
         }
 
-        // Render room-specific 2D HUD overlay (suppressed while single-screen menus are open)
-        if !state.ingame_menus.is_any_open() {
+        // Render room-specific 2D HUD overlay (suppressed while single-screen menus or pause are open)
+        if !state.ingame_menus.is_any_open() && !state.menu_ctrl.pause_menu.is_open {
             rooms::dispatch_render_hud(state, &mut encoder, &surface_view);
         }
 

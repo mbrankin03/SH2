@@ -323,6 +323,17 @@ pub fn draw_pause_screen_with_scrim(
                 );
             }
 
+            // Exact `sh2pc.exe` `FUN_00407300` (`0x00407300`) unselected base colors:
+            // enabled `(0x7f, 0x7f, 0x7f, 0x60)`, disabled Save `(0x55, 0x55, 0x55, 0x60)`.
+            let unselected_color = Sh2TextColor::Custom {
+                top: [0x7f, 0x7f, 0x7f, 0x60],
+                bottom: [0x7f, 0x7f, 0x7f, 0x60],
+            };
+            let disabled_color = Sh2TextColor::Custom {
+                top: [0x55, 0x55, 0x55, 0x60],
+                bottom: [0x55, 0x55, 0x55, 0x60],
+            };
+
             // 5 items at `(256, 230 + idx * 30)` (`0xe6, 0x104, 0x122, 0x140, 0x15e`)
             for (idx, opt) in PauseMenuOption::ALL.iter().enumerate() {
                 let vy = PAUSE_ITEM_START_Y + idx as f32 * PAUSE_ITEM_PITCH_Y;
@@ -331,13 +342,13 @@ pub fn draw_pause_screen_with_scrim(
                 let is_disabled = *opt == PauseMenuOption::Save && !pause_menu.can_save;
 
                 let base_color = if is_disabled {
-                    Sh2TextColor::MutedFooter
+                    disabled_color
                 } else {
-                    Sh2TextColor::SilverUnselected
+                    unselected_color
                 };
 
                 // Unselected base pass (`alpha = 0x60`)
-                font.draw_line_centered(rasterizer, opt.label(), pos, item_size, base_color, true);
+                font.draw_line_centered(rasterizer, opt.label(), pos, item_size, base_color, false);
 
                 // Selected double-draw pop pass at `(-2, -2)` (`0xfe, vy - 2`, `alpha = 0xff`)
                 if is_selected && !is_disabled {
@@ -377,23 +388,20 @@ pub fn draw_pause_screen_with_scrim(
             let yes_pos = to_px(PAUSE_QUIT_YES_XY.0, PAUSE_QUIT_YES_XY.1);
             let no_pos = to_px(PAUSE_QUIT_NO_XY.0, PAUSE_QUIT_NO_XY.1);
 
-            // Base unselected pass (`alpha = 0x60`)
+            // Base unselected pass (`FUN_00407610` `0x00407610`: `(0x7f, 0x7f, 0x7f, 0x60)`)
+            let unselected_color = Sh2TextColor::Custom {
+                top: [0x7f, 0x7f, 0x7f, 0x60],
+                bottom: [0x7f, 0x7f, 0x7f, 0x60],
+            };
             font.draw_line_centered(
                 rasterizer,
                 "Yes",
                 yes_pos,
                 item_size,
-                Sh2TextColor::SilverUnselected,
-                true,
+                unselected_color,
+                false,
             );
-            font.draw_line_centered(
-                rasterizer,
-                "No",
-                no_pos,
-                item_size,
-                Sh2TextColor::SilverUnselected,
-                true,
-            );
+            font.draw_line_centered(rasterizer, "No", no_pos, item_size, unselected_color, false);
 
             // Selected pop pass at `(-2, -2)` (`0xe0, 0x108` or `0x11c, 0x108`, `alpha = 0xff`)
             let (sel_label, sel_pos) = if pause_menu.quit_confirm_index == 0 {

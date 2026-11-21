@@ -49,22 +49,16 @@ impl Act1StageItemEntry {
         (self.st & 0x3fff) as u16
     }
 
-    /// Projects this retail `gi_list` entry into [`ItemListEntry`] for `event_item_condition_check`.
+    /// Projects this retail `gi_list` entry losslessly into [`ItemListEntry`]
+    /// (`SLUS_202.28` `ItemListElement` `0x001a9320`, `ItemCheckLookPoint` `0x001a93b0`).
     #[must_use]
     pub const fn to_item_list_entry(&self) -> ItemListEntry {
-        let packed_flag = (self.item_kind_index() as u32)
-            | ((self.difficulty_condition() as u32) << 8)
-            | (((self.extra_condition() & 0x0f) as u32) << 12)
-            | ((self.flag_id() as u32) << 16);
         ItemListEntry {
-            flag: packed_flag,
-            pos_x: self.pos_x.clamp(-32_768.0, 32_767.0) as i16,
-            pos_y: self.pos_y,
-            pos_z: self.pos_z.clamp(-32_768.0, 32_767.0) as i16,
-            rot_x: 0,
-            rot_y: (self.rot_y >> 8) as i8,
-            rot_z: 0,
-            pad: [0; 3],
+            pos_x: self.pos_x,
+            pos_z: self.pos_z,
+            pos_y: self.pos_y as u16,
+            rot_y: self.rot_y as u16,
+            flag: self.st,
         }
     }
 }

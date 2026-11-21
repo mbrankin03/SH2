@@ -76,9 +76,7 @@ fn audit_all_58_stages_retail_move_transitions() {
             total_moves += 1;
 
             // `SLUS_202.28` `0x001a97c8` (`sltiu $1, $17, 6; beqz`): `0` and `>= 6` use Case 0.
-            let ds = entry
-                .dest_shape_kind()
-                .unwrap_or(EventDestShapeKind::PointWithAngle);
+            let ds = entry.dest_shape_kind().unwrap_or(EventDestShapeKind::Point);
             let Some((dest_pos, dest_yaw)) =
                 decode_retail_move_destination(ev_pos, entry.dest_ev_pos_offset(), ds)
             else {

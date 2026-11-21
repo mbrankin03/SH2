@@ -6,79 +6,37 @@
 //! `0x006a91e8`) and `SLUS_202.28` (`EventResultMovePosition` `0x001a9730`, `EventExecMove`
 //! `0x001aa670`, `EventExecDoor` `0x001a9f20`).
 
-use std::f32::consts::{FRAC_PI_2, PI};
-
 use crate::events::engine::{
     is_connected_stage_pair, EventEngineEffects, EventPositionalSound, StageTransitionCommand,
 };
 use crate::events::stages_act2::{
-    char_to_float2_retail, decode_retail_ev_pos_shape, normalize_retail_event_entry_for_input,
+    decode_retail_ev_pos_shape, normalize_retail_event_entry_for_input,
 };
 use crate::events::triggers::{
     check_event_flag_conditions, event_check_look_line, event_check_look_point,
-    event_exec_sub_flag_set, player_height_matches_event_y, EvPosShape, EventEvalInput,
+    event_exec_sub_flag_set, event_result_move_position, player_height_matches_event_y, EvPosShape,
+    EventEvalInput, EVENT_LOOK_RADIUS_MM,
 };
 use crate::events::EventFlags;
 use crate::inventory::InventoryManager;
 use crate::types::{
-    char_to_float4, wrap_angle, EventDestShapeKind, EventListEntry, EventResultKind,
-    EventTriggerKind, DOOR_SE_TABLE,
+    wrap_angle, EventDestShapeKind, EventListEntry, EventResultKind, EventTriggerKind,
+    DOOR_SE_TABLE,
 };
 
 /// Decodes a retail `ev_pos` destination pose (`EventResultMovePosition` `SLUS_202.28` `0x001a9730`,
-/// `sh2pc.exe` `0x0048b7e0`: `x0: f32@0`, `y: f16@4`, `z0: f32@6`, optional `p0: f16@10`, `dz: f16@12`).
+/// `sh2pc.exe` `0x0048b780`: `x0: f32@0`, `y: f16@4`, `z0: f32@6`, optional `p0: f16@10`, `dz: f16@12`).
 ///
-/// Case 0 (`PointWithAngle`, `0x001a9a18` / `0x0048b9a6`) reads only 10 bytes (`x0, y, z0`) and
-/// preserves the player's current yaw (`0.0` here; callers with a live player pose keep `player_yaw`).
+/// Case 0 (`Point`, `0x001a9730` / `0x0048b780`) reads only 10 bytes (`x0, y, z0`) and
+/// preserves the player's current yaw (`0.0` here; callers with a live player pose pass
+/// `current_player_yaw` to [`event_result_move_position`]).
 #[must_use]
 pub fn decode_retail_move_destination(
     ev_pos: &[u8],
     dest_offset: usize,
     dest_shape: EventDestShapeKind,
 ) -> Option<([f32; 3], f32)> {
-    let min_len = match dest_shape {
-        EventDestShapeKind::PointWithAngle => 10,
-        EventDestShapeKind::DoorSegment => 14,
-        _ => 12,
-    };
-    let s = ev_pos.get(dest_offset..dest_offset.checked_add(min_len)?)?;
-    let x0 = char_to_float4([s[0], s[1], s[2], s[3]]);
-    let raw_y = char_to_float2_retail([s[4], s[5]]);
-    let y = if raw_y == 0.0 { 0.0 } else { raw_y };
-    let z0 = char_to_float4([s[6], s[7], s[8], s[9]]);
-
-    if dest_shape == EventDestShapeKind::PointWithAngle {
-        return Some(([x0, y, z0], 0.0));
-    }
-
-    let p0 = char_to_float2_retail([s[10], s[11]]);
-
-    // Exact 1:1 parity with `EventResultMovePosition` (`SLUS_202.28` `0x001a9730`, jump table
-    // `0x00391060`; `sh2pc.exe` `0x0048b7e0`, jump table `0x0048ba04`).
-    let (pos, angle) = match dest_shape {
-        EventDestShapeKind::PointWithAngle => ([x0, y, z0], 0.0),
-        // Case 1 (`0x001a97f0` / `0x0048b855`): x = x0 + p0/2, z = z0 + 250, rot_y = 0.0
-        EventDestShapeKind::DoorLineNegZ => ([x0 + p0 * 0.5, y, z0 + 250.0], 0.0),
-        // Case 2 (`0x001a983c` / `0x0048b888`): x = x0 - p0/2, z = z0 - 250, rot_y = PI
-        EventDestShapeKind::DoorLinePosX => ([x0 - p0 * 0.5, y, z0 - 250.0], PI),
-        // Case 3 (`0x001a9890` / `0x0048b8bb`): x = x0 + 250, z = z0 - p0/2, rot_y = +PI/2
-        EventDestShapeKind::DoorLinePosZ => ([x0 + 250.0, y, z0 - p0 * 0.5], FRAC_PI_2),
-        // Case 4 (`0x001a98e4` / `0x0048b8ee`): x = x0 - 250, z = z0 + p0/2, rot_y = -PI/2
-        EventDestShapeKind::DoorLineNegX => ([x0 - 250.0, y, z0 + p0 * 0.5], -FRAC_PI_2),
-        // Case 5 (`0x001a9938` / `0x0048b921`): midpoint + 250 along normal (atan2(dz, p0) - PI/2)
-        EventDestShapeKind::DoorSegment => {
-            let dz = char_to_float2_retail([s[12], s[13]]);
-            let mid_x = x0 + p0 * 0.5;
-            let mid_z = z0 + dz * 0.5;
-            let angle = dz.atan2(p0) - FRAC_PI_2;
-            (
-                [mid_x + angle.sin() * 250.0, y, mid_z + angle.cos() * 250.0],
-                angle,
-            )
-        }
-    };
-
-    Some((pos, wrap_angle(angle)))
+    event_result_move_position(ev_pos, dest_offset, dest_shape, 0.0)
 }
 
 /// Evaluates one frame of a retail stage's `Event_List` + 10-byte `ev_pos` buffer
@@ -175,20 +133,14 @@ fn apply_retail_event_result(
             // `SLUS_202.28` `EventResultMovePosition` (`0x001a97c8`: `sltiu $1, $17, 6; beqz`)
             // and `sh2pc.exe` (`0x0048b841`: `cmpl $4, %eax; ja 0x48b9a6`) treat both `0` and
             // `>= 6` as Case 0: `[x0, y, z0]` preserving `player->rot.y`.
-            let ds = entry
-                .dest_shape_kind()
-                .unwrap_or(EventDestShapeKind::PointWithAngle);
-            let (dest_pos, dest_rot_y) =
-                decode_retail_move_destination(ev_pos, entry.dest_ev_pos_offset(), ds)
-                    .map(|(p, a)| {
-                        let yaw = if ds == EventDestShapeKind::PointWithAngle {
-                            wrap_angle(current_player_yaw)
-                        } else {
-                            a
-                        };
-                        (p, yaw)
-                    })
-                    .unwrap_or(([0.0, 0.0, 0.0], wrap_angle(current_player_yaw)));
+            let ds = entry.dest_shape_kind().unwrap_or(EventDestShapeKind::Point);
+            let (dest_pos, dest_rot_y) = event_result_move_position(
+                ev_pos,
+                entry.dest_ev_pos_offset(),
+                ds,
+                current_player_yaw,
+            )
+            .unwrap_or(([0.0, 0.0, 0.0], wrap_angle(current_player_yaw)));
 
             let door_idx = (entry.dest_stage_or_door_se() as usize).min(DOOR_SE_TABLE.len() - 1);
             let door_se = DOOR_SE_TABLE[door_idx];
@@ -284,8 +236,8 @@ fn apply_retail_event_result(
 fn point_in_retail_shape(player_pos: [f32; 3], shape: &EvPosShape) -> bool {
     let [px, py, pz] = player_pos;
     match *shape {
-        EvPosShape::Point { x, y, z, radius } => {
-            player_height_matches_event_y(py, y) && (px - x).hypot(pz - z) <= radius
+        EvPosShape::Point { x, y, z } => {
+            player_height_matches_event_y(py, y) && (px - x).hypot(pz - z) <= EVENT_LOOK_RADIUS_MM
         }
         EvPosShape::Rectangle { x, y, z, w, d } => {
             if !player_height_matches_event_y(py, y) {
@@ -303,36 +255,27 @@ fn point_in_retail_shape(player_pos: [f32; 3], shape: &EvPosShape) -> bool {
                 && (point_in_triangle(px, pz, [vertices[0], vertices[1], vertices[2]])
                     || point_in_triangle(px, pz, [vertices[0], vertices[2], vertices[3]]))
         }
-        EvPosShape::Polyline {
-            y,
-            radius,
-            ref vertices,
-        } => {
+        EvPosShape::Polyline { y, ref vertices } => {
             if !player_height_matches_event_y(py, y) {
                 return false;
             }
             vertices
                 .windows(2)
-                .any(|seg| dist_to_segment(px, pz, seg[0], seg[1]) <= radius)
+                .any(|seg| dist_to_segment(px, pz, seg[0], seg[1]) <= EVENT_LOOK_RADIUS_MM)
         }
     }
 }
 
 fn player_can_interact_with_shape(input: &EventEvalInput, shape: &EvPosShape) -> bool {
     let [px, py, pz] = input.player_pos;
-    // Exact 1:1 PS2 `EventCheckLookPoint` (`SLUS_202.28` `0x001a8a30`) and
-    // `EventCheckLookLine` (`SLUS_202.28` `0x001a8b10`) using the decoded shape radius
-    // (`RETAIL_LOOK_RADIUS_MM = 400.0` mm) and facing-cone check.
+    // Exact 1:1 PS2 `EventCheckLookPoint` (`SLUS_202.28` `0x001a8b00`) and
+    // `EventCheckLookLine` (`SLUS_202.28` `0x001a8c80` / `sh2pc.exe` `0x0048b0c0`).
     match *shape {
-        EvPosShape::Point { x, y, z, radius } => {
+        EvPosShape::Point { x, y, z } => {
             player_height_matches_event_y(py, y)
-                && event_check_look_point(px, pz, input.player_rot_y, x, z, radius) > 0.0
+                && event_check_look_point(px, pz, input.player_rot_y, x, z)
         }
-        EvPosShape::Polyline {
-            y,
-            radius,
-            ref vertices,
-        } => {
+        EvPosShape::Polyline { y, ref vertices } => {
             player_height_matches_event_y(py, y)
                 && vertices.windows(2).any(|seg| {
                     event_check_look_line(
@@ -343,8 +286,7 @@ fn player_can_interact_with_shape(input: &EventEvalInput, shape: &EvPosShape) ->
                         seg[0][1],
                         seg[1][0],
                         seg[1][1],
-                        radius,
-                    ) > 0.0
+                    )
                 })
         }
         _ => point_in_retail_shape(input.player_pos, shape),

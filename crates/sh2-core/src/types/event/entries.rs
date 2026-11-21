@@ -179,75 +179,106 @@ impl EventListEntry {
     }
 }
 
-/// 16-byte stage item pickup descriptor (`Item_List` in `event.c`, `ItemListElement` at `0x001a9320`).
+/// 16-byte stage item pickup descriptor (`Item_List` in `event.c`).
 ///
-/// Terminated by an entry where `(flag & 0x3fff0000) == 0x3fff0000` (`flag_id() == 0x3fff`).
+/// Exact 1:1 binary layout verified against `ItemCheckLookPoint` (`SLUS_202.28` `0x001a93b0`,
+/// `sh2pc.exe` `0x0048b4d0`), `ItemListElement` (`SLUS_202.28` `0x001a9320`, `sh2pc.exe`
+/// `0x0048b480`), and `EventExecItem` (`SLUS_202.28` `0x001aa260`):
+/// - `+0x00`: `f32 pos_x` (PS2 world mm)
+/// - `+0x04`: `f32 pos_z` (PS2 world mm)
+/// - `+0x08`: `u16 pos_y` (Team Silent `f16` decoded via `CharToFloat2`)
+/// - `+0x0A`: `u16 rot_y` (Team Silent `f16` decoded via `CharToFloat2`)
+/// - `+0x0C`: `u32 flag` (packed kind, difficulty, extra condition, and base flag ID)
+///
+/// Prototype vs retail PC sentinel drift: `SLUS_202.28` (`0x001a8584`) terminates `Item_List`
+/// when `(flag >> 29) == 7`, whereas retail Director's Cut `sh2pc.exe` (`0x0048e3b0`) shifted
+/// Revolver Bullets into kind `7` and terminates when `(flag >> 29) == 0`.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ItemListEntry {
+    /// `+0x00`: World X coordinate in PS2 millimeters (`f32`).
+    pub pos_x: f32,
+    /// `+0x04`: World Z coordinate in PS2 millimeters (`f32`).
+    pub pos_z: f32,
+    /// `+0x08`: World Y coordinate encoded as Team Silent `f16` (decoded via [`super::char_to_float2`]).
+    pub pos_y: u16,
+    /// `+0x0A`: Yaw rotation encoded as Team Silent `f16` (decoded via [`super::char_to_float2`]).
+    pub rot_y: u16,
+    /// `+0x0C`: Packed kind (`>> 29`), difficulty (`>> 26 & 7`), extra condition (`>> 20 & 0x1f`),
+    /// and base flag ID (`& 0x3fff`).
     pub flag: u32,
-    pub pos_x: i16,
-    pub pos_y: i16,
-    pub pos_z: i16,
-    pub rot_x: i8,
-    pub rot_y: i8,
-    pub rot_z: i8,
-    pub pad: [u8; 3],
 }
 
 impl ItemListEntry {
-    /// Returns `true` if this entry is the end-of-table sentinel (`flag_id() == 0x3fff`).
+    /// Retail PC `sh2pc.exe` (`0x0048e3b0`) end-of-table sentinel (`(flag >> 29) == 0`).
+    pub const SENTINEL: Self = Self {
+        pos_x: 0.0,
+        pos_z: 0.0,
+        pos_y: 0,
+        rot_y: 0,
+        flag: 0,
+    };
+
+    /// Returns `true` if this entry is an end-of-table sentinel (`(flag >> 29) == 0` in retail
+    /// `sh2pc.exe` `0x0048e3b0`, or `flag_id() == 0x3fff`).
     #[inline]
     pub const fn is_sentinel(&self) -> bool {
-        self.flag_id() == 0x3fff
+        self.item_kind_index() == 0 || self.flag_id() == 0x3fff
     }
 
-    /// Extracts field `kind` (`0..=4`) exactly as `ItemListElement` (`SLUS_202.28` `0x001a9320`).
+    /// Extracts field `kind` (`0..=3`) exactly as `ItemListElement` (`SLUS_202.28` `0x001a9320`,
+    /// `sh2pc.exe` `0x0048b480`).
     pub const fn element(&self, kind: u32) -> i32 {
         match kind {
-            0 => (self.flag & 0xff) as i32,
-            1 => ((self.flag >> 8) & 0xf) as i32,
-            2 => ((self.flag >> 12) & 0xf) as i32,
-            3 => ((self.flag >> 16) & 0x3fff) as i32,
-            4 => ((self.flag >> 30) & 0x3) as i32,
-            _ => -1,
+            0 => (self.flag >> 29) as i32,
+            1 => ((self.flag >> 26) & 0x7) as i32,
+            2 => ((self.flag >> 20) & 0x1f) as i32,
+            3 => (self.flag & 0x3fff) as i32,
+            _ => 0,
         }
     }
 
-    /// Selector `0`: Index into [`super::ITEM_KIND_TABLE`] (`flag & 0xff`, `0..=7`).
+    /// Selector `0`: Supply kind index (`flag >> 29`, `1..=7` in retail `sh2pc.exe`; `0` = sentinel).
     #[inline]
     pub const fn item_kind_index(&self) -> u8 {
-        (self.flag & 0xff) as u8
+        (self.flag >> 29) as u8
     }
 
-    /// Selector `1`: Action difficulty condition (`(flag >> 8) & 0xf`).
+    /// Selector `1`: Action difficulty condition (`(flag >> 26) & 0x7`).
     #[inline]
     pub const fn difficulty_condition(&self) -> u8 {
-        ((self.flag >> 8) & 0xf) as u8
+        ((self.flag >> 26) & 0x7) as u8
     }
 
-    /// Selector `2`: Extra flag condition (`(flag >> 12) & 0xf`).
+    /// Selector `2`: Extra flag condition (`(flag >> 20) & 0x1f`).
     #[inline]
     pub const fn extra_condition(&self) -> u8 {
-        ((self.flag >> 12) & 0xf) as u8
+        ((self.flag >> 20) & 0x1f) as u8
     }
 
-    /// Selector `3`: Base visibility flag ID (`(flag >> 16) & 0x3fff`); picking up sets `flag_id + 1`.
+    /// Selector `3`: Base visibility flag ID (`flag & 0x3fff`); picking up sets `flag_id + 1`.
     #[inline]
     pub const fn flag_id(&self) -> u16 {
-        ((self.flag >> 16) & 0x3fff) as u16
+        (self.flag & 0x3fff) as u16
     }
 
-    /// Selector `4`: Visibility mode (`(flag >> 30) & 0x3`).
+    /// World Y coordinate in PS2 millimeters decoded from `+0x08` via [`super::char_to_float2`]
+    /// (`ItemCheckLookPoint` `0x001a93b0`, `EventExecItem` `0x001aa260`).
     #[inline]
-    pub const fn visibility_mode(&self) -> u8 {
-        ((self.flag >> 30) & 0x3) as u8
+    pub const fn pos_y_mm(&self) -> f32 {
+        super::char_to_float2(self.pos_y.to_le_bytes())
     }
 
-    /// World-space 3D position `[x, y, z]` decoded via [`super::char_to_float2`].
+    /// Yaw rotation in radians decoded from `+0x0A` via [`super::char_to_float2`].
+    #[inline]
+    pub const fn rot_y_rad(&self) -> f32 {
+        super::char_to_float2(self.rot_y.to_le_bytes())
+    }
+
+    /// World-space 3D position `[x, y, z]` in PS2 millimeters.
     #[inline]
     pub const fn position(&self) -> [f32; 3] {
-        [self.pos_x as f32, self.pos_y as f32, self.pos_z as f32]
+        [self.pos_x, self.pos_y_mm(), self.pos_z]
     }
 }
 

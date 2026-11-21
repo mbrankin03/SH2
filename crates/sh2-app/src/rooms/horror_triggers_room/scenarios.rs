@@ -302,11 +302,16 @@ fn make_event_entry(
     }
 }
 
-fn push_i16(buf: &mut Vec<u8>, v: i16) {
+fn push_f32(buf: &mut Vec<u8>, v: f32) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
-/// Builds the synthetic `EventListEntry` table and `ev_pos` byte stream (`i16` coordinates matching `CharToFloat2`)
+fn push_f16(buf: &mut Vec<u8>, v: f32) {
+    buf.extend_from_slice(&sh2_core::types::float_to_char2(v));
+}
+
+/// Builds the synthetic `EventListEntry` table and 10-byte-header `ev_pos` byte stream
+/// (`SLUS_202.28` `EventCheckLook` `0x001a8780` / `EventCheckIn` `0x001a8d70`)
 /// for Scenario 1 (`PrisonN` Room `0x73` stall door inspect) or Scenario 8 (`EventEngine` sandbox).
 pub(crate) fn build_scenario_event_tables(
     scenario_idx: usize,
@@ -317,10 +322,10 @@ pub(crate) fn build_scenario_event_tables(
     let mut ev_pos = Vec::new();
 
     if scenario_idx == 0 {
-        push_i16(&mut ev_pos, 0);
-        push_i16(&mut ev_pos, -200);
-        push_i16(&mut ev_pos, -1000);
-        push_i16(&mut ev_pos, 650);
+        // Point at (0, -200, -1000) (10 bytes).
+        push_f32(&mut ev_pos, 0.0);
+        push_f16(&mut ev_pos, -200.0);
+        push_f32(&mut ev_pos, -1000.0);
 
         ev_list.push(make_event_entry(
             648,
@@ -343,26 +348,27 @@ pub(crate) fn build_scenario_event_tables(
     }
 
     if scenario_idx == 7 {
-        push_i16(&mut ev_pos, -800);
-        push_i16(&mut ev_pos, -200);
-        push_i16(&mut ev_pos, 2200);
-        push_i16(&mut ev_pos, 650);
-        push_i16(&mut ev_pos, 1600);
+        // Offset 0: LinePosX at (-800, -200, 2200) len 1600 (12 bytes).
+        push_f32(&mut ev_pos, -800.0);
+        push_f16(&mut ev_pos, -200.0);
+        push_f32(&mut ev_pos, 2200.0);
+        push_f16(&mut ev_pos, 1600.0);
 
-        push_i16(&mut ev_pos, -2000);
-        push_i16(&mut ev_pos, -200);
-        push_i16(&mut ev_pos, 0);
-        push_i16(&mut ev_pos, 850);
+        // Offset 12: Point at (-2000, -200, 0) (10 bytes).
+        push_f32(&mut ev_pos, -2000.0);
+        push_f16(&mut ev_pos, -200.0);
+        push_f32(&mut ev_pos, 0.0);
 
-        push_i16(&mut ev_pos, 1400);
-        push_i16(&mut ev_pos, -200);
-        push_i16(&mut ev_pos, -800);
-        push_i16(&mut ev_pos, 1400);
-        push_i16(&mut ev_pos, 800);
-        push_i16(&mut ev_pos, 2800);
-        push_i16(&mut ev_pos, 800);
-        push_i16(&mut ev_pos, 2800);
-        push_i16(&mut ev_pos, -800);
+        // Offset 22: Quad at (1400, -200, -800) with relative (dx, dz) vertices (22 bytes).
+        push_f32(&mut ev_pos, 1400.0);
+        push_f16(&mut ev_pos, -200.0);
+        push_f32(&mut ev_pos, -800.0);
+        push_f16(&mut ev_pos, 0.0);
+        push_f16(&mut ev_pos, 1600.0);
+        push_f16(&mut ev_pos, 1400.0);
+        push_f16(&mut ev_pos, 1600.0);
+        push_f16(&mut ev_pos, 1400.0);
+        push_f16(&mut ev_pos, 0.0);
 
         let d_se = (door_se_idx % DOOR_SE_TABLE.len()) as u8;
         let door_res = if sandbox_has_key {
@@ -390,7 +396,7 @@ pub(crate) fn build_scenario_event_tables(
             0,
             false,
             EventTriggerKind::ActionLook,
-            10,
+            12,
             EventShapeKind::Point,
             EventResultKind::Message,
             0,
@@ -403,7 +409,7 @@ pub(crate) fn build_scenario_event_tables(
             0,
             false,
             EventTriggerKind::ZoneEnterEdge,
-            18,
+            22,
             EventShapeKind::Quad,
             EventResultKind::FlagSet,
             0,
@@ -442,7 +448,7 @@ mod tests {
 
         let (ev0, pos0) = build_scenario_event_tables(0, 0, false);
         assert_eq!(ev0.len(), 2);
-        assert_eq!(pos0.len(), 8);
+        assert_eq!(pos0.len(), 10);
 
         let mut flags = EventFlags::new();
         let mut inv = InventoryManager::new();
@@ -469,7 +475,7 @@ mod tests {
 
         let (ev7, pos7) = build_scenario_event_tables(7, 2, true);
         assert_eq!(ev7.len(), 4);
-        assert_eq!(pos7.len(), 36);
+        assert_eq!(pos7.len(), 44);
 
         for &se_id in &[
             0x427Du32, 0x2EF3, 0x9C70, 0x9C51, 0x4682, 0x9C6C, 0x9C49, 0x9C47, 0x3E80, 0x9C73,

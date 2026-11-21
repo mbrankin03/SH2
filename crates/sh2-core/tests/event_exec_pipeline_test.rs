@@ -1,28 +1,32 @@
 //! Integration tests for `EventEngine` (`EventMainStandard`), `EventExecFlag`, `EventExecDoor`,
 //! `EventExecItem` (crouch vs stand pickup), `LightSpotOnOffCheck`, and `EventProgressCheck`.
 
-use sh2_core::types::{EventListEntry, ItemListEntry};
+use sh2_core::types::{float_to_char2, EventListEntry, ItemListEntry};
 use sh2_core::{
     event_check, event_progress_check, item_check_look_point, light_spot_on_off_check,
     ActionDifficulty, EventEngine, EventEvalInput, EventExecMode, EventFlags, EventTriggerState,
     InventoryManager, EVENT_ITEM_INDEX_BASE,
 };
 
-fn push_i16(buf: &mut Vec<u8>, v: i16) {
+fn push_f32(buf: &mut Vec<u8>, v: f32) {
     buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn push_f16(buf: &mut Vec<u8>, v: f32) {
+    buf.extend_from_slice(&float_to_char2(v));
 }
 
 #[test]
 fn event_engine_state_machine_executes_flag_message_door_move_item_and_save() {
     let mut ev_pos = Vec::new();
-    push_i16(&mut ev_pos, 0);
-    push_i16(&mut ev_pos, 0);
-    push_i16(&mut ev_pos, 500);
-    push_i16(&mut ev_pos, 1000);
-    push_i16(&mut ev_pos, 2000);
-    push_i16(&mut ev_pos, 0);
-    push_i16(&mut ev_pos, 3000);
-    push_i16(&mut ev_pos, 90);
+    // Offset 0: Point at (0, 0, 500) (10 bytes).
+    push_f32(&mut ev_pos, 0.0);
+    push_f16(&mut ev_pos, 0.0);
+    push_f32(&mut ev_pos, 500.0);
+    // Offset 10: Destination point at (2000, 0, 3000) (10 bytes).
+    push_f32(&mut ev_pos, 2000.0);
+    push_f16(&mut ev_pos, 0.0);
+    push_f32(&mut ev_pos, 3000.0);
 
     let ev_list = [
         EventListEntry {
@@ -45,10 +49,7 @@ fn event_engine_state_machine_executes_flag_message_door_move_item_and_save() {
         },
     ];
 
-    let item_list = [ItemListEntry {
-        flag: 0x3fff << 16,
-        ..Default::default()
-    }];
+    let item_list = [ItemListEntry::SENTINEL];
 
     let mut engine = EventEngine::new();
     let mut flags = EventFlags::new();
@@ -100,7 +101,9 @@ fn event_engine_state_machine_executes_flag_message_door_move_item_and_save() {
     assert_eq!(door_effects.common_message, Some(5));
     assert_eq!(door_effects.positional_sounds.len(), 1);
     assert_eq!(door_effects.positional_sounds[0].se_id, 11002);
-    assert_eq!(door_effects.positional_sounds[0].pos, [0.0, -500.0, 500.0]);
+    assert!((door_effects.positional_sounds[0].pos[0] - 0.0).abs() < 1e-3);
+    assert!((door_effects.positional_sounds[0].pos[1] - (-500.0)).abs() < 1e-3);
+    assert!((door_effects.positional_sounds[0].pos[2] - 500.0).abs() < 1e-3);
     assert!(flags.get(648));
 
     let dismiss_effects = engine.tick_standard(
@@ -130,16 +133,13 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
     }];
     let item_list = [
         ItemListEntry {
-            flag: 500 << 16,
-            pos_x: 0,
-            pos_y: -50,
-            pos_z: 300,
-            ..Default::default()
+            pos_x: 0.0,
+            pos_z: 300.0,
+            pos_y: u16::from_le_bytes(float_to_char2(-50.0)),
+            rot_y: 0,
+            flag: (1 << 29) | 500,
         },
-        ItemListEntry {
-            flag: 0x3fff << 16,
-            ..Default::default()
-        },
+        ItemListEntry::SENTINEL,
     ];
 
     let mut flags = EventFlags::new();
@@ -152,8 +152,11 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
         ..Default::default()
     };
 
-    let w = item_check_look_point(&item_list[0], input.player_pos, input.player_rot_y);
-    assert!(w > 0.0);
+    assert!(item_check_look_point(
+        &item_list[0],
+        input.player_pos,
+        input.player_rot_y
+    ));
 
     let chosen = event_check(
         &ev_list,

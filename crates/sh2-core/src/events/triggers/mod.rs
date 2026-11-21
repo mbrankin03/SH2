@@ -6,6 +6,8 @@ pub mod shapes;
 
 pub use look_raycast::{
     event_check_look, event_check_look_line, event_check_look_point, item_check_look_point,
+    EVENT_LOOK_BACK_OFFSET_MM, EVENT_LOOK_HALF_ANGLE_RAD, EVENT_LOOK_RADIUS_MM,
+    EVENT_LOOK_RADIUS_SQ_MM2, ITEM_LOOK_MAX_DY_MM, ITEM_LOOK_MIN_DY_MM,
 };
 pub use shapes::{
     decode_ev_pos_shape, event_check_in, event_position_set, event_result_move_position,
@@ -198,16 +200,12 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    false,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
+            let hit = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
+            } else {
+                event_check_in(ev_pos, offset, shape, input.player_pos)
+            };
+            if hit {
                 1.0
             } else {
                 0.0
@@ -220,21 +218,11 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            let w = if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    false,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
-                1.0
+            let inside = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
             } else {
-                0.0
+                event_check_in(ev_pos, offset, shape, input.player_pos)
             };
-            let inside = w > 0.0;
             let latched = trigger_state
                 .touch_edge_latched
                 .get(index)
@@ -244,7 +232,7 @@ pub fn evaluate_event_entry(
                 *slot = inside;
             }
             if inside && !latched {
-                w
+                1.0
             } else {
                 0.0
             }
@@ -256,17 +244,13 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    true,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
-                0.01
+            let hit = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
+            } else {
+                event_check_in(ev_pos, offset, shape, input.player_pos)
+            };
+            if hit {
+                1.0
             } else {
                 0.0
             }
@@ -278,17 +262,13 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    false,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
-                0.01
+            let hit = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
+            } else {
+                event_check_in(ev_pos, offset, shape, input.player_pos)
+            };
+            if hit {
+                1.0
             } else {
                 0.0
             }
@@ -317,17 +297,13 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    true,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
-                0.01
+            let hit = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
+            } else {
+                event_check_in(ev_pos, offset, shape, input.player_pos)
+            };
+            if hit {
+                1.0
             } else {
                 0.0
             }
@@ -339,21 +315,11 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            let w = if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    false,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
-                1.0
+            let inside = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
             } else {
-                0.0
+                event_check_in(ev_pos, offset, shape, input.player_pos)
             };
-            let inside = w > 0.0;
             let latched = trigger_state
                 .zone_edge_latched
                 .get(index)
@@ -363,7 +329,7 @@ pub fn evaluate_event_entry(
                 *slot = inside;
             }
             if inside && !latched {
-                w
+                1.0
             } else {
                 0.0
             }
@@ -378,17 +344,13 @@ pub fn evaluate_event_entry(
             let Some(shape) = entry.shape_kind() else {
                 return 0.0;
             };
-            if (shape as u8) <= 10 {
-                event_check_look(
-                    ev_pos,
-                    offset,
-                    shape,
-                    input.player_pos,
-                    input.player_rot_y,
-                    false,
-                )
-            } else if event_check_in(ev_pos, offset, shape, input.player_pos) {
-                0.01
+            let hit = if (shape as u8) <= 10 {
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
+            } else {
+                event_check_in(ev_pos, offset, shape, input.player_pos)
+            };
+            if hit {
+                1.0
             } else {
                 0.0
             }
@@ -410,9 +372,9 @@ pub fn evaluate_event_entry(
     }
 }
 
-/// Evaluates `EventCheck` (`SLUS_202.28` `0x001a7dc0`) across the stage's `Event_List` and `Item_List`.
+/// Evaluates `EventCheck` (`SLUS_202.28` `0x001a7ed0`) across the stage's `Event_List` and `Item_List`.
 ///
-/// Returns `Some(work_no)` for the highest-weight matching candidate:
+/// Returns `Some(work_no)` for the highest-priority matching candidate:
 /// - `0..0x400`: index into `ev_list`
 /// - `0x400..`: `0x400 + index` into `item_list`
 pub fn event_check(
@@ -437,30 +399,26 @@ pub fn event_check(
         }
     }
 
-    if input.ev_active == 0 && input.action_pressed && input.player_can_search {
+    if best_index.is_none()
+        && input.ev_active == 0
+        && input.action_pressed
+        && input.player_can_search
+    {
         for (idx, item) in item_list.iter().enumerate() {
             if item.is_sentinel() {
                 break;
             }
+            let base_flag = item.flag_id() as usize;
+            // `SLUS_202.28` `0x001a7ed0` lines 634-635 & `sh2pc.exe` `0x0048e3b0`:
+            // available only when both `flag(base_flag) == 0` and `flag(base_flag + 1) == 0`.
+            if flags.get(base_flag) || flags.get(base_flag + 1) {
+                continue;
+            }
             if !event_item_condition_check(item, input.action_difficulty, flags) {
                 continue;
             }
-            let base_flag = item.flag_id() as usize;
-            // Already picked up if flag (base_flag + 1) is set
-            if flags.get(base_flag + 1) {
-                continue;
-            }
-            let vis_mode = item.visibility_mode();
-            if vis_mode == 1 && !flags.get(base_flag) {
-                continue;
-            }
-            if vis_mode == 2 && flags.get(base_flag) {
-                continue;
-            }
-            let weight = item_check_look_point(item, input.player_pos, input.player_rot_y);
-            if weight > best_weight {
-                best_weight = weight;
-                best_index = Some(EVENT_ITEM_INDEX_BASE + idx);
+            if item_check_look_point(item, input.player_pos, input.player_rot_y) {
+                return Some(EVENT_ITEM_INDEX_BASE + idx);
             }
         }
     }

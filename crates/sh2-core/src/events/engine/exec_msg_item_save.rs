@@ -52,7 +52,7 @@ pub fn event_exec_item(
     inventory: &mut InventoryManager,
     effects: &mut EventEngineEffects,
 ) -> bool {
-    let item_y = item.pos_y as f32;
+    let item_y = item.pos_y_mm();
     let is_crouch_pickup = (player_y - item_y) < 100.0;
 
     match state.ev_e_step {
@@ -76,7 +76,8 @@ pub fn event_exec_item(
             false
         }
         1 => {
-            let kind_idx = (item.item_kind_index() as usize).min(ITEM_KIND_TABLE.len() - 1);
+            let kind_idx =
+                (item.item_kind_index().saturating_sub(1) as usize).min(ITEM_KIND_TABLE.len() - 1);
             let kind = ITEM_KIND_TABLE[kind_idx];
             let base_flag = item.flag_id() as usize;
             flags.set(base_flag + 1, true);
@@ -91,7 +92,8 @@ pub fn event_exec_item(
             if message_dismissed || state.ev_cancel {
                 effects.clear_message = true;
                 effects.sound_effects.push(0x2b21);
-                let kind_idx = (item.item_kind_index() as usize).min(ITEM_KIND_TABLE.len() - 1);
+                let kind_idx = (item.item_kind_index().saturating_sub(1) as usize)
+                    .min(ITEM_KIND_TABLE.len() - 1);
                 let kind = ITEM_KIND_TABLE[kind_idx];
                 effects.deleted_item_model = Some((kind.chr_id, item.flag_id()));
                 if is_crouch_pickup {

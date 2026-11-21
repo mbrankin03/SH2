@@ -302,6 +302,7 @@ impl EventEngine {
                         entry,
                         ev_pos,
                         current_stage,
+                        eval_input.player_rot_y,
                         &mut self.step_state,
                         flags,
                         &mut effects,

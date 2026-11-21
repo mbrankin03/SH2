@@ -114,6 +114,7 @@ pub fn event_exec_move(
     entry: &EventListEntry,
     ev_pos: &[u8],
     current_stage: u8,
+    current_rot_y: f32,
     state: &mut EventStepState,
     flags: &mut EventFlags,
     effects: &mut EventEngineEffects,
@@ -127,9 +128,12 @@ pub fn event_exec_move(
             }
 
             if let Some(dest_shape) = entry.dest_shape_kind() {
-                if let Some((pos, rot_y)) =
-                    event_result_move_position(ev_pos, entry.dest_ev_pos_offset(), dest_shape)
-                {
+                if let Some((pos, rot_y)) = event_result_move_position(
+                    ev_pos,
+                    entry.dest_ev_pos_offset(),
+                    dest_shape,
+                    current_rot_y,
+                ) {
                     state.result_move_pos = pos;
                     state.result_move_rot_y = rot_y;
                 }

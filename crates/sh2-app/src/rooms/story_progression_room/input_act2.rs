@@ -418,7 +418,7 @@ fn test_act2_trg10_door(
     let pre = RetailTriggerKind::UseOrActionCarryingItem.matches_input(key_id, &input, &inv);
     let norm = normalize_retail_event_entry_for_input(raw, &input, &inv);
     let mut ts = EventTriggerState::new();
-    let box_pos = [0, 0, 0, 0, 0, 0, 0x90, 0x01];
+    let box_pos = [0u8; 10];
     let fired = pre && evaluate_event_entry(0, &norm, &box_pos, &flags, &input, &mut ts) > 0.0;
     rm.act2_trg10_unlocked = Some(fired);
     let mode = if is_menu {

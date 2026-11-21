@@ -18,17 +18,45 @@ pub use tables::{
 
 use std::f32::consts::{PI, TAU};
 
-/// Converts a 2-byte signed integer (little-endian `i16`) into a single-precision `f32`.
+/// Decodes a 2-byte Team Silent half-precision float (`f16`) into IEEE-754 `f32`.
 ///
-/// Matches `CharToFloat2` (`SLUS_202.28` `0x001a9280`).
+/// Exact 1:1 parity with `CharToFloat2` (`SLUS_202.28` `0x001a9280`, `sh2pc.exe` `0x0048b400`):
+/// ```text
+/// bits = ((raw & 0x8000) << 16) | ((((raw >> 10) & 0x1f) + 0x70) << 23) | ((raw & 0x03ff) << 13)
+/// ```
+/// Note: Team Silent's decoder always adds `0x70` (`112`) to the 5-bit exponent without a
+/// subnormal/zero branch, so raw `0x0000` decodes to `+2^-15` (`3.0517578e-5`) and `0x8000`
+/// decodes to `-2^-15` (`-3.0517578e-5`).
 #[inline]
 pub const fn char_to_float2(bytes: [u8; 2]) -> f32 {
-    i16::from_le_bytes(bytes) as f32
+    let raw = u16::from_le_bytes(bytes) as u32;
+    let sign = (raw & 0x8000) << 16;
+    let exp = (((raw >> 10) & 0x1f) + 0x70) << 23;
+    let mant = (raw & 0x03ff) << 13;
+    f32::from_bits(sign | exp | mant)
+}
+
+/// Encodes an IEEE-754 `f32` into the 2-byte Team Silent half-precision float (`f16`) format
+/// consumed by [`char_to_float2`] (`SLUS_202.28` `0x001a9280`, `sh2pc.exe` `0x0048b400`).
+#[inline]
+pub const fn float_to_char2(value: f32) -> [u8; 2] {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exp32 = ((bits >> 23) & 0xff) as i32;
+    let exp16 = exp32 - 0x70;
+    if exp16 <= 0 {
+        return sign.to_le_bytes();
+    }
+    if exp16 >= 0x1f {
+        return (sign | (0x1f << 10) | 0x03ff).to_le_bytes();
+    }
+    let mant = ((bits >> 13) & 0x03ff) as u16;
+    (sign | ((exp16 as u16) << 10) | mant).to_le_bytes()
 }
 
 /// Reads an unaligned 4-byte IEEE-754 little-endian `f32` from raw byte data.
 ///
-/// Matches `CharToFloat4` (`SLUS_202.28` `0x001a92b0`).
+/// Matches `CharToFloat4` (`SLUS_202.28` `0x001a92e0`).
 #[inline]
 pub const fn char_to_float4(bytes: [u8; 4]) -> f32 {
     f32::from_le_bytes(bytes)

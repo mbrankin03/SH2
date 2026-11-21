@@ -113,16 +113,16 @@ pub enum Act2StageId {
     Hotel3fOtherworld = 46,
     /// Stage `47`: `stage_hotel_fire` (`SLUS_202.28` `stg_hotel_fire.c`, `sh2pc.exe` `0x008c6d88`).
     HotelFire = 47,
-    /// Stage `48`: `stage_end_maria` (`sh2pc.exe` `0x007b12c0`).
-    EndingMaria = 48,
-    /// Stage `49`: `stage_end_suicide` (`sh2pc.exe` `0x007b1f98`).
-    EndingInWater = 49,
-    /// Stage `50`: `stage_end_rebirth` (`sh2pc.exe` `0x007b0598`).
-    EndingRebirth = 50,
-    /// Stage `51`: `stage_end_dog` (`sh2pc.exe` `0x008c6940`).
-    EndingDog = 51,
-    /// Stage `52`: `stage_end_leave` (`sh2pc.exe` `0x008c5f48`).
-    EndingLeave = 52,
+    /// Stage `48` (`0x30`): `stage_end_recovery` (Leave ending, `SLUS_202.28` `0x00228300`, `sh2pc.exe` `0x007b12c0`).
+    EndingLeave = 48,
+    /// Stage `49` (`0x31`): `stage_end_maria` (Maria ending, `SLUS_202.28` `0x00228300`, `sh2pc.exe` `0x007b1f98`).
+    EndingMaria = 49,
+    /// Stage `50` (`0x32`): `stage_end_suicide` (In Water ending, `SLUS_202.28` `0x00228300`, `sh2pc.exe` `0x007b0598`).
+    EndingInWater = 50,
+    /// Stage `51` (`0x33`): `stage_end_rebirth` (Rebirth ending, `SLUS_202.28` `0x00228300`, `sh2pc.exe` `0x008c6940`).
+    EndingRebirth = 51,
+    /// Stage `52` (`0x34`): `stage_end_dog` (Dog ending, `SLUS_202.28` `0x00228300`, `sh2pc.exe` `0x008c5f48`).
+    EndingDog = 52,
     /// Stage `53`: `stage_wish_heaven` (*Born from a Wish* Heaven's Night, `sh2pc.exe` `0x008c5de0`).
     WishHeavensNight = 53,
     /// Stage `54`: `stage_wish_end` (*Born from a Wish* Town Exterior, `sh2pc.exe` `0x008c5970`).
@@ -171,11 +171,11 @@ impl Act2StageId {
             45 => Some(Self::Hotel2fOtherworld),
             46 => Some(Self::Hotel3fOtherworld),
             47 => Some(Self::HotelFire),
-            48 => Some(Self::EndingMaria),
-            49 => Some(Self::EndingInWater),
-            50 => Some(Self::EndingRebirth),
-            51 => Some(Self::EndingDog),
-            52 => Some(Self::EndingLeave),
+            48 => Some(Self::EndingLeave),
+            49 => Some(Self::EndingMaria),
+            50 => Some(Self::EndingInWater),
+            51 => Some(Self::EndingRebirth),
+            52 => Some(Self::EndingDog),
             53 => Some(Self::WishHeavensNight),
             54 => Some(Self::WishTownExterior),
             55 => Some(Self::WishMansion1f),
@@ -305,10 +305,7 @@ impl StageTableAct2 {
             .iter()
             .map(RetailItemSpawn::to_ps2_clamped)
             .collect();
-        out.push(ItemListEntry {
-            flag: 0x3fff_0000,
-            ..ItemListEntry::default()
-        });
+        out.push(ItemListEntry::SENTINEL);
         out
     }
 }
@@ -340,11 +337,11 @@ pub const fn stage_table_act2(stage_id: u16) -> Option<&'static StageTableAct2> 
         45 => Some(&STAGE_HOTEL_2F_B),
         46 => Some(&STAGE_HOTEL_3F_B),
         47 => Some(&STAGE_HOTEL_FIRE),
-        48 => Some(&STAGE_END_MARIA),
-        49 => Some(&STAGE_END_SUICIDE),
-        50 => Some(&STAGE_END_REBIRTH),
-        51 => Some(&STAGE_END_DOG),
-        52 => Some(&STAGE_END_LEAVE),
+        48 => Some(&STAGE_END_RECOVERY),
+        49 => Some(&STAGE_END_MARIA),
+        50 => Some(&STAGE_END_SUICIDE),
+        51 => Some(&STAGE_END_REBIRTH),
+        52 => Some(&STAGE_END_DOG),
         53 => Some(&STAGE_WISH_HEAVEN),
         54 => Some(&STAGE_WISH_END),
         55 => Some(&STAGE_WISH_1F),

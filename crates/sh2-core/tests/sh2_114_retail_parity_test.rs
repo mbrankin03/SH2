@@ -180,8 +180,8 @@ fn retail_trg10_key_doors_fire_on_action_while_carrying_key_or_menu_item_use() {
         (56, 33, 82), // Wish 2F: Acacia key (82)
     ];
 
-    // 8-byte PS2 point at `(0, 0, 0)` with `radius = 400` (`[0x90, 0x01]`) and player at `(0, 0, -200)`.
-    let ps2_origin_point = [0u8, 0, 0, 0, 0, 0, 0x90, 0x01];
+    // 10-byte `ev_pos` point at `(0, ~0, 0)` and player at `(0, 0, -200)` facing `+Z` (`0.0`).
+    let ps2_origin_point = [0u8; 10];
     let action_no_item = EventEvalInput {
         player_pos: [0.0, 0.0, -200.0],
         player_rot_y: 0.0,

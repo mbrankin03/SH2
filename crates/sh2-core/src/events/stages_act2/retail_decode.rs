@@ -3,8 +3,8 @@
 
 use std::f32::consts::PI;
 
-use crate::events::triggers::EvPosShape;
-use crate::types::{char_to_float4, EnemyListEntry, EventListEntry, EventShapeKind, ItemListEntry};
+use crate::events::triggers::{decode_ev_pos_shape, EvPosShape, EVENT_LOOK_RADIUS_MM};
+use crate::types::{char_to_float2, EnemyListEntry, EventListEntry, EventShapeKind, ItemListEntry};
 
 /// Sentinel `EventListEntry` (`flag_1 == 0x3fff`, `cond == 0`, `rslt0 == 0`) terminating both
 /// PS2 `SLUS_202.28` (`0x001a8ee8`) and retail PC `sh2pc.exe` (`0x0048e181`) event scans.
@@ -160,150 +160,37 @@ impl RetailItemSpawn {
         (self.flags_packed & 0x3fff) as u16
     }
 
-    /// Projects onto PS2 prototype [`ItemListEntry`] bit layout (`SLUS_202.28` `0x001a9320`).
+    /// Projects losslessly onto [`ItemListEntry`] (`SLUS_202.28` `0x001a9320`, `sh2pc.exe` `0x0048b480`).
     pub fn to_ps2_clamped(&self) -> ItemListEntry {
-        let kind = u32::from(self.item_kind_index());
-        let diff = u32::from(self.difficulty_filter() & 0xf) << 8;
-        let fid = u32::from(self.flag_id()) << 16;
-        let vis = u32::from(self.generic_supply_code().min(3)) << 30;
         ItemListEntry {
-            flag: kind | diff | fid | vis,
-            pos_x: clamp_f32_to_i16(self.pos_x()),
-            pos_y: clamp_f32_to_i16(self.pos_y()),
-            pos_z: clamp_f32_to_i16(self.pos_z()),
-            rot_x: 0,
-            rot_y: 0,
-            rot_z: 0,
-            pad: [0; 3],
+            pos_x: self.pos_x(),
+            pos_z: self.pos_z(),
+            pos_y: self.pos_y_hi16,
+            rot_y: self.rot_y_hi16,
+            flag: self.flags_packed,
         }
     }
 }
 
-/// Decodes a 2-byte retail `ev_pos` half-precision float (`CharToFloat2` at `sh2pc.exe` `0x0048b400`).
+/// Decodes a 2-byte retail `ev_pos` half-precision float (`CharToFloat2` at `SLUS_202.28` `0x001a9280`,
+/// `sh2pc.exe` `0x0048b400`).
 #[inline]
 pub const fn char_to_float2_retail(bytes: [u8; 2]) -> f32 {
-    let raw = u16::from_le_bytes(bytes) as u32;
-    let sign_mant = ((raw & 0x8000) << 3) | (raw & 0x03ff);
-    let exp = (raw & 0x7c00).wrapping_add(0x0001_c000);
-    f32::from_bits((sign_mant << 13) | (exp << 13))
+    char_to_float2(bytes)
 }
 
 /// Default horizontal interaction radius (`400.0` mm, `400.0^2 = 160_000.0` mm²) used by retail
-/// `EventCheck` point/line look checks (`sh2pc.exe` `0x0048b007` -> `0x006a91e8`, `0x0048b051` -> `0x006a91e4`).
-pub const RETAIL_LOOK_RADIUS_MM: f32 = 400.0;
+/// `EventCheck` point/line look checks (`SLUS_202.28` `0x001a8b00`, `sh2pc.exe` `0x0048b007` -> `0x006a91e8`).
+pub const RETAIL_LOOK_RADIUS_MM: f32 = EVENT_LOOK_RADIUS_MM;
 
-/// Decodes a spatial shape from a retail `ev_pos` byte buffer (`sh2pc.exe` `0x0048d4d0` & `0x0048da90`).
+/// Decodes a spatial shape from a retail `ev_pos` byte buffer (`SLUS_202.28` `0x001a8780` & `0x001a8d70`,
+/// `sh2pc.exe` `0x0048d4d0` & `0x0048da90`).
 pub fn decode_retail_ev_pos_shape(
     ev_pos: &[u8],
     offset: usize,
     shape: EventShapeKind,
 ) -> Option<EvPosShape> {
-    let req_len = match shape {
-        EventShapeKind::Point => 10,
-        EventShapeKind::LineNegZ
-        | EventShapeKind::LinePosX
-        | EventShapeKind::LinePosZ
-        | EventShapeKind::LineNegX => 12,
-        EventShapeKind::Polyline2
-        | EventShapeKind::Polyline3
-        | EventShapeKind::Polyline4
-        | EventShapeKind::Polyline5
-        | EventShapeKind::Polyline6
-        | EventShapeKind::Polyline7 => 10 + ((shape as usize) - 4) * 4,
-        EventShapeKind::Rectangle => 14,
-        EventShapeKind::Triangle => 18,
-        EventShapeKind::Quad => 22,
-    };
-    let s = ev_pos.get(offset..offset.checked_add(req_len)?)?;
-    let x0 = char_to_float4([s[0], s[1], s[2], s[3]]);
-    let y = char_to_float2_retail([s[4], s[5]]);
-    let z0 = char_to_float4([s[6], s[7], s[8], s[9]]);
-
-    match shape {
-        EventShapeKind::Point => Some(EvPosShape::Point {
-            x: x0,
-            y,
-            z: z0,
-            radius: RETAIL_LOOK_RADIUS_MM,
-        }),
-        EventShapeKind::LineNegZ
-        | EventShapeKind::LinePosX
-        | EventShapeKind::LinePosZ
-        | EventShapeKind::LineNegX => {
-            let len = char_to_float2_retail([s[10], s[11]]);
-            let end = match shape {
-                EventShapeKind::LineNegZ => [x0 + len, z0],
-                EventShapeKind::LinePosX => [x0 - len, z0],
-                EventShapeKind::LinePosZ => [x0, z0 - len],
-                _ => [x0, z0 + len],
-            };
-            Some(EvPosShape::Polyline {
-                y,
-                radius: RETAIL_LOOK_RADIUS_MM,
-                vertices: vec![[x0, z0], end],
-            })
-        }
-        EventShapeKind::Polyline2
-        | EventShapeKind::Polyline3
-        | EventShapeKind::Polyline4
-        | EventShapeKind::Polyline5
-        | EventShapeKind::Polyline6
-        | EventShapeKind::Polyline7 => {
-            let extra = (shape as usize) - 4;
-            let mut vertices = Vec::with_capacity(extra + 1);
-            vertices.push([x0, z0]);
-            for i in 0..extra {
-                let b = 10 + i * 4;
-                let dx = char_to_float2_retail([s[b], s[b + 1]]);
-                let dz = char_to_float2_retail([s[b + 2], s[b + 3]]);
-                vertices.push([x0 + dx, z0 + dz]);
-            }
-            Some(EvPosShape::Polyline {
-                y,
-                radius: RETAIL_LOOK_RADIUS_MM,
-                vertices,
-            })
-        }
-        EventShapeKind::Rectangle => Some(EvPosShape::Rectangle {
-            x: x0,
-            y,
-            z: z0,
-            w: char_to_float2_retail([s[10], s[11]]),
-            d: char_to_float2_retail([s[12], s[13]]),
-        }),
-        EventShapeKind::Triangle => Some(EvPosShape::Triangle {
-            y,
-            vertices: [
-                [x0, z0],
-                [
-                    x0 + char_to_float2_retail([s[10], s[11]]),
-                    z0 + char_to_float2_retail([s[12], s[13]]),
-                ],
-                [
-                    x0 + char_to_float2_retail([s[14], s[15]]),
-                    z0 + char_to_float2_retail([s[16], s[17]]),
-                ],
-            ],
-        }),
-        EventShapeKind::Quad => Some(EvPosShape::Quad {
-            y,
-            vertices: [
-                [x0, z0],
-                [
-                    x0 + char_to_float2_retail([s[10], s[11]]),
-                    z0 + char_to_float2_retail([s[12], s[13]]),
-                ],
-                [
-                    x0 + char_to_float2_retail([s[14], s[15]]),
-                    z0 + char_to_float2_retail([s[16], s[17]]),
-                ],
-                [
-                    x0 + char_to_float2_retail([s[18], s[19]]),
-                    z0 + char_to_float2_retail([s[20], s[21]]),
-                ],
-            ],
-        }),
-    }
+    decode_ev_pos_shape(ev_pos, offset, shape)
 }
 
 #[inline]
@@ -314,14 +201,5 @@ const fn clamp_i32_to_i16(v: i32) -> i16 {
         i16::MAX
     } else {
         v as i16
-    }
-}
-
-#[inline]
-fn clamp_f32_to_i16(v: f32) -> i16 {
-    if !v.is_finite() {
-        0
-    } else {
-        clamp_i32_to_i16(v.round() as i32)
     }
 }

@@ -320,24 +320,6 @@ impl AppState {
         )
     }
 
-    /// Computes a centered 16:9 aspect-preserving viewport `(x, y, w, h)` inside the live swapchain
-    /// surface for `menu_rasterizer` (`1280x720` debug HUDs), preventing stretch on ultrawide or
-    /// narrow/resized windows.
-    #[must_use]
-    pub fn hud_16_9_viewport(&self) -> (f32, f32, f32, f32) {
-        let sw = self.surface_config.width.max(1) as f32;
-        let sh = self.surface_config.height.max(1) as f32;
-        let target_aspect = 16.0 / 9.0;
-        let surface_aspect = sw / sh;
-        if surface_aspect >= target_aspect {
-            let w = sh * target_aspect;
-            ((sw - w) * 0.5, 0.0, w, sh)
-        } else {
-            let h = sw / target_aspect;
-            (0.0, (sh - h) * 0.5, sw, h)
-        }
-    }
-
     /// Blits a full-screen semi-transparent black dim scrim (`alpha` in `0..=255`) across the
     /// entire swapchain (edge-to-edge on 16:9, 21:9, 32:9, and 4K windows) with no 4:3 seam.
     pub fn draw_fullscreen_dim_scrim(
@@ -359,21 +341,20 @@ impl AppState {
         );
     }
 
-    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it into a
-    /// centered 16:9 aspect-preserving viewport over `surface_view`.
+    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it
+    /// edge-to-edge over `surface_view` (ensuring full-window campaign fades, FMV subtitles, and
+    /// debug HUDs never leave 3D scene strips peeking out on non-16:9 maximized windows).
     pub fn finish_hud_overlay(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
     ) {
         self.upload_hud_overlay_texture();
-        let vp = self.hud_16_9_viewport();
-        self.blitter.render_with_bind_group_in_viewport(
+        self.blitter.render_with_bind_group_and_load_op(
             encoder,
             &self.menu_text_bind_group,
             surface_view,
             wgpu::LoadOp::Load,
-            vp,
         );
     }
 

@@ -200,4 +200,46 @@ mod tests {
         draw_title_screen(&sm, None, &font, &mut rast);
         assert!(rast.pixels.chunks(4).any(|p| p[3] > 0));
     }
+
+    #[test]
+    fn test_main_menu_exit_confirm_flow() {
+        let mut sm = TitleStateMachine::new();
+        sm.show_phase_immediately(TitlePhase::MainMenu);
+        // Move to EXIT (last visible slot when include_pc_menu_slots == true)
+        let exit_idx = sm
+            .visible_main_menu_options()
+            .iter()
+            .position(|&o| o == MainMenuOption::Exit)
+            .expect("EXIT slot should be visible");
+        sm.main_menu_index = exit_idx;
+
+        assert_eq!(
+            sm.handle_input(MenuNavAction::Confirm),
+            MenuSoundCue::Confirm
+        );
+        assert_eq!(sm.phase, TitlePhase::ExitConfirm);
+        assert_eq!(sm.exit_confirm_index, 1); // Defaults to "No"
+        assert!(!sm.exit_requested);
+
+        // Confirming "No" returns to MainMenu without exiting
+        assert_eq!(
+            sm.handle_input(MenuNavAction::Confirm),
+            MenuSoundCue::Cancel
+        );
+        assert_eq!(sm.phase, TitlePhase::MainMenu);
+        assert!(!sm.exit_requested);
+
+        // Re-open ExitConfirm, toggle to "Yes", confirm -> exit_requested == true
+        sm.handle_input(MenuNavAction::Confirm);
+        assert_eq!(
+            sm.handle_input(MenuNavAction::Left),
+            MenuSoundCue::CursorMove
+        );
+        assert_eq!(sm.exit_confirm_index, 0);
+        assert_eq!(
+            sm.handle_input(MenuNavAction::Confirm),
+            MenuSoundCue::Confirm
+        );
+        assert!(sm.exit_requested);
+    }
 }

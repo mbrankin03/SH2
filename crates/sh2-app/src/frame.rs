@@ -515,13 +515,19 @@ fn render_title_menu_overlay(
     }
 
     // Render dynamic 2D overlay at 1920x1440 (exact 4:3) into centered `ps2_ui_viewport()`
-    // so Title, Difficulty, Options, Credits, and Loading stay 4K-sharp with zero stretch on any monitor.
+    // so Title, Difficulty, Options, Credits, ExitConfirm, and Loading stay 4K-sharp with zero stretch on any monitor.
     if phase != TitlePhase::SplashIntro {
+        if phase == TitlePhase::ExitConfirm {
+            state.draw_fullscreen_dim_scrim(encoder, surface_view, 165);
+        }
         state.inventory_rasterizer.clear();
         let font = sh2_ui::AtlasFont::shared(None);
 
         match phase {
-            TitlePhase::TitleLogo | TitlePhase::MainMenu | TitlePhase::Credits => {
+            TitlePhase::TitleLogo
+            | TitlePhase::MainMenu
+            | TitlePhase::Credits
+            | TitlePhase::ExitConfirm => {
                 sh2_ui::draw_title_screen(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),

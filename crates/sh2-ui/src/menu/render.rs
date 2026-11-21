@@ -258,6 +258,53 @@ pub fn draw_title_screen(
                 true,
             );
         }
+        TitlePhase::ExitConfirm => {
+            // Same retail `sh2pc.exe` `FUN_00407610` (`0x00407610`) 512×448 confirmation geometry:
+            // prompt at `(256, 232)` (`0, +8` centered), Yes at `(226, 266)` (`-30, +42`), No at `(286, 266)` (`+30, +42`).
+            let hdr_sz = (22.0 * vp.scale_y).round().max(14.0) as usize;
+            let item_sz = (18.0 * vp.scale_y).round().max(12.0) as usize;
+            let pop_dx = (2.0 * vp.scale_x).round().max(1.0) as usize;
+            let pop_dy = (2.0 * vp.scale_y).round().max(1.0) as usize;
+
+            let (px, py) = vp.centered_to_px(0.0, 8.0);
+            font.draw_line_centered(
+                rast,
+                "Exit the game?",
+                (px.max(0) as usize, py.max(0) as usize),
+                hdr_sz,
+                Sh2TextColor::White,
+                true,
+            );
+
+            let (yx, yy) = vp.centered_to_px(-30.0, 42.0);
+            let (nx, ny) = vp.centered_to_px(30.0, 42.0);
+            let yes_pos = (yx.max(0) as usize, yy.max(0) as usize);
+            let no_pos = (nx.max(0) as usize, ny.max(0) as usize);
+
+            let unselected = Sh2TextColor::Custom {
+                top: [0x7f, 0x7f, 0x7f, 0x60],
+                bottom: [0x7f, 0x7f, 0x7f, 0x60],
+            };
+            font.draw_line_centered(rast, "Yes", yes_pos, item_sz, unselected, false);
+            font.draw_line_centered(rast, "No", no_pos, item_sz, unselected, false);
+
+            let (sel_label, sel_pos) = if sm.exit_confirm_index == 0 {
+                ("Yes", yes_pos)
+            } else {
+                ("No", no_pos)
+            };
+            font.draw_line_centered(
+                rast,
+                sel_label,
+                (
+                    sel_pos.0.saturating_sub(pop_dx),
+                    sel_pos.1.saturating_sub(pop_dy),
+                ),
+                item_sz,
+                Sh2TextColor::White,
+                false,
+            );
+        }
         _ => {}
     }
 }

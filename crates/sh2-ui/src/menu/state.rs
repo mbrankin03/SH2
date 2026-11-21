@@ -84,6 +84,10 @@ pub struct TitleStateMachine {
     pub riddle_clear_mask: u8,
     /// Alternate Extra Riddle toggle bit (`DAT_01dbbf85 & 1` at `0x0048aa20`).
     pub extra_riddle_toggle_bit: bool,
+    /// Cursor index in [`TitlePhase::ExitConfirm`]: `0 = Yes`, `1 = No` (defaults to `1 = No`).
+    pub exit_confirm_index: usize,
+    /// Set to `true` when the user confirms `Yes` on [`TitlePhase::ExitConfirm`]; `sh2-app` exits cleanly.
+    pub exit_requested: bool,
     /// Last audio cue emitted by state change.
     pub pending_audio_cue: MenuSoundCue,
 }
@@ -121,6 +125,8 @@ impl TitleStateMachine {
             include_pc_menu_slots: true,
             riddle_clear_mask: 0,
             extra_riddle_toggle_bit: false,
+            exit_confirm_index: 1,
+            exit_requested: false,
             pending_audio_cue: MenuSoundCue::None,
         }
     }
@@ -309,7 +315,9 @@ impl TitleStateMachine {
                                 sound = MenuSoundCue::Confirm;
                             }
                             MainMenuOption::Exit => {
-                                sound = MenuSoundCue::Cancel;
+                                self.phase = TitlePhase::ExitConfirm;
+                                self.exit_confirm_index = 1; // Default to "No"
+                                sound = MenuSoundCue::Confirm;
                             }
                         }
                     }
@@ -451,6 +459,31 @@ impl TitleStateMachine {
                     sound = MenuSoundCue::Cancel;
                 }
             }
+            TitlePhase::ExitConfirm => match action {
+                MenuNavAction::Left
+                | MenuNavAction::Right
+                | MenuNavAction::Up
+                | MenuNavAction::Down => {
+                    self.exit_confirm_index ^= 1;
+                    self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
+                    sound = MenuSoundCue::CursorMove;
+                }
+                MenuNavAction::Confirm => {
+                    if self.exit_confirm_index == 0 {
+                        self.exit_requested = true;
+                        sound = MenuSoundCue::Confirm;
+                    } else {
+                        self.phase = TitlePhase::MainMenu;
+                        self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
+                        sound = MenuSoundCue::Cancel;
+                    }
+                }
+                MenuNavAction::Cancel => {
+                    self.phase = TitlePhase::MainMenu;
+                    self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
+                    sound = MenuSoundCue::Cancel;
+                }
+            },
             TitlePhase::TestRoomsSelect => match action {
                 MenuNavAction::Up => {
                     if self.test_room_index == 0 {

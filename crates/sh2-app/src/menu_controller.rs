@@ -477,10 +477,19 @@ impl AppMenuController {
             }
             TitlePhase::Credits => {
                 lines.push("=== CREDITS ===".into());
-                lines.push("Director: Keiichiro Toyama".into());
+                lines.push("Director: Masashi Tsuboyama".into());
                 lines.push("CGI & Character Design: Takayoshi Sato".into());
                 lines.push("Music & Sound Design: Akira Yamaoka".into());
                 lines.push("[Press Cancel / Esc to Return]".into());
+            }
+            TitlePhase::ExitConfirm => {
+                lines.push("Exit the game?".into());
+                let choice = if self.title_sm.exit_confirm_index == 0 {
+                    "> Yes <   No"
+                } else {
+                    "  Yes   > No <"
+                };
+                lines.push(choice.into());
             }
             TitlePhase::TransitionToGame => {
                 lines.push(format!(

@@ -27,6 +27,8 @@ pub enum TitlePhase {
     TestRoomsSelect,
     /// Credits display screen.
     Credits,
+    /// Confirmation prompt when selecting `EXIT` on the Main Menu ("Exit the game? Yes / No").
+    ExitConfirm,
     /// Fade-out transition into the game world / opening FMV (`titleFadeOutNewGame` `0x001c2ec0`).
     TransitionToGame,
 }

@@ -23,7 +23,7 @@ fn make_settle_road(
         lim_sw: RoadArea {
             x0: x_min,
             z0: -2000.0,
-            x1: x_max,
+            x1: x_min,
             z1: 2000.0,
             x2: x_max,
             z2: 2000.0,

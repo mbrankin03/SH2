@@ -82,6 +82,7 @@ impl ScriptCameraController {
             roll_radians: shot.roll_radians,
             transition,
             eye_velocity_mm_per_s: Vec3::ZERO,
+            watch_ang_spd_rad_per_s: Vec3::ZERO,
             cam_prm: DEFAULT_USER_CAM_MV_PARAM,
             watch_prm: DEFAULT_USER_WATCH_MV_PARAM,
         };
@@ -169,6 +170,7 @@ impl ScriptCameraController {
                 roll_radians: 0.0,
                 transition,
                 eye_velocity_mm_per_s: Vec3::ZERO,
+                watch_ang_spd_rad_per_s: Vec3::ZERO,
                 cam_prm: DEFAULT_USER_CAM_MV_PARAM,
                 watch_prm: DEFAULT_USER_WATCH_MV_PARAM,
             };
@@ -323,6 +325,7 @@ impl ScriptCameraController {
                 roll_radians,
                 transition,
                 eye_velocity_mm_per_s,
+                watch_ang_spd_rad_per_s,
                 cam_prm,
                 watch_prm,
             } => {
@@ -341,10 +344,18 @@ impl ScriptCameraController {
                     None => camera.curr_snapshot.eye,
                 };
                 let new_target = match *target_watch_mm {
-                    Some(tgt) if is_warp => tgt,
-                    Some(tgt) => {
-                        step_user_watch_target(new_eye, prev_output.target, tgt, watch_prm, dt)
+                    Some(tgt) if is_warp => {
+                        *watch_ang_spd_rad_per_s = Vec3::ZERO;
+                        tgt
                     }
+                    Some(tgt) => step_user_watch_target(
+                        new_eye,
+                        prev_output.target,
+                        tgt,
+                        watch_ang_spd_rad_per_s,
+                        watch_prm,
+                        dt,
+                    ),
                     None => camera.curr_snapshot.target,
                 };
 

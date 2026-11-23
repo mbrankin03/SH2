@@ -21,7 +21,7 @@ fn box_xz(x0: f32, x1: f32, min_hy: f32, max_hy: f32) -> RoadArea {
     RoadArea {
         x0,
         z0: -2000.0,
-        x1,
+        x1: x0,
         z1: 2000.0,
         x2: x1,
         z2: 2000.0,
@@ -91,7 +91,7 @@ fn test_intra_room_transition_policies_not_warp_veto_and_door_reset() {
 
     let mk_rec = |x0: f32, x1: f32, ex: f32, mv: CamMovementType, flags: u16| RoadRecord {
         lim_sw: box_xz(x0, x1, -2000.0, 2000.0),
-        lim_rd: box_xz(ex - 1000.0, ex + 1000.0, -1400.0, -1400.0),
+        lim_rd: box_xz(ex, ex, -1400.0, -1400.0),
         flags,
         rd_type: RoadType::Event,
         ofs_watch_hy: -300.0,
@@ -127,7 +127,7 @@ fn test_widescreen_and_outdoor_chase_rail_reset_and_settle_yaw_limits() {
     let settle_like = RoadRecord {
         lim_sw: box_xz(-2000.0, 2000.0, -2000.0, 2000.0),
         lim_rd: box_xz(-1500.0, 500.0, -1400.0, -1400.0),
-        flags: VC_RD_CAM_LIKE_SETTLE_F,
+        flags: VC_RD_CAM_LIKE_SETTLE_F | sh2_assets::formats::cam::VC_RD_NO_FRONT_FLIP_F,
         area_size_type: AreaSizeType::Outdoor,
         rd_type: RoadType::Road,
         ofs_watch_hy: -300.0,
@@ -193,14 +193,18 @@ fn test_retail_cam_corpus_all_rooms_across_all_aspects() -> Result<(), Box<dyn s
         let stem = path.file_stem().and_then(|s| s.to_str());
         for rec in &cam.records {
             let out = is_outdoor_room_or_record(stem, rec.area_size_type);
-            let ((x0, x1), (z0, z1)) = (rec.lim_rd.x_bounds(), rec.lim_rd.z_bounds());
-            let probe = Vec3::new(x0 - 5000.0, 0.0, z1 + 5000.0);
+            let ((min_lx, max_lx), (min_lz, max_lz)) = rec.lim_rd.local_xz_bounds();
+            let (px, pz) = rec
+                .lim_rd
+                .local_to_world_xz(min_lx - 5000.0, max_lz + 5000.0);
+            let probe = Vec3::new(px, 0.0, pz);
             let mut prev_dx = 0.0f32;
             for cfg in std::iter::once(AspectRailConfig::authentic_ps2_4x3()).chain(cfgs) {
                 let c = clamp_to_road_rail_with_config(&rec.lim_rd, probe, out, &cfg);
-                assert!(c.is_finite() && c.x >= x0 - 1e-2 && c.x <= x1 + 1e-2);
-                assert!(c.z >= z0 - 1e-2 && c.z <= z1 + 1e-2);
-                let dx = (c.x - x0).min(x1 - c.x);
+                let (clx, clz) = rec.lim_rd.world_to_local_xz(c.x, c.z);
+                assert!(c.is_finite() && clx >= min_lx - 1e-2 && clx <= max_lx + 1e-2);
+                assert!(clz >= min_lz - 1e-2 && clz <= max_lz + 1e-2);
+                let dx = (clx - min_lx).min(max_lx - clx);
                 assert!(dx + 1e-2 >= prev_dx);
                 prev_dx = dx;
             }

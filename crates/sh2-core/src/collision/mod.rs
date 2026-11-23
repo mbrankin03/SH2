@@ -20,6 +20,7 @@
 pub mod character;
 pub mod controller;
 pub mod dynamic;
+pub mod eye_ray;
 pub mod grid;
 pub mod probes;
 pub mod raycast;

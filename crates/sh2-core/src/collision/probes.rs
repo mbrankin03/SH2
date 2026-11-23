@@ -128,7 +128,11 @@ pub struct PlayerHeightResult {
 /// `sh2pc.exe` (`sh2pc_00520000.c:6120-6127`) explicitly extends the vertical floor probe from
 /// `[-250.0, +1500.0]` to `[-2100.0, +2100.0]` on stage `0x0e`. Both binaries share identical
 /// `100.0` mm step-snap, `9.8 * dt * dt` freefall velocity accumulation, and `250.0` mm `Fall`
-/// state thresholds.
+/// state thresholds. Note that `sh2pc.exe` (`sh2pc_00520000.c:6154-6155`) contains a trailing
+/// unconditional `pos.y = floor_y` snap after the `100.0` mm branch, whereas `SLUS_202.28`
+/// (`0x00107aa0`) preserves `pos.y` during freefall (`pos.y + 100.0 < floor_y`); this
+/// implementation follows `SLUS_202.28`'s freefall preservation so gravity/Fall states operate
+/// properly without instant teleporting.
 #[allow(clippy::too_many_arguments)]
 pub fn player_set_height(
     world: &CollisionWorld,

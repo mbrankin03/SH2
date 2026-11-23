@@ -56,6 +56,38 @@ pub const PS2_NOISE_TEX_SIZE: usize = 128;
 /// Number of noise tiles along each axis (`4x4` grid covering `512x512` in `sh2gfw_SendDraw_Noise` `0x00177f30`).
 pub const PS2_NOISE_TILE_GRID: usize = 4;
 
+/// Exact 16-entry `PSMT4` CLUT RGB values for the PS2 film-grain noise texture
+/// (`SLUS_202.28` `noise_clut` at `0x002ab5c0`, uploaded to VRAM `CBP = 0x37c4` by
+/// `DBG_data_loadGS` `0x00172930` and bound by `TEX0_1 = 0x2006f881dd40b500` in
+/// `sh2gfw_SendDraw_Noise` `0x00177f30`). Every entry has `R == G == B` (`0x00` or `0x18`) and `A = 0x10`.
+pub const PS2_NOISE_CLUT_RGB: [u8; 16] = [
+    0x18, 0x00, 0x18, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x18,
+];
+
+/// PS2 film-grain vertex RGB modulation byte (`SLUS_202.28` `DAT_002adb55 = 0xe6 = 230`,
+/// read by `sh2gfw_SendDraw_Noise` `0x00177f30` line 715 with `TFX = 0 (MODULATE)` -> `230 / 128.0`).
+pub const PS2_NOISE_VERTEX_RGB: u8 = 0xe6;
+
+/// PS2 film-grain `ALPHA_1` `FIX` blend byte (`SLUS_202.28` `DAT_002adb52 = 0x60 = 96`,
+/// passed by `Noise_and_FontDraw` `0x0019ff70` lines 201/204 into `sh2gfw_SendDraw_Noise`
+/// `0x00177f30` with `ALPHA_1 = (0x60 << 32) | 0x21`: `Out = (Cd - Cs) * (96/128) + Cs = mix(Cd, Cs, 32/128)`).
+pub const PS2_NOISE_BLEND_FIX: u8 = 0x60;
+
+/// Decodes the first `8,192` bytes (`0x200` qwords, `PSMT4` 4-bit nibbles, `sh2gfw_SendDraw_Noise`
+/// `0x00177f30` line 622) of `CalcTex_buffer` through [`PS2_NOISE_CLUT_RGB`] (`0x002ab5c0`) into
+/// `128 × 128` (`16,384`) `R8Unorm` texels (`0x00` or `0x18`).
+#[must_use]
+pub fn decode_ps2_noise_clut_128x128(raw_bytes: &[u8]) -> Vec<u8> {
+    let texel_count = PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE;
+    let packed_bytes = texel_count / 2;
+    let mut out = vec![0u8; texel_count];
+    for (i, &byte) in raw_bytes.iter().take(packed_bytes).enumerate() {
+        out[i * 2] = PS2_NOISE_CLUT_RGB[(byte & 0x0f) as usize];
+        out[i * 2 + 1] = PS2_NOISE_CLUT_RGB[((byte >> 4) & 0x0f) as usize];
+    }
+    out
+}
+
 /// Stateful 128×128 LCG film-grain generator matching `SLUS_202.28` `sh2gfw_test_MakeNoise` (`0x00177c50`).
 #[derive(Debug, Clone)]
 pub struct Ps2NoiseGenerator {
@@ -386,6 +418,13 @@ mod tests {
         let q2 = sample_ps2_noise_tiled_4x4(&buf, 17, 23 + 128, 512, 512);
         assert_eq!(q0, q1);
         assert_eq!(q0, q2);
+
+        // Verify PSMT4 CLUT decode (`noise_clut` 0x002ab5c0) produces only 0x00 or 0x18 texels
+        let clut_decoded = decode_ps2_noise_clut_128x128(&buf);
+        assert_eq!(clut_decoded.len(), 128 * 128);
+        assert!(clut_decoded.iter().all(|&v| v == 0x00 || v == 0x18));
+        assert_eq!(PS2_NOISE_VERTEX_RGB, 0xe6);
+        assert_eq!(PS2_NOISE_BLEND_FIX, 0x60);
     }
 
     #[test]

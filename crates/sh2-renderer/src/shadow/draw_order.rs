@@ -10,8 +10,9 @@
 //!   - Stage `0x09` (`9`), Room `0x2a` (`42`) with James flashlight off: spot light type `0`,
 //!     pos `(0xc763ee00, 0xc42f0000, 0x46969600, 1.0)`, dir `(0xbeb95810, 0x3f44dd2f, 0x3ea6e979, 0.0)`.
 //! - `sh2shd_del_jms_upper_body` (`0x001a5e60`) & `sh2shd_del_jms_head` (`0x001a5f60`, `sh2shd/sh2shd_shadow_model.c`).
-//! - `sh2shd_get_height_for_alpha` (`0x0018dc50` + caller `0x0018db00`, `sh2shd/sh2shd_char_jms.c`):
-//!   700.0 mm vertical fade window (`high = low - 700.0`) with character-specific head/foot bone IDs.
+//! - `sh2shd_get_height_for_alpha` (`0x0018dc50` + caller `sh2shd_renew_char_man_for_drop` at
+//!   `0x0018da80`, `sh2shd/sh2shd_char_jms.c`): 700.0 mm vertical fade window (`high = low - 700.0`)
+//!   with character-specific head/foot bone IDs.
 
 use glam::Vec3;
 

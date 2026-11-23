@@ -12,11 +12,12 @@ pub use clear_color::{
 };
 
 pub use ps2_filters::{
-    compute_swap_tap_offsets_12_4, ps2_brightness_byte, ps2_brightness_scale,
-    sample_ps2_noise_tiled_4x4, FilterRetainState, Ps2FadeKind, Ps2NoiseGenerator,
-    SwapGlowSoftParams, SwapSoftParams, SwapSoftTestMode, GS_FILTER_RETAIN_ALPHA_1,
-    PS2_BRIGHTNESS_LUT_U8, PS2_BRIGHTNESS_NEUTRAL_U8, PS2_FILTER_CMD_PAUSE_RETAIN,
-    PS2_NOISE_LCG_INC, PS2_NOISE_LCG_MUL, PS2_NOISE_TEX_SIZE, PS2_NOISE_TILE_GRID,
+    compute_swap_tap_offsets_12_4, decode_ps2_noise_clut_128x128, ps2_brightness_byte,
+    ps2_brightness_scale, sample_ps2_noise_tiled_4x4, FilterRetainState, Ps2FadeKind,
+    Ps2NoiseGenerator, SwapGlowSoftParams, SwapSoftParams, SwapSoftTestMode,
+    GS_FILTER_RETAIN_ALPHA_1, PS2_BRIGHTNESS_LUT_U8, PS2_BRIGHTNESS_NEUTRAL_U8,
+    PS2_FILTER_CMD_PAUSE_RETAIN, PS2_NOISE_BLEND_FIX, PS2_NOISE_CLUT_RGB, PS2_NOISE_LCG_INC,
+    PS2_NOISE_LCG_MUL, PS2_NOISE_TEX_SIZE, PS2_NOISE_TILE_GRID, PS2_NOISE_VERTEX_RGB,
 };
 
 /// Bitflag in [`PostUniforms::flags`]: enables modern ACES filmic tonemapping (`native-upgrade`).
@@ -114,6 +115,19 @@ struct PostUniforms {
 const POST_FLAG_ACES_TONEMAP: u32 = 1u;
 const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
 
+// PS2 `sh2gfw_SendDraw_Noise` (`0x00177f30`) & `Noise_and_FontDraw` (`0x0019ff70`) GS constants:
+// - `noise_clut` (`0x002ab5c0`): 16-entry PSMT4 CLUT with RGB = `0x00` or `0x18` (`24 / 255.0`).
+// - `DAT_002adb55 = 0xe6` (`230`): vertex RGB modulation (`TFX = 0 MODULATE` -> `230.0 / 128.0`).
+// - `DAT_002adb52 = 0x60` (`96`): `ALPHA_1 = (0x60 << 32) | 0x21` (`A=Cd, B=Cs, C=FIX(96), D=Cs`
+//   => `Out = (Cd - Cs) * (96/128) + Cs = mix(Cd, Cs, 32/128)`).
+const PS2_NOISE_CLUT_HIGH: f32 = 24.0 / 255.0;
+const PS2_NOISE_VTX_MODULATE: f32 = 230.0 / 128.0;
+const PS2_NOISE_BLEND_WEIGHT: f32 = (128.0 - 96.0) / 128.0;
+
+// PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) & `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 12.4 sub-pixel
+// half-texel bias (`-4` in 12.4 fixed-point = `-4.0 / 16.0 = -0.25` px).
+const PS2_SWAP_SUBPIXEL_BIAS_PX: f32 = -0.25;
+
 @group(0) @binding(0) var<uniform> post: PostUniforms;
 @group(0) @binding(1) var hdr_in: texture_2d<f32>;
 @group(0) @binding(2) var ldr_out: texture_storage_2d<rgba8unorm, write>;
@@ -152,47 +166,91 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let max_coord = vec2<i32>(dims) - vec2<i32>(1, 1);
     var hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
 
-    // 0a. PS2 `Swap_Soft` / `Kari_hisyakai` Screen-Space DoF (`0x001785e0`)
+    // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) 2x2 ping-pong DoF blur:
+    //     Tap offsets (`compute_swap_tap_offsets_12_4(2, step)`): `[-1.5 * step - 0.25, +0.5 * step - 0.25]` px.
+    //     GS `ALPHA_1 = (FIX << 32) | 0x64` (`A=Cs, B=Cd, C=FIX, D=Cd` => `dst = mix(dst, tap, FIX / 128.0)`).
     if (post.dof_strength > 0.001) {
-        let tap_delta = vec2<i32>(round(post.dof_tap_offset_px));
-        let tap_double = vec2<i32>(round(post.dof_tap_offset_px * 2.0));
-        let c1 = textureLoad(hdr_in, clamp(pixel_coords + tap_delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-        let c2 = textureLoad(hdr_in, clamp(pixel_coords - tap_delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-        let c3 = textureLoad(hdr_in, clamp(pixel_coords + tap_double, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-        let c4 = textureLoad(hdr_in, clamp(pixel_coords - tap_double, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-        let dof_avg = (c1 + c2) * 0.30 + (c3 + c4) * 0.20;
-        let w_dof = clamp(post.dof_strength, 0.0, 0.90);
-        hdr_color = mix(hdr_color, dof_avg, w_dof);
-    }
-
-    // 0b. PS2 `Swap_GlowSoft` additive bloom (`0x00178d60`)
-    if (post.glow_strength > 0.001) {
-        let step_px = max(i32(round(post.glow_step_px)), 1);
-        var glow_acc = vec3<f32>(0.0);
-        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
-            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
-                let sc = clamp(pixel_coords + vec2<i32>(dx * step_px, dy * step_px), vec2<i32>(0), max_coord);
-                let s = textureLoad(hdr_in, sc, 0).rgb * post.exposure;
-                let luma = max(s.r, max(s.g, s.b));
-                if (luma >= post.glow_threshold) {
-                    glow_acc = glow_acc + s;
+        let dof_alpha = clamp(post.dof_strength, 0.0, 1.0);
+        let ox0 = -1.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let ox1 = 0.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let oy0 = -1.5 * post.dof_tap_offset_px.y + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let oy1 = 0.5 * post.dof_tap_offset_px.y + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        var buf_a = hdr_color;
+        var buf_b = hdr_color;
+        var flip: u32 = 1u;
+        for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
+            let dy = select(oy0, oy1, iy == 1);
+            for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
+                let dx = select(ox0, ox1, ix == 1);
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+                if (flip == 1u) {
+                    buf_b = mix(buf_b, tap, dof_alpha);
+                } else {
+                    buf_a = mix(buf_a, tap, dof_alpha);
                 }
+                flip = flip ^ 1u;
             }
         }
-        hdr_color = hdr_color + (glow_acc * (1.0 / 9.0)) * post.glow_strength;
+        hdr_color = buf_a;
     }
 
-    // 0c. PS2 `enSetBlur` Motion Blur Pass
+    // 0b. PS2 `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 2x2 ping-pong additive bloom:
+    //     Tap offsets (`compute_swap_tap_offsets_12_4(2, step_param)`): `[-1.5 * step_px - 0.25, +0.5 * step_px - 0.25]` px.
+    //     GS `TEST_1 = (aref << 4) | 0x3800b` (`ATST = 5 GEQUAL`) and `ALPHA_1 = (FIX << 32) | 0x68`
+    //     (`A=Cs, B=0, C=FIX, D=Cd` => `dst = dst + tap * (FIX / 128.0)`).
+    if (post.glow_strength > 0.001) {
+        let glow_alpha = clamp(post.glow_strength, 0.0, 1.0);
+        let go0 = -1.5 * post.glow_step_px + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let go1 = 0.5 * post.glow_step_px + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        var buf_a = hdr_color;
+        var buf_b = hdr_color;
+        var flip: u32 = 1u;
+        for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
+            let dy = select(go0, go1, iy == 1);
+            for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
+                let dx = select(go0, go1, ix == 1);
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+                let luma = max(tap.r, max(tap.g, tap.b));
+                if (luma >= post.glow_threshold) {
+                    if (flip == 1u) {
+                        buf_b = buf_b + tap * glow_alpha;
+                    } else {
+                        buf_a = buf_a + tap * glow_alpha;
+                    }
+                }
+                flip = flip ^ 1u;
+            }
+        }
+        hdr_color = buf_a;
+    }
+
+    // 0c. PS2 `sh2gfw_Filter_Blur` (`0x00177440` / `enSetBlur` `0x00146c30` `param_2 = 0x60`):
+    //     GS `ALPHA_1 = 0x44` (`A=Cs, B=Cd, C=As, D=Cd` => `dst = mix(dst, tap, As / 128.0)`)
+    //     evaluated over the `Swap_Soft` 2x2 unit-step (`step_px = 1.0`) tap grid.
     if (post.motion_blur_strength > 0.001) {
-        let center = vec2<f32>(dims) * 0.5;
-        let radial = (vec2<f32>(global_id.xy) - center) * (0.015 * post.motion_blur_strength);
-        let step1 = vec2<i32>(round(radial));
-        let step2 = vec2<i32>(round(radial * 2.0));
-        let m1 = textureLoad(hdr_in, clamp(pixel_coords - step1, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-        let m2 = textureLoad(hdr_in, clamp(pixel_coords - step2, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-        let blur_rgb = (hdr_color + m1 + m2) * (1.0 / 3.0);
-        let w_mb = clamp(post.motion_blur_strength, 0.0, 0.85);
-        hdr_color = mix(hdr_color, blur_rgb, w_mb);
+        let mb_alpha = clamp(post.motion_blur_strength, 0.0, 1.0);
+        let mo0 = -1.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let mo1 = 0.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        var buf_a = hdr_color;
+        var buf_b = hdr_color;
+        var flip: u32 = 1u;
+        for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
+            let dy = select(mo0, mo1, iy == 1);
+            for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
+                let dx = select(mo0, mo1, ix == 1);
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+                if (flip == 1u) {
+                    buf_b = mix(buf_b, tap, mb_alpha);
+                } else {
+                    buf_a = mix(buf_a, tap, mb_alpha);
+                }
+                flip = flip ^ 1u;
+            }
+        }
+        hdr_color = buf_a;
     }
 
     // 1. Optional ACES tonemapping (`native-upgrade`) vs strict 1:1 Vanilla PS2 linear clamp
@@ -203,21 +261,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ldr = clamp(hdr_color, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
-    // 2. PS2 `sh2gfw_test_MakeNoise` (0x00177c50) + `sh2gfw_SendDraw_Noise` (0x00177f30):
-    //    Samples the CPU-generated 128x128 R8Unorm LCG texture tiled 4x4 across the screen.
+    // 2. PS2 `sh2gfw_test_MakeNoise` (`0x00177c50`) + `sh2gfw_SendDraw_Noise` (`0x00177f30`):
+    //    Samples the 128x128 PSMT4 `noise_clut` (`0x002ab5c0`: `0x00` / `0x18`) texture tiled 4x4,
+    //    modulates by `DAT_002adb55 = 0xe6` (`230 / 128.0`), and blends with `ALPHA_1 = (0x60 << 32) | 0x21`
+    //    (`DAT_002adb52 = 0x60 = 96` => `mix(Cd, Cs, 32 / 128.0)` scaled by user `grain_intensity`).
     if (post.grain_intensity > 0.001) {
-        var rand_f: f32;
+        var noise_texel: f32;
         if ((post.flags & POST_FLAG_PS2_LCG_NOISE) != 0u) {
             let uv = (vec2<f32>(global_id.xy) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
-            rand_f = textureSampleLevel(ps2_noise_tex, ps2_noise_sampler, uv * 4.0, 0.0).r;
+            noise_texel = textureSampleLevel(ps2_noise_tex, ps2_noise_sampler, uv * 4.0, 0.0).r;
         } else {
             let frame_seed = u32(post.time * 30.0);
-            rand_f = random_val(global_id.xy, frame_seed);
+            let rand_f = random_val(global_id.xy, frame_seed);
+            noise_texel = select(0.0, PS2_NOISE_CLUT_HIGH, rand_f >= 0.5);
         }
 
-        let grain_weight = clamp(0.05 * post.grain_intensity, 0.0, 0.05);
-        let grain_rgb = vec3<f32>(rand_f, rand_f, rand_f);
-        ldr = clamp(mix(ldr, grain_rgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
+        let cs = vec3<f32>(noise_texel * PS2_NOISE_VTX_MODULATE);
+        let grain_weight = PS2_NOISE_BLEND_WEIGHT * clamp(post.grain_intensity, 0.0, 1.0);
+        ldr = clamp(mix(ldr, cs, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     // 3. PS2 Black/White/Red screen fade (`sh2gfw_Fade2` 0x00179d60, `sh2gfw_Fade3` 0x0017a2e0)
@@ -329,7 +390,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         });
 
         let mut gen = Ps2NoiseGenerator::new(0);
-        let initial_bytes = gen.generate_128x128();
+        let initial_bytes = decode_ps2_noise_clut_128x128(&gen.generate_128x128());
         let this = Self {
             pipeline,
             bind_group_layout,
@@ -371,16 +432,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     /// Advances the internal [`Ps2NoiseGenerator`] by one `128x128` frame (`0x00177c50`),
-    /// uploads it to [`Self::ps2_noise_texture`], and returns the updated LCG seed.
+    /// decodes through `noise_clut` (`0x002ab5c0`), uploads it to [`Self::ps2_noise_texture`],
+    /// and returns the updated LCG seed.
     pub fn step_ps2_noise(&self, queue: &wgpu::Queue) -> u32 {
         let (bytes, seed) = match self.ps2_noise_gen.lock() {
             Ok(mut gen) => {
-                let bytes = gen.generate_128x128();
+                let bytes = decode_ps2_noise_clut_128x128(&gen.generate_128x128());
                 (bytes, gen.seed)
             }
             Err(poisoned) => {
                 let mut gen = poisoned.into_inner();
-                let bytes = gen.generate_128x128();
+                let bytes = decode_ps2_noise_clut_128x128(&gen.generate_128x128());
                 (bytes, gen.seed)
             }
         };
@@ -427,5 +489,19 @@ mod tests {
         let bytes = bytemuck::bytes_of(&uniforms);
         let back: &PostUniforms = bytemuck::from_bytes(bytes);
         assert_eq!(&uniforms, back);
+    }
+
+    #[test]
+    fn test_post_wgsl_has_no_uncited_filter_constants() {
+        let src = PostProcessPipeline::WGSL_SHADER;
+        assert!(src.contains("PS2_NOISE_VTX_MODULATE"));
+        assert!(src.contains("PS2_NOISE_BLEND_WEIGHT"));
+        assert!(src.contains("PS2_SWAP_SUBPIXEL_BIAS_PX"));
+        assert!(!src.contains("0.05 * post.grain_intensity"));
+        assert!(!src.contains("1.0 / 9.0"));
+        assert!(!src.contains("* 0.30"));
+        assert!(!src.contains("* 0.20"));
+        assert!(!src.contains("0.015"));
+        assert!(!src.contains("0.85"));
     }
 }

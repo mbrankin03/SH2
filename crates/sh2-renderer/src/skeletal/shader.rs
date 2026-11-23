@@ -83,10 +83,19 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+// Exact 8-bit UNORM midpoints matching `SLUS_202.28` `InitEnv1` (`0x002a9780`, `TEST_1 = 0x5000d`:
+// `ATE=1, ATST=6 (GREATER), AREF=0`) and `sh2pc.exe` `FUN_00503800` (`D3DCMP_GREATER, AREF=0`):
+// - `PS2_ALPHA_TEST_THRESHOLD`: discards `alpha_u8 == 0` (`< 0.5 / 255.0`), passes `alpha_u8 >= 1`.
+// - `PS2_ALPHA_OPAQUE_THRESHOLD`: partitions fully opaque texels (`alpha_u8 == 255`) into
+//   depth-writing `pass_mode == 1u` and translucent texels (`1 <= alpha_u8 <= 254`) into
+//   depth-read-only alpha-blended `pass_mode == 2u`.
+const PS2_ALPHA_TEST_THRESHOLD: f32 = 0.5 / 255.0;
+const PS2_ALPHA_OPAQUE_THRESHOLD: f32 = 254.5 / 255.0;
+
 // `pass_mode`:
-// 0u = Opaque pass (`is_transparent == false`)
-// 1u = Transparent hair/fringe core pass (`tex_color.a >= 0.90`, writes depth)
-// 2u = Transparent hair/fringe soft edge pass (`0.004 <= tex_color.a < 0.90`, reads depth)
+// 0u = Opaque pass (`is_transparent == false`, `ALPHATESTENABLE = 0`)
+// 1u = Transparent hair/fringe opaque core pass (`alpha_u8 == 255`, writes depth)
+// 2u = Transparent hair/fringe translucent pass (`1 <= alpha_u8 <= 254`, reads depth)
 fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // Sample diffuse texture unconditionally in uniform control flow before any early returns
     // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
@@ -110,14 +119,16 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     //   Maria's `1245` fingernails/rings, `scu.mdl` `1282`, `pap.mdl` `1293`) NEVER discard texels
     //   (`sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`), as genuine cutout `prim` cards (`lll_jms`,
     //   `lll_mar`, `lxx_mar` hair) are promoted to `pass_mode == 1u / 2u` at mesh compilation time.
-    // - `pass_mode == 1u / 2u`: transparent `tprim` and promoted cutout hair submeshes split cleanly
-    //   at `0.90` into depth-writing core (`1u`) + depth-read-only soft alpha-blended fringe (`2u`).
+    // - `pass_mode == 1u / 2u`: transparent `tprim` and promoted cutout hair submeshes enforce exact
+    //   1:1 PS2 GS `TEST_1 = 0x5000d` (`ATST=GREATER, AREF=0` -> `alpha_u8 > 0`, `SLUS_202.28`
+    //   `0x002a9780` / `sh2pc.exe` `0x00503800`), partitioning `alpha_u8 == 255` into depth-writing
+    //   core (`1u`) and `1 <= alpha_u8 <= 254` into depth-read-only alpha-blended fringe (`2u`).
     if pass_mode == 1u {
-        if tex_color.a < 0.90 {
+        if tex_color.a < PS2_ALPHA_OPAQUE_THRESHOLD {
             discard;
         }
     } else if pass_mode == 2u {
-        if tex_color.a < (1.0 / 255.0) || tex_color.a >= 0.90 {
+        if tex_color.a < PS2_ALPHA_TEST_THRESHOLD || tex_color.a >= PS2_ALPHA_OPAQUE_THRESHOLD {
             discard;
         }
     }

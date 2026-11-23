@@ -44,12 +44,20 @@ pub const PC_D3DRS_ALPHAFUNC_GREATER: u32 = 5;
 /// Retail PC `sh2pc.exe` `FUN_00503800` (`0x00503800` line 2409) `D3DRS_ALPHAREF` value (`0`).
 pub const PC_D3DRS_ALPHAREF_ZERO: u8 = 0;
 
-/// Exact normalized float alpha-test threshold (`1.0 / 255.0`) equivalent to PS2 GS `TEST_1 = 0x5000d`
-/// (`ATST = 6 (GREATER), AREF = 0`) and PC `D3DRS_ALPHAFUNC = D3DCMP_GREATER (5), D3DRS_ALPHAREF = 0`.
+/// Exact normalized 8-bit UNORM midpoint threshold (`0.5 / 255.0`) equivalent to PS2 GS
+/// `TEST_1 = 0x5000d` (`ATST = 6 (GREATER), AREF = 0`) and PC `D3DRS_ALPHAFUNC = D3DCMP_GREATER (5)`,
+/// `D3DRS_ALPHAREF = 0` (`alpha_u8 > 0`).
 ///
-/// Replaces the uncited `0.90` hair split and hardcoded `0.05` alpha-test with exact `alpha_u8 > 0`
-/// parity from `SLUS_202.28` (`0x002a9780`) and `sh2pc.exe` (`0x00503800`).
-pub const PS2_ALPHA_TEST_THRESHOLD: f32 = 1.0 / 255.0;
+/// Discards `alpha_u8 == 0` (`0.0`) and passes all `alpha_u8 >= 1` (`>= 1.0 / 255.0`) even under
+/// float rounding, replacing the uncited `0.90` / `0.05` alpha-test thresholds.
+pub const PS2_ALPHA_TEST_THRESHOLD: f32 = 0.5 / 255.0;
+
+/// Exact normalized 8-bit UNORM midpoint threshold (`254.5 / 255.0`) separating fully opaque
+/// texels (`alpha_u8 == 255`, depth-writing core `pass_mode == 1u`) from semi-transparent texels
+/// (`1 <= alpha_u8 <= 254`, depth-read-only alpha-blended fringe `pass_mode == 2u`) while keeping
+/// every `alpha_u8 > 0` texel (`TEST_1 = 0x5000d`, `SLUS_202.28` `0x002a9780`) visible without
+/// double-blending.
+pub const PS2_ALPHA_OPAQUE_THRESHOLD: f32 = 254.5 / 255.0;
 
 /// Decoded PS2 GS `TEST_1` (`0x47`) alpha-test fields (`ATE`, `ATST`, `AREF`, `AFAIL`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -435,5 +443,20 @@ mod tests {
         assert!(!opaque.enabled);
         assert!(opaque.passes(0));
         assert!(opaque.passes(128));
+
+        // Verify normalized UNORM thresholds partition all 256 8-bit alpha values identically to `alpha_u8 > 0`:
+        for a in 0u8..=255 {
+            let norm = (a as f32) / 255.0;
+            let in_core = norm >= PS2_ALPHA_OPAQUE_THRESHOLD;
+            let in_fringe = (PS2_ALPHA_TEST_THRESHOLD..PS2_ALPHA_OPAQUE_THRESHOLD).contains(&norm);
+            assert_eq!(in_core || in_fringe, atest.passes(a));
+            assert!(!(in_core && in_fringe));
+        }
+
+        // Verify WGSL shader uses the exact PS2 alpha-test constants rather than uncited `0.90`.
+        assert!(super::super::shader::WGSL_SKINNING_SHADER.contains("PS2_ALPHA_TEST_THRESHOLD"));
+        assert!(super::super::shader::WGSL_SKINNING_SHADER.contains("PS2_ALPHA_OPAQUE_THRESHOLD"));
+        assert!(!super::super::shader::WGSL_SKINNING_SHADER.contains("tex_color.a < 0.90"));
+        assert!(!super::super::shader::WGSL_SKINNING_SHADER.contains("tex_color.a >= 0.90"));
     }
 }

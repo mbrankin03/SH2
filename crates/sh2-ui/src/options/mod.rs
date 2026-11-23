@@ -353,7 +353,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 12);
+        assert_eq!(menu.item_count(), 13);
 
         // Adjust Resolution
         menu.adjust_value(1);
@@ -512,7 +512,7 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Enhanced;
-        assert_eq!(menu.item_count(), 12);
+        assert_eq!(menu.item_count(), 13);
         assert!(!menu.draft_config.game.enable_secondary_physics);
 
         // Row 0: Version Preset snaps to PS2 Authentic (1:1 Original)
@@ -522,6 +522,7 @@ mod tests {
             menu.draft_config.detect_enhanced_preset(),
             EnhancedPreset::Ps2Authentic
         );
+        assert!(!menu.draft_config.video.aces_tonemapping);
         assert!(!menu.draft_config.game.enable_secondary_physics);
         assert_eq!(
             menu.draft_config.video.texture_quality,
@@ -548,6 +549,7 @@ mod tests {
             menu.draft_config.detect_enhanced_preset(),
             EnhancedPreset::Sh2ee
         );
+        assert!(!menu.draft_config.video.aces_tonemapping);
         assert_eq!(
             menu.draft_config.video.shadow_quality,
             ShadowQualityMode::EnhancedEditionSoft
@@ -559,6 +561,7 @@ mod tests {
             menu.draft_config.detect_enhanced_preset(),
             EnhancedPreset::NativeEnhanced
         );
+        assert!(menu.draft_config.video.aces_tonemapping);
         assert_eq!(
             menu.draft_config.video.shadow_quality,
             ShadowQualityMode::NativePcss
@@ -568,6 +571,22 @@ mod tests {
             SpatialAudioMode::BinauralHrtf
         );
         assert!(menu.draft_config.game.enable_secondary_physics);
+
+        // Toggling ACES Tonemapping (row 11) switches Version Preset to Custom (Mixed)
+        menu.selected_index = 11;
+        assert_eq!(menu.item_display(11).unwrap().0, "ACES Tonemapping");
+        menu.adjust_value(1);
+        assert!(!menu.draft_config.video.aces_tonemapping);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::Custom
+        );
+        menu.adjust_value(1);
+        assert!(menu.draft_config.video.aces_tonemapping);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::NativeEnhanced
+        );
 
         // Toggling Secondary Cloth Physics (row 10) switches Version Preset to Custom (Mixed)
         menu.selected_index = 10;

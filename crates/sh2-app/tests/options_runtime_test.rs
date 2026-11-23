@@ -520,3 +520,67 @@ fn test_sh2_84_binaural_hrtf_options_toggle_and_persistence() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[test]
+fn test_sh2_136_aces_tonemapping_options_toggle_and_persistence() {
+    use sh2_core::config::EnhancedPreset;
+
+    let test_dir = std::env::temp_dir().join("sh2_136_aces_tonemapping_options_test");
+    let _ = fs::remove_dir_all(&test_dir);
+    fs::create_dir_all(&test_dir).unwrap();
+    let cfg_path = test_dir.join("aces_config.json");
+
+    let mut controller = AppMenuController::new(&cfg_path);
+    controller.title_sm.phase = TitlePhase::OptionsMenu;
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Video);
+
+    // Row 12 in Video tab is ACES Tonemapping (default ON for Native Enhanced)
+    controller.options_menu.selected_index = 12;
+    let (label, val0) = controller.options_menu.item_display(12).unwrap();
+    assert_eq!(label, "ACES Tonemapping");
+    assert_eq!(val0, "ON (Filmic HDR)");
+    assert!(controller.options_menu.draft_config.video.aces_tonemapping);
+
+    // Toggle OFF -> strict PS2 Linear clamp, commit & verify JSON roundtrip
+    controller.handle_nav(MenuNavAction::Right);
+    assert!(!controller.options_menu.draft_config.video.aces_tonemapping);
+    assert_eq!(
+        controller.options_menu.item_display(12).unwrap().1,
+        "OFF (PS2 Linear)"
+    );
+    assert_eq!(
+        controller.handle_nav(MenuNavAction::Confirm),
+        MenuSoundCue::Confirm
+    );
+    let reloaded = AppConfig::load_from_file(&cfg_path);
+    assert!(!reloaded.video.aces_tonemapping);
+
+    // Verify Enhanced tab row 11 toggles the same field and respects version presets
+    controller.options_menu.active_tab = OptionsTab::Enhanced;
+    controller.options_menu.selected_index = 0;
+    controller
+        .options_menu
+        .draft_config
+        .apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
+    assert!(!controller.options_menu.draft_config.video.aces_tonemapping);
+    controller
+        .options_menu
+        .draft_config
+        .apply_enhanced_preset(EnhancedPreset::Sh2ee);
+    assert!(!controller.options_menu.draft_config.video.aces_tonemapping);
+    controller
+        .options_menu
+        .draft_config
+        .apply_enhanced_preset(EnhancedPreset::NativeEnhanced);
+    assert!(controller.options_menu.draft_config.video.aces_tonemapping);
+
+    controller.options_menu.selected_index = 11;
+    assert_eq!(
+        controller.options_menu.item_display(11).unwrap().0,
+        "ACES Tonemapping"
+    );
+    controller.handle_nav(MenuNavAction::Left);
+    assert!(!controller.options_menu.draft_config.video.aces_tonemapping);
+
+    let _ = fs::remove_dir_all(&test_dir);
+}

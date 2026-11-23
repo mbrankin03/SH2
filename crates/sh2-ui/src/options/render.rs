@@ -267,6 +267,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Video, "Brightness Calibration") => {
             "Open PS2 20-bar brightness calibration screen (bright_main 0..7)"
         }
+        (OptionsTab::Video, "ACES Tonemapping") => {
+            "Modern ACES filmic HDR tonemapping (Native) vs strict PS2 linear clamp (1:1)"
+        }
 
         (OptionsTab::Audio, "Master Volume") => "Overall master sound and music volume level",
         (OptionsTab::Audio, "BGM Volume") => "Background music volume level",
@@ -397,6 +400,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         }
         (OptionsTab::Enhanced, "Secondary Cloth Physics") => {
             "Native procedural spring-damper jacket/skirt physics vs Original PS2 keyframed cloth"
+        }
+        (OptionsTab::Enhanced, "ACES Tonemapping") => {
+            "Modern ACES filmic HDR tonemapping (Native) vs strict PS2 linear clamp (1:1)"
         }
         (OptionsTab::Enhanced, "Audio Pack") => {
             "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"

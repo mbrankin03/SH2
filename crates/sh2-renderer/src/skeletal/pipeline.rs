@@ -12,11 +12,13 @@ use super::shader::WGSL_SKINNING_SHADER;
 pub enum SkeletalPassStage {
     /// Opaque submeshes (`is_transparent == false`): depth-write enabled, `BlendState::REPLACE`.
     Opaque,
-    /// Near-opaque hair/eyelash core (`is_transparent == true`, `alpha >= 0.90`): depth-write enabled,
-    /// `BlendState::ALPHA_BLENDING`, establishing front-to-back hair layer occlusion.
+    /// Opaque hair/eyelash core (`is_transparent == true`, `alpha_u8 == 255`): depth-write enabled,
+    /// `BlendState::ALPHA_BLENDING`, establishing front-to-back hair layer occlusion
+    /// (`SLUS_202.28` `InitEnv1` `0x002a9780` `TEST_1 = 0x5000d`).
     TransparentCore,
-    /// Semi-transparent hair/eyelash fringe (`is_transparent == true`, `0.004 <= alpha < 0.90`):
-    /// depth-write disabled (`LessEqual`), `BlendState::ALPHA_BLENDING`.
+    /// Semi-transparent hair/eyelash fringe (`is_transparent == true`, `1 <= alpha_u8 <= 254`):
+    /// depth-write disabled (`LessEqual`), `BlendState::ALPHA_BLENDING`
+    /// (`SLUS_202.28` `0x002a9780` / `sh2pc.exe` `0x00503800` `alpha_u8 > 0`).
     TransparentFringe,
 }
 

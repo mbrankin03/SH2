@@ -7,7 +7,7 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 12,
+            OptionsTab::Video => 13,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     11
@@ -19,9 +19,9 @@ impl OptionsMenu {
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
-                    12
+                    13
                 } else {
-                    11
+                    12
                 }
             }
             OptionsTab::Debug => 6,
@@ -107,6 +107,14 @@ impl OptionsMenu {
             11 => Some((
                 "Brightness Calibration",
                 format!("Level {} (0..7)", self.draft_config.game.brightness_level),
+            )),
+            12 => Some((
+                "ACES Tonemapping",
+                if v.aces_tonemapping {
+                    "ON (Filmic HDR)".into()
+                } else {
+                    "OFF (PS2 Linear)".into()
+                },
             )),
             _ => None,
         }
@@ -304,7 +312,15 @@ impl OptionsMenu {
                     "OFF (Original PS2)".into()
                 },
             )),
-            11 if self.audio_pack_status.both_detected() => {
+            11 => Some((
+                "ACES Tonemapping",
+                if v.aces_tonemapping {
+                    "ON (Filmic HDR)".into()
+                } else {
+                    "OFF (PS2 Linear)".into()
+                },
+            )),
+            12 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -418,6 +434,7 @@ impl OptionsMenu {
                 self.open_sub_screen(OptionsSubScreen::BrightnessCalibration);
                 return Some(OptionsSoundCue::CursorMove);
             }
+            12 => v.aces_tonemapping = !v.aces_tonemapping,
             _ => return Some(OptionsSoundCue::None),
         }
         None
@@ -489,7 +506,11 @@ impl OptionsMenu {
                 self.draft_config.game.enable_secondary_physics =
                     !self.draft_config.game.enable_secondary_physics;
             }
-            11 if self.audio_pack_status.both_detected() => {
+            11 => {
+                self.draft_config.video.aces_tonemapping =
+                    !self.draft_config.video.aces_tonemapping;
+            }
+            12 if self.audio_pack_status.both_detected() => {
                 let a = &mut self.draft_config.audio;
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()

@@ -82,6 +82,16 @@ impl Default for PostUniforms {
 pub struct PostProcessPipeline {
     pub pipeline: wgpu::ComputePipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
+    /// `128x128` `R8Unorm` GPU texture holding the bit-exact PS2 LCG noise frame
+    /// (`SLUS_202.28` `sh2gfw_test_MakeNoise` `0x00177c50`).
+    pub ps2_noise_texture: wgpu::Texture,
+    /// Texture view for [`Self::ps2_noise_texture`].
+    pub ps2_noise_view: wgpu::TextureView,
+    /// Repeat bilinear sampler for `4x4` screen-space noise tiling
+    /// (`SLUS_202.28` `sh2gfw_SendDraw_Noise` `0x00177f30`, `TEX1_1 = 0x60`).
+    pub ps2_noise_sampler: wgpu::Sampler,
+    /// Stateful CPU LCG generator (`DAT_002adaf0`) stepped once per frame.
+    ps2_noise_gen: std::sync::Mutex<Ps2NoiseGenerator>,
 }
 
 impl PostProcessPipeline {
@@ -107,6 +117,8 @@ const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
 @group(0) @binding(0) var<uniform> post: PostUniforms;
 @group(0) @binding(1) var hdr_in: texture_2d<f32>;
 @group(0) @binding(2) var ldr_out: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var ps2_noise_tex: texture_2d<f32>;
+@group(0) @binding(4) var ps2_noise_sampler: sampler;
 
 // Optional ACES filmic tonemapping approximation (native-upgrade, disabled in strict Vanilla PS2 mode)
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
@@ -116,19 +128,6 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     let d = 0.59;
     let e = 0.14;
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-// PS2 `sh2gfw_test_MakeNoise` (0x00177c50) LCG (`state * 0x19660d + 0x3c6ef35f`)
-// evaluated on 128x128 texel coordinates tiled 4x4 across the screen (`0x00177f30`).
-fn ps2_lcg_noise_4x4(pixel: vec2<u32>, dims: vec2<u32>, frame_seed: u32) -> f32 {
-    let u = fract((f32(pixel.x) / max(f32(dims.x), 1.0)) * 4.0);
-    let v = fract((f32(pixel.y) / max(f32(dims.y), 1.0)) * 4.0);
-    let tx = min(u32(u * 128.0), 127u);
-    let ty = min(u32(v * 128.0), 127u);
-    let idx = ty * 128u + tx;
-    var state = (idx ^ (frame_seed * 1664525u)) * 1664525u + 1013904223u;
-    state = state * 1664525u + 1013904223u;
-    return f32((state >> 24u) & 255u) / 255.0;
 }
 
 // Resolution-independent PCG hash fallback when PS2 tiled noise flag is off
@@ -204,13 +203,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         ldr = clamp(hdr_color, vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
-    // 2. PS2 `sh2gfw_SendDraw_Noise` (0x00177f30) 128x128 4x4 tiled LCG film grain
+    // 2. PS2 `sh2gfw_test_MakeNoise` (0x00177c50) + `sh2gfw_SendDraw_Noise` (0x00177f30):
+    //    Samples the CPU-generated 128x128 R8Unorm LCG texture tiled 4x4 across the screen.
     if (post.grain_intensity > 0.001) {
-        let frame_seed = u32(post.time * 30.0);
         var rand_f: f32;
         if ((post.flags & POST_FLAG_PS2_LCG_NOISE) != 0u) {
-            rand_f = ps2_lcg_noise_4x4(global_id.xy, dims, frame_seed);
+            let uv = (vec2<f32>(global_id.xy) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
+            rand_f = textureSampleLevel(ps2_noise_tex, ps2_noise_sampler, uv * 4.0, 0.0).r;
         } else {
+            let frame_seed = u32(post.time * 30.0);
             rand_f = random_val(global_id.xy, frame_seed);
         }
 
@@ -228,7 +229,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 "#;
 
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// Creates the post-processing compute pipeline and uploads the initial `128x128`
+    /// `R8Unorm` PS2 LCG noise texture (`sh2gfw_test_MakeNoise` `0x00177c50`).
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Post Process Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(Self::WGSL_SHADER.into()),
@@ -267,6 +270,22 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -285,10 +304,88 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             cache: None,
         });
 
-        Self {
+        let ps2_noise_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 LCG 128x128 Film Grain Noise Texture (0x00177c50)"),
+            size: wgpu::Extent3d {
+                width: PS2_NOISE_TEX_SIZE as u32,
+                height: PS2_NOISE_TEX_SIZE as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let ps2_noise_view = ps2_noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ps2_noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("PS2 LCG Noise 4x4 Repeat Sampler (0x00177f30)"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let mut gen = Ps2NoiseGenerator::new(0);
+        let initial_bytes = gen.generate_128x128();
+        let this = Self {
             pipeline,
             bind_group_layout,
+            ps2_noise_texture,
+            ps2_noise_view,
+            ps2_noise_sampler,
+            ps2_noise_gen: std::sync::Mutex::new(gen),
+        };
+        this.upload_ps2_noise_bytes(queue, &initial_bytes);
+        this
+    }
+
+    /// Uploads a raw `128x128` (`16,384`-byte) `R8Unorm` noise texture to the GPU
+    /// (`sh2gfw_test_MakeNoise` `0x00177c50`). Returns `false` if `bytes.len() != 16_384`.
+    pub fn upload_ps2_noise_bytes(&self, queue: &wgpu::Queue, bytes: &[u8]) -> bool {
+        if bytes.len() != PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE {
+            return false;
         }
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.ps2_noise_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(PS2_NOISE_TEX_SIZE as u32),
+                rows_per_image: Some(PS2_NOISE_TEX_SIZE as u32),
+            },
+            wgpu::Extent3d {
+                width: PS2_NOISE_TEX_SIZE as u32,
+                height: PS2_NOISE_TEX_SIZE as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        true
+    }
+
+    /// Advances the internal [`Ps2NoiseGenerator`] by one `128x128` frame (`0x00177c50`),
+    /// uploads it to [`Self::ps2_noise_texture`], and returns the updated LCG seed.
+    pub fn step_ps2_noise(&self, queue: &wgpu::Queue) -> u32 {
+        let (bytes, seed) = match self.ps2_noise_gen.lock() {
+            Ok(mut gen) => {
+                let bytes = gen.generate_128x128();
+                (bytes, gen.seed)
+            }
+            Err(poisoned) => {
+                let mut gen = poisoned.into_inner();
+                let bytes = gen.generate_128x128();
+                (bytes, gen.seed)
+            }
+        };
+        self.upload_ps2_noise_bytes(queue, &bytes);
+        seed
     }
 }
 

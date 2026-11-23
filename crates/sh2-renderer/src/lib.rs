@@ -362,6 +362,14 @@ impl RenderContext {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(ldr_output_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&post_pipeline.ps2_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&post_pipeline.ps2_noise_sampler),
+                },
             ],
         });
 
@@ -380,6 +388,14 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(ldr_output_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&post_pipeline.ps2_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&post_pipeline.ps2_noise_sampler),
                 },
             ],
         });
@@ -444,7 +460,7 @@ impl RenderContext {
         let lens_flare_pipeline = effects::LensFlarePipeline::new(&device, Self::HDR_FORMAT);
         let spray_mist_pipeline =
             effects::SprayMistPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
-        let post_pipeline = post::PostProcessPipeline::new(&device);
+        let post_pipeline = post::PostProcessPipeline::new(&device, &queue);
 
         let camera_uniforms = pipeline::CameraUniforms::default();
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1663,10 +1679,15 @@ impl RenderContext {
         Arc::new(blitter.create_bind_group_with_uniform_buffer(&self.device, &view, uniform_buffer))
     }
 
-    /// Update post-processing uniforms buffer.
+    /// Update post-processing uniforms buffer and, when PS2 LCG film grain is active,
+    /// step and upload the bit-exact `128x128` `R8Unorm` PS2 noise texture (`0x00177c50`).
     pub fn update_post(&self, uniforms: &post::PostUniforms) {
         self.queue
             .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
+        if (uniforms.flags & post::POST_FLAG_PS2_LCG_NOISE) != 0 && uniforms.grain_intensity > 0.001
+        {
+            self.post_pipeline.step_ps2_noise(&self.queue);
+        }
     }
 
     /// Compiles a ModelFile into a GpuSkeletalMesh.

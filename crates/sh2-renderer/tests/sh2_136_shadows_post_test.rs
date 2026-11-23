@@ -22,12 +22,23 @@ use sh2_renderer::shadow::{
 use sh2_renderer::{RenderContext, RendererConfig};
 
 fn find_retail_data_dir() -> Option<PathBuf> {
+    if let Ok(env_dir) = std::env::var("SH2_DATA_DIR") {
+        let p = PathBuf::from(env_dir);
+        if p.join("chr/jms/jms.kg1").is_file() {
+            return Some(p);
+        }
+        let nested = p.join("data");
+        if nested.is_dir() {
+            return Some(nested);
+        }
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
         manifest_dir.join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/data"),
-        PathBuf::from(
-            "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/data",
-        ),
+        PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/data"),
     ];
     candidates.into_iter().find(|p| p.is_dir())
 }
@@ -103,6 +114,25 @@ fn test_sh2_136_soft_stencil_blur_self_shadow_exclusion_clear_color_and_post_pip
         eprintln!("Skipping SH2-136 GPU pass verification: no headless adapter available");
         return;
     };
+
+    // Verify bit-exact 128x128 R8Unorm PS2 LCG noise texture & stepping (`0x00177c50` / `0x00177f30`)
+    assert_eq!(
+        ctx.post_pipeline.ps2_noise_texture.format(),
+        wgpu::TextureFormat::R8Unorm
+    );
+    assert_eq!(ctx.post_pipeline.ps2_noise_texture.width(), 128);
+    assert_eq!(ctx.post_pipeline.ps2_noise_texture.height(), 128);
+    assert!(!ctx
+        .post_pipeline
+        .upload_ps2_noise_bytes(&ctx.queue, &[0u8; 64]));
+    let mut expected_gen = sh2_renderer::post::Ps2NoiseGenerator::new(0);
+    let initial_frame = expected_gen.generate_128x128();
+    assert!(ctx
+        .post_pipeline
+        .upload_ps2_noise_bytes(&ctx.queue, &initial_frame));
+    let next_seed = ctx.post_pipeline.step_ps2_noise(&ctx.queue);
+    let _second_frame = expected_gen.generate_128x128();
+    assert_eq!(next_seed, expected_gen.seed);
 
     ctx.pcss_enabled
         .store(false, std::sync::atomic::Ordering::Relaxed);

@@ -9,10 +9,10 @@
 //!   - Erratic twitching locomotion: staggered burst steps alternating with sudden pauses.
 
 use crate::ai::creatures::anim::CreatureAnimationController;
-use crate::ai::creatures::CreatureStats;
+use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
 use crate::ai::sensory::{
-    evaluate_sensory, normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting,
-    SensoryNotice, SensoryProfile,
+    evaluate_sensory, normalize_angle, nse_walk_speed_scale, DifficultyLevel, PerceivableTarget,
+    RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -51,13 +51,37 @@ pub struct NurseController {
 }
 
 impl NurseController {
+    /// Create a Bubble Head Nurse (`NSE`, `0x207`) at default stage tier
+    /// (`enNSEInitData`, `SLUS_202.28` `0x001577b0`).
+    ///
+    /// - HP table (`0x2aa680`, `i16[5]`): `[400.0, 500.0, 800.0, 1500.0]` (`× 1.2` for `0x20b` variant)
+    /// - Endurance table (`0x2aa690`): `[10.0, 190.0, 285.0, 380.0]`
+    /// - Auto-recovery (`enNSEAutoRecovery` `0x00159a90`, `0x2aa6f0`): `[0.0, 10.0, 30.0, 60.0]`
     pub fn new(id: u32, position: Vec3, yaw: f32, difficulty: DifficultyLevel) -> Self {
-        let (hp, end, end_recovery) = match difficulty {
-            DifficultyLevel::Beginner => (300.0, 10.0, 0.0),
-            DifficultyLevel::Easy => (400.0, 180.0, 10.0),
-            DifficultyLevel::Normal => (600.0, 260.0, 25.0),
-            DifficultyLevel::Hard => (1200.0, 350.0, 50.0),
-        };
+        Self::new_for_stage(id, position, yaw, difficulty, false, StagePlace::Default)
+    }
+
+    /// Create a Bubble Head Nurse with optional `0x20b` dark-nurse `1.2x` HP/Endurance multiplier
+    /// and `enSetHP` (`0x001420c0`) stage multipliers.
+    pub fn new_for_stage(
+        id: u32,
+        position: Vec3,
+        yaw: f32,
+        difficulty: DifficultyLevel,
+        is_dark_variant: bool,
+        place: StagePlace,
+    ) -> Self {
+        const NSE_HP: [f32; 4] = [400.0, 500.0, 800.0, 1500.0];
+        const NSE_END: [f32; 4] = [10.0, 190.0, 285.0, 380.0];
+        const NSE_REC: [f32; 4] = [0.0, 10.0, 30.0, 60.0];
+        let idx = difficulty.as_index();
+        let mult = if is_dark_variant { 1.2 } else { 1.0 };
+        let (hp, end) = apply_stage_hp_multipliers(
+            EnemySpecies::Nurse,
+            NSE_HP[idx] * mult,
+            NSE_END[idx] * mult,
+            place,
+        );
 
         Self {
             id,
@@ -65,7 +89,7 @@ impl NurseController {
             origin_pos: position,
             yaw,
             state: NseState::Wander,
-            stats: CreatureStats::new(hp, end, end_recovery),
+            stats: CreatureStats::new(hp, end, NSE_REC[idx]),
             alert_timer: 0.0,
             state_timer: 0.0,
             twitch_timer: 0.0,
@@ -151,7 +175,12 @@ impl NurseController {
 
             NseState::Precaution => {
                 self.turn_towards(target_dir, 3.2 * dt);
-                if self.state_timer > 1.2 || notice == SensoryNotice::InAttackRange {
+                if self.state_timer > 1.2
+                    || matches!(
+                        notice,
+                        SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
+                    )
+                {
                     self.state = NseState::Chase;
                     self.state_timer = 0.0;
                 }
@@ -160,17 +189,22 @@ impl NurseController {
             NseState::Chase => {
                 self.turn_towards(target_dir, 3.2 * dt);
 
-                if dist <= self.sensory.attack_range {
+                if matches!(
+                    notice,
+                    SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
+                ) || dist <= self.sensory.attack_ranges[difficulty.as_index()]
+                {
                     self.state = NseState::Attack;
                     self.state_timer = 0.0;
                     return;
                 }
 
-                // Twitch advance at player
+                // HP-scaled twitch advance (`enNSEGetWalkSpeed` `0x00159b00`)
+                let speed_scale = nse_walk_speed_scale(difficulty, self.stats.hp_rate);
                 let twitch_speed = if (self.twitch_timer % 1.2) < 0.8 {
-                    650.0 // Stagger sprint
+                    650.0 * speed_scale
                 } else {
-                    120.0
+                    120.0 * speed_scale
                 };
                 self.position.x += self.yaw.sin() * twitch_speed * dt;
                 self.position.z += self.yaw.cos() * twitch_speed * dt;

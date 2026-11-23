@@ -8,8 +8,9 @@
 use super::anchor::compute_creature_grapple_transform;
 use super::tables::{get_grapple_spec, BestiaryId, GrappleSpec};
 use crate::ai::creatures::anim::CreatureAnimStateKind;
+use crate::ai::EnemyActor;
 use crate::animation::AnimationClip;
-use crate::combat::{CombatController, CombatMode, CombatTargetEnemy};
+use crate::combat::{CombatController, CombatMode};
 use glam::Vec3;
 
 /// Lifecycle phases of an active creature grapple.
@@ -55,21 +56,26 @@ impl GrappleSession {
     /// Validates distance, attack status, and species capability before binding.
     pub fn try_initiate(
         enemy_idx: usize,
-        enemy: &mut CombatTargetEnemy,
+        enemy: &mut EnemyActor,
         player: &mut CombatController,
         player_pos: Vec3,
         player_yaw: &mut f32,
         difficulty: usize,
     ) -> Option<Self> {
-        let species = BestiaryId::from_raw(enemy.id)?;
+        let species = BestiaryId::from_raw(enemy.id())?;
         let spec = *get_grapple_spec(species)?;
 
-        if !enemy.is_attacking || enemy.is_dead || enemy.is_downed || enemy.flinch_timer > 0.0 {
+        if !enemy.is_attacking()
+            || enemy.is_dead()
+            || enemy.is_downed()
+            || enemy.stats().flinch_timer > 0.0
+        {
             return None;
         }
 
-        let dx = enemy.position.x - player_pos.x;
-        let dz = enemy.position.z - player_pos.z;
+        let e_pos = enemy.position();
+        let dx = e_pos.x - player_pos.x;
+        let dz = e_pos.z - player_pos.z;
         let dist = (dx * dx + dz * dz).sqrt();
 
         if !dist.is_finite() || dist > spec.grab_range {
@@ -126,7 +132,7 @@ impl GrappleSession {
         &mut self,
         dt: f32,
         player: &mut CombatController,
-        enemies: &mut [CombatTargetEnemy],
+        enemies: &mut [EnemyActor],
         player_pos: Vec3,
         player_yaw: f32,
     ) {
@@ -136,7 +142,7 @@ impl GrappleSession {
 
         // Validate enemy existence and status
         let enemy = match enemies.get_mut(self.enemy_idx) {
-            Some(e) if e.id == (self.species as u32) => e,
+            Some(e) if e.id() == (self.species as u32) => e,
             _ => {
                 // Enemy array modified or enemy despawned: abort immediately to prevent ghost holds
                 self.terminate(player, None);
@@ -154,9 +160,9 @@ impl GrappleSession {
         }
 
         // If enemy died, got knocked down, or was externally flinched from damage during the hold, release James immediately
-        if enemy.is_dead
-            || enemy.is_downed
-            || (self.phase != GrapplePhase::BreakingOut && enemy.flinch_timer > 0.0)
+        if enemy.is_dead()
+            || enemy.is_downed()
+            || (self.phase != GrapplePhase::BreakingOut && enemy.stats().flinch_timer > 0.0)
         {
             self.terminate(player, Some(enemy));
             return;
@@ -171,10 +177,9 @@ impl GrappleSession {
         if self.phase == GrapplePhase::Latching || self.phase == GrapplePhase::Holding {
             let (creature_pos, creature_yaw) =
                 compute_creature_grapple_transform(self.species, player_pos, player_yaw);
-            enemy.position = Vec3::new(creature_pos.x, player_pos.y, creature_pos.z);
-            enemy.yaw = creature_yaw;
+            enemy.set_position(Vec3::new(creature_pos.x, player_pos.y, creature_pos.z));
+            enemy.set_yaw(creature_yaw);
             enemy.is_grappling_player = true;
-            enemy.is_attacking = true;
         }
 
         match self.phase {
@@ -206,16 +211,15 @@ impl GrappleSession {
                     self.breakout_timer = 0.0;
 
                     // Release creature grab binding and push creature back with recoil flinch
-                    enemy.is_grappling_player = false;
-                    enemy.is_attacking = false;
-                    enemy.attack_cooldown = 2.0;
-                    enemy.flinch_timer = 0.5;
+                    enemy.set_attacking(false);
+                    enemy.stats_mut().flinch_timer = 0.5;
 
                     let backward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-                    enemy.position += backward * 250.0;
+                    let pushed = enemy.position() + backward * 250.0;
+                    enemy.set_position(pushed);
 
                     if let Some(recoil_clip) = self.spec.creature_breakout_clip {
-                        enemy.anim.transition_to(
+                        enemy.anim_mut().transition_to(
                             CreatureAnimStateKind::Flinch,
                             recoil_clip,
                             0.0,
@@ -241,24 +245,27 @@ impl GrappleSession {
     pub fn trigger_breakout_recoil(
         &mut self,
         player: &mut CombatController,
-        enemy: &mut CombatTargetEnemy,
+        enemy: &mut EnemyActor,
         player_yaw: f32,
     ) {
         self.phase = GrapplePhase::Terminated;
 
-        enemy.is_grappling_player = false;
-        enemy.is_attacking = false;
-        enemy.attack_cooldown = 2.0;
-        enemy.flinch_timer = 0.5;
+        enemy.set_attacking(false);
+        enemy.stats_mut().flinch_timer = 0.5;
 
         // Authentic PS2 recoil: push creature backward away from James
         let backward = Vec3::new(player_yaw.sin(), 0.0, player_yaw.cos());
-        enemy.position += backward * 250.0;
+        let pushed = enemy.position() + backward * 250.0;
+        enemy.set_position(pushed);
 
         if let Some(recoil_clip) = self.spec.creature_breakout_clip {
-            enemy
-                .anim
-                .transition_to(CreatureAnimStateKind::Flinch, recoil_clip, 0.0, None, None);
+            enemy.anim_mut().transition_to(
+                CreatureAnimStateKind::Flinch,
+                recoil_clip,
+                0.0,
+                None,
+                None,
+            );
         }
 
         if player.mode == CombatMode::Held {
@@ -271,17 +278,11 @@ impl GrappleSession {
     }
 
     /// Terminate the grapple session and restore both characters cleanly with zero state leaks.
-    pub fn terminate(
-        &mut self,
-        player: &mut CombatController,
-        enemy: Option<&mut CombatTargetEnemy>,
-    ) {
+    pub fn terminate(&mut self, player: &mut CombatController, enemy: Option<&mut EnemyActor>) {
         self.phase = GrapplePhase::Terminated;
 
         if let Some(e) = enemy {
-            e.is_grappling_player = false;
-            e.is_attacking = false;
-            e.attack_timer = 0.0;
+            e.set_attacking(false);
         }
 
         if player.mode == CombatMode::Held {

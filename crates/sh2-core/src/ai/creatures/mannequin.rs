@@ -15,10 +15,10 @@
 //! - Normal health: 490 HP (70% of Lying Figure).
 
 use crate::ai::creatures::anim::CreatureAnimationController;
-use crate::ai::creatures::CreatureStats;
+use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
 use crate::ai::sensory::{
-    evaluate_sensory, is_lit_by_flashlight, normalize_angle, DifficultyLevel, PerceivableTarget,
-    RoomLighting, SensoryNotice, SensoryProfile,
+    evaluate_sensory, is_lit_by_flashlight, mkn_walk_speed_scale, normalize_angle, DifficultyLevel,
+    PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -71,13 +71,45 @@ pub struct MannequinController {
 }
 
 impl MannequinController {
+    /// Create a Mannequin (`MKN`) with default `1.0x` HP/Endurance (`enMKNInitData`, `SLUS_202.28` `0x00153410`).
+    ///
+    /// - HP table (`0x2aa480`): `[400.0, 400.0, 700.0, 1500.0]`
+    /// - Endurance table (`0x2aa4a0`): `[10.0, 190.0, 285.0, 380.0]`
+    /// - Auto-recovery (`enMKNAutoRecovery` `0x00157220`, `0x2aa528`): `[0.0, 10.0, 30.0, 60.0]`
+    ///
+    /// Note: The `0.7x` multiplier applies ONLY to subtype `9` (`work_type == 9`, see [`Self::new_with_subtype`]).
     pub fn new(id: u32, position: Vec3, yaw: f32, difficulty: DifficultyLevel) -> Self {
-        let (hp, end, end_recovery) = match difficulty {
-            DifficultyLevel::Beginner => (280.0, 7.0, 0.0),
-            DifficultyLevel::Easy => (280.0, 133.0, 7.0),
-            DifficultyLevel::Normal => (490.0, 200.0, 21.0),
-            DifficultyLevel::Hard => (1050.0, 266.0, 42.0),
+        Self::new_with_subtype(id, position, yaw, difficulty, 0, StagePlace::Default)
+    }
+
+    /// Create a Mannequin with explicit `enMKNInitData` (`0x00153410`) `work_type` subtype and stage place.
+    ///
+    /// Subtype multipliers (`0x00153410`): `1 => 1.2x`, `2 => 0.5x`, `3|4 => 0.3x`, `9 => 0.7x`, default `1.0x`.
+    pub fn new_with_subtype(
+        id: u32,
+        position: Vec3,
+        yaw: f32,
+        difficulty: DifficultyLevel,
+        subtype: u32,
+        place: StagePlace,
+    ) -> Self {
+        const MKN_HP: [f32; 4] = [400.0, 400.0, 700.0, 1500.0];
+        const MKN_END: [f32; 4] = [10.0, 190.0, 285.0, 380.0];
+        const MKN_REC: [f32; 4] = [0.0, 10.0, 30.0, 60.0];
+        let idx = difficulty.as_index();
+        let mult = match subtype {
+            1 => 1.2,
+            2 => 0.5,
+            3 | 4 => 0.3,
+            9 => 0.7,
+            _ => 1.0,
         };
+        let (hp, end) = apply_stage_hp_multipliers(
+            EnemySpecies::Mannequin,
+            MKN_HP[idx] * mult,
+            MKN_END[idx] * mult,
+            place,
+        );
 
         Self {
             id,
@@ -86,7 +118,7 @@ impl MannequinController {
             yaw,
             state: MknState::Stay, // Default dormant/freeze in dark
             sub_state: 0,
-            stats: CreatureStats::new(hp, end, end_recovery),
+            stats: CreatureStats::new(hp, end, MKN_REC[idx]),
             alert_timer: 0.0,
             state_timer: 0.0,
             is_kick_next: false,
@@ -200,18 +232,20 @@ impl MannequinController {
             MknState::Chase => {
                 self.turn_towards(target_dir, 3.5 * dt);
 
-                if dist <= self.sensory.attack_range {
+                let diff_idx = difficulty.as_index();
+                if dist <= self.sensory.attack_ranges[diff_idx] {
                     let diff = (normalize_angle(target_dir - self.yaw)).abs();
-                    if diff <= self.sensory.attack_half_angle {
+                    if diff <= self.sensory.attack_half_angles[diff_idx] {
                         self.state = MknState::Attack;
                         self.state_timer = 0.0;
                         return;
                     }
                 }
 
-                // Advance at 576 units/s
-                self.position.x += self.yaw.sin() * 576.0 * dt;
-                self.position.z += self.yaw.cos() * 576.0 * dt;
+                // HP-scaled walk speed (`enMKNGetWalkSpeed` `0x00157290`)
+                let walk_speed = 576.0 * mkn_walk_speed_scale(difficulty, self.stats.hp_rate);
+                self.position.x += self.yaw.sin() * walk_speed * dt;
+                self.position.z += self.yaw.cos() * walk_speed * dt;
 
                 // If player breaks line of sight or turns away, enter Circle flank mode (`0x4c2a90`)
                 if self.state_timer > 4.0 && dist > 1500.0 {
@@ -235,7 +269,9 @@ impl MannequinController {
                 self.position.x += self.yaw.sin() * 576.0 * dt;
                 self.position.z += self.yaw.cos() * 576.0 * dt;
 
-                if self.state_timer > 3.0 || dist <= self.sensory.attack_range {
+                if self.state_timer > 3.0
+                    || dist <= self.sensory.attack_ranges[difficulty.as_index()]
+                {
                     self.state = MknState::Chase;
                     self.state_timer = 0.0;
                 }
@@ -445,7 +481,7 @@ mod tests {
         let target_dark = PerceivableTarget::new(Vec3::new(0.0, 0.0, 2000.0), PI, false, false);
         mkn.update(
             &target_dark,
-            RoomLighting::DarkLightOff,
+            RoomLighting::NightLightOff,
             DifficultyLevel::Normal,
             0.1,
         );
@@ -455,7 +491,7 @@ mod tests {
         let target_lit = PerceivableTarget::new(Vec3::new(0.0, 0.0, 2000.0), PI, true, false);
         mkn.update(
             &target_lit,
-            RoomLighting::DarkLightOn,
+            RoomLighting::NightIndoorLightOn,
             DifficultyLevel::Normal,
             0.1,
         );

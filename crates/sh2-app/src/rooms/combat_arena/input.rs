@@ -172,7 +172,7 @@ pub(super) fn handle_combat_arena_key_input(
             equip_weapon_shortcut(state, key_code);
         }
         // Teleport / cycle selected enemy right in front of James for testing combat & grab interactions
-        KeyCode::Tab if pressed && !state.combat_arena.enemies.is_empty() => {
+        KeyCode::Tab if pressed && !state.combat_arena.ai.enemies.is_empty() => {
             cycle_and_teleport_active_enemy(state);
         }
         // Toggle between 4K AI Master (2048x2048) and Original PS2 (512x512) world & character textures (`SH2-92`)
@@ -308,13 +308,14 @@ fn cycle_and_teleport_active_enemy(state: &mut AppState) {
     let target_pos = state.combat_arena.player_position + fwd * 350.0;
     let facing_yaw = state.sim_core.scenario.player_yaw + std::f32::consts::PI;
 
-    state.combat_enemy_idx = (state.combat_enemy_idx + 1) % state.combat_arena.enemies.len();
-    let target_enemy = &mut state.combat_arena.enemies[state.combat_enemy_idx];
+    state.combat_enemy_idx = (state.combat_enemy_idx + 1) % state.combat_arena.ai.enemies.len();
+    let target_enemy = &mut state.combat_arena.ai.enemies[state.combat_enemy_idx];
 
     target_enemy.snap_pose(target_pos, facing_yaw);
-    target_enemy.is_aggroed = true;
-    target_enemy.flinch_timer = 0.0;
-    target_enemy.attack_cooldown = 0.2;
+    target_enemy.force_aggro();
+
+    let target_id = target_enemy.id();
+    let target_name = target_enemy.name();
 
     state.combat_arena.player.health = state.combat_arena.player.max_health;
     state.combat_arena.player.mode = sh2_core::combat::CombatMode::Free;
@@ -326,8 +327,8 @@ fn cycle_and_teleport_active_enemy(state: &mut AppState) {
 
     tracing::info!(
         "[Combat] Cycled to Enemy #{}: {} (teleported to X:{:.1} Z:{:.1})",
-        target_enemy.id,
-        target_enemy.name,
+        target_id,
+        target_name,
         target_pos.x,
         target_pos.z
     );

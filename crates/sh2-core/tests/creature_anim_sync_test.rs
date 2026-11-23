@@ -106,7 +106,7 @@ fn test_lying_figure_fsm_to_skeletal_sync() {
     let target = PerceivableTarget::new(glam::Vec3::new(0.0, 0.0, 5000.0), 0.0, false, false);
     scu.update(
         &target,
-        RoomLighting::DarkLightOff,
+        RoomLighting::NightLightOff,
         DifficultyLevel::Normal,
         0.016,
     );
@@ -131,8 +131,8 @@ fn test_lying_figure_fsm_to_skeletal_sync() {
     assert_eq!(scu.anim.state(), CreatureAnimStateKind::Flinch);
     assert_eq!(scu.anim.current_clip(), LyingFigureAnimClips::FLINCH);
 
-    // Downed knockdown
-    scu.receive_hit(50.0, 400.0, 0.99);
+    // Downed knockdown (`enReduceHP` 0x00142200: AP reduces both HP and Endurance)
+    scu.receive_hit(250.0, 40.0, 0.5);
     assert_eq!(scu.state, ScuState::Down);
     assert_eq!(scu.anim.state(), CreatureAnimStateKind::Knockdown);
     assert_eq!(scu.anim.current_clip(), LyingFigureAnimClips::KNOCKDOWN);
@@ -151,7 +151,7 @@ fn test_mannequin_fsm_to_skeletal_sync() {
     let target = PerceivableTarget::new(glam::Vec3::new(0.0, 0.0, 3000.0), 0.0, false, false);
     mkn.update(
         &target,
-        RoomLighting::DarkLightOff,
+        RoomLighting::NightLightOff,
         DifficultyLevel::Normal,
         0.016,
     );
@@ -164,7 +164,7 @@ fn test_mannequin_fsm_to_skeletal_sync() {
     mkn.is_kick_next = false;
     mkn.update(
         &target,
-        RoomLighting::DarkLightOff,
+        RoomLighting::NightLightOff,
         DifficultyLevel::Normal,
         0.016,
     );
@@ -175,7 +175,7 @@ fn test_mannequin_fsm_to_skeletal_sync() {
     mkn.is_kick_next = true;
     mkn.update(
         &target,
-        RoomLighting::DarkLightOff,
+        RoomLighting::NightLightOff,
         DifficultyLevel::Normal,
         0.016,
     );

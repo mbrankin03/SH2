@@ -9,11 +9,14 @@
 //!   - `0x542ad0`: Companion targeting arbitration.
 
 pub mod creatures;
+pub mod enemy_actor;
 pub mod maria;
 pub mod npcs;
 pub mod pathfinding;
 pub mod radio;
 pub mod sensory;
+
+pub use enemy_actor::EnemyActor;
 
 use crate::ai::creatures::abstract_daddy::AbstractDaddyController;
 use crate::ai::creatures::creeper::CreeperController;
@@ -27,7 +30,9 @@ use crate::ai::creatures::mary::MaryBossController;
 use crate::ai::creatures::nurse::NurseController;
 use crate::ai::creatures::pyramid_head::PyramidHeadController;
 use crate::ai::creatures::twin_pyramid_head::{TwinPartnerSnapshot, TwinPyramidHeadController};
-use crate::ai::creatures::EnemySpecies;
+use crate::ai::creatures::{
+    en_check_sleep_in, en_check_sleep_out, EnemySpecies, StagePlace, TribeCommunicationBus,
+};
 use crate::ai::maria::MariaCompanionController;
 use crate::ai::radio::{RadioNoiseEvaluator, RadioStaticOutput};
 use crate::ai::sensory::{DifficultyLevel, PerceivableTarget, RoomLighting};
@@ -172,6 +177,7 @@ impl ActiveEnemy {
             Self::LyingFigure(e) => Some(&e.anim),
             Self::Mannequin(e) => Some(&e.anim),
             Self::Nurse(e) => Some(&e.anim),
+            Self::Creeper(e) => Some(&e.anim),
             _ => None,
         }
     }
@@ -234,23 +240,34 @@ impl ActiveEnemy {
 #[derive(Debug, Clone)]
 pub struct AiSubsystem {
     /// Active enemies currently spawned in the stage/room (max 24-32 slots).
-    pub enemies: Vec<ActiveEnemy>,
+    pub enemies: Vec<EnemyActor>,
     /// Maria companion controller.
     pub maria: MariaCompanionController,
     /// Radio static evaluator.
     pub radio_evaluator: RadioNoiseEvaluator,
     /// Latest radio output state.
     pub radio_output: RadioStaticOutput,
-    /// Current room lighting condition.
+    /// Current room lighting condition (`enGetWorldCondition` `0x00141ca0`).
     pub lighting: RoomLighting,
-    /// Game difficulty setting.
+    /// Game difficulty setting (`enGetMode()` `0..=3`).
     pub difficulty: DifficultyLevel,
+    /// Stage progression tier for `enSetHP` (`0x001420c0`) multipliers.
+    pub stage_place: StagePlace,
+    /// True when the active stage is outdoor (`BgIsOut()`, controls sleep culling & acid fog reach).
+    pub is_outdoor: bool,
+    /// 8-slot tribe alert communication bus (`enSetCommunication` / `enCommunicateTribe`).
+    pub tribe_bus: TribeCommunicationBus,
     /// True when the player has 0 firearm ammo (`enCheckPlayerBulletEmpty` for Mary Boss pity timer).
     pub player_ammo_empty: bool,
     /// True while the player is actively firing Hyper Spray (`enCheckPlayerSprayNow` for Moth Swarm escape).
     pub player_spraying: bool,
     /// Player collision radius in mm (`enGetPlayerSize()`, `200.0` mm for James).
     pub player_radius_mm: f32,
+    /// Reusable scratch buffers to keep `update_filtered` 100% zero-allocation per tick.
+    scratch_hostile_positions: Vec<Vec3>,
+    scratch_twin_snapshots: Vec<(u32, TwinPartnerSnapshot)>,
+    scratch_flesh_lips_info: Vec<(u32, bool, bool)>,
+    scratch_mandarin_positions: Vec<(u32, Vec3)>,
 }
 
 impl Default for AiSubsystem {
@@ -262,9 +279,16 @@ impl Default for AiSubsystem {
             radio_output: RadioStaticOutput::default(),
             lighting: RoomLighting::Lit,
             difficulty: DifficultyLevel::Normal,
+            stage_place: StagePlace::Default,
+            is_outdoor: false,
+            tribe_bus: TribeCommunicationBus::default(),
             player_ammo_empty: false,
             player_spraying: false,
             player_radius_mm: 200.0,
+            scratch_hostile_positions: Vec::with_capacity(32),
+            scratch_twin_snapshots: Vec::with_capacity(4),
+            scratch_flesh_lips_info: Vec::with_capacity(8),
+            scratch_mandarin_positions: Vec::with_capacity(8),
         }
     }
 }
@@ -273,39 +297,64 @@ impl AiSubsystem {
     /// Clear all enemies and reset when entering a new room (`enInitData`).
     pub fn clear_enemies(&mut self) {
         self.enemies.clear();
+        self.tribe_bus.clear();
     }
 
-    /// Spawn an enemy into the active world.
+    /// Spawn an enemy into the active world with authentic `enSetHP` (`0x001420c0`) stage scaling.
     pub fn spawn_enemy(&mut self, species: EnemySpecies, id: u32, position: Vec3, yaw: f32) {
         let twin_count = self
             .enemies
             .iter()
-            .filter(|e| matches!(e, ActiveEnemy::TwinPyramidHead(_)))
+            .filter(|e| matches!(e.controller, ActiveEnemy::TwinPyramidHead(_)))
             .count();
         let insect_count = self
             .enemies
             .iter()
-            .filter(|e| matches!(e, ActiveEnemy::RoomInsect(_)))
+            .filter(|e| matches!(e.controller, ActiveEnemy::RoomInsect(_)))
             .count();
 
         let enemy = match species {
-            EnemySpecies::LyingFigure => ActiveEnemy::LyingFigure(LyingFigureController::new(
+            EnemySpecies::LyingFigure => {
+                ActiveEnemy::LyingFigure(LyingFigureController::new_for_stage(
+                    id,
+                    position,
+                    yaw,
+                    self.difficulty,
+                    self.stage_place,
+                ))
+            }
+            EnemySpecies::Mannequin => {
+                ActiveEnemy::Mannequin(MannequinController::new_with_subtype(
+                    id,
+                    position,
+                    yaw,
+                    self.difficulty,
+                    0,
+                    self.stage_place,
+                ))
+            }
+            EnemySpecies::Nurse => ActiveEnemy::Nurse(NurseController::new_for_stage(
+                id,
+                position,
+                yaw,
+                self.difficulty,
+                false,
+                self.stage_place,
+            )),
+            EnemySpecies::Creeper => ActiveEnemy::Creeper(CreeperController::new_with_difficulty(
                 id,
                 position,
                 yaw,
                 self.difficulty,
             )),
-            EnemySpecies::Mannequin => {
-                ActiveEnemy::Mannequin(MannequinController::new(id, position, yaw, self.difficulty))
-            }
-            EnemySpecies::Nurse => {
-                ActiveEnemy::Nurse(NurseController::new(id, position, yaw, self.difficulty))
-            }
-            EnemySpecies::Creeper => {
-                ActiveEnemy::Creeper(CreeperController::new(id, position, yaw))
-            }
             EnemySpecies::PyramidHead => {
-                ActiveEnemy::PyramidHead(PyramidHeadController::new(id, position, yaw))
+                ActiveEnemy::PyramidHead(PyramidHeadController::new_with_difficulty(
+                    id,
+                    position,
+                    yaw,
+                    self.difficulty,
+                    true,
+                ))
             }
             EnemySpecies::AbstractDaddy => ActiveEnemy::AbstractDaddy(
                 AbstractDaddyController::new(id, position, yaw, false, self.difficulty),
@@ -340,10 +389,10 @@ impl AiSubsystem {
                 insect_count == 0,
             )),
         };
-        self.enemies.push(enemy);
+        self.enemies.push(EnemyActor::new(enemy));
     }
 
-    /// Primary 60 Hz AI simulation update loop (`enExecTask`).
+    /// Primary 60 Hz AI simulation update loop (`enExecTask` `SLUS_202.28` `0x001413f0`).
     pub fn update(
         &mut self,
         player_pos: Vec3,
@@ -353,17 +402,41 @@ impl AiSubsystem {
         radio_enabled: bool,
         dt: f32,
     ) {
-        // Collect active enemy positions for radio and companion awareness
-        let mut active_hostile_positions = Vec::with_capacity(self.enemies.len());
+        self.update_filtered(
+            player_pos,
+            player_yaw,
+            is_flashlight_on,
+            is_running,
+            radio_enabled,
+            None,
+            dt,
+        );
+    }
+
+    /// Update AI simulation, optionally isolating execution to a single enemy index
+    /// (used by the Combat Arena single-target test mode).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_filtered(
+        &mut self,
+        player_pos: Vec3,
+        player_yaw: f32,
+        is_flashlight_on: bool,
+        is_running: bool,
+        radio_enabled: bool,
+        only_enemy_idx: Option<usize>,
+        dt: f32,
+    ) {
+        // Collect active enemy positions for radio and companion awareness (zero-alloc scratch)
+        self.scratch_hostile_positions.clear();
         for e in &self.enemies {
             if !e.is_dead() {
-                active_hostile_positions.push(e.position());
+                self.scratch_hostile_positions.push(e.position());
             }
         }
 
         // 1. Update Maria companion
         self.maria
-            .update(player_pos, player_yaw, &active_hostile_positions, dt);
+            .update(player_pos, player_yaw, &self.scratch_hostile_positions, dt);
 
         // 2. Target arbitration and enemy updates (`0x542ad0`)
         let player_target =
@@ -372,49 +445,71 @@ impl AiSubsystem {
         let maria_target =
             PerceivableTarget::new(self.maria.position, self.maria.yaw, false, false);
 
-        // Pre-capture cross-entity snapshots for paired bosses, multi-enemy Flesh Lips, Mandarins, and Moth Swarms.
-        let twin_snapshots: Vec<(u32, TwinPartnerSnapshot)> = self
-            .enemies
-            .iter()
-            .filter_map(|e| match e {
-                ActiveEnemy::TwinPyramidHead(t) => Some((t.id, t.snapshot(player_pos))),
-                _ => None,
-            })
-            .collect();
-        let flesh_lips_info: Vec<(u32, bool, bool)> = self
-            .enemies
-            .iter()
-            .filter_map(|e| match e {
-                ActiveEnemy::FleshLips(f) => Some((
-                    f.id,
-                    f.stats.health > 0.0,
-                    matches!(f.state, IkeState::Attack | IkeState::Attack2),
-                )),
-                _ => None,
-            })
-            .collect();
-        let mandarin_positions: Vec<(u32, Vec3)> = self
-            .enemies
-            .iter()
-            .filter_map(|e| match e {
-                ActiveEnemy::Mandarin(m) if m.stats.health > 0.0 => Some((m.id, m.position)),
-                _ => None,
-            })
-            .collect();
-        let insect_leader: Option<(u32, InsectState, Vec3)> =
-            self.enemies.iter().find_map(|e| match e {
-                ActiveEnemy::RoomInsect(i)
-                    if matches!(
-                        i.state,
-                        InsectState::Approach | InsectState::Attack | InsectState::Escape
-                    ) =>
-                {
-                    Some((i.id, i.state, i.position))
-                }
-                _ => None,
-            });
+        // Pre-capture cross-entity snapshots into reusable scratch buffers (zero heap allocation).
+        self.scratch_twin_snapshots.clear();
+        self.scratch_flesh_lips_info.clear();
+        self.scratch_mandarin_positions.clear();
+        let mut insect_leader: Option<(u32, InsectState, Vec3)> = None;
 
-        for enemy in &mut self.enemies {
+        for e in &self.enemies {
+            match &e.controller {
+                ActiveEnemy::TwinPyramidHead(t) => {
+                    self.scratch_twin_snapshots
+                        .push((t.id, t.snapshot(player_pos)));
+                }
+                ActiveEnemy::FleshLips(f) => {
+                    self.scratch_flesh_lips_info.push((
+                        f.id,
+                        f.stats.health > 0.0,
+                        matches!(f.state, IkeState::Attack | IkeState::Attack2),
+                    ));
+                }
+                ActiveEnemy::Mandarin(m) if m.stats.health > 0.0 => {
+                    self.scratch_mandarin_positions.push((m.id, m.position));
+                }
+                ActiveEnemy::RoomInsect(i)
+                    if insect_leader.is_none()
+                        && matches!(
+                            i.state,
+                            InsectState::Approach | InsectState::Attack | InsectState::Escape
+                        ) =>
+                {
+                    insect_leader = Some((i.id, i.state, i.position));
+                }
+                _ => {}
+            }
+        }
+
+        let twin_snapshots = &self.scratch_twin_snapshots;
+        let flesh_lips_info = &self.scratch_flesh_lips_info;
+        let mandarin_positions = &self.scratch_mandarin_positions;
+
+        for (idx, enemy) in self.enemies.iter_mut().enumerate() {
+            if only_enemy_idx.is_some_and(|only| only != idx) {
+                continue;
+            }
+
+            enemy.record_prev_pose();
+
+            // Outdoor sleep culling (`enCheckSleepIn` 15000mm / `enCheckSleepOut` 7500mm)
+            let dist_to_player = (enemy.position() - player_pos).length();
+            if enemy.is_sleeping {
+                if en_check_sleep_out(dist_to_player, self.is_outdoor, true) {
+                    enemy.is_sleeping = false;
+                } else {
+                    continue;
+                }
+            } else if en_check_sleep_in(dist_to_player, self.is_outdoor, enemy.is_dead(), true) {
+                enemy.is_sleeping = true;
+                continue;
+            }
+
+            // While grappling James, `GrappleSession` owns enemy anchoring & pose.
+            if enemy.is_grappling_player {
+                enemy.tick_fallback_anim(dt);
+                continue;
+            }
+
             let target = if self
                 .maria
                 .should_enemy_target_maria(enemy.position(), player_pos)
@@ -431,7 +526,7 @@ impl AiSubsystem {
                 ..EnemyUpdateContext::default()
             };
 
-            match enemy {
+            match &enemy.controller {
                 ActiveEnemy::TwinPyramidHead(t) => {
                     ctx.twin_partner = twin_snapshots
                         .iter()
@@ -461,13 +556,23 @@ impl AiSubsystem {
                 _ => {}
             }
 
-            enemy.update_with_context(target, self.lighting, self.difficulty, ctx, dt);
+            enemy
+                .controller
+                .update_with_context(target, self.lighting, self.difficulty, ctx, dt);
+            enemy.step_hitback();
+            enemy.tick_fallback_anim(dt);
         }
 
+        // Decay tribe alert bus TTLs (`enExecTask` `0x001413f0` lines 272–282)
+        self.tribe_bus.tick();
+
         // 3. Update Pocket Radio proximity static
-        self.radio_output =
-            self.radio_evaluator
-                .evaluate(radio_enabled, player_pos, &active_hostile_positions, dt);
+        self.radio_output = self.radio_evaluator.evaluate(
+            radio_enabled,
+            player_pos,
+            &self.scratch_hostile_positions,
+            dt,
+        );
     }
 }
 

@@ -245,24 +245,25 @@ fn render_combat_status_panel(
         true,
     );
 
-    if !state.combat_arena.enemies.is_empty() {
-        let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
-        let enemy = &state.combat_arena.enemies[active_idx];
-        let (status_str, color) = if enemy.is_dead {
+    if !state.combat_arena.ai.enemies.is_empty() {
+        let active_idx = state.combat_enemy_idx % state.combat_arena.ai.enemies.len();
+        let enemy = &state.combat_arena.ai.enemies[active_idx];
+        let stats = enemy.stats();
+        let (status_str, color) = if enemy.is_dead() {
             ("DEAD (Dispatched)".to_string(), muted)
-        } else if enemy.is_downed {
+        } else if enemy.is_downed() {
             (
                 format!(
                     "DOWNED (Stomp to Finish!) [Recover in {:.1}s]",
-                    enemy.down_timer.max(0.0)
+                    stats.down_timer.max(0.0)
                 ),
                 cyan,
             )
-        } else if enemy.flinch_timer > 0.0 {
+        } else if stats.flinch_timer > 0.0 {
             ("STAGGERED / FLINCHING".to_string(), muted)
-        } else if enemy.is_attacking {
+        } else if enemy.is_attacking() {
             ("ATTACKING / GRAPPLING".to_string(), green)
-        } else if enemy.is_aggroed {
+        } else if enemy.is_aggroed() {
             ("ENGAGED (Approaching)".to_string(), green)
         } else {
             ("STANDBY (In Section)".to_string(), muted)
@@ -272,11 +273,11 @@ fn render_combat_status_panel(
             &format!(
                 "ACTIVE TARGET [{}/{}]: Enemy #{}: {} | HP: {:.0}/{:.0} | STATUS: {} [TAB: Cycle]",
                 active_idx + 1,
-                state.combat_arena.enemies.len(),
-                enemy.id,
-                enemy.name,
-                enemy.health,
-                enemy.max_health,
+                state.combat_arena.ai.enemies.len(),
+                enemy.id(),
+                enemy.name(),
+                stats.health,
+                stats.max_health,
                 status_str
             ),
             20,
@@ -305,11 +306,11 @@ fn render_combat_status_panel(
         true,
     );
 
-    if !state.combat_arena.enemies.is_empty() {
-        let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
-        let enemy = &state.combat_arena.enemies[active_idx];
-        let enemy_clip = enemy.anim.current_clip();
-        let enemy_anim_state = format!("{:?}", enemy.anim.state());
+    if !state.combat_arena.ai.enemies.is_empty() {
+        let active_idx = state.combat_enemy_idx % state.combat_arena.ai.enemies.len();
+        let enemy = &state.combat_arena.ai.enemies[active_idx];
+        let enemy_clip = enemy.anim().current_clip();
+        let enemy_anim_state = format!("{:?}", enemy.anim().state());
         state.menu_rasterizer.draw_text(
             &format!(
                 "[ENEMY ANIM: {}] CLIP: frames {}..={} @ {:.0}fps | TIME: {:.2}s",
@@ -317,7 +318,7 @@ fn render_combat_status_panel(
                 enemy_clip.start_frame,
                 enemy_clip.end_frame,
                 enemy_clip.fps,
-                enemy.anim.clip_time()
+                enemy.anim().clip_time()
             ),
             620,
             592,

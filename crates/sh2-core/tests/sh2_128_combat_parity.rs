@@ -246,23 +246,24 @@ fn missing_weapons_great_knife_chainsaw_pipe_lunge_and_maria_cleaver() {
     arena.player.equip_weapon(WeaponGrip::GreatKnife);
     arena.player.mode = CombatMode::Ready;
     // Place Pyramid Head (high HP) within Great Knife 725mm blade reach
-    arena.enemies[7].position = Vec3::new(0.0, 0.0, 600.0);
-    let hp_before = arena.enemies[7].health;
+    arena.ai.enemies[7].snap_pose(Vec3::new(0.0, 0.0, 600.0), 0.0);
+    let hp_before = arena.ai.enemies[7].stats().health;
 
     arena.tick(true, true, true, dt);
     arena.tick(true, false, false, dt);
     assert_eq!(arena.player.active_attack.unwrap().id, 19);
 
-    // Two distinct active frames (10 and 11) must both register hits (multi-hit!)
+    // Two distinct active frames (10 and 11) register multi-hit damage with `enCheckDamage`
+    // (`0x001423a0`) consecutive-hit division: hit 1 = 600/1 = 600.0, hit 2 = 600/2 = 300.0.
     arena.player.anim_frame = 10.0;
     arena.tick(true, false, false, dt);
-    let hp_after_f10 = arena.enemies[7].health;
+    let hp_after_f10 = arena.ai.enemies[7].stats().health;
     assert_eq!(hp_before - hp_after_f10, 600.0);
 
     arena.player.anim_frame = 11.0;
     arena.tick(true, false, false, dt);
-    let hp_after_f11 = arena.enemies[7].health;
-    assert_eq!(hp_after_f10 - hp_after_f11, 600.0);
+    let hp_after_f11 = arena.ai.enemies[7].stats().health;
+    assert_eq!(hp_after_f10 - hp_after_f11, 300.0);
 
     // Chainsaw light (ID 23) & heavy thrust (ID 24)
     ctrl.mode = CombatMode::Ready;
@@ -357,22 +358,22 @@ fn hyper_spray_cone_taper_shake_recharge_and_color_stun() {
     arena.player.equip_weapon(WeaponGrip::HyperSpray);
     arena.player.mode = CombatMode::Ready;
     arena.player.hyper_spray_color = HyperSprayColor::White;
-    // White spray does NOT affect bosses (Pyramid Head = enemies[7])
-    arena.enemies[7].position = Vec3::new(0.0, 0.0, 600.0);
-    let ph_hp = arena.enemies[7].health;
+    // White spray does NOT affect bosses (Pyramid Head = ai.enemies[7])
+    arena.ai.enemies[7].snap_pose(Vec3::new(0.0, 0.0, 600.0), 0.0);
+    let ph_hp = arena.ai.enemies[7].stats().health;
     arena.tick(true, true, true, 1.0 / 60.0);
     assert_eq!(arena.player.pending_sfx, Some(SE_HYPER_SPRAY_SHOT));
     arena.player.anim_frame = 8.0;
     arena.tick(true, false, true, 1.0 / 60.0);
-    assert_eq!(arena.enemies[7].health, ph_hp);
+    assert_eq!(arena.ai.enemies[7].stats().health, ph_hp);
 
-    // Green spray kills regular enemy (Lying Figure = enemies[0]) immediately
-    arena.enemies[7].position = Vec3::new(0.0, 0.0, 5800.0);
-    arena.enemies[0].position = Vec3::new(0.0, 0.0, 600.0);
+    // Green spray kills regular enemy (Lying Figure = ai.enemies[0]) immediately
+    arena.ai.enemies[7].snap_pose(Vec3::new(0.0, 0.0, 5800.0), 0.0);
+    arena.ai.enemies[0].snap_pose(Vec3::new(0.0, 0.0, 600.0), 0.0);
     arena.player.hyper_spray_color = HyperSprayColor::Green;
     arena.player.anim_frame = 9.0;
     arena.tick(true, false, true, 1.0 / 60.0);
-    assert!(arena.enemies[0].is_dead);
+    assert!(arena.ai.enemies[0].is_dead());
 }
 
 #[test]
@@ -593,8 +594,8 @@ fn grapple_retail_ids_6dps_no_creeper_and_zero_passive_decay() {
     // Zero passive decay in GrappleSession::update over 2 full seconds with no button inputs
     let mut arena = CombatArena::new();
     let pap_idx = 6;
-    arena.enemies[pap_idx].position = Vec3::new(0.0, 0.0, 350.0);
-    arena.enemies[pap_idx].is_attacking = true;
+    arena.ai.enemies[pap_idx].snap_pose(Vec3::new(0.0, 0.0, 350.0), 0.0);
+    arena.ai.enemies[pap_idx].set_attacking(true);
     arena.tick(false, false, false, 1.0 / 60.0);
     assert_eq!(arena.player.mode, CombatMode::Held);
     let initial_gauge = arena.grapple_session.as_ref().unwrap().struggle_gauge;

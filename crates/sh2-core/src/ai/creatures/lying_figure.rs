@@ -18,10 +18,10 @@
 //! - Acid spray reach: 1,200 units (Normal difficulty).
 
 use crate::ai::creatures::anim::CreatureAnimationController;
-use crate::ai::creatures::CreatureStats;
+use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
 use crate::ai::sensory::{
-    evaluate_sensory, normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting,
-    SensoryNotice, SensoryProfile,
+    evaluate_sensory, normalize_angle, scu_walk_speed_scale, DifficultyLevel, PerceivableTarget,
+    RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -88,14 +88,29 @@ pub struct LyingFigureController {
 }
 
 impl LyingFigureController {
+    /// Create a Lying Figure (`SCU`) at default stage tier (`enSCUInitData`, `SLUS_202.28` `0x001603b0`).
+    ///
+    /// - HP table (`0x2ab070`): `[120.0, 400.0, 700.0, 1500.0]`
+    /// - Endurance table (`0x2ab090`): `[10.0, 190.0, 285.0, 380.0]`
+    /// - Auto-recovery (`enSCUAutoRecovery` `0x00164630`, `0x2ab100`): `[0.0, 10.0, 30.0, 60.0]`
     pub fn new(id: u32, position: Vec3, yaw: f32, difficulty: DifficultyLevel) -> Self {
-        // Authentic PS2 HP and Endurance per difficulty (`0x4c46c0`)
-        let (hp, end, end_recovery) = match difficulty {
-            DifficultyLevel::Beginner => (400.0, 10.0, 0.0),
-            DifficultyLevel::Easy => (400.0, 190.0, 10.0),
-            DifficultyLevel::Normal => (700.0, 285.0, 30.0),
-            DifficultyLevel::Hard => (1500.0, 380.0, 60.0),
-        };
+        Self::new_for_stage(id, position, yaw, difficulty, StagePlace::Default)
+    }
+
+    /// Create a Lying Figure applying `enSetHP` (`0x001420c0`) stage multipliers for `place`.
+    pub fn new_for_stage(
+        id: u32,
+        position: Vec3,
+        yaw: f32,
+        difficulty: DifficultyLevel,
+        place: StagePlace,
+    ) -> Self {
+        const SCU_HP: [f32; 4] = [120.0, 400.0, 700.0, 1500.0];
+        const SCU_END: [f32; 4] = [10.0, 190.0, 285.0, 380.0];
+        const SCU_REC: [f32; 4] = [0.0, 10.0, 30.0, 60.0];
+        let idx = difficulty.as_index();
+        let (hp, end) =
+            apply_stage_hp_multipliers(EnemySpecies::LyingFigure, SCU_HP[idx], SCU_END[idx], place);
 
         Self {
             id,
@@ -104,7 +119,7 @@ impl LyingFigureController {
             yaw,
             state: ScuState::Wander,
             sub_state: 0,
-            stats: CreatureStats::new(hp, end, end_recovery),
+            stats: CreatureStats::new(hp, end, SCU_REC[idx]),
             alert_timer: 0.0,
             state_timer: 0.0,
             attack_cooldown: 0.0,
@@ -236,19 +251,21 @@ impl LyingFigureController {
                     return;
                 }
 
-                // Spitting range check
-                if dist <= self.sensory.attack_range && self.attack_cooldown <= 0.0 {
+                // Spitting range check (`enSCUGetAttackRange` `0x00164860`, `enSCUGetAttackAngle` `0x001648e0`)
+                let diff_idx = difficulty.as_index();
+                if dist <= self.sensory.attack_ranges[diff_idx] && self.attack_cooldown <= 0.0 {
                     let angle_diff = (normalize_angle(target_dir - self.yaw)).abs();
-                    if angle_diff <= self.sensory.attack_half_angle {
+                    if angle_diff <= self.sensory.attack_half_angles[diff_idx] {
                         self.state = ScuState::Attack;
                         self.state_timer = 0.0;
                         return;
                     }
                 }
 
-                // Walk towards target
-                self.position.x += self.yaw.sin() * 402.0 * dt;
-                self.position.z += self.yaw.cos() * 402.0 * dt;
+                // HP-scaled walk speed (`enSCUGetWalkSpeed` `0x001646a0`)
+                let walk_speed = 402.0 * scu_walk_speed_scale(difficulty, self.stats.hp_rate);
+                self.position.x += self.yaw.sin() * walk_speed * dt;
+                self.position.z += self.yaw.cos() * walk_speed * dt;
 
                 // Lost contact
                 if notice == SensoryNotice::None && self.state_timer > 6.0 {
@@ -427,9 +444,13 @@ mod tests {
         }
         assert_eq!(scu.state, ScuState::Chase);
 
-        // Damage knockdown test
-        scu.receive_hit(100.0, 300.0, 0.99); // Exceeds endurance
+        // Damage knockdown test (`enReduceHP` 0x00142200: AP reduces both HP and Endurance;
+        // `enSetHitBack` 0x00142630: SP drives hitback impulse `sp * 2.0`).
+        scu.receive_hit(300.0, 40.0, 0.5); // AP=300 exceeds endurance (285) -> Down
         assert_eq!(scu.state, ScuState::Down);
+        assert_eq!(scu.stats.health, 400.0);
+        assert_eq!(scu.stats.endurance, 0.0);
+        assert_eq!(scu.stats.hitback_speed, 80.0);
     }
 
     #[test]

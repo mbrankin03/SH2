@@ -9,12 +9,12 @@ use sh2_core::types::ItemListEntry;
 use sh2_core::{
     decode_cursor_axis, ev_disp_control_model_entry, ev_disp_control_model_exec,
     ev_sub_file_load_and_fade_out, ev_sub_item_get, ev_sub_item_get_and_anim, ev_sub_item_use0,
-    ev_sub_map_get, ev_sub_message, ev_sub_movie_end, ev_sub_movie_ready, ev_sub_movie_start,
-    ev_sub_picture_cursor, ev_sub_picture_display, ev_sub_picture_display_and_fade_in,
-    ev_sub_picture_display_and_fade_out, ev_sub_picture_end, ev_sub_picture_filter,
-    ev_sub_picture_layer, ev_sub_question, event_exec_item, item_combination_use_check,
-    item_use_se_timing, picture_draw, picture_load_image, CursorBounds, CursorInput,
-    CursorTintMode, DispControlModelTable, DispOnOffCommand, EvSubItemGetAndAnimInput,
+    ev_sub_map_get, ev_sub_message, ev_sub_message_retail_pc, ev_sub_movie_end, ev_sub_movie_ready,
+    ev_sub_movie_start, ev_sub_picture_cursor, ev_sub_picture_display,
+    ev_sub_picture_display_and_fade_in, ev_sub_picture_display_and_fade_out, ev_sub_picture_end,
+    ev_sub_picture_filter, ev_sub_picture_layer, ev_sub_question, event_exec_item,
+    item_combination_use_check, item_use_se_timing, picture_draw, picture_load_image, CursorBounds,
+    CursorInput, CursorTintMode, DispControlModelTable, DispOnOffCommand, EvSubItemGetAndAnimInput,
     EvSubItemUseParams, EvSubPictureDisplayInput, EvSubPictureState, EventEngineEffects,
     EventFlags, EventStepState, InvalidFileLoadArgs, InventoryManager, MovieCommand,
     MovieReadyInput, MovieStartInput, MovieState, MovieTimingProfile, PictureAlphaBlend,
@@ -141,6 +141,18 @@ fn ev_sub_message_and_question_cancel_semantics() {
     assert_eq!(state.ev_s_step, 2);
     assert!(ev_sub_message(42, false, &mut state, &mut fx));
 
+    // Retail PC EvSubMessage (0x004a22d0) does NOT clear ev_prog_flag_set on ev_cancel
+    let mut pc_state = EventStepState::new();
+    let mut fx = EventEngineEffects::default();
+    assert!(!ev_sub_message_retail_pc(42, false, &mut pc_state, &mut fx));
+    pc_state.cancel();
+    let mut fx = EventEngineEffects::default();
+    assert!(!ev_sub_message_retail_pc(42, false, &mut pc_state, &mut fx));
+    assert!(pc_state.ev_prog_flag_set);
+    assert!(fx.clear_message);
+    assert_eq!(pc_state.ev_s_step, 2);
+    assert!(ev_sub_message_retail_pc(42, false, &mut pc_state, &mut fx));
+
     // EvSubQuestion ignores ev_cancel
     let mut q_state = EventStepState::new();
     let mut fx = EventEngineEffects::default();
@@ -202,6 +214,51 @@ fn ev_sub_item_use0_and_se_timing_tablets() {
         &params, true, &mut state, &mut inv, &mut fx
     ));
     assert_eq!(fx.player_lock_change, Some(false));
+
+    // Retail PC 0x004a33b0: ev_cancel dismisses step 1 when lock_player is true, but not when false
+    let mut cancel_state = EventStepState::new();
+    let mut fx = EventEngineEffects::default();
+    assert!(!ev_sub_item_use0(
+        &params,
+        false,
+        &mut cancel_state,
+        &mut inv,
+        &mut fx
+    ));
+    cancel_state.cancel();
+    let mut fx = EventEngineEffects::default();
+    assert!(!ev_sub_item_use0(
+        &params,
+        false,
+        &mut cancel_state,
+        &mut inv,
+        &mut fx
+    ));
+    assert_eq!(cancel_state.ev_s_step, 2);
+    assert!(fx.clear_message);
+
+    // Without lock_player, retail PC does NOT allow ev_cancel on step 1
+    let mut unlocked = params;
+    unlocked.lock_player = false;
+    let mut unlocked_state = EventStepState::new();
+    let mut fx = EventEngineEffects::default();
+    assert!(!ev_sub_item_use0(
+        &unlocked,
+        false,
+        &mut unlocked_state,
+        &mut inv,
+        &mut fx
+    ));
+    unlocked_state.cancel();
+    let mut fx = EventEngineEffects::default();
+    assert!(!ev_sub_item_use0(
+        &unlocked,
+        false,
+        &mut unlocked_state,
+        &mut inv,
+        &mut fx
+    ));
+    assert_eq!(unlocked_state.ev_s_step, 1);
 }
 
 #[test]

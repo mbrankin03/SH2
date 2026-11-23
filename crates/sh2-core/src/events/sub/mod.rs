@@ -1,14 +1,15 @@
 //! Event Sub-Coroutines (`SLUS_202.28` `Event/event_sub.c` `0x001abf50..0x001ad85b`
 //! and `sh2pc.exe` `0x004a22d0..0x004a30aa`).
 //!
-//! Organized into three focused submodules:
+//! Organized into four focused submodules:
 //! - [`self`]: Message, question, item-use, item-pickup-with-crouch-anim, and file-load coroutines.
-//! - [`picture`]: `PictureDraw` / `PictureLoadImage` command generation (`Event/picture.c`) and
-//!   `EvSubPicture*` / `EvSubMapGet` / `EvSubPictureCursor` coroutines.
+//! - [`picture_draw`]: `PictureDraw` / `PictureLoadImage` GS command builders (`Event/picture.c`).
+//! - [`picture`]: `EvSubPicture*` / `EvSubMapGet` / `EvSubPictureCursor` cutaway coroutines.
 //! - [`model_movie`]: `EvDispControlModelEntry`/`Exec` and `EvSubMovieReady`/`Start`/`End`.
 
 pub mod model_movie;
 pub mod picture;
+pub mod picture_draw;
 
 pub use model_movie::{
     ev_disp_control_model_entry, ev_disp_control_model_exec, ev_sub_movie_end, ev_sub_movie_ready,
@@ -21,12 +22,15 @@ pub use picture::{
     decode_cursor_axis, ev_sub_map_get, ev_sub_picture_cursor, ev_sub_picture_display,
     ev_sub_picture_display_and_fade_in, ev_sub_picture_display_and_fade_out,
     ev_sub_picture_display_only, ev_sub_picture_end, ev_sub_picture_filter, ev_sub_picture_init,
-    ev_sub_picture_layer, ev_sub_picture_start, picture_draw, picture_load_image, CursorBounds,
-    CursorInput, CursorTintMode, EvSubPictureDisplayInput, EvSubPictureState, PictureAlphaBlend,
-    PictureDrawCommand, PictureDrawParams, PictureFlags, PictureLoadImageCommand,
-    PicturePrimitiveKind, PictureTestConfig, PictureUv, CURSOR_DEADZONE_HIGH, CURSOR_DEADZONE_LOW,
+    ev_sub_picture_layer, ev_sub_picture_start, CursorBounds, CursorInput, CursorTintMode,
+    EvSubPictureDisplayInput, EvSubPictureState, CURSOR_DEADZONE_HIGH, CURSOR_DEADZONE_LOW,
     CURSOR_SPEED_X_PX_PER_SEC, CURSOR_SPEED_Y_PX_PER_SEC, EV_FILTER_ALPHA_SCALE,
-    EV_FILTER_RATE_PER_SEC, PICTURE_DEFAULT_CBP,
+    EV_FILTER_RATE_PER_SEC,
+};
+pub use picture_draw::{
+    picture_draw, picture_load_image, PictureAlphaBlend, PictureDrawCommand, PictureDrawParams,
+    PictureFlags, PictureLoadImageCommand, PicturePrimitiveKind, PictureTestConfig, PictureUv,
+    PICTURE_DEFAULT_CBP,
 };
 
 use crate::events::engine::{
@@ -51,14 +55,40 @@ pub const SE_ID_ITEM_GET: u32 = 0x2b21;
 /// `EvSubFileLoadAndFadeOut` `SLUS_202.28` `0x001ac780` and `sh2pc.exe` `0x004a2670`).
 pub const FILE_LAYER_ALIGN_BYTES: usize = 0x800;
 
-/// Executes one frame of `EvSubMessage` (`SLUS_202.28` `0x001abf50`, `sh2pc.exe` `0x004a22d0`).
+/// Executes one frame of `EvSubMessage` (`SLUS_202.28` `0x001abf50`).
 ///
 /// Displays stage message `msg_id`, waits until `message_finished` (`fontGetStatus() != -1`) or
-/// `state.ev_cancel`, clears `ev_prog_flag_set` if cancelled, calls `fontClear()`, and returns
-/// `true` on step `2`.
+/// `state.ev_cancel`, clears `ev_prog_flag_set` if cancelled (PS2 `0x001abf50`), calls
+/// `fontClear()`, and returns `true` on step `2`.
+///
+/// For retail PC `sh2pc.exe` (`0x004a22d0`) semantics where `ev_cancel` does **not** clear
+/// `ev_prog_flag_set`, use [`ev_sub_message_retail_pc`].
 pub fn ev_sub_message(
     msg_id: u16,
     message_finished: bool,
+    state: &mut EventStepState,
+    effects: &mut EventEngineEffects,
+) -> bool {
+    ev_sub_message_inner(msg_id, message_finished, true, state, effects)
+}
+
+/// Executes one frame of retail PC `EvSubMessage` (`sh2pc.exe` `0x004a22d0`).
+///
+/// Prototype-vs-retail drift: unlike PS2 `SLUS_202.28` (`0x001abf50`), retail PC omits clearing
+/// `ev_prog_flag_set` when `state.ev_cancel` dismisses step `1`.
+pub fn ev_sub_message_retail_pc(
+    msg_id: u16,
+    message_finished: bool,
+    state: &mut EventStepState,
+    effects: &mut EventEngineEffects,
+) -> bool {
+    ev_sub_message_inner(msg_id, message_finished, false, state, effects)
+}
+
+fn ev_sub_message_inner(
+    msg_id: u16,
+    message_finished: bool,
+    clear_prog_flag_on_cancel: bool,
     state: &mut EventStepState,
     effects: &mut EventEngineEffects,
 ) -> bool {
@@ -66,7 +96,7 @@ pub fn ev_sub_message(
         2 => true,
         1 => {
             if message_finished || state.ev_cancel {
-                if state.ev_cancel {
+                if clear_prog_flag_on_cancel && state.ev_cancel {
                     state.ev_prog_flag_set = false;
                 }
                 effects.clear_message = true;
@@ -149,7 +179,12 @@ pub struct EvSubItemUseParams {
     pub retail_ids: bool,
 }
 
-/// Executes one frame of `EvSubItemUse0` (`SLUS_202.28` `0x001ac100`).
+/// Executes one frame of `EvSubItemUse0` (`SLUS_202.28` `0x001ac100`, `sh2pc.exe` `0x004a33b0`).
+///
+/// Prototype-vs-retail drift: when `params.retail_ids` is `true` (matching retail PC `0x004a33b0`),
+/// step `1` additionally permits `state.ev_cancel` to dismiss the message when `params.lock_player`
+/// (`param_6 != 0`) is set; PS2 `0x001ac100` checks `message_dismissed` (`fontGetStatus() == -2`)
+/// only.
 pub fn ev_sub_item_use0(
     params: &EvSubItemUseParams,
     message_dismissed: bool,
@@ -180,7 +215,8 @@ pub fn ev_sub_item_use0(
             true
         }
         1 => {
-            if message_dismissed {
+            let retail_cancel = params.retail_ids && params.lock_player && state.ev_cancel;
+            if message_dismissed || retail_cancel {
                 effects.clear_message = true;
                 if params.se_id != 0 && item_use_se_timing(params.item_id, true, params.retail_ids)
                 {

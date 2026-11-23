@@ -29,14 +29,50 @@ pub enum RedState {
     Stand = 8,
 }
 
+/// Blue Creek Apartments boss stairwell waypoints (`ap_boss_point[3]` `SLUS 0x002aa9d0`).
+pub const RED_AP_STAIR_POINTS: [Vec3; 3] = [
+    Vec3::new(100_000.0, -1700.0, -101_000.0),
+    Vec3::new(98_850.0, -1700.0, -99_400.0),
+    Vec3::new(99_200.0, -1700.0, -99_000.0),
+];
+
+/// Blue Creek Apartments boss retreat waypoints (`ap_boss_end_point[6]` `SLUS 0x002aaa00` / `sh2pc 0x00890418`, 0 diffs).
+pub const RED_AP_BATTLE_END_POINTS: [Vec3; 6] = [
+    Vec3::new(98_850.0, -1700.0, -99_400.0),
+    Vec3::new(98_800.0, -1700.0, -99_000.0),
+    Vec3::new(101_136.0, -850.0, -98_992.0),
+    Vec3::new(101_136.0, -850.0, -99_820.0),
+    Vec3::new(98_800.0, 0.0, -99_800.0),
+    Vec3::new(98_800.0, 0.0, -98_620.0),
+];
+
+/// Retail PC Pyramid Head Great Knife & seize/choke attack IDs (`+6` over SLUS `0x2c..0x30`, `sh2pc 0x004c03a0`/`0x004c0530`).
+pub const RED_ATTACK_ID_SWING_PC: u16 = 0x32;
+pub const RED_ATTACK_ID_CLEAVE_PC: u16 = 0x33;
+pub const RED_ATTACK_ID_SEIZE_PC: u16 = 0x35;
+pub const RED_ATTACK_ID_CHOKE_PC: u16 = 0x36;
+
 #[derive(Debug, Clone)]
 pub struct PyramidHeadController {
     pub id: u32,
     pub position: Vec3,
     pub yaw: f32,
     pub state: RedState,
+    pub sub_state: u8,
     pub stats: CreatureStats,
+    /// Set by animation driver when current clip finishes (`*(i32*)(work + 0x14) == -1`).
+    pub anim_finished: bool,
     pub state_timer: f32,
+    /// Exact binary timer in 60 Hz ticks for Confuse (`600 - 90 * mode`) and Leave stair-guard (`300` ticks).
+    pub timer_ticks: f32,
+    /// True while choking the player in [`RedState::Grab`] (`enREDCtrlSeize` `0x0015e7d0`).
+    pub is_hugging_player: bool,
+    /// Optional nearby enemy for Hyper Spray friendly-fire in [`RedState::Confuse`] (`0x0015eb40`).
+    pub confuse_friendly_target: Option<Vec3>,
+    /// Active attack ID (e.g. `0x35` seize, `0x36` choke).
+    pub active_attack_id: Option<u16>,
+    /// Set when [`RedState::Leave`] reaches `ap_boss_end_point[5]` (`_DAT_01126440 |= 0x40000`).
+    pub battle_end_complete: bool,
     pub sensory: SensoryProfile,
 }
 
@@ -47,8 +83,15 @@ impl PyramidHeadController {
             position,
             yaw,
             state: RedState::Wander,
+            sub_state: 0,
             stats: CreatureStats::new(5000.0, 9999.0, 0.0), // Massive boss endurance (unflinching)
+            anim_finished: false,
             state_timer: 0.0,
+            timer_ticks: 0.0,
+            is_hugging_player: false,
+            confuse_friendly_target: None,
+            active_attack_id: None,
+            battle_end_complete: false,
             sensory: SensoryProfile::pyramid_head(),
         }
     }
@@ -106,13 +149,254 @@ impl PyramidHeadController {
                 self.position.z += self.yaw.cos() * 340.0 * dt;
             }
 
-            RedState::Attack if self.state_timer >= 2.2 => {
-                // Heavy overhead Great Knife strike duration: 2.2 seconds
-                self.state = RedState::Chase;
-                self.state_timer = 0.0;
+            RedState::Attack => {
+                // Retail PC `0x004c03a0`: tracks player at 1°/tick (`0.017453292` rad) on Hard during cleave.
+                if difficulty == DifficultyLevel::Hard {
+                    self.turn_towards(target_dir, 0.017_453_292 * dt * 60.0);
+                }
+                if self.state_timer >= 2.2 {
+                    self.state = RedState::Chase;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                }
             }
 
-            _ => {}
+            RedState::Hunt => {
+                // `enREDCtrlBerserk` (`SLUS 0x0015deb0`): approaches to 250 mm offset from target, then attacks.
+                let goal = if dist < 250.0 {
+                    target.position
+                } else {
+                    target.position + (self.position - target.position) * (250.0 / dist)
+                };
+                let gdx = goal.x - self.position.x;
+                let gdz = goal.z - self.position.z;
+                self.turn_towards(gdx.atan2(gdz), 1.8 * dt);
+                if dist <= 1250.0 && normalize_angle(target_dir - self.yaw).abs() < 0.174_532_92 {
+                    self.state = RedState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    return;
+                }
+                self.position.x += self.yaw.sin() * 340.0 * dt;
+                self.position.z += self.yaw.cos() * 340.0 * dt;
+            }
+
+            RedState::Stairs => {
+                // `enREDCtrlStair` (`SLUS 0x0015e0a0`): traverses `ap_boss_point[0..3]`.
+                if target.position.z < -99_400.0 && self.sub_state < 5 {
+                    self.state = RedState::Chase;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    return;
+                }
+                if self.sub_state < 4
+                    && dist < 1500.0
+                    && normalize_angle(target_dir - self.yaw).abs() < 0.122_173_05
+                {
+                    self.state = RedState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    return;
+                }
+                let wp = match self.sub_state {
+                    0 | 1 => {
+                        self.sub_state = 1;
+                        RED_AP_STAIR_POINTS[1]
+                    }
+                    2 => RED_AP_STAIR_POINTS[2],
+                    3 => target.position,
+                    5 => RED_AP_STAIR_POINTS[1],
+                    _ => RED_AP_STAIR_POINTS[0],
+                };
+                let wdx = wp.x - self.position.x;
+                let wdz = wp.z - self.position.z;
+                let wdist = (wdx * wdx + wdz * wdz).sqrt();
+                self.turn_towards(wdx.atan2(wdz), 1.8 * dt);
+                self.position.x += self.yaw.sin() * 340.0 * dt;
+                self.position.z += self.yaw.cos() * 340.0 * dt;
+                if wdist < 50.0 {
+                    if self.sub_state == 1 {
+                        self.sub_state = 2;
+                    } else if self.sub_state == 2 {
+                        self.sub_state = 3;
+                    } else if self.sub_state == 5 {
+                        self.sub_state = 6;
+                    } else if self.sub_state >= 6 {
+                        self.state = RedState::Chase;
+                        self.sub_state = 0;
+                    }
+                }
+            }
+
+            RedState::Grab => {
+                // `enREDCtrlSeize` (`SLUS 0x0015e7d0` / `sh2pc 0x004c0530`): reach (`0x35`), choke (`0x36`), release.
+                self.active_attack_id = None;
+                match self.sub_state {
+                    0 => {
+                        self.anim_finished = false;
+                        self.sub_state = 1;
+                    }
+                    1 => {
+                        self.active_attack_id = Some(RED_ATTACK_ID_SEIZE_PC);
+                        // Tracks player at 10°/tick (`0.17453292` rad/tick, `0x0015e7d0`).
+                        self.turn_towards(target_dir, 0.174_532_92 * dt * 60.0);
+                        if self.anim_finished {
+                            self.anim_finished = false;
+                            self.sub_state = if self.is_hugging_player { 3 } else { 4 };
+                        }
+                    }
+                    3 => {
+                        self.active_attack_id = Some(RED_ATTACK_ID_CHOKE_PC);
+                        if !self.is_hugging_player || !target.is_alive {
+                            self.anim_finished = false;
+                            self.sub_state = 4;
+                        }
+                    }
+                    _ => {
+                        if self.anim_finished {
+                            self.anim_finished = false;
+                            self.state = RedState::Chase;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                }
+            }
+
+            RedState::Confuse => {
+                // `enREDCtrlConfuse` (`SLUS 0x0015eb40`): friendly-fire within `|dY| < 250` & `dist_xz < 900`,
+                // else stunned for `600 - 90 * mode` ticks -> `Wander`.
+                match self.sub_state {
+                    0 => {
+                        if let Some(other) = self.confuse_friendly_target {
+                            let odx = other.x - self.position.x;
+                            let odz = other.z - self.position.z;
+                            let odist = (odx * odx + odz * odz).sqrt();
+                            if (other.y - self.position.y).abs() < 250.0 && odist < 900.0 {
+                                self.anim_finished = false;
+                                self.sub_state = 4;
+                                return;
+                            }
+                        }
+                        self.timer_ticks = (600 - 90 * difficulty.as_index() as i32) as f32;
+                        self.sub_state = 2;
+                    }
+                    2 => {
+                        self.timer_ticks -= dt * 60.0;
+                        if self.timer_ticks <= 0.0 {
+                            self.state = RedState::Wander;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                    4 | 5 => {
+                        if let Some(other) = self.confuse_friendly_target {
+                            let odx = other.x - self.position.x;
+                            let odz = other.z - self.position.z;
+                            self.turn_towards(odx.atan2(odz), 1.8 * dt);
+                        }
+                        if self.anim_finished {
+                            self.anim_finished = false;
+                            self.sub_state += 1;
+                            if self.sub_state >= 6 {
+                                self.confuse_friendly_target = None;
+                                self.state = RedState::Wander;
+                                self.sub_state = 0;
+                            }
+                        }
+                    }
+                    _ => {
+                        self.state = RedState::Wander;
+                        self.sub_state = 0;
+                    }
+                }
+            }
+
+            RedState::Leave => {
+                // `enREDCtrlBattleEnd` (`SLUS 0x0015eeb0` / `sh2pc 0x004c0a70`):
+                // 300-tick stair guard (with sub 2/3 counter-attacks `0x32`/`0x33`) -> walks `ap_boss_end_point[0..6]`.
+                self.active_attack_id = None;
+                match self.sub_state {
+                    0 => {
+                        self.timer_ticks = 300.0;
+                        self.sub_state = 1;
+                    }
+                    1 => {
+                        self.turn_towards(target_dir, 1.8 * dt);
+                        if target.position.z > -99_400.0 && dist < 1500.0 {
+                            // Retail PC `0x004c0a70`: stair-guard counter-attack sub 2 (swing) vs sub 3 (cleave).
+                            self.anim_finished = false;
+                            self.sub_state = if dist <= 900.0
+                                && target.position.x <= 99_000.0
+                                && self.position.x >= 99_000.0
+                            {
+                                2
+                            } else {
+                                3
+                            };
+                            return;
+                        }
+                        self.timer_ticks -= dt * 60.0;
+                        if self.timer_ticks <= 0.0 && target.position.z < -99_400.0 {
+                            self.sub_state = if self.position.z < -99_400.0 {
+                                4
+                            } else if self.position.z < -99_150.0 {
+                                5
+                            } else {
+                                6
+                            };
+                        }
+                    }
+                    2 | 3 => {
+                        self.active_attack_id = Some(if self.sub_state == 2 {
+                            RED_ATTACK_ID_SWING_PC
+                        } else {
+                            RED_ATTACK_ID_CLEAVE_PC
+                        });
+                        if self.anim_finished && target.position.z <= -99_400.0 {
+                            self.anim_finished = false;
+                            self.sub_state = 1;
+                        }
+                    }
+                    4..=9 => {
+                        if self.sub_state <= 6
+                            && target.position.z > -100_000.0
+                            && self.position.x < 100_000.0
+                            && dist < 1500.0
+                        {
+                            // Retail PC `0x004c0a70`: interrupts stair walk to counter-attack approaching player.
+                            self.anim_finished = false;
+                            self.sub_state = if dist <= 900.0 { 2 } else { 3 };
+                            return;
+                        }
+                        let wp_idx = (self.sub_state - 4) as usize;
+                        let wp = RED_AP_BATTLE_END_POINTS[wp_idx];
+                        let wdx = wp.x - self.position.x;
+                        let wdz = wp.z - self.position.z;
+                        let wdist = (wdx * wdx + wdz * wdz).sqrt();
+                        self.turn_towards(wdx.atan2(wdz), 1.8 * dt);
+                        self.position.x += self.yaw.sin() * 340.0 * dt;
+                        self.position.z += self.yaw.cos() * 340.0 * dt;
+                        if self.sub_state == 9 {
+                            self.position.y += 500.0 * dt;
+                        }
+                        if wdist < 50.0 {
+                            if self.sub_state < 9 {
+                                self.sub_state += 1;
+                            } else {
+                                self.battle_end_complete = true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            RedState::Stand => {
+                // `enREDCtrlOnlyWalk` (`SLUS 0x0015f3a0` / `sh2pc 0x004c0f50`): scripted walk-only.
+                self.position.x += self.yaw.sin() * 280.0 * dt;
+                self.position.z += self.yaw.cos() * 280.0 * dt;
+            }
         }
     }
 
@@ -125,5 +409,75 @@ impl PyramidHeadController {
     pub fn receive_hit(&mut self, ap: f32, _sp: f32) {
         // Pyramid Head never flinches or falls down from gunfire or melee swings
         self.stats.health = (self.stats.health - ap).max(0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pyramid_head_grab_confuse_and_leave() {
+        let mut red = PyramidHeadController::new(1, Vec3::new(98_850.0, -1700.0, -99_400.0), 0.0);
+        let player =
+            PerceivableTarget::new(Vec3::new(98_850.0, -1700.0, -100_500.0), 0.0, true, false);
+
+        red.state = RedState::Grab;
+        red.is_hugging_player = true;
+        red.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        red.anim_finished = true;
+        red.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        red.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert_eq!(red.active_attack_id, Some(RED_ATTACK_ID_CHOKE_PC));
+
+        // Leave stair-guard counter-attack (sub 2/3) when player approaches z > -99400.
+        red.state = RedState::Leave;
+        red.sub_state = 1;
+        let stair_player =
+            PerceivableTarget::new(Vec3::new(98_850.0, -1700.0, -99_000.0), 0.0, true, false);
+        red.update(
+            &stair_player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert!(matches!(red.sub_state, 2 | 3));
+
+        red.state = RedState::Confuse;
+        red.sub_state = 0;
+        red.confuse_friendly_target = Some(red.position + Vec3::new(400.0, 0.0, 0.0));
+        red.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert_eq!(red.sub_state, 4);
+
+        red.state = RedState::Leave;
+        red.sub_state = 9;
+        red.position = RED_AP_BATTLE_END_POINTS[5];
+        red.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert!(red.battle_end_complete);
     }
 }

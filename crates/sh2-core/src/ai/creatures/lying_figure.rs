@@ -44,6 +44,21 @@ pub enum ScuState {
     Dying = 11,
 }
 
+/// Authentic Lying Figure crawl recovery probability (`enSCUGetCrawlProbability` `SLUS 0x002ab280` / `sh2pc 0x004c4710`).
+pub const SCU_CRAWL_PROBABILITY: f32 = 0.8;
+
+/// Ambush zone entry (`ambush_data` `SLUS 0x002aac30..0x002ab02c` / `sh2pc 0x00890a0c`, 0 diffs).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ScuAmbushEntry {
+    pub min_x: f32,
+    pub min_z: f32,
+    pub max_x: f32,
+    pub max_z: f32,
+    pub pos_x: f32,
+    pub pos_z: f32,
+    pub angle_rad: f32,
+}
+
 /// Lying Figure controller and state machine instance.
 #[derive(Debug, Clone)]
 pub struct LyingFigureController {
@@ -52,11 +67,22 @@ pub struct LyingFigureController {
     pub origin_pos: Vec3,
     pub yaw: f32,
     pub state: ScuState,
+    pub sub_state: u8,
     pub stats: CreatureStats,
     pub alert_timer: f32,
     pub state_timer: f32,
     pub attack_cooldown: f32,
     pub is_crawling: bool,
+    /// `false` = face-down (`lie_dir == 0`, eligible for 80/20 crawl), `true` = face-up (`lie_dir == 1`).
+    pub lie_face_up: bool,
+    /// True if an overhead obstacle (e.g., car) blocks standing up (`enSCUCheckUpper` `SLUS 0x00164070`).
+    pub overhead_blocked: bool,
+    /// Deterministic roll in `[0.0, 1.0)` used for the 80/20 crawl-vs-stand check (`enSCUCtrlDown` `0x00163010`).
+    pub recovery_roll: f32,
+    /// Active ambush entry when in [`ScuState::Ambush`] (`work+0xc0` in `enSCUCtrlAmbush` `0x00161600`).
+    pub active_ambush: Option<ScuAmbushEntry>,
+    /// Confuse countdown timer in 60 Hz ticks (`600 - 90 * mode`, `enSCUCtrlConfuse` `0x00162ee0`).
+    pub confuse_timer_ticks: f32,
     pub sensory: SensoryProfile,
     pub anim: CreatureAnimationController,
 }
@@ -77,11 +103,17 @@ impl LyingFigureController {
             origin_pos: position,
             yaw,
             state: ScuState::Wander,
+            sub_state: 0,
             stats: CreatureStats::new(hp, end, end_recovery),
             alert_timer: 0.0,
             state_timer: 0.0,
             attack_cooldown: 0.0,
             is_crawling: false,
+            lie_face_up: false,
+            overhead_blocked: false,
+            recovery_roll: 0.5,
+            active_ambush: None,
+            confuse_timer_ticks: 0.0,
             sensory: SensoryProfile::lying_figure(),
             anim: CreatureAnimationController::new_lying_figure(),
         }
@@ -111,12 +143,29 @@ impl LyingFigureController {
             return;
         }
 
-        // Downed recovery check
+        // Downed recovery check (`enSCUCtrlDown` `SLUS 0x00163010` / `sh2pc 0x004c6d90`)
         if self.state == ScuState::Down {
             if self.stats.down_timer <= 0.0 {
-                // Recover: 80% chance crawl glide, 20% stand up
-                self.is_crawling = true;
-                self.state = ScuState::Crawl;
+                if difficulty == DifficultyLevel::Beginner {
+                    // Beginner mode dies when down timer expires (`enSCUCtrlDown` `0x00163010`).
+                    self.stats.health = 0.0;
+                    self.stats.endurance = 0.0;
+                    self.state = ScuState::Dying;
+                    return;
+                }
+                self.stats.health = (self.stats.health + 50.0).min(self.stats.max_health);
+                // 80% crawl (`SCU_CRAWL_PROBABILITY = 0.8` `0x002ab280`) when face-down, or forced crawl if overhead blocked (`enSCUCheckUpper` `0x00164070`).
+                let should_crawl = (!self.lie_face_up
+                    && self.recovery_roll < SCU_CRAWL_PROBABILITY)
+                    || self.overhead_blocked;
+                if should_crawl {
+                    self.is_crawling = true;
+                    self.state = ScuState::Crawl;
+                } else {
+                    self.is_crawling = false;
+                    self.state = ScuState::Precaution;
+                }
+                self.sub_state = 0;
                 self.state_timer = 0.0;
             }
             return;
@@ -255,11 +304,78 @@ impl LyingFigureController {
                 }
             }
 
-            ScuState::Down
-            | ScuState::Dying
-            | ScuState::Ambush
-            | ScuState::WaitCar
-            | ScuState::Confuse => {}
+            ScuState::Ambush => {
+                // `enSCUCtrlAmbush` (`SLUS 0x00161600` / `sh2pc 0x004c57f0`).
+                if let Some(entry) = self.active_ambush {
+                    let adx = entry.pos_x - self.position.x;
+                    let adz = entry.pos_z - self.position.z;
+                    let adist = (adx * adx + adz * adz).sqrt();
+                    if self.sub_state < 3 {
+                        if adist < 50.0 {
+                            self.position.x = entry.pos_x;
+                            self.position.z = entry.pos_z;
+                            self.sub_state = 3;
+                        } else if adist > 1250.0 {
+                            self.active_ambush = None;
+                            self.state = ScuState::Wander;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        } else {
+                            self.turn_towards(adx.atan2(adz), 3.0 * dt);
+                            self.position.x += self.yaw.sin() * 402.0 * dt;
+                            self.position.z += self.yaw.cos() * 402.0 * dt;
+                            if notice == SensoryNotice::VisualContact {
+                                self.state = ScuState::Chase;
+                                self.sub_state = 0;
+                                self.state_timer = 0.0;
+                            }
+                        }
+                    } else {
+                        // Sub 3: wait at ambush point, facing halfway between `entry.angle_rad` and `player_dir`.
+                        let half_yaw = normalize_angle(
+                            entry.angle_rad + normalize_angle(target_dir - entry.angle_rad) * 0.5,
+                        );
+                        self.turn_towards(half_yaw, 3.0 * dt);
+                        if notice == SensoryNotice::InAttackRange {
+                            self.state = ScuState::Attack;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                } else {
+                    self.state = ScuState::Wander;
+                    self.sub_state = 0;
+                }
+            }
+
+            ScuState::WaitCar => {
+                // `enSCUCtrlWaitCar` (`SLUS 0x00161b20` / `sh2pc 0x004c5bd0`):
+                // lies under car until player enters 2000.0 mm, then faces player and enters Crawl.
+                if dist < 2000.0 {
+                    self.yaw = target_dir;
+                    self.is_crawling = true;
+                    self.state = ScuState::Crawl;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                }
+            }
+
+            ScuState::Confuse => {
+                // `enSCUCtrlConfuse` (`SLUS 0x00162ee0` / `sh2pc 0x004c6cd0`):
+                // stunned for `600 - 90 * mode` ticks, then transitions to Precaution.
+                if self.sub_state == 0 {
+                    self.confuse_timer_ticks = (600 - 90 * difficulty.as_index() as i32) as f32;
+                    self.sub_state = 2;
+                }
+                self.confuse_timer_ticks -= dt * 60.0;
+                if self.confuse_timer_ticks <= 0.0 {
+                    self.state = ScuState::Precaution;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                }
+            }
+
+            ScuState::Down | ScuState::Dying => {}
         }
 
         // Synchronize and update skeletal animation controller with root motion displacement
@@ -314,5 +430,39 @@ mod tests {
         // Damage knockdown test
         scu.receive_hit(100.0, 300.0, 0.99); // Exceeds endurance
         assert_eq!(scu.state, ScuState::Down);
+    }
+
+    #[test]
+    fn test_lying_figure_wait_car_confuse_and_80_20_crawl_recovery() {
+        let mut scu = LyingFigureController::new(2, Vec3::ZERO, 0.0, DifficultyLevel::Normal);
+        scu.state = ScuState::WaitCar;
+        let far = PerceivableTarget::new(Vec3::new(0.0, 0.0, 2500.0), 0.0, false, false);
+        scu.update(&far, RoomLighting::Lit, DifficultyLevel::Normal, 1.0 / 60.0);
+        assert_eq!(scu.state, ScuState::WaitCar);
+
+        let near = PerceivableTarget::new(Vec3::new(0.0, 0.0, 1500.0), 0.0, false, false);
+        scu.update(
+            &near,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert_eq!(scu.state, ScuState::Crawl);
+
+        // 80/20 crawl recovery: roll 0.85 (>= 0.8) stands up into Precaution; roll 0.5 (< 0.8) crawls.
+        scu.state = ScuState::Down;
+        scu.stats.down_timer = 0.0;
+        scu.recovery_roll = 0.85;
+        scu.overhead_blocked = false;
+        scu.update(&far, RoomLighting::Lit, DifficultyLevel::Normal, 1.0 / 60.0);
+        assert_eq!(scu.state, ScuState::Precaution);
+
+        // Confuse expires after 600 - 90*2 = 420 ticks -> Precaution.
+        scu.state = ScuState::Confuse;
+        scu.sub_state = 0;
+        for _ in 0..425 {
+            scu.update(&far, RoomLighting::Lit, DifficultyLevel::Normal, 1.0 / 60.0);
+        }
+        assert_eq!(scu.state, ScuState::Precaution);
     }
 }

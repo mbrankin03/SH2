@@ -47,6 +47,18 @@ pub enum DifficultyLevel {
     Hard,
 }
 
+impl DifficultyLevel {
+    /// Returns the 0-based difficulty table index (`enGetMode()` `0..=3`: Beginner..Hard).
+    pub const fn as_index(self) -> usize {
+        match self {
+            Self::Beginner => 0,
+            Self::Easy => 1,
+            Self::Normal => 2,
+            Self::Hard => 3,
+        }
+    }
+}
+
 /// Information about a perceivable character (James or Maria) passed to sensory routines.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PerceivableTarget {

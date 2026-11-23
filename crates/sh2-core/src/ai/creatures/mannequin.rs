@@ -51,10 +51,21 @@ pub struct MannequinController {
     pub origin_pos: Vec3,
     pub yaw: f32,
     pub state: MknState,
+    pub sub_state: u8,
     pub stats: CreatureStats,
     pub alert_timer: f32,
     pub state_timer: f32,
     pub is_kick_next: bool,
+    /// Set by `enEventDriven(2)` to wake a mannequin in [`MknState::Event`] (`enMKNCtrlMannequin2` `0x00153e40`).
+    pub event_triggered: bool,
+    /// Set by animation driver when current clip finishes (`*(i32*)(work + 0x14) == -1`).
+    pub anim_finished: bool,
+    /// Vertical velocity in mm/s (Y-down gravity `+9800.0` mm/s²) for [`MknState::Fall`] / [`MknState::Fall2`].
+    pub vel_y: f32,
+    /// Exact binary timer in 60 Hz ticks (`30` landing pause in `Fall`/`Fall2`, `600 - 90 * mode` in `Confuse`).
+    pub timer_ticks: f32,
+    /// Optional nearby enemy position for Hyper Spray friendly-fire in [`MknState::Confuse`] (`0x00155b20`).
+    pub confuse_friendly_target: Option<Vec3>,
     pub sensory: SensoryProfile,
     pub anim: CreatureAnimationController,
 }
@@ -74,10 +85,16 @@ impl MannequinController {
             origin_pos: position,
             yaw,
             state: MknState::Stay, // Default dormant/freeze in dark
+            sub_state: 0,
             stats: CreatureStats::new(hp, end, end_recovery),
             alert_timer: 0.0,
             state_timer: 0.0,
             is_kick_next: false,
+            event_triggered: false,
+            anim_finished: false,
+            vel_y: 0.0,
+            timer_ticks: 0.0,
+            confuse_friendly_target: None,
             sensory: SensoryProfile::mannequin(),
             anim: CreatureAnimationController::new_mannequin(),
         }
@@ -238,7 +255,156 @@ impl MannequinController {
                 self.state_timer = 0.0;
             }
 
-            _ => {}
+            MknState::Event => {
+                // `enMKNCtrlMannequin2` (`SLUS 0x00153e40`): lies still until `enEventDriven(2)` triggers stand-up.
+                match self.sub_state {
+                    0 | 1 => {
+                        self.sub_state = 1;
+                        if self.event_triggered {
+                            self.anim_finished = false;
+                            self.sub_state = 2;
+                        }
+                    }
+                    _ => {
+                        if self.anim_finished {
+                            self.anim_finished = false;
+                            self.state = MknState::Precaution;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                }
+            }
+
+            MknState::Fall => {
+                // `enMKNCtrlWaitFall` (`SLUS 0x00154010`): drops when player enters 3000 mm,
+                // aims 1000 mm ahead of player (capped at 2500 mm/s XZ), gravity 9800 mm/s² (Y-down).
+                match self.sub_state {
+                    0 => {
+                        if dist < 3000.0 {
+                            self.vel_y = 0.0;
+                            self.sub_state = 1;
+                        }
+                    }
+                    1 => {
+                        let drop_x = target.position.x + target.yaw.sin() * 1000.0;
+                        let drop_z = target.position.z + target.yaw.cos() * 1000.0;
+                        let ddx = drop_x - self.position.x;
+                        let ddz = drop_z - self.position.z;
+                        let dlen = (ddx * ddx + ddz * ddz).sqrt();
+                        if dist >= 550.0 && dlen > 1e-3 {
+                            let step_spd = dlen.min(2500.0);
+                            self.position.x += (ddx / dlen) * step_spd * dt;
+                            self.position.z += (ddz / dlen) * step_spd * dt;
+                        }
+                        self.vel_y += dt * 9800.0;
+                        self.position.y += self.vel_y * dt;
+                        if self.position.y >= target.position.y {
+                            self.position.y = target.position.y;
+                            self.vel_y = 0.0;
+                            self.timer_ticks = 30.0;
+                            self.sub_state = 2;
+                        }
+                    }
+                    _ => {
+                        self.timer_ticks -= dt * 60.0;
+                        if self.timer_ticks <= 0.0 {
+                            self.stats.health =
+                                (self.stats.health + 100.0).min(self.stats.max_health);
+                            self.state = MknState::Chase;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                }
+            }
+
+            MknState::Fall2 => {
+                // `enMKNCtrlWaitJump` (`SLUS 0x00154590`): parabolic leap (`vel_y = -7500` mm/s, fwd `2000` mm/s, gravity `9800` mm/s²).
+                match self.sub_state {
+                    0 => {
+                        if dist < 3000.0 {
+                            self.vel_y = -7500.0;
+                            self.sub_state = 1;
+                        }
+                    }
+                    1 => {
+                        self.position.x += self.yaw.sin() * 2000.0 * dt;
+                        self.position.z += self.yaw.cos() * 2000.0 * dt;
+                        self.vel_y += dt * 9800.0;
+                        self.position.y += self.vel_y * dt;
+                        if self.vel_y >= 0.0 && self.position.y >= target.position.y {
+                            self.position.y = target.position.y;
+                            self.vel_y = 0.0;
+                            self.timer_ticks = 30.0;
+                            self.sub_state = 2;
+                        }
+                    }
+                    _ => {
+                        self.timer_ticks -= dt * 60.0;
+                        if self.timer_ticks <= 0.0 {
+                            self.stats.health =
+                                (self.stats.health + 100.0).min(self.stats.max_health);
+                            self.state = MknState::Chase;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                }
+            }
+
+            MknState::Confuse => {
+                // `enMKNCtrlConfuse` (`SLUS 0x00155b20`): Hyper Spray friendly-fire if another enemy
+                // is within `|dY| < 250` & `dist_xz < 1100` (2 swings), else stunned `600 - 90 * mode` ticks.
+                match self.sub_state {
+                    0 => {
+                        if let Some(other) = self.confuse_friendly_target {
+                            let odx = other.x - self.position.x;
+                            let odz = other.z - self.position.z;
+                            let odist = (odx * odx + odz * odz).sqrt();
+                            if (other.y - self.position.y).abs() < 250.0 && odist < 1100.0 {
+                                self.anim_finished = false;
+                                self.sub_state = 4;
+                                return;
+                            }
+                        }
+                        self.timer_ticks = (600 - 90 * difficulty.as_index() as i32) as f32;
+                        self.sub_state = 2;
+                    }
+                    2 => {
+                        self.timer_ticks -= dt * 60.0;
+                        if self.timer_ticks <= 0.0 {
+                            self.state = MknState::Precaution;
+                            self.sub_state = 0;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                    4 | 5 => {
+                        if let Some(other) = self.confuse_friendly_target {
+                            let odx = other.x - self.position.x;
+                            let odz = other.z - self.position.z;
+                            self.turn_towards(odx.atan2(odz), 3.5 * dt);
+                        }
+                        if self.anim_finished {
+                            self.anim_finished = false;
+                            self.sub_state += 1;
+                            self.is_kick_next = !self.is_kick_next;
+                            if self.sub_state >= 6 {
+                                self.confuse_friendly_target = None;
+                                self.state = MknState::Precaution;
+                                self.sub_state = 0;
+                                self.state_timer = 0.0;
+                            }
+                        }
+                    }
+                    _ => {
+                        self.state = MknState::Precaution;
+                        self.sub_state = 0;
+                    }
+                }
+            }
+
+            MknState::Damage | MknState::Down | MknState::Dying => {}
         }
 
         // Synchronize and advance skeletal animation controller
@@ -294,5 +460,77 @@ mod tests {
             0.1,
         );
         assert_eq!(mkn.state, MknState::Precaution);
+    }
+
+    #[test]
+    fn test_mannequin_event_fall_jump_and_confuse_friendly_fire() {
+        let mut mkn = MannequinController::new(
+            2,
+            Vec3::new(0.0, -2000.0, 0.0),
+            0.0,
+            DifficultyLevel::Normal,
+        );
+        mkn.state = MknState::Fall;
+        let player = PerceivableTarget::new(Vec3::new(0.0, 0.0, 2500.0), 0.0, false, false);
+        for _ in 0..80 {
+            mkn.update(
+                &player,
+                RoomLighting::Lit,
+                DifficultyLevel::Normal,
+                1.0 / 60.0,
+            );
+        }
+        assert!(matches!(mkn.state, MknState::Chase | MknState::Attack));
+        assert_eq!(mkn.position.y, 0.0);
+
+        // Fall2 (parabolic leap) wakes at <3000 mm, rises with vel_y = -7500, and lands into Chase.
+        let mut jumper = MannequinController::new(
+            3,
+            Vec3::new(0.0, -2000.0, 0.0),
+            0.0,
+            DifficultyLevel::Normal,
+        );
+        jumper.state = MknState::Fall2;
+        for _ in 0..160 {
+            jumper.update(
+                &player,
+                RoomLighting::Lit,
+                DifficultyLevel::Normal,
+                1.0 / 60.0,
+            );
+        }
+        assert_eq!(jumper.position.y, 0.0);
+        assert!(matches!(jumper.state, MknState::Chase | MknState::Attack));
+
+        // Event stand-up completes when stand-up animation finishes (`*(i32*)(work+0x14) == -1`).
+        mkn.state = MknState::Event;
+        mkn.sub_state = 0;
+        mkn.event_triggered = true;
+        mkn.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        mkn.anim_finished = true;
+        mkn.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert_eq!(mkn.state, MknState::Precaution);
+
+        // Confuse with nearby enemy triggers friendly-fire sub_state 4.
+        mkn.state = MknState::Confuse;
+        mkn.sub_state = 0;
+        mkn.confuse_friendly_target = Some(mkn.position + Vec3::new(500.0, 0.0, 0.0));
+        mkn.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        assert_eq!(mkn.sub_state, 4);
     }
 }

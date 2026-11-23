@@ -7,11 +7,14 @@
 //! - `vcSetProjectionValue` (`0x0019db80` PS2) & `vcChangeProjectionValue` (`0x0019dc50` PS2)
 //! - `stg_forest.c` (`sh2pc.exe` `0x008e77ac`), `stg_bowling.c` (`sh2pc.exe` `0x008de458..0x008de4cc`)
 
+use crate::camera::kinematics::{
+    fov_y_from_ps2_projection_unclamped, vc_adj_cam_ofs_ang_by_ofs_ang_spd, vc_renewal_cam_data,
+    vw_angle_to_vector, vw_vector_to_angle, CAM_MV_PRM_USER, WATCH_MV_PRM_USER,
+};
 use crate::camera::CameraSnapshot;
 use crate::types::camera::{CameraMoveParam, CameraWatchParam};
 use crate::types::EventCamSetData;
 use glam::{Mat4, Vec3};
-use std::f32::consts::PI;
 
 /// `_VC_FLAGS` bit `0x0001`: user/scripted camera position override active (`vcWork.flags` at `0x010e5ad8`).
 pub const VC_USER_CAM_F: u32 = 0x0001;
@@ -37,20 +40,11 @@ pub const PS2_DEFAULT_PROJECTION_SCR_Z: f32 = 448.0;
 
 /// Default scripted camera acceleration/speed profile (`cam_mv_prm_user` at `SLUS_202.28` `0x00390560`,
 /// units in PS2 mm/s² and mm/s).
-pub const DEFAULT_USER_CAM_MV_PARAM: CameraMoveParam = CameraMoveParam {
-    accel_xz: 5000.0,
-    accel_y: 1500.0,
-    max_spd_xz: 3000.0,
-    max_spd_y: 1000.0,
-};
+pub const DEFAULT_USER_CAM_MV_PARAM: CameraMoveParam = CAM_MV_PRM_USER;
 
 /// Default scripted watch angular profile (`watch_mv_prm_user` at `SLUS_202.28` `0x00390510`,
 /// units in rad/s² and rad/s).
-pub const DEFAULT_USER_WATCH_MV_PARAM: CameraWatchParam = CameraWatchParam {
-    ang_accel_x: 7.539_823,
-    ang_accel_y: 13.823_008,
-    max_ang_spd: 1.382_300_7,
-};
+pub const DEFAULT_USER_WATCH_MV_PARAM: CameraWatchParam = WATCH_MV_PRM_USER;
 
 /// Typed descriptor for a scripted event camera shot (`vcSetEventCamParamRefView` at `0x0019db10`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -222,6 +216,8 @@ pub enum ScriptCameraMode {
         transition: ScriptTransitionKind,
         /// Active eye velocity in PS2 mm/s (`vcWork.cam_velo`).
         eye_velocity_mm_per_s: Vec3,
+        /// Active watch angular velocity in rad/s (`vcWork.ofs_cam_ang_spd`).
+        watch_ang_spd_rad_per_s: Vec3,
         /// Acceleration & speed caps (`vcWork.user_cam_mv_prm`).
         cam_prm: CameraMoveParam,
         /// Angular acceleration & speed caps (`vcWork.user_watch_mv_prm`).
@@ -242,21 +238,22 @@ pub enum ScriptCameraMode {
 }
 
 /// Converts PS2 projection focal distance `scr_z` into vertical FOV in radians (`2 * atan(224.0 / scr_z)`).
+///
+/// Matches `SLUS_202.28` `vcSetProjectionValue` (`0x0019db80`) without artificial FOV clamps.
 #[inline]
 pub fn fov_y_from_ps2_projection(scr_z: f32) -> f32 {
-    let safe_z = if scr_z > 1.0 {
-        scr_z
-    } else {
-        PS2_DEFAULT_PROJECTION_SCR_Z
-    };
-    (2.0 * (224.0 / safe_z).atan()).clamp(0.25, 1.45)
+    fov_y_from_ps2_projection_unclamped(scr_z)
 }
 
 /// Inverse conversion from vertical FOV in radians back to PS2 `scr_z` (`224.0 / tan(fov_y * 0.5)`).
 #[inline]
 pub fn ps2_projection_from_fov_y(fov_y_rad: f32) -> f32 {
-    let half = (fov_y_rad * 0.5).clamp(0.10, 1.30);
-    224.0 / half.tan()
+    let tan_half = (fov_y_rad * 0.5).tan();
+    if tan_half > f32::EPSILON {
+        224.0 / tan_half
+    } else {
+        PS2_DEFAULT_PROJECTION_SCR_Z
+    }
 }
 
 /// Computes a PS2 Y-down `up` vector rotated by `roll_radians` around `forward` (`VbSetCameraMatrix`).
@@ -322,67 +319,30 @@ pub(crate) fn step_user_eye_pos(
     prm: &CameraMoveParam,
     dt: f32,
 ) -> Vec3 {
-    let delta = tgt_eye - cur_eye;
-    let dist_xz = (delta.x * delta.x + delta.z * delta.z).sqrt();
-    if dist_xz > 0.5 {
-        let dir_x = delta.x / dist_xz;
-        let dir_z = delta.z / dist_xz;
-        let desired_spd_xz = (dist_xz * 4.0).min(prm.max_spd_xz);
-        let max_dv_xz = prm.accel_xz * dt;
-        vel.x += (dir_x * desired_spd_xz - vel.x).clamp(-max_dv_xz, max_dv_xz);
-        vel.z += (dir_z * desired_spd_xz - vel.z).clamp(-max_dv_xz, max_dv_xz);
-    } else {
-        vel.x = 0.0;
-        vel.z = 0.0;
-    }
-
-    let desired_spd_y = (delta.y * 4.0).clamp(-prm.max_spd_y, prm.max_spd_y);
-    let max_dv_y = prm.accel_y * dt;
-    vel.y += (desired_spd_y - vel.y).clamp(-max_dv_y, max_dv_y);
-
-    let step = *vel * dt;
-    Vec3::new(
-        if step.x.abs() >= delta.x.abs() {
-            tgt_eye.x
-        } else {
-            cur_eye.x + step.x
-        },
-        if step.y.abs() >= delta.y.abs() {
-            tgt_eye.y
-        } else {
-            cur_eye.y + step.y
-        },
-        if step.z.abs() >= delta.z.abs() {
-            tgt_eye.z
-        } else {
-            cur_eye.z + step.z
-        },
-    )
+    let mut pos = cur_eye;
+    let mut mv_ang_y = 0.0;
+    vc_renewal_cam_data(&mut pos, tgt_eye, vel, &mut mv_ang_y, prm, false, dt);
+    pos
 }
 
 pub(crate) fn step_user_watch_target(
     eye: Vec3,
     cur_target: Vec3,
     tgt_watch: Vec3,
+    ang_spd: &mut Vec3,
     prm: &CameraWatchParam,
     dt: f32,
 ) -> Vec3 {
     let cur_vec = cur_target - eye;
     let dst_vec = tgt_watch - eye;
-    if cur_vec.length() <= 1.0 || dst_vec.length() <= 1.0 {
+    let cur_len = cur_vec.length();
+    let dst_len = dst_vec.length();
+    if cur_len <= f32::EPSILON || dst_len <= f32::EPSILON {
+        *ang_spd = Vec3::ZERO;
         return tgt_watch;
     }
-    let mut dyaw = dst_vec.x.atan2(dst_vec.z) - cur_vec.x.atan2(cur_vec.z);
-    while dyaw < -PI {
-        dyaw += 2.0 * PI;
-    }
-    while dyaw >= PI {
-        dyaw -= 2.0 * PI;
-    }
-    let max_step = (prm.max_ang_spd * 2.5 * dt).max(0.01);
-    if dyaw.abs() <= max_step && (dst_vec.length() - cur_vec.length()).abs() <= 50.0 {
-        return tgt_watch;
-    }
-    let blend = (max_step / dyaw.abs().max(max_step)).clamp(0.18, 1.0);
-    cur_target.lerp(tgt_watch, blend)
+    let mut cur_ang = vw_vector_to_angle(cur_vec);
+    let tgt_ang = vw_vector_to_angle(dst_vec);
+    vc_adj_cam_ofs_ang_by_ofs_ang_spd(&mut cur_ang, ang_spd, tgt_ang, prm, dt);
+    eye + vw_angle_to_vector(dst_len, cur_ang)
 }

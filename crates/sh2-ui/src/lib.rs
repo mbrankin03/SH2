@@ -28,14 +28,17 @@ pub use inventory::{
 };
 pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
 pub use map::{
-    active_markers_for_map, chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check,
-    chizu_world_to_sheet_norm, draw_paper_map, map_spec, ChizuDecodedMarker, ChizuPackedMarker,
-    MapCanvasClipper, MapDescriptor, MapDirection, MapPlayerMarker, MapReadCheck, MapSheetSpec,
-    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
+    active_markers_for_map, chizu_can_read_map, chizu_connect_check, chizu_connect_neighbor,
+    chizu_current_position_check, chizu_marker_layers, chizu_possession_check, chizu_select,
+    chizu_world_to_sheet_norm, draw_paper_map, map_spec, stage_to_default_room_id,
+    ChizuDecodedMarker, ChizuPackedMarker, MapCanvasClipper, MapDescriptor, MapDirection,
+    MapPlayerMarker, MapReadCheck, MapSheetSpec, MapTranscriptionPhase, MapZoomStep,
+    PaperMapAction, PaperMapPlayerState, PaperMapTextures, PaperMapViewer, CHIZU_CURSOR_TEX_PATH,
+    CHIZU_PAPER_SE_ID,
 };
 pub use memo::{
-    collected_memos, draw_memo_reader, memo_command_check, MemoAction, MemoEntry, MemoPhase,
-    MemoReader,
+    collected_memos, draw_memo_reader, memo_command_check, resolve_memo_textures, MemoAction,
+    MemoDisplayMode, MemoEntry, MemoPhase, MemoReader, MemoRenderContext, MemoRenderTextures,
 };
 pub use menu::{
     draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,

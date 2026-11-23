@@ -17,6 +17,14 @@ struct SpotlightUniforms {
     color_outer: vec4<f32>,
     ambient_tint: vec4<f32>,
     fill_and_range: vec4<f32>,
+    parallel_dirs: array<vec4<f32>, 3>,
+    parallel_colors: array<vec4<f32>, 3>,
+    point_positions: array<vec4<f32>, 3>,
+    point_colors: array<vec4<f32>, 3>,
+    ps2_falloff_params: vec4<f32>,
+    gun_and_dark_trim: vec4<f32>,
+    reflection_dir: vec4<f32>,
+    reflection_color: vec4<f32>,
 };
 
 struct SkeletonBones {
@@ -34,6 +42,8 @@ struct SkeletalMaterialUniforms {
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
 @group(0) @binding(2) var<uniform> pcss_u: PcssShadowUniforms;
 @group(0) @binding(3) var pcss_shadow_map: texture_depth_2d;
+@group(0) @binding(4) var specular_sphere_tex: texture_2d<f32>;
+@group(0) @binding(5) var specular_sphere_sampler: sampler;
 @group(1) @binding(0) var<uniform> skeleton: SkeletonBones;
 @group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
 @group(2) @binding(1) var diffuse_sampler: sampler;
@@ -84,9 +94,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 // `pass_mode`:
-// 0u = Opaque pass (`is_transparent == false`)
-// 1u = Transparent hair/fringe core pass (`tex_color.a >= 0.90`, writes depth)
-// 2u = Transparent hair/fringe soft edge pass (`0.004 <= tex_color.a < 0.90`, reads depth)
+// 0u = Opaque pass (`is_transparent == false`; `sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`)
+// 1u = Transparent pass (`is_transparent == true`; `SLUS_202.28` `InitEnv1` `0x0012c6d0` GIF packet
+//      `0x002a9780` `TEST_1 = 0x5000d` `ATST = 6 (GREATER), AREF = 0` & `sh2pc.exe` `FUN_00503800`
+//      `0x00503800` `D3DRS_ZWRITEENABLE = 1, D3DRS_ALPHAFUNC = 5 (GREATER), D3DRS_ALPHAREF = 0`)
+// 2u = Legacy second transparent pass (discards so `pass_mode == 1u` is not double-blended)
 fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // Sample diffuse texture unconditionally in uniform control flow before any early returns
     // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
@@ -109,17 +121,20 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // - `pass_mode == 0u` (`Opaque`): solid & PS2 specular gloss-mask submeshes (`red.mdl` `1303`,
     //   Maria's `1245` fingernails/rings, `scu.mdl` `1282`, `pap.mdl` `1293`) NEVER discard texels
     //   (`sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`), as genuine cutout `prim` cards (`lll_jms`,
-    //   `lll_mar`, `lxx_mar` hair) are promoted to `pass_mode == 1u / 2u` at mesh compilation time.
-    // - `pass_mode == 1u / 2u`: transparent `tprim` and promoted cutout hair submeshes split cleanly
-    //   at `0.90` into depth-writing core (`1u`) + depth-read-only soft alpha-blended fringe (`2u`).
+    //   `lll_mar`, `lxx_mar` hair) are promoted to `is_transparent == true` at mesh compilation time.
+    // - `pass_mode == 1u`: exact PS2/PC single-pass transparent alpha-test (`SLUS_202.28` `InitEnv1`
+    //   `0x0012c6d0` / GIF packet `0x002a9780` `TEST_1 = 0x5000d` [`ATE = 1`, `ATST = 6 (GREATER)`,
+    //   `AREF = 0`, `AFAIL = 0 (KEEP)`] and `sh2pc.exe` `FUN_00503800` `0x00503800`
+    //   [`D3DRS_ZWRITEENABLE = 1`, `D3DRS_ALPHABLENDENABLE = 1`, `D3DRS_ALPHATESTENABLE = 1`,
+    //   `D3DRS_ALPHAFUNC = 5 (D3DCMP_GREATER)`, `D3DRS_ALPHAREF = 0`]): discard quantized 8-bit `alpha == 0`.
+    // - `pass_mode == 2u`: discards unconditionally because `pass_mode == 1u` already renders all
+    //   `alpha > 0` fragments in a single depth-writing alpha-blended pass without double-blending.
     if pass_mode == 1u {
-        if tex_color.a < 0.90 {
+        if tex_color.a < (0.5 / 255.0) {
             discard;
         }
     } else if pass_mode == 2u {
-        if tex_color.a < (1.0 / 255.0) || tex_color.a >= 0.90 {
-            discard;
-        }
+        discard;
     }
 
     let out_alpha = select(clamp(in.color.a * tex_color.a, 0.0, 1.0), 1.0, pass_mode == 0u);
@@ -155,18 +170,41 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         inner_cos <= -0.99 && outer_cos <= -0.99
     );
 
-    let dist_m = dist * 0.001;
-    let reach = select(8500.0, spotlight.fill_and_range.y, spotlight.fill_and_range.y > 1.0);
-    let reach_ratio = clamp(dist / reach, 0.0, 1.0);
-    let reach_window = (1.0 - reach_ratio * reach_ratio);
-    let local_atten = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
+    // Exact PS2 linear/hyperbolic falloff (`sh2gfw_setsp1para2LGT_blk` 0x0017ddd0 / `UpdateFParam` 0x00126170)
+    let lin_atten = clamp(spotlight.ps2_falloff_params.x * dist + spotlight.ps2_falloff_params.y, 0.0, 1.0);
+    let hyp_atten = clamp(spotlight.ps2_falloff_params.z / max(dist, 1e-4) + spotlight.ps2_falloff_params.w, 0.0, 1.0);
+    let local_atten = select(lin_atten, hyp_atten, spotlight.fill_and_range.w > 0.5);
     let attenuation = select(local_atten, 1.0, inner_cos <= -0.99 && outer_cos <= -0.99);
     let n_dot_l = max(dot(norm, -l_dir), 0.0);
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
 
     let base_ambient = vec3<f32>(0.06, 0.06, 0.068);
-    let spot_diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation * pcss_vis);
+    var spot_diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation * pcss_vis);
+    for (var pi: u32 = 0u; pi < 3u; pi = pi + 1u) {
+        let p_dir_en = spotlight.parallel_dirs[pi];
+        if (p_dir_en.w > 0.5) {
+            let p_len = length(p_dir_en.xyz);
+            let p_dir = select(vec3<f32>(0.0, 1.0, 0.0), p_dir_en.xyz / p_len, p_len > 1e-4);
+            spot_diffuse = spot_diffuse + spotlight.parallel_colors[pi].xyz * max(dot(norm, -p_dir), 0.0);
+        }
+    }
+    for (var pti: u32 = 0u; pti < 3u; pti = pti + 1u) {
+        let pt_pos_near = spotlight.point_positions[pti];
+        let pt_col_far = spotlight.point_colors[pti];
+        if (pt_col_far.w > pt_pos_near.w + 1e-3) {
+            let pt_vec = pt_pos_near.xyz - in.world_pos;
+            let pt_dist = length(pt_vec);
+            let pt_dir = select(vec3<f32>(0.0, 1.0, 0.0), pt_vec / pt_dist, pt_dist > 1e-4);
+            let pt_atten = clamp((pt_col_far.w - pt_dist) / max(pt_col_far.w - pt_pos_near.w, 1e-4), 0.0, 1.0);
+            spot_diffuse = spot_diffuse + pt_col_far.xyz * (max(dot(norm, pt_dir), 0.0) * pt_atten);
+        }
+    }
     let camera_fill = vec3<f32>(spotlight.fill_and_range.x * max(dot(norm, view_dir), 0.0));
+    // Gun muzzle flash ambient boost (`(sh2gfw_Get_GunLight() * 2.0) / 4.0 = gun_light * 0.5` in
+    // 1.0-normalized ambient space, factoring out `4.0` VU1 ambient scale in `0x0017d7f0` / `0x0017ddd0`)
+    // and `DARK_Hosei` ambient trim (`0x002ab710` = 0.5, `sh2gfw_Get_DarkTrimFactor` 0x0028e350).
+    let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x);
+    let dark_trim_scale = 1.0 + spotlight.gun_and_dark_trim.y * spotlight.gun_and_dark_trim.z;
 
     // 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used in Model Viewer modes (1 and 3)
     let key_dir = normalize(vec3<f32>(0.45, -0.65, 0.60));
@@ -200,39 +238,76 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
     let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
 
-    let game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
+    let game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale * dark_trim_scale + gun_boost + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
     let studio_diffuse_light = (mat_ambient * studio_amb + mat_diffuse * studio_direct) * env_tint_rgb;
     let total_diffuse_light = select(game_diffuse_light, studio_diffuse_light, shade_mode == 3);
 
     var final_rgb = total_diffuse_light * in.color.rgb * tex_color.rgb;
 
-    // Material Type 4 (`SLUS_202.28` `DrawPart1` `0x12da1c` / `sh2pc.exe` `0x501b66` `MODULATEALPHA_ADDCOLOR`):
-    // Additive per-fragment Blinn-Phong specular modulated by `tex_color.a` gloss mask on opaque primitives.
+    // MakeEnvironPacket (`SLUS_202.28` `0x0012cf20`): optional environment reflection pass
+    // modulated by part header byte `+0x45` (`reflection_color.w` in `0..=1`), projected via the
+    // `UpdateReflections` (`0x00126f90`) NHM halfway axis (`spotlight.reflection_dir.xyz`), and
+    // gated to specular/reflective primitives (`mat_type == 4u`) so matte cloth is never washed out.
+    if mat_type == 4u && spotlight.reflection_color.w > 0.001 {
+        let env_dir = select(
+            view_dir,
+            normalize(spotlight.reflection_dir.xyz),
+            length(spotlight.reflection_dir.xyz) > 1e-4,
+        );
+        let env_ref_up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(env_dir.y) > 0.99);
+        let env_u_axis = normalize(cross(env_ref_up, env_dir));
+        let env_v_axis = normalize(cross(env_dir, env_u_axis));
+        let env_uv = clamp(vec2<f32>(0.5 * dot(norm, env_u_axis) + 0.5, 0.5 * dot(norm, env_v_axis) + 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+        let env_sample = textureSampleLevel(specular_sphere_tex, specular_sphere_sampler, env_uv, 0.0).rgb;
+        final_rgb = final_rgb + env_sample * spotlight.reflection_color.xyz * material.specular_cull.xyz * spotlight.reflection_color.w;
+    }
+
+    // Material Type 4 (`SLUS_202.28` `mdl_SpecularMappingMakeTexture` `0x0012f0c0`,
+    // `MakeSpecularPacket` `0x0012d090`, `UpdateReflections` `0x00126f90`, `sh2gfw_Set_SpecularAlpha`
+    // `0x00181be0` `ALPHA_1 = 0x58` night / `0x54` day / `sh2pc.exe` `0x00501750`):
+    // 64x64 `pow(sqrt(1 - r^2), 8.0)` sphere-map lookup projected via NHM `(U, V, H)` basis.
     if mat_type == 4u {
-        let shininess = material.ambient_shininess.w;
         let spec_rgb = material.specular_cull.xyz;
         let gloss_mask = select(1.0, tex_color.a, pass_mode == 0u);
 
         let h_spot_raw = -l_dir + view_dir;
         let h_spot = select(view_dir, normalize(h_spot_raw), length(h_spot_raw) > 1e-4);
-        let spec_spot = pow(max(dot(norm, h_spot), 0.0), shininess)
+        let ref_up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(h_spot.y) > 0.99);
+        let u_axis = normalize(cross(ref_up, h_spot));
+        let v_axis = normalize(cross(h_spot, u_axis));
+        let spot_spec_uv = clamp(
+            vec2<f32>(0.5 * dot(norm, u_axis) + 0.5, 0.5 * dot(norm, v_axis) + 0.5),
+            vec2<f32>(0.0),
+            vec2<f32>(1.0),
+        );
+        let sphere_val = textureSampleLevel(specular_sphere_tex, specular_sphere_sampler, spot_spec_uv, 0.0).rgb;
+        let spec_spot = sphere_val
             * spot_cone
             * attenuation
             * pcss_vis
             * select(0.0, 1.0, n_dot_l > 0.0)
             * spotlight.color_outer.xyz;
 
+        // Studio inspection mode (`shade_mode == 3`) also samples the exact 64x64 sphere-map
         let h_key = normalize(key_dir + view_dir);
-        let h_fill = normalize(fill_dir + view_dir);
-        let h_rim = normalize(rim_dir + view_dir);
-        let spec_studio = pow(max(dot(norm, h_key), 0.0), shininess) * vec3<f32>(0.90, 0.88, 0.84) * select(0.0, 1.0, k_ndotl > 0.0)
-            + pow(max(dot(norm, h_fill), 0.0), max(shininess * 0.75, 16.0)) * vec3<f32>(0.30, 0.34, 0.40) * select(0.0, 1.0, f_ndotl > 0.0)
-            + pow(max(dot(norm, h_rim), 0.0), max(shininess * 0.50, 12.0)) * vec3<f32>(0.48, 0.52, 0.60) * select(0.0, 1.0, r_ndotl > 0.0)
-            + spec_spot * 0.65;
+        let k_ref_up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(h_key.y) > 0.99);
+        let k_u = normalize(cross(k_ref_up, h_key));
+        let k_v = normalize(cross(h_key, k_u));
+        let k_uv = clamp(vec2<f32>(0.5 * dot(norm, k_u) + 0.5, 0.5 * dot(norm, k_v) + 0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+        let spec_studio = textureSampleLevel(specular_sphere_tex, specular_sphere_sampler, k_uv, 0.0).rgb
+            * vec3<f32>(0.90, 0.88, 0.84)
+            * select(0.0, 1.0, k_ndotl > 0.0)
+            + spec_spot;
 
         let spec_scale = select(1.0, pcss_u.params.w, pcss_u.params.w > 0.01);
-        let active_spec = select(spec_spot, spec_studio, shade_mode == 3) * env_tint_rgb * spec_scale;
-        final_rgb = final_rgb + active_spec * spec_rgb * gloss_mask;
+        let active_spec = select(spec_spot, spec_studio, shade_mode == 3) * env_tint_rgb * spec_scale * spec_rgb;
+        // Exact PS2 GS `ALPHA_1` specular composite (`sh2gfw_Set_SpecularAlpha` `0x00181be0`):
+        // - Night (`gun_and_dark_trim.w > 0.5`, `ALPHA_1 = 0x58`): `Cs * Ad + Cd` (additive)
+        // - Day (`gun_and_dark_trim.w <= 0.5`, `ALPHA_1 = 0x54`): `(Cs - Cd) * Ad + Cd` (`mix`)
+        let is_night_spec = spotlight.gun_and_dark_trim.w > 0.5;
+        let night_spec_rgb = final_rgb + active_spec * gloss_mask;
+        let day_spec_rgb = mix(final_rgb, active_spec, gloss_mask);
+        final_rgb = select(day_spec_rgb, night_spec_rgb, is_night_spec);
     }
 
     return vec4<f32>(final_rgb, out_alpha);
@@ -253,3 +328,20 @@ fn fs_transparent_fringe(in: VertexOutput) -> @location(0) vec4<f32> {
     return shade_skeletal_fragment(in, 2u);
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::WGSL_SKINNING_SHADER;
+
+    #[test]
+    fn wgsl_skinning_shader_supports_day_0x54_and_night_0x58_specular_branches() {
+        assert!(WGSL_SKINNING_SHADER
+            .contains("let is_night_spec = spotlight.gun_and_dark_trim.w > 0.5;"));
+        assert!(WGSL_SKINNING_SHADER
+            .contains("let day_spec_rgb = mix(final_rgb, active_spec, gloss_mask);"));
+        assert!(WGSL_SKINNING_SHADER
+            .contains("let night_spec_rgb = final_rgb + active_spec * gloss_mask;"));
+        assert!(WGSL_SKINNING_SHADER
+            .contains("final_rgb = select(day_spec_rgb, night_spec_rgb, is_night_spec);"));
+    }
+}

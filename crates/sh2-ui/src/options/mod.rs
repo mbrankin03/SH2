@@ -512,8 +512,9 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Enhanced;
-        assert_eq!(menu.item_count(), 12);
+        assert_eq!(menu.item_count(), 13);
         assert!(!menu.draft_config.game.enable_secondary_physics);
+        assert!(!menu.draft_config.audio.enable_dynamic_room_acoustics);
 
         // Row 0: Version Preset snaps to PS2 Authentic (1:1 Original)
         menu.selected_index = 0;
@@ -541,6 +542,7 @@ mod tests {
             SpatialAudioMode::ClassicPs2Stereo
         );
         assert!(!menu.draft_config.audio.enable_acoustic_occlusion);
+        assert!(!menu.draft_config.audio.enable_dynamic_room_acoustics);
 
         // Next preset: SH2:EE
         menu.adjust_value(1);
@@ -568,6 +570,7 @@ mod tests {
             SpatialAudioMode::BinauralHrtf
         );
         assert!(menu.draft_config.game.enable_secondary_physics);
+        assert!(menu.draft_config.audio.enable_dynamic_room_acoustics);
 
         // Toggling Secondary Cloth Physics (row 10) switches Version Preset to Custom (Mixed)
         menu.selected_index = 10;

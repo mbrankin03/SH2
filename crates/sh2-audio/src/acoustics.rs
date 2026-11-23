@@ -1,8 +1,10 @@
-//! Dynamic channel spatialization and environmental reverb modeling (`SH2-55`).
+//! Dynamic `.cam`-aspect environmental reverb heuristics (`SH2-55`, `SH2-137` `native-upgrade`).
 //!
-//! Evaluates room reverb (`feedback`, `damping`, `wet_mix`) and stereo spatial spread
-//! directly from active `.cam` camera volume properties (`rd_type`, `area_size_type`, and
-//! 3D bounding-box geometry) without requiring pre-processed audio files.
+//! **1:1 Parity Note (`SLUS_202.28` / `sh2pc.exe`):** The original PS2 and retail PC sound drivers do
+//! NOT derive reverb parameters from `.cam` camera-volume bounding-box aspect ratios. This module is a
+//! modern `native-upgrade` enhancement gated behind `AudioOptions::enable_dynamic_room_acoustics`
+//! (defaulting to `false` in the strict 1:1 Vanilla PS2 preset). When disabled, [`evaluate_room_acoustics_gated`]
+//! and [`evaluate_room_acoustics_for_pos_gated`] return [`EnvironmentalPreset::Off`] (dry output).
 
 use glam::Vec3;
 use sh2_assets::{AreaSizeType, CamFile, RoadRecord, RoadType};
@@ -188,4 +190,33 @@ pub fn evaluate_room_acoustics_for_pos(
 ) -> RoomAcousticsProfile {
     let active_rec = cam.find_active_record([player_pos.x, player_pos.y, player_pos.z], 50.0);
     evaluate_room_acoustics(active_rec, is_interior_map)
+}
+
+/// Evaluates [`evaluate_room_acoustics`] only when `enable_dynamic_room_acoustics` (`native-upgrade`)
+/// is `true`; returns dry [`EnvironmentalPreset::Off`] (`wet_mix = 0.0`) for strict 1:1 Vanilla PS2 parity.
+#[inline]
+pub fn evaluate_room_acoustics_gated(
+    record: Option<&RoadRecord>,
+    is_interior_map: bool,
+    enable_dynamic_room_acoustics: bool,
+) -> RoomAcousticsProfile {
+    if !enable_dynamic_room_acoustics {
+        return RoomAcousticsProfile::from_preset(EnvironmentalPreset::Off);
+    }
+    evaluate_room_acoustics(record, is_interior_map)
+}
+
+/// Evaluates [`evaluate_room_acoustics_for_pos`] only when `enable_dynamic_room_acoustics` (`native-upgrade`)
+/// is `true`; returns dry [`EnvironmentalPreset::Off`] (`wet_mix = 0.0`) for strict 1:1 Vanilla PS2 parity.
+#[inline]
+pub fn evaluate_room_acoustics_for_pos_gated(
+    cam: &CamFile,
+    player_pos: Vec3,
+    is_interior_map: bool,
+    enable_dynamic_room_acoustics: bool,
+) -> RoomAcousticsProfile {
+    if !enable_dynamic_room_acoustics {
+        return RoomAcousticsProfile::from_preset(EnvironmentalPreset::Off);
+    }
+    evaluate_room_acoustics_for_pos(cam, player_pos, is_interior_map)
 }

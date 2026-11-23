@@ -1,61 +1,59 @@
 //! Authentic Silent Hill 2 Sound Effect (`sddata.bin` & `voice.afs`) lookup tables,
-//! 3D distance attenuation (`SeCallPosDistanceF`), and surface material footstep selection (`SH2-61`).
+//! 3D distance attenuation (`SeCallPosDistanceF` / `SeCallPosDistance`), stereo pan
+//! (`SeCallPosDirection`), and surface material footstep selection (`SH2-61`, `SH2-137`).
 //!
-//! # Ground Truth & Binary References (`sh2pc.exe` & SH2:EE)
+//! # Ground Truth & Binary References (`SLUS_202.28`, `sh2pc.exe`, & SH2:EE)
 //! - **`0x8A1ED8` (`0x29A` = 666 pairs)**: Maps game `se_id` (`u32`, e.g., `10000` / `0x2710` = `CursorMove`,
 //!   `11048` / `0x2B28` = `HandgunShot`) to internal driver ID `5000..=5698`, which indexes `0x8A67E0` (`SFXAddrMap`)
 //!   to resolve one of the **417** RIFF WAVE entries in `sddata.bin` (`0..=416`).
 //! - **`0x8A1E58` (32 pairs)**: Maps streamed SFX `se_id` (`u16`, e.g., `10051` / `0x2743` = `SavePoint`,
 //!   `15002` / `0x3A9A` = `GameStartTransition`) to `voice.afs` entry indices (`raw_id - 0xEA60`, `13..=44`).
-//! - **`0x5155E0` (`SeCallPosDistanceF`) & `0x517D10`**:
-//!   - Inner full-volume radius: $d_{\min} = 1500.0$ world units (`0x6B4038`).
-//!   - Outer cutoff radius: $d_{\max} = 11500.0$ world units ($d_{\max} - d_{\min} = 10000.0$, `0x6C5D70` = $10^{-4}$).
-//!   - Normalized PS2 sound driver attenuation gain curve (`SH2-61`):
-//!     $$\text{gain}(v) = \min\left(1.0,\ \frac{25.5}{255.0 \cdot (1.0 - v)}\right)$$
+//! - **`SeCallPosDistanceF` (`SLUS_202.28` `0x00192bc0`) & `SeCallPosDistance` (`0x00192a70` / `sh2pc.exe` `0x005155e0`)**:
+//!   - Inner full-volume radius: $d_{\min} = 1500.0$ mm (`0x00192bc0` / `sh2pc` `0x006B4038`).
+//!   - Reciprocal attenuation span: $0.0001$ (`0x00192bc0` / `sh2pc` `0x006C5D70`), giving outer cutoff $d_{\max} = 11500.0$ mm.
+//!   - Dual-distance linear product combining camera-to-James distance $d_{\text{cam}}$ (`vcWork.cam_pos` `0x010e5b40`
+//!     vs `sh2jms + 0x20`) and source-to-James distance $d_{\text{src}}$:
+//!     $$\text{atten} = (1 - \text{clamp}((d_{\text{cam}} - 1500)\cdot 0.0001, 0, 1)) \cdot (1 - \text{clamp}((d_{\text{src}} - 1500)\cdot 0.0001, 0, 1))$$
+//!   - Byte attenuation passed to `shSdCall`: `(int)(255.0 - base_volume * atten * 255.0)` (`0` = loudest, `255` = silent).
+//! - **`SeCallPosDirection` (`SLUS_202.28` `0x00192990` / `sh2pc.exe` `0x00515e60`)**:
+//!   - Transforms `[pos.x, pos.y, pos.z, 1.0]` by `VbWvsMatrix` (`0x010e59d0` / `sh2pc` `0x01f80e00`).
+//!   - Offsets camera-space X by `-750.0` mm (`0x00192990` / `sh2pc` `0x006a8478`), zeroes Y, normalizes XZ,
+//!     and outputs `(int)(sign(-x) * (70.0 - z * 70.0))` (`±70°` at left/right, `0°` ahead, `±140°` behind).
+//!   - **Prototype vs. Retail PC**: Both `SLUS_202.28` and `sh2pc.exe` use identical equations and constants for
+//!     `SeCallPosDistance`, `SeCallPosDistanceF`, and `SeCallPosDirection`.
 //! - **SH2:EE Patches**:
 //!   - `Patches/PlayWavSound.cpp`: Standalone `.wav` cues in `sh2e/sound/extra/` (`g_start.wav`, `save_sound.wav`,
 //!     `flashlight_on.wav`, `flashlight_off.wav`).
 //!   - `Patches/ChainsawSoundFix.cpp`: Chainsaw idle loop (`0x1642` -> `sddata[352]`) skips initial rev transient on loop.
 
-use glam::Vec3;
+use glam::{Mat4, Vec3, Vec4};
 use sh2_core::SurfaceMaterial;
 
 /// Total number of RIFF WAVE entries inside retail `data/sound/sddata.bin` and SH2:EE `sh2e/sound/sddata.bin`.
 pub const SDDATA_ENTRY_COUNT: usize = 417;
 
-/// Inner 3D distance radius (in world units, mm) within which positional sound effects play at unattenuated full volume (`0x5155E0` / `0x6B4038`).
+/// Inner 3D distance radius (in world units, mm) within which positional sound effects play at unattenuated full volume
+/// (`SLUS_202.28` `SeCallPosDistanceF` `0x00192bc0` / `sh2pc.exe` `0x005155e0` `0x006B4038`).
 pub const SFX_MIN_DISTANCE: f32 = 1500.0;
 
-/// Outer 3D distance cutoff radius (in world units, mm) beyond which positional sound effects attenuate to silence (`0x5155E0`).
+/// Outer 3D distance cutoff radius (in world units, mm) beyond which positional sound effects attenuate to silence
+/// (`1500.0 + 1.0 / 0.0001 = 11500.0`, `SeCallPosDistanceF` `0x00192bc0`).
 pub const SFX_MAX_DISTANCE: f32 = 11500.0;
 
-/// Distance attenuation span ($d_{\max} - d_{\min} = 10000.0$ world units, reciprocal `0.0001` at `0x6C5D70`).
+/// Distance attenuation span ($d_{\max} - d_{\min} = 10000.0$ mm, derived from reciprocal `0.0001` at `0x00192bc0` / `0x006C5D70`).
 pub const SFX_DISTANCE_SPAN: f32 = SFX_MAX_DISTANCE - SFX_MIN_DISTANCE;
 
-/// Evaluates the authentic PS2/PC sound driver attenuation gain formula (`SH2-61`):
-///
-/// $$\text{gain}(v) = \min\left(1.0,\ \frac{25.5}{255.0 \cdot (1.0 - v)}\right)$$
-///
-/// where $v \in [0.0, 1.0]$ is the normalized proximity/volume parameter ($v = 0.0$ at maximum distance cutoff,
-/// $v \ge 0.9$ within the inner full-volume zone where $\text{gain} = 1.0$).
-///
-/// Note: At $v = 0.0$, the raw hyperbola evaluates to $25.5 / 255.0 = 0.10$. For callers that require
-/// complete silence at the outer boundary $v \le 0.0$, see [`compute_se_call_pos_distance_f`].
-#[inline]
-pub fn compute_ps2_sfx_attenuation_gain(v: f32) -> f32 {
-    let v_clamped = v.clamp(0.0, 1.0);
-    let denom = 255.0 * (1.0 - v_clamped);
-    if denom <= 25.5 {
-        1.0
-    } else {
-        (25.5 / denom).clamp(0.0, 1.0)
-    }
-}
+/// Exact reciprocal attenuation span (`0.0001`, `SLUS_202.28` `0x00192bc0` / `sh2pc.exe` `0x006C5D70`).
+pub const SFX_DISTANCE_INV_SPAN: f32 = 0.0001;
 
-/// Computes the normalized proximity parameter $v \in [0.0, 1.0]$ from 3D world-space distance $d$
-/// using `SeCallPosDistanceF` (`0x5155E0`) inner/outer radii ($d_{\min} = 1500.0$, $d_{\max} = 11500.0$):
-///
-/// $$v(d) = 1.0 - \text{clamp}\left(\frac{d - d_{\min}}{d_{\max} - d_{\min}},\ 0.0,\ 1.0\right)$$
+/// Camera-space X offset in mm subtracted in `SeCallPosDirection` (`SLUS_202.28` `0x00192990` / `sh2pc.exe` `0x00515e60` `0x006a8478`).
+pub const SE_DIR_CAMERA_X_OFFSET_MM: f32 = 750.0;
+
+/// Pan angle scale in degrees (`70.0°`, `SLUS_202.28` `SeCallPosDirection` `0x00192990` / `sh2pc.exe` `0x0069f3d0`).
+pub const SE_DIR_PAN_SCALE_DEG: f32 = 70.0;
+
+/// Computes the normalized proximity factor $1.0 - \text{clamp}((d - d_{\min}) / (d_{\max} - d_{\min}), 0, 1)$
+/// for a single distance in mm (`SeCallPosDistanceF` `0x00192bc0` / `sh2pc.exe` `0x005155e0`).
 #[inline]
 pub fn compute_sfx_distance_param_v(distance: f32, min_dist: f32, max_dist: f32) -> f32 {
     let span = (max_dist - min_dist).max(1.0);
@@ -63,91 +61,189 @@ pub fn compute_sfx_distance_param_v(distance: f32, min_dist: f32, max_dist: f32)
     1.0 - t
 }
 
-/// Complete 3D positional SFX evaluation result (`SeCallPosDistanceF` at `0x5155E0` & `0x517D10`).
+/// Evaluates `SeCallPosDistanceF` (`SLUS_202.28` `0x00192bc0`) exact dual-distance linear product:
+///
+/// $$\text{atten} = \left(1 - \text{clamp}((d_{\text{cam}} - 1500)\cdot 0.0001, 0, 1)\right)
+///                \cdot \left(1 - \text{clamp}((d_{\text{src}} - 1500)\cdot 0.0001, 0, 1)\right)$$
+///
+/// where $d_{\text{cam}} = \|\text{camera\_pos} - \text{player\_pos}\|$ (`vcWork.cam_pos` `0x010e5b40` vs `sh2jms + 0x20`)
+/// and $d_{\text{src}} = \|\text{source\_pos} - \text{player\_pos}\|$ in world mm.
+#[inline]
+pub fn se_call_pos_distance_f(camera_pos: Vec3, player_pos: Vec3, source_pos: Vec3) -> f32 {
+    if !camera_pos.is_finite() || !player_pos.is_finite() || !source_pos.is_finite() {
+        return 0.0;
+    }
+    let d_cam = (camera_pos - player_pos).length();
+    let d_src = (source_pos - player_pos).length();
+    let f_cam = ((d_cam - SFX_MIN_DISTANCE) * SFX_DISTANCE_INV_SPAN).clamp(0.0, 1.0);
+    let f_src = ((d_src - SFX_MIN_DISTANCE) * SFX_DISTANCE_INV_SPAN).clamp(0.0, 1.0);
+    (1.0 - f_cam) * (1.0 - f_src)
+}
+
+/// Evaluates `SeCallPosDistance` (`SLUS_202.28` `0x00192a70` / `sh2pc.exe` `0x005155e0`),
+/// returning the `0..=255` driver attenuation byte (`0` = loudest, `255` = silent):
+/// `(int)(255.0 - base_volume * se_call_pos_distance_f(...) * 255.0)`.
+#[inline]
+pub fn se_call_pos_distance(
+    base_volume: f32,
+    camera_pos: Vec3,
+    player_pos: Vec3,
+    source_pos: Vec3,
+) -> u8 {
+    if !base_volume.is_finite() {
+        return 255;
+    }
+    let atten = se_call_pos_distance_f(camera_pos, player_pos, source_pos);
+    let raw = 255.0 - base_volume.clamp(0.0, 1.0) * atten * 255.0;
+    raw.clamp(0.0, 255.0) as u8
+}
+
+/// Evaluates `SeCallPosDirection` (`SLUS_202.28` `0x00192990` / `sh2pc.exe` `0x00515e60`):
+/// 1. Transforms `[source_pos.x, source_pos.y, source_pos.z, 1.0]` by `wvs_matrix` (`VbWvsMatrix` `0x010e59d0`).
+/// 2. Subtracts `750.0` mm from camera-space `x` and zeroes `y`.
+/// 3. Normalizes `(x, 0, z)` (`FUN_00515d00` in `sh2pc.exe`, VU0 `vrsqrt` in `SLUS_202.28`).
+/// 4. Returns `(int)(sign(-x) * (70.0 - z * 70.0))` in degrees (`0` ahead, `-70` right, `+70` left, `±140` behind).
+#[inline]
+pub fn se_call_pos_direction(wvs_matrix: Mat4, source_pos: Vec3) -> i32 {
+    if !source_pos.is_finite() {
+        return 0;
+    }
+    let view = wvs_matrix * Vec4::new(source_pos.x, source_pos.y, source_pos.z, 1.0);
+    let vx = view.x - SE_DIR_CAMERA_X_OFFSET_MM;
+    let vz = view.z;
+    let len_sq = vx * vx + vz * vz;
+    let (nx, nz) = if len_sq > 0.0 {
+        let inv = len_sq.sqrt().recip();
+        if inv.is_finite() && inv <= f32::MAX {
+            (vx * inv, vz * inv)
+        } else {
+            (vx, vz)
+        }
+    } else {
+        (vx, vz)
+    };
+    let neg_x = -nx;
+    let sign = if neg_x > 0.0 {
+        1.0
+    } else if neg_x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    };
+    (sign * (SE_DIR_PAN_SCALE_DEG - nz * SE_DIR_PAN_SCALE_DEG)) as i32
+}
+
+/// Builds a PS2 `VbWvsMatrix` (`view/vb_main.c` `0x010e59d0`: `+X` right, `+Y` down, `+Z` forward)
+/// for a camera at `camera_pos` facing horizontal `yaw` radians (`0.0` = `+Z`, `+pi/2` = `+X`).
+#[inline]
+pub fn build_ps2_wvs_matrix(camera_pos: Vec3, yaw: f32) -> Mat4 {
+    let (sin_y, cos_y) = yaw.sin_cos();
+    // Matches `vb_main.c` lines 267-290:
+    // x_axis = (cos_y, 0, -sin_y), y_axis = (0, 1, 0), z_axis = (sin_y, 0, cos_y)
+    let x_axis = Vec3::new(cos_y, 0.0, -sin_y);
+    let y_axis = Vec3::Y;
+    let z_axis = Vec3::new(sin_y, 0.0, cos_y);
+    let tx = -x_axis.dot(camera_pos);
+    let ty = -y_axis.dot(camera_pos);
+    let tz = -z_axis.dot(camera_pos);
+    Mat4::from_cols(
+        Vec4::new(x_axis.x, y_axis.x, z_axis.x, 0.0),
+        Vec4::new(x_axis.y, y_axis.y, z_axis.y, 0.0),
+        Vec4::new(x_axis.z, y_axis.z, z_axis.z, 0.0),
+        Vec4::new(tx, ty, tz, 1.0),
+    )
+}
+
+/// Complete 3D positional SFX evaluation result (`SeCallPosDistanceF` `0x00192bc0` & `SeCallPosDirection` `0x00192990`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SfxSpatialEval {
-    /// 3D Euclidean distance between listener and emitter in world units (mm).
+    /// 3D Euclidean distance between player (`sh2jms`) and emitter in world units (mm).
     pub distance: f32,
-    /// Normalized proximity parameter $v \in [0.0, 1.0]$ ($1.0$ at $\le 1500$, $0.0$ at $\ge 11500$).
+    /// 3D Euclidean distance between active camera (`vcWork.cam_pos`) and player in world units (mm).
+    pub camera_distance: f32,
+    /// Dual-distance linear attenuation factor `(1 - f_cam) * (1 - f_src) * base_volume` in `[0.0, 1.0]`.
     pub proximity_v: f32,
-    /// Normalized PS2 hyperbolic attenuation curve value `compute_ps2_sfx_attenuation_gain(v)`.
-    pub ps2_curve_gain: f32,
-    /// Final effective linear amplitude gain (`0.0..=1.0`, reaching `0.0` outside `SFX_MAX_DISTANCE`).
+    /// Final effective linear amplitude gain (`0.0..=1.0`), identical to `proximity_v`.
     pub effective_gain: f32,
     /// Integer byte attenuation `0..=255` passed to `shSdCall` (`0` = loudest, `255` = silent).
     pub driver_attenuation_byte: u8,
-    /// Stereo pan in `[-1.0, 1.0]` (`-1.0` = full left, `0.0` = center, `+1.0` = full right).
+    /// Raw `SeCallPosDirection` (`0x00192990`) pan angle in degrees (`0` ahead, `-70` right, `+70` left, `±140` behind).
+    pub direction_deg: i32,
+    /// Normalized stereo pan in `[-1.0, 1.0]` (`-1.0` = full left, `0.0` = center, `+1.0` = full right),
+    /// derived from `(-direction_deg as f32 / 70.0).clamp(-1.0, 1.0)`.
     pub stereo_pan: f32,
 }
 
-/// Evaluates `SeCallPosDistanceF` (`SLUS_202.28` `0x00192bc0` / `sh2pc.exe` `0x5155E0`) and
-/// stereo listener panning (`SeCallPosDirection` `0x00192990` / `0x517D10`) for a 3D sound emitter.
+/// Evaluates full dual-distance `SeCallPosDistanceF` (`SLUS_202.28` `0x00192bc0` / `sh2pc.exe` `0x005155e0`)
+/// and `SeCallPosDirection` (`0x00192990` / `0x00515e60`) using separate camera and player positions plus `VbWvsMatrix`.
+pub fn compute_se_call_pos_spatial(
+    camera_pos: Vec3,
+    player_pos: Vec3,
+    wvs_matrix: Mat4,
+    source_pos: Vec3,
+    base_volume: f32,
+) -> SfxSpatialEval {
+    if !camera_pos.is_finite()
+        || !player_pos.is_finite()
+        || !source_pos.is_finite()
+        || !base_volume.is_finite()
+    {
+        return SfxSpatialEval {
+            distance: SFX_MAX_DISTANCE,
+            camera_distance: SFX_MAX_DISTANCE,
+            proximity_v: 0.0,
+            effective_gain: 0.0,
+            driver_attenuation_byte: 255,
+            direction_deg: 0,
+            stereo_pan: 0.0,
+        };
+    }
+
+    let distance = (source_pos - player_pos).length();
+    let camera_distance = (camera_pos - player_pos).length();
+    let atten = se_call_pos_distance_f(camera_pos, player_pos, source_pos);
+    let clamped_vol = base_volume.clamp(0.0, 1.0);
+    let proximity_v = (atten * clamped_vol).clamp(0.0, 1.0);
+    let driver_attenuation_byte =
+        se_call_pos_distance(clamped_vol, camera_pos, player_pos, source_pos);
+    let direction_deg = se_call_pos_direction(wvs_matrix, source_pos);
+    // In `SeCallPosDirection`, negative degrees = right ear (+X), positive degrees = left ear (-X).
+    let stereo_pan = (-(direction_deg as f32) / SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
+
+    SfxSpatialEval {
+        distance,
+        camera_distance,
+        proximity_v,
+        effective_gain: proximity_v,
+        driver_attenuation_byte,
+        direction_deg,
+        stereo_pan,
+    }
+}
+
+/// Evaluates `SeCallPosDistanceF` (`0x00192bc0` / `0x005155e0`) and `SeCallPosDirection` (`0x00192990` / `0x00515e60`)
+/// when the listener camera and player share a position (`d_cam = 0`), constructing `VbWvsMatrix` from `listener_yaw`.
 ///
-/// - `listener_pos`: Player / camera position in world space (`+Y` downward, `500.0` units = `1.0 m`).
-/// - `listener_yaw`: Active camera / listener facing yaw in radians (`0.0` = $+Z$, $+\pi/2$ = $+X$).
-/// - `source_pos`: 3D world position of the sound effect emitter.
-/// - `base_volume`: Caller volume multiplier in `[0.0, 1.0]`.
+/// For separate camera (`vcWork.cam_pos`) and player (`sh2jms`) positions, call [`compute_se_call_pos_spatial`].
 pub fn compute_se_call_pos_distance_f(
     listener_pos: Vec3,
     listener_yaw: f32,
     source_pos: Vec3,
     base_volume: f32,
 ) -> SfxSpatialEval {
-    if !listener_pos.is_finite()
-        || !source_pos.is_finite()
-        || !listener_yaw.is_finite()
-        || !base_volume.is_finite()
-    {
+    if !listener_yaw.is_finite() {
         return SfxSpatialEval {
             distance: SFX_MAX_DISTANCE,
+            camera_distance: SFX_MAX_DISTANCE,
             proximity_v: 0.0,
-            ps2_curve_gain: 0.1,
             effective_gain: 0.0,
             driver_attenuation_byte: 255,
+            direction_deg: 0,
             stereo_pan: 0.0,
         };
     }
-
-    let delta = source_pos - listener_pos;
-    let distance = delta.length();
-    let v_dist = compute_sfx_distance_param_v(distance, SFX_MIN_DISTANCE, SFX_MAX_DISTANCE);
-    let v = (v_dist * base_volume.clamp(0.0, 1.0)).clamp(0.0, 1.0);
-
-    // Raw `0x5155E0` byte attenuation: `att = 255.0 * (1.0 - v)`
-    let att_f = (255.0 * (1.0 - v)).clamp(0.0, 255.0);
-    let driver_attenuation_byte = att_f.round() as u8;
-
-    let ps2_curve_gain = compute_ps2_sfx_attenuation_gain(v);
-    let effective_gain = if distance >= SFX_MAX_DISTANCE || base_volume <= 0.0 {
-        0.0
-    } else {
-        (ps2_curve_gain * v).clamp(0.0, 1.0)
-    };
-
-    // Compute horizontal azimuth projection onto screen-right / right-ear axis (`SeCallPosDirection` `0x00192990`):
-    // In SH2 right-handed `+Y`-down space, `fwd = (sin(yaw), 0, cos(yaw))` and `world_up = (0, -1, 0)`,
-    // so `right = fwd × world_up = (cos(yaw), 0, -sin(yaw))` (`+X` when facing `+Z`).
-    let horiz_len_sq = delta.x * delta.x + delta.z * delta.z;
-    let stereo_pan = if horiz_len_sq > 1.0 {
-        let inv_len = horiz_len_sq.sqrt().recip();
-        let dir_x = delta.x * inv_len;
-        let dir_z = delta.z * inv_len;
-        let (sin_y, cos_y) = listener_yaw.sin_cos();
-        let right_x = cos_y;
-        let right_z = -sin_y;
-        (dir_x * right_x + dir_z * right_z).clamp(-1.0, 1.0)
-    } else {
-        0.0
-    };
-
-    SfxSpatialEval {
-        distance,
-        proximity_v: v,
-        ps2_curve_gain,
-        effective_gain,
-        driver_attenuation_byte,
-        stereo_pan,
-    }
+    let wvs = build_ps2_wvs_matrix(listener_pos, listener_yaw);
+    compute_se_call_pos_spatial(listener_pos, listener_pos, wvs, source_pos, base_volume)
 }
 
 /// Returns the pair of `(left_step_sddata_idx, right_step_sddata_idx)` in `sddata.bin` (`0..417`)

@@ -136,12 +136,16 @@ fn test_standalone_apply_tick_multi_tick_convergence_and_prev_snapshot_advanceme
     );
     assert!(cam.interpolated_view_matrix(0.5).is_finite());
 
-    // Converge to exact target shot over standalone ticks and retain target FOV after 30 ticks.
+    // Converge to target shot over standalone ticks and retain target FOV after 30 ticks.
+    // Authentic `vcRenewalCamData` (`SLUS_202.28` `0x0019c8d4..0x0019c908`, `sh2pc.exe` `0x0051c100`)
+    // scales XZ by `/ 500.0` with `dist_ofs = 0.1` -> `50.0` mm XZ deadband; Y converges to `< 1.0` mm.
     for _ in 0..180 {
         sc.apply_tick(&mut cam, 1.0 / 60.0);
     }
-    assert!((cam.curr_snapshot.eye - target_shot.eye_mm).length() < 1.0);
-    assert!((cam.curr_snapshot.target - target_shot.watch_mm).length() < 1.0);
+    let eye_err = cam.curr_snapshot.eye - target_shot.eye_mm;
+    assert!(eye_err.y.abs() < 1.0);
+    assert!(eye_err.x.hypot(eye_err.z) <= 51.0);
+    assert!((cam.curr_snapshot.target - target_shot.watch_mm).length() < 60.0);
     let expected_fov = fov_y_from_ps2_projection(600.0);
     assert!((cam.curr_snapshot.fov_y - expected_fov).abs() < 1e-4);
 

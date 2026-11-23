@@ -1,27 +1,43 @@
-//! Dynamic map companion & 1:1 PS2 Fullscreen Paper Map (`Event/chizu.c`).
+//! Dynamic map companion & 1:1 PS2 / PC Fullscreen Paper Map (`Event/chizu.c`).
 //!
-//! Supports James's maps (`1..=35`), Maria's Baldwin Mansion map (`36`), `ChizuPossessionCheck`
-//! (`0x001c7890`), `ChizuConnectCheck` (`0x001c8ce0`), `ChizuControl` (`0x001c8360`),
-//! `ChizuMarkerDraw` (`0x001c7e90`), `MapTranscription.cpp` (`0x0049c644`) 60 FPS red-pen
-//! transcription animations, and SH2:EE `SetBlackPillarBoxes` (`Fix2D`) widescreen/ultrawide
-//! (`16:9` / `21:9` / `32:9`) map decal & green player marker boundary clipping (`SH2-77`).
+//! Supports James's maps (`1..=35`), Maria's Baldwin Mansion map (`36`), `ChizuSelect`
+//! (`0x001c7040` / `0x0049ac70`), `ChizuPossessionCheck` (`0x001c7890` / `0x0049b240`),
+//! `ChizuConnectCheck` (`0x001c8ce0` / `0x0049b7c0`), `ChizuConnectArrowDraw` (`0x001c88f0`),
+//! `ChizuControl` (`0x001c8360`), dual-layer `ChizuMarkerDraw` (`0x001c7e90`),
+//! `ChizuCurrentPositionCheck`/`Draw` (`0x001c9550`/`0x001c9000`), `MapTranscription.cpp`
+//! (`0x0049c644`) 60 FPS red-pen transcription animations, and SH2:EE `SetBlackPillarBoxes`
+//! (`Fix2D`) widescreen/ultrawide (`16:9` / `21:9` / `32:9`) boundary clipping (`SH2-77`, `SH2-138`).
 
 pub mod markers;
+pub mod markers_data;
+pub mod position;
+pub mod position_data;
 pub mod render;
 pub mod tables;
 pub mod viewer;
 
-pub use markers::{active_markers_for_map, ChizuDecodedMarker, ChizuPackedMarker, CHIZU_MARKERS};
-pub use render::draw_paper_map;
+pub use markers::{
+    active_markers_for_map, chizu_marker_layers, ChizuDecodedMarker, ChizuPackedMarker,
+    CHIZU_MARKERS,
+};
+pub use position::{
+    chizu_arrow_yaw_offset, chizu_current_position_check, chizu_select,
+    chizu_should_draw_player_arrow, stage_to_default_room_id, ChzCrtBlockEntry, CHZ_CRT_BLOCK,
+    CHZ_CRT_BLOCK_COUNT,
+};
+pub use render::{draw_paper_map, PaperMapPlayerState, PaperMapTextures};
 pub use tables::{
-    chizu_can_read_map, chizu_connect_neighbor, chizu_possession_check, chizu_world_to_sheet_norm,
-    map_spec, MapDirection, MapReadCheck, MapSheetSpec, CHIZU_CONNECT, CHIZU_WORLD_SCALE_X,
-    CHIZU_WORLD_SCALE_Z, MAP_COUNT, MAP_SPECS,
+    chizu_can_read_map, chizu_connect_check, chizu_connect_neighbor, chizu_possession_check,
+    chizu_world_to_sheet_norm, map_spec, MapDirection, MapReadCheck, MapSheetSpec,
+    CHIZU_ARROW_DEF_POS, CHIZU_ARROW_TEX_UVS, CHIZU_CONNECT, CHIZU_CURSOR_TEX_PATH,
+    CHIZU_PAPER_SE_ID, CHIZU_PLAYER_ARROW_UVS, CHIZU_WORLD_SCALE_X, CHIZU_WORLD_SCALE_Z, MAP_COUNT,
+    MAP_SPECS,
 };
 pub use viewer::{
-    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer,
-    TRANSCRIBE_FADE_TARGET_ALPHA, TRANSCRIBE_WAIT_AFTER_FADE_TICKS,
-    TRANSCRIBE_WAIT_BEFORE_PAN_TICKS, TRANSCRIBE_WAIT_INIT_TICKS, TRANSCRIBE_WAIT_ZOOM_CHECK_TICKS,
+    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapViewer, CHIZU_CENTER_LIMIT,
+    CHIZU_PAN_SPEED_X, CHIZU_PAN_SPEED_Y, CHIZU_ZOOM_RATE, TRANSCRIBE_FADE_TARGET_ALPHA,
+    TRANSCRIBE_WAIT_AFTER_FADE_TICKS, TRANSCRIBE_WAIT_BEFORE_PAN_TICKS, TRANSCRIBE_WAIT_INIT_TICKS,
+    TRANSCRIBE_WAIT_ZOOM_CHECK_TICKS,
 };
 
 use sh2_core::{ClippedQuadUv, PillarboxMaskRect, PillarboxViewportLayout, AUTHORED_4X3_ASPECT};

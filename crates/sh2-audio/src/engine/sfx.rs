@@ -85,11 +85,12 @@ impl AudioEngine {
             .as_mut()
             .ok_or_else(|| AudioError::InitError("No spatial scene".into()))?;
 
-        let spread = self.current_acoustics.spatial_spread.clamp(0.5, 1.5);
+        // Exact `SeCallPosDistanceF` (`0x00192bc0` / `sh2pc 0x005155e0`) radii scaled by 0.01 (1500..11500 mm -> 15..115).
+        // Do NOT scale by `spatial_spread` (which was a synthetic heuristic absent from PS2/PC).
         let emitter_settings = EmitterSettings::new()
             .distances(EmitterDistances {
-                min_distance: 15.0 * spread,
-                max_distance: 115.0 * spread,
+                min_distance: crate::sfx_bank::SFX_MIN_DISTANCE * 0.01,
+                max_distance: crate::sfx_bank::SFX_MAX_DISTANCE * 0.01,
             })
             .attenuation_function(Some(Easing::Linear))
             .enable_spatialization(true)

@@ -52,13 +52,118 @@ pub const LOW_HEALTH_RATIO_THRESHOLD: f32 = 0.20;
 /// value = priority (`0` lowest .. `4` highest).
 pub const FADE_PRIO: [i32; 5] = [0, 2, 3, 1, 4];
 
-/// Fade duration table in seconds (`track_fade_time[5]` at `0x8A7764` in `sh2pc.exe`):
+/// Fade duration table in seconds (`track_fade_time[5]` at `0x002b8860` in `SLUS_202.28`, `0x8A7764` in `sh2pc.exe`):
 /// - Type `0`: `0.0s` (inactive)
 /// - Type `1`: `3.0s` (normal fade)
 /// - Type `2`: `1.5s` (fast fade)
 /// - Type `3`: `6.0s` (slow fade)
 /// - Type `4`: `0.0s` (instant step)
 pub const FADE_TIME_SECS: [f32; 5] = [0.0, 3.0, 1.5, 6.0, 0.0];
+
+/// Normal gameplay BGM global fade target (`SeBgmManager` `SLUS_202.28` `0x00194300` / `sh2pc.exe` `0x00516430`).
+pub const BGM_DUCK_NORMAL: f32 = 1.0;
+
+/// Non-exempt drama demo / cutscene BGM global fade target (`SeBgmManager` `0x00194300` / `0x00516430`).
+pub const BGM_DUCK_DEMO: f32 = 0.7;
+
+/// Pause / Inventory / Map / Memo / Options subscreen (`game_mode` `5..=9`) BGM global fade target
+/// (`SeBgmManager` `0x00194300` / `0x00516430`).
+pub const BGM_DUCK_PAUSED: f32 = 0.5;
+
+/// Ramp divisor for `global_bgm_fade` (`dt / 2.0`, i.e., `0.5/s` in both `SLUS_202.28` `0x00194300` and `sh2pc.exe` `0x00516430`).
+pub const BGM_DUCK_RAMP_DIVISOR: f32 = 2.0;
+
+/// Game/demo state controlling `SeBgmManager` (`0x00194300`) global BGM ducking (`bgm.vol` / `_DAT_010e5890`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BgmDuckingMode {
+    /// Normal gameplay or exempt drama demos: target `1.0`.
+    #[default]
+    Normal,
+    /// Non-exempt drama demo / cutscene: target `0.7`.
+    DramaDemo,
+    /// Pause / Inventory / Map / Memo / Options subscreen (`game_mode` `5..=9`): target `0.5`.
+    PausedOrMenu,
+}
+
+impl BgmDuckingMode {
+    /// Target `global_bgm_fade` scalar (`0.5`, `0.7`, or `1.0`, `SeBgmManager` `0x00194300` / `0x00516430`).
+    #[inline]
+    pub const fn target_volume(self) -> f32 {
+        match self {
+            Self::Normal => BGM_DUCK_NORMAL,
+            Self::DramaDemo => BGM_DUCK_DEMO,
+            Self::PausedOrMenu => BGM_DUCK_PAUSED,
+        }
+    }
+}
+
+/// Returns `true` if `drama_demo_id` is exempt from `0.7` BGM ducking in retail `sh2pc.exe` (`0x00516430`).
+///
+/// Prototype vs. Retail drift: `SLUS_202.28` (`0x00194300`) only exempted `{0, 1, 2, 0x0e}`;
+/// retail `sh2pc.exe` (`0x00516430`) expanded the exemption list to these 27 demo IDs.
+#[inline]
+pub const fn is_bgm_demo_duck_exempt(drama_demo_id: i32) -> bool {
+    matches!(
+        drama_demo_id,
+        0 | 1
+            | 2
+            | 3
+            | 0x0e
+            | 0x10
+            | 0x12
+            | 0x15
+            | 0x16
+            | 0x26
+            | 0x27
+            | 0x28
+            | 0x29
+            | 0x31
+            | 0x32
+            | 0x35
+            | 0x36
+            | 0x37
+            | 0x38
+            | 0x39
+            | 0x3a
+            | 0x3b
+            | 0x3c
+            | 0x3d
+            | 0x3e
+            | 0x50
+            | 0x61
+    )
+}
+
+/// Resolves [`BgmDuckingMode`] from `game_mode` (`_DAT_010f0888` / `DAT_00932178`) and `DramaDemoNumber()`
+/// (`SeBgmManager` `SLUS_202.28` `0x00194300` / `sh2pc.exe` `0x00516430`).
+#[inline]
+pub const fn bgm_ducking_mode_from_game_state(
+    game_mode: i32,
+    drama_demo_id: i32,
+) -> BgmDuckingMode {
+    if game_mode >= 5 && game_mode <= 9 {
+        BgmDuckingMode::PausedOrMenu
+    } else if is_bgm_demo_duck_exempt(drama_demo_id) {
+        BgmDuckingMode::Normal
+    } else {
+        BgmDuckingMode::DramaDemo
+    }
+}
+
+/// Advances `global_bgm_fade` (`_DAT_010e5890` / `_DAT_01f80bd4`) toward `mode.target_volume()` at `dt / 2.0`
+/// (`SeBgmManager` `SLUS_202.28` `0x00194300` / `sh2pc.exe` `0x00516430`).
+#[inline]
+pub fn step_global_bgm_fade(current: f32, mode: BgmDuckingMode, dt_secs: f32) -> f32 {
+    let target = mode.target_volume();
+    let step = dt_secs.max(0.0) / BGM_DUCK_RAMP_DIVISOR;
+    if target < current {
+        (current - step).max(target)
+    } else if current < target {
+        (current + step).min(target)
+    } else {
+        current
+    }
+}
 
 /// Situation preset table for `situation_page` `6..=15` (`0x8A9EB8` in `sh2pc.exe`).
 /// Each entry specifies `(fade_in[7], fade_out[7])`.
@@ -769,8 +874,10 @@ pub struct BgmManager {
     pub loaded_layer_count: usize,
     /// Per-file master volume scalar (`0x8A73B4`, `0.25..=0.90`, default `0.40`).
     pub file_master_volume: f32,
-    /// Global BGM ducking/fade scalar (`bgm.vol` at `0x1F837D4`, `0.0..=1.0`, default `1.0`).
+    /// Global BGM ducking/fade scalar (`bgm.vol` at `0x010e5890` / `0x1F837D4`, `0.5..=1.0`, default `1.0`).
     pub global_bgm_fade: f32,
+    /// Active ducking mode (`Normal` `1.0`, `DramaDemo` `0.7`, `PausedOrMenu` `0.5`, `SeBgmManager` `0x00194300`).
+    pub ducking_mode: BgmDuckingMode,
     /// Current situation page (`0` = Calm, `2` = Low Health, `3` = Enemy Near, `4..=15` = Event).
     pub situation_page: u32,
     /// Last `_SOUND_DATA` spatial evaluation snapshot.
@@ -801,7 +908,8 @@ impl BgmManager {
             loaded_sample_rate: 0,
             loaded_layer_count: 0,
             file_master_volume: 0.40,
-            global_bgm_fade: 1.0,
+            global_bgm_fade: BGM_DUCK_NORMAL,
+            ducking_mode: BgmDuckingMode::Normal,
             situation_page: 0,
             last_area_eval: SoundAreaEvaluation {
                 matched_box_count: 0,
@@ -833,12 +941,21 @@ impl BgmManager {
         Ok(())
     }
 
-    /// Requests a transition to BGM `page` (`0..=47`), reproducing `FUN_005155e0` (`0x5155E0` in `sh2pc.exe`):
+    /// Sets the active BGM global ducking mode (`SeBgmManager` `0x00194300` / `0x00516430`).
+    #[inline]
+    pub fn set_ducking_mode(&mut self, mode: BgmDuckingMode) {
+        self.ducking_mode = mode;
+    }
+
+    /// Requests a transition to BGM `page` (`0..=47`), reproducing `SeBgmCall`
+    /// (`SLUS_202.28` `0x00194220` / `sh2pc.exe` `0x00515990`):
     /// - Looks up `(load_id, start_id)` in `BGM_PAGES[page]`.
     /// - If `start_id != current_play_id`:
     ///   - Sets `next_play_id = start_id` and `pending_load_id = load_id`.
-    ///   - Transitions all active tracks (`status != Off`) to `FadingOut` (`TR_OUT = 3`) with
-    ///     `fade_out = 1` (`3.0` seconds), unless already fading out with type `3` (`6.0s`).
+    ///   - For every active track (`status != Off`):
+    ///     - If already `FadingOut`, ONLY accelerate slow `6.0s` (`fade_out == 3`) to `3.0s` (`1`);
+    ///       never overwrite fast `1.5s` (`2`) or instant (`4`) fade-outs.
+    ///     - Otherwise (`FadingIn` or `On`), transition to `FadingOut` with `fade_out = 1` (`3.0s`).
     pub fn request_page(&mut self, page: u32) {
         let clamped_page = page.min(47);
         self.target_page = clamped_page;
@@ -849,12 +966,17 @@ impl BgmManager {
             self.pending_load_id = entry.load_id;
 
             for track in &mut self.tracks {
-                if track.status != BgmTrackStatus::Off {
-                    if track.status == BgmTrackStatus::FadingOut && track.fade_out == 3 {
-                        continue;
+                match track.status {
+                    BgmTrackStatus::Off => {}
+                    BgmTrackStatus::FadingOut => {
+                        if track.fade_out == 3 {
+                            track.fade_out = 1;
+                        }
                     }
-                    track.status = BgmTrackStatus::FadingOut;
-                    track.fade_out = 1; // 3.0s fade-out before loading next page
+                    BgmTrackStatus::FadingIn | BgmTrackStatus::On => {
+                        track.status = BgmTrackStatus::FadingOut;
+                        track.fade_out = 1; // 3.0s fade-out before loading next page
+                    }
                 }
             }
         }
@@ -1008,8 +1130,10 @@ impl BgmManager {
             self.last_area_eval = eval;
         }
 
-        // 3. Step per-track volume ramps (`0x516402..0x51650B`)
+        // 3. Step `global_bgm_fade` pause/demo ducking ramp (`SeBgmManager` `0x00194300` / `0x00516430`)
+        //    and per-track volume ramps (`0x516402..0x51650B`).
         let dt = dt_secs.max(0.0);
+        self.global_bgm_fade = step_global_bgm_fade(self.global_bgm_fade, self.ducking_mode, dt);
         for (i, track) in self.tracks.iter_mut().enumerate() {
             match track.status {
                 BgmTrackStatus::FadingIn => {

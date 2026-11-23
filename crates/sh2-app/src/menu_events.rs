@@ -37,6 +37,7 @@ pub(crate) fn sync_audio_config(state: &mut AppState, cfg: &AppConfig) {
         audio.set_voice_volume(cfg.audio.dialogue_volume);
         audio.set_spatial_audio_mode(cfg.audio.spatial_audio_mode);
         audio.set_acoustic_occlusion_enabled(cfg.audio.enable_acoustic_occlusion);
+        audio.set_dynamic_room_acoustics_enabled(cfg.audio.enable_dynamic_room_acoustics);
     }
     state.fmv_viewer.enable_restored_cut_audio = cfg.audio.enable_restored_cut_audio;
     state.bgm_manager.event_flags.enable_restored_cut_audio = cfg.audio.enable_restored_cut_audio;
@@ -280,6 +281,9 @@ pub(crate) fn apply_pending_engine_config(state: &mut AppState) {
                     new_engine.set_voice_volume(cfg.audio.dialogue_volume);
                     new_engine.set_spatial_audio_mode(cfg.audio.spatial_audio_mode);
                     new_engine.set_acoustic_occlusion_enabled(cfg.audio.enable_acoustic_occlusion);
+                    new_engine.set_dynamic_room_acoustics_enabled(
+                        cfg.audio.enable_dynamic_room_acoustics,
+                    );
                     state.audio_engine = Some(new_engine);
                 }
                 Err(e) => {

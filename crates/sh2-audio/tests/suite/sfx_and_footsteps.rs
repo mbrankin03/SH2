@@ -6,34 +6,29 @@ use sh2_audio::*;
 
 #[test]
 fn test_sh2_61_ps2_sfx_attenuation_formula_and_spatial_eval() {
-    // 1. Verify exact PS2 attenuation formula: gain = min(1.0, 25.5 / (255.0 * (1.0 - v)))
-    assert!((compute_ps2_sfx_attenuation_gain(1.0) - 1.0).abs() < 1e-6);
-    assert!((compute_ps2_sfx_attenuation_gain(0.95) - 1.0).abs() < 1e-6);
-    assert!((compute_ps2_sfx_attenuation_gain(0.90) - 1.0).abs() < 1e-5);
-    // At v = 0.8: 25.5 / (255 * 0.2) = 25.5 / 51.0 = 0.5
-    assert!((compute_ps2_sfx_attenuation_gain(0.80) - 0.5).abs() < 1e-5);
-    // At v = 0.5: 25.5 / (255 * 0.5) = 0.2
-    assert!((compute_ps2_sfx_attenuation_gain(0.50) - 0.2).abs() < 1e-5);
-    // At v = 0.0: 25.5 / 255 = 0.1
-    assert!((compute_ps2_sfx_attenuation_gain(0.0) - 0.1).abs() < 1e-5);
-
-    // 2. Verify SeCallPosDistanceF (0x5155E0) inner (1500.0) and outer (11500.0) distance bounds
+    // 1. Verify exact `SeCallPosDistanceF` (`0x00192bc0` / `sh2pc 0x005155e0`) dual-distance linear product:
+    //    atten = (1 - clamp((d_cam - 1500) * 0.0001, 0, 1)) * (1 - clamp((d_src - 1500) * 0.0001, 0, 1))
     let listener = Vec3::ZERO;
     let eval_inner =
-        compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(0.0, 0.0, 1200.0), 1.0);
+        compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(750.0, 0.0, 1200.0), 1.0);
     assert!((eval_inner.proximity_v - 1.0).abs() < 1e-5);
     assert!((eval_inner.effective_gain - 1.0).abs() < 1e-5);
     assert_eq!(eval_inner.driver_attenuation_byte, 0);
+    // Emitter at X = +750.0 cancels the -750.0mm camera-space X offset -> exact 0 deg center pan
+    assert_eq!(eval_inner.direction_deg, 0);
     assert!(eval_inner.stereo_pan.abs() < 1e-5);
 
-    // Halfway at d = 6500.0 -> v = 0.5, pan to right ear (listener facing +Z, screen-right / right ear in RH +Y-down is +X)
+    // Halfway at d_src = 6500.0 (d_cam = 0.0) -> linear atten = 0.5, byte = 127, pan = -70 deg (+1.0 right)
     let eval_mid = compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(6500.0, 0.0, 0.0), 1.0);
     assert!((eval_mid.proximity_v - 0.5).abs() < 1e-5);
-    assert!((eval_mid.ps2_curve_gain - 0.2).abs() < 1e-5);
-    assert!((eval_mid.effective_gain - 0.1).abs() < 1e-5);
+    assert!((eval_mid.effective_gain - 0.5).abs() < 1e-5);
+    assert_eq!(eval_mid.driver_attenuation_byte, 127);
+    assert_eq!(eval_mid.direction_deg, -70);
     assert!((eval_mid.stereo_pan - 1.0).abs() < 1e-5);
+
     let eval_left =
         compute_se_call_pos_distance_f(listener, 0.0, Vec3::new(-6500.0, 0.0, 0.0), 1.0);
+    assert_eq!(eval_left.direction_deg, 70);
     assert!((eval_left.stereo_pan - (-1.0)).abs() < 1e-5);
 
     // Verify 1:1 view-space screen-right parity with `glam::Mat4::look_at_rh(..., Vec3::new(0.0, -1.0, 0.0))`
@@ -188,7 +183,7 @@ fn test_sh2_58_complete_audio_parity_dual_source_bgm_sfx_acoustics_and_looping()
     let eval_far =
         compute_se_call_pos_distance_f(Vec3::ZERO, 0.0, Vec3::new(0.0, 0.0, 12000.0), 1.0);
     assert!((eval_near.effective_gain - 1.0).abs() < 1e-5);
-    assert!(eval_mid.effective_gain > 0.05 && eval_mid.effective_gain < 0.5);
+    assert!((eval_mid.effective_gain - 0.5).abs() < 1e-5);
     assert_eq!(eval_far.effective_gain, 0.0);
 
     let prof_corridor = RoomAcousticsProfile::from_preset(EnvironmentalPreset::Corridor);

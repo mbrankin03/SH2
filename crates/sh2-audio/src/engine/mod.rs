@@ -40,7 +40,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 pub use crate::acoustics::{
-    evaluate_room_acoustics, evaluate_room_acoustics_for_pos, EnvironmentalPreset,
+    evaluate_room_acoustics_for_pos_gated, evaluate_room_acoustics_gated, EnvironmentalPreset,
     RoomAcousticsProfile,
 };
 pub use crate::dialogue::ActiveDialogue;
@@ -90,6 +90,7 @@ pub struct AudioEngine {
     pub(super) binaural_hrtf_flag: Arc<AtomicBool>,
     pub(super) acoustic_occlusion_enabled: bool,
     pub(super) occlusion_enabled_flag: Arc<AtomicBool>,
+    pub(super) dynamic_room_acoustics_enabled: bool,
 
     pub(super) output_ringbuffer: Arc<AudioRingBuffer>,
 
@@ -210,6 +211,7 @@ impl AudioEngine {
             binaural_hrtf_flag: Arc::new(AtomicBool::new(false)),
             acoustic_occlusion_enabled: false,
             occlusion_enabled_flag: Arc::new(AtomicBool::new(false)),
+            dynamic_room_acoustics_enabled: false,
             output_ringbuffer: Arc::new(AudioRingBuffer::with_capacity(DEFAULT_RINGBUFFER_FRAMES)),
             active_bgm_handle: None,
             active_bgm_layers: Vec::new(),
@@ -349,25 +351,52 @@ impl AudioEngine {
         &self.occlusion_enabled_flag
     }
 
-    /// Evaluates and applies dynamic room acoustics from the active `.cam` [`RoadRecord`] at `player_pos` (`SH2-55`).
+    /// Enables or disables dynamic `.cam`-aspect room reverb heuristics (`SH2-137` `native-upgrade`).
+    /// Disabling immediately resets the reverb bus to dry [`EnvironmentalPreset::Off`].
+    pub fn set_dynamic_room_acoustics_enabled(&mut self, enabled: bool) {
+        self.dynamic_room_acoustics_enabled = enabled;
+        if !enabled {
+            self.apply_acoustics_profile(RoomAcousticsProfile::from_preset(
+                EnvironmentalPreset::Off,
+            ));
+        }
+    }
+
+    /// Returns `true` when dynamic `.cam`-aspect room reverb heuristics are enabled (`false` = strict 1:1 PS2 vanilla).
+    pub fn dynamic_room_acoustics_enabled(&self) -> bool {
+        self.dynamic_room_acoustics_enabled
+    }
+
+    /// Evaluates and applies dynamic room acoustics from the active `.cam` [`RoadRecord`] at `player_pos` (`SH2-55`),
+    /// gated by `self.dynamic_room_acoustics_enabled` (`SH2-137`).
     pub fn update_room_acoustics_from_cam(
         &mut self,
         cam: &CamFile,
         player_pos: Vec3,
         is_interior_map: bool,
     ) -> RoomAcousticsProfile {
-        let profile = evaluate_room_acoustics_for_pos(cam, player_pos, is_interior_map);
+        let profile = evaluate_room_acoustics_for_pos_gated(
+            cam,
+            player_pos,
+            is_interior_map,
+            self.dynamic_room_acoustics_enabled,
+        );
         self.apply_acoustics_profile(profile);
         profile
     }
 
-    /// Evaluates and applies dynamic room acoustics directly from an active [`RoadRecord`] (`SH2-55`).
+    /// Evaluates and applies dynamic room acoustics directly from an active [`RoadRecord`] (`SH2-55`),
+    /// gated by `self.dynamic_room_acoustics_enabled` (`SH2-137`).
     pub fn update_room_acoustics_from_record(
         &mut self,
         record: Option<&RoadRecord>,
         is_interior_map: bool,
     ) -> RoomAcousticsProfile {
-        let profile = evaluate_room_acoustics(record, is_interior_map);
+        let profile = evaluate_room_acoustics_gated(
+            record,
+            is_interior_map,
+            self.dynamic_room_acoustics_enabled,
+        );
         self.apply_acoustics_profile(profile);
         profile
     }

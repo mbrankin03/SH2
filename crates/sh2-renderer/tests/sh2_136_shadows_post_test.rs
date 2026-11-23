@@ -134,6 +134,17 @@ fn test_sh2_136_soft_stencil_blur_self_shadow_exclusion_clear_color_and_post_pip
     let _second_frame = expected_gen.generate_128x128();
     assert_eq!(next_seed, expected_gen.seed);
 
+    // 30 Hz cadence deduplication: multiple calls within the same 1/30s window (e.g. 240 FPS)
+    // only step once, then advance on the next 30 Hz boundary.
+    let s0 = ctx.post_pipeline.step_ps2_noise_at_time(&ctx.queue, 0.01);
+    assert!(s0.is_some());
+    assert!(ctx
+        .post_pipeline
+        .step_ps2_noise_at_time(&ctx.queue, 0.02)
+        .is_none());
+    let s1 = ctx.post_pipeline.step_ps2_noise_at_time(&ctx.queue, 0.04);
+    assert!(s1.is_some() && s1 != s0);
+
     ctx.pcss_enabled
         .store(false, std::sync::atomic::Ordering::Relaxed);
     ctx.set_soft_shadow_blur_enabled(true);

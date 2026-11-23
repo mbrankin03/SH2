@@ -80,6 +80,11 @@ impl Default for PostUniforms {
     }
 }
 
+/// Authentic PS2 film-grain refresh cadence in Hz (`draw_main` 30 Hz loop in
+/// `SLUS_202.28` `sh2gfw_drawloop_main.c` `0x0019feb0`). Decoupling noise updates to 30 Hz
+/// prevents temporal washout and redundant GPU texture uploads at 120/240/unlimited FPS.
+pub const PS2_NOISE_CADENCE_HZ: f32 = 30.0;
+
 pub struct PostProcessPipeline {
     pub pipeline: wgpu::ComputePipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -88,11 +93,14 @@ pub struct PostProcessPipeline {
     pub ps2_noise_texture: wgpu::Texture,
     /// Texture view for [`Self::ps2_noise_texture`].
     pub ps2_noise_view: wgpu::TextureView,
-    /// Repeat bilinear sampler for `4x4` screen-space noise tiling
+    /// Repeat bilinear sampler for screen-space noise tiling
     /// (`SLUS_202.28` `sh2gfw_SendDraw_Noise` `0x00177f30`, `TEX1_1 = 0x60`).
     pub ps2_noise_sampler: wgpu::Sampler,
-    /// Stateful CPU LCG generator (`DAT_002adaf0`) stepped once per frame.
+    /// Stateful CPU LCG generator (`DAT_002adaf0`) stepped on the 30 Hz PS2 cadence.
     ps2_noise_gen: std::sync::Mutex<Ps2NoiseGenerator>,
+    /// Last 30 Hz tick index (`floor(time * 30.0)`) uploaded to [`Self::ps2_noise_texture`],
+    /// or `u64::MAX` before the first timed step.
+    ps2_noise_last_tick: std::sync::atomic::AtomicU64,
 }
 
 impl PostProcessPipeline {
@@ -123,6 +131,10 @@ const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
 const PS2_NOISE_CLUT_HIGH: f32 = 24.0 / 255.0;
 const PS2_NOISE_VTX_MODULATE: f32 = 230.0 / 128.0;
 const PS2_NOISE_BLEND_WEIGHT: f32 = (128.0 - 96.0) / 128.0;
+// PS2 `512x448` framebuffer displays `4.0` horizontal x `448 / 128 = 3.5` vertical tiles of `128x128`
+// noise (`sh2gfw_SendDraw_Noise` `0x00177f30`). Scaling X by `aspect` gives exact `4.0 x 3.5` at
+// `512x448` and keeps grain texels square on 16:9 / 21:9 / 4K displays.
+const PS2_NOISE_TILES_Y: f32 = 448.0 / 128.0;
 
 // PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) & `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 12.4 sub-pixel
 // half-texel bias (`-4` in 12.4 fixed-point = `-4.0 / 16.0 = -0.25` px).
@@ -268,8 +280,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (post.grain_intensity > 0.001) {
         var noise_texel: f32;
         if ((post.flags & POST_FLAG_PS2_LCG_NOISE) != 0u) {
-            let uv = (vec2<f32>(global_id.xy) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
-            noise_texel = textureSampleLevel(ps2_noise_tex, ps2_noise_sampler, uv * 4.0, 0.0).r;
+            let fdims = max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
+            let uv = (vec2<f32>(global_id.xy) + vec2<f32>(0.5, 0.5)) / fdims;
+            let tiles = vec2<f32>(PS2_NOISE_TILES_Y * (fdims.x / fdims.y), PS2_NOISE_TILES_Y);
+            noise_texel = textureSampleLevel(ps2_noise_tex, ps2_noise_sampler, uv * tiles, 0.0).r;
         } else {
             let frame_seed = u32(post.time * 30.0);
             let rand_f = random_val(global_id.xy, frame_seed);
@@ -398,6 +412,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             ps2_noise_view,
             ps2_noise_sampler,
             ps2_noise_gen: std::sync::Mutex::new(gen),
+            ps2_noise_last_tick: std::sync::atomic::AtomicU64::new(u64::MAX),
         };
         this.upload_ps2_noise_bytes(queue, &initial_bytes);
         this
@@ -449,6 +464,26 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         self.upload_ps2_noise_bytes(queue, &bytes);
         seed
     }
+
+    /// Steps and uploads the PS2 LCG noise texture only when `time_secs` crosses a new
+    /// 30 Hz PS2 frame boundary ([`PS2_NOISE_CADENCE_HZ`]), returning `Some(new_seed)` when
+    /// stepped or `None` when the current 30 Hz frame is already uploaded.
+    ///
+    /// Keeps film grain crisp and framerate-independent at 120/240/unlimited Hz.
+    pub fn step_ps2_noise_at_time(&self, queue: &wgpu::Queue, time_secs: f32) -> Option<u32> {
+        let tick = if time_secs.is_finite() && time_secs > 0.0 {
+            (time_secs * PS2_NOISE_CADENCE_HZ).floor() as u64
+        } else {
+            0
+        };
+        let prev = self
+            .ps2_noise_last_tick
+            .swap(tick, std::sync::atomic::Ordering::Relaxed);
+        if prev == tick {
+            return None;
+        }
+        Some(self.step_ps2_noise(queue))
+    }
 }
 
 #[cfg(test)]
@@ -496,6 +531,7 @@ mod tests {
         let src = PostProcessPipeline::WGSL_SHADER;
         assert!(src.contains("PS2_NOISE_VTX_MODULATE"));
         assert!(src.contains("PS2_NOISE_BLEND_WEIGHT"));
+        assert!(src.contains("PS2_NOISE_TILES_Y"));
         assert!(src.contains("PS2_SWAP_SUBPIXEL_BIAS_PX"));
         assert!(!src.contains("0.05 * post.grain_intensity"));
         assert!(!src.contains("1.0 / 9.0"));

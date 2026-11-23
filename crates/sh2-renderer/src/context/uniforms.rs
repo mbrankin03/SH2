@@ -281,13 +281,15 @@ impl RenderContext {
     }
 
     /// Update post-processing uniforms buffer and, when PS2 LCG film grain is active,
-    /// step and upload the bit-exact `128x128` `R8Unorm` PS2 noise texture (`0x00177c50`).
+    /// step and upload the bit-exact `128x128` `R8Unorm` PS2 noise texture (`0x00177c50`)
+    /// on the authentic 30 Hz PS2 cadence (framerate-independent at 120/240/unlimited Hz).
     pub fn update_post(&self, uniforms: &post::PostUniforms) {
         self.queue
             .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
         if (uniforms.flags & post::POST_FLAG_PS2_LCG_NOISE) != 0 && uniforms.grain_intensity > 0.001
         {
-            self.post_pipeline.step_ps2_noise(&self.queue);
+            self.post_pipeline
+                .step_ps2_noise_at_time(&self.queue, uniforms.time);
         }
     }
 

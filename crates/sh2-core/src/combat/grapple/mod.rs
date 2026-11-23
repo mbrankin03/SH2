@@ -24,8 +24,8 @@ pub use anchor::{compute_creature_grapple_transform, compute_grapple_coupling, G
 pub use session::{GrapplePhase, GrappleSession};
 pub use tables::{
     get_grapple_spec, BestiaryId, GrappleFacingMode, GrappleSpec, PS2_HUGGING_POS,
-    PS2_HURIHODOKI_TIMER, SPEC_ABSTRACT_DADDY, SPEC_CREEPER, SPEC_FLESH_LIPS, SPEC_MARY_BOSS,
-    SPEC_PYRAMID_HEAD,
+    PS2_HURIHODOKI_TIMER, SPEC_ABSTRACT_DADDY, SPEC_FLESH_LIPS, SPEC_MARY_BOSS,
+    SPEC_MARY_MOTH_SWARM, SPEC_PYRAMID_HEAD,
 };
 
 #[cfg(test)]

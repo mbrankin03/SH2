@@ -11,7 +11,7 @@
 //! skeletal keyframe indices and playback frame rates that direct the runtime animation
 //! system to ingest data from user-supplied authentic retail game files.
 
-use crate::animation::{AnimationClip, JamesBasicClips, JamesStageClips};
+use crate::animation::{AnimationClip, JamesStageClips};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -63,16 +63,22 @@ pub const PS2_HUGGING_POS: [[f32; 4]; 5] = [
     [0.0, 1496.4872, 0.0, 0.0],
 ];
 
-/// Authentic struggle resistance duration matrix `hurihodoki_timer[5][5]` from PS2 `0x002a8e10`.
-/// Rows: Game difficulty (0=Beginner, 1=Easy, 2=Normal, 3=Hard, 4=Extra).
-/// Columns: Attack classification column:
-/// - Col 0: Pyramid Head (Strike 47 -> Hug 48)
-/// - Col 1: Flesh Lips (Strike 54 -> Hug 55)
-/// - Col 2: Abstract Daddy (Strike 57 -> Hug 58)
-/// - Col 3: Mary Boss Tentacle (Strike 59 -> Hug 60)
-/// - Col 4: Mary Boss Moth Swarm (Strike 62 -> Hug 63)
+/// Authentic struggle resistance duration matrix `hurihodoki_timer[5][5]` from Retail PC
+/// `sh2pc.exe` `0x005340b0` (`PlayerCheckHuggingAttack`, shifted +6 from `SLUS_202.28` `0x002a8e10`).
+///
+/// **Prototype vs. Retail Drift:** `SLUS_202.28` `0x002a8e10` had `[0.07, 0.08, 0.10, 0.13, 0.10]`
+/// for Beginner (Row 0); Retail PC `sh2pc.exe` `0x005340b0` raises Beginner to match Easy
+/// (`[0.35, 0.40, 0.50, 0.65, 0.50]`).
+///
+/// Rows: Game difficulty (`0=Beginner`, `1=Easy`, `2=Normal`, `3=Hard`, `4=Extra`).
+/// Columns: Attack classification column (Retail PC `sh2_attack_list` `0x00629000` IDs):
+/// - Col 0: Pyramid Head (Strike `53` / `0x35` -> Hug `54` / `0x36`, `6.0` DPS)
+/// - Col 1: Flesh Lips (Strike `60` / `0x3c` -> Hug `61` / `0x3d`, `6.0` DPS)
+/// - Col 2: Abstract Daddy (Strike `63` / `0x3f` -> Hug `64` / `0x40`, `6.0` DPS)
+/// - Col 3: Mary Boss Tentacle (Strike `65` / `0x41` -> Hug `66` / `0x42`, `6.0` DPS)
+/// - Col 4: Mary Boss Moth Swarm (Strike `68` / `0x44` -> Hug `69` / `0x45`, `1.5` DPS)
 pub const PS2_HURIHODOKI_TIMER: [[f32; 5]; 5] = [
-    [0.07, 0.08, 0.10, 0.13, 0.10], // Beginner (0)
+    [0.35, 0.40, 0.50, 0.65, 0.50], // Beginner (0) — Retail PC 0x005340b0
     [0.35, 0.40, 0.50, 0.65, 0.50], // Easy (1)
     [0.70, 0.80, 1.00, 1.30, 1.00], // Normal (2)
     [1.40, 1.60, 2.00, 2.60, 2.00], // Hard (3)
@@ -134,13 +140,13 @@ impl GrappleSpec {
 }
 
 // ----------------------------------------------------------------------------
-// Authentic Static Specifications (SLUS_202.28 1:1 Parity)
+// Authentic Static Specifications (Retail PC sh2pc.exe 0x00629000 & 0x005340b0)
 // ----------------------------------------------------------------------------
 
 pub const SPEC_FLESH_LIPS: GrappleSpec = GrappleSpec {
     bestiary_id: BestiaryId::FleshLips,
-    strike_id: 54,
-    hug_id: 55,
+    strike_id: 60, // Retail PC 0x3c (SLUS 54 + 6)
+    hug_id: 61,    // Retail PC 0x3d (SLUS 55 + 6, ap=0.20 * 30Hz = 6.0 DPS)
     timer_col: 1,
     grab_range: 450.0,
     hold_dps: 6.0,
@@ -159,8 +165,8 @@ pub const SPEC_FLESH_LIPS: GrappleSpec = GrappleSpec {
 
 pub const SPEC_ABSTRACT_DADDY: GrappleSpec = GrappleSpec {
     bestiary_id: BestiaryId::AbstractDaddy,
-    strike_id: 57,
-    hug_id: 58,
+    strike_id: 63, // Retail PC 0x3f (SLUS 57 + 6)
+    hug_id: 64,    // Retail PC 0x40 (SLUS 58 + 6, ap=0.20 * 30Hz = 6.0 DPS)
     timer_col: 2,
     grab_range: 530.0,
     hold_dps: 6.0,
@@ -179,8 +185,8 @@ pub const SPEC_ABSTRACT_DADDY: GrappleSpec = GrappleSpec {
 
 pub const SPEC_MARY_BOSS: GrappleSpec = GrappleSpec {
     bestiary_id: BestiaryId::MaryBoss,
-    strike_id: 59,
-    hug_id: 60,
+    strike_id: 65, // Retail PC 0x41 (SLUS 59 + 6)
+    hug_id: 66,    // Retail PC 0x42 (SLUS 60 + 6, ap=0.20 * 30Hz = 6.0 DPS)
     timer_col: 3,
     grab_range: 600.0,
     hold_dps: 6.0,
@@ -197,10 +203,31 @@ pub const SPEC_MARY_BOSS: GrappleSpec = GrappleSpec {
     james_anm_overlay: Some("data/chr/jms/jms_stg_end_recovery.anm"),
 };
 
+/// Mary Boss moth swarm hold (`sh2pc.exe` `0x005340b0` col 4: strike `68` / `0x44`, hug `69` / `0x45`).
+pub const SPEC_MARY_MOTH_SWARM: GrappleSpec = GrappleSpec {
+    bestiary_id: BestiaryId::MaryBoss,
+    strike_id: 68, // Retail PC 0x44 (SLUS 62 + 6)
+    hug_id: 69,    // Retail PC 0x45 (SLUS 63 + 6, ap=0.05 * 30Hz = 1.5 DPS)
+    timer_col: 4,
+    grab_range: 300.0,
+    hold_dps: 1.5,
+    creature_hold_clip: AnimationClip::new(89, 112, 30.0, true),
+    creature_breakout_clip: Some(AnimationClip::new(113, 136, 30.0, false)),
+    james_struggle_clip: JamesStageClips::MARY_TENTACLE_CHOKE_LOOP,
+    james_breakout_clip: JamesStageClips::MARY_TENTACLE_CHOKE_RELEASE,
+    anchor_offset: Vec3::new(
+        PS2_HUGGING_POS[4][0],
+        -PS2_HUGGING_POS[4][1],
+        PS2_HUGGING_POS[4][2],
+    ),
+    facing_mode: GrappleFacingMode::FaceTarget,
+    james_anm_overlay: Some("data/chr/jms/jms_stg_end_recovery.anm"),
+};
+
 pub const SPEC_PYRAMID_HEAD: GrappleSpec = GrappleSpec {
     bestiary_id: BestiaryId::PyramidHead,
-    strike_id: 47,
-    hug_id: 48,
+    strike_id: 53, // Retail PC 0x35 (SLUS 47 + 6)
+    hug_id: 54,    // Retail PC 0x36 (SLUS 48 + 6, ap=0.20 * 30Hz = 6.0 DPS)
     timer_col: 0,
     grab_range: 400.0,
     hold_dps: 6.0,
@@ -217,23 +244,11 @@ pub const SPEC_PYRAMID_HEAD: GrappleSpec = GrappleSpec {
     james_anm_overlay: Some("data/chr/jms/jms_stg_apart_stair.anm"),
 };
 
-pub const SPEC_CREEPER: GrappleSpec = GrappleSpec {
-    bestiary_id: BestiaryId::Creeper,
-    strike_id: 51,
-    hug_id: 51,
-    timer_col: 0,
-    grab_range: 220.0,
-    hold_dps: 4.0,
-    creature_hold_clip: AnimationClip::new(0, 7, 30.0, true),
-    creature_breakout_clip: None,
-    james_struggle_clip: JamesBasicClips::STRUGGLE_LEG,
-    james_breakout_clip: JamesBasicClips::STRUGGLE_RELEASE,
-    anchor_offset: Vec3::new(0.0, 0.0, 80.0),
-    facing_mode: GrappleFacingMode::FaceTarget,
-    james_anm_overlay: None,
-};
-
-/// Lookup the authentic grapple specification for a creature species, if it possesses a grab.
+/// Lookup the authentic grapple specification for a creature species, if it possesses a Type 6 hug grab.
+///
+/// Verified against `PlayerCheckHuggingAttack` (`SLUS_202.28` `0x00110070` / `sh2pc.exe` `0x005340b0`):
+/// only Pyramid Head, Flesh Lips, Abstract Daddy, and Mary Boss have Type 6 hug grapples.
+/// Lying Figure, Mannequin, Nurse, Mandarin, and Creeper do NOT have hug grapples.
 #[inline]
 pub const fn get_grapple_spec(species: BestiaryId) -> Option<&'static GrappleSpec> {
     match species {
@@ -241,8 +256,6 @@ pub const fn get_grapple_spec(species: BestiaryId) -> Option<&'static GrappleSpe
         BestiaryId::AbstractDaddy => Some(&SPEC_ABSTRACT_DADDY),
         BestiaryId::MaryBoss => Some(&SPEC_MARY_BOSS),
         BestiaryId::PyramidHead => Some(&SPEC_PYRAMID_HEAD),
-        BestiaryId::Creeper => Some(&SPEC_CREEPER),
-        // Lying Figure, Mannequin, Nurse, Mandarin have strike/kick/needle moves, not Type 6 grabs.
         _ => None,
     }
 }

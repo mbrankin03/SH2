@@ -104,11 +104,17 @@ impl GrappleSession {
         })
     }
 
-    /// Register player struggle button presses or stick flicks to accelerate breakout (`PlayerCheckHuggingButton`).
+    /// Register player struggle button presses or stick flicks (`PlayerCheckHuggingButton`,
+    /// `SLUS_202.28` `0x0021c360`) assuming a 30 Hz PS2 frame step (`1.0 / 30.0` s).
     pub fn register_struggle_input(&mut self, button_presses: u32) {
+        self.register_struggle_input_dt(button_presses, 1.0 / 30.0);
+    }
+
+    /// Register player struggle button presses or stick flicks using explicit frame `dt`
+    /// (`PlayerCheckHuggingButton`, `SLUS_202.28` `0x0021c360`: each trigger subtracts `shGetDT()`).
+    pub fn register_struggle_input_dt(&mut self, button_presses: u32, dt: f32) {
         if self.phase == GrapplePhase::Holding || self.phase == GrapplePhase::Latching {
-            // Authentic PS2 mechanic: each button mash event shaves 1 frame of hold meter (0.0333s at 30Hz)
-            let shave_amount = (button_presses as f32) * 0.0333;
+            let shave_amount = (button_presses as f32) * dt;
             self.struggle_gauge = (self.struggle_gauge - shave_amount).max(0.0);
         }
     }
@@ -176,13 +182,12 @@ impl GrappleSession {
                 self.phase = GrapplePhase::Holding;
             }
             GrapplePhase::Holding => {
-                // Synchronize struggle gauge with player struggle meter if it was modified externally
+                // Synchronize struggle gauge with player struggle meter if it was modified externally.
+                // Authentic `PlayerCheckHuggingButton` (0x0021c360): ZERO passive time decay —
+                // `struggle_gauge` only decreases when button/stick triggers are pressed.
                 if player.struggle_meter < self.struggle_gauge {
                     self.struggle_gauge = player.struggle_meter;
                 }
-
-                // Authentic passive time decay: 0.20 * dt (so a 0.80s gauge lasts ~4.0s without mashing)
-                self.struggle_gauge = (self.struggle_gauge - 0.20 * dt).max(0.0);
                 player.struggle_meter = self.struggle_gauge;
 
                 // Apply authentic PS2 gripping damage over time

@@ -1,4 +1,4 @@
-//! Thin runtime wiring for the 1:1 PS2 / SH2:EE Single-Screen In-Game Menus (`SH2-116`):
+//! Thin runtime wiring for the 1:1 PS2 / SH2:EE Single-Screen In-Game Menus (`SH2-116`, `SH2-138`):
 //! - Status & Inventory Screen (`sh2_ui::inventory`, `Item/otn_itemmain.c`)
 //! - Fullscreen Paper Map (`sh2_ui::map`, `Event/chizu.c`)
 //! - Collected Memo Reader (`sh2_ui::memo`, `Event/memo.c`)
@@ -22,10 +22,14 @@ use crate::state::AppState;
 use sh2_assets::formats::mes::MessageTable;
 use sh2_ui::inventory::{draw_inventory_screen, InventoryPlayerSnapshot, InventoryScreen};
 use sh2_ui::map::{
-    chizu_can_read_map, chizu_world_to_sheet_norm, draw_paper_map, MapReadCheck, PaperMapAction,
-    PaperMapViewer,
+    chizu_can_read_map, chizu_current_position_check, chizu_possession_check, chizu_select,
+    draw_paper_map, stage_to_default_room_id, MapReadCheck, PaperMapAction, PaperMapPlayerState,
+    PaperMapTextures, PaperMapViewer, CHIZU_PAPER_SE_ID,
 };
-use sh2_ui::memo::{draw_memo_reader, MemoAction, MemoReader, DEFAULT_MEMO_BACKDROP_TEX};
+use sh2_ui::memo::{
+    draw_memo_reader, MemoAction, MemoReader, MemoRenderContext, MemoRenderTextures,
+    DEFAULT_MEMO_BACKDROP_TEX,
+};
 use sh2_ui::menu::{MenuNavAction, MenuSoundCue};
 use sh2_ui::{draw_options_screen, AtlasFont};
 
@@ -38,6 +42,8 @@ pub(crate) struct InGameMenuState {
     pub map_viewer: PaperMapViewer,
     /// Collected Memo list & multi-page reader (`memo.c`).
     pub memo_reader: MemoReader,
+    /// Held directional keys `[Up, Down, Left, Right]` for continuous `307.2/384.0` px/s map panning.
+    pub held_map_pan: [bool; 4],
     /// True when Options was opened via the Inventory `OPTION` corner button.
     pub options_from_inventory: bool,
     /// Whether `memo_msg_e.mes` has been attempted to load from disk.
@@ -48,8 +54,12 @@ pub(crate) struct InGameMenuState {
     pub(crate) cached_map_sheet: Option<(u8, usize, usize, Vec<u8>)>,
     /// Cached decoded map marker atlas `(map_id, width, height, rgba)`.
     pub(crate) cached_map_marks: Option<(u8, usize, usize, Vec<u8>)>,
+    /// Cached decoded `pic/etc/carsol.tex` (`256x128` connect arrows + player heading arrow).
+    pub(crate) cached_map_cursor: Option<(usize, usize, Vec<u8>)>,
     /// Cached decoded memo backdrop `(rel_path, width, height, rgba)`.
     pub(crate) cached_memo_backdrop: Option<(&'static str, usize, usize, Vec<u8>)>,
+    /// Cached decoded memo puzzle overlay layer `(rel_path, width, height, rgba)`.
+    pub(crate) cached_memo_layer: Option<(&'static str, usize, usize, Vec<u8>)>,
     /// Whether `pic/etc/itemmenu2.tex` has been attempted to load from disk.
     pub(crate) item_atlas_loaded: bool,
     /// Cached decoded `itemmenu2.tex` (`4096x4096` SH2:EE HD or `1024x1024` PS2/PC) `(width, height, rgba)`.
@@ -72,20 +82,33 @@ impl InGameMenuState {
         self.inventory.close();
         self.map_viewer.close();
         self.memo_reader.close();
+        self.held_map_pan = [false; 4];
         self.options_from_inventory = false;
     }
 
-    /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/transcription, memo fade).
+    /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/pan/transcription, memo dim).
     pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) {
         if self.inventory.is_open {
             self.inventory.tick(dt, snapshot);
         }
         if self.map_viewer.is_open {
+            let axis_x = (self.held_map_pan[3] as i32 - self.held_map_pan[2] as i32) as f32;
+            let axis_y = (self.held_map_pan[1] as i32 - self.held_map_pan[0] as i32) as f32;
+            if axis_x != 0.0 || axis_y != 0.0 {
+                self.map_viewer.pan_continuous(axis_x, axis_y, dt);
+            }
             self.map_viewer.tick(dt);
         }
         if self.memo_reader.is_open {
             self.memo_reader.tick(dt);
         }
+    }
+}
+
+/// Emits `SeCall(1.0, 0x2b17)` paper rustle SFX (`ChizuMain` `0x001c6e8c` / `sh2pc.exe` `0x0049e560`).
+fn play_map_paper_sfx(state: &mut AppState) {
+    if let (Some(ref mut eng), Some(ref bank)) = (&mut state.audio_engine, &state.audio_bank) {
+        let _ = bank.play_se_id(eng, CHIZU_PAPER_SE_ID, 1.0);
     }
 }
 
@@ -101,19 +124,49 @@ pub(crate) fn open_inventory(state: &mut AppState) {
     emit_menu_sound(state, MenuSoundCue::Confirm, "Inventory");
 }
 
-/// Opens the Fullscreen Paper Map directly (`M` / gamepad `Triangle`) if owned and lit.
+/// Opens the Fullscreen Paper Map directly (`M` / gamepad `Triangle`) using `ChizuSelect`
+/// (`0x001c7040` / `sh2pc.exe` `0x0049ac70`) if owned and lit.
 pub(crate) fn open_map_direct(state: &mut AppState, from_inventory: bool) {
-    let default_map_id = if state.active_maria { 36 } else { 1 };
+    let pos = state.sim_core.scenario.player_position;
+    let room_id =
+        stage_to_default_room_id(state.sim_core.scenario.current_stage, state.active_maria);
+    let selected_map_id = chizu_select(
+        room_id,
+        [pos.x, pos.y, pos.z],
+        &state.sim_core.scenario.flags,
+    );
     let is_dark_room = state.sim_core.scenario.is_current_stage_dark();
     let flashlight_active = state.sim_core.scenario.is_flashlight_active();
 
+    // Exact ChizuMain (`0x001c6b90` lines 48-54) fallback: if current area map is unowned,
+    // fall back to Map 1 (Town Overall) when flag 24 is set.
+    let target_map_id = if selected_map_id != 0
+        && chizu_possession_check(selected_map_id, &state.sim_core.scenario.flags)
+    {
+        selected_map_id
+    } else if state.sim_core.scenario.flags.get(24) {
+        1
+    } else if selected_map_id != 0 {
+        selected_map_id
+    } else if state.active_maria {
+        36
+    } else {
+        1
+    };
+
     match chizu_can_read_map(
-        default_map_id,
+        target_map_id,
         &state.sim_core.scenario.flags,
         is_dark_room,
         flashlight_active,
     ) {
-        MapReadCheck::Allowed => open_map_sheet(state, default_map_id, from_inventory),
+        MapReadCheck::Allowed => open_map_sheet(
+            state,
+            target_map_id,
+            selected_map_id,
+            room_id,
+            from_inventory,
+        ),
         MapReadCheck::TooDark => {
             emit_menu_sound(state, MenuSoundCue::Cancel, "Map");
             if from_inventory {
@@ -129,7 +182,13 @@ pub(crate) fn open_map_direct(state: &mut AppState, from_inventory: bool) {
                 state.active_launch_target,
                 sh2_ui::menu::LaunchTarget::Campaign { .. }
             ) {
-                open_map_sheet(state, default_map_id, from_inventory);
+                open_map_sheet(
+                    state,
+                    target_map_id,
+                    selected_map_id,
+                    room_id,
+                    from_inventory,
+                );
             } else {
                 emit_menu_sound(state, MenuSoundCue::Cancel, "Map");
                 if from_inventory {
@@ -143,17 +202,37 @@ pub(crate) fn open_map_direct(state: &mut AppState, from_inventory: bool) {
     }
 }
 
-fn open_map_sheet(state: &mut AppState, map_id: u8, from_inventory: bool) {
+fn open_map_sheet(
+    state: &mut AppState,
+    map_id: u8,
+    selected_map_id: u8,
+    room_id: usize,
+    from_inventory: bool,
+) {
     state.clear_held_gameplay_keys();
+    state.ingame_menus.held_map_pan = [false; 4];
     state.ingame_menus.inventory.close();
-    state.ingame_menus.map_viewer.open(map_id, from_inventory);
+    let pos = state.sim_core.scenario.player_position;
+    let player_ps2 = chizu_current_position_check(
+        room_id,
+        map_id,
+        [pos.x, pos.y, pos.z],
+        &state.sim_core.scenario.flags,
+    );
+    state.ingame_menus.map_viewer.open_at_player(
+        map_id,
+        selected_map_id,
+        Some(player_ps2),
+        state.active_maria,
+        from_inventory,
+    );
     ensure_map_sheet_loaded(state, map_id);
-    emit_menu_sound(state, MenuSoundCue::Confirm, "Map");
+    play_map_paper_sfx(state);
 }
 
 pub(crate) fn open_memo_reader(state: &mut AppState) {
     state.ingame_menus.inventory.close();
-    ensure_memo_assets_loaded(state, DEFAULT_MEMO_BACKDROP_TEX);
+    ensure_memo_assets_loaded(state, DEFAULT_MEMO_BACKDROP_TEX, None);
     state
         .ingame_menus
         .memo_reader
@@ -163,6 +242,17 @@ pub(crate) fn open_memo_reader(state: &mut AppState) {
 
 /// Handles keyboard input while any single-screen in-game menu is open.
 pub(crate) fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed: bool) {
+    // Track held directional keys for continuous paper map panning (`ChizuControl` 307.2/384.0 px/s)
+    if state.ingame_menus.map_viewer.is_open {
+        match key_code {
+            KeyCode::KeyW | KeyCode::ArrowUp => state.ingame_menus.held_map_pan[0] = pressed,
+            KeyCode::KeyS | KeyCode::ArrowDown => state.ingame_menus.held_map_pan[1] = pressed,
+            KeyCode::KeyA | KeyCode::ArrowLeft => state.ingame_menus.held_map_pan[2] = pressed,
+            KeyCode::KeyD | KeyCode::ArrowRight => state.ingame_menus.held_map_pan[3] = pressed,
+            _ => {}
+        }
+    }
+
     if !pressed {
         return;
     }
@@ -182,14 +272,20 @@ pub(crate) fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed:
                 .handle_nav(nav, &state.sim_core.scenario.flags);
             emit_menu_sound(state, cue, "Map");
             match action {
-                PaperMapAction::MapSheetChanged(new_id) => ensure_map_sheet_loaded(state, new_id),
-                PaperMapAction::Close if return_to_inv => {
-                    state
-                        .ingame_menus
-                        .inventory
-                        .open(&state.sim_core.scenario.inventory_mgr);
+                PaperMapAction::MapSheetChanged(new_id) => {
+                    ensure_map_sheet_loaded(state, new_id);
+                    play_map_paper_sfx(state);
                 }
-                _ => {}
+                PaperMapAction::Close => {
+                    state.ingame_menus.held_map_pan = [false; 4];
+                    if return_to_inv {
+                        state
+                            .ingame_menus
+                            .inventory
+                            .open(&state.sim_core.scenario.inventory_mgr);
+                    }
+                }
+                PaperMapAction::None => {}
             }
         }
         return;
@@ -197,13 +293,17 @@ pub(crate) fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed:
 
     if state.ingame_menus.memo_reader.is_open {
         if let Some(nav) = key_to_nav(key_code, false, false) {
-            let (cue, action) = state
-                .ingame_menus
-                .memo_reader
-                .handle_nav(nav, state.ingame_menus.memo_messages.as_ref());
+            let (cue, action) = state.ingame_menus.memo_reader.handle_nav(
+                nav,
+                &state.sim_core.scenario.flags,
+                state.ingame_menus.memo_messages.as_ref(),
+            );
             emit_menu_sound(state, cue, "Memo");
             match action {
-                MemoAction::BackdropChanged(path) => ensure_memo_assets_loaded(state, path),
+                MemoAction::TexturesChanged {
+                    backdrop_path,
+                    layer_path,
+                } => ensure_memo_assets_loaded(state, backdrop_path, layer_path),
                 MemoAction::Close => {
                     state
                         .ingame_menus
@@ -317,16 +417,33 @@ pub(crate) fn render_overlay(
             .as_ref()
             .filter(|(id, _, _, _)| *id == cur_id)
             .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h));
+        let cursor = state
+            .ingame_menus
+            .cached_map_cursor
+            .as_ref()
+            .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
         let pos = state.sim_core.scenario.player_position;
-        let norm_pos = chizu_world_to_sheet_norm(pos.x, pos.z);
+        let room_id =
+            stage_to_default_room_id(state.sim_core.scenario.current_stage, state.active_maria);
+        let pos_ps2 = chizu_current_position_check(
+            room_id,
+            cur_id,
+            [pos.x, pos.y, pos.z],
+            &state.sim_core.scenario.flags,
+        );
         draw_paper_map(
             &state.ingame_menus.map_viewer,
             &state.sim_core.scenario.flags,
-            norm_pos,
-            state.sim_core.scenario.player_yaw,
-            sheet,
-            marks,
-            font,
+            PaperMapPlayerState {
+                room_id,
+                pos_ps2,
+                yaw_rad: state.sim_core.scenario.player_yaw,
+            },
+            PaperMapTextures {
+                sheet_rgba: sheet,
+                mark_atlas_rgba: marks,
+                cursor_rgba: cursor,
+            },
             &mut state.menu_rasterizer,
         );
     } else if state.ingame_menus.memo_reader.is_open {
@@ -335,10 +452,23 @@ pub(crate) fn render_overlay(
             .cached_memo_backdrop
             .as_ref()
             .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h));
+        let layer = state
+            .ingame_menus
+            .cached_memo_layer
+            .as_ref()
+            .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h));
         draw_memo_reader(
             &state.ingame_menus.memo_reader,
             state.ingame_menus.memo_messages.as_ref(),
-            backdrop,
+            MemoRenderTextures {
+                backdrop_rgba: backdrop,
+                layer_rgba: layer,
+            },
+            Some(MemoRenderContext {
+                flags: &state.sim_core.scenario.flags,
+                puzzle: &state.sim_core.scenario.puzzle_state,
+                riddle: state.sim_core.scenario.riddle_difficulty,
+            }),
             font,
             &mut state.menu_rasterizer,
         );
@@ -376,9 +506,6 @@ pub(crate) fn render_overlay(
             font,
             &mut state.inventory_rasterizer,
         );
-        // Blit the dedicated 4:3 (`1280x960`) inventory texture into the exact centered 4:3
-        // swapchain viewport so glyphs have 1:1 square pixels and align bit-for-bit with
-        // `HealthEcgState::snapshot_viewport_rect` on ALL monitors (4:3, 16:10, 16:9, 21:9, 32:9, portrait).
         let vp = sh2_ui::inventory::ps2_ui_canvas_rect(
             state.surface_config.width as f32,
             state.surface_config.height as f32,

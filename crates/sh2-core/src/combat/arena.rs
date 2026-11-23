@@ -51,6 +51,8 @@ pub struct CombatArena {
     pub grapple_session: Option<GrappleSession>,
     /// Pending enemy attack SFX ID emitted by `shBattleAttackByEnemy*` (`0x00122310..0x00122eb0`).
     pub pending_enemy_sfx: Option<u32>,
+    /// Reusable scratch buffer for `HumanFog` 5-ray deduplication (zero heap allocation per tick).
+    scratch_spray_hit_mask: Vec<bool>,
 }
 
 impl Default for CombatArena {
@@ -127,6 +129,7 @@ impl CombatArena {
             grappling_enemy_idx: None,
             grapple_session: None,
             pending_enemy_sfx: None,
+            scratch_spray_hit_mask: Vec::with_capacity(32),
         }
     }
 
@@ -155,9 +158,13 @@ impl CombatArena {
     }
 
     /// Check if any enemy is currently downed within `600.0` mm (`shBattleGetNearDeadlyTargetEnemy`
-    /// `0x00124800`) assuming unobstructed arena LOS.
+    /// `0x00124800`) assuming unobstructed arena LOS (zero heap allocations per tick).
     pub fn has_downed_enemy_at_feet(&self) -> bool {
-        self.find_stomp_target_with_los(|_| true).is_some()
+        self.ai.enemies.iter().any(|e| {
+            e.is_downed()
+                && !e.is_dead()
+                && (e.position() - self.player_position).length() <= STOMP_TARGET_MAX_DIST_MM
+        })
     }
 
     /// Acquire the primary auto-aim target (`shBattleGetTargetEnemy`, `0x00124390`).
@@ -386,7 +393,6 @@ impl CombatArena {
 
         let is_outdoor = self.ai.is_outdoor;
         let difficulty = self.ai.difficulty.as_index() as u8;
-        let player_guard = self.player.guard_state;
         let enemy = &mut self.ai.enemies[enemy_idx];
         let species = enemy.species();
         let e_pos = enemy.position();
@@ -402,7 +408,7 @@ impl CombatArena {
             e_yaw,
             self.player_position,
             self.player_yaw,
-            player_guard,
+            &mut self.player.guard_state,
             difficulty,
             is_outdoor,
         );
@@ -614,14 +620,16 @@ impl CombatArena {
                 let muzzle = self.player_position + Vec3::new(0.0, -1100.0, 0.0) + forward * 200.0;
                 let rays = generate_hyper_spray_rays(forward);
                 let color = self.player.hyper_spray_color;
-                let mut hit_mask = vec![false; self.ai.enemies.len()];
+                self.scratch_spray_hit_mask.clear();
+                self.scratch_spray_hit_mask
+                    .resize(self.ai.enemies.len(), false);
 
                 for ray_dir in rays {
                     if let Some(hit_idx) =
                         self.find_closest_ray_hit(muzzle, ray_dir, min_r, max_r, isolated_idx)
                     {
-                        if !hit_mask[hit_idx] {
-                            hit_mask[hit_idx] = true;
+                        if !self.scratch_spray_hit_mask[hit_idx] {
+                            self.scratch_spray_hit_mask[hit_idx] = true;
                             self.ai.enemies[hit_idx].receive_hyper_spray_hit(atk, color);
                         }
                     }

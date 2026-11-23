@@ -406,7 +406,11 @@ impl EnemyActor {
             self.stats_mut().set_hit_back(attack_dir_xz, atk.sp);
         }
 
-        let dead = self.stats().health <= 0.0 || (was_downed && atk.ap >= 9999.0);
+        // `enCheckInstantDeath` (`sh2pc.exe` `0x004a6330`): retail finish kicks/stomps `31..=40`
+        // (`0x1f..=0x28`, shifted +6 from proto `0x19..=0x22`) finish downed enemies immediately.
+        let is_instant_death_finish =
+            was_downed && ((31..=40).contains(&atk.id) || atk.ap >= 9999.0);
+        let dead = self.stats().health <= 0.0 || is_instant_death_finish;
         if dead {
             self.stats_mut().health = 0.0;
             self.stats_mut().endurance = 0.0;

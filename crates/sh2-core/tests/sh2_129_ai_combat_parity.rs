@@ -280,6 +280,7 @@ fn golden_sh_battle_attack_by_enemy_dispatchers_and_guard() {
     assert!((outdoor_max - 1800.0).abs() < 1e-3);
 
     let mut fog_work = EnemyAttackWork::default();
+    let mut guard = GuardState::default();
     let fog_out = dispatch_enemy_attack(
         EnemySpecies::LyingFigure,
         fog_atk,
@@ -289,7 +290,7 @@ fn golden_sh_battle_attack_by_enemy_dispatchers_and_guard() {
         0.0,
         Vec3::new(0.0, 0.0, 600.0),
         std::f32::consts::PI,
-        GuardState::default(),
+        &mut guard,
         2,
         false,
     );
@@ -313,7 +314,7 @@ fn golden_sh_battle_attack_by_enemy_dispatchers_and_guard() {
         0.0,
         Vec3::new(0.0, 0.0, 1000.0),
         std::f32::consts::PI,
-        GuardState::default(),
+        &mut guard,
         2,
         false,
     );
@@ -329,7 +330,7 @@ fn golden_sh_battle_attack_by_enemy_dispatchers_and_guard() {
         0.0,
         Vec3::new(0.0, 0.0, 1000.0),
         std::f32::consts::PI,
-        GuardState::default(),
+        &mut guard,
         2,
         false,
     );

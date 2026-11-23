@@ -17,8 +17,8 @@
 //! - Panic state:
 //!   - Triggers when an active hostile enemy is within 1,500 units.
 //!   - In panic mode, Maria cowers, covers her head, or retreats behind James.
-//! - Health & Game Over:
-//!   - Max health: 1,000 HP.
+//! - Health & Game Over (`shCharacterMariaWorkInitAtGameStart` `SLUS_202.28` `0x002205b0`):
+//!   - Max health: `160.0` HP (Beginner / Easy) or `80.0` HP (Normal / Hard).
 //!   - If Maria's health reaches 0, companion death event triggers game over.
 
 use crate::ai::creatures::anim::CreatureAnimationController;
@@ -71,7 +71,7 @@ pub struct MariaCompanionController {
     pub position: Vec3,
     /// Facing yaw in radians.
     pub yaw: f32,
-    /// Current health (default 1000.0).
+    /// Current health (`160.0` Beginner/Easy, `80.0` Normal/Hard per `0x002205b0`).
     pub health: f32,
     pub max_health: f32,
     /// Current companion state.

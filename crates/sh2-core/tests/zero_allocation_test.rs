@@ -113,6 +113,7 @@ fn test_zero_allocation_simulation_tick() {
     for i in 0..240 {
         let ticks = sim.update(Duration::from_nanos(4_166_667));
         for _ in 0..ticks {
+            arena.tick(false, false, false, 1.0 / 60.0);
             arena.tick_isolated(
                 true,
                 i % 20 == 0,

@@ -18,7 +18,7 @@
 use super::attack_list::AttackSpec;
 use super::hitboxes::{generate_hyper_spray_rays, CombatHitbox, SweptBladeQuad};
 use super::targeting::{check_guard_success, GuardState};
-use crate::ai::creatures::EnemySpecies;
+use crate::ai::creatures::{EnemySize, EnemySpecies};
 use glam::Vec3;
 
 /// Enemy attack dispatch variant selected by `shBattleExecAttackQueue` (`0x00123760`).
@@ -131,7 +131,7 @@ pub fn dispatch_enemy_attack(
     enemy_yaw: f32,
     player_pos: Vec3,
     player_yaw: f32,
-    mut player_guard: GuardState,
+    player_guard: &mut GuardState,
     difficulty: u8,
     is_outdoor: bool,
 ) -> EnemyAttackOutcome {
@@ -140,7 +140,11 @@ pub fn dispatch_enemy_attack(
     };
 
     let forward = Vec3::new(enemy_yaw.sin(), 0.0, enemy_yaw.cos());
-    let attack_origin = enemy_pos + Vec3::new(0.0, -750.0, 0.0) + forward * 150.0;
+    // Derive fallback attack origin from authentic `enSetSize` (`0x001426e0`) center_y and body radius
+    // (approximating `shGetEnemyAttackStartPos` `0x00122150` when skeletal bone matrices are absent).
+    let enemy_size = EnemySize::standing_for(species);
+    let attack_origin =
+        enemy_pos + Vec3::new(0.0, -enemy_size.center_y, 0.0) + forward * enemy_size.radius;
     // James standing collision cylinder (`enGetPlayerSize` = 200.0 mm radius, 1700.0 mm tall).
     let player_hitbox = CombatHitbox::new_standing(player_pos, 200.0, 1700.0);
 
@@ -175,7 +179,7 @@ pub fn dispatch_enemy_attack(
                         atk,
                         enemy_yaw,
                         player_yaw,
-                        &mut player_guard,
+                        player_guard,
                         difficulty,
                     );
                 }
@@ -206,7 +210,7 @@ pub fn dispatch_enemy_attack(
                         atk,
                         enemy_yaw,
                         player_yaw,
-                        &mut player_guard,
+                        player_guard,
                         difficulty,
                     );
                 }
@@ -235,7 +239,7 @@ pub fn dispatch_enemy_attack(
                                 atk,
                                 enemy_yaw,
                                 player_yaw,
-                                &mut player_guard,
+                                player_guard,
                                 difficulty,
                             );
                             break;
@@ -274,8 +278,10 @@ pub fn dispatch_enemy_attack(
                 outcome.sfx_id = Some(0x2fdc);
                 work.sfx_played = true;
             }
+            // Derive dual arm/tentacle lateral offset from `enSetSize` (`0x001426e0`) body radius.
+            let lateral_offset = enemy_size.radius * 0.5;
             for side in [-1.0_f32, 1.0_f32] {
-                let origin = attack_origin + right * (side * 120.0);
+                let origin = attack_origin + right * (side * lateral_offset);
                 if player_hitbox
                     .intersects_ray(origin, forward, atk.min_range, atk.max_range)
                     .is_some()
@@ -285,7 +291,7 @@ pub fn dispatch_enemy_attack(
                         atk,
                         enemy_yaw,
                         player_yaw,
-                        &mut player_guard,
+                        player_guard,
                         difficulty,
                     );
                     break;
@@ -309,7 +315,7 @@ pub fn dispatch_enemy_attack(
                         atk,
                         enemy_yaw,
                         player_yaw,
-                        &mut player_guard,
+                        player_guard,
                         difficulty,
                     );
                 }

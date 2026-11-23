@@ -16,11 +16,13 @@ pub mod looping;
 pub mod menu_sfx;
 pub mod occlusion;
 pub mod ringbuffer;
+pub mod se_manager;
 pub mod sfx_bank;
 pub mod spatial_voice;
 
 pub use acoustics::{
-    evaluate_room_acoustics, evaluate_room_acoustics_for_pos, EnvironmentalPreset,
+    evaluate_room_acoustics, evaluate_room_acoustics_for_pos,
+    evaluate_room_acoustics_for_pos_gated, evaluate_room_acoustics_gated, EnvironmentalPreset,
     RoomAcousticsProfile,
 };
 pub use beta_audio_catalog::{
@@ -38,11 +40,13 @@ pub use bgm_data::{
     STAGE_SOUND_DATA,
 };
 pub use bgm_manager::{
-    apply_music_box_volume_patch, decode_bgm_layers_from_disk, eval_stage_ev_bgm_control,
-    evaluate_situation_page, evaluate_sound_areas, evaluate_sound_areas_with_restoration,
-    extract_record_track_fades, pick_bgm_page, BgmEventFlags, BgmManager, BgmTrackState,
-    BgmTrackStatus, SoundAreaEvaluation, BGM_MAX_TRACKS, ENEMY_NEAR_DIST_SQ, FADE_PRIO,
-    FADE_TIME_SECS, LOW_HEALTH_RATIO_THRESHOLD, MAX_MATCHED_SOUND_AREAS, SITUATION_PRESETS_6_TO_15,
+    apply_music_box_volume_patch, bgm_ducking_mode_from_game_state, decode_bgm_layers_from_disk,
+    eval_stage_ev_bgm_control, evaluate_situation_page, evaluate_sound_areas,
+    evaluate_sound_areas_with_restoration, extract_record_track_fades, is_bgm_demo_duck_exempt,
+    pick_bgm_page, step_global_bgm_fade, BgmDuckingMode, BgmEventFlags, BgmManager, BgmTrackState,
+    BgmTrackStatus, SoundAreaEvaluation, BGM_DUCK_DEMO, BGM_DUCK_NORMAL, BGM_DUCK_PAUSED,
+    BGM_DUCK_RAMP_DIVISOR, BGM_MAX_TRACKS, ENEMY_NEAR_DIST_SQ, FADE_PRIO, FADE_TIME_SECS,
+    LOW_HEALTH_RATIO_THRESHOLD, MAX_MATCHED_SOUND_AREAS, SITUATION_PRESETS_6_TO_15,
     SOUND_AREA_HALF_WIDTH,
 };
 pub use chainsaw_sfx::{
@@ -80,10 +84,18 @@ pub use occlusion::{
 pub use ringbuffer::{
     pack_stereo_frame, unpack_stereo_frame, AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES,
 };
+pub use se_manager::{
+    Se2d3dMapping, Se2dSlot, Se3dChannel, SeBackendAction, SeCallResult, SeListenerContext,
+    SePoolManager, SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT, SE_3D_CHANNEL_COUNT,
+    SE_3D_ID_THRESHOLD, SE_3D_PRIORITY1_MAX, SE_FLAG_MANAGED_2D, SE_FLAG_NO_DISTANCE,
+    SE_FLAG_PRIO_1,
+};
 pub use sfx_bank::{
-    compute_ps2_sfx_attenuation_gain, compute_se_call_pos_distance_f, compute_sfx_distance_param_v,
-    footstep_sddata_indices, resolve_se_id_to_sddata_index, resolve_se_id_to_voice_afs_index,
-    SfxSpatialEval, SDDATA_ENTRY_COUNT, SE_ID_TO_SDDATA_INDEX, SE_ID_TO_VOICE_AFS_INDEX,
+    build_ps2_wvs_matrix, compute_se_call_pos_distance_f, compute_se_call_pos_spatial,
+    compute_sfx_distance_param_v, footstep_sddata_indices, resolve_se_id_to_sddata_index,
+    resolve_se_id_to_voice_afs_index, se_call_pos_direction, se_call_pos_distance,
+    se_call_pos_distance_f, SfxSpatialEval, SDDATA_ENTRY_COUNT, SE_DIR_CAMERA_X_OFFSET_MM,
+    SE_DIR_PAN_SCALE_DEG, SE_ID_TO_SDDATA_INDEX, SE_ID_TO_VOICE_AFS_INDEX, SFX_DISTANCE_INV_SPAN,
     SFX_DISTANCE_SPAN, SFX_MAX_DISTANCE, SFX_MIN_DISTANCE,
 };
 pub use spatial_voice::{

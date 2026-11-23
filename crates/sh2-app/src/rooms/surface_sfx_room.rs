@@ -706,11 +706,11 @@ impl RoomController for SurfaceSfxRoomController {
         );
         state.menu_rasterizer.draw_text(
             &format!(
-                "PROXIMITY v: {:.3} | PS2 CURVE gain(v)=25.5/(255*(1-v)): {:.1}% | EFFECTIVE GAIN: {:.1}% | shSdCall BYTE: {} | STEREO PAN: {:+.2}",
+                "PROXIMITY v: {:.3} | EFFECTIVE GAIN: {:.1}% | shSdCall BYTE: {} | DIR: {:+}deg | STEREO PAN: {:+.2}",
                 eval.proximity_v,
-                eval.ps2_curve_gain * 100.0,
                 eval.effective_gain * 100.0,
                 eval.driver_attenuation_byte,
+                eval.direction_deg,
                 eval.stereo_pan
             ),
             20,

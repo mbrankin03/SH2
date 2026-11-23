@@ -877,9 +877,11 @@ impl CombatController {
                 self.reload_transfer_frame = 17.0;
             }
             WeaponGrip::HyperSpray => {
-                // `sh2_attack_list[10]` shake clip (frames 0..30)
+                // `sh2_attack_list[10]` standing shake clip (frames 0..30); recharge transfer occurs
+                // at frame `7` (`0x1fe` standing shake; `3` for moving `0x1ff`) in `upper_attack`
+                // (`SLUS_202.28` `0x0021ef50` / `sh2pc.exe` `sh2pc_00540000.c` `case '\x04'`).
                 self.clip_length = 30.0;
-                self.reload_transfer_frame = 15.0;
+                self.reload_transfer_frame = 7.0;
             }
             _ => {}
         }

@@ -2,7 +2,7 @@
 //! auto-aim/LOS stomp targeting, and grapple lifecycle.
 //!
 //! # Ground Truth & Binary References
-//! - **`shBattleExecAttackQueue` (`SLUS_202.28` `0x00123760` / `sh2pc.exe` `0x00544f00`):**
+//! - **`shBattleExecAttackQueue` (`SLUS_202.28` `0x00123760` / `sh2pc.exe` `0x00544f90`):**
 //!   Dispatches attacks by `AttackDispatchKind` (GunshotTypeA, GunshotTypeB 10-pellet 3D cone,
 //!   HumanFog 5-ray cone, HumanFight swept blade quad, HumanFinish stomp/kick).
 //! - **`shBattleAttackByHumanFightType` (`SLUS_202.28` `0x00121370` / `sh2pc.exe` `0x00543ec0`):**

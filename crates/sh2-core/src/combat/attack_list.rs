@@ -215,7 +215,7 @@ impl HyperSprayColor {
 }
 
 /// Dispatch category for player attacks (`shBattleExecAttackQueue`, `SLUS_202.28` `0x00123760`
-/// / `sh2pc.exe` `0x00544f00`).
+/// / `sh2pc.exe` `0x00544f90`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttackDispatchKind {
     /// Unused/reload sentinel slot (`ap == 0.0`).
@@ -259,7 +259,7 @@ pub struct AttackSpec {
 }
 
 impl AttackSpec {
-    /// Classify how `shBattleExecAttackQueue` (`SLUS_202.28` `0x00123760` / `sh2pc.exe` `0x00544f00`)
+    /// Classify how `shBattleExecAttackQueue` (`SLUS_202.28` `0x00123760` / `sh2pc.exe` `0x00544f90`)
     /// dispatches hit detection for this attack ID.
     pub const fn dispatch_kind(&self) -> AttackDispatchKind {
         match self.id {

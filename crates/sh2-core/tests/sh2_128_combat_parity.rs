@@ -326,13 +326,18 @@ fn hyper_spray_cone_taper_shake_recharge_and_color_stun() {
     );
     assert_eq!(hyper_spray_effective_range(0.0, -125.0, 1000.0), (0.0, 0.0));
 
-    // 3. Shake recharge (`upper_attack` 0x0021ef50): 200 -> 199 -> 19.9s
+    // 3. Shake recharge (`upper_attack` 0x0021ef50): 200 -> 199 -> 19.9s at frame 7.0 (0x1fe)
     let mut ctrl = CombatController::new(false, false);
     ctrl.equip_weapon(WeaponGrip::HyperSpray);
+    ctrl.mode = CombatMode::Ready;
     ctrl.hyper_spray_charge = 0.0;
-    let recharged = ctrl.shake_hyper_spray();
+    ctrl.handle_combat_inputs(true, true, true, false, 1.0 / 60.0);
+    assert_eq!(ctrl.mode, CombatMode::Reload);
+    assert_eq!(ctrl.reload_transfer_frame, 7.0);
+    ctrl.anim_frame = 7.0;
+    ctrl.handle_combat_inputs(true, false, false, false, 1.0 / 60.0);
     assert_eq!(ctrl.hyper_spray_shakes, 199);
-    assert!((recharged - 19.9).abs() < 1e-4);
+    assert!((ctrl.hyper_spray_charge - 19.9).abs() < 1e-4);
 
     // 4. Color tiers (`GameSaveSprayPower` 0x00290c20)
     assert_eq!(HyperSprayColor::from_rank_score(0), HyperSprayColor::Purple);
@@ -383,6 +388,18 @@ fn swept_melee_blade_quad_and_3d_shotgun_cone_geometry() {
     // Enemy at Z=1100 is well beyond Plank's 350mm reach (old static 1600mm segment would falsely hit!)
     let far_enemy = CombatHitbox::new_standing(Vec3::new(0.0, 0.0, 1100.0), 150.0, 1700.0);
     assert!(!far_enemy.intersects_swept_quad(&quad));
+
+    // Degenerate first-frame quad (`prev_tip = None` -> `prev_tip == curr_tip`) must NOT falsely hit
+    // collinear distant enemies ahead or behind the player!
+    let first_frame_quad = SweptBladeQuad::new(origin, Vec3::Z, -150.0, 350.0, None);
+    let collinear_far_ahead =
+        CombatHitbox::new_standing(Vec3::new(0.0, 0.0, 5000.0), 150.0, 1700.0);
+    let collinear_far_behind =
+        CombatHitbox::new_standing(Vec3::new(0.0, 0.0, -5000.0), 150.0, 1700.0);
+    let collinear_in_range = CombatHitbox::new_standing(Vec3::new(0.0, 0.0, 450.0), 150.0, 1700.0);
+    assert!(!collinear_far_ahead.intersects_swept_quad(&first_frame_quad));
+    assert!(!collinear_far_behind.intersects_swept_quad(&first_frame_quad));
+    assert!(collinear_in_range.intersects_swept_quad(&first_frame_quad));
 
     // 2. Shotgun 10-pellet 3D cone (`shBattleAttackByHumanGunshotTypeB` 0x00120f30)
     let mut rng_a = CombatRng::new(0x1234_5678);

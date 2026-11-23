@@ -281,14 +281,22 @@ impl CombatHitbox {
         }
 
         // Point-in-triangle check in XZ plane (for wide arcs sweeping completely across cylinder center).
-        let px = self.center_x;
-        let pz = self.center_z;
+        // Guard against degenerate zero-area triangles (e.g., first active frame where prev_tip == curr_tip):
+        // without this guard, collinear points at arbitrary distance yield d1 == d2 == d3 == 0.0.
         let ax = quad.curr_base.x;
         let az = quad.curr_base.z;
         let bx = quad.prev_tip.x;
         let bz = quad.prev_tip.z;
         let cx = quad.curr_tip.x;
         let cz = quad.curr_tip.z;
+
+        let area2 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+        if area2.abs() < 1e-4 {
+            return false;
+        }
+
+        let px = self.center_x;
+        let pz = self.center_z;
 
         let d1 = (px - bx) * (az - bz) - (ax - bx) * (pz - bz);
         let d2 = (px - cx) * (bz - cz) - (bx - cx) * (pz - cz);

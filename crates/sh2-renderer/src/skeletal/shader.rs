@@ -287,13 +287,10 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
 
         let spec_scale = select(1.0, pcss_u.params.w, pcss_u.params.w > 0.01);
         let active_spec = select(spec_spot, spec_studio, shade_mode == 3) * env_tint_rgb * spec_scale * spec_rgb;
-        // GS `ALPHA_1 = 0x58` (night/interior): `Cd + Cs * Ad`; `0x54` (day): `Cd + (Cs - Cd) * Ad`
-        let is_night = spotlight.gun_and_dark_trim.w > 0.5;
-        final_rgb = select(
-            final_rgb + (active_spec - final_rgb) * gloss_mask,
-            final_rgb + active_spec * gloss_mask,
-            is_night,
-        );
+        // GS `ALPHA_1 = 0x58` (`sh2gfw_Set_SpecularAlpha` 0x00181be0) / `sh2pc.exe` `0x00501b66`
+        // (`MODULATEALPHA_ADDCOLOR`): additive specular modulated by the texture's gloss-mask alpha
+        // (`tex_color.a`), never erasing opaque diffuse albedo (`tex_color.a == 1.0`).
+        final_rgb = final_rgb + active_spec * gloss_mask;
     }
 
     return vec4<f32>(final_rgb, out_alpha);

@@ -501,6 +501,29 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             effective_fog.fog_color[3] *= session.player.atmosphere.fog_density_scale;
         }
     }
+    // Step 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`) UV-scrolling screen fog overlay
+    let cam_eye = state.sim_core.active_camera_eye(alpha);
+    let cam_delta = cam_eye - state.last_screen_fog_cam;
+    state.last_screen_fog_cam = cam_eye;
+    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
+        let fog_alpha_param = (effective_fog.layer_transparencies[0] * 128.0)
+            .round()
+            .clamp(0.0, 128.0) as u8;
+        let screen_eval = state
+            .screen_fog_state
+            .step(&sh2_renderer::fog::ScreenFogStepInput {
+                cam_delta,
+                area_size: sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                wind_vec: glam::Vec3::new(0.4, 0.0, 0.0),
+                dt_scale: fog_dt * 60.0 * effective_fog.speed_mult,
+                world_view_rot: glam::Mat3::IDENTITY,
+                fog_color_a: 0x80,
+                fog_alpha_param,
+            });
+        effective_fog.screen_fog_uv = state.screen_fog_state.to_gpu_vec4(&screen_eval);
+    } else {
+        effective_fog.screen_fog_uv[3] = 0.0;
+    }
     state.render_ctx.update_fog(&effective_fog);
 
     // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`)
@@ -571,6 +594,14 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
                     color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
                 }
             }));
+        // Step 1:1 `Fog/fog_blow.c` (`0x00274ca0..0x00275480`) steam-vent particles for rooms 0x8e/0x8f/0x90
+        if state.fog_blow_system.active_room_id != ps2_room_id {
+            state.fog_blow_system.set_room(ps2_room_id);
+        }
+        state.fog_blow_system.tick(fog_dt, 1, player_pos);
+        state
+            .fog_blow_system
+            .write_gpu_instances(fog_rgb, &mut state.fog_particle_scratch);
         state
             .render_ctx
             .update_fog_particles(&state.fog_particle_scratch);

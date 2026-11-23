@@ -23,7 +23,8 @@ pub mod uniforms;
 
 pub use character_pool::{
     CharacterLightEntry, CharacterLightPool, CharacterLightType, FakeLightKind,
-    CHARACTER_EXTRA_LIGHT_LIMIT, CHARACTER_LIGHT_SLOT_COUNT, PS2_LUMA_WEIGHTS, PS2_NHM_UV_BIAS_ROW,
+    CHARACTER_EXTRA_LIGHT_LIMIT, CHARACTER_LIGHT_SLOT_COUNT, CHARACTER_PARALLEL_MATRIX_LIMIT,
+    PS2_LUMA_WEIGHTS, PS2_NHM_UV_BIAS_COL,
 };
 pub use jms_spot::{
     linear_trim, JmsSpotManager, DARK_HOSEI, DARK_ROOM_MAX_SCALE_DEFAULT,

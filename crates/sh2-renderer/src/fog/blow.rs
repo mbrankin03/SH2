@@ -286,8 +286,17 @@ impl Default for FogBlowSystem {
     }
 }
 
+/// Default blow particle max size in PS2 mm from `fog_defset_data + 0x04` (`SLUS_202.28` `0x002ab530`
+/// `param_1[2] = 300`, stored in `_DAT_00581510` by `fogSetEnvironment` `0x00168dd0`).
+pub const PS2_DEFAULT_BLOW_MAX_SIZE_MM: f32 = 300.0;
+
+/// Default blow particle target alpha from `fog_defset_data + 0x13` (`SLUS_202.28` `0x002ab530`
+/// `*(byte*)(param_1 + 0x13) = 16`, stored in `_DAT_0058152e` by `fogSetEnvironment` `0x00168dd0`).
+pub const PS2_DEFAULT_BLOW_TARGET_ALPHA: f32 = 16.0;
+
 impl FogBlowSystem {
-    /// Initializes an empty blow-fog system (`fogInitParticle2` `0x00274ca0`).
+    /// Initializes an empty blow-fog system (`fogInitParticle2` `0x00274ca0`) with defaults from
+    /// `fog_defset_data` (`SLUS_202.28` `0x002ab530`: `max_size = 300.0 mm`, `target_alpha = 16.0`).
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -295,9 +304,16 @@ impl FogBlowSystem {
             spawn_interval_frames: 0,
             emitter_timers: [0; 16],
             particles: Vec::with_capacity(MAX_BLOW_FOG_PARTICLES),
-            max_size_mm: 400.0,
-            target_alpha: 64.0,
+            max_size_mm: PS2_DEFAULT_BLOW_MAX_SIZE_MM,
+            target_alpha: PS2_DEFAULT_BLOW_TARGET_ALPHA,
         }
+    }
+
+    /// Updates dynamic room fog environment parameters (`_DAT_00581510` max particle size in mm
+    /// and `_DAT_0058152e` target GS alpha) from `fogSetEnvironment` (`0x00168dd0`).
+    pub fn set_environment_params(&mut self, max_size_mm: f32, target_alpha: f32) {
+        self.max_size_mm = max_size_mm.max(1.0);
+        self.target_alpha = target_alpha.clamp(0.0, 127.0);
     }
 
     /// Selects the emitter table for `room_id` (`fogSetBlowPoint` `0x00274cb0`).

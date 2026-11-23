@@ -55,7 +55,7 @@ pub struct FogUniforms {
     pub time: f32,
     /// Number of discrete volumetric raymarching steps (e.g., 16, 24, 32). (Offset 32, size 4)
     pub step_count: u32,
-    /// Density curve falloff type: `0` = PS2 Hyperbolic `FA/z + FB` (`0x00175df0`), `1` = Linear, `2` = Exponential Squared. (Offset 36, size 4)
+    /// Density curve falloff type: `0` = PS2 Hyperbolic `FA/z + FB` (`0x00175df0`), `1` = Exponential, `2` = Exponential Squared (`dbg_fogparm_ctl`). (Offset 36, size 4)
     pub curve_type: u32,
     /// Drift speed multiplier matching SH2:EE `FogSpeedFix` (`FogAdjustments.cpp:272-306`). (Offset 40, size 4)
     pub speed_mult: f32,

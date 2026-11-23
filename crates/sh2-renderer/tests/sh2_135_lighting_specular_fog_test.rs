@@ -2,7 +2,7 @@
 //! 1:1 multi-light world/character pipeline, linear/hyperbolic flashlight attenuation & lifecycle,
 //! 64×64 sphere-map specular, and PS2 depth/screen/blow fog.
 
-use glam::{Mat3, Vec3};
+use glam::{Mat3, Vec3, Vec4};
 use sh2_core::config::FogQuality;
 use sh2_renderer::fog::{
     DepthFogCoeffs, FogBlowSystem, FogUniforms, ScreenFogState, ScreenFogStepInput,
@@ -14,7 +14,7 @@ use sh2_renderer::light::{
     DemoPointLightParams, JmsSpotManager, ParallelLightParams, SpotlightUniforms,
     CHARACTER_EXTRA_LIGHT_LIMIT, CHARACTER_LIGHT_SLOT_COUNT, DARK_HOSEI, PITCH_BLACK_MAP_IDS,
     PS2_DEFAULT_FLASHLIGHT_FAR_MM, PS2_DEFAULT_FLASHLIGHT_NEAR_MM, PS2_DEFAULT_FLASHLIGHT_POS_Y_MM,
-    PS2_NHM_UV_BIAS_ROW, SPOT_LCG_INCREMENT, SPOT_LCG_MULTIPLIER,
+    PS2_NHM_UV_BIAS_COL, SPOT_LCG_INCREMENT, SPOT_LCG_MULTIPLIER,
 };
 use sh2_renderer::skeletal::{
     composite_gs_specular, compute_sphere_map_uv, environ_packet_alpha,
@@ -172,9 +172,21 @@ fn golden_character_12_slot_light_pool_selection() {
         assert!(a >= b, "extra lights must be sorted descending: {a} >= {b}");
     }
 
+    pool.update_parallels();
+    assert_eq!(pool.valid_parallel_count(), 2);
+    assert_eq!(pool.valid_parallel_matrix_count(), 1);
+    let lcm0 = pool.nth_parallel_lcm(0).unwrap();
+    assert!((lcm0.col(0).x - 0.5).abs() < 1e-6);
+    assert!((lcm0.col(1).x - 0.2).abs() < 1e-6);
+
     pool.update_reflections(Vec3::Z, Vec3::Y);
     assert!((pool.reflection_brightness() - 0.8).abs() < 1e-5);
-    assert_eq!(pool.nhm().row(3).to_array(), PS2_NHM_UV_BIAS_ROW);
+    assert_eq!(pool.nhm().col(3).to_array(), PS2_NHM_UV_BIAS_COL);
+    // Half-vector (0, 0, 1) must project to exact sphere-map center (0.5, 0.5)
+    let proj = pool.nhm() * Vec4::new(0.0, 0.0, 1.0, 1.0);
+    assert!((proj.x - 0.5).abs() < 1e-5);
+    assert!((proj.y - 0.5).abs() < 1e-5);
+    assert!((proj.w - 1.0).abs() < 1e-5);
 }
 
 #[test]
@@ -245,6 +257,66 @@ fn golden_ps2_depth_screen_and_blow_fog() {
     assert_eq!(blow.spawn_interval_frames, 60);
 }
 
+fn readback_ldr_mean_luma(ctx: &RenderContext) -> f32 {
+    let w = ctx.config.width;
+    let h = ctx.config.height;
+    let unpadded_bpr = w * 4;
+    let padded_bpr = unpadded_bpr.div_ceil(256) * 256;
+    let staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("SH2-135 Readback Staging"),
+        size: u64::from(padded_bpr) * u64::from(h),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("SH2-135 Readback Encoder"),
+        });
+    enc.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture: &ctx.ldr_output_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: &staging,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bpr),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    ctx.queue.submit(std::iter::once(enc.finish()));
+    let slice = staging.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        let _ = tx.send(res);
+    });
+    ctx.device.poll(wgpu::Maintain::Wait);
+    rx.recv().unwrap().unwrap();
+    let data = slice.get_mapped_range();
+    let mut sum = 0.0_f64;
+    let mut count = 0_u64;
+    for y in 0..h as usize {
+        let row = &data[y * padded_bpr as usize..y * padded_bpr as usize + (w * 4) as usize];
+        for px in row.as_chunks::<4>().0 {
+            sum += 0.3 * f64::from(px[0]) + 0.6 * f64::from(px[1]) + 0.1 * f64::from(px[2]);
+            count += 1;
+        }
+    }
+    drop(data);
+    staging.unmap();
+    (sum / count.max(1) as f64) as f32
+}
+
 #[test]
 fn retail_headless_vanilla_ps2_pipeline_smoke_test() {
     let Some(ctx) = RenderContext::new_headless(RendererConfig {
@@ -266,10 +338,11 @@ fn retail_headless_vanilla_ps2_pipeline_smoke_test() {
 
     let mut spot = SpotlightUniforms::default();
     spot.set_ps2_falloff(1500.0, 6000.0, false);
-    spot.set_gun_and_dark_trim(0.0, 0.3, true);
+    spot.set_gun_and_dark_trim(0.0, 0.3, false); // Daytime test (`ALPHA_1 = 0x54` / additive safety)
     ctx.update_spotlight(&spot);
 
-    // Verify retail Restroom map (`er01.map`) loads and renders cleanly if retail assets are present
+    // Verify retail Restroom map (`er01.map`) loads, renders cleanly under strict Vanilla PS2 mode,
+    // and produces non-black, finite LDR pixels.
     let map_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/data/bg/er/er01.map");
     if map_path.exists() {
@@ -277,6 +350,19 @@ fn retail_headless_vanilla_ps2_pipeline_smoke_test() {
         let map = sh2_assets::formats::map::MapFile::parse(&bytes)
             .expect("retail er01.map should parse cleanly");
         let gpu_map = sh2_renderer::GpuMap::from_map(&ctx.device, &map);
+        let proj = glam::Mat4::perspective_rh(60.0_f32.to_radians(), 1.0, 50.0, 50_000.0);
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(0.0, -1200.0, 1500.0),
+            glam::Vec3::new(0.0, -1000.0, 0.0),
+            glam::Vec3::NEG_Y,
+        );
+        let vp = proj * view;
+        ctx.update_camera(vp, proj.inverse(), glam::Vec3::new(0.0, -1200.0, 1500.0));
         ctx.render_gpu_map(&gpu_map);
+        let luma = readback_ldr_mean_luma(&ctx);
+        assert!(
+            luma.is_finite() && luma > 1.0,
+            "Vanilla PS2 render of retail er01.map must produce finite non-black pixels (luma={luma:.2})"
+        );
     }
 }

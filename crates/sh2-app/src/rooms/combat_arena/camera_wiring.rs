@@ -252,13 +252,82 @@ pub(crate) fn update_spotlight_uniforms(
             }
         };
         let flashlight_active = state.sim_core.scenario.is_flashlight_active();
+        let has_flashlight = state.sim_core.scenario.has_flashlight();
+        // Sync & tick 1:1 `sh2_JmsSpot_Man.c` lifecycle (`0x0028e410..0x0028eaf0`)
+        if flashlight_active && !state.jms_spot_man.spot_on {
+            state.jms_spot_man.turn_on();
+        } else if !flashlight_active
+            && state.jms_spot_man.spot_on
+            && state.jms_spot_man.ramp_step >= 0
+        {
+            state.jms_spot_man.turn_off();
+        }
+        state
+            .jms_spot_man
+            .tick(is_dark_room, has_flashlight, packed_map_id.unwrap_or(0));
+        let gun_light = state.jms_spot_man.gun_light();
+        let dark_trim = state.jms_spot_man.dark_trim_factor();
+
+        // Populate & evaluate 12-slot `CharacterLightPool` (`Chacter_Draw/light_n.c` `0x001260b0..0x00127360`)
+        state.char_light_pool.delete_all();
+        if let Some(env) = draw_env {
+            for (i, dl) in env.directional_lights.iter().enumerate() {
+                let col = glam::Vec3::from_array(dl.color);
+                if col.max_element() > 1e-4 {
+                    state.char_light_pool.set_parallel(
+                        i,
+                        glam::Vec3::from_array(dl.direction),
+                        col,
+                    );
+                }
+            }
+            for (i, pt) in env.point_lights.iter().take(4).enumerate() {
+                let col = glam::Vec3::from_array(pt.color);
+                if col.max_element() > 1e-4 && pt.far_dist > pt.near_dist {
+                    state.char_light_pool.set_point(
+                        3 + i,
+                        glam::Vec3::from_array(pt.position),
+                        col,
+                        pt.near_dist,
+                        pt.far_dist,
+                    );
+                }
+            }
+            state.char_light_pool.set_reflection(
+                7,
+                glam::Vec3::from_array(env.directional_lights[0].direction),
+                glam::Vec3::from_array(env.directional_lights[0].color).max(glam::Vec3::splat(0.3)),
+            );
+        }
+        if flashlight_active {
+            state.char_light_pool.set_spot(
+                8,
+                spot_pos,
+                light_dir,
+                glam::Vec3::new(1.18, 1.12, 0.96),
+                outer_cos,
+                (
+                    sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
+                    sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_FAR_MM,
+                ),
+            );
+        }
+        let cam_eye = state.sim_core.active_camera_eye(alpha);
+        let char_pos = state.sim_core.scenario.player_position;
+        let view_dir = (cam_eye - char_pos).normalize_or(glam::Vec3::Z);
+        state.char_light_pool.update_parallels();
+        state
+            .char_light_pool
+            .update_reflections(view_dir, glam::Vec3::NEG_Y);
+        state.char_light_pool.update_extras(175.0, char_pos);
+
         let darkness =
             sh2_core::lighting::evaluate_room_darkness(&sh2_core::lighting::RoomDarknessInput {
                 packed_map_id,
                 room_id: sh2_core::lighting::darkness_room_id_from_code(room_code),
                 chapter,
                 is_dark_room,
-                has_flashlight: state.sim_core.scenario.has_flashlight(),
+                has_flashlight,
                 flashlight_on: flashlight_active,
                 flag_625_set: state.sim_core.scenario.has_flag(u32::from(
                     sh2_core::lighting::FLAG_WOODSIDE_FLASHLIGHT_PICKUP,
@@ -275,10 +344,32 @@ pub(crate) fn update_spotlight_uniforms(
             base_amb_scale
         };
 
+        const PARALLEL_LIGHT_LINEAR_SCALE: f32 = 0.07 * 2.2;
+        let aux_parallels = draw_env
+            .map(|env| {
+                let mut aux = [sh2_renderer::light::ParallelLightParams::default(); 3];
+                for i in 1..3 {
+                    let dl = env.directional_lights[i];
+                    let lum = dl.color[0].max(dl.color[1]).max(dl.color[2]);
+                    if lum > 1e-4 {
+                        aux[i] = sh2_renderer::light::ParallelLightParams {
+                            direction: dl.direction,
+                            color: [
+                                dl.color[0] * PARALLEL_LIGHT_LINEAR_SCALE,
+                                dl.color[1] * PARALLEL_LIGHT_LINEAR_SCALE,
+                                dl.color[2] * PARALLEL_LIGHT_LINEAR_SCALE,
+                            ],
+                            enabled: true,
+                        };
+                    }
+                }
+                aux
+            })
+            .unwrap_or_default();
+
         if flashlight_active {
-            // Flashlight ON: chest-pocket forward spotlight (`Calculate_Jms_Spot` @ 0x0028e940).
-            // `fl_mul = 1.2` (`EnhancedFlashlight.cpp:49`) is unit-normalized relative to the
-            // 4.0 PC wall scale (`PS2_FLASHLIGHT_COLOR_SCALE = 1.2 / 4.0`), with reach `6000` / `8500` mm.
+            // Flashlight ON: 1-spot + 2-parallel (`sh2gfw_setsp1para2LGT_blk` @ 0x0017ddd0,
+            // `Calculate_Jms_Spot` @ 0x0028e940).
             let fl_mul =
                 sh2_core::lighting::flashlight_wall_brightness_multiplier(video.lighting_profile);
             let mut u = SpotlightUniforms {
@@ -299,21 +390,23 @@ pub(crate) fn update_spotlight_uniforms(
                 ],
                 ..Default::default()
             };
+            u.set_parallel_lights(&aux_parallels);
             u.set_ps2_falloff(
                 sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
                 darkness.flashlight_reach_mm,
                 false,
             );
-            u.set_gun_and_dark_trim(0.0, 0.0, is_dark_room);
+            u.set_gun_and_dark_trim(gun_light, dark_trim, is_dark_room);
+            u.set_reflection(
+                light_dir.to_array(),
+                state.char_light_pool.reflection_brightness(),
+                state.char_light_pool.reflection_color().to_array(),
+                0,
+            );
             u
         } else if !is_dark_room {
-            // Daytime / lit room (`sh2gfw_Get_NightOrDay() == 0`): emit authentic PS2 parallel
-            // directional light (`sh2gfw_setparal3LGT_blk` @ `SLUS_202.28` `0x0017d7f0`,
-            // `DrawEnvData.directional_lights[0..3]`) scaled into the shader's `base_ambient * 2.2`
-            // linear unit space (`0.07 * 2.2 = 0.154`) so `ER_DrawEnvData[room=1]` (`col=[0.5,0.5,0.5]`)
-            // and `OB_DrawEnvData` (`col=[0.1,0.1,0.1]`) match their PS2 diffuse-to-ambient ratios
-            // without overexposing lit interiors or mirrors. Zero camera headlamp fill in lit rooms.
-            const PARALLEL_LIGHT_LINEAR_SCALE: f32 = 0.07 * 2.2;
+            // Daytime / lit room (`sh2gfw_Get_NightOrDay() == 0`): 3-parallel directional lights
+            // (`sh2gfw_setparal3LGT_blk` @ `SLUS_202.28` `0x0017d7f0`).
             let (dir, color) = draw_env
                 .map(|env| {
                     let dl = env.directional_lights[0];
@@ -344,31 +437,18 @@ pub(crate) fn update_spotlight_uniforms(
                 fill_and_range: [0.0, 1_000_000.0, darkness.flash_level, 0.0],
                 ..Default::default()
             };
-            if let Some(env) = draw_env {
-                let mut aux = [sh2_renderer::light::ParallelLightParams::default(); 3];
-                for i in 1..3 {
-                    let dl = env.directional_lights[i];
-                    let lum = dl.color[0].max(dl.color[1]).max(dl.color[2]);
-                    if lum > 1e-4 {
-                        aux[i] = sh2_renderer::light::ParallelLightParams {
-                            direction: dl.direction,
-                            color: [
-                                dl.color[0] * PARALLEL_LIGHT_LINEAR_SCALE,
-                                dl.color[1] * PARALLEL_LIGHT_LINEAR_SCALE,
-                                dl.color[2] * PARALLEL_LIGHT_LINEAR_SCALE,
-                            ],
-                            enabled: true,
-                        };
-                    }
-                }
-                u.set_parallel_lights(&aux);
-            }
-            u.set_gun_and_dark_trim(0.0, 0.0, false);
+            u.set_parallel_lights(&aux_parallels);
+            u.set_gun_and_dark_trim(gun_light, dark_trim, false);
+            u.set_reflection(
+                dir.to_array(),
+                state.char_light_pool.reflection_brightness(),
+                state.char_light_pool.reflection_color().to_array(),
+                0,
+            );
             u
         } else {
-            // Dark room, Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`), while dark rooms receive
-            // authentic `s_flash_level` ambient modulation (`0.75` pre-pickup -> `0.575` post-pickup)
-            // and camera view-space directional fill (`0.075` pre-pickup -> `0.0225` post-pickup).
+            // Dark room, Flashlight OFF: spotlight is OFF (`[0, 0, 0]`), while dark rooms receive
+            // authentic `s_flash_level` ambient modulation, `DARK_Hosei` trim, and aux parallels.
             let mut u = SpotlightUniforms {
                 position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
                 direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
@@ -387,7 +467,14 @@ pub(crate) fn update_spotlight_uniforms(
                 ],
                 ..Default::default()
             };
-            u.set_gun_and_dark_trim(0.0, 0.0, true);
+            u.set_parallel_lights(&aux_parallels);
+            u.set_gun_and_dark_trim(gun_light, dark_trim, true);
+            u.set_reflection(
+                light_dir.to_array(),
+                state.char_light_pool.reflection_brightness(),
+                state.char_light_pool.reflection_color().to_array(),
+                0,
+            );
             u
         }
     };

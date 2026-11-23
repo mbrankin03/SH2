@@ -18,9 +18,15 @@ pub const CHARACTER_EXTRA_LIGHT_LIMIT: usize = 6;
 /// extracted from `SLUS_202.28` `0x002a9540`.
 pub const PS2_LUMA_WEIGHTS: [f32; 3] = [0.3, 0.6, 0.1];
 
-/// NHM row 3 UV bias vector from `SLUS_202.28` `0x002a9550`, copied into `0x419d10` / `0x419d50`
-/// by `UpdateReflections` (`0x00126f90`).
-pub const PS2_NHM_UV_BIAS_ROW: [f32; 4] = [0.5, 0.5, 0.0, 1.0];
+/// NHM column 3 UV translation bias vector from `SLUS_202.28` `0x002a9550`, copied into
+/// `0x419d10` / `0x419d50` (column 3) by `UpdateReflections` (`0x00126f90`).
+pub const PS2_NHM_UV_BIAS_COL: [f32; 4] = [0.5, 0.5, 0.0, 1.0];
+
+/// Maximum number of VU parallel light matrices populated by `UpdateParallels` (`0x00126d30`).
+///
+/// Matrix 0 holds up to 3 parallel lights (`iVar6 == 3 && iVar5 == 0`), Matrix 1 holds up to 4
+/// (`iVar6 == 4`), for a total of up to 7 parallel lights across 2 matrices.
+pub const CHARACTER_PARALLEL_MATRIX_LIMIT: usize = 2;
 
 /// Spot spread offset scale in `sh_Kari_LightSetSpot` (`0x001265f0`: `__s[0x23] = -*param_5 * 0.8`).
 pub const KARI_SPOT_SPREAD_BIAS_SCALE: f32 = 0.8;
@@ -190,6 +196,12 @@ impl CharacterLightEntry {
 #[derive(Debug, Clone)]
 pub struct CharacterLightPool {
     slots: [CharacterLightEntry; CHARACTER_LIGHT_SLOT_COUNT],
+    /// Packed parallel Normal-Light Matrices (`0x419b10` / `0x419b90`, `UpdateParallels` `0x00126d30`).
+    parallel_nlm: [Mat4; CHARACTER_PARALLEL_MATRIX_LIMIT],
+    /// Packed parallel Light-Color Matrices (`0x419c10`, `UpdateParallels` `0x00126d30`).
+    parallel_lcm: [Mat4; CHARACTER_PARALLEL_MATRIX_LIMIT],
+    /// Total active parallel lights packed (`_DAT_00419b00`, up to 7 across 2 matrices).
+    valid_parallel_count: usize,
     /// Selected top-6 point/spot extra light slot indices (`DAT_00419c90`, `UpdateExtras` `0x00127360`).
     valid_extras: [usize; CHARACTER_EXTRA_LIGHT_LIMIT],
     valid_extra_count: usize,
@@ -213,6 +225,9 @@ impl CharacterLightPool {
     pub fn new() -> Self {
         Self {
             slots: [CharacterLightEntry::default(); CHARACTER_LIGHT_SLOT_COUNT],
+            parallel_nlm: [Mat4::ZERO; CHARACTER_PARALLEL_MATRIX_LIMIT],
+            parallel_lcm: [Mat4::ZERO; CHARACTER_PARALLEL_MATRIX_LIMIT],
+            valid_parallel_count: 0,
             valid_extras: [0; CHARACTER_EXTRA_LIGHT_LIMIT],
             valid_extra_count: 0,
             reflection_brightness: 0.0,
@@ -327,6 +342,66 @@ impl CharacterLightPool {
         }
     }
 
+    /// Packs active parallel lights into up to 2 VU matrices (3 in matrix 0 + 4 in matrix 1)
+    /// matching `UpdateParallels` (`Chacter_Draw/light_n.c` `0x00126d30`).
+    pub fn update_parallels(&mut self) {
+        self.parallel_nlm = [Mat4::ZERO; CHARACTER_PARALLEL_MATRIX_LIMIT];
+        self.parallel_lcm = [Mat4::ZERO; CHARACTER_PARALLEL_MATRIX_LIMIT];
+        self.valid_parallel_count = 0;
+
+        let mut mat_idx: usize = 0;
+        let mut slot_in_mat: usize = 0;
+
+        for slot in &self.slots {
+            if slot.kind == CharacterLightType::Parallel
+                && mat_idx < CHARACTER_PARALLEL_MATRIX_LIMIT
+            {
+                let mut nlm_cols = self.parallel_nlm[mat_idx].to_cols_array_2d();
+                // `UpdateParallels` (`0x00126d30` lines 539-545): direction stored in rows 0..3 at column `slot_in_mat`
+                nlm_cols[0][slot_in_mat] = slot.world_dir.x;
+                nlm_cols[1][slot_in_mat] = slot.world_dir.y;
+                nlm_cols[2][slot_in_mat] = slot.world_dir.z;
+                self.parallel_nlm[mat_idx] = Mat4::from_cols_array_2d(&nlm_cols);
+
+                // `UpdateParallels` (`0x00126d30` lines 546-550): color stored as column `slot_in_mat` of LCM
+                let mut lcm_cols = self.parallel_lcm[mat_idx].to_cols_array_2d();
+                lcm_cols[slot_in_mat] = [slot.color.x, slot.color.y, slot.color.z, 0.0];
+                self.parallel_lcm[mat_idx] = Mat4::from_cols_array_2d(&lcm_cols);
+
+                slot_in_mat += 1;
+                if (slot_in_mat == 3 && mat_idx == 0) || slot_in_mat == 4 {
+                    mat_idx += 1;
+                    slot_in_mat = 0;
+                }
+                self.valid_parallel_count += 1;
+            }
+        }
+    }
+
+    /// Number of valid parallel light matrices (`LightNValidParallelMatrices` `0x00127660`, `(n + 3) >> 2`).
+    #[must_use]
+    pub fn valid_parallel_matrix_count(&self) -> usize {
+        (self.valid_parallel_count + 3) >> 2
+    }
+
+    /// Number of active parallel lights packed by [`Self::update_parallels`] (`_DAT_00419b00`).
+    #[must_use]
+    pub fn valid_parallel_count(&self) -> usize {
+        self.valid_parallel_count
+    }
+
+    /// Returns the `n`-th Normal-Light Matrix (`LightGetNthViewNLM` `0x00127690`, `n < 2`).
+    #[must_use]
+    pub fn nth_parallel_nlm(&self, n: usize) -> Option<Mat4> {
+        self.parallel_nlm.get(n).copied()
+    }
+
+    /// Returns the `n`-th Light-Color Matrix (`LightGetNthLCM` `0x00127700`, `n < 2`).
+    #[must_use]
+    pub fn nth_parallel_lcm(&self, n: usize) -> Option<Mat4> {
+        self.parallel_lcm.get(n).copied()
+    }
+
     /// Selects the strongest reflection light and builds the Normal-to-Halfway Matrix
     /// (`UpdateReflections` `0x00126f90`).
     pub fn update_reflections(&mut self, view_dir: Vec3, camera_up: Vec3) {
@@ -358,12 +433,14 @@ impl CharacterLightPool {
         let u_axis = camera_up.cross(half).normalize_or(Vec3::X);
         let v_axis = half.cross(u_axis).normalize_or(Vec3::Y);
 
-        // `UpdateReflections` (`0x00126f90`): columns U, V, H transposed + row 3 = [0.5, 0.5, 0.0, 1.0] (`0x2a9550`)
+        // `UpdateReflections` (`0x00126f90` lines 623-630): transposes `[U, V, H, (0,0,0,1)]` so
+        // rows 0..3 hold U, V, H, then copies `[0.5, 0.5, 0.0, 1.0]` (`0x002a9550`) into column 3
+        // (`0x419d10` / `0x419d50`), yielding `nhm * Vec4(n, 1.0) = (dot(u,n)+0.5, dot(v,n)+0.5, dot(h,n), 1.0)`.
         self.nhm = Mat4::from_cols(
-            Vec4::new(u_axis.x, v_axis.x, half.x, PS2_NHM_UV_BIAS_ROW[0]),
-            Vec4::new(u_axis.y, v_axis.y, half.y, PS2_NHM_UV_BIAS_ROW[1]),
-            Vec4::new(u_axis.z, v_axis.z, half.z, PS2_NHM_UV_BIAS_ROW[2]),
-            Vec4::new(0.0, 0.0, 0.0, PS2_NHM_UV_BIAS_ROW[3]),
+            Vec4::new(u_axis.x, v_axis.x, half.x, 0.0),
+            Vec4::new(u_axis.y, v_axis.y, half.y, 0.0),
+            Vec4::new(u_axis.z, v_axis.z, half.z, 0.0),
+            Vec4::from_array(PS2_NHM_UV_BIAS_COL),
         );
         self.reflection_brightness = best.signed_intensity;
         self.reflection_color = best.color;

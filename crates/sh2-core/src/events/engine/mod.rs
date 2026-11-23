@@ -153,6 +153,19 @@ pub struct StageTransitionCommand {
     pub dest_rot_y: f32,
 }
 
+/// Player animation pause/restart signal emitted during crouch item pickups
+/// (`shCharacterAnimePause` / `shCharacterAnimeRestart` in `EventExecItem` `0x001aa260`
+/// and `EvSubItemGetAndAnim` `0x001ac470`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerAnimSignal {
+    /// Pause the player's crouch pickup animation at `PlayerEventAnimeSuccessFrame`
+    /// while the item-acquired message is displayed (`shCharacterAnimePause`).
+    Pause,
+    /// Resume the player's crouch pickup animation so James stands back up after the
+    /// message is dismissed (`shCharacterAnimeRestart`).
+    Restart,
+}
+
 /// Side effects emitted during a single frame of `EventMainStandard` / `EventExec*`.
 #[derive(Debug, Clone, Default)]
 pub struct EventEngineEffects {
@@ -177,6 +190,8 @@ pub struct EventEngineEffects {
     pub save_point_name_id: Option<u8>,
     /// Player pickup animation requested by `PlayerEventAnimeSet` (`0x4e21` crouch or `0x65` stand).
     pub player_pickup_anim: Option<u16>,
+    /// Player crouch animation pause/restart signal (`shCharacterAnimePause` / `shCharacterAnimeRestart`).
+    pub player_anim_signal: Option<PlayerAnimSignal>,
     /// 3D item character model deleted on pickup `(chr_id, base_flag_id)`.
     pub deleted_item_model: Option<(i32, u16)>,
     /// Stage `ev_prog` index (`1..`) invoked when `ev_m_step == Program`.

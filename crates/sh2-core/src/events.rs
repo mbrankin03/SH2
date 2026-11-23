@@ -14,6 +14,7 @@ mod runner;
 pub mod stagemdl;
 pub mod stageparts;
 pub mod stages_act1;
+pub mod sub;
 pub mod triggers;
 
 pub use engine::*;
@@ -23,6 +24,7 @@ pub use runner::*;
 pub use stagemdl::*;
 pub use stageparts::*;
 pub use stages_act1::*;
+pub use sub::*;
 pub use triggers::*;
 
 pub mod stages_act2;

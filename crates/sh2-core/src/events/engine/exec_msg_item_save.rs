@@ -7,7 +7,7 @@ use crate::types::{EventListEntry, ItemListEntry, ITEM_KIND_TABLE};
 
 use super::super::triggers::event_exec_sub_flag_set;
 use super::super::EventFlags;
-use super::{EventEngineEffects, EventStepState};
+use super::{EventEngineEffects, EventStepState, PlayerAnimSignal};
 
 /// Executes one frame of `EventExecMessage` (`SLUS_202.28` `0x001a9cc0`).
 ///
@@ -71,6 +71,8 @@ pub fn event_exec_item(
             if state.ev_cancel {
                 state.set_e_step(6);
             } else if anim_success_frame {
+                // `shCharacterAnimePause(_sh2jms)` at `0x001aa260` (case 4)
+                effects.player_anim_signal = Some(PlayerAnimSignal::Pause);
                 state.set_e_step(1);
             }
             false
@@ -97,6 +99,8 @@ pub fn event_exec_item(
                 let kind = ITEM_KIND_TABLE[kind_idx];
                 effects.deleted_item_model = Some((kind.chr_id, item.flag_id()));
                 if is_crouch_pickup {
+                    // `shCharacterAnimeRestart()` at `0x001aa260` (case 2)
+                    effects.player_anim_signal = Some(PlayerAnimSignal::Restart);
                     state.set_e_step(5);
                 } else {
                     state.set_e_step(6);

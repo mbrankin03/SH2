@@ -74,6 +74,16 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
 
     let aspect = state.surface_config.width as f32 / state.surface_config.height.max(1) as f32;
 
+    let shadow_quality = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .shadow_quality;
+    state.render_ctx.set_soft_shadow_blur_enabled(
+        shadow_quality != sh2_core::config::ShadowQualityMode::NativePcss,
+    );
+
     // 6. Dispatch 3D scene or video pass to the active room controller (advances 60 Hz sim ticks)
     rooms::dispatch_tick_and_render_3d(state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game);
 

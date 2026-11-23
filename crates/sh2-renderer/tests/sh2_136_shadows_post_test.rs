@@ -110,8 +110,13 @@ fn test_sh2_136_soft_stencil_blur_self_shadow_exclusion_clear_color_and_post_pip
     ctx.update_shadow_volumes(&no_upper_verts, &[], 80.0 / 128.0);
 
     // Day clear color (`0x46, 0x46, 0x46, 0x40`) + Subtractive GS shadow composite (`0x8000000052`)
+    // + `Check_DrawOrder::ShadowBeforeCharacter` (`0x000a007d`)
     ctx.set_room_clear_color(false, None);
     ctx.set_shadow_composite_mode(ShadowCompositeMode::Subtractive);
+    ctx.set_shadow_blur_opacity(80.0 / 128.0);
+    ctx.set_shadow_draw_order(sh2_renderer::shadow::check_draw_order(0x000a_007d, 0));
+    let mut live_quads = quads.clone();
+    let _smoothed = ctx.update_lens_flares_smoothed(&mut live_quads, true, 1.0, true);
     ctx.update_post(&PostUniforms {
         time: 1.0,
         grain_intensity: 0.65,

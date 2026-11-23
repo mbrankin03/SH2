@@ -377,6 +377,36 @@ pub(crate) fn update_spotlight_uniforms(
     state
         .render_ctx
         .update_shadow_config(effective_shadow_mode, opacity, specular_scale);
+
+    // Sync SH2-136 PS2 room clear color (`0x00175930`), soft stencil shadow blur (`0x001767e0`),
+    // dual GS composite mode (`0x00175f90`), and `Check_DrawOrder` (`0x001a08a0`).
+    let room_clear_rgba = world_color_rgb.map(|rgb| {
+        [
+            rgb[0],
+            rgb[1],
+            rgb[2],
+            if is_dark_room { 0x7c } else { 0x40 },
+        ]
+    });
+    state
+        .render_ctx
+        .set_room_clear_color(is_dark_room, room_clear_rgba);
+    state.render_ctx.set_soft_shadow_blur_enabled(
+        effective_shadow_mode != sh2_core::config::ShadowQualityMode::NativePcss,
+    );
+    state.render_ctx.set_shadow_composite_mode(if is_dark_room {
+        sh2_renderer::shadow::ShadowCompositeMode::Multiplicative
+    } else {
+        sh2_renderer::shadow::ShadowCompositeMode::Subtractive
+    });
+    state.render_ctx.set_shadow_blur_opacity(opacity);
+    let demo_num = if active_demo.is_some() { 1 } else { 0 };
+    state
+        .render_ctx
+        .set_shadow_draw_order(sh2_renderer::shadow::check_draw_order(
+            packed_map_id.unwrap_or(0),
+            demo_num,
+        ));
 }
 
 /// Splits a PS2 room code like `"rr21"` or `"ap108"` into `("rr", 21)` for `DrawEnvData` lookup.

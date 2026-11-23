@@ -130,10 +130,10 @@ impl ShadowCompositeMode {
     #[must_use]
     pub const fn wgpu_blend_state(self) -> wgpu::BlendState {
         match self {
-            // Cd - Cs * Ad (approximated with SrcAlpha * src subtracted from dst)
+            // ALPHA_1 = 0x8000000052: (0 - Cs) * Ad + Cd = Cd - Cs * Ad
             Self::Subtractive => wgpu::BlendState {
                 color: wgpu::BlendComponent {
-                    src_factor: wgpu::BlendFactor::One,
+                    src_factor: wgpu::BlendFactor::DstAlpha,
                     dst_factor: wgpu::BlendFactor::One,
                     operation: wgpu::BlendOperation::ReverseSubtract,
                 },

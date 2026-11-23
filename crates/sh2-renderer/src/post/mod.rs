@@ -71,9 +71,9 @@ impl Default for PostUniforms {
             dof_strength: 0.0,
             motion_blur_strength: 0.0,
             flags: POST_FLAG_PS2_LCG_NOISE,
-            glow_threshold: 0.75,
+            glow_threshold: 0.0,
             glow_strength: 0.0,
-            glow_step_px: 1.0,
+            glow_step_px: 0.0,
             fade_rgba: [0.0, 0.0, 0.0, 0.0],
         }
     }

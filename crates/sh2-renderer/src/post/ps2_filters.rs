@@ -153,11 +153,11 @@ pub fn compute_swap_tap_offsets_12_4(n: u32, step_param: i32) -> Vec<i16> {
 /// GS `TEST_1` alpha-test mode for `sh2gfw_Swap_Soft` (`0x001785e0` lines 822-833).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapSoftTestMode {
-    /// `param_7 == 0`: `TEST_1 = (aref << 4) | 0x3800a` (`ATST = GEQUAL`).
+    /// `param_7 == 0`: `TEST_1 = (aref << 4) | 0x3800a` (`ATE = 0`, alpha test disabled).
     All = 0,
-    /// `param_7 == 1`: `TEST_1 = (aref << 4) | 0x3800d` (`ATST = NOTEQUAL`, near DoF pass).
+    /// `param_7 == 1`: `TEST_1 = (aref << 4) | 0x3800d` (`ATE = 1`, `ATST = 6 (GREATER)`, near DoF pass).
     Near = 1,
-    /// `param_7 == 2`: `TEST_1 = (aref << 4) | 0x38007` (`ATST = LESS`, far DoF pass).
+    /// `param_7 == 2`: `TEST_1 = (aref << 4) | 0x38007` (`ATE = 1`, `ATST = 3 (LEQUAL)`, far DoF pass).
     Far = 2,
 }
 

@@ -30,24 +30,24 @@ pub const MAX_SPECULAR_SHININESS: f32 = 96.0;
 
 /// PS2 GS `TEST_1` register (`0x47`) for character alpha-tested primitives
 /// (`SLUS_202.28` `0x002a9780` referenced by `DrawPart1` `0x0012d750` in `Chacter_Draw/model3_vu1_n.c`):
-/// `ATE=1`, `ATST=6 (NOTEQUAL)`, `AREF=0x00`, `AFAIL=0 (KEEP)`, `ZTE=1`, `ZTST=2 (GEQUAL)`.
-pub const PS2_GS_TEST_ALPHA_NOTEQUAL_ZERO: u64 = 0x0005_000d;
+/// `ATE=1`, `ATST=6 (GREATER)`, `AREF=0x00`, `AFAIL=0 (KEEP)`, `ZTE=1`, `ZTST=2 (GEQUAL)`.
+pub const PS2_GS_TEST_ALPHA_GREATER_ZERO: u64 = 0x0005_000d;
 
 /// PS2 GS `TEST_1` register (`0x47`) for opaque world/character geometry without alpha-test
 /// (`SLUS_202.28` `SetupDrawEnvData` `0x00251370` line 408: `ATE=0, ZTE=1, ZTST=1`).
 pub const PS2_GS_TEST_OPAQUE_NO_ATEST: u64 = 0x0003_0002;
 
 /// Retail PC `sh2pc.exe` `FUN_00503800` (`0x00503800` lines 2406-2409) `D3DRS_ALPHAFUNC` value
-/// (`D3DCMP_NOTEQUAL = 5`) paired with `D3DRS_ALPHAREF = 0` (`alpha != 0`).
-pub const PC_D3DRS_ALPHAFUNC_NOTEQUAL: u32 = 5;
+/// (`D3DCMP_GREATER = 5` in Direct3D 8) paired with `D3DRS_ALPHAREF = 0` (`alpha > 0`).
+pub const PC_D3DRS_ALPHAFUNC_GREATER: u32 = 5;
 
 /// Retail PC `sh2pc.exe` `FUN_00503800` (`0x00503800` line 2409) `D3DRS_ALPHAREF` value (`0`).
 pub const PC_D3DRS_ALPHAREF_ZERO: u8 = 0;
 
 /// Exact normalized float alpha-test threshold (`1.0 / 255.0`) equivalent to PS2 GS `TEST_1 = 0x5000d`
-/// (`ATST = NOTEQUAL, AREF = 0`) and PC `D3DRS_ALPHAFUNC = D3DCMP_NOTEQUAL, D3DRS_ALPHAREF = 0`.
+/// (`ATST = 6 (GREATER), AREF = 0`) and PC `D3DRS_ALPHAFUNC = D3DCMP_GREATER (5), D3DRS_ALPHAREF = 0`.
 ///
-/// Replaces the uncited `0.90` hair split and hardcoded `0.05` alpha-test with exact `alpha_u8 != 0`
+/// Replaces the uncited `0.90` hair split and hardcoded `0.05` alpha-test with exact `alpha_u8 > 0`
 /// parity from `SLUS_202.28` (`0x002a9780`) and `sh2pc.exe` (`0x00503800`).
 pub const PS2_ALPHA_TEST_THRESHOLD: f32 = 1.0 / 255.0;
 
@@ -57,8 +57,7 @@ pub struct GsAlphaTest {
     /// Bit 0 (`ATE`): alpha test enable.
     pub enabled: bool,
     /// Bits 1..=3 (`ATST`): comparison function (`0=NEVER, 1=ALWAYS, 2=LESS, 3=LEQUAL, 4=EQUAL,
-    /// 5=GEQUAL, 6=GREATER, 7=NOTEQUAL` — note GS `0x5000d` has `bits 1..3 = 6 (GREATER)` vs
-    /// `0x3800d` `NOTEQUAL`; both discard `alpha == 0` when `AREF == 0`!).
+    /// 5=GEQUAL, 6=GREATER, 7=NOTEQUAL`).
     pub atst: u8,
     /// Bits 4..=11 (`AREF`): 8-bit alpha reference value (`0..=255`).
     pub aref: u8,
@@ -423,7 +422,7 @@ mod tests {
 
     #[test]
     fn gs_alpha_test_matches_slus_002a9780_and_sh2pc_00503800() {
-        let atest = GsAlphaTest::from_gs_test_1(PS2_GS_TEST_ALPHA_NOTEQUAL_ZERO);
+        let atest = GsAlphaTest::from_gs_test_1(PS2_GS_TEST_ALPHA_GREATER_ZERO);
         assert!(atest.enabled);
         assert_eq!(atest.atst, 6);
         assert_eq!(atest.aref, 0);

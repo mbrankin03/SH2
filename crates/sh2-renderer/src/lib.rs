@@ -146,7 +146,9 @@ pub struct RenderContext {
     pub pcss_enabled: std::sync::atomic::AtomicBool,
     pub soft_shadow_blur_enabled: std::sync::atomic::AtomicBool,
     pub shadow_composite_mode: std::sync::atomic::AtomicU8,
+    pub shadow_draw_order: std::sync::atomic::AtomicU8,
     pub clear_color_rgba: std::sync::atomic::AtomicU32,
+    lens_flare_smoother: std::sync::Mutex<effects::LensFlareSmoother>,
     last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
     last_pcss_params: std::sync::Mutex<[f32; 4]>,
 
@@ -1026,9 +1028,13 @@ impl RenderContext {
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
             soft_shadow_blur_enabled: std::sync::atomic::AtomicBool::new(true),
             shadow_composite_mode: std::sync::atomic::AtomicU8::new(1),
+            shadow_draw_order: std::sync::atomic::AtomicU8::new(
+                shadow::ShadowDrawOrder::CharacterBeforeShadow as u8,
+            ),
             clear_color_rgba: std::sync::atomic::AtomicU32::new(u32::from_le_bytes(
                 post::PS2_DEFAULT_NIGHT_CLEAR_RGBA,
             )),
+            lens_flare_smoother: std::sync::Mutex::new(effects::LensFlareSmoother::default()),
             last_shadow_view_proj: std::sync::Mutex::new(initial_shadow_vp),
             last_pcss_params: std::sync::Mutex::new(initial_pcss_uniforms.params),
             default_sampler,
@@ -1083,6 +1089,53 @@ impl RenderContext {
             .shadow_composite_mode
             .load(std::sync::atomic::Ordering::Relaxed);
         shadow::ShadowCompositeMode::from_filter_param(val as i32)
+    }
+
+    /// Updates the room shadow blur composite opacity (`Get_ShadowColor` `0x00176040`).
+    pub fn set_shadow_blur_opacity(&self, opacity: f32) {
+        self.shadow_blur_pipeline
+            .update_uniforms(&self.queue, opacity);
+    }
+
+    /// Sets the PS2 character vs. shadow draw order (`Check_DrawOrder` `0x001a08a0`).
+    pub fn set_shadow_draw_order(&self, order: shadow::ShadowDrawOrder) {
+        self.shadow_draw_order
+            .store(order as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns the active PS2 character vs. shadow draw order (`Check_DrawOrder` `0x001a08a0`).
+    #[must_use]
+    pub fn shadow_draw_order(&self) -> shadow::ShadowDrawOrder {
+        if self
+            .shadow_draw_order
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == shadow::ShadowDrawOrder::ShadowBeforeCharacter as u8
+        {
+            shadow::ShadowDrawOrder::ShadowBeforeCharacter
+        } else {
+            shadow::ShadowDrawOrder::CharacterBeforeShadow
+        }
+    }
+
+    /// Steps the stateful PS2 [`effects::LensFlareSmoother`] (`kari_shLensFlareDraw` `0x00184ef0`,
+    /// `shLensFlareLightCenterIsVisible` `0x00187090`, `shLensFlareDrawCommon` `0x00184bf0`),
+    /// applies `(rate + 3.0) / 4.0` size and `512.0 / 448.0` Y-aspect scaling to `quads`, and
+    /// uploads the smoothed quads to the GPU lens-flare buffer.
+    pub fn update_lens_flares_smoothed(
+        &self,
+        quads: &mut [effects::GpuLensFlareQuad],
+        center_visible: bool,
+        target_rate: f32,
+        camera_is_smooth: bool,
+    ) -> f32 {
+        let rate = self
+            .lens_flare_smoother
+            .lock()
+            .map(|mut s| s.step(center_visible, target_rate, camera_is_smooth))
+            .unwrap_or(0.0);
+        effects::apply_ps2_lens_flare_smoothing(quads, rate);
+        self.update_lens_flares(quads);
+        rate
     }
 
     /// Builds a right-handed `Depth32Float` perspective `(proj, inv_proj)` pair honoring a custom

@@ -742,7 +742,7 @@ impl Ps2CameraController {
         );
 
         let head_pos = Vec3::new(player_pos.x, player_pos.y - 937.5, player_pos.z);
-        let ideal_cam_pos_h = head_pos.y + if is_outdoor { -450.0 } else { -200.0 };
+        let chara_center_y = player_pos.y - 468.75;
         let nearest_item_pair = self
             .nearest_item
             .center_y
@@ -756,7 +756,7 @@ impl Ps2CameraController {
                 cam_pos: target_eye,
                 chara_pos: player_pos,
                 chara_yaw: player_yaw,
-                ideal_cam_pos_h,
+                chara_center_y,
                 neck_ang_x,
                 neck_ang_y,
                 nearest_enemy: self.nearest_enemy,

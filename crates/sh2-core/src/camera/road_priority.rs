@@ -325,11 +325,11 @@ pub fn signed_xz_dist_from_lim_sw(rec: &RoadRecord, pos: Vec3) -> f32 {
         min_z - pos.z
     };
 
-    if dx > 0.0 && dz > 0.0 {
-        dx.hypot(dz)
-    } else if dx > 0.0 {
+    if dx >= 0.0 && dz >= 0.0 {
+        dx + dz
+    } else if dx >= 0.0 {
         dx
-    } else if dz > 0.0 {
+    } else if dz >= 0.0 {
         dz
     } else {
         dx.max(dz)
@@ -622,5 +622,10 @@ mod tests {
             VC_RD_NO_EXTRA_AREA_F,
         );
         assert_eq!(advantage_dist_of_old_cur_road(&no_extra), 0.0);
+
+        // 5. `vcGetXZSumDistFromLimArea` (`0x0019d980`) returns L1 sum `dx + dz` outside corners
+        // `new_rd` has `lim_sw` X=[0, 1000], Z=[-1000, 1000]: at (1300, 0, 1400), dx=300, dz=400 -> 700 (not hypot 500)
+        let corner_dist = signed_xz_dist_from_lim_sw(&new_rd, Vec3::new(1300.0, 0.0, 1400.0));
+        assert!((corner_dist - 700.0).abs() < 1e-4);
     }
 }

@@ -253,8 +253,8 @@ pub struct FarWatchInput {
     pub chara_pos: Vec3,
     /// Character facing yaw in radians (`vcWork.chara_mv_ang_y`).
     pub chara_yaw: f32,
-    /// Ideal camera height in PS2 mm, Y-down (`_DAT_012027f8` / `vcWork.ideal_cam_pos_h`).
-    pub ideal_cam_pos_h: f32,
+    /// Character center Y in PS2 mm, Y-down (`_DAT_012027f8 = *(float*)(_sh2jms + 0xa4)` set in `vcPreSetCharaDataForCamera` `0x0026f780`, `view/vc_play.c:36`).
+    pub chara_center_y: f32,
     /// Player neck pitch in radians (`PlayerGetNeckAngleX`, `_DAT_012027f0` / `DAT_01f80d20`).
     pub neck_ang_x: f32,
     /// Player neck yaw in radians (`PlayerGetNeckAngleY`, `_DAT_012027f4` / `_DAT_01f80d24`).
@@ -316,7 +316,7 @@ pub fn make_far_watch_tgt_pos(input: &FarWatchInput) -> Vec3 {
     let out_x = input.chara_pos.x + radius * opposite_ang.sin();
     let out_z = input.chara_pos.z + radius * opposite_ang.cos();
 
-    let dy_head = base_y - input.ideal_cam_pos_h;
+    let dy_head = base_y - input.chara_center_y;
     let horiz_dist = (input.cam_pos.x - out_x).hypot(input.cam_pos.z - out_z);
     let ang0 = (input.cam_pos.y - base_y).atan2(horiz_dist);
     let pitch_dy = -(radius.hypot(dy_head)) * input.neck_ang_x.sin();
@@ -618,7 +618,7 @@ mod tests {
             cam_pos: Vec3::new(0.0, -1400.0, -2000.0),
             chara_pos: Vec3::ZERO,
             chara_yaw: 0.0,
-            ideal_cam_pos_h: -1400.0,
+            chara_center_y: -468.75,
             neck_ang_x: 0.0,
             neck_ang_y: 0.0,
             nearest_enemy: None,

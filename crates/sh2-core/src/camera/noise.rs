@@ -3,7 +3,7 @@
 //! Ground truth:
 //! - PS2 `SLUS_202.28` (`view/vc_main.c`):
 //!   - `vcCamMatNoise` (`0x0019d8e0`)
-//!   - `vcSetDataToVwSystem` (`0x0019d550`, Mode 3 branch at `view/vc_main.c:3962-3996`)
+//!   - `vcSetDataToVwSystem` (`0x0019d650`, Mode 3 branch at `view/vc_main.c:3962-3996`)
 
 use crate::camera::locus_door::regulate_angle;
 use glam::{Mat4, Vec3};
@@ -47,7 +47,7 @@ pub fn vc_cam_mat_noise(amp: f32, freq1: f32, freq2: f32, self_view_timer_sec: f
 }
 
 /// Evaluates the Mode 3 (`SELF_VIEW`) pitch/yaw noise perturbation `(rx_rad, ry_rad)` at `self_view_timer_sec`
-/// (`SLUS_202.28` `vcSetDataToVwSystem` `0x0019d550`).
+/// (`SLUS_202.28` `vcSetDataToVwSystem` `0x0019d650`).
 #[inline]
 pub fn self_view_angle_noise(self_view_timer_sec: f32) -> (f32, f32) {
     let rx = vc_cam_mat_noise(
@@ -66,7 +66,7 @@ pub fn self_view_angle_noise(self_view_timer_sec: f32) -> (f32, f32) {
 }
 
 /// Builds the 4x4 Mode 3 (`SELF_VIEW`) perturbation matrix `noise_mat` multiplied onto `cam_mat`
-/// in `vcSetDataToVwSystem` (`SLUS_202.28` `0x0019d550`).
+/// in `vcSetDataToVwSystem` (`SLUS_202.28` `0x0019d650`).
 pub fn build_self_view_noise_matrix(self_view_timer_sec: f32) -> Mat4 {
     let (rx, ry) = self_view_angle_noise(self_view_timer_sec);
     let mut m = Mat4::from_euler(glam::EulerRot::YXZ, ry, rx, 0.0);

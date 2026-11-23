@@ -103,10 +103,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
-    // Sample diffuse texture in uniform control flow before alpha-test discard
+    // Sample diffuse texture in uniform control flow before alpha-test discard.
+    // Exact PS2/PC alpha-test (`SLUS_202.28` `shGs_InitDefaultRegsEnv` `0x001909e0` & `InitEnv1`
+    // GIF packet `0x002a9780`: `TEST_1 = 0x5000d` -> `ATE = 1`, `ATST = 6 (GREATER)`, `AREF = 0`,
+    // `AFAIL = 0 (KEEP)`; `sh2pc.exe` `FUN_00503800` `0x00503800`: `D3DRS_ALPHATESTENABLE = 1`,
+    // `D3DRS_ALPHAFUNC = 5 (D3DCMP_GREATER)`, `D3DRS_ALPHAREF = 0`): discard quantized 8-bit `alpha == 0`.
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let out_alpha = in.color.a * tex_color.a;
-    if (out_alpha < 0.05) {
+    if (out_alpha < (0.5 / 255.0)) {
         discard;
     }
 

@@ -94,9 +94,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 // `pass_mode`:
-// 0u = Opaque pass (`is_transparent == false`)
-// 1u = Transparent hair/fringe core pass (`tex_color.a >= 0.90`, writes depth)
-// 2u = Transparent hair/fringe soft edge pass (`0.004 <= tex_color.a < 0.90`, reads depth)
+// 0u = Opaque pass (`is_transparent == false`; `sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`)
+// 1u = Transparent pass (`is_transparent == true`; `SLUS_202.28` `InitEnv1` `0x0012c6d0` GIF packet
+//      `0x002a9780` `TEST_1 = 0x5000d` `ATST = 6 (GREATER), AREF = 0` & `sh2pc.exe` `FUN_00503800`
+//      `0x00503800` `D3DRS_ZWRITEENABLE = 1, D3DRS_ALPHAFUNC = 5 (GREATER), D3DRS_ALPHAREF = 0`)
+// 2u = Legacy second transparent pass (discards so `pass_mode == 1u` is not double-blended)
 fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // Sample diffuse texture unconditionally in uniform control flow before any early returns
     // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
@@ -119,17 +121,20 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // - `pass_mode == 0u` (`Opaque`): solid & PS2 specular gloss-mask submeshes (`red.mdl` `1303`,
     //   Maria's `1245` fingernails/rings, `scu.mdl` `1282`, `pap.mdl` `1293`) NEVER discard texels
     //   (`sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`), as genuine cutout `prim` cards (`lll_jms`,
-    //   `lll_mar`, `lxx_mar` hair) are promoted to `pass_mode == 1u / 2u` at mesh compilation time.
-    // - `pass_mode == 1u / 2u`: transparent `tprim` and promoted cutout hair submeshes split cleanly
-    //   at `0.90` into depth-writing core (`1u`) + depth-read-only soft alpha-blended fringe (`2u`).
+    //   `lll_mar`, `lxx_mar` hair) are promoted to `is_transparent == true` at mesh compilation time.
+    // - `pass_mode == 1u`: exact PS2/PC single-pass transparent alpha-test (`SLUS_202.28` `InitEnv1`
+    //   `0x0012c6d0` / GIF packet `0x002a9780` `TEST_1 = 0x5000d` [`ATE = 1`, `ATST = 6 (GREATER)`,
+    //   `AREF = 0`, `AFAIL = 0 (KEEP)`] and `sh2pc.exe` `FUN_00503800` `0x00503800`
+    //   [`D3DRS_ZWRITEENABLE = 1`, `D3DRS_ALPHABLENDENABLE = 1`, `D3DRS_ALPHATESTENABLE = 1`,
+    //   `D3DRS_ALPHAFUNC = 5 (D3DCMP_GREATER)`, `D3DRS_ALPHAREF = 0`]): discard quantized 8-bit `alpha == 0`.
+    // - `pass_mode == 2u`: discards unconditionally because `pass_mode == 1u` already renders all
+    //   `alpha > 0` fragments in a single depth-writing alpha-blended pass without double-blending.
     if pass_mode == 1u {
-        if tex_color.a < 0.90 {
+        if tex_color.a < (0.5 / 255.0) {
             discard;
         }
     } else if pass_mode == 2u {
-        if tex_color.a < (1.0 / 255.0) || tex_color.a >= 0.90 {
-            discard;
-        }
+        discard;
     }
 
     let out_alpha = select(clamp(in.color.a * tex_color.a, 0.0, 1.0), 1.0, pass_mode == 0u);

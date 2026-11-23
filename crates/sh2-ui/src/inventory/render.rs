@@ -231,12 +231,12 @@ fn draw_command_column(
     let text_x = c.xi(COMMAND_TEXT_X);
 
     // `command_main` case 7 (`DAT_0116e3e4 == 1`, `0x001d0790`) + `look_volume` (`0x001d9480`):
-    // render `"Volume"` header at `y = 0x5a = 90` and 16-bar green meter at `y = 104..124`.
+    // render `"Volume"` header at `font_print` `(0x15e = 350, 0x5a = 90)` and 16-bar green meter at `y = 104..124`.
     if screen.focus == InventoryFocus::RadioVolume {
         font.draw_line_styled(
             rasterizer,
             "Volume",
-            (c.xi(350.0), c.yi(74.0)),
+            (c.xi(350.0), c.yi(90.0).saturating_sub(font_px)),
             font_px,
             Sh2TextColor::White,
             true,
@@ -409,14 +409,15 @@ fn draw_carousel_arc(
                 } else {
                     snapshot.radio_on
                 };
-                let (_mid_x, _mid_y) =
+                let (_mid_x, mid_y) =
                     draw_stock_line(rasterizer, c, STOCK_LINE_WIDTH_ON_OFF, false);
-                // `font_print` (`0x001d4c00` lines 2463–2480): `"ON"` at `(264, 290)`, `"OFF"` at `(261, 290)`
+                // `font_print` (`0x001d4c00` lines 2463–2480): `"ON"` at `x = 264`, `"OFF"` at `x = 261`,
+                // vertically centered on the `stock_line` (`y = 274..276`) bar midpoint `mid_y`.
                 let (label, text_x_512) = if is_on { ("ON", 264.0) } else { ("OFF", 261.0) };
                 font.draw_line_styled(
                     rasterizer,
                     label,
-                    (c.xi(text_x_512), c.yi(290.0).saturating_sub(font_px)),
+                    (c.xi(text_x_512), c.yi(mid_y).saturating_sub(font_px / 2)),
                     font_px,
                     Sh2TextColor::White,
                     true,

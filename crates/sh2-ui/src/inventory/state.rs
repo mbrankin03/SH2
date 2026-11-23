@@ -401,6 +401,11 @@ impl InventoryScreen {
         let ps2_x = (mouse_x - ox) * 512.0 / cw;
         let ps2_y = (mouse_y - oy) * 448.0 / ch;
 
+        if self.focus == InventoryFocus::RadioVolume {
+            self.focus = InventoryFocus::Carousel;
+            return (MenuSoundCue::Confirm, InventoryAction::None);
+        }
+
         if self.focus == InventoryFocus::CommandWindow {
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
                 && (CMD_WIN_MOUSE_Y_MIN..=CMD_WIN_MOUSE_Y_MAX).contains(&ps2_y)
@@ -776,6 +781,14 @@ mod tests {
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(screen.focus, InventoryFocus::CombineTarget);
         assert_eq!(screen.command_index, 2);
+
+        // Mouse click while in `RadioVolume` exits cleanly back to `Carousel` without hitting corner buttons
+        screen.focus = InventoryFocus::RadioVolume;
+        let (vol_cue, vol_act) =
+            screen.handle_mouse_click(60.0 * sx, 420.0 * sy, 640.0, 480.0, &inv, &snap);
+        assert_eq!(vol_cue, MenuSoundCue::Confirm);
+        assert_eq!(vol_act, InventoryAction::None);
+        assert_eq!(screen.focus, InventoryFocus::Carousel);
     }
 
     #[test]

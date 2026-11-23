@@ -15,7 +15,7 @@ use sh2_assets::formats::cam::{
     VC_RD_CAM_LIKE_SETTLE_F, VC_RD_NOT_WARP_F, VC_RD_NO_EXTRA_AREA_F, VC_RD_WARP_IN_F,
     VC_RD_WARP_OUT_F,
 };
-use std::f32::consts::{FRAC_PI_6, PI, TAU};
+use std::f32::consts::{PI, TAU};
 
 #[cfg(test)]
 mod tests;
@@ -213,7 +213,12 @@ pub fn compute_aspect_rail_margin_mm(is_outdoor: bool, config: &AspectRailConfig
 }
 
 /// Computes `lim_sw` switch-volume hysteresis advantage in PS2 world mm (`vcAdvantageDistOfOldCurRoad`
-/// `0x00198ae0` + table `0x00390600`); returns `0.0` mm when `VC_RD_NO_EXTRA_AREA_F` (`0x0100`) is set.
+/// `0x00198ae0` + table `extra_boundary_width` at `0x00390600`); returns `0.0` mm when
+/// `VC_RD_NO_EXTRA_AREA_F` (`0x0100`) is set.
+///
+/// Verified against `SLUS_202.28` `vcAdvantageDistOfOldCurRoad` (`0x00198ae0`): `RoadType::SelfViewOnly`
+/// (`5`) uses `extra_boundary_width[area_size_type]` (`[75, 125, 175, 250]` mm), identical to
+/// `Road` (`0`), `RoadPrioLow` (`3`), and `RoadPrioHigh` (`4`).
 #[must_use]
 pub const fn switch_hysteresis_advantage_mm(rec: &RoadRecord) -> f32 {
     if (rec.flags & VC_RD_NO_EXTRA_AREA_F) != 0 {
@@ -221,19 +226,43 @@ pub const fn switch_hysteresis_advantage_mm(rec: &RoadRecord) -> f32 {
     }
     match (rec.rd_type, rec.area_size_type) {
         (RoadType::Effect | RoadType::Event, _) => 50.0,
-        (RoadType::SelfViewOnly, _) => 0.0,
-        (_, AreaSizeType::Tiny) => 75.0,
-        (_, AreaSizeType::Small) => 125.0,
-        (_, AreaSizeType::Wide) => 175.0,
-        (_, AreaSizeType::Outdoor) => 250.0,
+        (
+            RoadType::Road
+            | RoadType::RoadPrioLow
+            | RoadType::RoadPrioHigh
+            | RoadType::SelfViewOnly,
+            AreaSizeType::Tiny,
+        ) => 75.0,
+        (
+            RoadType::Road
+            | RoadType::RoadPrioLow
+            | RoadType::RoadPrioHigh
+            | RoadType::SelfViewOnly,
+            AreaSizeType::Small,
+        ) => 125.0,
+        (
+            RoadType::Road
+            | RoadType::RoadPrioLow
+            | RoadType::RoadPrioHigh
+            | RoadType::SelfViewOnly,
+            AreaSizeType::Wide,
+        ) => 175.0,
+        (
+            RoadType::Road
+            | RoadType::RoadPrioLow
+            | RoadType::RoadPrioHigh
+            | RoadType::SelfViewOnly,
+            AreaSizeType::Outdoor,
+        ) => 250.0,
     }
 }
 
-/// Returns `true` when `_VC_ROAD_AREA` defines a non-degenerate horizontal rail (`> 0.01` mm span).
+/// Returns `true` when `_VC_ROAD_AREA` defines a non-degenerate horizontal rail (`> 0.01` mm span)
+/// in its oriented local XZ frame.
 #[must_use]
 pub fn is_rail_constrained(rail: &RoadArea) -> bool {
-    let ((min_x, max_x), (min_z, max_z)) = (rail.x_bounds(), rail.z_bounds());
-    (max_x - min_x).abs() > 0.01 || (max_z - min_z).abs() > 0.01
+    let ((min_lx, max_lx), (min_lz, max_lz)) = rail.local_xz_bounds();
+    (max_lx - min_lx).abs() > 0.01 || (max_lz - min_lz).abs() > 0.01
 }
 
 /// Clamps one axis (PS2 world mm) within `[min_bound + margin_mm, max_bound - margin_mm]`, collapsing
@@ -247,8 +276,9 @@ pub fn clamp_axis_with_margin(min_bound: f32, max_bound: f32, margin_mm: f32, va
     value.clamp(lo, hi)
 }
 
-/// Clamps `pos` (PS2 world mm, Y-down) inside a `_VC_ROAD_AREA` rail using
-/// PS2 `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST` (`0x0019b700`) and [`AspectRailConfig`].
+/// Clamps `pos` (PS2 world mm, Y-down) inside an oriented `_VC_ROAD_AREA` rail using
+/// PS2 `vcTransRotRoadArea` (`0x001a6b40`), `vcAdjustXzInLimAreaUsingMIN_IN_ROAD_DIST` (`0x0019b700`),
+/// `vcRotTransRoadArea` (`0x001a6b80`), and [`AspectRailConfig`].
 #[must_use]
 pub fn clamp_to_road_rail_with_config(
     rail: &RoadArea,
@@ -257,12 +287,13 @@ pub fn clamp_to_road_rail_with_config(
     config: &AspectRailConfig,
 ) -> Vec3 {
     let m = compute_aspect_rail_margin_mm(is_outdoor, config);
-    let ((x0, x1), (z0, z1), (y0, y1)) = (rail.x_bounds(), rail.z_bounds(), rail.y_bounds());
-    Vec3::new(
-        clamp_axis_with_margin(x0, x1, m, pos.x),
-        pos.y.clamp(y0, y1),
-        clamp_axis_with_margin(z0, z1, m, pos.z),
-    )
+    let (lx, lz) = rail.world_to_local_xz(pos.x, pos.z);
+    let ((min_lx, max_lx), (min_lz, max_lz)) = rail.local_xz_bounds();
+    let clamped_lx = clamp_axis_with_margin(min_lx, max_lx, m, lx);
+    let clamped_lz = clamp_axis_with_margin(min_lz, max_lz, m, lz);
+    let (wx, wz) = rail.local_to_world_xz(clamped_lx, clamped_lz);
+    let (y0, y1) = rail.y_bounds();
+    Vec3::new(wx, pos.y.clamp(y0, y1), wz)
 }
 
 fn norm_rad(mut a: f32) -> f32 {
@@ -310,29 +341,29 @@ pub fn apply_chase_rail_clearance(
     let c2c = dx.atan2(dz);
     let tgt = Vec3::new(
         player_pos.x + player_yaw.sin() * cir_r + c2c.sin() * extra,
-        rec.ofs_watch_hy + (player_pos.y - 250.0),
+        rec.ofs_watch_hy + player_pos.y,
         player_pos.z + player_yaw.cos() * cir_r + c2c.cos() * extra,
     );
     let vt = tgt - eye;
     let raw_ax = (-vt.y).atan2(vt.x.hypot(vt.z));
     let mut yaw = vt.x.atan2(vt.z);
-    let scr_z = if rec.projection > 0.0 {
-        rec.projection
-    } else {
-        448.0
-    };
-    let half_wy = 448.0f32.atan2(scr_z) * 0.5;
-    let w_btm = norm_rad((-(rec.trace_btm_hy + player_pos.y - 250.0 - eye.y)).atan2(r_p) - raw_ax);
-    let w_top = norm_rad((-(player_pos.y - 937.5 - eye.y)).atan2(r_p) - raw_ax);
-    let mut adj_x = if -half_wy > w_btm {
-        w_btm + half_wy
-    } else {
-        0.0
-    };
-    if w_top - adj_x > half_wy {
-        adj_x += (w_top - adj_x) - half_wy;
-    }
-    let pitch = raw_ax + adj_x.clamp(-FRAC_PI_6, FRAC_PI_6);
+    let (half_wx, half_wy) = crate::camera::kinematics::compute_screen_half_angles(rec.projection);
+    let btm_ang = Vec3::new(
+        (-(rec.trace_btm_hy + player_pos.y - eye.y)).atan2(r_p),
+        c2c,
+        0.0,
+    );
+    let top_ang = Vec3::new((-(player_pos.y - 925.0 - eye.y)).atan2(r_p), c2c, 0.0);
+    let mut ofs_ang = Vec3::new(raw_ax, yaw, 0.0);
+    crate::camera::kinematics::vc_adj_cam_ofs_ang_by_chara_in_screen(
+        &mut ofs_ang,
+        btm_ang,
+        top_ang,
+        half_wx,
+        half_wy,
+    );
+    let pitch = ofs_ang.x;
+    yaw = ofs_ang.y;
     if (rec.flags & VC_RD_CAM_LIKE_SETTLE_F) != 0 {
         if let CamMovementParams::Chase(ref chs) = rec.params {
             if chs.lr_lim_ang_y != -17.451548 || chs.rr_lim_ang_y != 17.451548 {

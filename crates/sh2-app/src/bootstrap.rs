@@ -419,6 +419,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             engine.set_voice_volume(audio_cfg.dialogue_volume);
             engine.set_spatial_audio_mode(audio_cfg.spatial_audio_mode);
             engine.set_acoustic_occlusion_enabled(audio_cfg.enable_acoustic_occlusion);
+            engine.set_dynamic_room_acoustics_enabled(audio_cfg.enable_dynamic_room_acoustics);
             tracing::info!(
                 "Audio engine successfully initialized with Kira runtime (Device: {:?}, Spatial: {:?}, Occlusion: {}).",
                 target_audio_device.as_deref().unwrap_or("Default"),
@@ -588,6 +589,11 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
         ),
         fog_particle_scratch: Vec::with_capacity(sh2_renderer::fog::MAX_GPU_FOG_PARTICLES),
+        screen_fog_state: sh2_renderer::fog::ScreenFogState::default(),
+        last_screen_fog_cam: glam::Vec3::ZERO,
+        fog_blow_system: sh2_renderer::fog::FogBlowSystem::new(),
+        jms_spot_man: sh2_renderer::light::JmsSpotManager::new(),
+        char_light_pool: sh2_renderer::light::CharacterLightPool::new(),
         last_fog_time: 0.0,
         menu_ctrl,
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),

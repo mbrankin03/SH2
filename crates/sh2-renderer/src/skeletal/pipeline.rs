@@ -14,11 +14,11 @@ pub enum SkeletalPassStage {
     Opaque,
     /// Opaque hair/eyelash core (`is_transparent == true`, `alpha_u8 == 255`): depth-write enabled,
     /// `BlendState::ALPHA_BLENDING`, establishing front-to-back hair layer occlusion
-    /// (`SLUS_202.28` `InitEnv1` `0x002a9780` `TEST_1 = 0x5000d`).
+    /// (`SLUS_202.28` `InitEnv1` `0x0012c6d0` / `0x002a9780` `TEST_1 = 0x5000d`).
     TransparentCore,
     /// Semi-transparent hair/eyelash fringe (`is_transparent == true`, `1 <= alpha_u8 <= 254`):
     /// depth-write disabled (`LessEqual`), `BlendState::ALPHA_BLENDING`
-    /// (`SLUS_202.28` `0x002a9780` / `sh2pc.exe` `0x00503800` `alpha_u8 > 0`).
+    /// (`SLUS_202.28` `0x002a9780` / `sh2pc.exe` `FUN_00503800` `0x00503800` `alpha_u8 > 0`).
     TransparentFringe,
 }
 

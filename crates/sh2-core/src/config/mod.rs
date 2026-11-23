@@ -54,6 +54,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = false;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
+                self.audio.enable_dynamic_room_acoustics = false;
                 self.audio.enable_restored_cut_audio = false;
                 self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
@@ -70,6 +71,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = false;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
+                self.audio.enable_dynamic_room_acoustics = false;
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
@@ -86,6 +88,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = true;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
+                self.audio.enable_dynamic_room_acoustics = true;
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Auto;
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
@@ -109,6 +112,7 @@ impl AppConfig {
             && !self.video.aces_tonemapping
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
+            && !self.audio.enable_dynamic_room_acoustics
             && !self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
             && !self.game.enable_delayed_fade_in
@@ -126,6 +130,7 @@ impl AppConfig {
             && !self.video.aces_tonemapping
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
+            && !self.audio.enable_dynamic_room_acoustics
             && self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
             && self.game.enable_delayed_fade_in
@@ -143,6 +148,7 @@ impl AppConfig {
             && self.video.aces_tonemapping
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion
+            && self.audio.enable_dynamic_room_acoustics
             && self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder
             && self.game.enable_delayed_fade_in

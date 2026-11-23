@@ -293,6 +293,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Audio, "Restored Cut Audio") => {
             "Restore cut audio cues (Mary's Laura letter voiceover, closet & street bonus SFX)"
         }
+        (OptionsTab::Audio, "Dynamic Room Acoustics") => {
+            "Dynamic .cam room-volume reverb presets (Native) vs dry Original PS2 mix"
+        }
         (OptionsTab::Audio, "Audio Pack") => {
             "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"
         }
@@ -403,6 +406,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         }
         (OptionsTab::Enhanced, "ACES Tonemapping") => {
             "Modern ACES filmic HDR tonemapping (Native) vs strict PS2 linear clamp (1:1)"
+        }
+        (OptionsTab::Enhanced, "Dynamic Room Acoustics") => {
+            "Dynamic .cam room-volume reverb presets (Native) vs dry Original PS2 mix"
         }
         (OptionsTab::Enhanced, "Audio Pack") => {
             "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"

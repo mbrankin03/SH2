@@ -280,6 +280,11 @@ pub struct AudioOptions {
     /// `SeCallPosDistanceF` (`0x00192bc0` / `0x5155E0`) unoccluded behavior unless enabled.
     #[serde(default)]
     pub enable_acoustic_occlusion: bool,
+    /// Dynamic `.cam`-aspect room reverb heuristics (`SH2-55` / `SH2-137` `native-upgrade`).
+    /// Defaults to `false` (`OFF (Original PS2)`) so purist players receive dry 1:1 PS2 SFX output
+    /// without synthetic `.cam` bounding-box reverb heuristics.
+    #[serde(default)]
+    pub enable_dynamic_room_acoustics: bool,
     /// Selected audio output device name (None = System Default).
     pub selected_output_device: Option<String>,
     /// Mute game audio when the window loses focus.
@@ -305,6 +310,7 @@ impl Default for AudioOptions {
             speaker_config: SpeakerConfiguration::default(),
             spatial_audio_mode: SpatialAudioMode::default(),
             enable_acoustic_occlusion: false,
+            enable_dynamic_room_acoustics: false,
             selected_output_device: None,
             mute_in_background: true,
             audio_pack_source: AudioPackSource::default(),

@@ -34,7 +34,9 @@ use crate::ai::creatures::{
     en_check_sleep_in, en_check_sleep_out, EnemySpecies, StagePlace, TribeCommunicationBus,
 };
 use crate::ai::maria::MariaCompanionController;
-use crate::ai::radio::{RadioNoiseEvaluator, RadioStaticOutput};
+use crate::ai::radio::{
+    en_kind_from_species, RadioEnemySample, RadioNoiseEvaluator, RadioStaticOutput,
+};
 use crate::ai::sensory::{DifficultyLevel, PerceivableTarget, RoomLighting};
 use glam::Vec3;
 
@@ -265,6 +267,7 @@ pub struct AiSubsystem {
     pub player_radius_mm: f32,
     /// Reusable scratch buffers to keep `update_filtered` 100% zero-allocation per tick.
     scratch_hostile_positions: Vec<Vec3>,
+    scratch_radio_samples: Vec<RadioEnemySample>,
     scratch_twin_snapshots: Vec<(u32, TwinPartnerSnapshot)>,
     scratch_flesh_lips_info: Vec<(u32, bool, bool)>,
     scratch_mandarin_positions: Vec<(u32, Vec3)>,
@@ -286,6 +289,7 @@ impl Default for AiSubsystem {
             player_spraying: false,
             player_radius_mm: 200.0,
             scratch_hostile_positions: Vec::with_capacity(32),
+            scratch_radio_samples: Vec::with_capacity(32),
             scratch_twin_snapshots: Vec::with_capacity(4),
             scratch_flesh_lips_info: Vec::with_capacity(8),
             scratch_mandarin_positions: Vec::with_capacity(8),
@@ -566,11 +570,24 @@ impl AiSubsystem {
         // Decay tribe alert bus TTLs (`enExecTask` `0x001413f0` lines 272–282)
         self.tribe_bus.tick();
 
-        // 3. Update Pocket Radio proximity static
-        self.radio_output = self.radio_evaluator.evaluate(
+        // 3. Update Pocket Radio proximity static (`RadioNoise` `0x001ab300` & `enSetRadioVolume` `0x00143890`)
+        self.scratch_radio_samples.clear();
+        for e in &self.enemies {
+            self.scratch_radio_samples.push(RadioEnemySample {
+                kind: en_kind_from_species(e.species()),
+                sub_type: 0,
+                position: e.position(),
+                is_spawned_active: !e.is_sleeping,
+                is_alive: !e.is_dead(),
+                is_downed: e.controller.is_downed(),
+            });
+        }
+        self.radio_output = self.radio_evaluator.evaluate_enemies(
             radio_enabled,
             player_pos,
-            &self.scratch_hostile_positions,
+            player_pos,
+            glam::Mat4::IDENTITY,
+            &self.scratch_radio_samples,
             dt,
         );
     }
@@ -594,11 +611,13 @@ mod tests {
         );
         assert_eq!(ai.enemies.len(), 1);
 
-        // Tick AI
-        ai.update(player_pos, 0.0, true, false, true, 0.016);
+        // Tick AI enough frames for the 2.5s `RadioNoise` (`0x001ab300`) volume ramp to settle
+        for _ in 0..200 {
+            ai.update(player_pos, 0.0, true, false, true, 0.016);
+        }
 
-        // Radio static should be active and audible at 1000 units
+        // Radio static should be active and audible at 1000 units (`cos(1000/12500 * pi/2) ≈ 0.992`)
         assert!(ai.radio_output.volume > 0.8);
-        assert!((ai.radio_output.nearest_enemy_dist - 1000.0).abs() < 50.0);
+        assert!(ai.radio_output.nearest_enemy_dist < 12_500.0);
     }
 }

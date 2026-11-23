@@ -23,6 +23,10 @@ struct FogUniforms {
     // [layer1_alpha, layer2_alpha, volumetric_mode (0=ClassicPs2, 1=ModernVolumetric), volumetric_light_enabled]
     layer_transparencies: vec4<f32>,
     shadow_view_proj: mat4x4<f32>,
+    // Exact PS2 depth-fog coefficients [persp_fa, persp_fb, fog_min, fog_max] (`sh2gfw_Set_DepthFog` 0x00175df0)
+    depth_fog_params: vec4<f32>,
+    // `fog_view_screen_fog` (0x0016c1c0) UV window [u_center, v_center, half_span (0.125), gs_alpha_norm]
+    screen_fog_uv: vec4<f32>,
 };
 
 struct CameraUniforms {
@@ -38,6 +42,14 @@ struct SpotlightUniforms {
     color_outer: vec4<f32>,
     ambient_tint: vec4<f32>,
     fill_and_range: vec4<f32>,
+    parallel_dirs: array<vec4<f32>, 3>,
+    parallel_colors: array<vec4<f32>, 3>,
+    point_positions: array<vec4<f32>, 3>,
+    point_colors: array<vec4<f32>, 3>,
+    ps2_falloff_params: vec4<f32>,
+    gun_and_dark_trim: vec4<f32>,
+    reflection_dir: vec4<f32>,
+    reflection_color: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> fog: FogUniforms;
@@ -56,16 +68,24 @@ fn interleaved_gradient_noise(pixel: vec2<f32>) -> f32 {
     return fract(magic.z * fract(dot(pixel, magic.xy)));
 }
 
-// Evaluate PS2 depth-fog curve (`sh2gfw_Set_DepthFog` @ 0x00175df0, `dbg_fogparm_ctl`)
+// Evaluate PS2 depth-fog curve (`sh2gfw_Set_DepthFog` @ 0x00175df0):
+// Hyperbolic: clamp(FA / z + FB, FogMin, FogMax); Linear: clamp((z - Near) / (Far - Near), FogMin, FogMax).
 fn eval_depth_curve(dist_mm: f32) -> f32 {
+    let fog_min = min(fog.depth_fog_params.z, fog.depth_fog_params.w);
+    let fog_max = max(fog.depth_fog_params.z, fog.depth_fog_params.w);
+    let has_ps2_fafb = abs(fog.depth_fog_params.x) > 1e-4;
+    if (fog.curve_type == 0u && has_ps2_fafb) {
+        let hyp = fog.depth_fog_params.x / max(dist_mm, 1e-4) + fog.depth_fog_params.y;
+        return clamp(hyp, fog_min, fog_max);
+    }
     let span = max(1e-4, fog.fog_far - fog.fog_near);
     let linear_t = clamp((dist_mm - fog.fog_near) / span, 0.0, 1.0);
     if (fog.curve_type == 1u) {
-        return 1.0 - exp(-3.0 * linear_t);
+        return clamp(mix(fog_min, fog_max, 1.0 - exp(-3.0 * linear_t)), fog_min, fog_max);
     } else if (fog.curve_type == 2u) {
-        return 1.0 - exp(-4.0 * linear_t * linear_t);
+        return clamp(mix(fog_min, fog_max, 1.0 - exp(-4.0 * linear_t * linear_t)), fog_min, fog_max);
     }
-    return linear_t;
+    return clamp(mix(fog_min, fog_max, linear_t), fog_min, fog_max);
 }
 
 // Sample dual-layer UV-scrolling PS2 fog planes (`fog_view_screen_fog` @ 0x0016c1c0, `FogFix.cpp`)
@@ -196,9 +216,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var inscatter_rgb = vec3<f32>(0.0);
 
     if (!volumetric_mode || fog.step_count <= 1u) {
-        // 1:1 Classic PS2 analytical depth-fog curve + dual-layer UV-scrolling noise planes
+        // 1:1 Classic PS2 analytical depth-fog (`sh2gfw_Set_DepthFog` FA/z + FB @ 0x00175df0)
+        // + `fog_view_screen_fog` (0x0016c1c0) UV-scrolling screen overlay
         let base_curve = eval_depth_curve(view_dist);
-        let layered = clamp(base_curve + plane_noise * base_curve * 0.42, 0.0, 1.0);
+        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (fog.screen_fog_uv.z * 2.0);
+        let screen_overlay = select(
+            0.0,
+            textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r * fog.screen_fog_uv.w,
+            fog.screen_fog_uv.w > 0.001,
+        );
+        let layered = clamp(base_curve + plane_noise * base_curve * 0.42 + screen_overlay, 0.0, 1.0);
         fog_factor = clamp(layered * effective_density, 0.0, 1.0);
     } else {
         // Discrete-step 3D Volumetric Raymarching (`step_count` steps)

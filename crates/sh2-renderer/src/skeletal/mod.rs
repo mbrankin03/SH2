@@ -7,6 +7,7 @@ pub mod material;
 mod mesh;
 mod pipeline;
 mod shader;
+pub mod specular;
 
 pub use body_region::{
     classify_primitive_body_region, cranial_bone_mask, dominant_vertex_bone,
@@ -28,3 +29,9 @@ pub use mesh::{
     GpuSkeletalMesh, GpuSkeletalPrimitive, SkeletalVertex, SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 pub use pipeline::{SkeletalPassStage, SkeletalPipeline};
+pub use specular::{
+    composite_gs_specular, compute_sphere_map_uv, environ_packet_alpha,
+    generate_specular_sphere_map_rgba, ENVIRON_PACKET_RGB_U8, GS_ALPHA_1_SPECULAR_DAY,
+    GS_ALPHA_1_SPECULAR_NIGHT, SPECULAR_SPHERE_MAP_ALPHA_U8, SPECULAR_SPHERE_MAP_DIM,
+    SPECULAR_SPHERE_MAP_EXPONENT,
+};

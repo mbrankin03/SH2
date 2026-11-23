@@ -9,7 +9,7 @@ use sh2_assets::formats::mes::parse_mes;
 use sh2_assets::{AssetPathResolver, TextureLoader};
 use sh2_core::combat::{CombatController, WeaponGrip};
 use sh2_ui::inventory::{InventoryAction, InventoryPlayerSnapshot};
-use sh2_ui::map::map_spec;
+use sh2_ui::map::{map_spec, CHIZU_CURSOR_TEX_PATH};
 use sh2_ui::memo::{memo_command_check, DEFAULT_MEMO_BACKDROP_TEX};
 use sh2_ui::menu::MenuSoundCue;
 use sh2_ui::options::{OptionsMenu, OptionsSoundCue};
@@ -255,9 +255,18 @@ pub(crate) fn ensure_map_sheet_loaded(state: &mut AppState, map_id: u8) {
             state.ingame_menus.cached_map_marks = Some((map_id, tex.width, tex.height, tex.rgba));
         }
     }
+    if state.ingame_menus.cached_map_cursor.is_none() {
+        if let Ok(tex) = loader.load_texture(CHIZU_CURSOR_TEX_PATH) {
+            state.ingame_menus.cached_map_cursor = Some((tex.width, tex.height, tex.rgba));
+        }
+    }
 }
 
-pub(crate) fn ensure_memo_assets_loaded(state: &mut AppState, backdrop_path: &'static str) {
+pub(crate) fn ensure_memo_assets_loaded(
+    state: &mut AppState,
+    backdrop_path: &'static str,
+    layer_path: Option<&'static str>,
+) {
     let resolver = AssetPathResolver::resolve();
     if !state.ingame_menus.memo_mes_loaded {
         state.ingame_menus.memo_mes_loaded = true;
@@ -274,21 +283,38 @@ pub(crate) fn ensure_memo_assets_loaded(state: &mut AppState, backdrop_path: &'s
             }
         }
     }
-    if state
+    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    if !state
         .ingame_menus
         .cached_memo_backdrop
         .as_ref()
         .is_some_and(|(p, _, _, _)| *p == backdrop_path)
     {
-        return;
+        if let Ok(tex) = loader
+            .load_texture(backdrop_path)
+            .or_else(|_| loader.load_texture(DEFAULT_MEMO_BACKDROP_TEX))
+        {
+            state.ingame_menus.cached_memo_backdrop =
+                Some((backdrop_path, tex.width, tex.height, tex.rgba));
+        }
     }
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
-    if let Ok(tex) = loader
-        .load_texture(backdrop_path)
-        .or_else(|_| loader.load_texture(DEFAULT_MEMO_BACKDROP_TEX))
-    {
-        state.ingame_menus.cached_memo_backdrop =
-            Some((backdrop_path, tex.width, tex.height, tex.rgba));
+    match layer_path {
+        Some(lp) => {
+            if !state
+                .ingame_menus
+                .cached_memo_layer
+                .as_ref()
+                .is_some_and(|(p, _, _, _)| *p == lp)
+            {
+                if let Ok(tex) = loader.load_texture(lp) {
+                    state.ingame_menus.cached_memo_layer =
+                        Some((lp, tex.width, tex.height, tex.rgba));
+                }
+            }
+        }
+        None => {
+            state.ingame_menus.cached_memo_layer = None;
+        }
     }
 }
 

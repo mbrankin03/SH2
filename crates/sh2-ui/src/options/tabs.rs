@@ -10,18 +10,18 @@ impl OptionsMenu {
             OptionsTab::Video => 13,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
-                    11
+                    12
                 } else {
-                    10
+                    11
                 }
             }
             OptionsTab::Controls => 12,
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
-                    13
+                    14
                 } else {
-                    12
+                    13
                 }
             }
             OptionsTab::Debug => 6,
@@ -162,7 +162,15 @@ impl OptionsMenu {
                     "OFF (Vanilla)".into()
                 },
             )),
-            10 if self.audio_pack_status.both_detected() => {
+            10 => Some((
+                "Dynamic Room Acoustics",
+                if a.enable_dynamic_room_acoustics {
+                    "ON (.cam Reverb)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            11 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -320,7 +328,15 @@ impl OptionsMenu {
                     "OFF (PS2 Linear)".into()
                 },
             )),
-            12 if self.audio_pack_status.both_detected() => {
+            12 => Some((
+                "Dynamic Room Acoustics",
+                if a.enable_dynamic_room_acoustics {
+                    "ON (.cam Reverb)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            13 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -510,7 +526,11 @@ impl OptionsMenu {
                 self.draft_config.video.aces_tonemapping =
                     !self.draft_config.video.aces_tonemapping;
             }
-            12 if self.audio_pack_status.both_detected() => {
+            12 => {
+                self.draft_config.audio.enable_dynamic_room_acoustics =
+                    !self.draft_config.audio.enable_dynamic_room_acoustics;
+            }
+            13 if self.audio_pack_status.both_detected() => {
                 let a = &mut self.draft_config.audio;
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()
@@ -579,7 +599,8 @@ impl OptionsMenu {
             7 => a.enable_acoustic_occlusion = !a.enable_acoustic_occlusion,
             8 => a.mute_in_background = !a.mute_in_background,
             9 => a.enable_restored_cut_audio = !a.enable_restored_cut_audio,
-            10 if self.audio_pack_status.both_detected() => {
+            10 => a.enable_dynamic_room_acoustics = !a.enable_dynamic_room_acoustics,
+            11 if self.audio_pack_status.both_detected() => {
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()
                 } else {

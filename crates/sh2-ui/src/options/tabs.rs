@@ -19,9 +19,9 @@ impl OptionsMenu {
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
-                    11
+                    12
                 } else {
-                    10
+                    11
                 }
             }
             OptionsTab::Debug => 6,
@@ -296,7 +296,15 @@ impl OptionsMenu {
                 },
             )),
             9 => Some(("Camera Mode", c.default_camera_mode.label().to_string())),
-            10 if self.audio_pack_status.both_detected() => {
+            10 => Some((
+                "Secondary Cloth Physics",
+                if self.draft_config.game.enable_secondary_physics {
+                    "ON (Native)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            11 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -477,7 +485,11 @@ impl OptionsMenu {
                     c.default_camera_mode.prev()
                 };
             }
-            10 if self.audio_pack_status.both_detected() => {
+            10 => {
+                self.draft_config.game.enable_secondary_physics =
+                    !self.draft_config.game.enable_secondary_physics;
+            }
+            11 if self.audio_pack_status.both_detected() => {
                 let a = &mut self.draft_config.audio;
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()

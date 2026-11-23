@@ -512,7 +512,8 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Enhanced;
-        assert_eq!(menu.item_count(), 11);
+        assert_eq!(menu.item_count(), 12);
+        assert!(!menu.draft_config.game.enable_secondary_physics);
 
         // Row 0: Version Preset snaps to PS2 Authentic (1:1 Original)
         menu.selected_index = 0;
@@ -521,6 +522,7 @@ mod tests {
             menu.draft_config.detect_enhanced_preset(),
             EnhancedPreset::Ps2Authentic
         );
+        assert!(!menu.draft_config.game.enable_secondary_physics);
         assert_eq!(
             menu.draft_config.video.texture_quality,
             WorldTextureQuality::OriginalPs2
@@ -564,6 +566,16 @@ mod tests {
         assert_eq!(
             menu.draft_config.audio.spatial_audio_mode,
             SpatialAudioMode::BinauralHrtf
+        );
+        assert!(menu.draft_config.game.enable_secondary_physics);
+
+        // Toggling Secondary Cloth Physics (row 10) switches Version Preset to Custom (Mixed)
+        menu.selected_index = 10;
+        menu.adjust_value(1);
+        assert!(!menu.draft_config.game.enable_secondary_physics);
+        assert_eq!(
+            menu.draft_config.detect_enhanced_preset(),
+            EnhancedPreset::Custom
         );
 
         // Toggling an individual setting switches Version Preset display to Custom (Mixed)

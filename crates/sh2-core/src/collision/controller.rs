@@ -21,9 +21,7 @@ use super::character::{
 };
 use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
-use super::raycast::{
-    clamp_camera_ray, raycast_acoustic_occlusion, AcousticOcclusionHit, RaycastFilter,
-};
+use super::raycast::{raycast_acoustic_occlusion, AcousticOcclusionHit};
 use super::solver::{
     cl_check_column_to_bg_column_hit, cl_check_column_to_wall_hit, cl_collect_chara_all,
     cl_make_wall_hit_collect_vector, quantize_collect_vector_1_16, sh_atan2, CharaCollectEntry,
@@ -193,8 +191,12 @@ pub struct CollisionWorld {
     pub floors: Vec<FloorTriangle>,
     /// Derived 2D wall segments (for legacy raycast/audio consumers).
     pub walls: Vec<WallSegment>,
+    /// Raw `_CL_HITPOLY_PLANE` floors (`fld`, group 0), indexed 1:1 by `grid.floor_cells`.
+    pub raw_floors: Vec<HitPolyPlane>,
     /// Raw `_CL_HITPOLY_PLANE` walls (`wld`, group 1), indexed 1:1 by `grid.wall_cells`.
     pub raw_walls: Vec<HitPolyPlane>,
+    /// Raw `_CL_HITPOLY_PLANE` ceilings (`ced`, group 2), indexed 1:1 by `grid.ceiling_cells`.
+    pub raw_ceilings: Vec<HitPolyPlane>,
     /// Raw `_CL_HITPOLY_PLANE` side walls (`swd`, group 3), indexed 1:1 by `grid.side_wall_cells`.
     pub raw_side_walls: Vec<HitPolyPlane>,
     /// Raw `_CL_HITPOLY_COLUMN` static BG columns (`cld`), indexed 1:1 by `grid.column_cells`.
@@ -223,7 +225,9 @@ impl CollisionWorld {
             disable: cld.disable,
             floors: cld.floors.clone(),
             walls: cld.walls.clone(),
+            raw_floors: cld.raw_floors.clone(),
             raw_walls: cld.raw_walls.clone(),
+            raw_ceilings: cld.raw_ceilings.clone(),
             raw_side_walls: cld.raw_side_walls.clone(),
             columns: cld.columns.clone(),
             extra_walls: Vec::new(),
@@ -277,7 +281,9 @@ impl CollisionWorld {
         for p in parts {
             merged.floors.extend_from_slice(&p.floors);
             merged.walls.extend_from_slice(&p.walls);
+            merged.raw_floors.extend_from_slice(&p.raw_floors);
             merged.raw_walls.extend_from_slice(&p.raw_walls);
+            merged.raw_ceilings.extend_from_slice(&p.raw_ceilings);
             merged.raw_side_walls.extend_from_slice(&p.raw_side_walls);
             merged.columns.extend_from_slice(&p.columns);
             merged.extra_walls.extend_from_slice(&p.extra_walls);
@@ -290,7 +296,9 @@ impl CollisionWorld {
             origin: [0.0, 0.0],
             floors: merged.floors.clone(),
             walls: merged.walls.clone(),
+            raw_floors: merged.raw_floors.clone(),
             raw_walls: merged.raw_walls.clone(),
+            raw_ceilings: merged.raw_ceilings.clone(),
             raw_side_walls: merged.raw_side_walls.clone(),
             columns: merged.columns.clone(),
             ..Default::default()
@@ -675,11 +683,6 @@ impl CollisionWorld {
         pos
     }
 
-    /// Clamp camera position against room walls (`clCheckHitEyes` / `col_clamp_ray`).
-    pub fn clamp_camera(&self, target: Vec3, camera_pos: Vec3, filter: &RaycastFilter) -> Vec3 {
-        clamp_camera_ray(target, camera_pos, self.all_walls(), filter)
-    }
-
     /// Iterate over all active walkable/structural floor triangles (static + active dynamic floors).
     pub fn all_floors(&self) -> impl Iterator<Item = &FloorTriangle> {
         self.floors.iter().chain(
@@ -872,6 +875,7 @@ impl CollisionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collision::RaycastFilter;
 
     #[test]
     fn test_wall_pushback_and_sliding() {
@@ -966,12 +970,13 @@ mod tests {
 
         let clamped = world.clamp_camera(player_eye, desired_camera, &filter);
 
+        // Exact 1:1 `clCheckHitEyes` (`0x00138ea0`): stops directly at the wall plane `z = -1000.0`
+        // with zero guessed pullback margin (`safety_margin = 0.0`).
         assert!(
-            clamped.z > -1000.0,
-            "Camera ray must stop before wall: clamped.z={}",
+            (clamped.z - (-1000.0)).abs() < 1e-3,
+            "Camera ray must stop at wall plane z = -1000.0: clamped.z={}",
             clamped.z
         );
-        assert!(clamped.z < -800.0);
     }
 
     #[test]

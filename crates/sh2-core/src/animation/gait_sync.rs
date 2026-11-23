@@ -225,6 +225,9 @@ impl LocomotionAnimationSync {
                 clips.quick_turn_right,
                 1.0,
             ),
+            LocomotionState::WallF | LocomotionState::Fall => {
+                (AnimationStateKind::Idle, clips.idle, 1.0)
+            }
         };
 
         let blend_mode = if matches!(

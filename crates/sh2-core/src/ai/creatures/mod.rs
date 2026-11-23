@@ -9,12 +9,19 @@
 //!   - `0x4c65d0`: Common damage calculation: AP against HP, SP against endurance, knockdown check.
 //!   - `0x4c3e30`: Endurance recovery rates per second.
 
+pub mod abstract_daddy;
 pub mod anim;
 pub mod creeper;
+pub mod eddie;
+pub mod flesh_lips;
+pub mod insects;
 pub mod lying_figure;
+pub mod mandarin;
 pub mod mannequin;
+pub mod mary;
 pub mod nurse;
 pub mod pyramid_head;
+pub mod twin_pyramid_head;
 
 use serde::{Deserialize, Serialize};
 
@@ -28,10 +35,24 @@ pub enum EnemySpecies {
     Mannequin = 0x201,
     /// 0x202: Creeper (`chr/tyu`).
     Creeper = 0x202,
+    /// 0x203: Flesh Lips (`chr/ike`).
+    FleshLips = 0x203,
+    /// 0x204: Abstract Daddy (`chr/pap`).
+    AbstractDaddy = 0x204,
+    /// 0x205: Eddie Boss (`chr/edb`).
+    Eddie = 0x205,
+    /// 0x206: Mary / Maria Final Boss (`chr/bos`).
+    MaryBoss = 0x206,
     /// 0x207: Bubble Head Nurse (`chr/nse`).
     Nurse = 0x207,
     /// 0x208: Pyramid Head (`chr/red`).
     PyramidHead = 0x208,
+    /// 0x209: Twin Pyramid Heads (`chr/oni`).
+    TwinPyramidHead = 0x209,
+    /// 0x20a: Mandarin (`chr/arm`).
+    Mandarin = 0x20a,
+    /// 0x20f: Room Insects / Mary Moth Swarm (`en_insect.c`, type `0x0f`).
+    RoomInsect = 0x20f,
 }
 
 /// Generic high-level behavior state for Silent Hill 2 creatures.

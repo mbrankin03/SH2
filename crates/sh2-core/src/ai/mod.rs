@@ -11,21 +11,29 @@
 pub mod creatures;
 pub mod maria;
 pub mod npcs;
+pub mod pathfinding;
 pub mod radio;
 pub mod sensory;
 
+use crate::ai::creatures::abstract_daddy::AbstractDaddyController;
 use crate::ai::creatures::creeper::CreeperController;
+use crate::ai::creatures::eddie::EddieController;
+use crate::ai::creatures::flesh_lips::FleshLipsController;
+use crate::ai::creatures::insects::RoomInsectController;
 use crate::ai::creatures::lying_figure::LyingFigureController;
+use crate::ai::creatures::mandarin::MandarinController;
 use crate::ai::creatures::mannequin::MannequinController;
+use crate::ai::creatures::mary::MaryBossController;
 use crate::ai::creatures::nurse::NurseController;
 use crate::ai::creatures::pyramid_head::PyramidHeadController;
+use crate::ai::creatures::twin_pyramid_head::{TwinPartnerSnapshot, TwinPyramidHeadController};
 use crate::ai::creatures::EnemySpecies;
 use crate::ai::maria::MariaCompanionController;
 use crate::ai::radio::{RadioNoiseEvaluator, RadioStaticOutput};
 use crate::ai::sensory::{DifficultyLevel, PerceivableTarget, RoomLighting};
 use glam::Vec3;
 
-/// Unified enemy instance wrapper supporting all core archetype state machines.
+/// Unified enemy instance wrapper supporting all core and boss archetype state machines.
 #[derive(Debug, Clone)]
 pub enum ActiveEnemy {
     LyingFigure(LyingFigureController),
@@ -33,6 +41,13 @@ pub enum ActiveEnemy {
     Nurse(NurseController),
     Creeper(CreeperController),
     PyramidHead(PyramidHeadController),
+    AbstractDaddy(AbstractDaddyController),
+    FleshLips(FleshLipsController),
+    Mandarin(MandarinController),
+    Eddie(EddieController),
+    TwinPyramidHead(TwinPyramidHeadController),
+    MaryBoss(MaryBossController),
+    RoomInsect(RoomInsectController),
 }
 
 impl ActiveEnemy {
@@ -43,6 +58,13 @@ impl ActiveEnemy {
             Self::Nurse(e) => e.id,
             Self::Creeper(e) => e.id,
             Self::PyramidHead(e) => e.id,
+            Self::AbstractDaddy(e) => e.id,
+            Self::FleshLips(e) => e.id,
+            Self::Mandarin(e) => e.id,
+            Self::Eddie(e) => e.id,
+            Self::TwinPyramidHead(e) => e.id,
+            Self::MaryBoss(e) => e.id,
+            Self::RoomInsect(e) => e.id,
         }
     }
 
@@ -53,6 +75,13 @@ impl ActiveEnemy {
             Self::Nurse(e) => e.position,
             Self::Creeper(e) => e.position,
             Self::PyramidHead(e) => e.position,
+            Self::AbstractDaddy(e) => e.position,
+            Self::FleshLips(e) => e.position,
+            Self::Mandarin(e) => e.position,
+            Self::Eddie(e) => e.position,
+            Self::TwinPyramidHead(e) => e.position,
+            Self::MaryBoss(e) => e.position,
+            Self::RoomInsect(e) => e.position,
         }
     }
 
@@ -63,6 +92,13 @@ impl ActiveEnemy {
             Self::Nurse(e) => e.yaw,
             Self::Creeper(e) => e.yaw,
             Self::PyramidHead(e) => e.yaw,
+            Self::AbstractDaddy(e) => e.yaw,
+            Self::FleshLips(e) => e.yaw,
+            Self::Mandarin(e) => e.yaw,
+            Self::Eddie(e) => e.yaw,
+            Self::TwinPyramidHead(e) => e.yaw,
+            Self::MaryBoss(e) => e.yaw,
+            Self::RoomInsect(e) => e.yaw,
         }
     }
 
@@ -73,6 +109,13 @@ impl ActiveEnemy {
             Self::Nurse(e) => e.stats.health <= 0.0,
             Self::Creeper(e) => e.stats.health <= 0.0,
             Self::PyramidHead(e) => e.stats.health <= 0.0,
+            Self::AbstractDaddy(e) => e.stats.health <= 0.0,
+            Self::FleshLips(e) => e.stats.health <= 0.0,
+            Self::Mandarin(e) => e.stats.health <= 0.0,
+            Self::Eddie(e) => e.stats.health <= 0.0,
+            Self::TwinPyramidHead(e) => e.stats.health <= 0.0,
+            Self::MaryBoss(e) => e.stats.health <= 0.0,
+            Self::RoomInsect(e) => e.stats.health <= 0.0,
         }
     }
 
@@ -81,8 +124,17 @@ impl ActiveEnemy {
             Self::LyingFigure(e) => e.stats.down_timer > 0.0,
             Self::Mannequin(e) => e.stats.down_timer > 0.0,
             Self::Nurse(e) => e.stats.down_timer > 0.0,
-            Self::Creeper(_) => false,
-            Self::PyramidHead(_) => false,
+            Self::AbstractDaddy(e) => {
+                e.state == crate::ai::creatures::abstract_daddy::PapState::Down
+            }
+            Self::Creeper(_)
+            | Self::PyramidHead(_)
+            | Self::FleshLips(_)
+            | Self::Mandarin(_)
+            | Self::Eddie(_)
+            | Self::TwinPyramidHead(_)
+            | Self::MaryBoss(_)
+            | Self::RoomInsect(_) => false,
         }
     }
 
@@ -92,8 +144,7 @@ impl ActiveEnemy {
             Self::LyingFigure(e) => Some(&e.anim),
             Self::Mannequin(e) => Some(&e.anim),
             Self::Nurse(e) => Some(&e.anim),
-            Self::Creeper(_) => None,
-            Self::PyramidHead(_) => None,
+            _ => None,
         }
     }
 
@@ -104,12 +155,31 @@ impl ActiveEnemy {
         difficulty: DifficultyLevel,
         dt: f32,
     ) {
+        self.update_with_context(target, lighting, difficulty, None, dt);
+    }
+
+    /// Update with optional paired Twin Pyramid Head partner snapshot (`en_oni.c` `partner_ptr`).
+    pub fn update_with_context(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        twin_partner: Option<TwinPartnerSnapshot>,
+        dt: f32,
+    ) {
         match self {
             Self::LyingFigure(e) => e.update(target, lighting, difficulty, dt),
             Self::Mannequin(e) => e.update(target, lighting, difficulty, dt),
             Self::Nurse(e) => e.update(target, lighting, difficulty, dt),
             Self::Creeper(e) => e.update(target, dt),
             Self::PyramidHead(e) => e.update(target, lighting, difficulty, dt),
+            Self::AbstractDaddy(e) => e.update(target, difficulty, dt),
+            Self::FleshLips(e) => e.update(target, difficulty, dt),
+            Self::Mandarin(e) => e.update(target, difficulty, dt),
+            Self::Eddie(e) => e.update(target, difficulty, dt),
+            Self::TwinPyramidHead(e) => e.update(target, twin_partner, difficulty, dt),
+            Self::MaryBoss(e) => e.update(target, false, difficulty, dt),
+            Self::RoomInsect(e) => e.update(target, None, false, dt),
         }
     }
 }
@@ -152,6 +222,17 @@ impl AiSubsystem {
 
     /// Spawn an enemy into the active world.
     pub fn spawn_enemy(&mut self, species: EnemySpecies, id: u32, position: Vec3, yaw: f32) {
+        let twin_count = self
+            .enemies
+            .iter()
+            .filter(|e| matches!(e, ActiveEnemy::TwinPyramidHead(_)))
+            .count();
+        let insect_count = self
+            .enemies
+            .iter()
+            .filter(|e| matches!(e, ActiveEnemy::RoomInsect(_)))
+            .count();
+
         let enemy = match species {
             EnemySpecies::LyingFigure => ActiveEnemy::LyingFigure(LyingFigureController::new(
                 id,
@@ -171,6 +252,38 @@ impl AiSubsystem {
             EnemySpecies::PyramidHead => {
                 ActiveEnemy::PyramidHead(PyramidHeadController::new(id, position, yaw))
             }
+            EnemySpecies::AbstractDaddy => ActiveEnemy::AbstractDaddy(
+                AbstractDaddyController::new(id, position, yaw, false, self.difficulty),
+            ),
+            EnemySpecies::FleshLips => {
+                ActiveEnemy::FleshLips(FleshLipsController::new(id, position, yaw, self.difficulty))
+            }
+            EnemySpecies::Mandarin => {
+                ActiveEnemy::Mandarin(MandarinController::new(id, position, yaw, self.difficulty))
+            }
+            EnemySpecies::Eddie => ActiveEnemy::Eddie(EddieController::new(
+                id,
+                position,
+                yaw,
+                false,
+                self.difficulty,
+            )),
+            EnemySpecies::TwinPyramidHead => ActiveEnemy::TwinPyramidHead(
+                TwinPyramidHeadController::new(id, position, yaw, twin_count, self.difficulty),
+            ),
+            EnemySpecies::MaryBoss => ActiveEnemy::MaryBoss(MaryBossController::new(
+                id,
+                position,
+                yaw,
+                false,
+                self.difficulty,
+            )),
+            EnemySpecies::RoomInsect => ActiveEnemy::RoomInsect(RoomInsectController::new(
+                id,
+                position,
+                yaw,
+                insect_count == 0,
+            )),
         };
         self.enemies.push(enemy);
     }
@@ -204,6 +317,16 @@ impl AiSubsystem {
         let maria_target =
             PerceivableTarget::new(self.maria.position, self.maria.yaw, false, false);
 
+        // Pre-capture Twin Pyramid Head snapshots for paired coordination (`en_oni.c` `partner_ptr`).
+        let twin_snapshots: Vec<(u32, TwinPartnerSnapshot)> = self
+            .enemies
+            .iter()
+            .filter_map(|e| match e {
+                ActiveEnemy::TwinPyramidHead(t) => Some((t.id, t.snapshot(player_pos))),
+                _ => None,
+            })
+            .collect();
+
         for enemy in &mut self.enemies {
             let target = if self
                 .maria
@@ -214,7 +337,15 @@ impl AiSubsystem {
                 &player_target
             };
 
-            enemy.update(target, self.lighting, self.difficulty, dt);
+            let partner = match enemy {
+                ActiveEnemy::TwinPyramidHead(t) => twin_snapshots
+                    .iter()
+                    .find(|(id, _)| *id != t.id)
+                    .map(|(_, snap)| *snap),
+                _ => None,
+            };
+
+            enemy.update_with_context(target, self.lighting, self.difficulty, partner, dt);
         }
 
         // 3. Update Pocket Radio proximity static

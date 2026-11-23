@@ -43,6 +43,9 @@ pub struct NurseController {
     pub alert_timer: f32,
     pub state_timer: f32,
     pub twitch_timer: f32,
+    /// Confuse countdown timer in 60 Hz ticks (`600 - 90 * mode`, `enNSECtrlConfuse` `SLUS 0x001589a0`).
+    pub confuse_timer_ticks: f32,
+    pub sub_state: u8,
     pub sensory: SensoryProfile,
     pub anim: CreatureAnimationController,
 }
@@ -66,6 +69,8 @@ impl NurseController {
             alert_timer: 0.0,
             state_timer: 0.0,
             twitch_timer: 0.0,
+            confuse_timer_ticks: 0.0,
+            sub_state: 0,
             sensory: SensoryProfile::nurse(),
             anim: CreatureAnimationController::new_nurse(),
         }
@@ -189,7 +194,28 @@ impl NurseController {
                 self.state_timer = 0.0;
             }
 
-            _ => {}
+            NseState::Confuse => {
+                // `enNSECtrlConfuse` (`SLUS 0x001589a0` / `sh2pc 0x004bb250`):
+                // stunned for `600 - 90 * mode` ticks, then transitions to Precaution.
+                if self.sub_state == 0 {
+                    let mode = match difficulty {
+                        DifficultyLevel::Beginner => 0,
+                        DifficultyLevel::Easy => 1,
+                        DifficultyLevel::Normal => 2,
+                        DifficultyLevel::Hard => 3,
+                    };
+                    self.confuse_timer_ticks = (600 - 90 * mode) as f32;
+                    self.sub_state = 2;
+                }
+                self.confuse_timer_ticks -= dt * 60.0;
+                if self.confuse_timer_ticks <= 0.0 {
+                    self.state = NseState::Precaution;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                }
+            }
+
+            NseState::Damage | NseState::Down | NseState::Dying => {}
         }
 
         // Synchronize and update skeletal animation controller
@@ -227,6 +253,24 @@ mod tests {
 
         let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 1000.0), 0.0, false, false);
         nurse.update(&target, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
+        assert_eq!(nurse.state, NseState::Precaution);
+    }
+
+    #[test]
+    fn test_nurse_confuse_timer_to_precaution() {
+        let mut nurse = NurseController::new(2, Vec3::ZERO, 0.0, DifficultyLevel::Hard);
+        nurse.state = NseState::Confuse;
+        nurse.sub_state = 0;
+        let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 5000.0), 0.0, false, false);
+        // Hard mode: 600 - 90*3 = 330 ticks.
+        for _ in 0..335 {
+            nurse.update(
+                &target,
+                RoomLighting::Lit,
+                DifficultyLevel::Hard,
+                1.0 / 60.0,
+            );
+        }
         assert_eq!(nurse.state, NseState::Precaution);
     }
 }

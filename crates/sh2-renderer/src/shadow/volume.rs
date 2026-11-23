@@ -50,10 +50,27 @@ pub fn extrude_kg1_stencil_volume(
     light_pos: Vec3,
     extrude_dist_mm: f32,
 ) -> Vec<ShadowVolumeVertex> {
+    extrude_kg1_stencil_volume_filtered(kg, bone_matrices, light_pos, extrude_dist_mm, &[])
+}
+
+/// Extrudes a closed Z-fail stencil shadow volume from a character `.kg1` shadow model while
+/// skipping any part whose `bone_or_object_id` is listed in `excluded_parts`
+/// (`SLUS_202.28` `sh2shd_del_jms_upper_body` `0x001a5e60` / `sh2shd_del_jms_head` `0x001a5f60`).
+#[must_use]
+pub fn extrude_kg1_stencil_volume_filtered(
+    kg: &KgFile,
+    bone_matrices: &[[[f32; 4]; 4]],
+    light_pos: Vec3,
+    extrude_dist_mm: f32,
+    excluded_parts: &[u16],
+) -> Vec<ShadowVolumeVertex> {
     let mut out = Vec::new();
     let dist = extrude_dist_mm.max(500.0);
 
     for part in &kg.parts {
+        if excluded_parts.contains(&part.bone_or_object_id) {
+            continue;
+        }
         let bone_idx = part.bone_or_object_id as usize;
         let mat = bone_matrices
             .get(bone_idx)

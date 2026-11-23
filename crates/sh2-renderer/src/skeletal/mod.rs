@@ -18,10 +18,12 @@ pub use cutout::{
     is_opaque_cutout_primitive, refine_4k_chr_texture_from_sources, DecodedModelTextureMap,
 };
 pub use material::{
-    discover_pose_presets, is_default_active_pose, pack_aligned_material_buffer, PoseVariantPreset,
-    SkeletalMaterialUniforms, MAX_NORMALIZED_SPECULAR_COMPONENT, MAX_SPECULAR_SHININESS,
-    MIN_SPECULAR_SHININESS, PS2_SPECULAR_COLOR_SCALE, SHININESS_PER_SPECULAR_SCALE,
-    TRANSPARENT_CORE_ALPHA_THRESHOLD,
+    discover_pose_presets, is_default_active_pose, pack_aligned_material_buffer, GsAlphaTest,
+    PoseVariantPreset, SkeletalMaterialUniforms, MAX_NORMALIZED_SPECULAR_COMPONENT,
+    MAX_SPECULAR_SHININESS, MIN_SPECULAR_SHININESS, PC_D3DRS_ALPHAFUNC_GREATER,
+    PC_D3DRS_ALPHAREF_ZERO, PS2_ALPHA_OPAQUE_THRESHOLD, PS2_ALPHA_TEST_THRESHOLD,
+    PS2_GS_TEST_ALPHA_GREATER_ZERO, PS2_GS_TEST_OPAQUE_NO_ATEST, PS2_SPECULAR_COLOR_SCALE,
+    SHININESS_PER_SPECULAR_SCALE,
 };
 pub use mesh::{
     GpuSkeletalMesh, GpuSkeletalPrimitive, SkeletalVertex, SkeletonBoneUniforms, MAX_SKELETON_BONES,

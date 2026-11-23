@@ -12,14 +12,13 @@ use super::shader::WGSL_SKINNING_SHADER;
 pub enum SkeletalPassStage {
     /// Opaque submeshes (`is_transparent == false`): depth-write enabled, `BlendState::REPLACE`.
     Opaque,
-    /// Transparent hair/eyelash pass (`is_transparent == true`, `alpha > 0` / `>= 0.5 / 255.0`):
-    /// depth-write enabled, `BlendState::ALPHA_BLENDING`, matching PS2 `SLUS_202.28` `InitEnv1`
-    /// (`0x0012c6d0` / `0x002a9780` `TEST_1 = 0x5000d`, `ATST = GREATER, AREF = 0`) and
-    /// `sh2pc.exe` `FUN_00503800` (`0x00503800`, `D3DRS_ZWRITEENABLE = 1, D3DRS_ALPHAFUNC = GREATER, D3DRS_ALPHAREF = 0`).
+    /// Opaque hair/eyelash core (`is_transparent == true`, `alpha_u8 == 255`): depth-write enabled,
+    /// `BlendState::ALPHA_BLENDING`, establishing front-to-back hair layer occlusion
+    /// (`SLUS_202.28` `InitEnv1` `0x0012c6d0` / `0x002a9780` `TEST_1 = 0x5000d`).
     TransparentCore,
-    /// Legacy second transparent pass retained for stage-dispatch compatibility; discards
-    /// unconditionally in WGSL because [`Self::TransparentCore`] already renders all `alpha > 0`
-    /// fragments in a single PS2/PC-exact pass.
+    /// Semi-transparent hair/eyelash fringe (`is_transparent == true`, `1 <= alpha_u8 <= 254`):
+    /// depth-write disabled (`LessEqual`), `BlendState::ALPHA_BLENDING`
+    /// (`SLUS_202.28` `0x002a9780` / `sh2pc.exe` `FUN_00503800` `0x00503800` `alpha_u8 > 0`).
     TransparentFringe,
 }
 

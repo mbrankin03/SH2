@@ -395,6 +395,9 @@ pub struct VideoOptions {
     /// Outdoor `.map` tile residency mode: Classic PS2 `2x2`, Native `5x5`, or Whole-Town (`SH2-78`).
     #[serde(default)]
     pub outdoor_streaming_mode: OutdoorStreamingMode,
+    /// Modern ACES filmic tonemapping (`native-upgrade`, `SH2-136`). Disabled in strict 1:1 Vanilla PS2 mode.
+    #[serde(default)]
+    pub aces_tonemapping: bool,
 }
 
 impl Default for VideoOptions {
@@ -413,6 +416,7 @@ impl Default for VideoOptions {
             shadow_quality: ShadowQualityMode::default(),
             lighting_profile: LightingProfile::default(),
             outdoor_streaming_mode: OutdoorStreamingMode::default(),
+            aces_tonemapping: true,
         }
     }
 }

@@ -51,6 +51,7 @@ impl AppConfig {
                 self.video.shadow_quality = ShadowQualityMode::ClassicPs2Stencil;
                 self.video.lighting_profile = LightingProfile::Ps2Authentic;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
+                self.video.aces_tonemapping = false;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_dynamic_room_acoustics = false;
@@ -67,6 +68,7 @@ impl AppConfig {
                 self.video.shadow_quality = ShadowQualityMode::EnhancedEditionSoft;
                 self.video.lighting_profile = LightingProfile::EnhancedEdition;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
+                self.video.aces_tonemapping = false;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_dynamic_room_acoustics = false;
@@ -83,6 +85,7 @@ impl AppConfig {
                 self.video.shadow_quality = ShadowQualityMode::NativePcss;
                 self.video.lighting_profile = LightingProfile::NativeEnhanced;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::NativeWholeTown;
+                self.video.aces_tonemapping = true;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
                 self.audio.enable_dynamic_room_acoustics = true;
@@ -106,6 +109,7 @@ impl AppConfig {
             && self.video.shadow_quality == ShadowQualityMode::ClassicPs2Stencil
             && self.video.lighting_profile == LightingProfile::Ps2Authentic
             && self.video.outdoor_streaming_mode == OutdoorStreamingMode::ClassicPs2LoadBg2x2
+            && !self.video.aces_tonemapping
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_dynamic_room_acoustics
@@ -123,6 +127,7 @@ impl AppConfig {
             && self.video.shadow_quality == ShadowQualityMode::EnhancedEditionSoft
             && self.video.lighting_profile == LightingProfile::EnhancedEdition
             && self.video.outdoor_streaming_mode == OutdoorStreamingMode::ClassicPs2LoadBg2x2
+            && !self.video.aces_tonemapping
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_dynamic_room_acoustics
@@ -140,6 +145,7 @@ impl AppConfig {
             && self.video.shadow_quality == ShadowQualityMode::NativePcss
             && self.video.lighting_profile == LightingProfile::NativeEnhanced
             && self.video.outdoor_streaming_mode == OutdoorStreamingMode::NativeWholeTown
+            && self.video.aces_tonemapping
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion
             && self.audio.enable_dynamic_room_acoustics

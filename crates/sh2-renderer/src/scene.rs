@@ -100,6 +100,16 @@ impl RenderContext {
             );
         }
 
+        // Determine PS2 `Check_DrawOrder` (`0x001a08a0`): on maps `0x000a007d` / `0x00090016`
+        // during gameplay, stencil shadows are composited onto the static room BEFORE characters.
+        let stencil_verts = self
+            .shadow_volume_vertex_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let stencil_active =
+            stencil_verts > 0 && !self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed);
+        let shadow_before_character = stencil_active
+            && self.shadow_draw_order() == crate::shadow::ShadowDrawOrder::ShadowBeforeCharacter;
+
         // 1. Geometry & Skeletal Meshes Render Pass
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -108,12 +118,7 @@ impl RenderContext {
                     view: &self.hdr_color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.01,
-                            g: 0.01,
-                            b: 0.015,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.room_clear_color()),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -140,9 +145,9 @@ impl RenderContext {
                 );
             }
 
-            // 1b. Render skeletal character meshes (opaque pass first, then alpha-blended transparent pass),
-            // including any planar mirror reflections behind semi-transparent mirror decals (`er01.map` X = -20000.0)
-            if !skeletal_meshes.is_empty() {
+            // 1b. Render skeletal character meshes in the main pass unless `Check_DrawOrder`
+            // requested `ShadowBeforeCharacter` (`0x001a08a0`).
+            if !shadow_before_character && !skeletal_meshes.is_empty() {
                 self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
             }
 
@@ -228,21 +233,65 @@ impl RenderContext {
             }
         }
 
-        // 1.5. PS2 / SH2:EE Two-Pass Stencil Shadow Volume + Darkening Quad (`0x445540`, `SH2-81`)
-        let stencil_verts = self
-            .shadow_volume_vertex_count
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if stencil_verts > 0 && !self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed) {
-            self.stencil_shadow_pipeline.encode_stencil_volume_pass(
-                &mut encoder,
-                &self.hdr_color_view,
-                &self.stencil_depth_view,
-                &self.geometry_bind_group,
-                &self.shadow_darken_bind_group,
-                gpu_map,
-                &self.shadow_volume_buffer,
-                stencil_verts,
-            );
+        // 1.5. PS2 / SH2:EE Two-Pass Stencil Shadow Volume + 4-Pass Soft Blur (`0x001767e0`, `0x00175f90`)
+        if stencil_active {
+            if self
+                .soft_shadow_blur_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.stencil_shadow_pipeline.encode_soft_stencil_blur_pass(
+                    &mut encoder,
+                    &self.hdr_color_view,
+                    &self.stencil_depth_view,
+                    &self.shadow_mask_view,
+                    &self.shadow_mask_bind_group,
+                    &self.shadow_blur_pipeline,
+                    self.shadow_composite_mode(),
+                    &self.geometry_bind_group,
+                    &self.shadow_darken_bind_group,
+                    gpu_map,
+                    &self.shadow_volume_buffer,
+                    stencil_verts,
+                );
+            } else {
+                self.stencil_shadow_pipeline.encode_stencil_volume_pass(
+                    &mut encoder,
+                    &self.hdr_color_view,
+                    &self.stencil_depth_view,
+                    &self.geometry_bind_group,
+                    &self.shadow_darken_bind_group,
+                    gpu_map,
+                    &self.shadow_volume_buffer,
+                    stencil_verts,
+                );
+            }
+        }
+
+        // 1.6. Deferred skeletal character pass when `Check_DrawOrder` (`0x001a08a0`) returned
+        // `ShadowBeforeCharacter` (`0x000a007d` / `0x00090016` during gameplay).
+        if shadow_before_character && !skeletal_meshes.is_empty() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("PS2 Check_DrawOrder Deferred Character Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.hdr_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
         }
 
         // 1.75. Additive 7-Sprite Screen-Space Lens Flares (`Lens/lens_flare.c`, `SH2-81`)

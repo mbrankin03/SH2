@@ -28,9 +28,81 @@ pub const MIN_SPECULAR_SHININESS: f32 = 24.0;
 /// Maximum Blinn-Phong shininess exponent for `material_type == 4` specular primitives.
 pub const MAX_SPECULAR_SHININESS: f32 = 96.0;
 
-/// Alpha threshold separating the depth-writing hair core pass (`>= 0.90`) from the
-/// depth-read-only soft alpha-blended hair/eyelash fringe pass (`< 0.90`) on `tprim` submeshes.
-pub const TRANSPARENT_CORE_ALPHA_THRESHOLD: f32 = 0.90;
+/// PS2 GS `TEST_1` register (`0x47`) for character alpha-tested primitives
+/// (`SLUS_202.28` `0x002a9780` referenced by `DrawPart1` `0x0012d750` in `Chacter_Draw/model3_vu1_n.c`):
+/// `ATE=1`, `ATST=6 (GREATER)`, `AREF=0x00`, `AFAIL=0 (KEEP)`, `ZTE=1`, `ZTST=2 (GEQUAL)`.
+pub const PS2_GS_TEST_ALPHA_GREATER_ZERO: u64 = 0x0005_000d;
+
+/// PS2 GS `TEST_1` register (`0x47`) for opaque world/character geometry without alpha-test
+/// (`SLUS_202.28` `SetupDrawEnvData` `0x00251370` line 408: `ATE=0, ZTE=1, ZTST=1`).
+pub const PS2_GS_TEST_OPAQUE_NO_ATEST: u64 = 0x0003_0002;
+
+/// Retail PC `sh2pc.exe` `FUN_00503800` (`0x00503800` lines 2406-2409) `D3DRS_ALPHAFUNC` value
+/// (`D3DCMP_GREATER = 5` in Direct3D 8) paired with `D3DRS_ALPHAREF = 0` (`alpha > 0`).
+pub const PC_D3DRS_ALPHAFUNC_GREATER: u32 = 5;
+
+/// Retail PC `sh2pc.exe` `FUN_00503800` (`0x00503800` line 2409) `D3DRS_ALPHAREF` value (`0`).
+pub const PC_D3DRS_ALPHAREF_ZERO: u8 = 0;
+
+/// Exact normalized 8-bit UNORM midpoint threshold (`0.5 / 255.0`) equivalent to PS2 GS
+/// `TEST_1 = 0x5000d` (`ATST = 6 (GREATER), AREF = 0`) and PC `D3DRS_ALPHAFUNC = D3DCMP_GREATER (5)`,
+/// `D3DRS_ALPHAREF = 0` (`alpha_u8 > 0`).
+///
+/// Discards `alpha_u8 == 0` (`0.0`) and passes all `alpha_u8 >= 1` (`>= 1.0 / 255.0`) even under
+/// float rounding, replacing the uncited `0.90` / `0.05` alpha-test thresholds.
+pub const PS2_ALPHA_TEST_THRESHOLD: f32 = 0.5 / 255.0;
+
+/// Exact normalized 8-bit UNORM midpoint threshold (`254.5 / 255.0`) separating fully opaque
+/// texels (`alpha_u8 == 255`, depth-writing core `pass_mode == 1u`) from semi-transparent texels
+/// (`1 <= alpha_u8 <= 254`, depth-read-only alpha-blended fringe `pass_mode == 2u`) while keeping
+/// every `alpha_u8 > 0` texel (`TEST_1 = 0x5000d`, `SLUS_202.28` `0x002a9780`) visible without
+/// double-blending.
+pub const PS2_ALPHA_OPAQUE_THRESHOLD: f32 = 254.5 / 255.0;
+
+/// Decoded PS2 GS `TEST_1` (`0x47`) alpha-test fields (`ATE`, `ATST`, `AREF`, `AFAIL`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GsAlphaTest {
+    /// Bit 0 (`ATE`): alpha test enable.
+    pub enabled: bool,
+    /// Bits 1..=3 (`ATST`): comparison function (`0=NEVER, 1=ALWAYS, 2=LESS, 3=LEQUAL, 4=EQUAL,
+    /// 5=GEQUAL, 6=GREATER, 7=NOTEQUAL`).
+    pub atst: u8,
+    /// Bits 4..=11 (`AREF`): 8-bit alpha reference value (`0..=255`).
+    pub aref: u8,
+    /// Bits 12..=13 (`AFAIL`): fail behavior (`0=KEEP`, `1=FB_ONLY`, `2=ZB_ONLY`, `3=RGB_ONLY`).
+    pub afail: u8,
+}
+
+impl GsAlphaTest {
+    /// Decodes the alpha-test fields from a 64-bit PS2 GS `TEST_1` (`0x47`) register value.
+    #[must_use]
+    pub const fn from_gs_test_1(test_1: u64) -> Self {
+        Self {
+            enabled: (test_1 & 1) != 0,
+            atst: ((test_1 >> 1) & 0x7) as u8,
+            aref: ((test_1 >> 4) & 0xff) as u8,
+            afail: ((test_1 >> 12) & 0x3) as u8,
+        }
+    }
+
+    /// Evaluates whether a fragment with 8-bit alpha `alpha_u8` passes this GS `TEST_1` alpha test.
+    #[must_use]
+    pub const fn passes(self, alpha_u8: u8) -> bool {
+        if !self.enabled {
+            return true;
+        }
+        match self.atst {
+            0 => false,                 // NEVER
+            1 => true,                  // ALWAYS
+            2 => alpha_u8 < self.aref,  // LESS
+            3 => alpha_u8 <= self.aref, // LEQUAL
+            4 => alpha_u8 == self.aref, // EQUAL
+            5 => alpha_u8 >= self.aref, // GEQUAL
+            6 => alpha_u8 > self.aref,  // GREATER
+            _ => alpha_u8 != self.aref, // NOTEQUAL (7)
+        }
+    }
+}
 
 /// GPU-aligned per-primitive material uniform block (64 bytes, 16-byte `vec4<f32>` aligned).
 #[repr(C)]
@@ -354,5 +426,37 @@ mod tests {
         let (bytes, offsets) = pack_aligned_material_buffer(&prims, 256);
         assert_eq!(offsets, vec![0, 256]);
         assert_eq!(bytes.len(), 512);
+    }
+
+    #[test]
+    fn gs_alpha_test_matches_slus_002a9780_and_sh2pc_00503800() {
+        let atest = GsAlphaTest::from_gs_test_1(PS2_GS_TEST_ALPHA_GREATER_ZERO);
+        assert!(atest.enabled);
+        assert_eq!(atest.atst, 6);
+        assert_eq!(atest.aref, 0);
+        assert_eq!(atest.afail, 0);
+        assert!(!atest.passes(0));
+        assert!(atest.passes(1));
+        assert!(atest.passes(255));
+
+        let opaque = GsAlphaTest::from_gs_test_1(PS2_GS_TEST_OPAQUE_NO_ATEST);
+        assert!(!opaque.enabled);
+        assert!(opaque.passes(0));
+        assert!(opaque.passes(128));
+
+        // Verify normalized UNORM thresholds partition all 256 8-bit alpha values identically to `alpha_u8 > 0`:
+        for a in 0u8..=255 {
+            let norm = (a as f32) / 255.0;
+            let in_core = norm >= PS2_ALPHA_OPAQUE_THRESHOLD;
+            let in_fringe = (PS2_ALPHA_TEST_THRESHOLD..PS2_ALPHA_OPAQUE_THRESHOLD).contains(&norm);
+            assert_eq!(in_core || in_fringe, atest.passes(a));
+            assert!(!(in_core && in_fringe));
+        }
+
+        // Verify WGSL shader uses the exact PS2 alpha-test constants rather than uncited `0.90`.
+        assert!(super::super::shader::WGSL_SKINNING_SHADER.contains("PS2_ALPHA_TEST_THRESHOLD"));
+        assert!(super::super::shader::WGSL_SKINNING_SHADER.contains("PS2_ALPHA_OPAQUE_THRESHOLD"));
+        assert!(!super::super::shader::WGSL_SKINNING_SHADER.contains("tex_color.a < 0.90"));
+        assert!(!super::super::shader::WGSL_SKINNING_SHADER.contains("tex_color.a >= 0.90"));
     }
 }

@@ -419,6 +419,112 @@ fn fs_darken() -> @location(0) vec4<f32> {
             rpass.draw(0..3, 0..1);
         }
     }
+
+    /// Encodes Z-fail stencil counting, extracts the binary stencil mask into `mask_view`, and
+    /// executes the PS2 4-pass ping-pong soft shadow blur + dual GS composite mode
+    /// (`SLUS_202.28` `shdw_shadow_filter_main` `0x001767e0`, `sh2gfw_Set_FilterData` `0x00175f90`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_soft_stencil_blur_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        hdr_color_view: &wgpu::TextureView,
+        stencil_depth_view: &wgpu::TextureView,
+        mask_view: &wgpu::TextureView,
+        mask_bind_group: &wgpu::BindGroup,
+        blur_pipeline: &super::blur::ShadowBlurPipeline,
+        composite_mode: super::blur::ShadowCompositeMode,
+        camera_bind_group: &wgpu::BindGroup,
+        darken_bind_group: &wgpu::BindGroup,
+        gpu_map: Option<&GpuMap>,
+        volume_buffer: &wgpu::Buffer,
+        volume_vertex_count: u32,
+    ) {
+        if volume_vertex_count == 0 {
+            return;
+        }
+
+        // Pass A: Depth prepass + Z-fail stencil counting
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("PS2 Soft Stencil Shadow Volume Count Pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: stencil_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            if let Some(map) = gpu_map {
+                rpass.set_pipeline(&self.depth_prepass_pipeline);
+                rpass.set_bind_group(0, camera_bind_group, &[]);
+                rpass.set_bind_group(1, darken_bind_group, &[]);
+                for batch in &map.batches {
+                    if batch.group != BatchGroup::Opaque || !map.is_batch_visible(batch) {
+                        continue;
+                    }
+                    rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+                    rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
+                }
+            }
+
+            let byte_len =
+                (volume_vertex_count as usize * std::mem::size_of::<ShadowVolumeVertex>()) as u64;
+            rpass.set_pipeline(&self.volume_stencil_pipeline);
+            rpass.set_bind_group(0, camera_bind_group, &[]);
+            rpass.set_bind_group(1, darken_bind_group, &[]);
+            rpass.set_vertex_buffer(0, volume_buffer.slice(0..byte_len));
+            rpass.draw(0..volume_vertex_count, 0..1);
+        }
+
+        // Pass B: Extract binary stencil mask (stencil != 0 -> 1.0)
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("PS2 Soft Stencil Mask Extract Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: mask_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: stencil_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rpass.set_pipeline(&blur_pipeline.mask_extract_pipeline);
+            rpass.set_stencil_reference(0);
+            rpass.draw(0..3, 0..1);
+        }
+
+        // Pass C: 4-pass ping-pong bilinear blur + dual GS composite (`0x001767e0` + `0x00175f90`)
+        blur_pipeline.encode_blur_and_composite(
+            encoder,
+            mask_bind_group,
+            hdr_color_view,
+            composite_mode,
+        );
+    }
 }
 
 #[cfg(test)]

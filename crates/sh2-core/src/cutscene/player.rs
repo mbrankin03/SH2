@@ -138,6 +138,92 @@ impl CutsceneCameraSnapshot {
     }
 }
 
+/// Frame-boundary snap threshold (`0.9999`) in `DdsPlay` (`SLUS_202.28` `0x001b1980`, `sh2pc.exe` `0x004a13c0`).
+pub const DEMO_FRAME_SNAP_EPSILON: f32 = 0.9999;
+
+/// PS2 Q12 signed screen coordinate minimum (`-4096` / `0xf000`) in `DramaDemoFade` (`SLUS_202.28` `0x001b3390`).
+pub const PS2_LETTERBOX_Q12_MIN: i16 = -4096;
+/// PS2 Q12 signed screen coordinate maximum (`+4096` / `0x1000`) in `DramaDemoFade` (`SLUS_202.28` `0x001b3390`).
+pub const PS2_LETTERBOX_Q12_MAX: i16 = 4096;
+/// PS2 Q12 top letterbox bar bottom edge (`-3072` / `0xf400`) in `DramaDemoFade` (`SLUS_202.28` `0x001b3390`).
+pub const PS2_LETTERBOX_TOP_Y1_Q12: i16 = -3072;
+/// PS2 Q12 bottom letterbox bar top edge (`+3072` / `0x0c00`) in `DramaDemoFade` (`SLUS_202.28` `0x001b3390`).
+pub const PS2_LETTERBOX_BOTTOM_Y0_Q12: i16 = 3072;
+/// Normalized vertical fraction (`1024 / 8192 = 0.125`) of each top/bottom letterbox bar (`DramaDemoFade` `0x001b3390`).
+pub const PS2_LETTERBOX_BAR_HEIGHT_FRACTION: f32 = 0.125;
+
+/// Snaps `frame` to `floor(frame) + 1.0` when `frame - floor(frame) > 0.9999`, matching
+/// `DdsPlay` (`SLUS_202.28` `0x001b1980`, `sh2pc.exe` `0x004a13c0`).
+#[inline]
+pub fn snap_demo_frame_boundary(frame: f32) -> f32 {
+    let whole = (frame as i32) as f32;
+    if frame - whole > DEMO_FRAME_SNAP_EPSILON {
+        whole + 1.0
+    } else {
+        frame
+    }
+}
+
+/// Hardware voice stream readiness state polled by `DramaDemoMain` (`shSdStat() & 0xf0`, `0x001b0f00` / `0x004a2110`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DemoVoiceBufferState {
+    /// Voice stream has not yet been requested or is idle.
+    Idle,
+    /// Voice stream is still buffering; `DramaDemoMain` calls `shSetDFZero()` to freeze cutscene delta-time.
+    Buffering,
+    /// Voice stream buffer is ready (`0x40` on PS2, `0x10` on PC); `DramaDemoMain` starts playback and calls `shResetDF()`.
+    #[default]
+    Ready,
+    /// Voice stream is actively playing.
+    Playing,
+}
+
+/// Frame-delta synchronization hook returned by `DramaDemoPlayer::tick_with_voice_buffer_sync`,
+/// mirroring `shSetDFZero()` / `shResetDF()` in `DramaDemoMain` (`SLUS_202.28` `0x001b0f00`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DemoDeltaFrameHook {
+    /// Advance frame delta normally.
+    #[default]
+    Normal,
+    /// Reset accumulated delta-frame counter (`shResetDF`, e.g. on stream preload or buffer-ready release).
+    ResetDeltaFrame,
+    /// Freeze frame delta to zero (`shSetDFZero`) while waiting for the voice stream buffer to fill.
+    FreezeDeltaFrame,
+}
+
+/// Authentic PS2 `DramaDemoFade` (`0x001b3390`) top and bottom letterbox bar geometry in Q12
+/// signed screen space (`[-4096, +4096]`) and normalized `[0.0, 1.0]` screen coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DramaDemoLetterboxRects {
+    /// Top bar `(x0, y0, x1, y1)` in PS2 Q12 coordinates (`[-4096, -4096, 4096, -3072]`).
+    pub top_q12: [i16; 4],
+    /// Bottom bar `(x0, y0, x1, y1)` in PS2 Q12 coordinates (`[-4096, 3072, 4096, 4096]`).
+    pub bottom_q12: [i16; 4],
+    /// Normalized vertical height fraction of each bar (`0.125`, leaving `0.75` active vertical band).
+    pub bar_height_fraction: f32,
+}
+
+impl DramaDemoLetterboxRects {
+    /// Returns the authentic PS2 `DramaDemoFade` (`0x001b3390`) Q12 letterbox bars.
+    pub const fn ps2_authentic() -> Self {
+        Self {
+            top_q12: [
+                PS2_LETTERBOX_Q12_MIN,
+                PS2_LETTERBOX_Q12_MIN,
+                PS2_LETTERBOX_Q12_MAX,
+                PS2_LETTERBOX_TOP_Y1_Q12,
+            ],
+            bottom_q12: [
+                PS2_LETTERBOX_Q12_MIN,
+                PS2_LETTERBOX_BOTTOM_Y0_Q12,
+                PS2_LETTERBOX_Q12_MAX,
+                PS2_LETTERBOX_Q12_MAX,
+            ],
+            bar_height_fraction: PS2_LETTERBOX_BAR_HEIGHT_FRACTION,
+        }
+    }
+}
+
 /// Lifecycle phase of [`DramaDemoPlayer`] (`demo_step` in `DramaDemoMain` at `0x1b2b30`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DramaDemoStep {
@@ -162,12 +248,18 @@ pub struct DramaDemoPlayer {
     pub scene_frame: f32,
     /// Independent 30 FPS subtitle clock (`msg_frame`).
     pub msg_frame: f32,
-    /// Whether the voice stream (`info.stream_no`) has been triggered at `scene_frame >= stream_start`.
+    /// Whether the voice stream (`info.stream_no`) has been preloaded (`_demo_status & 0x80`, `DramaDemoMain` `0x001b0f00`).
+    pub voice_preload_requested: bool,
+    /// Whether the voice stream (`info.stream_no`) has been triggered at `scene_frame >= stream_start` (`_demo_status & 0x100`).
     pub voice_started: bool,
     /// Whether the voice stream is waiting to be started by the audio engine on this tick.
     pub pending_voice_trigger: bool,
     /// Whether the voice stream should be stopped immediately (`SeCall(0x3F4)` on skip/finish).
     pub pending_voice_stop: bool,
+    /// Cumulative seconds spent stalled waiting for voice buffer readiness (`_stop_counter_896` at `0x001b0f00` / `_DAT_0094e2d8` at `0x004a2110`).
+    pub voice_stall_secs: f32,
+    /// Most recent `shSetDFZero` / `shResetDF` delta-frame hook emitted by `DramaDemoMain` (`0x001b0f00`).
+    pub last_df_hook: DemoDeltaFrameHook,
     /// Active `.mes` message ID (`info.msg_start + window.msg_offset`) if a subtitle window is currently active.
     pub active_subtitle_msg_id: Option<u16>,
     /// Current screen fade alpha (`0.0` = clear, `1.0` = black).
@@ -362,9 +454,12 @@ impl DramaDemoPlayer {
             step: DramaDemoStep::Playing,
             scene_frame: 0.0,
             msg_frame: 0.0,
+            voice_preload_requested: false,
             voice_started: false,
             pending_voice_trigger: false,
             pending_voice_stop: false,
+            voice_stall_secs: 0.0,
+            last_df_hook: DemoDeltaFrameHook::Normal,
             active_subtitle_msg_id: None,
             fade_alpha: 0.0,
             reduce_widescreen_fov,
@@ -422,6 +517,21 @@ impl DramaDemoPlayer {
     pub fn letterbox_bars_hidden(&self) -> bool {
         self.border_mode
             .should_hide_letterbox_bars(self.viewport_aspect, self.widescreen_mode)
+    }
+
+    /// Returns the authentic PS2 `DramaDemoFade` (`SLUS_202.28` `0x001b3390`) Q12 letterbox bar
+    /// geometry when `Check_Filter_Soft() == 0` (`!filter_soft_active`) and letterbox bars are not
+    /// hidden by the active widescreen border mode.
+    #[inline]
+    pub fn ps2_letterbox_geometry(
+        &self,
+        filter_soft_active: bool,
+    ) -> Option<DramaDemoLetterboxRects> {
+        if filter_soft_active || self.letterbox_bars_hidden() {
+            None
+        } else {
+            Some(DramaDemoLetterboxRects::ps2_authentic())
+        }
     }
 
     /// Returns `true` if gameplay input and the pause menu should be locked while this cutscene is active.
@@ -482,22 +592,62 @@ impl DramaDemoPlayer {
         subtitles_enabled: bool,
         voice_pos_secs: Option<f32>,
     ) {
+        let _ = self.tick_with_voice_buffer_sync(
+            dt_sec,
+            subtitles_enabled,
+            voice_pos_secs,
+            DemoVoiceBufferState::Ready,
+        );
+    }
+
+    /// Advances the cutscene by `dt_sec` seconds with full `DramaDemoMain` (`0x001b0f00` / `0x004a2110`)
+    /// voice-buffer stall (`shSetDFZero` / `shResetDF`) and `DdsPlay` (`0x001b1980`) `0.9999`
+    /// frame-boundary snap parity (`SH2-134`).
+    pub fn tick_with_voice_buffer_sync(
+        &mut self,
+        dt_sec: f32,
+        subtitles_enabled: bool,
+        voice_pos_secs: Option<f32>,
+        buffer_state: DemoVoiceBufferState,
+    ) -> DemoDeltaFrameHook {
         if self.step == DramaDemoStep::Finished {
-            return;
+            self.last_df_hook = DemoDeltaFrameHook::Normal;
+            return self.last_df_hook;
         }
 
-        let delta_frames = (dt_sec.max(0.0)) * CUTSCENE_NATIVE_FPS;
-        let total_f = self.total_frames() as f32;
-
-        // Check voice stream pre-roll trigger (`scene_frame - 1 >= stream_start`)
+        let safe_dt = dt_sec.max(0.0);
+        let mut df_hook = DemoDeltaFrameHook::Normal;
+        let mut effective_dt = safe_dt;
         let stream_start_f = self.info.stream_start.max(0) as f32;
-        if !self.voice_started
-            && self.info.stream_no > 0
-            && (self.scene_frame + delta_frames) >= stream_start_f
-        {
-            self.voice_started = true;
-            self.pending_voice_trigger = true;
+
+        // `DramaDemoMain` (`SLUS_202.28` `0x001b0f00`, `sh2pc.exe` `0x004a2110`) stream preload &
+        // voice-buffer readiness gate (`shSetDFZero` / `shResetDF`).
+        if self.info.stream_no > 0 {
+            if !self.voice_preload_requested {
+                self.voice_preload_requested = true;
+                df_hook = DemoDeltaFrameHook::ResetDeltaFrame;
+            }
+            if !self.voice_started
+                && (self.scene_frame + safe_dt * CUTSCENE_NATIVE_FPS) >= stream_start_f
+            {
+                match buffer_state {
+                    DemoVoiceBufferState::Ready | DemoVoiceBufferState::Playing => {
+                        self.voice_started = true;
+                        self.pending_voice_trigger = true;
+                        df_hook = DemoDeltaFrameHook::ResetDeltaFrame;
+                    }
+                    DemoVoiceBufferState::Buffering | DemoVoiceBufferState::Idle => {
+                        // Stream buffer not ready: accumulate `_stop_counter_896` and emit `shSetDFZero()`.
+                        self.voice_stall_secs += safe_dt;
+                        effective_dt = 0.0;
+                        df_hook = DemoDeltaFrameHook::FreezeDeltaFrame;
+                    }
+                }
+            }
         }
+
+        let delta_frames = effective_dt * CUTSCENE_NATIVE_FPS;
+        let total_f = self.total_frames() as f32;
 
         // Advance scene_frame and msg_frame, resynchronizing to the active voice stream hardware clock
         // if drift exceeds 2 frames (66 ms), matching `DramaDemoMain`.
@@ -519,6 +669,11 @@ impl DramaDemoPlayer {
             self.msg_frame += delta_frames;
             self.scene_frame += delta_frames;
         }
+
+        // `DdsPlay` (`SLUS_202.28` `0x001b1980`, `sh2pc.exe` `0x004a13c0`): snap fractional frames
+        // exceeding `0.9999` up to the next integer frame boundary.
+        self.scene_frame = snap_demo_frame_boundary(self.scene_frame);
+        self.msg_frame = snap_demo_frame_boundary(self.msg_frame);
 
         // Evaluate active subtitle window (`DramaDemoMessage` at `0x1b1f80`)
         let show_subs = subtitles_enabled || self.info.forces_subtitles();
@@ -550,7 +705,8 @@ impl DramaDemoPlayer {
                 || (self.voice_started && self.msg_frame < last_subtitle_end);
             if !voice_still_active {
                 self.skip();
-                return;
+                self.last_df_hook = df_hook;
+                return df_hook;
             }
         }
 
@@ -575,10 +731,15 @@ impl DramaDemoPlayer {
 
         self.current_state = sampled;
         if PistonArrayRuntime::is_piston_room_active(0, self.info.demo_no) {
-            self.piston_array
-                .step(dt_sec, self.info.demo_no, self.current_state.camera_pos[0]);
+            self.piston_array.step(
+                effective_dt,
+                self.info.demo_no,
+                self.current_state.camera_pos[0],
+            );
         }
         self.sync_camera_and_actors();
+        self.last_df_hook = df_hook;
+        df_hook
     }
 
     /// Scrubs directly to `target_frame` (for interactive inspection in the debug viewer).
@@ -797,5 +958,99 @@ impl DramaDemoPlayer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sh2_assets::formats::demo::{DemoDdsHeader, DemoFrameRecord};
+
+    fn minimal_demo_script(total_frames: u32) -> DemoDdsFile {
+        DemoDdsFile {
+            header: DemoDdsHeader {
+                version_a: 0.0,
+                version_b: 0.0,
+                total_frames,
+                total_objects: 0,
+                point_light_count: 0,
+                spot_light_count: 0,
+                inf_light_count: 0,
+                character_names: Vec::new(),
+            },
+            records: vec![DemoFrameRecord {
+                frame: 0,
+                is_cut: false,
+                trigger_animations: false,
+                flag_14: false,
+                camera_ops: Vec::new(),
+                light_ops: Vec::new(),
+                char_ops: Vec::new(),
+            }],
+            animation_trigger_frames: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_dds_play_09999_frame_boundary_snap() {
+        assert_eq!(snap_demo_frame_boundary(12.99995), 13.0);
+        assert_eq!(snap_demo_frame_boundary(12.9998), 12.9998);
+        assert_eq!(snap_demo_frame_boundary(0.99991), 1.0);
+        assert_eq!(snap_demo_frame_boundary(5.0), 5.0);
+    }
+
+    #[test]
+    fn test_drama_demo_main_voice_buffer_stall_and_reset_df() {
+        let mut info = crate::cutscene::catalog::DRAMA_DEMO_CATALOG[0];
+        info.stream_no = 118;
+        info.stream_start = 1;
+        let mut player = DramaDemoPlayer::new(info, minimal_demo_script(100), false);
+
+        // First tick: stream_start=1 reached on 1/30s tick, but buffer is still Buffering -> FreezeDeltaFrame (`shSetDFZero`)
+        let hook1 = player.tick_with_voice_buffer_sync(
+            1.0 / 30.0,
+            false,
+            None,
+            DemoVoiceBufferState::Buffering,
+        );
+        assert_eq!(hook1, DemoDeltaFrameHook::FreezeDeltaFrame);
+        assert_eq!(player.scene_frame, 0.0);
+        assert!(!player.voice_started);
+        assert!((player.voice_stall_secs - (1.0 / 30.0)).abs() < 1e-5);
+
+        // Next tick: buffer becomes Ready -> ResetDeltaFrame (`shResetDF`), voice starts, frame advances
+        let hook2 = player.tick_with_voice_buffer_sync(
+            1.0 / 30.0,
+            false,
+            None,
+            DemoVoiceBufferState::Ready,
+        );
+        assert_eq!(hook2, DemoDeltaFrameHook::ResetDeltaFrame);
+        assert!(player.voice_started);
+        assert!(player.pending_voice_trigger);
+        assert!((player.scene_frame - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_drama_demo_fade_ps2_q12_letterbox_geometry() {
+        let info = crate::cutscene::catalog::DRAMA_DEMO_CATALOG[0];
+        let mut player = DramaDemoPlayer::new_with_widescreen(
+            info,
+            minimal_demo_script(100),
+            4.0 / 3.0,
+            CutsceneWidescreenMode::Sh2eeZoom16x9,
+        );
+        player.border_mode = CutsceneBorderMode::Enabled;
+
+        // `Check_Filter_Soft() == 0` -> authentic Q12 letterbox bars active
+        let rects = player
+            .ps2_letterbox_geometry(false)
+            .expect("letterbox bars active in 4:3 when Check_Filter_Soft == 0");
+        assert_eq!(rects.top_q12, [-4096, -4096, 4096, -3072]);
+        assert_eq!(rects.bottom_q12, [-4096, 3072, 4096, 4096]);
+        assert!((rects.bar_height_fraction - 0.125).abs() < 1e-6);
+
+        // `Check_Filter_Soft() != 0` -> DramaDemoFade skips drawing bars
+        assert!(player.ps2_letterbox_geometry(true).is_none());
     }
 }

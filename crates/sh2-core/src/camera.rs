@@ -11,7 +11,7 @@ use crate::types::camera::CameraState;
 use glam::{Mat4, Quat, Vec3};
 use sh2_assets::formats::cam::{
     AreaSizeType, CamFile, CamMovementParams, CamSourceKind, RoadRecord, VC_RD_CAM_LIKE_SETTLE_F,
-    VC_RD_WARP_IN_F, VC_RD_WARP_OUT_F,
+    VC_RD_LIM_UP_FAR_VIEW_F,
 };
 use sh2_assets::AssetPathResolver;
 use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI};
@@ -20,8 +20,14 @@ use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI};
 pub use sh2_assets::formats::cam::CamMovementType as CameraMovementType;
 pub use sh2_assets::formats::cam::CamSourceKind as CameraSourceKind;
 
-/// Authentic PS2 `LOCUS_CIRCLE` (Mode 4) and `THROUGH_DOOR` (Mode 5) camera motion algorithms (`SH2-51`).
+/// Authentic PS2 `LOCUS_CIRCLE` (Mode 4) and `THROUGH_DOOR` (Mode 5) camera motion algorithms (`SH2-51`, `SH2-134`).
 pub mod locus_door;
+/// Authentic PS2 Mode 3 (`SELF_VIEW`) camera matrix breathing/handheld noise (`SH2-134`).
+pub mod noise;
+/// Authentic PS2 road priority gates (`vcRetPrioStgEvnt`), nearest-item search, and hysteresis (`SH2-134`).
+pub mod road_priority;
+/// Authentic PS2 Mode 3 (`SELF_VIEW`) and `FarWatch` search-view algorithms (`SH2-134`).
+pub mod self_view;
 
 /// Snapshot of camera transforms for sub-frame alpha interpolation between 60 Hz ticks.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,9 +71,9 @@ pub struct Ps2CameraController {
     pub prev_snapshot: CameraSnapshot,
     /// Current tick snapshot.
     pub curr_snapshot: CameraSnapshot,
-    /// Search camera look offset yaw (radians) driven by right analog stick.
+    /// Search camera neck yaw angle in radians (`PlayerGetNeckAngleY`, `_DAT_012027f4`).
     pub search_yaw_offset: f32,
-    /// Search camera look offset pitch (radians) driven by right analog stick.
+    /// Search camera neck pitch angle in radians (`PlayerGetNeckAngleX`, `_DAT_012027f0`).
     pub search_pitch_offset: f32,
     /// Target camera eye position (smoothing accumulator).
     pub ideal_eye: Vec3,
@@ -75,6 +81,20 @@ pub struct Ps2CameraController {
     pub ideal_target: Vec3,
     /// Dynamic viewport aspect-ratio rail clearance and intra-room warp transition configuration (`SH2-53`).
     pub aspect_rail_config: crate::widescreen_rail::AspectRailConfig,
+    /// Active doorway transit session (`_VC_THROUGH_DOOR_CAM_PARAM`, `SLUS_202.28` `0x00196e00`, `sh2pc.exe` `0x0051b0c0`).
+    pub through_door_session: locus_door::ThroughDoorSession,
+    /// Nearest world item within `5000.0` mm (`vcSetNearestItemDataInVC_WORK`, `0x001971a0`).
+    pub nearest_item: road_priority::NearestItemData,
+    /// Optional nearest enemy `(xz_dist_mm, center_y_mm)` for `vcRetSelfViewEffectRate` & `vcMakeFarWatchTgtPos`.
+    pub nearest_enemy: Option<(f32, f32)>,
+    /// Elapsed Mode 3 (`SELF_VIEW`) breathing noise timer in seconds (`_vcSelfViewTimer`, `0x0019d8e0`).
+    pub self_view_timer_sec: f32,
+    /// Active stage ID (`_stage + 0x24`) for `vcMakeFarWatchTgtPos`, `vcAdjustWatchYLimitHighWhenFarView`, and `vcRetPrioStgEvnt`.
+    pub stage_id: i32,
+    /// `true` when James is rowing the Toluca Lake boat (`_sh2jms->flags & 0x20000`).
+    pub on_boat: bool,
+    /// `true` while the L2 / Search View button is held (`PlayerSearchVIewButtonCheck`, `VC_WORK.flags & 0x200`).
+    pub search_button_pressed: bool,
 }
 
 impl Default for Ps2CameraController {
@@ -101,7 +121,36 @@ impl Ps2CameraController {
             ideal_eye: initial.eye,
             ideal_target: initial.target,
             aspect_rail_config: crate::widescreen_rail::AspectRailConfig::default(),
+            through_door_session: locus_door::ThroughDoorSession::default(),
+            nearest_item: road_priority::NearestItemData::default(),
+            nearest_enemy: None,
+            self_view_timer_sec: 0.0,
+            stage_id: 0,
+            on_boat: false,
+            search_button_pressed: false,
         }
+    }
+
+    /// Starts a Mode 5 (`THROUGH_DOOR`) doorway transition session (`vcSetTHROUGH_DOOR_CAM_PARAM_in_VC_WORK`, `0x00196e00`).
+    pub fn activate_through_door(&mut self, player_pos: Vec3, player_yaw: f32, is_outdoor: bool) {
+        self.through_door_session
+            .activate(player_pos, player_yaw, is_outdoor);
+    }
+
+    /// Ends an active Mode 5 (`THROUGH_DOOR`) doorway transition session (`0x00196e6c`).
+    pub fn deactivate_through_door(&mut self) {
+        self.through_door_session.deactivate();
+    }
+
+    /// Scans up to 20 nearby world items within `5000.0` mm (`vcSetNearestItemDataInVC_WORK`, `0x001971a0`).
+    pub fn update_nearest_item(
+        &mut self,
+        player_pos: Vec3,
+        player_status_flags: u32,
+        candidates: &[road_priority::CameraItemCandidate],
+    ) {
+        self.nearest_item =
+            road_priority::find_nearest_item_data(player_pos, player_status_flags, candidates);
     }
 
     /// Configure dynamic viewport aspect-ratio rail clearance (PS2 world mm) and intra-room
@@ -249,6 +298,16 @@ impl Ps2CameraController {
                     locus_door::evaluate_locus_circle_record(rec, player_pos);
                 effective_projection = locus_proj;
                 locus_eye
+            }
+            CameraMovementType::SelfView => {
+                let head_pos = Vec3::new(player_pos.x, player_pos.y - 937.5, player_pos.z);
+                self_view::make_ideal_cam_pos_by_head_pos(
+                    0,
+                    player_pos,
+                    player_pos.y - 468.75,
+                    head_pos,
+                    player_yaw,
+                )
             }
             CameraMovementType::ThroughDoor => {
                 locus_door::evaluate_through_door_record(rec, player_yaw)
@@ -401,6 +460,7 @@ impl Ps2CameraController {
 
         let mv_type = match rec.cam_mv_type {
             CameraMovementType::Settle => CameraMovementType::Settle,
+            CameraMovementType::SelfView => CameraMovementType::SelfView,
             CameraMovementType::LocusCircle => CameraMovementType::LocusCircle,
             CameraMovementType::ThroughDoor => CameraMovementType::ThroughDoor,
             _ => CameraMovementType::Chase,
@@ -501,8 +561,10 @@ impl Ps2CameraController {
 
     /// Step the camera simulation by one 60 Hz tick.
     ///
-    /// Evaluates `.cam` volume triggers and smooth transitions across volume boundaries.
-    /// `right_stick` offsets adjust the authentic PS2 search-view camera angle without altering room rails.
+    /// Evaluates active `ThroughDoorSession`, `.cam` volume triggers with `vcSetCurNearRoadInVC_WORK`
+    /// hysteresis, and authentic PS2 `SelfView` / `FarWatch` / `vcCamMatNoise` framing.
+    /// `neck_ang_y` (`right_stick_x`) and `neck_ang_x` (`right_stick_y`) drive `vcMakeFarWatchTgtPos`
+    /// (`SLUS_202.28` `0x00199760`) without synthetic offset multipliers.
     pub fn tick(
         &mut self,
         player_pos: Vec3,
@@ -510,32 +572,102 @@ impl Ps2CameraController {
         right_stick_x: f32,
         right_stick_y: f32,
     ) {
-        self.prev_snapshot = self.curr_snapshot;
+        self.tick_with_context(player_pos, player_yaw, right_stick_y, right_stick_x, None);
+    }
 
-        // Apply PS2 search camera pan limits (maximum ~0.6 rad yaw, ~0.3 rad pitch)
-        self.search_yaw_offset = right_stick_x * 0.6;
-        self.search_pitch_offset = right_stick_y * 0.3;
+    /// Step the camera simulation by one 60 Hz tick with optional stage-event priority context
+    /// (`vcRetPrioStgEvnt`, `SLUS_202.28` `0x00294ab0` / `sh2pc.exe` `0x005227c0`).
+    pub fn tick_with_context(
+        &mut self,
+        player_pos: Vec3,
+        player_yaw: f32,
+        neck_ang_x: f32,
+        neck_ang_y: f32,
+        stg_evnt_ctx: Option<&road_priority::StageEventPriorityContext<'_>>,
+    ) {
+        const DT_60HZ: f32 = 1.0 / 60.0;
+        self.prev_snapshot = self.curr_snapshot;
+        self.search_yaw_offset = neck_ang_y;
+        self.search_pitch_offset = neck_ang_x;
 
         let target_eye: Vec3;
-        let target_look: Vec3;
+        let mut target_look: Vec3;
         let target_fov: f32;
         let target_mv_type: CameraMovementType;
+        let mut cur_road_flags: u16 = 0;
+        let mut cur_area_size = AreaSizeType::Wide;
+        let mut cur_projection: f32 = 448.0;
         let mut warp_cut = false;
         let mut eye_lerp = crate::widescreen_rail::DEFAULT_SMOOTH_WARP_EYE_LERP;
         let mut target_lerp = crate::widescreen_rail::DEFAULT_SMOOTH_WARP_TARGET_LERP;
 
-        if let Some(ref cam_file) = self.cam_file {
-            let player_arr = [player_pos.x, player_pos.y, player_pos.z];
-            if let Some(rec) = cam_file.find_active_record(player_arr, 150.0) {
-                let rec_idx = cam_file.records.iter().position(|r| std::ptr::eq(r, rec));
+        let nearest_enemy_dist = self.nearest_enemy.map(|(d, _)| d).unwrap_or(7500.0);
 
-                // Volume transition check (`vcSetCurNearRoadInVC_WORK` + `IntraRoomTransitionPolicy`)
-                if self.active_road_index != rec_idx {
+        if let Some(td_eye) = self.through_door_session.step(
+            DT_60HZ,
+            player_pos,
+            player_yaw,
+            self.nearest_enemy.map(|(d, _)| d),
+        ) {
+            target_eye = td_eye;
+            target_look = player_pos + Vec3::new(0.0, -450.0, 0.0);
+            target_fov = FRAC_PI_4;
+            target_mv_type = CameraMovementType::ThroughDoor;
+        } else if let Some(ref cam_file) = self.cam_file {
+            // Select best candidate road using `vcRetRoadUsePriority` (`vcRetPrioStgEvnt`)
+            // and `vcSetCurNearRoadInVC_WORK` hysteresis (`0x00197af0`).
+            let mut best: Option<road_priority::RoadSelectionCandidate<'_>> = None;
+            let mut old_cand: Option<road_priority::RoadSelectionCandidate<'_>> = None;
+
+            for (idx, rec) in cam_file.records.iter().enumerate() {
+                let (min_y, max_y) = rec.lim_sw.y_bounds();
+                if player_pos.y < min_y || player_pos.y > max_y {
+                    continue;
+                }
+                let prio = road_priority::ret_road_use_priority(
+                    rec.rd_type,
+                    self.search_button_pressed,
+                    stg_evnt_ctx,
+                );
+                let signed_dist = road_priority::signed_xz_dist_from_lim_sw(rec, player_pos);
+                let cand = road_priority::RoadSelectionCandidate {
+                    index: idx,
+                    record: rec,
+                    priority: prio,
+                    signed_dist_mm: signed_dist,
+                };
+                if Some(idx) == self.active_road_index {
+                    old_cand = Some(cand);
+                }
+                if prio == 0 {
+                    continue;
+                }
+                let better = match best {
+                    None => true,
+                    Some(b) => {
+                        if prio > b.priority {
+                            signed_dist <= 0.0 || signed_dist < b.signed_dist_mm
+                        } else if prio < b.priority {
+                            b.signed_dist_mm > 0.0 && signed_dist < b.signed_dist_mm
+                        } else {
+                            signed_dist < b.signed_dist_mm
+                        }
+                    }
+                };
+                if better {
+                    best = Some(cand);
+                }
+            }
+
+            if let Some(best_cand) = best {
+                let decision = road_priority::resolve_cur_near_road_hysteresis(
+                    old_cand, best_cand, player_yaw,
+                );
+                let rec = &cam_file.records[decision.selected_index];
+                if decision.switched {
                     if let Some(old_idx) = self.active_road_index {
                         let old_rec = &cam_file.records[old_idx];
-                        if (old_rec.flags & VC_RD_WARP_OUT_F) != 0
-                            || (rec.flags & VC_RD_WARP_IN_F) != 0
-                        {
+                        if decision.warp_cut {
                             match crate::widescreen_rail::evaluate_intra_room_transition(
                                 old_rec.flags,
                                 rec.flags,
@@ -553,8 +685,16 @@ impl Ps2CameraController {
                             }
                         }
                     }
-                    self.active_road_index = rec_idx;
+                    self.active_road_index = Some(decision.selected_index);
                 }
+
+                cur_road_flags = rec.flags;
+                cur_area_size = rec.area_size_type;
+                cur_projection = if rec.projection > 0.0 {
+                    rec.projection
+                } else {
+                    448.0
+                };
 
                 let (eval_eye, eval_look, eval_fov, eval_mv) =
                     Self::evaluate_road_record(rec, player_pos, player_yaw);
@@ -585,6 +725,84 @@ impl Ps2CameraController {
             target_mv_type = fb_mv;
         }
 
+        // Authentic PS2 `vcRetFarWatchRate` (`0x00196700`), `vcMakeFarWatchTgtPos` (`0x00199760`),
+        // `vcRetSelfViewEffectRate` (`0x001968f0`), `vcMixSelfViewEffectToWatchTgtPos` (`0x00199080`),
+        // and `vcAdjustWatchYLimitHighWhenFarView` (`0x00199dd0`).
+        let is_outdoor = cur_area_size == AreaSizeType::Outdoor;
+        let far_watch = self_view::ret_far_watch_rate(
+            self.search_button_pressed,
+            target_mv_type,
+            self.raw_state.flags,
+            cur_road_flags,
+            is_outdoor,
+            self.through_door_session.rail_sta_to_chara_dist,
+            Vec3::from_array(self.through_door_session.param.rail_sta_pos),
+            player_pos,
+            player_yaw,
+        );
+
+        let head_pos = Vec3::new(player_pos.x, player_pos.y - 937.5, player_pos.z);
+        let ideal_cam_pos_h = head_pos.y + if is_outdoor { -450.0 } else { -200.0 };
+        let nearest_item_pair = self
+            .nearest_item
+            .center_y
+            .map(|cy| (self.nearest_item.dist_mm, cy));
+
+        if target_mv_type == CameraMovementType::SelfView || far_watch.rate > 0.0 {
+            let far_tgt = self_view::make_far_watch_tgt_pos(&self_view::FarWatchInput {
+                stage_id: self.stage_id,
+                area_size_type: cur_area_size,
+                on_boat: self.on_boat,
+                cam_pos: target_eye,
+                chara_pos: player_pos,
+                chara_yaw: player_yaw,
+                ideal_cam_pos_h,
+                neck_ang_x,
+                neck_ang_y,
+                nearest_enemy: self.nearest_enemy,
+                nearest_item: nearest_item_pair,
+            });
+            target_look = if target_mv_type == CameraMovementType::SelfView {
+                far_tgt
+            } else {
+                target_look.lerp(far_tgt, far_watch.rate)
+            };
+        }
+
+        let sv_eff_rate = self_view::ret_self_view_effect_rate(
+            target_mv_type,
+            target_eye,
+            head_pos,
+            nearest_enemy_dist,
+        );
+        if sv_eff_rate > 0.0 {
+            let (mixed_tgt, mixed_ang_z) = self_view::mix_self_view_effect_to_watch_tgt_pos(
+                sv_eff_rate,
+                target_look,
+                self.raw_state.watch_tgt_ang_z,
+                target_eye,
+                player_yaw,
+                [neck_ang_x, player_yaw + neck_ang_y, 0.0],
+                0,
+                self.nearest_enemy.is_some(),
+            );
+            target_look = mixed_tgt;
+            self.raw_state.watch_tgt_ang_z = mixed_ang_z;
+        }
+
+        if (cur_road_flags & VC_RD_LIM_UP_FAR_VIEW_F) != 0
+            && (target_mv_type == CameraMovementType::Chase
+                || target_mv_type == CameraMovementType::SelfView)
+        {
+            target_look = self_view::adjust_watch_y_limit_high_when_far_view(
+                target_look,
+                target_eye,
+                cur_projection,
+                448.0,
+                self.stage_id,
+            );
+        }
+
         self.mv_type = target_mv_type;
 
         // If warp cut is signaled (instant cut across cinematic cameras), snap instantly
@@ -599,12 +817,14 @@ impl Ps2CameraController {
 
         let mut final_target = self.ideal_target;
 
-        // Apply search-view look rotation around target
-        if self.search_yaw_offset.abs() > 0.01 || self.search_pitch_offset.abs() > 0.01 {
-            let rot = Quat::from_rotation_y(self.search_yaw_offset);
-            let dir = rot * (final_target - self.ideal_eye);
-            final_target = self.ideal_eye + dir;
-            final_target.y += self.search_pitch_offset * 1000.0;
+        // Authentic PS2 Mode 3 (`SELF_VIEW`) camera matrix breathing noise (`vcCamMatNoise` `0x0019d8e0`).
+        if self.mv_type == CameraMovementType::SelfView {
+            self.self_view_timer_sec += DT_60HZ;
+            final_target = noise::apply_self_view_noise_to_target(
+                self.ideal_eye,
+                final_target,
+                self.self_view_timer_sec,
+            );
         }
 
         self.curr_snapshot = CameraSnapshot {
@@ -696,7 +916,8 @@ mod tests {
     fn test_sh2_50_warp_in_out_flags_snap_prev_and_curr_snapshots() {
         use sh2_assets::formats::cam::{
             AreaSizeType, CamMovementParams, CamMovementType as AssetCamMovementType,
-            ChaseCamParam, RoadArea, RoadRecord, RoadType, VC_RD_END_DATA_F,
+            ChaseCamParam, RoadArea, RoadRecord, RoadType, VC_RD_END_DATA_F, VC_RD_WARP_IN_F,
+            VC_RD_WARP_OUT_F,
         };
 
         let make_area = |min_x: f32, max_x: f32| RoadArea {

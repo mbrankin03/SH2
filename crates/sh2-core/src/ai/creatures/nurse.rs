@@ -198,13 +198,7 @@ impl NurseController {
                 // `enNSECtrlConfuse` (`SLUS 0x001589a0` / `sh2pc 0x004bb250`):
                 // stunned for `600 - 90 * mode` ticks, then transitions to Precaution.
                 if self.sub_state == 0 {
-                    let mode = match difficulty {
-                        DifficultyLevel::Beginner => 0,
-                        DifficultyLevel::Easy => 1,
-                        DifficultyLevel::Normal => 2,
-                        DifficultyLevel::Hard => 3,
-                    };
-                    self.confuse_timer_ticks = (600 - 90 * mode) as f32;
+                    self.confuse_timer_ticks = (600 - 90 * difficulty.as_index() as i32) as f32;
                     self.sub_state = 2;
                 }
                 self.confuse_timer_ticks -= dt * 60.0;

@@ -23,7 +23,16 @@ pub mod nurse;
 pub mod pyramid_head;
 pub mod twin_pyramid_head;
 
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
+
+/// Horizontal XZ Euclidean distance in PS2 world mm.
+#[inline]
+pub fn xz_dist(a: Vec3, b: Vec3) -> f32 {
+    let dx = a.x - b.x;
+    let dz = a.z - b.z;
+    (dx * dx + dz * dz).sqrt()
+}
 
 /// Species identifier matching table `0x88d408` and stage `Enemy_List`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

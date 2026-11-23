@@ -58,9 +58,11 @@ pub struct MannequinController {
     pub is_kick_next: bool,
     /// Set by `enEventDriven(2)` to wake a mannequin in [`MknState::Event`] (`enMKNCtrlMannequin2` `0x00153e40`).
     pub event_triggered: bool,
+    /// Set by animation driver when current clip finishes (`*(i32*)(work + 0x14) == -1`).
+    pub anim_finished: bool,
     /// Vertical velocity in mm/s (Y-down gravity `+9800.0` mm/s²) for [`MknState::Fall`] / [`MknState::Fall2`].
     pub vel_y: f32,
-    /// Landing pause / confuse countdown timer in 60 Hz ticks (`30` ticks on land, `600 - 90 * mode` in Confuse).
+    /// Exact binary timer in 60 Hz ticks (`30` landing pause in `Fall`/`Fall2`, `600 - 90 * mode` in `Confuse`).
     pub timer_ticks: f32,
     /// Optional nearby enemy position for Hyper Spray friendly-fire in [`MknState::Confuse`] (`0x00155b20`).
     pub confuse_friendly_target: Option<Vec3>,
@@ -89,6 +91,7 @@ impl MannequinController {
             state_timer: 0.0,
             is_kick_next: false,
             event_triggered: false,
+            anim_finished: false,
             vel_y: 0.0,
             timer_ticks: 0.0,
             confuse_friendly_target: None,
@@ -258,13 +261,13 @@ impl MannequinController {
                     0 | 1 => {
                         self.sub_state = 1;
                         if self.event_triggered {
-                            self.timer_ticks = 30.0;
+                            self.anim_finished = false;
                             self.sub_state = 2;
                         }
                     }
                     _ => {
-                        self.timer_ticks -= dt * 60.0;
-                        if self.timer_ticks <= 0.0 {
+                        if self.anim_finished {
+                            self.anim_finished = false;
                             self.state = MknState::Precaution;
                             self.sub_state = 0;
                             self.state_timer = 0.0;
@@ -360,18 +363,12 @@ impl MannequinController {
                             let odz = other.z - self.position.z;
                             let odist = (odx * odx + odz * odz).sqrt();
                             if (other.y - self.position.y).abs() < 250.0 && odist < 1100.0 {
-                                self.timer_ticks = 35.0;
+                                self.anim_finished = false;
                                 self.sub_state = 4;
                                 return;
                             }
                         }
-                        let mode = match difficulty {
-                            DifficultyLevel::Beginner => 0,
-                            DifficultyLevel::Easy => 1,
-                            DifficultyLevel::Normal => 2,
-                            DifficultyLevel::Hard => 3,
-                        };
-                        self.timer_ticks = (600 - 90 * mode) as f32;
+                        self.timer_ticks = (600 - 90 * difficulty.as_index() as i32) as f32;
                         self.sub_state = 2;
                     }
                     2 => {
@@ -388,8 +385,8 @@ impl MannequinController {
                             let odz = other.z - self.position.z;
                             self.turn_towards(odx.atan2(odz), 3.5 * dt);
                         }
-                        self.timer_ticks -= dt * 60.0;
-                        if self.timer_ticks <= 0.0 {
+                        if self.anim_finished {
+                            self.anim_finished = false;
                             self.sub_state += 1;
                             self.is_kick_next = !self.is_kick_next;
                             if self.sub_state >= 6 {
@@ -397,8 +394,6 @@ impl MannequinController {
                                 self.state = MknState::Precaution;
                                 self.sub_state = 0;
                                 self.state_timer = 0.0;
-                            } else {
-                                self.timer_ticks = 35.0;
                             }
                         }
                     }
@@ -507,18 +502,23 @@ mod tests {
         assert_eq!(jumper.position.y, 0.0);
         assert!(matches!(jumper.state, MknState::Chase | MknState::Attack));
 
-        // Event stand-up
+        // Event stand-up completes when stand-up animation finishes (`*(i32*)(work+0x14) == -1`).
         mkn.state = MknState::Event;
         mkn.sub_state = 0;
         mkn.event_triggered = true;
-        for _ in 0..35 {
-            mkn.update(
-                &player,
-                RoomLighting::Lit,
-                DifficultyLevel::Normal,
-                1.0 / 60.0,
-            );
-        }
+        mkn.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
+        mkn.anim_finished = true;
+        mkn.update(
+            &player,
+            RoomLighting::Lit,
+            DifficultyLevel::Normal,
+            1.0 / 60.0,
+        );
         assert_eq!(mkn.state, MknState::Precaution);
 
         // Confuse with nearby enemy triggers friendly-fire sub_state 4.

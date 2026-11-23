@@ -12,7 +12,7 @@
 //!   - `enINSMove` (`0x004abc10`): wall check only in `Stay` (`state == 4`).
 //!   - Sound `0x49b2` volume `0.6 -> 1.0` (`0x004abf3e`).
 
-use crate::ai::creatures::CreatureStats;
+use crate::ai::creatures::{xz_dist, CreatureStats};
 use crate::ai::sensory::{normalize_angle, PerceivableTarget};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -286,12 +286,6 @@ impl AmbientFlyController {
         self.position.x += self.yaw.sin() * (dt * 1500.0);
         self.position.z += self.yaw.cos() * (dt * 1500.0);
     }
-}
-
-fn xz_dist(a: Vec3, b: Vec3) -> f32 {
-    let dx = a.x - b.x;
-    let dz = a.z - b.z;
-    (dx * dx + dz * dz).sqrt()
 }
 
 #[cfg(test)]

@@ -4,23 +4,24 @@
 //! - PS2 prototype (`SLUS_202.28`, `docs/decomp/slus/Enemy/en_pap.c`):
 //!   - `0x0015a060` `enPAPInitData` — regular vs boss HP/endurance, sizes, initial state.
 //!   - `0x0015a2f0` `enPAPCtrlAutomatic` — 10-state dispatch table (`0x002aa8e0`).
-//!   - `0x0015a4b0` `enPAPCtrlWander`, `0x0015a8c0` `enPAPCtrlStraight`, `0x0015ac10` `enPAPCtrlChase`,
-//!     `0x0015ae80` `enPAPCtrlRush`, `0x0015b160` `enPAPCtrlAttack`, `0x0015b640` `enPAPCtrlDamage`,
-//!     `0x0015b9c0` `enPAPCtrlConfuse`, `0x0015baf0` `enPAPCtrlDown`, `0x0015c430` `enPAPCtrlLastMove`.
-//!   - `0x0015c690` `enPAPCanSeePlayer` — 2500 mm sight, 10° cone, `player_size + 405.0 (-100.0 in Rush)` grab range.
+//!   - `0x0015a4b0` `Wander`, `0x0015a8c0` `Straight`, `0x0015ac10` `Chase`, `0x0015ae80` `Rush`,
+//!     `0x0015b160` `Attack`, `0x0015b640` `Damage`, `0x0015b9c0` `Confuse`, `0x0015baf0` `Down`,
+//!     `0x0015c430` `LastMove`.
+//!   - `0x0015c690` `enPAPCanSeePlayer` — 2500 mm sight, 10° cone, `player_radius + 405.0 (-100.0 in Rush)` grab range.
+//!   - `0x0015cc70` `enPAPGetWalkSpeed` — computes Q12 animation playback speed (`rate * 4096.0`, Rush `5120.0`).
+//!   - `0x00142200` `enReduceHP` — incoming AP reduces both HP and Endurance.
 //! - Retail PC (`sh2pc.exe`) drift:
-//!   - Boss HP (`0x004b6874`): `[900, 2500, 5000, 7000, 10000]` (vs SLUS `[1000, 4000, 5000, 7000, 10000]`).
-//!   - Attack IDs (`+6` shift): Grab `0x39` -> `0x3f` (`0x004b76da`), Hug `0x3a` -> `0x40` (`0x004b7821`).
-//!   - Rot speed (`0x004b5de0`): `[0.5, 0.8, 1.0, 2.0, 2.0] * 0.02617994` rad/tick (vs SLUS `[0.5, 0.8, 1.0, 1.2, 1.5] * 0.05235988`).
-//!   - Rush trigger (`0x004b78f0`): `mode > 1` (Normal+, vs SLUS `mode > 2` Hard+).
-//!   - `enPAPCtrlDown` case 3 Beginner bugfix (`0x004b7be0`): writes `state = 9 (Dying)` instead of SLUS invalid `0x0b`.
+//!   - Boss HP (`0x004b6874`): `[900, 2500, 5000, 7000, 10000]` (SLUS `[1000, 4000, 5000, 7000, 10000]`).
+//!   - Attack IDs (`+6` shift): Grab `0x39 -> 0x3f` (`0x004b76da`), Hug `0x3a -> 0x40` (`0x004b7821`).
+//!   - Rot speed (`0x004b5de0`): `[0.5, 0.8, 1.0, 2.0, 2.0] * 0.02617994` rad/tick.
+//!   - Rush trigger (`0x004b78f0`): `mode > 1` (Normal+, vs SLUS `mode > 2`).
+//!   - `enPAPCtrlDown` case 3 Beginner fix (`0x004b7be0`): writes `state = 9` instead of SLUS `0x0b`.
 
-use crate::ai::creatures::CreatureStats;
+use crate::ai::creatures::{xz_dist, CreatureStats};
 use crate::ai::pathfinding::EnemyPathState;
 use crate::ai::sensory::{normalize_angle, DifficultyLevel, PerceivableTarget};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Regular hotel Abstract Daddy HP table (`SLUS 0x002aa840`).
 pub const PAP_REGULAR_HP: [f32; 5] = [500.0, 750.0, 1000.0, 2000.0, 4000.0];
@@ -51,8 +52,8 @@ pub const PAP_SIGHT_HALF_ANGLE_RAD: f32 = 0.174_532_92;
 pub const PAP_ATTACK_RANGE_OFFSET_MM: f32 = 405.0;
 /// Reach reduction during Rush state (`100.0` mm, `enPAPCanSeePlayer` `0x0015c690`).
 pub const PAP_RUSH_RANGE_REDUCTION_MM: f32 = 100.0;
-/// Rush duration in ticks (`300` ticks = 5s at 60 Hz, `enPAPCtrlRush` `0x0015ae80`).
-pub const PAP_RUSH_DURATION_TICKS: i32 = 300;
+/// Rush duration in ticks (`300` ticks, `enPAPCtrlRush` `0x0015ae80`).
+pub const PAP_RUSH_DURATION_TICKS: f32 = 300.0;
 /// Retail PC grab attempt attack ID (`0x3f`; SLUS `0x39`, `0x0015b160` / `0x004b76da`).
 pub const PAP_ATTACK_ID_GRAB_PC: u16 = 0x3f;
 /// Retail PC hug attack ID (`0x40`; SLUS `0x3a`, `0x0015b160` / `0x004b7821`).
@@ -87,13 +88,19 @@ pub struct AbstractDaddyController {
     pub sub_state: u8,
     pub stats: CreatureStats,
     pub path: EnemyPathState,
+    /// Q12 animation playback speed (`*(i16*)(work + 0xc)`, `4096 = 1.0x`, `enPAPGetWalkSpeed` `0x0015cc70`).
+    pub anim_speed_q12: i16,
+    /// Set to `true` by the animation driver when current clip finishes (`*(i32*)(work + 0x14) == -1`).
+    pub anim_finished: bool,
+    /// Root-motion forward displacement in mm for the current tick (from `.anm` playback).
+    pub root_motion_mm: f32,
     /// Active collision radius in mm (`400.0` normal, `200.0` rush, `150.0` attack, `0.0` hug, `300.0` down).
     pub radius_mm: f32,
-    /// Countdown timer in 60 Hz ticks (`enSetTimer` / `enReduceTimer`).
+    /// Countdown timer in 60 Hz ticks (`enSetTimer` / `enReduceTimer`: Rush `300`, Confuse `600 - 90*mode`, Down table).
     pub timer_ticks: f32,
     /// Current attack ID being checked (`0x3f` grab, `0x40` hug), if any.
     pub active_attack_id: Option<u16>,
-    /// Set to `true` when `enPAPCtrlLastMove` finishes (`event_flag_01126458 |= 0x4000`).
+    /// Set when `enPAPCtrlLastMove` finishes (`event_flag_01126458 |= 0x4000`).
     pub boss_defeated_event: bool,
     /// True while hugging/grabbing the player (`enCheckHuggedPlayer`).
     pub is_hugging_player: bool,
@@ -112,7 +119,7 @@ impl AbstractDaddyController {
         is_boss: bool,
         difficulty: DifficultyLevel,
     ) -> Self {
-        let idx = difficulty_index(difficulty);
+        let idx = difficulty.as_index();
         let (hp, end) = if is_boss {
             (PAP_BOSS_HP_PC[idx], PAP_BOSS_ENDURANCE[idx])
         } else {
@@ -133,6 +140,9 @@ impl AbstractDaddyController {
             sub_state: 0,
             stats: CreatureStats::new(hp, end, PAP_AUTO_RECOVERY[idx]),
             path: EnemyPathState::new(yaw),
+            anim_speed_q12: 4096,
+            anim_finished: false,
+            root_motion_mm: 0.0,
             radius_mm: 400.0,
             timer_ticks: 0.0,
             active_attack_id: None,
@@ -145,7 +155,7 @@ impl AbstractDaddyController {
 
     /// Compute authentic walk speed scale (`enPAPGetWalkSpeed` `SLUS 0x0015cc70`).
     pub fn walk_speed_scale(&self, difficulty: DifficultyLevel) -> f32 {
-        let idx = difficulty_index(difficulty);
+        let idx = difficulty.as_index();
         let boss_factor = if self.is_boss { 0.5 } else { 1.0 };
         PAP_WALK_SPEED_MULT[idx] * (self.stats.health / 200.0 + 0.5) * boss_factor
     }
@@ -178,19 +188,27 @@ impl AbstractDaddyController {
     }
 
     /// Advance Abstract Daddy AI by `dt` seconds (`enPAPCtrlAutomatic` `SLUS 0x0015a2f0`).
-    pub fn update(&mut self, target: &PerceivableTarget, difficulty: DifficultyLevel, dt: f32) {
+    ///
+    /// `player_radius_mm` corresponds to `enGetPlayerSize()` (`200.0` mm for James).
+    pub fn update(
+        &mut self,
+        target: &PerceivableTarget,
+        player_radius_mm: f32,
+        difficulty: DifficultyLevel,
+        dt: f32,
+    ) {
         if self.state == PapState::Dying {
             return;
         }
 
         let ticks = dt * 60.0;
-        let idx = difficulty_index(difficulty);
+        let idx = difficulty.as_index();
         let rot_step = PAP_ROT_SPEED_MULT_PC[idx] * PAP_ROT_STEP_PC_RAD * ticks;
         let dx = target.position.x - self.position.x;
         let dz = target.position.z - self.position.z;
-        let dist = (dx * dx + dz * dz).sqrt();
+        let dist = xz_dist(self.position, target.position);
         let player_dir = dx.atan2(dz);
-        let see = self.can_see_player(target.position, 200.0);
+        let see = self.can_see_player(target.position, player_radius_mm);
 
         self.active_attack_id = None;
 
@@ -211,13 +229,11 @@ impl AbstractDaddyController {
                         + Vec3::new(self.yaw.sin() * 1500.0, 0.0, self.yaw.cos() * 1500.0);
                     self.sub_state = 1;
                 }
+                self.anim_speed_q12 = (self.walk_speed_scale(difficulty) * 4096.0) as i16;
                 let tdx = self.wander_target.x - self.position.x;
                 let tdz = self.wander_target.z - self.position.z;
-                let desired = tdx.atan2(tdz);
-                self.turn_towards(desired, rot_step);
-                let speed = self.walk_speed_scale(difficulty).min(2.5) * 400.0;
-                self.position.x += self.yaw.sin() * speed * dt;
-                self.position.z += self.yaw.cos() * speed * dt;
+                self.turn_towards(tdx.atan2(tdz), rot_step);
+                self.apply_root_motion();
             }
 
             PapState::Straight => {
@@ -230,13 +246,13 @@ impl AbstractDaddyController {
                     self.path.init(self.yaw);
                     self.sub_state = 1;
                 }
-                let speed = self.walk_speed_scale(difficulty).min(2.5) * 400.0;
-                self.position.x += self.yaw.sin() * speed * dt;
-                self.position.z += self.yaw.cos() * speed * dt;
+                self.anim_speed_q12 = (self.walk_speed_scale(difficulty) * 4096.0) as i16;
+                self.apply_root_motion();
             }
 
             PapState::Chase => {
                 self.turn_towards(player_dir, rot_step);
+                self.anim_speed_q12 = (self.walk_speed_scale(difficulty) * 4096.0) as i16;
                 if see == 2 {
                     self.transition(PapState::Attack);
                     return;
@@ -245,15 +261,13 @@ impl AbstractDaddyController {
                     self.transition(PapState::Wander);
                     return;
                 }
-                let speed = self.walk_speed_scale(difficulty).min(2.5) * 400.0;
-                self.position.x += self.yaw.sin() * speed * dt;
-                self.position.z += self.yaw.cos() * speed * dt;
+                self.apply_root_motion();
             }
 
             PapState::Rush => {
                 if self.sub_state == 0 {
                     self.radius_mm = 200.0;
-                    self.timer_ticks = PAP_RUSH_DURATION_TICKS as f32;
+                    self.timer_ticks = PAP_RUSH_DURATION_TICKS;
                     self.sub_state = 1;
                 }
                 self.turn_towards(player_dir, rot_step);
@@ -267,72 +281,62 @@ impl AbstractDaddyController {
                     self.transition(PapState::Attack);
                     return;
                 }
-                // 5120 / 4096 = 1.25x walk speed (`enPAPCtrlRush` `SLUS 0x0015ae80`).
-                let speed = self.walk_speed_scale(difficulty).min(2.5) * 400.0 * 1.25;
-                self.position.x += self.yaw.sin() * speed * dt;
-                self.position.z += self.yaw.cos() * speed * dt;
+                // `enPAPCtrlRush` `SLUS 0x0015ae80`: `5120.0` Q12 scale (`1.25x` walk speed).
+                self.anim_speed_q12 = (self.walk_speed_scale(difficulty) * 5120.0) as i16;
+                self.apply_root_motion();
             }
 
-            PapState::Attack => {
-                match self.sub_state {
-                    0 => {
-                        self.radius_mm = 150.0;
-                        self.timer_ticks = 45.0;
-                        self.sub_state = 1;
+            PapState::Attack => match self.sub_state {
+                0 => {
+                    self.radius_mm = 150.0;
+                    self.anim_finished = false;
+                    self.sub_state = 1;
+                }
+                1 => {
+                    self.active_attack_id = Some(PAP_ATTACK_ID_GRAB_PC);
+                    // Rotates toward player at 0.05235988 rad/f (`3°`, `enPAPCtrlAttack` `0x0015b160`).
+                    self.turn_towards(player_dir, 0.052_359_88 * ticks);
+                    if self.is_hugging_player {
+                        self.radius_mm = 0.0;
+                        let target_pos = Vec3::new(
+                            target.position.x - player_dir.sin() * 150.0,
+                            self.position.y,
+                            target.position.z - player_dir.cos() * 150.0,
+                        );
+                        let pull = (target_pos - self.position) * 4.0;
+                        self.position.x += pull.x * dt;
+                        self.position.z += pull.z * dt;
                     }
-                    1 => {
-                        self.active_attack_id = Some(PAP_ATTACK_ID_GRAB_PC);
-                        // Rotates toward player at 0.05235988 rad/f (`3°`, `0x0015b160`).
-                        self.turn_towards(player_dir, 0.052_359_88 * ticks);
-                        if self.is_hugging_player {
-                            self.radius_mm = 0.0;
-                            let target_pos = Vec3::new(
-                                target.position.x - player_dir.sin() * 150.0,
-                                self.position.y,
-                                target.position.z - player_dir.cos() * 150.0,
-                            );
-                            let pull = (target_pos - self.position) * 4.0;
-                            self.position.x += pull.x * dt;
-                            self.position.z += pull.z * dt;
-                        }
-                        self.timer_ticks -= ticks;
-                        if self.timer_ticks <= 0.0 {
-                            if self.is_hugging_player {
-                                self.sub_state = 2;
-                            } else {
-                                self.timer_ticks = 30.0;
-                                self.sub_state = 4;
-                            }
-                        }
-                    }
-                    2 => {
-                        self.active_attack_id = Some(PAP_ATTACK_ID_HUG_PC);
-                        if !self.is_hugging_player {
-                            self.timer_ticks = 30.0;
-                            self.sub_state = 3;
-                        }
-                    }
-                    3 => {
-                        // Recoil at -500.0 mm/s (`enPAPCtrlAttack` `SLUS 0x0015b160`).
-                        self.position.x -= self.yaw.sin() * 500.0 * dt;
-                        self.position.z -= self.yaw.cos() * 500.0 * dt;
-                        self.timer_ticks -= ticks;
-                        if self.timer_ticks <= 0.0 {
-                            self.finish_attack();
-                        }
-                    }
-                    _ => {
-                        self.timer_ticks -= ticks;
-                        if self.timer_ticks <= 0.0 {
-                            self.finish_attack();
-                        }
+                    if self.anim_finished {
+                        self.anim_finished = false;
+                        self.sub_state = if self.is_hugging_player { 2 } else { 4 };
                     }
                 }
-            }
+                2 => {
+                    self.active_attack_id = Some(PAP_ATTACK_ID_HUG_PC);
+                    if !self.is_hugging_player {
+                        self.anim_finished = false;
+                        self.sub_state = 3;
+                    }
+                }
+                3 => {
+                    // Recoil at -500.0 mm/s (`enPAPCtrlAttack` `SLUS 0x0015b160`).
+                    self.position.x -= self.yaw.sin() * 500.0 * dt;
+                    self.position.z -= self.yaw.cos() * 500.0 * dt;
+                    if self.anim_finished {
+                        self.finish_attack();
+                    }
+                }
+                _ => {
+                    if self.anim_finished {
+                        self.finish_attack();
+                    }
+                }
+            },
 
             PapState::Damage => {
-                self.timer_ticks -= ticks;
-                if self.timer_ticks <= 0.0 {
+                if self.anim_finished {
+                    self.anim_finished = false;
                     if self.sub_state == 2 {
                         self.transition(PapState::Down);
                     } else if (self.is_boss || idx > 1) && matches!(self.last_damage_kind, 1 | 2) {
@@ -366,8 +370,9 @@ impl AbstractDaddyController {
                         }
                         return;
                     }
+                    // Uses `enPAPSetDownTime` (`SLUS 0x0015ce10`: `PAP_BOSS_DOWN_TICKS` / `PAP_REGULAR_DOWN_TICKS`).
                     self.timer_ticks = if self.is_boss {
-                        0.0
+                        PAP_BOSS_DOWN_TICKS[idx] as f32
                     } else {
                         PAP_REGULAR_DOWN_TICKS[idx] as f32
                     };
@@ -389,15 +394,18 @@ impl AbstractDaddyController {
             }
 
             PapState::LastMove => {
-                self.boss_defeated_event = true;
-                self.transition(PapState::Dying);
+                if self.anim_finished {
+                    self.boss_defeated_event = true;
+                    self.transition(PapState::Dying);
+                }
             }
 
             PapState::Dying => {}
         }
     }
 
-    /// Apply incoming hit (`enPAPCtrlRush` 0.4x armor on light hits, `enPAPCtrlDamage` `0x0015b640`, Hyper Spray `0x004b5c90`).
+    /// Apply incoming hit (`enReduceHP` `SLUS 0x00142200` reduces both HP and endurance by `ap`;
+    /// `enPAPCtrlRush` `0x0015ae80` applies `0.4x` armor on light hits; Hyper Spray `sh2pc 0x004b5c90`).
     pub fn receive_hit(
         &mut self,
         ap: f32,
@@ -413,7 +421,6 @@ impl AbstractDaddyController {
 
         if is_spray {
             if spray_power >= 2 {
-                // Retail PC `0x004b5c90`: Green Hyper Spray zeroes HP/endurance.
                 self.stats.health = 0.0;
                 self.stats.endurance = 0.0;
                 self.transition(PapState::Down);
@@ -427,12 +434,12 @@ impl AbstractDaddyController {
         }
 
         if self.state == PapState::Rush && matches!(damage_kind, 1 | 2) {
-            // `enPAPCtrlRush` `0x0015ae80`: light hits deal 0.4x and do not interrupt unless lethal.
             self.stats.health = (self.stats.health - ap * 0.4).max(0.0);
             if self.stats.health > 0.0 {
                 return;
             }
         } else {
+            // `enReduceHP` (`SLUS 0x00142200`): AP reduces both HP and Endurance.
             self.stats.health = (self.stats.health - ap).max(0.0);
             self.stats.endurance = (self.stats.endurance - ap).max(0.0);
         }
@@ -443,15 +450,24 @@ impl AbstractDaddyController {
 
         self.state = PapState::Damage;
         self.sub_state = if knocked_down { 2 } else { 1 };
-        self.timer_ticks = 20.0;
+        self.anim_finished = false;
         if knocked_down {
             self.radius_mm = 300.0;
+        }
+    }
+
+    fn apply_root_motion(&mut self) {
+        if self.root_motion_mm != 0.0 {
+            self.position.x += self.yaw.sin() * self.root_motion_mm;
+            self.position.z += self.yaw.cos() * self.root_motion_mm;
+            self.root_motion_mm = 0.0;
         }
     }
 
     fn finish_attack(&mut self) {
         self.radius_mm = 400.0;
         self.is_hugging_player = false;
+        self.anim_finished = false;
         let next = if self.is_boss {
             PapState::Chase
         } else {
@@ -463,28 +479,20 @@ impl AbstractDaddyController {
     fn transition(&mut self, next: PapState) {
         self.state = next;
         self.sub_state = 0;
+        self.anim_finished = false;
     }
 
     fn turn_towards(&mut self, desired_yaw: f32, max_step: f32) {
         let diff = normalize_angle(desired_yaw - self.yaw);
         let step = diff.clamp(-max_step, max_step);
         self.yaw = normalize_angle(self.yaw + step);
-        let _ = (FRAC_PI_2, PI);
-    }
-}
-
-fn difficulty_index(d: DifficultyLevel) -> usize {
-    match d {
-        DifficultyLevel::Beginner => 0,
-        DifficultyLevel::Easy => 1,
-        DifficultyLevel::Normal => 2,
-        DifficultyLevel::Hard => 3,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::PI;
 
     #[test]
     fn test_abstract_daddy_boss_init_and_rush_armor() {
@@ -494,13 +502,11 @@ mod tests {
         assert_eq!(pap.stats.max_health, 5000.0);
         assert_eq!(pap.stats.max_endurance, 600.0);
 
-        // Light hit (damage_kind = 1) on Normal boss triggers Rush after Damage finishes.
         pap.receive_hit(50.0, 1, false, 0, 0.1);
         assert_eq!(pap.state, PapState::Damage);
         let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 2000.0), 0.0, true, false);
-        for _ in 0..25 {
-            pap.update(&target, DifficultyLevel::Normal, 1.0 / 60.0);
-        }
+        pap.anim_finished = true;
+        pap.update(&target, 200.0, DifficultyLevel::Normal, 1.0 / 60.0);
         assert_eq!(pap.state, PapState::Rush);
 
         // In Rush, light hit deals 0.4x (40.0) without interrupting Rush.
@@ -518,7 +524,7 @@ mod tests {
         assert_eq!(pap.can_see_player(Vec3::new(0.0, 0.0, 2600.0), 200.0), 0);
 
         let close = PerceivableTarget::new(Vec3::new(0.0, 0.0, 500.0), PI, true, false);
-        pap.update(&close, DifficultyLevel::Normal, 1.0 / 60.0);
+        pap.update(&close, 200.0, DifficultyLevel::Normal, 1.0 / 60.0);
         assert_eq!(pap.state, PapState::Attack);
     }
 }

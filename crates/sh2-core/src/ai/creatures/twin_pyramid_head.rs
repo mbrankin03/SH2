@@ -4,27 +4,26 @@
 //! - PS2 prototype (`SLUS_202.28`, `docs/decomp/slus/Enemy/en_oni.c`):
 //!   - `0x00228b00` `enONIInitData` — links twin partners (`partner_ptr`, `twin_idx`), sets `variant = 2`.
 //!   - `0x00228dd0` `enONICtrlAutomatic` — 11-state dispatch (`0x0034c830`), `+200.0/s` endurance regen after slow timer.
-//!   - `0x00229500` `Chase`, `0x002297b0` `BothAttack` (60° flanking pincer at 2500 mm, 1.2x speed),
-//!     `0x00229cf0` `Wait`, `0x0022a120` `Attack` (Spear thrust `0x31`), `0x0022a2f0` `Attack3` (Spear spin `0x32`, 2..5 loops),
-//!     `0x0022ac80` `Suicide` (synchronized walk to `suicide_point[0..1]` -> `_DAT_0112646c |= 8`).
-//!   - `0x0022b370` `enONISetDamage` — shared HP overflow transfer to partner (`0.5x` SLUS -> `0.75x` PC).
+//!   - `0x00229500` `Chase`, `0x002297b0` `BothAttack` (60° flanking pincer at 2500 mm, `6/5` = `1.2x` Q12 speed),
+//!     `0x00229cf0` `Wait`, `0x0022a120` `Attack` (`0x31` SLUS / `0x37` PC), `0x0022a2f0` `Attack3` (`0x32` SLUS / `0x38` PC, `((rand>>12)&3)+2` loops),
+//!     `0x0022ac80` `Suicide` (`suicide_point[0..1]` -> `_DAT_0112646c |= 8`).
+//!   - `0x0022bcd0` `enONIGetWalkSpeed` — computes Q12 animation playback speed (`rate * 4096.0`).
 //! - Retail PC (`sh2pc.exe`) drift:
-//!   - Attack IDs (`+6` shift): Spear thrust `0x31 -> 0x37` (`0x004be330`), Spear spin `0x32 -> 0x38` (`0x004be4f0`).
-//!   - HP (`0x004bc2e0`): `[1200, 5000, 9000, 20000, 30000]` (SLUS `[3000, 7500, 10000, 20000, 40000]`).
-//!   - Endurance (`0x004bc2e0`): `[300, 500, 1300, 1500, 2000]` (SLUS `[500, 700, 1000, 2000, 5000]`).
+//!   - Attack IDs (`+6` shift): Spear thrust `0x37` (`0x004be330`), Spear spin `0x38` (`0x004be4f0`).
+//!   - HP (`0x004bc2e0`): `[1200, 5000, 9000, 20000, 30000]`, Endurance: `[300, 500, 1300, 1500, 2000]`.
 //!   - Survival countdown timer (`0x004bc425`): `[60, 180, 300, 3600, 3600]` seconds × pair count.
 //!   - Partner separation for `Attack3` spin (`0x004bcb40`): `750.0 -> 1100.0` mm.
 //!   - Shared HP overflow (`0x004bc8b0`): `0.5x -> 0.75x`.
 
-use crate::ai::creatures::CreatureStats;
+use crate::ai::creatures::{xz_dist, CreatureStats};
 use crate::ai::sensory::{normalize_angle, DifficultyLevel, PerceivableTarget};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use std::f32::consts::{FRAC_PI_3, FRAC_PI_4, FRAC_PI_6};
 
-/// Retail PC Twin Pyramid Head HP per twin (`sh2pc 0x004bc2e0`; SLUS `0x0034c7d0` had `[3000, 7500, 10000, 20000, 40000]`).
+/// Retail PC Twin Pyramid Head HP per twin (`sh2pc 0x004bc2e0`).
 pub const ONI_HP_PC: [f32; 5] = [1200.0, 5000.0, 9000.0, 20_000.0, 30_000.0];
-/// Retail PC Twin Pyramid Head endurance (`sh2pc 0x004bc2e0`; SLUS `0x0034c7f0` had `[500, 700, 1000, 2000, 5000]`).
+/// Retail PC Twin Pyramid Head endurance (`sh2pc 0x004bc2e0`).
 pub const ONI_ENDURANCE_PC: [f32; 5] = [300.0, 500.0, 1300.0, 1500.0, 2000.0];
 /// Retail PC walk speed multipliers (`sh2pc 0x004bc0a0`).
 pub const ONI_WALK_SPEED_MULT_PC: [f32; 5] = [0.6, 0.8, 1.0, 1.0, 1.0];
@@ -48,6 +47,12 @@ pub const ONI_SUICIDE_POINTS: [(Vec3, f32); 2] = [
     (Vec3::new(-19_344.45, 0.0, 21_723.15), -FRAC_PI_6),
     (Vec3::new(-19_622.8, 0.0, 22_746.35), FRAC_PI_4),
 ];
+
+/// Compute authentic spin loop count `2..=5` (`((shRandI() >> 12) & 3) + 2` in `enONICtrlAttack3` `SLUS 0x0022a2f0`).
+#[inline]
+pub const fn roll_oni_spin_loops(rand_bits: u32) -> u8 {
+    (((rand_bits >> 12) & 3) + 2) as u8
+}
 
 /// Twin Pyramid Head state enum matching `0x0034c830` (`enONICtrlAutomatic` `SLUS 0x00228dd0`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -90,10 +95,18 @@ pub struct TwinPyramidHeadController {
     pub state: OniState,
     pub sub_state: u8,
     pub stats: CreatureStats,
+    /// Q12 animation playback speed (`*(i16*)(work + 0xc)`, `4096 = 1.0x`, `enONIGetWalkSpeed` `0x0022bcd0`).
+    pub anim_speed_q12: i16,
+    /// Set by animation driver when current clip/loop finishes (`*(i32*)(work + 0x14) == -1`).
+    pub anim_finished: bool,
+    /// Root-motion forward displacement in mm for the current tick.
+    pub root_motion_mm: f32,
     pub slow_timer_ticks: f32,
-    pub state_timer_ticks: f32,
+    pub confuse_timer_ticks: f32,
     /// Number of spin loops (`2..=5`) for `Attack3` (`work+0xa4`).
     pub spin_loops_remaining: u8,
+    /// Deterministic RNG bits passed into [`roll_oni_spin_loops`] (`enONICtrlAttack3` `0x0022a2f0`).
+    pub spin_loop_rand_bits: u32,
     /// Retail PC survival countdown timer (`0x0094e520`).
     pub survival_timer_sec: f32,
     pub active_attack_id: Option<u16>,
@@ -110,7 +123,7 @@ impl TwinPyramidHeadController {
         twin_idx: usize,
         difficulty: DifficultyLevel,
     ) -> Self {
-        let idx = difficulty_index(difficulty);
+        let idx = difficulty.as_index();
         Self {
             id,
             position,
@@ -120,9 +133,13 @@ impl TwinPyramidHeadController {
             state: OniState::Chase,
             sub_state: 0,
             stats: CreatureStats::new(ONI_HP_PC[idx], ONI_ENDURANCE_PC[idx], 200.0),
+            anim_speed_q12: 4096,
+            anim_finished: false,
+            root_motion_mm: 0.0,
             slow_timer_ticks: 0.0,
-            state_timer_ticks: 0.0,
+            confuse_timer_ticks: 0.0,
             spin_loops_remaining: 0,
+            spin_loop_rand_bits: 0,
             survival_timer_sec: ONI_SURVIVAL_TIMER_SEC_PC[idx] * 2.0,
             active_attack_id: None,
             suicide_cutscene_ready: false,
@@ -151,17 +168,15 @@ impl TwinPyramidHeadController {
     }
 
     /// Evaluate `enONICanSeePlayer` (`SLUS 0x0022b520` / `sh2pc 0x004bcb40`).
-    ///
-    /// Returns `4` (Spin `Attack3`), `2` (Thrust `Attack`), `1` (Chase/Blocked by partner attacking), `0` none.
     pub fn can_see_player(&self, target_pos: Vec3, partner: Option<TwinPartnerSnapshot>) -> u8 {
         if let Some(p) = partner {
             if matches!(p.state, OniState::Attack | OniState::Attack3) {
-                return 1; // Prevents simultaneous attacks (`enONICanSeePlayer` `0x0022b520`).
+                return 1;
             }
         }
         let dx = target_pos.x - self.position.x;
         let dz = target_pos.z - self.position.z;
-        let dist = (dx * dx + dz * dz).sqrt();
+        let dist = xz_dist(self.position, target_pos);
         let ang = normalize_angle(dx.atan2(dz) - self.yaw).abs();
 
         let partner_far =
@@ -193,10 +208,9 @@ impl TwinPyramidHeadController {
         }
 
         let ticks = dt * 60.0;
-        let idx = difficulty_index(difficulty);
+        let idx = difficulty.as_index();
         self.active_attack_id = None;
 
-        // Endurance recovery (`+200.0/s` once slow_timer_ticks <= 0, `0x00228dd0`).
         if self.slow_timer_ticks > 0.0 {
             self.slow_timer_ticks = (self.slow_timer_ticks - ticks).max(0.0);
         } else {
@@ -204,7 +218,6 @@ impl TwinPyramidHeadController {
                 (self.stats.endurance + dt * 200.0).min(self.stats.max_endurance);
         }
 
-        // Retail PC survival timer (`sh2pc 0x004bc425`): triggers Suicide when expired.
         if self.variant == 2 && self.state != OniState::Suicide {
             self.survival_timer_sec = (self.survival_timer_sec - dt).max(0.0);
             if self.survival_timer_sec <= 0.0
@@ -217,16 +230,16 @@ impl TwinPyramidHeadController {
 
         let dx = target.position.x - self.position.x;
         let dz = target.position.z - self.position.z;
-        let dist = (dx * dx + dz * dz).sqrt();
+        let dist = xz_dist(self.position, target.position);
         let player_dir = dx.atan2(dz);
         let rot_step = 0.052_359_88 * ONI_ROT_SPEED_MULT_PC[idx] * ticks;
-        let walk_spd = 420.0 * self.speed_scale() * ONI_WALK_SPEED_MULT_PC[idx];
+        let base_q12 = self.speed_scale() * ONI_WALK_SPEED_MULT_PC[idx] * 4096.0;
         let see = self.can_see_player(target.position, partner);
 
         match self.state {
             OniState::Wander => {
-                self.position.x += self.yaw.sin() * walk_spd * dt;
-                self.position.z += self.yaw.cos() * walk_spd * dt;
+                self.anim_speed_q12 = base_q12 as i16;
+                self.apply_root_motion();
                 if see >= 2 {
                     self.transition(OniState::Attack);
                 } else if see == 1 {
@@ -244,24 +257,22 @@ impl TwinPyramidHeadController {
                     self.transition(OniState::Attack);
                     return;
                 }
-                // Paired flanking handoff (`enONICtrlChase` `SLUS 0x00229500`):
-                // farther twin switches to BothAttack when closer twin is also chasing.
                 if let Some(p) = partner {
                     if p.state == OniState::Chase && p.player_dist < dist {
                         self.transition(OniState::BothAttack);
                         return;
                     }
                 }
-                let sprint = if self.variant == 2
+                // `enONICtrlChase` `SLUS 0x00229500`: `3/2` (`1.5x`) sprint when aligned within `5°` on Normal+.
+                let mut q12 = base_q12 as i16;
+                if self.variant == 2
                     && idx > 1
                     && normalize_angle(self.yaw - player_dir).abs() < 0.087_266_46
                 {
-                    1.5
-                } else {
-                    1.0
-                };
-                self.position.x += self.yaw.sin() * walk_spd * sprint * dt;
-                self.position.z += self.yaw.cos() * walk_spd * sprint * dt;
+                    q12 = (i32::from(q12) * 3 / 2) as i16;
+                }
+                self.anim_speed_q12 = q12;
+                self.apply_root_motion();
             }
 
             OniState::BothAttack => {
@@ -285,7 +296,7 @@ impl TwinPyramidHeadController {
                     return;
                 }
 
-                // Flanking pincer: 60° (`1.0471976` rad) off partner's angle at 2500 mm, 1.2x speed (`0x002297b0`).
+                // Flanking pincer: 60° (`FRAC_PI_3`) off partner's angle at 2500 mm, `6/5` (`1.2x`) speed (`0x002297b0`).
                 let flank_goal = if let Some(p) = partner {
                     let partner_dir =
                         (target.position.x - p.position.x).atan2(target.position.z - p.position.z);
@@ -303,8 +314,8 @@ impl TwinPyramidHeadController {
                 let fdx = flank_goal.x - self.position.x;
                 let fdz = flank_goal.z - self.position.z;
                 self.turn_towards(fdx.atan2(fdz), rot_step);
-                self.position.x += self.yaw.sin() * walk_spd * 1.2 * dt;
-                self.position.z += self.yaw.cos() * walk_spd * 1.2 * dt;
+                self.anim_speed_q12 = (base_q12 * 1.2) as i16;
+                self.apply_root_motion();
             }
 
             OniState::Wait => {
@@ -324,21 +335,16 @@ impl TwinPyramidHeadController {
                     self.transition(OniState::Attack);
                     return;
                 }
-                self.position.x += self.yaw.sin() * walk_spd * 1.5 * dt;
-                self.position.z += self.yaw.cos() * walk_spd * 1.5 * dt;
+                self.anim_speed_q12 = (base_q12 * 1.5) as i16;
+                self.apply_root_motion();
             }
 
             OniState::Attack => {
-                if self.sub_state == 0 {
-                    self.state_timer_ticks = 45.0;
-                    self.sub_state = 1;
-                }
                 self.active_attack_id = Some(ONI_ATTACK_ID_SPEAR_THRUST_PC);
                 if idx > 2 || dist < 500.0 {
                     self.turn_towards(player_dir, rot_step);
                 }
-                self.state_timer_ticks -= ticks;
-                if self.state_timer_ticks <= 0.0 {
+                if self.anim_finished {
                     self.transition(if partner.is_some() && see > 1 {
                         OniState::Wait
                     } else {
@@ -349,41 +355,35 @@ impl TwinPyramidHeadController {
 
             OniState::Attack3 => match self.sub_state {
                 0 => {
-                    self.state_timer_ticks = 20.0;
+                    self.anim_finished = false;
                     self.sub_state = 1;
                 }
                 1 => {
-                    self.state_timer_ticks -= ticks;
-                    if self.state_timer_ticks <= 0.0 {
-                        self.spin_loops_remaining = 3; // deterministic middle of 2..=5 loops
-                        self.state_timer_ticks = 30.0;
+                    if self.anim_finished {
+                        self.anim_finished = false;
+                        self.spin_loops_remaining = roll_oni_spin_loops(self.spin_loop_rand_bits);
                         self.sub_state = 2;
                     }
                 }
                 2 => {
                     self.active_attack_id = Some(ONI_ATTACK_ID_SPEAR_SPIN_PC);
-                    self.state_timer_ticks -= ticks;
-                    if self.state_timer_ticks <= 0.0 {
+                    if self.anim_finished {
+                        self.anim_finished = false;
                         self.spin_loops_remaining = self.spin_loops_remaining.saturating_sub(1);
                         if self.spin_loops_remaining == 0 || dist > 2500.0 {
-                            self.state_timer_ticks = 25.0;
                             self.sub_state = 3;
-                        } else {
-                            self.state_timer_ticks = 30.0;
                         }
                     }
                 }
                 _ => {
-                    self.state_timer_ticks -= ticks;
-                    if self.state_timer_ticks <= 0.0 {
+                    if self.anim_finished {
                         self.transition(OniState::Chase);
                     }
                 }
             },
 
             OniState::Damage => {
-                self.state_timer_ticks -= ticks;
-                if self.state_timer_ticks <= 0.0 {
+                if self.anim_finished {
                     if self.variant == 2
                         && self.stats.health <= 0.0
                         && partner.is_none_or(|p| p.is_dead)
@@ -397,11 +397,11 @@ impl TwinPyramidHeadController {
 
             OniState::Confuse => {
                 if self.sub_state == 0 {
-                    self.state_timer_ticks = (600 - 90 * idx as i32) as f32;
+                    self.confuse_timer_ticks = (600 - 90 * idx as i32) as f32;
                     self.sub_state = 2;
                 }
-                self.state_timer_ticks -= ticks;
-                if self.state_timer_ticks <= 0.0 {
+                self.confuse_timer_ticks -= ticks;
+                if self.confuse_timer_ticks <= 0.0 {
                     self.transition(OniState::Wander);
                 }
             }
@@ -413,14 +413,13 @@ impl TwinPyramidHeadController {
                         self.sub_state = 1;
                         let gdx = goal_pos.x - self.position.x;
                         let gdz = goal_pos.z - self.position.z;
-                        let gdist = (gdx * gdx + gdz * gdz).sqrt();
-                        if gdist < 50.0 {
+                        if xz_dist(self.position, goal_pos) < 50.0 {
                             self.position = goal_pos;
                             self.sub_state = 3;
                         } else {
                             self.turn_towards(gdx.atan2(gdz), rot_step);
-                            self.position.x += self.yaw.sin() * walk_spd * dt;
-                            self.position.z += self.yaw.cos() * walk_spd * dt;
+                            self.anim_speed_q12 = 4096;
+                            self.apply_root_motion();
                         }
                     }
                     3 => {
@@ -445,7 +444,7 @@ impl TwinPyramidHeadController {
 
     /// Apply incoming damage (`enONISetDamage` `SLUS 0x0022b370` / `sh2pc 0x004bc8b0`).
     ///
-    /// Returns the overflow damage (`* 0.75` on retail PC) to apply to the partner twin if this twin's HP drops below `0.0`.
+    /// Returns the overflow damage (`* 0.75` on retail PC) to apply to the partner twin if HP drops below `0.0`.
     pub fn receive_hit(
         &mut self,
         ap: f32,
@@ -457,11 +456,10 @@ impl TwinPyramidHeadController {
         if matches!(self.state, OniState::Suicide | OniState::Dead) {
             return 0.0;
         }
-        // Retail PC `0x004bc8b0`: ignores self/partner spear attacks 0x37 & 0x38.
         if matches!(damage_kind, 0x37 | 0x38) {
             return 0.0;
         }
-        let idx = difficulty_index(difficulty);
+        let idx = difficulty.as_index();
 
         if is_spray {
             if spray_power >= 2 {
@@ -493,22 +491,30 @@ impl TwinPyramidHeadController {
             0.0
         };
 
-        // Light hits (1, 2, 0xc, 0xd) do not reset slow timer or stagger in Twin Boss mode (`0x004bc8b0`).
         if !matches!(damage_kind, 1 | 2 | 0x0c | 0x0d) {
             self.slow_timer_ticks = ONI_SLOW_TIME_PC[idx];
             if self.stats.endurance <= 0.0 && self.state != OniState::Attack3 {
                 self.stats.endurance = self.stats.max_endurance;
                 self.state = OniState::Damage;
                 self.sub_state = 1;
-                self.state_timer_ticks = 20.0;
+                self.anim_finished = false;
             }
         }
         overflow
     }
 
+    fn apply_root_motion(&mut self) {
+        if self.root_motion_mm != 0.0 {
+            self.position.x += self.yaw.sin() * self.root_motion_mm;
+            self.position.z += self.yaw.cos() * self.root_motion_mm;
+            self.root_motion_mm = 0.0;
+        }
+    }
+
     fn transition(&mut self, next: OniState) {
         self.state = next;
         self.sub_state = 0;
+        self.anim_finished = false;
     }
 
     fn turn_towards(&mut self, desired_yaw: f32, max_step: f32) {
@@ -518,27 +524,15 @@ impl TwinPyramidHeadController {
     }
 }
 
-fn xz_dist(a: Vec3, b: Vec3) -> f32 {
-    let dx = a.x - b.x;
-    let dz = a.z - b.z;
-    (dx * dx + dz * dz).sqrt()
-}
-
-fn difficulty_index(d: DifficultyLevel) -> usize {
-    match d {
-        DifficultyLevel::Beginner => 0,
-        DifficultyLevel::Easy => 1,
-        DifficultyLevel::Normal => 2,
-        DifficultyLevel::Hard => 3,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_twin_ph_paired_flanking_and_shared_hp_overflow() {
+    fn test_twin_ph_paired_flanking_spin_roll_and_shared_hp_overflow() {
+        assert_eq!(roll_oni_spin_loops(0), 2);
+        assert_eq!(roll_oni_spin_loops(3 << 12), 5);
+
         let mut t0 = TwinPyramidHeadController::new(
             1,
             Vec3::new(-20_000.0, 0.0, 20_000.0),
@@ -555,12 +549,10 @@ mod tests {
         );
         let player = PerceivableTarget::new(Vec3::new(-20_000.0, 0.0, 20_800.0), 0.0, true, false);
 
-        // t1 is farther than t0 (2200 vs 800), so t1 hands off to BothAttack flanking.
         let s0 = t0.snapshot(player.position);
         t1.update(&player, Some(s0), DifficultyLevel::Normal, 1.0 / 60.0);
         assert_eq!(t1.state, OniState::BothAttack);
 
-        // Overflow damage transfers 75% to partner (`sh2pc 0x004bc8b0`).
         t0.stats.health = 100.0;
         let overflow = t0.receive_hit(500.0, 0x05, false, 0, DifficultyLevel::Normal);
         assert!((overflow - 300.0).abs() < 1e-3);

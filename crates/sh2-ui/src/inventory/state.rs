@@ -1,11 +1,16 @@
 //! State machine & input navigation for [`InventoryScreen`] (`Item/otn_itemmain.c`).
 
 use crate::inventory::health_ecg::HealthEcgState;
+use crate::inventory::widgets::{
+    move_near, ITEM_ALLAY_FADE_STEP, ITEM_ALLAY_MAX_FADE, ITEM_ALLAY_PULSE_MAX,
+    ITEM_ALLAY_PULSE_MIN, ITEM_ALLAY_PULSE_RATE, LOOK_COMBINE_FADE_RATE, LOOK_COMMAND_GLOW_STEP,
+    LOOK_COMMAND_MAX_GLOW, RADIO_VOLUME_BARS,
+};
 use crate::inventory::{
     CornerButton, InventoryAction, InventoryFocus, InventoryPlayerSnapshot, ItemCommand,
     CAROUSEL_SCALE_STEP, CAROUSEL_SELECTED_SCALE, CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_X_MAX,
     CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MAX, CMD_WIN_MOUSE_Y_MIN, CMD_WIN_ROW_0_MAX_Y,
-    CMD_WIN_ROW_1_MAX_Y,
+    CMD_WIN_ROW_1_MAX_Y, DEFAULT_RADIO_VOLUME,
 };
 use crate::menu::{MenuNavAction, MenuSoundCue};
 use sh2_core::inventory::{
@@ -31,12 +36,28 @@ pub struct InventoryScreen {
     pub command_index: usize,
     /// First item ID chosen when `focus == InventoryFocus::CombineTarget`.
     pub combine_first_item_id: Option<u8>,
+    /// Up to 3 staged combine preview slots (`_DAT_0116e644.._DAT_0116e648`, `look_combine` `0x001da490`).
+    pub combine_slots: [Option<u8>; 3],
+    /// Combine overlay fade (`0.0..=1.0`, `_DAT_0116e64c`, `±4.0/s`).
+    pub combine_fade: f32,
     /// Most recently combined pseudo-item (`86..=96`) ready for contextual `Use`.
     pub active_combo_id: Option<u8>,
     /// 3D carousel turntable yaw angle in radians (`item_screen_obj.c`).
     pub item_yaw_rad: f32,
     /// Selected carousel item scale (`0.8..=1.0`, `itemmainmain` `0x001ce188`).
     pub selected_scale: f32,
+    /// `item_allay` (`0x001d7640`) brightness triangle-wave phase (`_DAT_0116e614`, `0..350`, wraps to `50`).
+    pub arrow_pulse: f32,
+    /// `item_allay` (`0x001d7640`) fade alpha (`_DAT_0116e618`, `0.0..=32.0`, `±4.0` per 30 Hz tick).
+    pub arrow_fade: f32,
+    /// `sprite` (`0x001d8890`) active-tab pulse phase (`_DAT_0116e61c`, `0.0..2.0`, `+0.04` per 30 Hz tick).
+    pub tab_pulse: f32,
+    /// `look_command` (`0x001d8f50`) smoothly eased command row index (`_DAT_0116e3dc`, via `move_near`).
+    pub command_cursor_y: f32,
+    /// `look_command` (`0x001d8f50`) green-teal glow intensity (`_DAT_0116e3d8`, `0.0..=40.0`, `±6` per 30 Hz tick).
+    pub command_glow: f32,
+    /// Pocket Radio volume level (`0..=15`, `DAT_01126900`, default `0xc = 12` from `ItemDataInit` `0x001ad860`).
+    pub radio_volume: u8,
     /// Top-left Health ECG Status Box animation state (`look_hp` `0x001d9660`).
     pub health_ecg: HealthEcgState,
     /// Optional status feedback toast message shown briefly in the footer.
@@ -62,9 +83,17 @@ impl InventoryScreen {
             active_commands: Vec::new(),
             command_index: 0,
             combine_first_item_id: None,
+            combine_slots: [None; 3],
+            combine_fade: 0.0,
             active_combo_id: None,
             item_yaw_rad: 0.0,
             selected_scale: CAROUSEL_UNSELECTED_SCALE,
+            arrow_pulse: ITEM_ALLAY_PULSE_MIN,
+            arrow_fade: ITEM_ALLAY_MAX_FADE,
+            tab_pulse: 0.0,
+            command_cursor_y: 0.0,
+            command_glow: 0.0,
+            radio_volume: DEFAULT_RADIO_VOLUME,
             health_ecg: HealthEcgState::new(),
             status_toast: None,
             status_toast_timer: 0.0,
@@ -80,7 +109,14 @@ impl InventoryScreen {
         self.active_commands.clear();
         self.command_index = 0;
         self.combine_first_item_id = None;
+        self.combine_slots = [None; 3];
+        self.combine_fade = 0.0;
         self.selected_scale = CAROUSEL_UNSELECTED_SCALE;
+        self.arrow_pulse = ITEM_ALLAY_PULSE_MIN;
+        self.arrow_fade = ITEM_ALLAY_MAX_FADE;
+        self.tab_pulse = 0.0;
+        self.command_cursor_y = 0.0;
+        self.command_glow = 0.0;
         self.status_toast = None;
         self.status_toast_timer = 0.0;
         self.refresh_owned_items(inventory);
@@ -92,6 +128,8 @@ impl InventoryScreen {
         self.focus = InventoryFocus::Carousel;
         self.active_commands.clear();
         self.combine_first_item_id = None;
+        self.combine_slots = [None; 3];
+        self.combine_fade = 0.0;
     }
 
     /// Rebuilds `owned_items` in canonical Director's Cut catalog order (`1..=85`).
@@ -119,19 +157,65 @@ impl InventoryScreen {
         self.owned_items.get(self.selected_index).copied()
     }
 
-    /// Advances ECG animation, 3D carousel rotation, and scale lerp (`itemmainmain` `0x001ce188`).
+    /// Advances ECG animation, 3D carousel rotation, scale lerp, `item_allay` pulse/fade,
+    /// `sprite` tab pulse, `look_command` eased cursor/glow, and `look_combine` fade
+    /// (`SLUS_202.28` `itemmainmain` `0x001cddd0`).
     pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) {
         if !self.is_open {
             return;
         }
         let dt = dt.clamp(0.0, 0.1);
+        let ticks_30hz = dt * 30.0;
         self.health_ecg.tick(dt, snapshot.hp, snapshot.max_hp);
         // 30 Hz PS2 step: `CAROUSEL_SCALE_STEP` (`0.1`) per 1/30s frame (`itemmainmain` `0x001ce1a4`)
         self.item_yaw_rad = (self.item_yaw_rad + dt * 0.9) % std::f32::consts::TAU;
         if self.selected_scale < CAROUSEL_SELECTED_SCALE {
-            self.selected_scale = (self.selected_scale + CAROUSEL_SCALE_STEP * (dt * 30.0))
+            self.selected_scale = (self.selected_scale + CAROUSEL_SCALE_STEP * ticks_30hz)
                 .min(CAROUSEL_SELECTED_SCALE);
         }
+
+        // `sprite` (`0x001d8890`) active tab pulse (`_DAT_0116e61c`: `+0.04` per 30 Hz tick, wraps at `2.0`)
+        self.tab_pulse += 0.04 * ticks_30hz;
+        if self.tab_pulse >= 2.0 {
+            self.tab_pulse -= 2.0;
+        }
+
+        // `item_allay` (`0x001d7640`) arrow brightness triangle-wave (`50..350` at `180/s`) & fade (`0..32`)
+        self.arrow_pulse += dt * ITEM_ALLAY_PULSE_RATE;
+        if self.arrow_pulse > ITEM_ALLAY_PULSE_MAX {
+            self.arrow_pulse = ITEM_ALLAY_PULSE_MIN;
+        }
+        if self.focus == InventoryFocus::Carousel {
+            self.arrow_fade =
+                (self.arrow_fade + ITEM_ALLAY_FADE_STEP * ticks_30hz).min(ITEM_ALLAY_MAX_FADE);
+        } else {
+            self.arrow_fade = (self.arrow_fade - ITEM_ALLAY_FADE_STEP * ticks_30hz).max(0.0);
+        }
+
+        // `look_command` (`0x001d8f50`) eased cursor Y via `move_near(2.0, 0.2, ...)` & glow (`0..40`)
+        let cur_scaled = self.command_cursor_y * 1000.0;
+        let tgt_scaled = (self.command_index as f32) * 1000.0;
+        let next_scaled = move_near(2.0, 0.2, cur_scaled, tgt_scaled, dt);
+        self.command_cursor_y = (next_scaled as i32) as f32 / 1000.0;
+
+        if self.focus == InventoryFocus::CommandWindow {
+            self.command_glow = (self.command_glow + LOOK_COMMAND_GLOW_STEP * ticks_30hz)
+                .min(LOOK_COMMAND_MAX_GLOW);
+        } else if self.focus == InventoryFocus::RadioVolume {
+            self.command_glow = 0.0;
+        } else {
+            self.command_glow = (self.command_glow - LOOK_COMMAND_GLOW_STEP * ticks_30hz).max(0.0);
+        }
+
+        // `look_combine` (`0x001da490`) 3-slot green overlay fade (`±4.0/s`)
+        self.combine_slots[0] = self.combine_first_item_id;
+        let has_combine = self.combine_slots.iter().any(Option::is_some);
+        if has_combine {
+            self.combine_fade = (self.combine_fade + dt * LOOK_COMBINE_FADE_RATE).min(1.0);
+        } else {
+            self.combine_fade = (self.combine_fade - dt * LOOK_COMBINE_FADE_RATE).max(0.0);
+        }
+
         if self.status_toast_timer > 0.0 {
             self.status_toast_timer = (self.status_toast_timer - dt).max(0.0);
             if self.status_toast_timer == 0.0 {
@@ -198,6 +282,7 @@ impl InventoryScreen {
                     } else {
                         ItemCommand::TurnOn
                     });
+                    cmds.push(ItemCommand::Volume);
                 } else {
                     cmds.push(ItemCommand::Use);
                 }
@@ -231,6 +316,7 @@ impl InventoryScreen {
             InventoryFocus::Carousel => self.handle_carousel_nav(nav, inventory, snapshot),
             InventoryFocus::Corner(btn) => self.handle_corner_nav(btn, nav, snapshot),
             InventoryFocus::CommandWindow => self.handle_command_window_nav(nav, inventory, false),
+            InventoryFocus::RadioVolume => self.handle_radio_volume_nav(nav),
             InventoryFocus::CombineTarget => self.handle_combine_nav(nav),
             InventoryFocus::ExamineOverlay => match nav {
                 MenuNavAction::Confirm | MenuNavAction::Cancel => {
@@ -314,6 +400,11 @@ impl InventoryScreen {
         }
         let ps2_x = (mouse_x - ox) * 512.0 / cw;
         let ps2_y = (mouse_y - oy) * 448.0 / ch;
+
+        if self.focus == InventoryFocus::RadioVolume {
+            self.focus = InventoryFocus::Carousel;
+            return (MenuSoundCue::Confirm, InventoryAction::None);
+        }
 
         if self.focus == InventoryFocus::CommandWindow {
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
@@ -527,6 +618,7 @@ impl InventoryScreen {
                     }
                     ItemCommand::Combine => {
                         self.combine_first_item_id = Some(item_id);
+                        self.combine_slots = [Some(item_id), None, None];
                         if !from_mouse {
                             self.command_index = 0;
                         }
@@ -542,8 +634,47 @@ impl InventoryScreen {
                             (MenuSoundCue::Confirm, InventoryAction::ToggleRadio)
                         }
                     }
+                    ItemCommand::Volume => {
+                        self.focus = InventoryFocus::RadioVolume;
+                        self.command_glow = 0.0;
+                        (MenuSoundCue::Confirm, InventoryAction::None)
+                    }
                 }
             }
+        }
+    }
+
+    /// Handles Left/Right volume adjustments (`0..=15`) in `command_main` case 7 (`0x001d0790`).
+    fn handle_radio_volume_nav(&mut self, nav: MenuNavAction) -> (MenuSoundCue, InventoryAction) {
+        let max_vol = (RADIO_VOLUME_BARS - 1) as u8;
+        match nav {
+            MenuNavAction::Left => {
+                if self.radio_volume > 0 {
+                    self.radio_volume -= 1;
+                    (
+                        MenuSoundCue::CursorMove,
+                        InventoryAction::SetRadioVolume(self.radio_volume),
+                    )
+                } else {
+                    (MenuSoundCue::None, InventoryAction::None)
+                }
+            }
+            MenuNavAction::Right => {
+                if self.radio_volume < max_vol {
+                    self.radio_volume += 1;
+                    (
+                        MenuSoundCue::CursorMove,
+                        InventoryAction::SetRadioVolume(self.radio_volume),
+                    )
+                } else {
+                    (MenuSoundCue::None, InventoryAction::None)
+                }
+            }
+            MenuNavAction::Confirm | MenuNavAction::Cancel => {
+                self.focus = InventoryFocus::Carousel;
+                (MenuSoundCue::Confirm, InventoryAction::None)
+            }
+            _ => (MenuSoundCue::None, InventoryAction::None),
         }
     }
 
@@ -564,11 +695,13 @@ impl InventoryScreen {
             }
             MenuNavAction::Cancel => {
                 self.combine_first_item_id = None;
+                self.combine_slots = [None; 3];
                 self.focus = InventoryFocus::Carousel;
                 (MenuSoundCue::Cancel, InventoryAction::None)
             }
             MenuNavAction::Confirm => {
                 let first = self.combine_first_item_id.take();
+                self.combine_slots = [None; 3];
                 let second = self.selected_item_id();
                 self.focus = InventoryFocus::Carousel;
                 if let (Some(a), Some(b)) = (first, second) {
@@ -617,14 +750,14 @@ mod tests {
             screen.commands_for_item(16, &inv, &snap),
             vec![ItemCommand::Equip, ItemCommand::Look]
         );
-        // Flashlight (#18) offers ON, Look; Radio (#19) offers OFF, Look
+        // Flashlight (#18) offers ON, Look; Radio (#19) offers OFF, Volume, Look
         assert_eq!(
             screen.commands_for_item(18, &inv, &snap),
             vec![ItemCommand::TurnOn, ItemCommand::Look]
         );
         assert_eq!(
             screen.commands_for_item(19, &inv, &snap),
-            vec![ItemCommand::TurnOff, ItemCommand::Look]
+            vec![ItemCommand::TurnOff, ItemCommand::Volume, ItemCommand::Look]
         );
 
         // Open command window on key item (#24) -> 3 options
@@ -648,6 +781,14 @@ mod tests {
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(screen.focus, InventoryFocus::CombineTarget);
         assert_eq!(screen.command_index, 2);
+
+        // Mouse click while in `RadioVolume` exits cleanly back to `Carousel` without hitting corner buttons
+        screen.focus = InventoryFocus::RadioVolume;
+        let (vol_cue, vol_act) =
+            screen.handle_mouse_click(60.0 * sx, 420.0 * sy, 640.0, 480.0, &inv, &snap);
+        assert_eq!(vol_cue, MenuSoundCue::Confirm);
+        assert_eq!(vol_act, InventoryAction::None);
+        assert_eq!(screen.focus, InventoryFocus::Carousel);
     }
 
     #[test]

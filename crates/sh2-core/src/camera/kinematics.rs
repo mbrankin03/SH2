@@ -9,8 +9,10 @@
 //!   vs retail `sh2pc.exe` (`file 0x2c6a30`) `[0.879646, 2.827433, 1.105841, 3.534292]`.
 //! - `cam_mv_prm_on_boat`: `SLUS_202.28` (`0x00390590`) `[1500.0, 450.0, 2400.0, 800.0]`
 //!   vs retail `sh2pc.exe` (`file 0x2c6a80`) `[3600.0, 1200.0, 4500.0, 1500.0]`.
-//! - `vcRenewalCamData`: retail `sh2pc.exe` (`0x0051c100`) scales XZ target delta by `0.002` (`/ 500.0`,
-//!   matching Y's `/ 500.0` in `SLUS_202.28` `0x0019c840`) and clamps zero-crossing overshoot per axis.
+//! - `vcRenewalCamData`: both `SLUS_202.28` (`0x0019c8d4..0x0019c908`, `div.s` by `500.0` / `0x43fa0000`)
+//!   and retail `sh2pc.exe` (`0x0051c100`, `* 0.002`) scale `cur_pos` and `tgt_pos` XZ by `/ 500.0`
+//!   before calling `vwRenewalXZVelocityToTargetPos` (`0x0019e640`), matching Y's `/ 500.0`.
+//!   Retail `sh2pc.exe` (`0x0051c100`) additionally clamps per-axis zero-crossing overshoot.
 
 use crate::types::camera::{CameraMoveParam, CameraWatchParam};
 use glam::{Mat3, Vec3};
@@ -230,13 +232,10 @@ pub fn vw_decrease_side_of_vector(dec_val: f32, lim_side: f32, ang_y: f32, vel: 
 /// Velocity-bounded XZ acceleration toward `tgt_pos` (`SLUS_202.28` `vwRenewalXZVelocityToTargetPos`
 /// `0x0019e640`).
 ///
-/// Units: `cur_pos` and `tgt_pos` in PS2 world mm; `vel` in mm/s; `accel`, `side_dec` in mm/s²;
-/// `max_spd` in mm/s; `dist_ofs` in mm (`0.1` mm in `SLUS_202.28` `vcRenewalCamData` `0x0019c840`);
-/// `dt` in seconds.
-///
-/// Note on retail PC drift: `sh2pc.exe` (`0x0051c100`) multiplies `(tgt - cur)` by `0.002` (`/ 500.0`),
-/// turning `dist_ofs = 0.1` into a `50.0` mm deadband. Using `SLUS_202.28`'s exact mm-space equation
-/// converges to within `0.1` mm while preserving identical velocity/acceleration bounds.
+/// Units: `cur_pos` and `tgt_pos` in caller-scaled units (in `vcRenewalCamData`, both `SLUS_202.28`
+/// `0x0019c8d4..0x0019c908` and retail `sh2pc.exe` `0x0051c100` pass `pos / 500.0`, turning
+/// `dist_ofs = 0.1` into a `50.0` mm deadband and yielding an `800.0` mm braking onset for
+/// `CAM_MV_PRM_NRML`); `vel` in mm/s; `accel`, `side_dec` in mm/s²; `max_spd` in mm/s; `dt` in seconds.
 #[allow(clippy::too_many_arguments)]
 pub fn vw_renewal_xz_velocity_to_target_pos(
     dist_ofs: f32,
@@ -377,7 +376,8 @@ pub fn vc_get_use_watch_and_cam_mv_param(
 }
 
 /// Integrates camera position toward `cam_tgt_pos` using velocity-bounded XZ/Y kinematics
-/// (`SLUS_202.28` `vcRenewalCamData` `0x0019c840` + retail `sh2pc.exe` `0x0051c100`).
+/// (`SLUS_202.28` `vcRenewalCamData` `0x0019c840`, XZ `/ 500.0` at `0x0019c8d4..0x0019c908` +
+/// retail `sh2pc.exe` `0x0051c100`).
 pub fn vc_renewal_cam_data(
     cam_pos: &mut Vec3,
     cam_tgt_pos: Vec3,
@@ -395,6 +395,11 @@ pub fn vc_renewal_cam_data(
     }
 
     let prev_delta = cam_tgt_pos - *cam_pos;
+    // Both `SLUS_202.28` (`0x0019c8d4..0x0019c908`, `div.s` by `0x43fa0000` = `500.0`) and
+    // retail `sh2pc.exe` (`0x0051c100`, `* 0.002`) divide `cur_pos` and `tgt_pos` by `500.0`
+    // across XZ and Y before passing them into `vwRenewalXZVelocityToTargetPos` / `vwRetNewVelocityToTargetVal`.
+    let scaled_cur = *cam_pos / 500.0;
+    let scaled_tgt = cam_tgt_pos / 500.0;
     vw_renewal_xz_velocity_to_target_pos(
         0.1,
         prm.accel_xz,
@@ -402,14 +407,14 @@ pub fn vc_renewal_cam_data(
         prm.accel_xz * 0.4,
         6000.0,
         cam_velo,
-        *cam_pos,
-        cam_tgt_pos,
+        scaled_cur,
+        scaled_tgt,
         dt,
     );
     cam_velo.y = vw_ret_new_velocity_to_target_val(
         cam_velo.y,
-        cam_pos.y / 500.0,
-        cam_tgt_pos.y / 500.0,
+        scaled_cur.y,
+        scaled_tgt.y,
         prm.accel_y,
         prm.max_spd_y,
         prm.accel_y,

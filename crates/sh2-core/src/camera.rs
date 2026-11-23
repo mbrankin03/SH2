@@ -353,7 +353,12 @@ impl Ps2CameraController {
             ),
         };
 
-        // 2. Camera target renewal (`vcAutoRenewalCamTgtPos` + `vcFlipFromCamExclusionArea` + `vcAdjTgtMvVecYByCurNearRoad`).
+        // 2. Camera target renewal (`vcAutoRenewalCamTgtPos` `0x00199f80` +
+        //    `vcFlipFromCamExclusionArea` + `vcAdjTgtMvVecYByCurNearRoad`).
+        //    On warp (`_DAT_010e5ad8 & 0x10`), `SLUS_202.28` (`vc_main.c:2387-2446`) copies
+        //    `ideal_pos` into `cam_tgt_pos` and still runs `vcMakeBasicCamTgtMvVec`,
+        //    `vcCamTgtMvVecIsFlipedFromCharaFront`, and `vcAdjTgtMvVecYByCurNearRoad` before
+        //    applying `cam_tgt_pos += mv_vec`.
         let mut cam_tgt_pos = if warp {
             self.raw_state.old_cam_excl_area_r = -1.0;
             ideal_pos
@@ -365,52 +370,59 @@ impl Ps2CameraController {
             )
         };
 
-        if !warp {
-            let max_xz = chase::vc_ret_max_tgt_mv_xz_len(
-                chara_mv_spd,
-                chara_ang_spd_y,
-                cam_prm.max_spd_xz,
+        let max_xz = chase::vc_ret_max_tgt_mv_xz_len(
+            chara_mv_spd,
+            chara_ang_spd_y,
+            cam_prm.max_spd_xz,
+            is_outdoor,
+            dt,
+        );
+        let mut mv_vec =
+            chase::vc_make_basic_cam_tgt_mv_vec(max_xz, ideal_pos, cam_tgt_pos, dt, warp);
+        if matches!(
+            rec.cam_mv_type,
+            CameraMovementType::Chase | CameraMovementType::LocusCircle
+        ) && (rec.flags & VC_RD_NO_FRONT_FLIP_F) == 0
+        {
+            exclusion::vc_cam_tgt_mv_vec_is_fliped_from_chara_front(
+                max_xz,
+                &mut mv_vec,
+                cam_tgt_pos,
+                player_pos,
+                player_yaw,
+                &mut self.raw_state.old_cam_excl_area_r,
+                &rec.lim_rd,
+                rec.area_size_type,
                 is_outdoor,
+                &self.aspect_rail_config,
                 dt,
             );
-            let mut mv_vec =
-                chase::vc_make_basic_cam_tgt_mv_vec(max_xz, ideal_pos, cam_tgt_pos, dt, false);
-            if matches!(
-                rec.cam_mv_type,
-                CameraMovementType::Chase | CameraMovementType::LocusCircle
-            ) && (rec.flags & VC_RD_NO_FRONT_FLIP_F) == 0
-            {
-                exclusion::vc_cam_tgt_mv_vec_is_fliped_from_chara_front(
-                    max_xz,
-                    &mut mv_vec,
-                    cam_tgt_pos,
-                    player_pos,
-                    player_yaw,
-                    &mut self.raw_state.old_cam_excl_area_r,
-                    &rec.lim_rd,
-                    rec.area_size_type,
-                    is_outdoor,
-                    &self.aspect_rail_config,
-                    dt,
-                );
-            }
-            if rec.cam_mv_type != CameraMovementType::ThroughDoor {
-                chase::vc_adj_tgt_mv_vec_y_by_cur_near_road(
-                    &mut mv_vec,
-                    rec,
-                    cam_tgt_pos,
-                    player_pos,
-                    chara_top_y,
-                    ideal_cam_pos_h,
-                    is_outdoor,
-                );
-            }
+        }
+        if rec.cam_mv_type != CameraMovementType::ThroughDoor {
+            chase::vc_adj_tgt_mv_vec_y_by_cur_near_road(
+                &mut mv_vec,
+                rec,
+                cam_tgt_pos,
+                player_pos,
+                chara_top_y,
+                ideal_cam_pos_h,
+                is_outdoor,
+            );
+        }
+        self.raw_state.cam_tgt_mv_ang_y = mv_vec.x.atan2(mv_vec.z);
+        if dt <= 0.0 && !warp {
+            self.raw_state.cam_tgt_velo[0] = 0.0;
+            self.raw_state.cam_tgt_velo[2] = 0.0;
+            self.raw_state.cam_tgt_spd = 0.0;
+        } else {
             cam_tgt_pos += mv_vec;
             if dt > 0.0 {
                 let tgt_vel = mv_vec / dt;
                 self.raw_state.cam_tgt_velo = [tgt_vel.x, tgt_vel.y, tgt_vel.z, 0.0];
-                self.raw_state.cam_tgt_mv_ang_y = mv_vec.x.atan2(mv_vec.z);
                 self.raw_state.cam_tgt_spd = tgt_vel.x.hypot(tgt_vel.z);
+            } else {
+                self.raw_state.cam_tgt_velo = [0.0; 4];
+                self.raw_state.cam_tgt_spd = 0.0;
             }
         }
         self.raw_state.cam_tgt_pos = [cam_tgt_pos.x, cam_tgt_pos.y, cam_tgt_pos.z, 1.0];
@@ -917,7 +929,7 @@ mod tests {
             flags,
             area_size_type: AreaSizeType::Wide,
             rd_type: RoadType::Event,
-            mv_y_type: 0,
+            mv_y_type: 3,
             ofs_watch_hy: -300.0,
             trace_btm_hy: 0.0,
             rd_dir_type: 0,

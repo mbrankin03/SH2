@@ -114,6 +114,9 @@ fn test_intra_room_transition_policies_not_warp_veto_and_door_reset() {
     ];
     ctrl.set_cam_file(Some(CamFile { records }));
     ctrl.reset_to_player(Vec3::new(-250.0, 0.0, 0.0), 0.0);
+    // At 60 Hz (`40 mm/tick`), 2 ticks advance `cam_tgt_pos` 80 mm past the authentic 50 mm
+    // `vcRenewalCamData` (`0x0019c8d4..0x0019c908`) XZ deadband so eye begins smooth blend.
+    ctrl.tick(Vec3::new(250.0, 0.0, 0.0), 0.0, 0.0, 0.0);
     ctrl.tick(Vec3::new(250.0, 0.0, 0.0), 0.0, 0.0, 0.0);
     assert!(ctrl.curr_snapshot.eye.x > -500.0 && ctrl.curr_snapshot.eye.x < 500.0);
     assert!((ctrl.prev_snapshot.eye.x - (-500.0)).abs() < 1e-3);

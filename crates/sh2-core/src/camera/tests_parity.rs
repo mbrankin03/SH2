@@ -82,10 +82,66 @@ fn test_vw_calc_velocity_and_angular_golden_vectors() {
     assert!(vel.x < 2400.0, "lateral velocity must be capped and damped");
     assert!(vel.z > 0.0, "forward velocity must accelerate toward +Z");
 
-    // 4. vcRenewalCamData (0x0019c840) + vcAdjCamOfsAngByOfsAngSpd (0x0019d440) convergence.
+    // 4. vcRenewalCamData (0x0019c840, XZ / 500.0 at 0x0019c8d4..0x0019c908 + sh2pc.exe 0x0051c100):
+    //    Verify authentic braking envelope (~800 mm onset, 50 mm XZ deadband for CAM_MV_PRM_NRML).
+    let mut brake_pos = Vec3::ZERO;
+    let mut brake_vel = Vec3::new(0.0, 0.0, CAM_MV_PRM_NRML.max_spd_xz);
+    let mut mv_ang = 0.0;
+    // Above 800 mm (e.g. 900 mm): lim_len = 1600 * (900/500 - 0.1) = 2720 > 2400 -> holds max_spd_xz.
+    vc_renewal_cam_data(
+        &mut brake_pos,
+        Vec3::new(0.0, 0.0, 900.0),
+        &mut brake_vel,
+        &mut mv_ang,
+        &CAM_MV_PRM_NRML,
+        false,
+        1.0 / 60.0,
+    );
+    assert!(
+        (brake_vel.z - CAM_MV_PRM_NRML.max_spd_xz).abs() < 1e-3,
+        "above 800 mm braking onset, speed should hold at max_spd_xz (got {})",
+        brake_vel.z
+    );
+
+    // Inside 800 mm braking envelope (450 mm): lim_len = 1600 * (450/500 - 0.1) = 1280 mm/s.
+    brake_pos = Vec3::ZERO;
+    brake_vel = Vec3::new(0.0, 0.0, CAM_MV_PRM_NRML.max_spd_xz);
+    vc_renewal_cam_data(
+        &mut brake_pos,
+        Vec3::new(0.0, 0.0, 450.0),
+        &mut brake_vel,
+        &mut mv_ang,
+        &CAM_MV_PRM_NRML,
+        false,
+        1.0 / 60.0,
+    );
+    assert!(
+        (brake_vel.z - 1280.0).abs() < 1e-2,
+        "at 450 mm, braking envelope must cap XZ speed to 1280 mm/s (got {})",
+        brake_vel.z
+    );
+
+    // Inside 50 mm deadband (40 mm <= 0.1 * 500): lim_len = 0 -> XZ velocity clamps to 0.
+    brake_pos = Vec3::ZERO;
+    brake_vel = Vec3::new(0.0, 0.0, 500.0);
+    vc_renewal_cam_data(
+        &mut brake_pos,
+        Vec3::new(0.0, 0.0, 40.0),
+        &mut brake_vel,
+        &mut mv_ang,
+        &CAM_MV_PRM_NRML,
+        false,
+        1.0 / 60.0,
+    );
+    assert!(
+        brake_vel.x.hypot(brake_vel.z) < 1e-4,
+        "inside 50 mm deadband, XZ velocity must clamp to 0 (got {:?})",
+        brake_vel
+    );
+
+    // Full convergence check: Y converges to < 1 mm; XZ settles at the authentic 50 mm deadband.
     let mut pos = Vec3::ZERO;
     let mut cvel = Vec3::ZERO;
-    let mut mv_ang = 0.0;
     let tgt = Vec3::new(400.0, -300.0, 600.0);
     for _ in 0..180 {
         vc_renewal_cam_data(
@@ -98,7 +154,17 @@ fn test_vw_calc_velocity_and_angular_golden_vectors() {
             1.0 / 60.0,
         );
     }
-    assert!((pos - tgt).length() < 1.0);
+    let xz_err = (tgt.x - pos.x).hypot(tgt.z - pos.z);
+    assert!(
+        (pos.y - tgt.y).abs() < 1.0,
+        "Y should converge to < 1 mm (got {})",
+        (pos.y - tgt.y).abs()
+    );
+    assert!(
+        xz_err <= 51.0,
+        "XZ should converge to the 50 mm deadband (got {} mm)",
+        xz_err
+    );
 
     let mut ofs_ang = Vec3::ZERO;
     let mut ofs_spd = Vec3::ZERO;
@@ -441,4 +507,50 @@ fn test_yxz_matrix_renewal_base_cam_ang_world_orientation_continuity() {
     let (composed_mat, _) = vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang(base_ang, tgt_ofs);
     let expected_fwd = (watch_tgt - cam_pos).normalize();
     assert!((composed_mat.z_axis - expected_fwd).length() < 1e-5);
+}
+
+#[test]
+fn test_fixed_angle_warp_clamps_y_via_adj_tgt_mv_vec_y() {
+    use crate::camera::Ps2CameraController;
+    use sh2_assets::formats::cam::{CamFile, VC_RD_WARP_IN_F};
+
+    // FixedAngle road with `mv_y_type = 3` (`lim_rd.max_hy = -1800.0`, `lim_rd.min_hy = -1200.0`).
+    // `vcMakeIdealCamPosForFixAngCam` sets `ideal_pos.y = chara_pos.y` (floor = 50.0), so on warp
+    // `vcAutoRenewalCamTgtPos` (0x00199f80) MUST still run `vcAdjTgtMvVecYByCurNearRoad` and clamp
+    // `cam_tgt_pos.y` (and `cam_pos.y`) into `[-1800.0, -1200.0]` instead of snapping to `50.0`.
+    let fixed_rec = RoadRecord {
+        lim_sw: rect_area(-4000.0, 4000.0, -4000.0, 4000.0, 500.0, -3000.0),
+        lim_rd: rect_area(-3000.0, 3000.0, -3000.0, 3000.0, -1200.0, -1800.0),
+        flags: VC_RD_WARP_IN_F,
+        cam_mv_type: CamMovementType::FixedAngle,
+        mv_y_type: 3,
+        projection: 448.0,
+        params: CamMovementParams::FixedAngle(FixAngCamParam {
+            ang_x: -0.2,
+            ang_y: 0.0,
+            ofs_hy: -200.0,
+            cam2wth_dist: 2000.0,
+        }),
+        ..RoadRecord::default()
+    };
+
+    let mut ctrl = Ps2CameraController::new();
+    ctrl.set_cam_file(Some(CamFile {
+        records: vec![fixed_rec],
+    }));
+
+    // Warp via `reset_to_player` (`warp = true`, `dt = 0.0`).
+    ctrl.reset_to_player(Vec3::new(0.0, 50.0, 0.0), 0.0);
+    assert!(
+        (ctrl.curr_snapshot.eye.y - (-1200.0)).abs() < 1e-3,
+        "FixedAngle warp must clamp Y via vcAdjTgtMvVecYByCurNearRoad to -1200.0, not floor 50.0 (got {})",
+        ctrl.curr_snapshot.eye.y
+    );
+    assert!(
+        (ctrl.raw_state.cam_tgt_pos[1] - (-1200.0)).abs() < 1e-3,
+        "cam_tgt_pos.y must also be clamped to -1200.0 (got {})",
+        ctrl.raw_state.cam_tgt_pos[1]
+    );
+    assert!(ctrl.raw_state.cam_tgt_velo.iter().all(|v| v.is_finite()));
+    assert!(ctrl.raw_state.cam_tgt_spd.is_finite());
 }

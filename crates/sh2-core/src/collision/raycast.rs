@@ -1,16 +1,22 @@
-//! Camera ray occlusion clamping and line-of-sight raycasts (`clCheckHitEyes`).
+//! Camera ray occlusion clamping and 3D line-of-sight raycasts (`clCheckHitEyes`).
 //!
-//! In Silent Hill 2, the 3rd-person chase camera uses raycast intersection against the static
-//! and dynamic geometry to guarantee the camera does not pass through walls or clip into
-//! out-of-bounds void:
-//! - Casts from character target $(tx, tz)$ to camera target $(cx, cz)$ at height $y$.
-//! - Tests against active wall segments in $XZ$.
-//! - When an intersection $t \in [0, 1]$ is hit, the camera is clamped to stop slightly in front
-//!   of the wall (`best - 0.08` margin).
+//! # Ground Truth
+//! - `SLUS_202.28` `Collision/cl_main.c`:
+//!   - `clCheckHitEyes` (`0x00138ea0`): dispatches `mode == 0` (`NoThru`), `mode == 1` (`Thru`), `mode == 2` (`AllNoThru`).
+//!   - `clCheckHitEyesOnlyFloor` (`0x00138f10`), `clCheckHitEyesOnlyFloorThru` (`0x00139010`),
+//!     `clCheckHitEyesOnlyWall` (`0x00139110`), `clCheckHitEyesOnlyFloorCeil` (`0x001392c0`).
+//!   - `clCheckHitEyeVectorWall` (`0x00139b90`: skips `Thru` materials `9, 11, 12`),
+//!     `clCheckHitSwordVectorWall` (`0x001367f0`: skips material `12`),
+//!     `clCheckHitNoThruVectorWall` (`0x00136990`: skips nothing).
+//!   - `clCheckHitEyeVectorBGColumn` (`0x00139d40`), `clCheckHitEyeVectorCharacter` (`0x0013a590`).
+//! - `SLUS_202.28` `Collision/cl_calc2.c`:
+//!   - `clCheckSubLineToPlane` (`0x001315e0`), `clCheckSubLineToPlane3` (`0x00131830`),
+//!     `clCheckSubLineToColumnPlus` (`0x00131a10`).
 
 use glam::Vec3;
-use sh2_assets::formats::cld::{FloorTriangle, WallSegment};
+use sh2_assets::formats::cld::{FloorTriangle, HitPolyColumn, HitPolyPlane, WallSegment};
 
+use super::character::CharacterId;
 use crate::modern_camera::CharacterHeadRigSpec;
 
 /// Vertical offset from James's feet (`+Y` downward, `500.0` SH2 units = `1.0 m`) to ear/eye anchor height
@@ -51,23 +57,293 @@ pub struct RayHit {
     pub material: u32,
 }
 
+/// Raycast mode for `clCheckHitEyes` (`SLUS_202.28` `0x00138ea0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum EyeRayMode {
+    /// `mode == 0` (`clCheckHitEyeVectorNoThru` `0x00139680`): skips only invisible walk boundary `material == 12`.
+    /// Tests dynamic walls/floors, static `fld`/`wld`/`ced`, BG columns, and characters.
+    NoThru = 0,
+    /// `mode == 1` (`clCheckHitEyeVector` `0x00139420`): skips see-through `Thru` materials `9, 11, 12`.
+    /// Tests dynamic walls/floors, static `fld`/`wld`/`ced`, BG columns, and characters.
+    Thru = 1,
+    /// `mode == 2` (`clCheckHitEyeVectorAllNoThru` `0x001398e0`): skips NO materials and also tests `swd` (side walls).
+    /// Tests dynamic walls/floors, static `fld`/`wld`/`swd`/`ced`, BG columns, and characters.
+    AllNoThru = 2,
+}
+
+/// Geometry category hit by `clCheckHitEyes` (`SLUS_202.28` `cl_main.c` `*param_1` values `1, 2, 3`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum EyeHitKind {
+    /// Static or dynamic `_CL_HITPOLY_PLANE` (floor, wall, ceiling, or side wall; `*param_1 = 1`).
+    Plane = 1,
+    /// Static `_CL_HITPOLY_COLUMN` background pillar (`*param_1 = 2`).
+    BgColumn = 2,
+    /// Active character hit cylinder (`*param_1 = 3`).
+    Character = 3,
+}
+
+/// Full 3D raycast result matching `_CL_VHIT_RESULT` in `SLUS_202.28` `Collision/cl_main.c`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EyeRayHit {
+    /// Geometry category hit (`Plane = 1`, `BgColumn = 2`, `Character = 3`).
+    pub kind: EyeHitKind,
+    /// Exact 3D contact point (`+0x10..+0x1c`).
+    pub point: Vec3,
+    /// Surface normal (`+0x20..+0x2c`, plane equation normal for planes, `Vec3::ZERO` for columns/characters).
+    pub normal: Vec3,
+    /// Normalized ray parameter `t` in `[0.0, 1.0]` along `origin -> target`.
+    pub t: f32,
+    /// Squared 3D distance from `origin` to `point` (`fStack_4` in `cl_main.c`).
+    pub dist_sq: f32,
+    /// Raw `.cld` plane material (`0` for columns/characters).
+    pub material: u32,
+    /// Character ID when `kind == EyeHitKind::Character`.
+    pub character_id: Option<CharacterId>,
+}
+
+/// Returns `true` when `clCheckHitEyes` skips a plane with `raw_material` under `mode`.
+///
+/// Ground truth:
+/// - `Thru` (`clCheckHitEyeVectorWall` `0x00139b90`): skips `9, 11, 12`.
+/// - `NoThru` (`clCheckHitSwordVectorWall` `0x001367f0`): skips `12` (`0xc`).
+/// - `AllNoThru` (`clCheckHitNoThruVectorWall` `0x00136990`): skips nothing.
+#[inline]
+pub const fn should_skip_material_for_mode(raw_material: u32, mode: EyeRayMode) -> bool {
+    match mode {
+        EyeRayMode::Thru => is_cld_material_thru(raw_material),
+        EyeRayMode::NoThru => (raw_material & 0x80) == 0 && raw_material == 12,
+        EyeRayMode::AllNoThru => false,
+    }
+}
+
+/// Exact 3D segment-vs-`_CL_HITPOLY_PLANE` intersection matching `clCheckSubLineToPlane3` (`0x00131830`,
+/// triangle) and `clCheckSubLineToPlane` (`0x001315e0`, quad) in `SLUS_202.28` `Collision/cl_calc2.c`.
+///
+/// Returns `(t, hit_point, normal)` if the 3D segment `origin -> target` pierces `plane`.
+pub fn cl_check_sub_line_to_plane(
+    origin: Vec3,
+    target: Vec3,
+    plane: &HitPolyPlane,
+) -> Option<(f32, Vec3, Vec3)> {
+    let v0 = Vec3::new(plane.p[0][0], plane.p[0][1], plane.p[0][2]);
+    let v1 = Vec3::new(plane.p[1][0], plane.p[1][1], plane.p[1][2]);
+    let v2 = Vec3::new(plane.p[2][0], plane.p[2][1], plane.p[2][2]);
+    let is_quad = plane.shape != 0;
+
+    // AABB early-out matching VU0 `_vmax`/`_vmini` reject in `0x001315e0` / `0x00131830`
+    let mut pmin = v0.min(v1).min(v2);
+    let mut pmax = v0.max(v1).max(v2);
+    if is_quad {
+        let v3 = Vec3::new(plane.p[3][0], plane.p[3][1], plane.p[3][2]);
+        pmin = pmin.min(v3);
+        pmax = pmax.max(v3);
+    }
+    let rmin = origin.min(target);
+    let rmax = origin.max(target);
+    if pmax.x < rmin.x
+        || pmax.y < rmin.y
+        || pmax.z < rmin.z
+        || rmax.x < pmin.x
+        || rmax.y < pmin.y
+        || rmax.z < pmin.z
+    {
+        return None;
+    }
+
+    // Plane normal `n = (v2 - v0) × (v1 - v0)` (`clCalcPlaneEquation`)
+    let e01 = v1 - v0;
+    let e02 = v2 - v0;
+    let normal = e02.cross(e01);
+    let normal_len_sq = normal.length_squared();
+    if normal_len_sq < 1e-10 {
+        return None;
+    }
+
+    let dir = target - origin;
+    let denom = normal.dot(dir);
+    if denom.abs() < 1e-8 {
+        return None;
+    }
+
+    // Plane equation `n · x + d = 0`, where `d = -(n · v0)`
+    let d0 = normal.dot(origin - v0);
+    let d1 = normal.dot(target - v0);
+    // Segment must straddle or touch the plane (`d0` and `d1` opposite signs or zero)
+    if (d0 > 0.0 && d1 > 0.0) || (d0 < 0.0 && d1 < 0.0) {
+        return None;
+    }
+
+    let t = (-d0 / denom).clamp(0.0, 1.0);
+    let hit_pt = origin + dir * t;
+
+    // Test point-in-triangle (or 2-triangle quad `v0,v1,v2` + `v0,v2,v3`) using barycentric / edge cross signs
+    let point_in_tri = |a: Vec3, b: Vec3, c: Vec3| -> bool {
+        let ab = b - a;
+        let bc = c - b;
+        let ca = a - c;
+        let ap = hit_pt - a;
+        let bp = hit_pt - b;
+        let cp = hit_pt - c;
+        let c0 = ab.cross(ap).dot(normal);
+        let c1 = bc.cross(bp).dot(normal);
+        let c2 = ca.cross(cp).dot(normal);
+        const EPS: f32 = 1e-3;
+        let all_non_neg = c0 >= -EPS && c1 >= -EPS && c2 >= -EPS;
+        let all_non_pos = c0 <= EPS && c1 <= EPS && c2 <= EPS;
+        all_non_neg || all_non_pos
+    };
+
+    let inside = if is_quad {
+        let v3 = Vec3::new(plane.p[3][0], plane.p[3][1], plane.p[3][2]);
+        point_in_tri(v0, v1, v2) || point_in_tri(v0, v2, v3)
+    } else {
+        point_in_tri(v0, v1, v2)
+    };
+
+    if inside {
+        Some((t, hit_pt, normal.normalize_or_zero()))
+    } else {
+        None
+    }
+}
+
+/// Exact 3D segment-vs-vertical cylinder intersection matching `clCheckSubLineToColumnPlus`
+/// (`SLUS_202.28` `0x00131a10`).
+///
+/// Cylinder is centered at `(cx, cz)` with radius `r`, spanning `[y_top .. y_bottom]` (`+Y` downward,
+/// so `y_top <= y_bottom`). Returns `(t, hit_point)` for the closest contact in `[0.0, 1.0]`.
+pub fn cl_check_sub_line_to_column_plus(
+    origin: Vec3,
+    target: Vec3,
+    cx: f32,
+    cz: f32,
+    y_top: f32,
+    y_bottom: f32,
+    radius: f32,
+) -> Option<(f32, Vec3)> {
+    if radius <= 0.0 {
+        return None;
+    }
+
+    // Vertical AABB quick reject (`0x00131a10`)
+    let rmin_y = origin.y.min(target.y);
+    let rmax_y = origin.y.max(target.y);
+    if rmax_y < y_top || rmin_y > y_bottom {
+        return None;
+    }
+
+    let ox = origin.x - cx;
+    let oz = origin.z - cz;
+    let dx = target.x - origin.x;
+    let dy = target.y - origin.y;
+    let dz = target.z - origin.z;
+
+    let a = dx * dx + dz * dz;
+    let r_sq = radius * radius;
+    let c = ox * ox + oz * oz - r_sq;
+
+    // Origin already inside cylinder in XZ: check Y overlap
+    if c <= 0.0 {
+        if origin.y >= y_top && origin.y <= y_bottom {
+            return Some((0.0, origin));
+        }
+        // Check cap intersection if moving vertically into [y_top, y_bottom]
+        if dy.abs() > 1e-8 {
+            let cap_y = if origin.y < y_top { y_top } else { y_bottom };
+            let t = (cap_y - origin.y) / dy;
+            if (0.0..=1.0).contains(&t) {
+                let hx = ox + dx * t;
+                let hz = oz + dz * t;
+                if hx * hx + hz * hz <= r_sq {
+                    return Some((t, origin + Vec3::new(dx, dy, dz) * t));
+                }
+            }
+        }
+        return None;
+    }
+
+    if a < 1e-10 {
+        return None;
+    }
+
+    let b = 2.0 * (ox * dx + oz * dz);
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+
+    let sqrt_disc = disc.sqrt();
+    let t0 = (-b - sqrt_disc) / (2.0 * a);
+    let t1 = (-b + sqrt_disc) / (2.0 * a);
+
+    // Check closest cylinder wall hit first
+    for t in [t0, t1] {
+        if (0.0..=1.0).contains(&t) {
+            let hy = origin.y + dy * t;
+            if hy >= y_top && hy <= y_bottom {
+                return Some((t, origin + Vec3::new(dx, dy, dz) * t));
+            }
+        }
+    }
+
+    // Check top/bottom cap intersections (`0x00131cc0..0x00131d40`)
+    if dy.abs() > 1e-8 {
+        let mut best_cap: Option<(f32, Vec3)> = None;
+        for cap_y in [y_top, y_bottom] {
+            let t = (cap_y - origin.y) / dy;
+            if (0.0..=1.0).contains(&t) {
+                let hx = ox + dx * t;
+                let hz = oz + dz * t;
+                if hx * hx + hz * hz <= r_sq && best_cap.is_none_or(|(bt, _)| t < bt) {
+                    best_cap = Some((t, origin + Vec3::new(dx, dy, dz) * t));
+                }
+            }
+        }
+        if best_cap.is_some() {
+            return best_cap;
+        }
+    }
+
+    None
+}
+
+/// Convenience wrapper for `cl_check_sub_line_to_column_plus` on a static `.cld` `HitPolyColumn`.
+#[inline]
+pub fn intersect_segment_bg_column(
+    origin: Vec3,
+    target: Vec3,
+    col: &HitPolyColumn,
+) -> Option<(f32, Vec3)> {
+    cl_check_sub_line_to_column_plus(
+        origin,
+        target,
+        col.center_x,
+        col.center_z,
+        col.y_top,
+        col.y_bottom,
+        col.radius,
+    )
+}
+
 /// Filter options for raycast queries.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RaycastFilter {
-    /// Include ceiling / high overhead geometry (group 2). Default is false.
+    /// Include ceiling / high overhead geometry (group 2). Default is `true` (matching `clCheckHitEyeVector`).
     pub include_ceilings: bool,
-    /// Include dynamic stage obstacles. Default is true.
+    /// Include dynamic stage obstacles. Default is `true`.
     pub include_dynamic: bool,
-    /// Stop margin offset (e.g. 0.08 for authentic PS2 camera clamping).
+    /// Optional pullback margin along the ray. Default is `0.0` for 1:1 PS2 `clCheckHitEyes` (`0x00138ea0`) parity.
     pub safety_margin: f32,
 }
 
 impl Default for RaycastFilter {
     fn default() -> Self {
         Self {
-            include_ceilings: false,
+            include_ceilings: true,
             include_dynamic: true,
-            safety_margin: 0.08,
+            safety_margin: 0.0,
         }
     }
 }
@@ -105,9 +381,10 @@ pub fn intersect_segment_xz(
     }
 }
 
-/// Clamp camera position along a ray from subject `target` to `camera_pos` (`clCheckHitEyes` / `col_clamp_ray`).
+/// Clamp camera position along a 3D ray from subject `target` to `camera_pos` (`clCheckHitEyes` / `0x00138ea0`).
 ///
-/// Stops short of the closest obstacle by `filter.safety_margin`.
+/// Skips `Thru` materials `9, 11, 12` (`clCheckHitEyeVectorWall` `0x00139b90`) and returns the exact
+/// 3D contact point (or pulled back by `filter.safety_margin`, which defaults to `0.0` for 1:1 PS2 parity).
 pub fn clamp_camera_ray<'a, I>(
     target: Vec3,
     camera_pos: Vec3,
@@ -118,21 +395,23 @@ where
     I: Iterator<Item = &'a WallSegment>,
 {
     let mut best_t = 1.0f32;
-    let y = camera_pos.y;
+    let dy = camera_pos.y - target.y;
 
     for w in walls {
         if !filter.include_ceilings && w.group == 2 {
             continue;
         }
-
-        // Check if wall covers the ray height Y
-        if !(w.y_top <= y && w.y_bottom >= y) {
+        if is_cld_material_thru(w.material) {
             continue;
         }
 
         if let Some((t, _norm)) =
             intersect_segment_xz(target.x, target.z, camera_pos.x, camera_pos.z, w)
         {
+            let y_at_hit = target.y + dy * t;
+            if !(w.y_top <= y_at_hit && w.y_bottom >= y_at_hit) {
+                continue;
+            }
             if t >= 0.0 && t < best_t {
                 best_t = t;
             }
@@ -140,7 +419,6 @@ where
     }
 
     if best_t < 1.0 {
-        // Apply authentic PS2 safety margin
         let clamped_t = if best_t > filter.safety_margin {
             best_t - filter.safety_margin
         } else {
@@ -149,7 +427,7 @@ where
 
         Vec3::new(
             target.x + (camera_pos.x - target.x) * clamped_t,
-            camera_pos.y,
+            target.y + dy * clamped_t,
             target.z + (camera_pos.z - target.z) * clamped_t,
         )
     } else {

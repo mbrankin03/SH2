@@ -395,6 +395,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Enhanced, "Camera Mode") => {
             "Classic PS2 Rail camera vs Over-the-Shoulder 3D vs First-Person immersion"
         }
+        (OptionsTab::Enhanced, "Secondary Cloth Physics") => {
+            "Native procedural spring-damper jacket/skirt physics vs Original PS2 keyframed cloth"
+        }
         (OptionsTab::Enhanced, "Audio Pack") => {
             "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"
         }

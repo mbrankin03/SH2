@@ -295,6 +295,38 @@ impl SecondaryBonePhysics {
         }
     }
 
+    /// Advances the simulation clock by `dt` seconds only when `enabled` is `true`
+    /// (`GameOptions::enable_secondary_physics`, default `false` for 1:1 PS2 parity).
+    ///
+    /// When `enabled` is `false`, resets all spring deflections to resting zero so toggling
+    /// the option off at runtime immediately restores the authentic PS2 keyframed pose.
+    pub fn step_if_enabled(
+        &mut self,
+        enabled: bool,
+        dt: f32,
+        current_position: Vec3,
+        current_yaw: f32,
+    ) {
+        if enabled {
+            self.step(dt, current_position, current_yaw);
+        } else {
+            self.reset(current_position, current_yaw);
+        }
+    }
+
+    /// Applies sub-frame Slerp-interpolated secondary deflection transforms only when `enabled` is `true`
+    /// (`GameOptions::enable_secondary_physics`, default `false` for 1:1 PS2 parity).
+    pub fn apply_to_locals_if_enabled(
+        &self,
+        enabled: bool,
+        locals: &mut [[[f32; 4]; 4]],
+        alpha: f32,
+    ) {
+        if enabled {
+            self.apply_to_locals_interpolated(locals, alpha);
+        }
+    }
+
     /// Resets all bone deflections and velocities to resting state.
     pub fn reset(&mut self, current_position: Vec3, current_yaw: f32) {
         self.last_position = current_position;
@@ -351,5 +383,39 @@ mod tests {
         sim_james.apply_to_locals(&mut locals);
         // Bone 11 should have been modified
         assert_ne!(locals[11][0][0], 0.0);
+    }
+
+    #[test]
+    fn test_secondary_physics_native_upgrade_toggle_gate() {
+        use crate::config::{AppConfig, EnhancedPreset, GameOptions};
+
+        // Default config must disable synthetic secondary physics for 1:1 PS2 parity
+        assert!(!GameOptions::default().enable_secondary_physics);
+        let mut cfg = AppConfig::default();
+        cfg.apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
+        assert!(!cfg.game.enable_secondary_physics);
+        cfg.apply_enhanced_preset(EnhancedPreset::NativeEnhanced);
+        assert!(cfg.game.enable_secondary_physics);
+
+        let mut sim = SecondaryBonePhysics::for_james();
+        let dt = 1.0 / 60.0;
+        sim.step_if_enabled(false, dt, Vec3::ZERO, 0.0);
+        sim.step_if_enabled(false, dt, Vec3::new(0.0, 0.0, 50.0), 0.5);
+
+        let mut locals = vec![
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
+            40
+        ];
+        let orig = locals.clone();
+        sim.apply_to_locals_if_enabled(false, &mut locals, 1.0);
+        assert_eq!(
+            locals, orig,
+            "Disabled secondary physics must leave bind pose matrices untouched"
+        );
     }
 }

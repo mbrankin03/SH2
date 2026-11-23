@@ -648,16 +648,29 @@ fn evaluate_player_skinning(
                 }
             }
 
+            let secondary_physics_enabled = state
+                .menu_ctrl
+                .options_menu
+                .draft_config
+                .game
+                .enable_secondary_physics;
             if !is_paused && ticks_processed > 0 {
                 let dt_physics = 1.0 / 60.0;
                 for _ in 0..ticks_processed {
-                    c.secondary_physics
-                        .step(dt_physics, auth_player_pos, auth_player_yaw);
+                    c.secondary_physics.step_if_enabled(
+                        secondary_physics_enabled,
+                        dt_physics,
+                        auth_player_pos,
+                        auth_player_yaw,
+                    );
                 }
             }
             c.dynamic_locals.copy_from_slice(&c.bind_locals);
-            c.secondary_physics
-                .apply_to_locals_interpolated(&mut c.dynamic_locals, alpha);
+            c.secondary_physics.apply_to_locals_if_enabled(
+                secondary_physics_enabled,
+                &mut c.dynamic_locals,
+                alpha,
+            );
 
             evaluate_pose_into(
                 &c.model.parents,

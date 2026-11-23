@@ -21,6 +21,7 @@ pub mod character;
 pub mod controller;
 pub mod dynamic;
 pub mod grid;
+pub mod probes;
 pub mod raycast;
 pub mod solver;
 
@@ -38,10 +39,23 @@ pub use dynamic::{DynamicFloor, DynamicWall};
 pub use grid::{
     SpatialGrid, OUTDOOR_BLOCK_CULL_DIST_SQ, OUTDOOR_CELL_CULL_DIST_SQ, OUTDOOR_CELL_SIZE,
 };
+pub use probes::{
+    cl_collect_chara_position_y_smooth, player_check_foot_line, player_check_side_line,
+    player_check_straight_line, player_set_height, FootLineProbeResult, PlayerHeightResult,
+    PlayerHeightState, SideLineProbeResult, StraightLineProbeResult,
+    CL_POSITION_Y_SMOOTH_SPEED_MM_PER_SEC, PLAYER_FALL_STATE_THRESHOLD_MM,
+    PLAYER_FOOT_LINE_DOWN_MM, PLAYER_FOOT_LINE_UP_MM, PLAYER_FREEFALL_GRAVITY_ACCEL,
+    PLAYER_HEIGHT_RAY_DOWN_NORMAL, PLAYER_HEIGHT_RAY_STAGE_0E, PLAYER_HEIGHT_RAY_UP_NORMAL,
+    PLAYER_SIDE_LINE_LEN_MM, PLAYER_SIDE_LINE_Y_OFFSET_MM, PLAYER_STEP_SNAP_THRESHOLD_MM,
+    PLAYER_STRAIGHT_LINE_LEN_MM, PLAYER_STRAIGHT_LINE_LOW_Y_OFFSET_MM,
+    PLAYER_STRAIGHT_LINE_SLOPE_RAD, PLAYER_WALL_AHEAD_DIST_MM, STAGE_ID_EXTENDED_HEIGHT_RAY,
+};
 pub use raycast::{
-    cld_material_barrier_weight, intersect_ray_triangle_3d, is_cld_material_thru,
-    listener_head_position, raycast_acoustic_occlusion, AcousticOcclusionHit, RayHit,
-    RaycastFilter, JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y, MIN_DISTINCT_BARRIER_SEPARATION_UNITS,
+    cl_check_sub_line_to_column_plus, cl_check_sub_line_to_plane, cld_material_barrier_weight,
+    intersect_ray_triangle_3d, intersect_segment_bg_column, is_cld_material_thru,
+    listener_head_position, raycast_acoustic_occlusion, should_skip_material_for_mode,
+    AcousticOcclusionHit, EyeHitKind, EyeRayHit, EyeRayMode, RayHit, RaycastFilter,
+    JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y, MIN_DISTINCT_BARRIER_SEPARATION_UNITS,
 };
 pub use solver::{
     cl_add_collect_vector, cl_add_wall_collect_vector, cl_check_column_to_bg_column_hit,

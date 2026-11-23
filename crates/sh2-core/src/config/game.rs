@@ -427,6 +427,10 @@ pub struct GameOptions {
     /// PS2 Brightness calibration level `0..=7` (`bright_main` `0x00212ec0`, `DAT_0122b386`, default `3`).
     #[serde(default = "default_brightness_level")]
     pub brightness_level: u8,
+    /// Native-upgrade procedural secondary bone spring-damper cloth/jacket/skirt physics
+    /// (`secondary_physics.rs`). Default `false` for strict 1:1 original PS2 parity (AGENTS.md Rule 3.4).
+    #[serde(default)]
+    pub enable_secondary_physics: bool,
 }
 
 /// Debug and development options.
@@ -472,6 +476,7 @@ impl Default for GameOptions {
             retreat_turn: RetreatTurnMode::default(),
             walk_run_control: WalkRunControlMode::default(),
             brightness_level: PS2_DEFAULT_BRIGHTNESS_LEVEL,
+            enable_secondary_physics: false,
         }
     }
 }

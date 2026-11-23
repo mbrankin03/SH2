@@ -88,6 +88,7 @@ impl SimulationCore {
                 health_fraction: self.scenario.health / 100.0,
                 is_maria_follower: false,
                 camera_yaw: self.scenario.player_yaw,
+                ..Default::default()
             };
             (input, true)
         } else {
@@ -124,6 +125,7 @@ impl SimulationCore {
                 health_fraction: self.scenario.health / 100.0,
                 is_maria_follower: false,
                 camera_yaw,
+                ..Default::default()
             };
             (input, is_tank)
         }

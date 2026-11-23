@@ -15,6 +15,7 @@
 
 pub mod catalog;
 pub mod overlays;
+pub mod overlays_retail;
 pub mod render;
 
 pub use catalog::{

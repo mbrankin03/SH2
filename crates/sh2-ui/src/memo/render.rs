@@ -100,11 +100,12 @@ pub fn draw_memo_reader(
             // 4. MemoPictureLayerDraw(brightness_ps2) (synchronized brightness per MemoFix.cpp)
             if let (Some(c), Some((lrgba, lw, lh))) = (ctx, textures.layer_rgba) {
                 let (nat_w, nat_h) = match entry.index {
-                    0x12 => (128.0, 128.0), // p_safe_close2.tex
-                    0x20 => (512.0, 256.0), // p_boxnumber_2.tex
-                    0x21 => (256.0, 64.0),  // p_hair_hair.tex
-                    0x23 => (64.0, 64.0),   // p_female_ring.tex
-                    0x29 => (256.0, 256.0), // p_tablet_plate.tex
+                    0x12 => (128.0, 128.0),        // p_safe_close2.tex
+                    0x20 => (512.0, 256.0),        // p_boxnumber_2.tex
+                    0x21 => (256.0, 64.0),         // p_hair_hair.tex
+                    0x23 => (64.0, 64.0),          // p_female_ring.tex
+                    0x29 => (256.0, 256.0),        // p_tablet_plate.tex
+                    0x35 | 0x36 => (512.0, 512.0), // maker.tex / teien2.tex
                     _ => (lw.max(1) as f32, lh.max(1) as f32),
                 };
                 let quads = build_memo_layer_quads(entry.index, c.flags, c.puzzle);

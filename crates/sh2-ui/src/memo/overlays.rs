@@ -70,8 +70,9 @@ impl MemoLayerQuad {
     }
 }
 
-/// Computes the 0..4 [`MemoLayerQuad`]s for the active memo entry (`MemoPictureLayerDraw`
-/// `SLUS_202.28` `0x002316d0` / `sh2pc.exe` `0x0049a6a0`).
+/// Computes the [`MemoLayerQuad`]s for the active memo entry (`MemoPictureLayerDraw`
+/// `SLUS_202.28` `0x002316d0` / `sh2pc.exe` `0x0049a6a0`), including retail PC `0x35`
+/// (Lakeview Hotel briefcase) and `0x36` (*Born From a Wish* Baldwin Mansion board).
 #[must_use]
 pub fn build_memo_layer_quads(
     catalog_index: usize,
@@ -84,6 +85,8 @@ pub fn build_memo_layer_quads(
         0x21 if flags.get(171) => vec![build_hair_quad()],
         0x23 if flags.get(227) || flags.get(228) => build_angel_ring_quads(flags),
         0x29 => build_tablet_quads(flags),
+        0x35 => crate::memo::overlays_retail::build_briefcase_quads(flags),
+        0x36 => crate::memo::overlays_retail::build_teien_quads(flags),
         _ => Vec::new(),
     }
 }

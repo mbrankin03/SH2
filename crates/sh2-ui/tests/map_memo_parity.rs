@@ -382,3 +382,59 @@ fn save_png(path: &str, rast: &TextRasterizer) {
             .expect("rgba image buffer");
     img.save(path).expect("save snapshot png");
 }
+
+#[test]
+fn retail_memo_overlays_briefcase_and_teien_golden_vectors() {
+    let puzzle = PuzzleState::default();
+
+    // 0x35 Lakeview Hotel briefcase: word_idx = 7 ("love") via flags 406, 407, 408
+    let mut bflags = EventFlags::new();
+    bflags.set(406, true);
+    bflags.set(407, true);
+    bflags.set(408, true);
+    let bquads = build_memo_layer_quads(0x35, &bflags, &puzzle);
+    assert_eq!(bquads.len(), 9); // 4 letters + 5 smudges
+                                 // Slot 0 = 'l' (letter_idx 7): pos (-711, -672) Q4, uv (384, 112, 431, 159)
+    assert!((bquads[0].corners_ps2[0].0 - (-711.0 / 16.0)).abs() < 1e-4);
+    assert!((bquads[0].corners_ps2[0].1 - (-672.0 / 16.0)).abs() < 1e-4);
+    assert_eq!(bquads[0].uv_px, [384.0, 112.0, 431.0, 159.0]);
+    // Smudge 0: (0, 0, 159, 287) + base (-2949, -2423)
+    assert!((bquads[4].corners_ps2[0].0 - (-2949.0 / 16.0)).abs() < 1e-4);
+    assert_eq!(bquads[4].uv_px, [0.0, 0.0, 159.0, 287.0]);
+
+    // 0x36 BFAW Baldwin Mansion board: cover visible (!flag 704), base tablet 0 (679),
+    // rot1 tablet 1 (689) at 90 deg (692), rot2 tablet 2 (699) at 180 deg (702)
+    let mut tflags = EventFlags::new();
+    tflags.set(679, true);
+    tflags.set(689, true);
+    tflags.set(692, true);
+    tflags.set(699, true);
+    tflags.set(702, true);
+    let tquads = build_memo_layer_quads(0x36, &tflags, &puzzle);
+    assert_eq!(tquads.len(), 4);
+    // Cover plate UV: [2560, 3312, 3056, 4592] >> 4 = [160, 207, 191, 287]
+    assert_eq!(tquads[0].uv_px, [160.0, 207.0, 191.0, 287.0]);
+    // Tablet 1 rotated 90 deg CW: TL = (x1, y0)
+    assert!((tquads[2].corners_ps2[0].0 - (1275.0 / 16.0)).abs() < 1e-4);
+    assert!((tquads[2].corners_ps2[0].1 - (-2110.0 / 16.0)).abs() < 1e-4);
+    // Tablet 2 rotated 180 deg: TL = (x1, y1)
+    assert!((tquads[3].corners_ps2[0].0 - (1275.0 / 16.0)).abs() < 1e-4);
+    assert!((tquads[3].corners_ps2[0].1 - (1218.0 / 16.0)).abs() < 1e-4);
+    // Setting flag 704 hides the board cover plate
+    tflags.set(704, true);
+    assert_eq!(build_memo_layer_quads(0x36, &tflags, &puzzle).len(), 3);
+}
+
+#[test]
+fn chizu_possession_check_hotel_employee_fallthrough() {
+    use sh2_ui::map::chizu_possession_check;
+
+    let mut flags = EventFlags::new();
+    flags.set(31, true); // Hotel Employee map only (flag 30 unset)
+    assert!(chizu_possession_check(20, &flags));
+    assert!(chizu_possession_check(23, &flags));
+    assert!(!chizu_possession_check(24, &flags)); // Otherworld requires flag 476
+    flags.set(476, true);
+    assert!(chizu_possession_check(24, &flags));
+    assert!(chizu_possession_check(27, &flags));
+}

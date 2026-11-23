@@ -181,8 +181,10 @@ pub fn chizu_possession_check(map_id: u8, flags: &EventFlags) -> bool {
         14..=15 => flags.get(27) && flags.get(215),
         16..=17 => flags.get(28),
         18..=19 => flags.get(29),
-        20..=23 => flags.get(30),
-        24..=27 => flags.get(476) && flags.get(30),
+        // sh2pc.exe 0x0049b240: cases 0x14..=0x17 & 0x18..=0x1b fall through into 0x1c..=0x1f
+        // so owning the Hotel Employee map (flag 31) also satisfies Guest map (20..=27).
+        20..=23 => flags.get(30) || flags.get(31),
+        24..=27 => flags.get(476) && (flags.get(30) || flags.get(31)),
         28..=31 => flags.get(31),
         32..=35 => flags.get(476) && flags.get(31),
         // Retail sh2pc.exe 0x0049b368: DAT_01f7aa30 & 0x40000000 -> flag 670

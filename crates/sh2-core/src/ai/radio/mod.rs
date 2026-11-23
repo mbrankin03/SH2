@@ -3,7 +3,7 @@
 //! # Ground Truth (`SLUS_202.28` & `sh2pc.exe`)
 //! - **`enSetRadioVolume`** (`SLUS_202.28` `Enemy/en_common.c` `0x00143890`):
 //!   Computes each enemy's base radio emission weight (`0.0`, `0.5`, `0.8`, or `1.0`) from its
-//!   `enLocalWork.kind` (`1..=15`, `enTransID` `0x00141b30` in `Enemy/en_common.c:452`), `sub_type`,
+//!   `enLocalWork.kind` (`0..=14`, `enTransID` `0x00141b30` in `Enemy/en_common.c:452`), `sub_type`,
 //!   spawned-active flag (`+0x04 & 0x10`), alive flag (`+0x170 & 0x01`), and downed flag (`+0x170 & 0x04`).
 //! - **`RadioNoise`** (`SLUS_202.28` `Event/event.c` `0x001ab300`) & **`enemy_track$2443`** (`0x002b9850`):
 //!   - **Mode 0 (Normal)**: Selects up to 3 nearest enemies with `dist <= 12500.0` mm and `radio_vol != 0.0`,

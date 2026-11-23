@@ -49,6 +49,7 @@ pub const RADIO_MAX_VOLUME_LEVEL: u8 = 15;
 /// - `10`: Mandarin (`0x20a`) `[1.0, 0.8, 0.0, 0.2]`
 /// - `11`: Mary Boss (`0x206`) `[0.0, 0.0, 0.0, 0.0]`
 /// - `13`/`14`: `ty2`/`fly` (`0x20c`/`0x20d`) `[0.6, 0.0, 0.0, 0.0]`
+/// - `15`: unused / `0` (`enTransID` `0x00141b30` / `sh2pc.exe` `FUN_004a5ba0` `0x004a5ba0` return `0` for unmapped IDs including `0x20f`)
 pub const ENEMY_RADIO_TRACK_WEIGHTS: [[f32; RADIO_TRACK_COUNT]; 16] = [
     [0.0, 0.0, 0.0, 0.0], // 0: none
     [1.0, 0.0, 1.0, 0.0], // 1: Lying Figure (scu)
@@ -65,11 +66,13 @@ pub const ENEMY_RADIO_TRACK_WEIGHTS: [[f32; RADIO_TRACK_COUNT]; 16] = [
     [0.0, 0.0, 0.0, 0.0], // 12: nik (0x421)
     [0.6, 0.0, 0.0, 0.0], // 13: ty2 (0x20c)
     [0.6, 0.0, 0.0, 0.0], // 14: fly (0x20d)
-    [0.0, 0.0, 0.0, 0.0], // 15: ins (0x20f)
+    [0.0, 0.0, 0.0, 0.0], // 15: unused / 0
 ];
 
-/// Converts an [`EnemySpecies`] to its `SLUS_202.28` `enLocalWork.kind` index (`1..=15`,
-/// `enTransID` `0x00141b30` in `Enemy/en_common.c:452`).
+/// Converts an [`EnemySpecies`] to its `SLUS_202.28` `enLocalWork.kind` index (`0..=14`,
+/// `enTransID` `0x00141b30` in `Enemy/en_common.c:452`, retail `sh2pc.exe` `FUN_004a5ba0`
+/// `0x004a5ba0` in `sh2pc_004a0000.c:3644`). Unmapped IDs including `RoomInsect` (`0x20f`)
+/// return `0`.
 #[inline]
 pub const fn en_kind_from_species(species: EnemySpecies) -> u8 {
     match species {
@@ -84,7 +87,7 @@ pub const fn en_kind_from_species(species: EnemySpecies) -> u8 {
         EnemySpecies::Eddie => 9,
         EnemySpecies::Mandarin => 10,
         EnemySpecies::MaryBoss => 11,
-        EnemySpecies::RoomInsect => 15,
+        EnemySpecies::RoomInsect => 0,
     }
 }
 
@@ -162,7 +165,7 @@ impl RadioDuckingState {
 /// Per-enemy snapshot fed into [`super::RadioNoiseEvaluator::evaluate_enemies`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RadioEnemySample {
-    /// `enLocalWork.kind` (`1..=15`, see [`en_kind_from_species`]).
+    /// `enLocalWork.kind` (`0..=14`, see [`en_kind_from_species`]).
     pub kind: u8,
     /// Enemy subtype (`enLocalWork[5]`, used by Pyramid Head `kind == 4`).
     pub sub_type: u8,

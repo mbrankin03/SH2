@@ -21,6 +21,16 @@ use sh2_assets::formats::mes::MessageTable;
 use sh2_core::config::RiddleDifficulty;
 use sh2_core::events::{EventFlags, PuzzleState};
 
+/// PS2 Normal font (`20x30`) glyph height in virtual pixels (`Font/font.c` `0x001b3730`, `0x1e`).
+const PS2_FONT_GLYPH_HEIGHT: f32 = 30.0;
+/// PS2 font line stride in virtual pixels (`Font/font.c` `0x001b3730` `_DAT_011591bc = 0x20`,
+/// `Event/memo.c` `MemoSelect` `0x00230810` row stride `0x20` and `MemoSelectBarDraw` `0x002315c0`).
+const PS2_FONT_LINE_STEP: f32 = 32.0;
+/// PS2 NTSC virtual framebuffer height (`512x448`) used for `fontMessageNum` text rendering.
+const PS2_VIRTUAL_HEIGHT: f32 = 448.0;
+/// `MemoSelect` / `MemoSelectBarDraw` virtual coordinate grid extent (`512x512`).
+const PS2_MEMO_GRID_SIZE: f32 = 512.0;
+
 /// Optional decoded retail RGBA textures for the active memo view.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MemoRenderTextures<'a> {
@@ -82,14 +92,28 @@ pub fn draw_memo_reader(
         rasterizer.blit_overlay_triangles(&tris, rgba, bw, bh, brightness_mul);
     }
 
-    let scale_x = cw / 512.0;
-    let scale_y = ch / 512.0;
-    let text_px = ((22.0 * scale_y).round() as usize).clamp(12, 34);
+    let scale_x = cw / PS2_MEMO_GRID_SIZE;
+    let scale_y = ch / PS2_MEMO_GRID_SIZE;
+    // PS2 20x30 Normal font scaled into 512x512 MemoSelect grid (`Font/font.c` 0x001b3730)
+    let list_text_px = (PS2_FONT_GLYPH_HEIGHT * scale_y).round().max(1.0) as usize;
+    // PS2 20x30 Normal font scaled onto 512x448 NTSC height (`fontMessageNum` / `Font/font.c`)
+    let page_scale_y = ch / PS2_VIRTUAL_HEIGHT;
+    let page_text_px = (PS2_FONT_GLYPH_HEIGHT * page_scale_y).round().max(1.0) as usize;
+    let page_line_step = (PS2_FONT_LINE_STEP * page_scale_y).round().max(1.0) as usize;
 
     match reader.phase {
         MemoPhase::List => {
             draw_memo_select_list(
-                reader, mes_table, cl, ct, cw, scale_x, scale_y, text_px, font, rasterizer,
+                reader,
+                mes_table,
+                cl,
+                ct,
+                cw,
+                scale_x,
+                scale_y,
+                list_text_px,
+                font,
+                rasterizer,
             );
         }
         MemoPhase::ViewingImage | MemoPhase::ViewingText => {
@@ -136,7 +160,17 @@ pub fn draw_memo_reader(
                 } else {
                     raw_text.clone()
                 };
-                draw_memo_text_page(&page_text, cl, ct, cw, ch, text_px, font, rasterizer);
+                draw_memo_text_page(
+                    &page_text,
+                    cl,
+                    ct,
+                    cw,
+                    ch,
+                    page_text_px,
+                    page_line_step,
+                    font,
+                    rasterizer,
+                );
             }
         }
     }
@@ -166,8 +200,9 @@ fn draw_memo_select_list(
         return;
     }
     let center_x = (cl + cw * 0.5).round() as usize;
-    let bar_h = (32.0 * scale_y).round().max(text_px as f32 + 4.0) as usize;
-    let pad_x = (4.0 * scale_x).round().max(3.0) as usize;
+    // MemoSelectBarDraw (0x002315c0): height 0x20 (32) and horizontal half-width padding +4 in 512x512 space
+    let bar_h = (PS2_FONT_LINE_STEP * scale_y).round().max(1.0) as usize;
+    let pad_x = (4.0 * scale_x).round().max(1.0) as usize;
 
     let rows = reader.visible_list_rows();
     for row in rows {
@@ -183,7 +218,8 @@ fn draw_memo_select_list(
             rasterizer.fill_rect(bx, vy, half_w * 2, bar_h, [0x20, 0x60, 0x20, 128]);
         }
 
-        // Convert PS2 0..0x80 alpha to 0..255 RGBA alpha
+        // Convert PS2 0..0x80 alpha to 0..255 RGBA alpha; MemoSelect uses fontClear default white
+        // (`Font/font.c` 0x001b3a10) + `fontSetAlpha` (0x001b74a0) with full RGB [255, 255, 255].
         let rgba_a = ((row.alpha_ps2 as u16 * 255) / 128).min(255) as u8;
         let tw = font.text_width(title, text_px);
         let tx = center_x.saturating_sub(tw / 2);
@@ -193,7 +229,7 @@ fn draw_memo_select_list(
             title,
             (tx, ty),
             text_px,
-            [235, 235, 235, rgba_a],
+            [255, 255, 255, rgba_a],
             true,
         );
     }
@@ -237,7 +273,8 @@ fn draw_layer_quad(
     rasterizer.blit_overlay_triangles(&tris, layer_rgba, lw, lh, brightness_mul);
 }
 
-/// Draws centered multi-line `.mes` memo page text over the dimmed backdrop (`fontMessageNum`).
+/// Draws centered multi-line `.mes` memo page text over the dimmed backdrop (`fontMessageNum`,
+/// `Font/font.c` `0x001b9ba0`, `30.0` px glyph height / `32.0` px line step in `512x448` space).
 #[allow(clippy::too_many_arguments)]
 fn draw_memo_text_page(
     page_text: &str,
@@ -246,22 +283,22 @@ fn draw_memo_text_page(
     cw: f32,
     ch: f32,
     text_px: usize,
+    line_step: usize,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
 ) {
-    let lines: Vec<&str> = page_text.lines().take(12).collect();
+    let lines: Vec<&str> = page_text.lines().collect();
     if lines.is_empty() {
         return;
     }
-    let step = text_px + (text_px / 3).max(4);
-    let total_h = lines.len() * step;
+    let total_h = lines.len() * line_step;
     let start_y = (ct + (ch - total_h as f32).max(0.0) * 0.5).round() as usize;
     let center_x = (cl + cw * 0.5).round() as usize;
     for (i, line) in lines.iter().enumerate() {
         font.draw_line_centered(
             rasterizer,
             line,
-            (center_x, start_y + i * step),
+            (center_x, start_y + i * line_step),
             text_px,
             Sh2TextColor::White,
             true,

@@ -415,54 +415,190 @@ pub const fn chizu_arrow_yaw_offset(current_map_id: u8, room_id: usize) -> f32 {
     }
 }
 
-/// Maps `sh2-core`'s 1-based `ScenarioState::current_stage` (`1..=58`) to a canonical PS2
-/// `RoomName` ID (`Event/stg_name.c` `0x001af0f0`) for `ChizuSelect` and
-/// `ChizuCurrentPositionCheck` when fine-grained grid lookup is not yet active.
+/// Maps `sh2-core`'s 1-based `ScenarioState::current_stage` (`1..=58`, `StgOverlayGetStageData`
+/// `SLUS_202.28` `0x00228670` / `sh2pc.exe` `0x00494ec0`) to a canonical PS2 / PC `RoomName` ID
+/// (`Event/stg_name.c` `0x001af0f0` / `sh2pc.exe` `0x0049a900`) verified against `CHZ_CRT_BLOCK`
+/// (`sh2pc.exe` `0x0088cb18`) when fine-grained grid lookup is not yet active.
 #[must_use]
 pub const fn stage_to_default_room_id(stage_id: u16, is_maria: bool) -> usize {
-    if is_maria || stage_id >= 53 {
+    if is_maria {
         return match stage_id {
-            53..=55 => 0x08, // Maria Heaven's Night / Town West
-            _ => 0xc0,       // Baldwin Mansion
+            53 => 0xd5, // WishHeavensNight (stage_wish_heaven, map_id 3)
+            54 => 0x08, // WishTownExterior (stage_wish_end, map_id 3)
+            55 => 0xc0, // WishMansion1f (stage_wish_1f, Baldwin Mansion 1F, map_id 36)
+            56 => 0xc5, // WishMansion2f (stage_wish_2f, Baldwin Mansion 2F, map_id 36)
+            57 => 0xd2, // WishMansionBasement (stage_wish_bf, Baldwin Mansion BF, map_id 0)
+            58 => 0x25, // WishBlueCreek (stage_wish_ap, Blue Creek Pathway, map_id 7)
+            _ => 0xc0,  // Default Born From a Wish fallback (Baldwin Mansion 1F, map_id 36)
         };
     }
     match stage_id {
-        1 => 0x04,       // TGS Trial (Town East)
-        2 => 0x01,       // Restroom (er01)
-        3 => 0x02,       // Observation Deck (ob01)
-        4 => 0x03,       // Forest Trail (rr)
-        5 => 0x04,       // South Vale East
-        6 => 0x13,       // Wood Side Apartments 1F
-        7 => 0x16,       // Wood Side Apartments 2F
-        8 | 9 => 0x1b,   // Wood Side Apartments 3F
-        10 => 0x22,      // Blue Creek Apartments 1F
-        11 => 0x23,      // Blue Creek Apartments 2F
-        12 => 0x0f,      // Apartments Stairwell (multi-floor override)
-        13 => 0x12,      // Apartments Courtyard
-        14 => 0x08,      // South Vale West & Rosewater Park
-        15 => 0x09,      // Pete's Bowl-O-Rama
-        16 => 0x0a,      // Back Alley to Heaven's Night
-        17 => 0x0b,      // Heaven's Night
-        18 => 0x2b,      // Brookhaven Hospital 1F Normal
-        19 => 0x30,      // Brookhaven Hospital 2F Normal
-        20 => 0x35,      // Brookhaven Hospital 3F Normal
-        21 => 0x3b,      // Brookhaven Hospital Roof
-        22 => 0x29,      // Brookhaven Hospital Stairwell (multi-floor override)
-        23 => 0x49,      // Brookhaven Hospital 1F Otherworld
-        24 => 0x4d,      // Brookhaven Hospital 2F Otherworld
-        25 => 0x52,      // Brookhaven Hospital 3F Otherworld
-        26 => 0x47,      // Brookhaven Hospital Otherworld Stairwell
-        27 => 0x08,      // Town West Night
-        28..=30 => 0x5c, // Historical Society
-        31..=33 => 0x66, // Toluca Prison
-        34..=37 => 0x78, // Labyrinth
-        38 => 0x0e,      // Toluca Lake Boat
-        39 => 0x91,      // Lakeview Hotel BF / Employee Stairwell
-        40 => 0x92,      // Lakeview Hotel 1F
-        41 => 0x99,      // Lakeview Hotel 2F
-        42 => 0x9f,      // Lakeview Hotel 3F
-        43 => 0xab,      // Lakeview Hotel Otherworld Stairwell
-        44..=47 => 0xb0, // Lakeview Hotel Otherworld
-        _ => 0x01,
+        1 => 0x33,       // TgsTrial (stg_tgs_trial.c, Hospital 1F Normal, map_id 12)
+        2 => 0x01,       // Toilet (stg_toilet.c, Restroom er01, map_id 1)
+        3 => 0x02,       // Observation (stg_ovservation.c, Observation Deck, map_id 1)
+        4 => 0x03,       // Forest (stg_forest.c, Forest Trail & Graveyard, map_id 1)
+        5 => 0x04,       // TownEast (stg_town_east.c, South Vale East, map_id 2)
+        6 => 0x14,       // ApartE1f (stg_apart_e1f.c, Wood Side Apartments 1F, map_id 4)
+        7 => 0x16,       // ApartE2f (stg_apart_e2f.c, Wood Side Apartments 2F, map_id 5)
+        8 => 0x1b,       // ApartE3fw (stg_apart_e3fw.c, Wood Side Apartments 3F West, map_id 6)
+        9 => 0x1c,       // ApartE3fe (stg_apart_e3fe.c, Wood Side Apartments 3F East, map_id 6)
+        10 => 0x22,      // ApartW1f (stg_apart_w1f.c, Blue Creek Apartments 1F, map_id 7)
+        11 => 0x26,      // ApartW2f (stg_apart_w2f.c, Blue Creek Apartments 2F, map_id 8)
+        12 => 0x0f,      // ApartStair (stg_apart_stair.c, multi-floor stairwell override -> 4/5/6)
+        13 => 0x07,      // ApartOut (stg_apart_out.c, Wood Side Courtyard, map_id 4)
+        14 => 0x08,      // TownWest (stg_town_west.c, South Vale West & Rosewater Park, map_id 3)
+        15 => 0x09,      // Bowling (stg_bowling.c, Pete's Bowl-O-Rama, map_id 3)
+        16 => 0x08,      // ToHeaven (stg_to_heaven.c, Back Alley to Heaven's Night, map_id 3)
+        17 => 0x0c,      // HeavenNight (stg_heaven_night.c, Heaven's Night Interior, map_id 3)
+        18 => 0x2c,      // Hospital1fNormal (stg_hospital_1f_f.c, Brookhaven 1F Normal, map_id 12)
+        19 => 0x35,      // Hospital2fNormal (stg_hospital_2f_f.c, Brookhaven 2F Normal, map_id 13)
+        20 => 0x3e,      // Hospital3fNormal (stg_hospital_3f_f.c, Brookhaven 3F Normal, map_id 13)
+        21 => 0x2b,      // HospitalRoofNormal (stg_hospital_rf_f.c, Brookhaven Roof, map_id 13)
+        22 => 0x49, // Hospital1fwOtherworld (stg_hospital_1fw_b.c, 1F West Otherworld, map_id 14)
+        23 => 0x4d, // Hospital1feOtherworld (stg_hospital_1fe_b.c, 1F East Otherworld, map_id 14)
+        24 => 0x50, // Hospital2fOtherworld (stg_hospital_2f_b.c, 2F Otherworld, map_id 15)
+        25 => 0x54, // Hospital3fOtherworld (stg_hospital_3f_b.c, 3F Otherworld, map_id 15)
+        26 => 0x59, // HospitalBfOtherworld (stg_hospital_bf_b.c, B1 Otherworld Storeroom, map_id 14)
+        27 => 0x5b, // HospitalPass (stg_hospital_pass.c, Basement Corridor PH Chase, map_id 0)
+        28 => 0x5c, // HistoricalSociety (stg_society.c, Historical Society, map_id 3)
+        29 => 0x5f, // Delusion2 (stg_delusion_2.c, Underground Stairwell, map_id 0)
+        30 => 0x64, // Delusion3 (stg_delusion_3.c, Well / Sewer, map_id 0)
+        31 => 0x66, // PrisonNorth (stg_prison_n.c, Toluca Prison North, map_id 16)
+        32 => 0x68, // PrisonSouth (stg_prison_s.c, Toluca Prison South, map_id 16)
+        33 => 0x74, // PrisonBasement (stg_prison_bf.c, Toluca Prison Courtyard, map_id 17 -> 16)
+        34 => 0x78, // LabyrinthWest (stg_labyrinth_w.c, Labyrinth West, map_id 18)
+        35 => 0x79, // LabyrinthEast (stg_labyrinth_e.c, Labyrinth East, map_id 18)
+        36 => 0x8b, // LabyrinthNorth (stg_labyrinth_n.c, Labyrinth North, map_id 18)
+        37 => 0x8f, // EddieBoss (stg_eddie_boss.c, Meat Locker Boss, map_id 0)
+        38 => 0x0e, // TolucaLake (stg_lake.c, Toluca Lake Boat, map_id 1 or 3 via flags 379/381)
+        39 => 0xa5, // HotelBfNormal (stg_hotel_bf_f.c, Lakeview Hotel BF Normal, map_id 20 -> 28)
+        40 => 0x93, // Hotel1fNormal (stg_hotel_1f_f.c, Lakeview Hotel 1F Normal, map_id 21 -> 29)
+        41 => 0x9b, // Hotel2fNormal (stg_hotel_2f_f.c, Lakeview Hotel 2F Normal, map_id 22 -> 30)
+        42 => 0xa2, // Hotel3fNormal (stg_hotel_3f_f.c, Lakeview Hotel 3F Normal, map_id 23 -> 31)
+        43 => 0xb6, // HotelBfOtherworld (stg_hotel_bf_b.c, Hotel BF Otherworld, map_id 24 -> 32)
+        44 => 0xac, // Hotel1fOtherworld (stg_hotel_1f_b.c, Hotel 1F Otherworld, map_id 25 -> 33)
+        45 => 0xb0, // Hotel2fOtherworld (stg_hotel_2f_b.c, Hotel 2F Otherworld, map_id 26 -> 34)
+        46 => 0xb5, // Hotel3fOtherworld (stg_hotel_3f_b.c, Hotel 3F Otherworld, map_id 27 -> 35)
+        47 => 0xaa, // HotelFire (stg_hotel_fire.c, Burning Staircase, map_id 0)
+        48..=51 => 0xbb, // EndingLeave / EndingMaria / EndingInWater / EndingRebirth (map_id 0)
+        52 => 0xbc, // EndingDog (stage_end_dog, Observation Room, map_id 0)
+        53 => 0xd5, // WishHeavensNight (stage_wish_heaven, map_id 3)
+        54 => 0x08, // WishTownExterior (stage_wish_end, map_id 3)
+        55 => 0xc0, // WishMansion1f (stage_wish_1f, Baldwin Mansion 1F, map_id 36)
+        56 => 0xc5, // WishMansion2f (stage_wish_2f, Baldwin Mansion 2F, map_id 36)
+        57 => 0xd2, // WishMansionBasement (stage_wish_bf, Baldwin Mansion BF, map_id 0)
+        58 => 0x25, // WishBlueCreek (stage_wish_ap, Blue Creek Pathway, map_id 7)
+        _ => 0x00,  // Invalid / unmapped stage (map_id 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_stages_resolve_to_exact_chizu_select_map_ids() {
+        let flags = EventFlags::new();
+        // Verify every stage ID 0..=58 against CHZ_CRT_BLOCK + ChizuSelect (sh2pc.exe 0x0049ac70).
+        let expected: [(u16, u8); 59] = [
+            (0, 0),
+            (1, 12),
+            (2, 1),
+            (3, 1),
+            (4, 1),
+            (5, 2),
+            (6, 4),
+            (7, 5),
+            (8, 6),
+            (9, 6),
+            (10, 7),
+            (11, 8),
+            (12, 4),
+            (13, 4),
+            (14, 3),
+            (15, 3),
+            (16, 3),
+            (17, 3),
+            (18, 12),
+            (19, 13),
+            (20, 13),
+            (21, 13),
+            (22, 14),
+            (23, 14),
+            (24, 15),
+            (25, 15),
+            (26, 14),
+            (27, 0),
+            (28, 3),
+            (29, 0),
+            (30, 0),
+            (31, 16),
+            (32, 16),
+            (33, 16),
+            (34, 18),
+            (35, 18),
+            (36, 18),
+            (37, 0),
+            (38, 3),
+            (39, 20),
+            (40, 21),
+            (41, 22),
+            (42, 23),
+            (43, 24),
+            (44, 25),
+            (45, 26),
+            (46, 27),
+            (47, 0),
+            (48, 0),
+            (49, 0),
+            (50, 0),
+            (51, 0),
+            (52, 0),
+            (53, 3),
+            (54, 3),
+            (55, 36),
+            (56, 36),
+            (57, 0),
+            (58, 7),
+        ];
+        for (stage_id, expected_map) in expected {
+            let room = stage_to_default_room_id(stage_id, false);
+            let resolved = chizu_select(room, [0.0, 0.0, 0.0], &flags);
+            assert_eq!(
+                resolved, expected_map,
+                "stage {stage_id} -> room 0x{room:02x} resolved to map {resolved}, expected {expected_map}"
+            );
+        }
+
+        // Verify Maria scenario stages 53..=58 with is_maria = true
+        for (stage_id, expected_map) in [(53, 3), (54, 3), (55, 36), (56, 36), (57, 0), (58, 7)] {
+            let room = stage_to_default_room_id(stage_id, true);
+            let resolved = chizu_select(room, [0.0, 0.0, 0.0], &flags);
+            assert_eq!(
+                resolved, expected_map,
+                "Maria stage {stage_id} -> room 0x{room:02x} resolved to map {resolved}, expected {expected_map}"
+            );
+        }
+
+        // Verify Hotel Employee map upgrade (flag 31) across Normal (39..=42) & Otherworld (43..=46)
+        let mut hotel_emp_flags = EventFlags::new();
+        hotel_emp_flags.set(31, true);
+        for (stage_id, expected_map) in [
+            (39, 28),
+            (40, 29),
+            (41, 30),
+            (42, 31),
+            (43, 32),
+            (44, 33),
+            (45, 34),
+            (46, 35),
+        ] {
+            let room = stage_to_default_room_id(stage_id, false);
+            let resolved = chizu_select(room, [0.0, 0.0, 0.0], &hotel_emp_flags);
+            assert_eq!(
+                resolved, expected_map,
+                "Hotel Employee stage {stage_id} -> room 0x{room:02x} resolved to map {resolved}, expected {expected_map}"
+            );
+        }
     }
 }

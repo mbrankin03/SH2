@@ -110,6 +110,9 @@ pub struct PaperMapViewer {
     pub center_x: f32,
     /// Pan center Y in PS2 virtual pixels (`-256.0..=+256.0`, `chizu_center_y` `0x0116dbb8`).
     pub center_y: f32,
+    /// Player's PS2 `[-256..+256]` map position for `selected_map_id`, retained so switching back
+    /// onto `selected_map_id` re-centers on `(px * 2.0, py * 2.0)` (`ChizuMain` `0x001c6b90`).
+    pub player_ps2_pos: Option<(f32, f32)>,
     /// Active red-pen transcription animation state (`MapTranscription.cpp`).
     pub transcription_phase: MapTranscriptionPhase,
     /// Active marker flag ID being transcribed, if any.
@@ -140,6 +143,7 @@ impl PaperMapViewer {
             zoom_t: 0.0,
             center_x: 0.0,
             center_y: 0.0,
+            player_ps2_pos: None,
             transcription_phase: MapTranscriptionPhase::Idle,
             transcribing_flag_id: None,
             transcription_ticks: 0,
@@ -169,24 +173,30 @@ impl PaperMapViewer {
         self.current_map_id = clamped;
         self.selected_map_id = selected_map_id;
         self.is_maria_scenario = is_maria_scenario;
+        self.player_ps2_pos = player_ps2_pos;
         self.zoom_step = MapZoomStep::FullSheet;
         self.zoom_t = 0.0;
-        if clamped == selected_map_id {
-            if let Some((px, py)) = player_ps2_pos {
-                self.center_x = (px * 2.0).clamp(-CHIZU_CENTER_LIMIT, CHIZU_CENTER_LIMIT);
-                self.center_y = (py * 2.0).clamp(-CHIZU_CENTER_LIMIT, CHIZU_CENTER_LIMIT);
-            } else {
-                self.center_x = 0.0;
-                self.center_y = 0.0;
-            }
-        } else {
-            self.center_x = 0.0;
-            self.center_y = 0.0;
-        }
+        self.reset_center_for_current_sheet();
         self.transcription_phase = MapTranscriptionPhase::Idle;
         self.transcribing_flag_id = None;
         self.transcription_ticks = 0;
         self.transcription_alpha = TRANSCRIBE_FADE_TARGET_ALPHA;
+    }
+
+    /// Initializes `(center_x, center_y)` for `self.current_map_id` matching `ChizuMain`
+    /// (`SLUS_202.28` `0x001c6b90` lines 108-118 / `sh2pc.exe` `0x0049e2e0`):
+    /// centers on `(px * 2.0, py * 2.0)` clamped to `±256.0` when `current_map_id == selected_map_id`,
+    /// otherwise resets to `(0.0, 0.0)`.
+    fn reset_center_for_current_sheet(&mut self) {
+        if self.current_map_id == self.selected_map_id {
+            if let Some((px, py)) = self.player_ps2_pos {
+                self.center_x = (px * 2.0).clamp(-CHIZU_CENTER_LIMIT, CHIZU_CENTER_LIMIT);
+                self.center_y = (py * 2.0).clamp(-CHIZU_CENTER_LIMIT, CHIZU_CENTER_LIMIT);
+                return;
+            }
+        }
+        self.center_x = 0.0;
+        self.center_y = 0.0;
     }
 
     /// Closes the fullscreen paper map.
@@ -366,8 +376,7 @@ impl PaperMapViewer {
                         self.is_maria_scenario,
                     ) {
                         self.current_map_id = next_id;
-                        self.center_x = 0.0;
-                        self.center_y = 0.0;
+                        self.reset_center_for_current_sheet();
                         (MenuSoundCue::None, PaperMapAction::MapSheetChanged(next_id))
                     } else {
                         (MenuSoundCue::None, PaperMapAction::None)
@@ -464,5 +473,29 @@ mod tests {
         }
         assert_eq!(viewer.transcription_phase, MapTranscriptionPhase::Idle);
         assert_eq!(viewer.transcription_alpha, TRANSCRIBE_FADE_TARGET_ALPHA);
+    }
+
+    #[test]
+    fn test_handle_nav_recenters_when_returning_to_selected_map_id() {
+        let mut flags = EventFlags::new();
+        // Own Wood Side Apartments map (flag 25): 4 (1F) <-> 5 (2F) via Up/Down
+        flags.set(25, true);
+        let mut viewer = PaperMapViewer::new();
+        viewer.open_at_player(4, 4, Some((42.5, -31.25)), false, false);
+        assert!((viewer.center_x - 85.0).abs() < 1e-5);
+        assert!((viewer.center_y - (-62.5)).abs() < 1e-5);
+
+        // Switch away to 2F (map 5): center resets to (0.0, 0.0)
+        let (_, action) = viewer.handle_nav(MenuNavAction::Up, &flags);
+        assert_eq!(action, PaperMapAction::MapSheetChanged(5));
+        assert_eq!(viewer.current_map_id, 5);
+        assert_eq!((viewer.center_x, viewer.center_y), (0.0, 0.0));
+
+        // Switch back onto selected_map_id (map 4): re-centers on (px * 2.0, py * 2.0)
+        let (_, action) = viewer.handle_nav(MenuNavAction::Down, &flags);
+        assert_eq!(action, PaperMapAction::MapSheetChanged(4));
+        assert_eq!(viewer.current_map_id, 4);
+        assert!((viewer.center_x - 85.0).abs() < 1e-5);
+        assert!((viewer.center_y - (-62.5)).abs() < 1e-5);
     }
 }

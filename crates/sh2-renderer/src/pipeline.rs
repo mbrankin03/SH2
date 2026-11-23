@@ -186,7 +186,8 @@ fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
     let cam_fill_ndotl = select(1.0, max(dot(norm, view_dir), 0.0), has_normal);
     let camera_fill = vec3<f32>(spotlight.fill_and_range.x * cam_fill_ndotl);
 
-    // Gun muzzle flash ambient boost (`sh2gfw_Get_GunLight() * 2.0`, 0x0017d7f0 / 0x0017ddd0)
+    // Gun muzzle flash ambient boost (`(sh2gfw_Get_GunLight() * 2.0) / 4.0 = gun_light * 0.5` in
+    // 1.0-normalized ambient space, factoring out `4.0` VU1 ambient scale in `0x0017d7f0` / `0x0017ddd0`)
     // and `DARK_Hosei` ambient trim (`0x002ab710` = 0.5, `sh2gfw_Get_DarkTrimFactor` 0x0028e350).
     let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x);
     let dark_trim_scale = 1.0 + spotlight.gun_and_dark_trim.y * spotlight.gun_and_dark_trim.z;

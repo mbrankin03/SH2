@@ -31,6 +31,11 @@ pub const CHARACTER_PARALLEL_MATRIX_LIMIT: usize = 2;
 /// Spot spread offset scale in `sh_Kari_LightSetSpot` (`0x001265f0`: `__s[0x23] = -*param_5 * 0.8`).
 pub const KARI_SPOT_SPREAD_BIAS_SCALE: f32 = 0.8;
 
+/// Default character bounding radius in PS2 mm passed by `Model3UpdateLightEnv` (`SLUS_202.28`
+/// `0x00128e00`) to `LightUpdateInfoByPos` (`0x00127640`): `radius$946` at `0x002a9700`
+/// (`0x44480000` = `800.0f` mm).
+pub const MODEL3_LIGHT_ENV_RADIUS_MM: f32 = 800.0;
+
 /// Light entry type discriminant (`*light_ptr` in `Chacter_Draw/light_n.c`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]

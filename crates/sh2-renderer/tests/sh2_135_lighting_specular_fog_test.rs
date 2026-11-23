@@ -12,9 +12,11 @@ use sh2_renderer::fog::{
 use sh2_renderer::light::{
     compute_ps2_falloff_params, eval_hyperbolic_falloff, eval_linear_falloff, CharacterLightPool,
     DemoPointLightParams, JmsSpotManager, ParallelLightParams, SpotlightUniforms,
-    CHARACTER_EXTRA_LIGHT_LIMIT, CHARACTER_LIGHT_SLOT_COUNT, DARK_HOSEI, PITCH_BLACK_MAP_IDS,
-    PS2_DEFAULT_FLASHLIGHT_FAR_MM, PS2_DEFAULT_FLASHLIGHT_NEAR_MM, PS2_DEFAULT_FLASHLIGHT_POS_Y_MM,
-    PS2_NHM_UV_BIAS_COL, SPOT_LCG_INCREMENT, SPOT_LCG_MULTIPLIER,
+    CHARACTER_EXTRA_LIGHT_LIMIT, CHARACTER_LIGHT_SLOT_COUNT, DARK_HOSEI,
+    DAYTIME_REFLECTION_HIGHLIGHT_SCALE, GUN_LIGHT_NORMALIZED_AMBIENT_MULTIPLIER,
+    MODEL3_LIGHT_ENV_RADIUS_MM, PITCH_BLACK_MAP_IDS, PS2_DEFAULT_FLASHLIGHT_FAR_MM,
+    PS2_DEFAULT_FLASHLIGHT_NEAR_MM, PS2_DEFAULT_FLASHLIGHT_POS_Y_MM, PS2_NHM_UV_BIAS_COL,
+    SPOT_LCG_INCREMENT, SPOT_LCG_MULTIPLIER,
 };
 use sh2_renderer::skeletal::{
     composite_gs_specular, compute_sphere_map_uv, environ_packet_alpha,
@@ -71,10 +73,16 @@ fn golden_ps2_falloff_and_multi_light_uniforms() {
         DemoPointLightParams::default(),
     ]);
     u.set_gun_and_dark_trim(0.75, 0.3, true);
-    assert_eq!(u.gun_and_dark_trim[0], 1.5); // sh2gfw_Get_GunLight() * 2.0
+    // (sh2gfw_Get_GunLight() * 2.0) / 4.0 = 0.75 * 0.5 = 0.375 in 1.0-normalized ambient space
+    assert!((u.gun_and_dark_trim[0] - 0.75 * GUN_LIGHT_NORMALIZED_AMBIENT_MULTIPLIER).abs() < 1e-6);
+    assert!((u.gun_and_dark_trim[0] - 0.375).abs() < 1e-6);
     assert_eq!(u.gun_and_dark_trim[1], 0.3);
     assert_eq!(u.gun_and_dark_trim[2], DARK_HOSEI);
     assert_eq!(u.gun_and_dark_trim[3], 1.0);
+    // Daytime flag (`night_or_day == 0.0`, `ALPHA_1 = 0x54`)
+    u.set_gun_and_dark_trim(0.0, 0.0, false);
+    assert_eq!(u.gun_and_dark_trim[3], 0.0);
+    assert!((DAYTIME_REFLECTION_HIGHLIGHT_SCALE - 0.7).abs() < 1e-6);
 }
 
 #[test]
@@ -100,20 +108,32 @@ fn golden_jms_spot_manager_ramp_flicker_and_gun_light() {
     // Turn-on ramp: +2/frame from 0 to 60 => 30 frames
     spot.turn_on();
     assert!(spot.spot_on);
-    for _ in 0..30 {
+    spot.step_ramp();
+    assert!(
+        spot.normalized_spot_intensity() > 0.0 && spot.normalized_spot_intensity() < 0.1,
+        "frame 1 turn-on ramp must start softly"
+    );
+    for _ in 0..29 {
         spot.step_ramp();
     }
     assert_eq!(spot.ramp_count, 60);
     assert_eq!(spot.ramp_step, 0);
     assert!((spot.spot_intensity - 1.0).abs() < 1e-6);
+    assert!((spot.normalized_spot_intensity() - 1.0).abs() < 1e-6);
 
     // Turn-off ramp: -10/frame from 60 down to 1 => 6 frames -> TrueOff
     spot.turn_off();
-    for _ in 0..6 {
+    spot.step_ramp();
+    assert!(
+        spot.spot_on && spot.normalized_spot_intensity() < 1.0,
+        "mid turn-off ramp must remain active and dim smoothly"
+    );
+    for _ in 0..5 {
         spot.step_ramp();
     }
     assert!(!spot.spot_on);
     assert_eq!(spot.ramp_count, 1);
+    assert_eq!(spot.normalized_spot_intensity(), 0.0);
 
     // Deterministic LCG flicker (`Flicker_Jms_Spot` `0x0028e7e0`)
     let mut flicker = JmsSpotManager::new();
@@ -163,7 +183,7 @@ fn golden_character_12_slot_light_pool_selection() {
     pool.set_parallel(10, Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.5, 0.5, 0.5));
     pool.set_parallel(11, Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.2, 0.2, 0.2));
 
-    pool.update_extras(175.0, Vec3::ZERO);
+    pool.update_extras(MODEL3_LIGHT_ENV_RADIUS_MM, Vec3::ZERO);
     assert_eq!(pool.valid_extra_count(), CHARACTER_EXTRA_LIGHT_LIMIT);
     // Verify strictly descending influence order (`CompareByInfluence` `0x00126c00`)
     for i in 0..5 {
@@ -215,6 +235,9 @@ fn golden_64x64_specular_sphere_map_and_gs_blend() {
 
     let night = composite_gs_specular(Vec3::splat(0.25), Vec3::splat(0.5), 0.5, true);
     assert!((night - Vec3::splat(0.5)).length() < 1e-5);
+    let day = composite_gs_specular(Vec3::splat(0.25), Vec3::splat(0.5), 0.5, false);
+    // Daytime ALPHA_1 = 0x54: (Cs - Cd) * Ad + Cd = mix(0.25, 0.5, 0.5) = 0.375
+    assert!((day - Vec3::splat(0.375)).length() < 1e-5);
 }
 
 #[test]

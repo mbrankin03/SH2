@@ -156,4 +156,13 @@ mod tests {
         let out = composite_gs_specular(dest, spec, 0.5, true);
         assert!((out - Vec3::new(0.6, 0.7, 0.8)).length() < 1e-5);
     }
+
+    #[test]
+    fn test_gs_alpha_1_0x54_daytime_lerp() {
+        let dest = Vec3::new(0.2, 0.3, 0.4);
+        let spec = Vec3::new(0.8, 0.7, 0.6);
+        let out = composite_gs_specular(dest, spec, 0.5, false);
+        // (Cs - Cd) * Ad + Cd = mix(Cd, Cs, Ad) = (0.5, 0.5, 0.5)
+        assert!((out - Vec3::new(0.5, 0.5, 0.5)).length() < 1e-5);
+    }
 }

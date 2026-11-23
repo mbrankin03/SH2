@@ -8,9 +8,28 @@
 /// `world_ambient += DARK_Hosei * 4.0 * dark_trim_factor * base_ambient`.
 pub const DARK_HOSEI: f32 = 0.5;
 
-/// Gun muzzle flash ambient multiplier (`sh2gfw_setparal3LGT_blk` `0x0017d7f0` &
-/// `sh2gfw_setsp1para2LGT_blk` `0x0017ddd0`: `fVar2 = sh2gfw_Get_GunLight() * 2.0`).
+/// VU1 world-lighting scale factor (`0x40800000` = `4.0f`) applied to parallel light colors and
+/// world ambient in `sh2gfw_setparal3LGT_blk` (`0x0017d7f0`) and `sh2gfw_setsp1para2LGT_blk` (`0x0017ddd0`).
+pub const PS2_VU1_WORLD_LIGHT_SCALE: f32 = 4.0;
+
+/// Gun muzzle flash ambient multiplier in VU1 4×-scaled lighting space
+/// (`sh2gfw_setparal3LGT_blk` `0x0017d7f0` & `sh2gfw_setsp1para2LGT_blk` `0x0017ddd0`:
+/// `fVar2 = sh2gfw_Get_GunLight() * 2.0`).
 pub const GUN_LIGHT_AMBIENT_MULTIPLIER: f32 = 2.0;
+
+/// Normalized (1.0-ambient-space) gun muzzle flash ambient boost multiplier
+/// (`GUN_LIGHT_AMBIENT_MULTIPLIER / PS2_VU1_WORLD_LIGHT_SCALE = 2.0 / 4.0 = 0.5`), matching how
+/// `DARK_Hosei * 4.0 * dark_trim_factor` factors out `4.0` in `0x0017d7f0` / `0x0017ddd0`.
+pub const GUN_LIGHT_NORMALIZED_AMBIENT_MULTIPLIER: f32 =
+    GUN_LIGHT_AMBIENT_MULTIPLIER / PS2_VU1_WORLD_LIGHT_SCALE;
+
+/// Daytime reflection highlight scale factor in `Programed_Light_Set` (`SLUS_202.28` `0x0028eaf0`,
+/// `sceVu0ScaleVector(0x3f333333, ...)` = `0.7f` applied to `0x0037b570`).
+pub const DAYTIME_REFLECTION_HIGHLIGHT_SCALE: f32 = 0.7;
+
+/// Base reflection highlight RGB color in `Programed_Light_Set` (`SLUS_202.28` `0x0037b570` =
+/// `[1.0, 1.0, 1.0, 0.0]`).
+pub const BASE_REFLECTION_HIGHLIGHT_RGB: [f32; 3] = [1.0, 1.0, 1.0];
 
 /// Initial gun muzzle flash intensity written by `sh2gfw_Set_JmsGunLight` (`0x0028e220`, `0x3f400000`).
 pub const GUN_LIGHT_INITIAL_INTENSITY: f32 = 0.75;
@@ -179,6 +198,19 @@ impl JmsSpotManager {
     #[must_use]
     pub fn dark_trim_factor(&self) -> f32 {
         self.dark_trim_factor
+    }
+
+    /// Returns the normalized spotlight intensity in `[0.0, 1.0]` (`spot_rgb_scalar / spot_max_color`),
+    /// unifying `Calculate_Jms_Spot` (`0x0028e940`) 30-frame turn-on / 6-frame turn-off ramps and
+    /// `Flicker_Jms_Spot` (`0x0028e7e0`) LCG flicker.
+    #[must_use]
+    #[inline]
+    pub fn normalized_spot_intensity(&self) -> f32 {
+        if !self.spot_on || self.spot_max_color <= 1e-6 {
+            0.0
+        } else {
+            (self.spot_rgb_scalar / self.spot_max_color).clamp(0.0, 1.0)
+        }
     }
 
     /// Evaluates `sh2gfw_Get_MaxDarkScaleFactor` (`0x0028e360`).

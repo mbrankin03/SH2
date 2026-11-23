@@ -15,6 +15,17 @@ pub const SCREEN_FOG_UV_SCROLL_SCALE: f32 = 0.25;
 /// Half-span of the fullscreen fog quad UV window (`±0.125` in `fog_view_screen_fog` `0x0016c1c0`).
 pub const SCREEN_FOG_UV_HALF_SPAN: f32 = 0.125;
 
+/// Default PS2 fog wind speed magnitude (`0x3ecccccd` = `0.4f`) in `fogChangeWind`
+/// (`SLUS_202.28` `0x00169380`, `uVar8 = 0x3ecccccd` for default `wind_type = 0` from
+/// `fog_defset_data +0x10` at `0x002ab530`).
+pub const PS2_FOG_WIND_DEFAULT_SPEED: f32 = 0.4;
+
+/// Default PS2 horizontal wind vector at [`PS2_FOG_WIND_DEFAULT_SPEED`] (`fogChangeWind` `0x00169380`).
+pub const PS2_DEFAULT_FOG_WIND_VEC: Vec3 = Vec3::new(PS2_FOG_WIND_DEFAULT_SPEED, 0.0, 0.0);
+
+/// Default PS2 `fogSetColor` alpha byte (`0x80` = `128`) set by `fogInit` (`SLUS_202.28` `0x001687d0`).
+pub const PS2_FOG_DEFAULT_COLOR_ALPHA_U8: u8 = 0x80;
+
 /// 1:1 screen-space fog UV accumulator (`_DAT_00581500`, `_DAT_00581504` in `Fog/fog.c`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenFogState {

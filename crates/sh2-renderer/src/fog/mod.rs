@@ -27,7 +27,8 @@ pub use depth_fog::{
 };
 pub use particles::{FogParticlePipeline, GpuFogParticle, MAX_GPU_FOG_PARTICLES};
 pub use screen_fog::{
-    ScreenFogEvaluation, ScreenFogState, ScreenFogStepInput, SCREEN_FOG_UV_HALF_SPAN,
+    ScreenFogEvaluation, ScreenFogState, ScreenFogStepInput, PS2_DEFAULT_FOG_WIND_VEC,
+    PS2_FOG_DEFAULT_COLOR_ALPHA_U8, PS2_FOG_WIND_DEFAULT_SPEED, SCREEN_FOG_UV_HALF_SPAN,
 };
 pub use shadow::{
     compute_spotlight_view_proj, SpotlightShadowPipeline, SpotlightShadowUniforms,

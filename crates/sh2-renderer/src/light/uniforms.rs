@@ -164,7 +164,8 @@ pub struct SpotlightUniforms {
     /// from `sh2gfw_setsp1para2LGT_blk` (`0x0017ddd0` `+0xc00`/`+0xbf0`) and `UpdateFParam` (`0x00126170`).
     pub ps2_falloff_params: [f32; 4],
     /// Gun muzzle flash ambient boost & `DARK_Hosei` trim:
-    /// - `x`: `gun_light_boost = sh2gfw_Get_GunLight() * 2.0` (`0x0017d7f0` / `0x0017ddd0`)
+    /// - `x`: `gun_light_boost = (sh2gfw_Get_GunLight() * 2.0) / 4.0 = gun_light * 0.5` in 1.0-normalized
+    ///   ambient space (factoring out the `4.0` VU1 ambient scale in `0x0017d7f0` / `0x0017ddd0`)
     /// - `y`: `dark_trim_factor` (`sh2gfw_Get_DarkTrimFactor` `0x0028e350`)
     /// - `z`: `DARK_Hosei` (`0.5` @ `0x002ab710`)
     /// - `w`: `night_or_day` (`0.0` = Day `ALPHA_1=0x54`, `1.0` = Night `ALPHA_1=0x58`, `0x00181be0`)
@@ -234,11 +235,13 @@ impl SpotlightUniforms {
         self.fill_and_range[3] = if use_hyperbolic { 1.0 } else { 0.0 };
     }
 
-    /// Sets gun muzzle flash ambient boost (`sh2gfw_Get_GunLight() * 2.0`), `DARK_Hosei` trim
-    /// (`sh2gfw_Get_DarkTrimFactor` `0x0028e350`), and day/night flag (`0x00181be0`).
+    /// Sets gun muzzle flash ambient boost (`(sh2gfw_Get_GunLight() * 2.0) / 4.0 = gun_light * 0.5`
+    /// in 1.0-normalized ambient space, factoring out the `4.0` VU1 ambient scale in `0x0017d7f0` /
+    /// `0x0017ddd0`), `DARK_Hosei` trim (`sh2gfw_Get_DarkTrimFactor` `0x0028e350`), and day/night flag
+    /// (`0x00181be0`).
     pub fn set_gun_and_dark_trim(&mut self, gun_light: f32, dark_trim_factor: f32, is_night: bool) {
         self.gun_and_dark_trim = [
-            gun_light * super::jms_spot::GUN_LIGHT_AMBIENT_MULTIPLIER,
+            gun_light * super::jms_spot::GUN_LIGHT_NORMALIZED_AMBIENT_MULTIPLIER,
             dark_trim_factor,
             DARK_HOSEI,
             if is_night { 1.0 } else { 0.0 },

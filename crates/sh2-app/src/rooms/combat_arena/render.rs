@@ -502,22 +502,36 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         }
     }
     // Step 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`) UV-scrolling screen fog overlay
-    let cam_eye = state.sim_core.active_camera_eye(alpha);
+    let (cam_eye, view_mat) = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+        .map(|s| (s.player.camera.eye, s.player.camera.view_matrix()))
+        .unwrap_or_else(|| {
+            (
+                state.sim_core.active_camera_eye(alpha),
+                state.sim_core.active_view_matrix(alpha),
+            )
+        });
     let cam_delta = cam_eye - state.last_screen_fog_cam;
     state.last_screen_fog_cam = cam_eye;
-    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
+    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.0 {
         let fog_alpha_param = (effective_fog.layer_transparencies[0] * 128.0)
             .round()
             .clamp(0.0, 128.0) as u8;
+        let fog_color_a = (effective_fog.fog_color[3]
+            * f32::from(sh2_renderer::fog::PS2_FOG_DEFAULT_COLOR_ALPHA_U8))
+        .round()
+        .clamp(0.0, 255.0) as u8;
         let screen_eval = state
             .screen_fog_state
             .step(&sh2_renderer::fog::ScreenFogStepInput {
                 cam_delta,
                 area_size: sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                wind_vec: glam::Vec3::new(0.4, 0.0, 0.0),
+                wind_vec: sh2_renderer::fog::PS2_DEFAULT_FOG_WIND_VEC,
                 dt_scale: fog_dt * 60.0 * effective_fog.speed_mult,
-                world_view_rot: glam::Mat3::IDENTITY,
-                fog_color_a: 0x80,
+                world_view_rot: glam::Mat3::from_mat4(view_mat),
+                fog_color_a,
                 fog_alpha_param,
             });
         effective_fog.screen_fog_uv = state.screen_fog_state.to_gpu_vec4(&screen_eval);
@@ -527,7 +541,7 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     state.render_ctx.update_fog(&effective_fog);
 
     // Step and upload localized 3D proximity fog sprites decoupled from display refresh rate (`SH2-32`)
-    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.05 {
+    if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.0 {
         let player_pos = state.sim_core.scenario.player_position;
         let ps2_room_id = {
             let from_room =

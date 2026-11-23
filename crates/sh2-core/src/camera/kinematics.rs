@@ -13,7 +13,7 @@
 //!   matching Y's `/ 500.0` in `SLUS_202.28` `0x0019c840`) and clamps zero-crossing overshoot per axis.
 
 use crate::types::camera::{CameraMoveParam, CameraWatchParam};
-use glam::Vec3;
+use glam::{Mat3, Vec3};
 use sh2_assets::formats::cam::{
     CamMovementParams, CamMovementType, RoadRecord, VC_RD_CAM_LIKE_SETTLE_F,
 };
@@ -536,6 +536,101 @@ pub fn vc_correct_cam_mat_ang_forcibly(ang: &mut Vec3, rec: &RoadRecord) {
     } else {
         ang.y = sh_angle_regulate(ang.y);
     }
+}
+
+/// Builds the PS2 YXZ rotation matrix `Ry(ang.y) * Rx(ang.x) * Rz(ang.z)`
+/// (`SLUS_202.28` `vwRotMatrixYXZ` `0x0019edf0`).
+#[inline]
+pub fn vw_rot_matrix_yxz(ang: Vec3) -> Mat3 {
+    Mat3::from_rotation_y(ang.y) * Mat3::from_rotation_x(ang.x) * Mat3::from_rotation_z(ang.z)
+}
+
+/// Extracts PS2 YXZ Euler angles `(pitch_x, yaw_y, roll_z)` in radians from a rotation matrix
+/// (`SLUS_202.28` `vwMatrixToAngleYXZ` `0x0019ee60`).
+pub fn vw_matrix_to_angle_yxz(mat: Mat3) -> Vec3 {
+    // Column 2 is forward `M * (0, 0, 1) = (cos(x)*sin(y), -sin(x), cos(x)*cos(y))`.
+    let col0 = mat.x_axis;
+    let col1 = mat.y_axis;
+    let col2 = mat.z_axis;
+
+    let pitch_x = (-col2.y).atan2(col2.x.hypot(col2.z));
+    let (yaw_y, roll_z) = if (pitch_x - FRAC_PI_2).abs() <= 1e-6 {
+        (col1.x.atan2(col1.z), 0.0)
+    } else if (pitch_x + FRAC_PI_2).abs() <= 1e-6 {
+        ((-col1.x).atan2(-col1.z), 0.0)
+    } else {
+        (col2.x.atan2(col2.z), col0.y.atan2(col1.y))
+    };
+    Vec3::new(pitch_x, yaw_y, roll_z)
+}
+
+/// Updates `base_cam_ang` to `new_base_ang` while re-expressing `ofs_cam_ang` so world camera
+/// orientation `R_YXZ(base) * R_YXZ(ofs)` remains continuous (`SLUS_202.28`
+/// `vcRenewalBaseCamAngAndAdjustOfsCamAng` `0x0019cfa0`).
+pub fn vc_renewal_base_cam_ang_and_adjust_ofs_cam_ang(
+    base_cam_ang: &mut Vec3,
+    ofs_cam_ang: &mut Vec3,
+    new_base_ang: Vec3,
+) {
+    let old_base_mat = vw_rot_matrix_yxz(*base_cam_ang);
+    let new_base_mat_t = vw_rot_matrix_yxz(new_base_ang).transpose();
+    let ofs_mat = vw_rot_matrix_yxz(*ofs_cam_ang);
+    let new_ofs_mat = (new_base_mat_t * old_base_mat) * ofs_mat;
+    *ofs_cam_ang = vw_matrix_to_angle_yxz(new_ofs_mat);
+    *base_cam_ang = new_base_ang;
+}
+
+/// Computes the target offset Euler angles `(pitch_x, yaw_y, watch_tgt_ang_z)` in the transposed
+/// base camera frame `base_mat_t` (`SLUS_202.28` `vcMakeOfsCamTgtAng` `0x0019d0f0`).
+#[inline]
+pub fn vc_make_ofs_cam_tgt_ang(
+    base_mat_t: Mat3,
+    watch_tgt_pos: Vec3,
+    cam_pos: Vec3,
+    watch_tgt_ang_z: f32,
+) -> Vec3 {
+    let local_vec = base_mat_t * (watch_tgt_pos - cam_pos);
+    let mut ang = vw_vector_to_angle(local_vec);
+    ang.z = watch_tgt_ang_z;
+    ang
+}
+
+/// Computes character bottom and top target angles in the transposed base camera frame
+/// `base_mat_t` (`SLUS_202.28` `vcMakeOfsCam2CharaBottomAndTopAngByBaseMatT` `0x0019d160`).
+#[inline]
+pub fn vc_make_ofs_cam_2_chara_bottom_and_top_ang_by_base_mat_t(
+    chara_btm_y: f32,
+    chara_top_y: f32,
+    base_mat_t: Mat3,
+    cam_pos: Vec3,
+    chara_pos: Vec3,
+) -> (Vec3, Vec3) {
+    let btm_world = Vec3::new(
+        chara_pos.x - cam_pos.x,
+        chara_btm_y - cam_pos.y,
+        chara_pos.z - cam_pos.z,
+    );
+    let top_world = Vec3::new(
+        chara_pos.x - cam_pos.x,
+        chara_top_y - cam_pos.y,
+        chara_pos.z - cam_pos.z,
+    );
+    (
+        vw_vector_to_angle(base_mat_t * btm_world),
+        vw_vector_to_angle(base_mat_t * top_world),
+    )
+}
+
+/// Composes final camera rotation matrix `R_YXZ(base_ang) * R_YXZ(ofs_ang)` and extracts its
+/// YXZ Euler angles (`SLUS_202.28` `vcMakeCamMatAndCamAngByBaseAngAndOfsAng` `0x0019d560`).
+#[inline]
+pub fn vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang(
+    base_ang: Vec3,
+    ofs_ang: Vec3,
+) -> (Mat3, Vec3) {
+    let cam_mat = vw_rot_matrix_yxz(base_ang) * vw_rot_matrix_yxz(ofs_ang);
+    let cam_ang = vw_matrix_to_angle_yxz(cam_mat);
+    (cam_mat, cam_ang)
 }
 
 /// Converts a world-space direction vector into PS2 `(pitch_x, yaw_y, 0.0)` angles in radians

@@ -12,10 +12,12 @@ use crate::camera::fixed_angle::{
 use crate::camera::kinematics::{
     compute_screen_half_angles, fov_y_from_ps2_projection_unclamped, sh_angle_regulate,
     vc_adj_cam_ofs_ang_by_chara_in_screen, vc_adj_cam_ofs_ang_by_ofs_ang_spd,
-    vc_get_use_watch_and_cam_mv_param, vc_renewal_cam_data, vc_ret_smooth_cam_mv_f,
-    vw_oresen_hokan, vw_renewal_xz_velocity_to_target_pos, vw_ret_new_ang_spd_to_target_ang,
-    vw_ret_new_velocity_to_target_val, CAM_MV_PRM_NRML, CAM_MV_PRM_OUTDOOR, WATCH_MV_PRM_NRML,
-    WATCH_MV_PRM_USER,
+    vc_get_use_watch_and_cam_mv_param, vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang,
+    vc_make_ofs_cam_tgt_ang, vc_renewal_base_cam_ang_and_adjust_ofs_cam_ang, vc_renewal_cam_data,
+    vc_ret_smooth_cam_mv_f, vw_matrix_to_angle_yxz, vw_oresen_hokan,
+    vw_renewal_xz_velocity_to_target_pos, vw_ret_new_ang_spd_to_target_ang,
+    vw_ret_new_velocity_to_target_val, vw_rot_matrix_yxz, CAM_MV_PRM_NRML, CAM_MV_PRM_OUTDOOR,
+    WATCH_MV_PRM_NRML, WATCH_MV_PRM_USER,
 };
 use crate::types::camera::FixCamManager;
 use crate::widescreen_rail::{switch_hysteresis_advantage_mm, AspectRailConfig};
@@ -266,17 +268,19 @@ fn test_fixed_angle_ideal_pos_and_180_warp() {
         params: CamMovementParams::FixedAngle(FixAngCamParam {
             ang_x: -0.3,
             ang_y: 0.0,
-            ofs_hy: 0.0,
+            ofs_hy: -250.0,
             cam2wth_dist: 2000.0,
         }),
         ..RoadRecord::default()
     };
     let mut mng = FixCamManager::default();
+    let mut chara_top_y = -925.0;
     let eye = vc_make_ideal_cam_pos_for_fix_ang_cam(
         &rec,
-        Vec3::ZERO,
+        Vec3::new(0.0, 50.0, 0.0),
         0.0,
         Vec3::new(0.0, -1400.0, -1000.0),
+        &mut chara_top_y,
         &mut mng,
         true,
         false,
@@ -286,6 +290,9 @@ fn test_fixed_angle_ideal_pos_and_180_warp() {
         eye.z < 0.0,
         "FixedAngle eye backs away opposite ang_y=0 (+Z)"
     );
+    // `vc_main.c:2580-2582`: `ideal_pos.y == chara_pos.y` (unclamped) & `chara_top_y += fix.ofs_hy`.
+    assert!((eye.y - 50.0).abs() < 1e-4);
+    assert!((chara_top_y - (-1175.0)).abs() < 1e-4);
 
     // Facing 180° opposite (`PI` vs `0.0` >= 135°) triggers `vcWarpForFixAngCam` (`0x00252980`).
     assert!(vc_warp_for_fix_ang_cam(&rec, PI, &mut mng));
@@ -388,4 +395,50 @@ fn test_oriented_retail_cam_volumes_ap30_and_ca03() -> Result<(), Box<dyn std::e
         }
     }
     Ok(())
+}
+
+#[test]
+fn test_yxz_matrix_renewal_base_cam_ang_world_orientation_continuity() {
+    // 1. Round-trip `vwRotMatrixYXZ` (0x0019edf0) <-> `vwMatrixToAngleYXZ` (0x0019ee60).
+    let ang = Vec3::new(0.35, -1.1, 0.22);
+    let mat = vw_rot_matrix_yxz(ang);
+    let extracted = vw_matrix_to_angle_yxz(mat);
+    assert!((extracted - ang).length() < 1e-5);
+
+    // Gimbal lock ±PI/2 extraction matches `vw_calc.c:305-314`.
+    let gimbal_pos = vw_matrix_to_angle_yxz(vw_rot_matrix_yxz(Vec3::new(
+        std::f32::consts::FRAC_PI_2,
+        0.7,
+        0.0,
+    )));
+    assert!((gimbal_pos.x - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    assert!((gimbal_pos.y - 0.7).abs() < 1e-5);
+    assert!(gimbal_pos.z.abs() < 1e-5);
+
+    // 2. `vcRenewalBaseCamAngAndAdjustOfsCamAng` (0x0019cfa0): changing `base_cam_ang` from
+    // non-zero pitch/yaw to a new base must keep world camera orientation `R(base) * R(ofs)` exact!
+    let mut base_ang = Vec3::new(0.4, 0.8, 0.0);
+    let mut ofs_ang = Vec3::new(-0.25, 0.35, 0.12);
+    let (before_mat, _before_ang) =
+        vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang(base_ang, ofs_ang);
+
+    let new_base_ang = Vec3::new(0.55, -0.45, 0.0);
+    vc_renewal_base_cam_ang_and_adjust_ofs_cam_ang(&mut base_ang, &mut ofs_ang, new_base_ang);
+    assert_eq!(base_ang, new_base_ang);
+
+    let (after_mat, _after_ang) =
+        vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang(base_ang, ofs_ang);
+    assert!((after_mat.x_axis - before_mat.x_axis).length() < 1e-5);
+    assert!((after_mat.y_axis - before_mat.y_axis).length() < 1e-5);
+    assert!((after_mat.z_axis - before_mat.z_axis).length() < 1e-5);
+
+    // 3. `vcMakeOfsCamTgtAng` (0x0019d0f0) + `vcMakeCamMatAndCamAngByBaseAngAndOfsAng` (0x0019d560):
+    // Transforming a world watch vector into `base_mat^T` and composing back recovers exact world forward.
+    let cam_pos = Vec3::new(100.0, -1500.0, -500.0);
+    let watch_tgt = Vec3::new(900.0, -900.0, 1200.0);
+    let base_mat_t = vw_rot_matrix_yxz(base_ang).transpose();
+    let tgt_ofs = vc_make_ofs_cam_tgt_ang(base_mat_t, watch_tgt, cam_pos, 0.0);
+    let (composed_mat, _) = vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang(base_ang, tgt_ofs);
+    let expected_fwd = (watch_tgt - cam_pos).normalize();
+    assert!((composed_mat.z_axis - expected_fwd).length() < 1e-5);
 }

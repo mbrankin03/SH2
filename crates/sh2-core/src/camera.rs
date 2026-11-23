@@ -262,7 +262,7 @@ impl Ps2CameraController {
         warp: bool,
         dt: f32,
     ) -> (Vec3, Vec3, f32, CameraMovementType) {
-        let (chara_bottom_y, chara_top_y, chara_center_y) =
+        let (chara_bottom_y, mut chara_top_y, chara_center_y) =
             chase::compute_chara_y_bounds(player_pos.y, 0.0);
         let is_outdoor = crate::widescreen_rail::is_outdoor_room_or_record(
             self.active_room_id.as_deref(),
@@ -323,16 +323,21 @@ impl Ps2CameraController {
             CameraMovementType::ThroughDoor => {
                 locus_door::evaluate_through_door_record(rec, player_yaw)
             }
-            CameraMovementType::FixedAngle => fixed_angle::vc_make_ideal_cam_pos_for_fix_ang_cam(
-                rec,
-                player_pos,
-                player_yaw,
-                cur_cam_pos,
-                &mut self.raw_state.fix_cam_mng,
-                road_changed,
-                is_outdoor,
-                &self.aspect_rail_config,
-            ),
+            CameraMovementType::FixedAngle => {
+                let pos = fixed_angle::vc_make_ideal_cam_pos_for_fix_ang_cam(
+                    rec,
+                    player_pos,
+                    player_yaw,
+                    cur_cam_pos,
+                    &mut chara_top_y,
+                    &mut self.raw_state.fix_cam_mng,
+                    road_changed,
+                    is_outdoor,
+                    &self.aspect_rail_config,
+                );
+                self.raw_state.chara_top_y = chara_top_y;
+                pos
+            }
             CameraMovementType::Chase
             | CameraMovementType::Settle
             | CameraMovementType::SelfView => chase::vc_make_ideal_cam_pos_use_vc_road_data(
@@ -452,28 +457,41 @@ impl Ps2CameraController {
         self.raw_state.scr_half_ang_wy = scr_half_wy;
 
         // 6. Base & offset angular renewal (`vcRenewalCamMatAng` `0x0019c9d0`).
-        let prev_base_ang = Vec3::new(
+        let mut base_ang = Vec3::new(
             self.raw_state.base_cam_ang[0],
             self.raw_state.base_cam_ang[1],
             self.raw_state.base_cam_ang[2],
         );
-        let base_ang = chase::vc_make_new_base_cam_ang(
+        let mut ofs_ang = Vec3::new(
+            self.raw_state.ofs_cam_ang[0],
+            self.raw_state.ofs_cam_ang[1],
+            self.raw_state.ofs_cam_ang[2],
+        );
+        let new_base_ang = chase::vc_make_new_base_cam_ang(
             rec,
             cam_pos,
             watch_tgt,
-            prev_base_ang,
+            base_ang,
             chara_mv_spd,
             false,
             warp,
             dt,
         );
         self.raw_state.old_base_cam_ang = self.raw_state.base_cam_ang;
+        if new_base_ang != base_ang {
+            kinematics::vc_renewal_base_cam_ang_and_adjust_ofs_cam_ang(
+                &mut base_ang,
+                &mut ofs_ang,
+                new_base_ang,
+            );
+        }
         self.raw_state.base_cam_ang = [base_ang.x, base_ang.y, base_ang.z, 0.0];
 
-        let raw_tgt_ang = kinematics::vw_vector_to_angle(watch_tgt - cam_pos);
-        let mut tgt_ofs_ang = Vec3::new(
-            kinematics::sh_angle_regulate(raw_tgt_ang.x - base_ang.x),
-            kinematics::sh_angle_regulate(raw_tgt_ang.y - base_ang.y),
+        let base_mat_t = kinematics::vw_rot_matrix_yxz(base_ang).transpose();
+        let mut tgt_ofs_ang = kinematics::vc_make_ofs_cam_tgt_ang(
+            base_mat_t,
+            watch_tgt,
+            cam_pos,
             self.raw_state.watch_tgt_ang_z,
         );
 
@@ -484,28 +502,14 @@ impl Ps2CameraController {
                 | CameraMovementType::Settle
                 | CameraMovementType::LocusCircle
         ) {
-            let btm_world = Vec3::new(
-                player_pos.x - cam_pos.x,
-                (chara_bottom_y + rec.trace_btm_hy) - cam_pos.y,
-                player_pos.z - cam_pos.z,
-            );
-            let top_world = Vec3::new(
-                player_pos.x - cam_pos.x,
-                chara_top_y - cam_pos.y,
-                player_pos.z - cam_pos.z,
-            );
-            let btm_raw = kinematics::vw_vector_to_angle(btm_world);
-            let top_raw = kinematics::vw_vector_to_angle(top_world);
-            let btm_ofs = Vec3::new(
-                kinematics::sh_angle_regulate(btm_raw.x - base_ang.x),
-                kinematics::sh_angle_regulate(btm_raw.y - base_ang.y),
-                0.0,
-            );
-            let top_ofs = Vec3::new(
-                kinematics::sh_angle_regulate(top_raw.x - base_ang.x),
-                kinematics::sh_angle_regulate(top_raw.y - base_ang.y),
-                0.0,
-            );
+            let (btm_ofs, top_ofs) =
+                kinematics::vc_make_ofs_cam_2_chara_bottom_and_top_ang_by_base_mat_t(
+                    chara_bottom_y + rec.trace_btm_hy,
+                    chara_top_y,
+                    base_mat_t,
+                    cam_pos,
+                    player_pos,
+                );
             kinematics::vc_adj_cam_ofs_ang_by_chara_in_screen(
                 &mut tgt_ofs_ang,
                 btm_ofs,
@@ -515,11 +519,6 @@ impl Ps2CameraController {
             );
         }
 
-        let mut ofs_ang = Vec3::new(
-            self.raw_state.ofs_cam_ang[0],
-            self.raw_state.ofs_cam_ang[1],
-            self.raw_state.ofs_cam_ang[2],
-        );
         let mut ofs_ang_spd = Vec3::new(
             self.raw_state.ofs_cam_ang_spd[0],
             self.raw_state.ofs_cam_ang_spd[1],
@@ -538,6 +537,8 @@ impl Ps2CameraController {
             );
         }
         kinematics::vc_correct_cam_mat_ang_forcibly(&mut ofs_ang, rec);
+        let (cam_rot_mat, final_ang) =
+            kinematics::vc_make_cam_mat_and_cam_ang_by_base_ang_and_ofs_ang(base_ang, ofs_ang);
         ofs_ang = Vec3::new(
             kinematics::sh_angle_regulate(ofs_ang.x),
             kinematics::sh_angle_regulate(ofs_ang.y),
@@ -545,13 +546,28 @@ impl Ps2CameraController {
         );
         self.raw_state.ofs_cam_ang = [ofs_ang.x, ofs_ang.y, ofs_ang.z, 0.0];
         self.raw_state.ofs_cam_ang_spd = [ofs_ang_spd.x, ofs_ang_spd.y, ofs_ang_spd.z, 0.0];
-
-        let final_ang = Vec3::new(
-            kinematics::sh_angle_regulate(base_ang.x + ofs_ang.x),
-            kinematics::sh_angle_regulate(base_ang.y + ofs_ang.y),
-            kinematics::sh_angle_regulate(base_ang.z + ofs_ang.z),
-        );
         self.raw_state.cam_mat_ang = [final_ang.x, final_ang.y, final_ang.z, 0.0];
+        self.raw_state.cam_mat.m = [
+            [
+                cam_rot_mat.x_axis.x,
+                cam_rot_mat.x_axis.y,
+                cam_rot_mat.x_axis.z,
+                0.0,
+            ],
+            [
+                cam_rot_mat.y_axis.x,
+                cam_rot_mat.y_axis.y,
+                cam_rot_mat.y_axis.z,
+                0.0,
+            ],
+            [
+                cam_rot_mat.z_axis.x,
+                cam_rot_mat.z_axis.y,
+                cam_rot_mat.z_axis.z,
+                0.0,
+            ],
+            [cam_pos.x, cam_pos.y, cam_pos.z, 1.0],
+        ];
 
         let watch_dist = (watch_tgt - cam_pos).length().max(500.0);
         let look_target = cam_pos + kinematics::vw_angle_to_vector(watch_dist, final_ang);

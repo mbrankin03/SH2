@@ -24,13 +24,16 @@ pub const FIX_ANG_WARP_RAIL_SHIFT_MM: f32 = 800.0;
 /// Computes the ideal camera eye position for `FixedAngle` (Mode 2) roads
 /// (`SLUS_202.28` `vcMakeIdealCamPosForFixAngCam` `0x0019a4c0`).
 ///
-/// Resets `fix_mng` when `road_changed` (`_VC_FLAGS & 0x20`) is `true`.
+/// Resets `fix_mng` when `road_changed` (`_VC_FLAGS & 0x20`) is `true`, returns `chara_pos.y`
+/// unclamped (vertical bounds are applied by `vcAdjTgtMvVecYByCurNearRoad` `0x0019b990`), and
+/// adds `fix.ofs_hy` (`+0x78`) to `chara_top_y` (`vcWork+0x1b4`, `vc_main.c:2581-2582`).
 #[allow(clippy::too_many_arguments)]
 pub fn vc_make_ideal_cam_pos_for_fix_ang_cam(
     rec: &RoadRecord,
     chara_pos: Vec3,
     chara_eye_ang_y: f32,
     cur_cam_pos: Vec3,
+    chara_top_y: &mut f32,
     fix_mng: &mut FixCamManager,
     road_changed: bool,
     is_outdoor: bool,
@@ -40,9 +43,9 @@ pub fn vc_make_ideal_cam_pos_for_fix_ang_cam(
         *fix_mng = FixCamManager::default();
     }
 
-    let (fix_ang_y, cam2wth_dist) = match rec.params {
-        CamMovementParams::FixedAngle(ref fix) => (fix.ang_y, fix.cam2wth_dist),
-        _ => (0.0, 2000.0),
+    let (fix_ang_y, fix_ofs_hy, cam2wth_dist) = match rec.params {
+        CamMovementParams::FixedAngle(ref fix) => (fix.ang_y, fix.ofs_hy, fix.cam2wth_dist),
+        _ => (0.0, 0.0, 2000.0),
     };
 
     let ang_y = sh_angle_regulate(fix_ang_y + fix_mng.add_ang_y);
@@ -76,14 +79,16 @@ pub fn vc_make_ideal_cam_pos_for_fix_ang_cam(
     let raw_x = chara_pos.x + lead * chara_eye_ang_y.sin() + back_dist * back_ang.sin();
     let raw_z = chara_pos.z + lead * chara_eye_ang_y.cos() + back_dist * back_ang.cos();
 
+    // `SLUS_202.28` `vc_main.c:2581-2582`: `vcWork.chara_top_y += fix.ofs_hy`.
+    *chara_top_y += fix_ofs_hy;
+
     let margin = compute_aspect_rail_margin_mm(is_outdoor, aspect_config);
     let (raw_lx, raw_lz) = rec.lim_rd.world_to_local_xz(raw_x, raw_z);
     let clamped_lx = clamp_axis_with_margin(shifted_min_x, shifted_max_x, margin, raw_lx);
     let clamped_lz = clamp_axis_with_margin(shifted_min_z, shifted_max_z, margin, raw_lz);
     let (final_wx, final_wz) = rec.lim_rd.local_to_world_xz(clamped_lx, clamped_lz);
 
-    let (y_hi, y_lo) = rec.lim_rd.y_bounds();
-    Vec3::new(final_wx, chara_pos.y.clamp(y_hi, y_lo), final_wz)
+    Vec3::new(final_wx, chara_pos.y, final_wz)
 }
 
 /// Computes the watch target position for `FixedAngle` (Mode 2) roads

@@ -462,6 +462,7 @@ fn build_cutscene_spotlight_uniforms(
             (player_pos - safe_d * 50_000.0, safe_d, -1.0, -1.0)
         }
     };
+    let effective_far = far_decay.max(4500.0);
     sh2_renderer::light::SpotlightUniforms {
         position: [pos.x, pos.y, pos.z, 1.0],
         direction_inner: [dir.x, dir.y, dir.z, inner_cos],
@@ -472,7 +473,12 @@ fn build_cutscene_spotlight_uniforms(
             outer_cos,
         ],
         ambient_tint,
-        fill_and_range: [0.0, far_decay.max(4500.0), 0.0, 0.0],
+        fill_and_range: [0.0, effective_far, 0.0, 0.0],
+        ps2_falloff_params: sh2_renderer::light::compute_ps2_falloff_params(
+            sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
+            effective_far,
+        ),
+        ..Default::default()
     }
 }
 

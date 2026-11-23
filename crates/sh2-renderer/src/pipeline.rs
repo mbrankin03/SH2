@@ -56,12 +56,22 @@ struct SpotlightUniforms {
     color_outer: vec4<f32>,
     ambient_tint: vec4<f32>,
     fill_and_range: vec4<f32>,
+    parallel_dirs: array<vec4<f32>, 3>,
+    parallel_colors: array<vec4<f32>, 3>,
+    point_positions: array<vec4<f32>, 3>,
+    point_colors: array<vec4<f32>, 3>,
+    ps2_falloff_params: vec4<f32>,
+    gun_and_dark_trim: vec4<f32>,
+    reflection_dir: vec4<f32>,
+    reflection_color: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
 @group(0) @binding(2) var<uniform> pcss_u: PcssShadowUniforms;
 @group(0) @binding(3) var pcss_shadow_map: texture_depth_2d;
+@group(0) @binding(4) var specular_sphere_tex: texture_2d<f32>;
+@group(0) @binding(5) var specular_sphere_sampler: sampler;
 
 @group(1) @binding(0) var diffuse_texture: texture_2d<f32>;
 @group(1) @binding(1) var diffuse_sampler: sampler;
@@ -126,20 +136,44 @@ fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
         inner_cos <= -0.99 && outer_cos <= -0.99,
     );
 
-    // Distance attenuation (world units are PS2 mm: `1000.0 == 1.0 m`) with calibrated
-    // PS2 (6000 mm) / SH2:EE (8500 mm) flashlight reach windowing (`EnhancedFlashlight.cpp:162-164`).
+    // Exact PS2 distance attenuation (`sh2gfw_setsp1para2LGT_blk` 0x0017ddd0 / `UpdateFParam` 0x00126170):
+    // Linear: clamp(fa * dist + fb, 0.0, 1.0); Hyperbolic: clamp(h_fa / dist + h_fb, 0.0, 1.0).
     // Parallel directional lights (`inner_cos <= -0.99 && outer_cos <= -0.99`, `sh2gfw_setparal3LGT_blk`
     // at `SLUS_202.28` `0x0017d7f0`) have no distance falloff.
-    let dist_m = dist * 0.001;
-    let reach = select(8500.0, spotlight.fill_and_range.y, spotlight.fill_and_range.y > 1.0);
-    let reach_ratio = clamp(dist / reach, 0.0, 1.0);
-    let reach_window = (1.0 - reach_ratio * reach_ratio);
-    let local_atten = (1.0 / (1.0 + 0.09 * dist_m + 0.032 * dist_m * dist_m)) * reach_window * reach_window;
+    let lin_atten = clamp(spotlight.ps2_falloff_params.x * dist + spotlight.ps2_falloff_params.y, 0.0, 1.0);
+    let hyp_atten = clamp(spotlight.ps2_falloff_params.z / max(dist, 1e-4) + spotlight.ps2_falloff_params.w, 0.0, 1.0);
+    let local_atten = select(lin_atten, hyp_atten, spotlight.fill_and_range.w > 0.5);
     let atten = select(local_atten, 1.0, inner_cos <= -0.99 && outer_cos <= -0.99);
     let norm = select(vec3<f32>(0.0, 1.0, 0.0), in.normal / n_len, has_normal);
     let n_dot_l = max(0.0, dot(norm, -l_dir));
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
-    let diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten * pcss_vis);
+    var diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_intensity * atten * pcss_vis);
+
+    // Auxiliary parallel directional lights (`sh2gfw_setparal3LGT_blk` 0x0017d7f0: 3 parallel lights;
+    // `sh2gfw_setsp1para2LGT_blk` 0x0017ddd0: 2 parallel lights in slots 1..2).
+    for (var pi: u32 = 0u; pi < 3u; pi = pi + 1u) {
+        let p_dir_en = spotlight.parallel_dirs[pi];
+        if (p_dir_en.w > 0.5) {
+            let p_len = length(p_dir_en.xyz);
+            let p_dir = select(vec3<f32>(0.0, 1.0, 0.0), p_dir_en.xyz / p_len, p_len > 1e-4);
+            let p_ndotl = select(1.0, max(dot(norm, -p_dir), 0.0), has_normal);
+            diffuse = diffuse + spotlight.parallel_colors[pi].xyz * p_ndotl;
+        }
+    }
+
+    // Up to 3 demo/room point lights (`sh2gfw_Set_DemoPointLight` 0x0017d600) with PS2 linear falloff
+    for (var pti: u32 = 0u; pti < 3u; pti = pti + 1u) {
+        let pt_pos_near = spotlight.point_positions[pti];
+        let pt_col_far = spotlight.point_colors[pti];
+        if (pt_col_far.w > pt_pos_near.w + 1e-3) {
+            let pt_vec = pt_pos_near.xyz - in.world_pos;
+            let pt_dist = length(pt_vec);
+            let pt_dir = select(vec3<f32>(0.0, 1.0, 0.0), pt_vec / pt_dist, pt_dist > 1e-4);
+            let pt_atten = clamp((pt_col_far.w - pt_dist) / max(pt_col_far.w - pt_pos_near.w, 1e-4), 0.0, 1.0);
+            let pt_ndotl = select(1.0, max(dot(norm, pt_dir), 0.0), has_normal);
+            diffuse = diffuse + pt_col_far.xyz * (pt_ndotl * pt_atten);
+        }
+    }
 
     // Authentic camera view-space directional fill light (`sh2pc.exe` `0x50b036`, `k = 0.3 * s_flash_level * 0.25`)
     let cam_vec = camera.cam_pos.xyz - in.world_pos;
@@ -148,11 +182,16 @@ fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
     let cam_fill_ndotl = select(1.0, max(dot(norm, view_dir), 0.0), has_normal);
     let camera_fill = vec3<f32>(spotlight.fill_and_range.x * cam_fill_ndotl);
 
+    // Gun muzzle flash ambient boost (`sh2gfw_Get_GunLight() * 2.0`, 0x0017d7f0 / 0x0017ddd0)
+    // and `DARK_Hosei` ambient trim (`0x002ab710` = 0.5, `sh2gfw_Get_DarkTrimFactor` 0x0028e350).
+    let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x);
+    let dark_trim_scale = 1.0 + spotlight.gun_and_dark_trim.y * spotlight.gun_and_dark_trim.z;
+
     let shade_mode = i32(round(camera.cam_pos.w));
     let studio_ambient = select(base_ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
     let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
-    let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient * env_tint_rgb * env_ambient_scale + camera_fill * env_tint_rgb + diffuse * env_tint_rgb);
+    let lit_color = in.color.rgb * tex_color.rgb * (studio_ambient * env_tint_rgb * env_ambient_scale * dark_trim_scale + gun_boost + camera_fill * env_tint_rgb + diffuse * env_tint_rgb);
     return vec4<f32>(lit_color, out_alpha);
 }
 
@@ -228,6 +267,22 @@ fn fs_opaque(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @locati
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],

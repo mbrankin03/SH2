@@ -11,10 +11,24 @@
 //! - [`particles::FogParticlePipeline`]: Instanced camera-facing billboards for localized 3D
 //!   proximity fog sprites (`fogMakePacket` @ `0x0016bb70`, `ObservationDeckFogFix.cpp`).
 
+pub mod blow;
+pub mod depth_fog;
 pub mod particles;
+pub mod screen_fog;
 pub mod shadow;
 
+pub use blow::{
+    FogBlowEmitter, FogBlowParticle, FogBlowSystem, BLOW_POINT_PS185, BLOW_POINT_PS189,
+    BLOW_POINT_PS193, MAX_BLOW_FOG_PARTICLES, ROOM_BLOW_PS185, ROOM_BLOW_PS189, ROOM_BLOW_PS193,
+};
+pub use depth_fog::{
+    DepthFogCoeffs, PS2_DEFAULT_FOG_FAR_MM, PS2_DEFAULT_FOG_MAX, PS2_DEFAULT_FOG_MIN,
+    PS2_DEFAULT_FOG_NEAR_MM,
+};
 pub use particles::{FogParticlePipeline, GpuFogParticle, MAX_GPU_FOG_PARTICLES};
+pub use screen_fog::{
+    ScreenFogEvaluation, ScreenFogState, ScreenFogStepInput, SCREEN_FOG_UV_HALF_SPAN,
+};
 pub use shadow::{
     compute_spotlight_view_proj, SpotlightShadowPipeline, SpotlightShadowUniforms,
     SPOTLIGHT_SHADOW_MAP_SIZE,
@@ -25,7 +39,7 @@ use sh2_core::fog::{Ps2FogLayerParams, RoomFogEvaluation};
 
 /// Uniform buffer for the multi-layered & volumetric fog compute shader.
 ///
-/// Layout is strictly 16-byte aligned for WGSL uniform compliance (total size: 160 bytes).
+/// Layout is strictly 16-byte aligned for WGSL uniform compliance (total size: 192 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FogUniforms {
@@ -41,7 +55,7 @@ pub struct FogUniforms {
     pub time: f32,
     /// Number of discrete volumetric raymarching steps (e.g., 16, 24, 32). (Offset 32, size 4)
     pub step_count: u32,
-    /// Density curve falloff type: `0` = Linear, `1` = Exponential, `2` = Exponential Squared (`dbg_fogparm_ctl`). (Offset 36, size 4)
+    /// Density curve falloff type: `0` = PS2 Hyperbolic `FA/z + FB` (`0x00175df0`), `1` = Linear, `2` = Exponential Squared. (Offset 36, size 4)
     pub curve_type: u32,
     /// Drift speed multiplier matching SH2:EE `FogSpeedFix` (`FogAdjustments.cpp:272-306`). (Offset 40, size 4)
     pub speed_mult: f32,
@@ -55,15 +69,25 @@ pub struct FogUniforms {
     pub layer_transparencies: [f32; 4],
     /// Spotlight shadow-map view-projection matrix for god-ray occlusion sampling. (Offset 96, size 64)
     pub shadow_view_proj: [[f32; 4]; 4],
+    /// Exact PS2 depth-fog coefficients `[persp_fa, persp_fb, fog_min, fog_max]` (`sh2gfw_Set_DepthFog` @ `0x00175df0`). (Offset 160, size 16)
+    pub depth_fog_params: [f32; 4],
+    /// `fog_view_screen_fog` (`0x0016c1c0`) UV window `[u_center, v_center, half_span (0.125), gs_alpha_norm]`. (Offset 176, size 16)
+    pub screen_fog_uv: [f32; 4],
 }
 
 impl Default for FogUniforms {
     fn default() -> Self {
         let layers = Ps2FogLayerParams::default();
+        let depth_coeffs = DepthFogCoeffs::from_ps2_params(
+            PS2_DEFAULT_FOG_FAR_MM,
+            PS2_DEFAULT_FOG_NEAR_MM,
+            PS2_DEFAULT_FOG_MAX,
+            PS2_DEFAULT_FOG_MIN,
+        );
         Self {
             fog_color: [0.7, 0.7, 0.75, 1.0],
-            fog_near: 2.0,
-            fog_far: 25.0,
+            fog_near: PS2_DEFAULT_FOG_NEAR_MM,
+            fog_far: PS2_DEFAULT_FOG_FAR_MM,
             density: 1.0,
             time: 0.0,
             step_count: 24,
@@ -89,6 +113,8 @@ impl Default for FogUniforms {
                 1.0, // volumetric_light enabled default
             ],
             shadow_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            depth_fog_params: depth_coeffs.to_gpu_vec4(),
+            screen_fog_uv: [0.5, 0.5, SCREEN_FOG_UV_HALF_SPAN, 0.0],
         }
     }
 }
@@ -101,6 +127,12 @@ impl FogUniforms {
         fog_quality: FogQuality,
         volumetric_light: bool,
     ) -> Self {
+        let depth_coeffs = DepthFogCoeffs::from_ps2_params(
+            eval.fog_far_mm,
+            eval.fog_near_mm,
+            PS2_DEFAULT_FOG_MAX,
+            PS2_DEFAULT_FOG_MIN,
+        );
         Self {
             fog_color: eval.fog_color,
             fog_near: eval.fog_near_mm,
@@ -140,7 +172,25 @@ impl FogUniforms {
                 if volumetric_light { 1.0 } else { 0.0 },
             ],
             shadow_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            depth_fog_params: depth_coeffs.to_gpu_vec4(),
+            screen_fog_uv: [0.5, 0.5, SCREEN_FOG_UV_HALF_SPAN, 0.0],
         }
+    }
+
+    /// Recomputes `depth_fog_params` (`sh2gfw_Set_DepthFog` `0x00175df0`) for explicit
+    /// `(fog_near_mm, fog_far_mm, fog_min, fog_max)` bounds.
+    pub fn set_depth_fog_bounds(
+        &mut self,
+        fog_near_mm: f32,
+        fog_far_mm: f32,
+        fog_min: f32,
+        fog_max: f32,
+    ) {
+        self.fog_near = fog_near_mm;
+        self.fog_far = fog_far_mm;
+        self.depth_fog_params =
+            DepthFogCoeffs::from_ps2_params(fog_far_mm, fog_near_mm, fog_max, fog_min)
+                .to_gpu_vec4();
     }
 
     /// Applies user [`FogQuality`] and `volumetric_light` toggle settings in place.
@@ -361,8 +411,11 @@ mod tests {
 
     #[test]
     fn test_fog_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<FogUniforms>(), 160);
+        assert_eq!(std::mem::size_of::<FogUniforms>(), 192);
         assert_eq!(std::mem::align_of::<FogUniforms>(), 4);
+        let d = FogUniforms::default();
+        assert_eq!(d.fog_near, PS2_DEFAULT_FOG_NEAR_MM);
+        assert_eq!(d.fog_far, PS2_DEFAULT_FOG_FAR_MM);
     }
 
     #[test]

@@ -122,6 +122,9 @@ pub struct RenderContext {
     pub lens_flare_view: wgpu::TextureView,
     pub spray_mist_texture: wgpu::Texture,
     pub spray_mist_view: wgpu::TextureView,
+    pub specular_sphere_texture: wgpu::Texture,
+    pub specular_sphere_view: wgpu::TextureView,
+    pub specular_sphere_sampler: wgpu::Sampler,
 
     pub geometry_bind_group: wgpu::BindGroup,
     pub spotlight_shadow_bind_group: wgpu::BindGroup,
@@ -698,6 +701,55 @@ impl RenderContext {
         let spray_mist_view =
             spray_mist_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // 1:1 PS2/PC 64x64 sphere-map specular texture (`mdl_SpecularMappingMakeTexture` @ 0x0012f0c0)
+        let spec_dim = skeletal::SPECULAR_SPHERE_MAP_DIM;
+        let spec_rgba = skeletal::generate_specular_sphere_map_rgba();
+        let specular_sphere_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 64x64 Specular Sphere-Map Texture"),
+            size: wgpu::Extent3d {
+                width: spec_dim,
+                height: spec_dim,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &specular_sphere_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &spec_rgba,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(spec_dim * 4),
+                rows_per_image: Some(spec_dim),
+            },
+            wgpu::Extent3d {
+                width: spec_dim,
+                height: spec_dim,
+                depth_or_array_layers: 1,
+            },
+        );
+        let specular_sphere_view =
+            specular_sphere_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let specular_sphere_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("PS2 Specular Sphere-Map Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         let post_uniforms = post::PostUniforms::default();
         let post_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Post Uniform Buffer"),
@@ -733,6 +785,14 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&pcss_shadow_depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&specular_sphere_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&specular_sphere_sampler),
                 },
             ],
         });
@@ -953,6 +1013,9 @@ impl RenderContext {
             lens_flare_view,
             spray_mist_texture,
             spray_mist_view,
+            specular_sphere_texture,
+            specular_sphere_view,
+            specular_sphere_sampler,
             geometry_bind_group,
             spotlight_shadow_bind_group,
             pcss_shadow_bind_group,

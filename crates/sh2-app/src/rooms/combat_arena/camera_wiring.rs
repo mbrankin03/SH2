@@ -239,6 +239,7 @@ pub(crate) fn update_spotlight_uniforms(
                 ambient_tint[3] * base_amb_scale,
             ],
             fill_and_range: [0.0, 1_000_000.0, 0.0, 0.0],
+            ..Default::default()
         }
     } else {
         let room_code = state.sim_core.scenario.current_room.as_str();
@@ -280,7 +281,7 @@ pub(crate) fn update_spotlight_uniforms(
             // 4.0 PC wall scale (`PS2_FLASHLIGHT_COLOR_SCALE = 1.2 / 4.0`), with reach `6000` / `8500` mm.
             let fl_mul =
                 sh2_core::lighting::flashlight_wall_brightness_multiplier(video.lighting_profile);
-            SpotlightUniforms {
+            let mut u = SpotlightUniforms {
                 position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
                 direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
                 color_outer: [1.18 * fl_mul, 1.12 * fl_mul, 0.96 * fl_mul, outer_cos],
@@ -296,11 +297,19 @@ pub(crate) fn update_spotlight_uniforms(
                     darkness.flash_level,
                     0.0,
                 ],
-            }
+                ..Default::default()
+            };
+            u.set_ps2_falloff(
+                sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
+                darkness.flashlight_reach_mm,
+                false,
+            );
+            u.set_gun_and_dark_trim(0.0, 0.0, is_dark_room);
+            u
         } else if !is_dark_room {
             // Daytime / lit room (`sh2gfw_Get_NightOrDay() == 0`): emit authentic PS2 parallel
             // directional light (`sh2gfw_setparal3LGT_blk` @ `SLUS_202.28` `0x0017d7f0`,
-            // `DrawEnvData.directional_lights[0]`) scaled into the shader's `base_ambient * 2.2`
+            // `DrawEnvData.directional_lights[0..3]`) scaled into the shader's `base_ambient * 2.2`
             // linear unit space (`0.07 * 2.2 = 0.154`) so `ER_DrawEnvData[room=1]` (`col=[0.5,0.5,0.5]`)
             // and `OB_DrawEnvData` (`col=[0.1,0.1,0.1]`) match their PS2 diffuse-to-ambient ratios
             // without overexposing lit interiors or mirrors. Zero camera headlamp fill in lit rooms.
@@ -322,8 +331,8 @@ pub(crate) fn update_spotlight_uniforms(
                 })
                 .unwrap_or((glam::Vec3::new(0.0, 1.0, 0.0), [0.0, 0.0, 0.0, -1.0]));
             let far_pos = spot_pos - dir * 50_000.0;
-            SpotlightUniforms {
-                position: [far_pos.x, far_pos.y, far_pos.z, 1.0],
+            let mut u = SpotlightUniforms {
+                position: [far_pos.x, far_pos.y, far_pos.z, 0.0],
                 direction_inner: [dir.x, dir.y, dir.z, -1.0],
                 color_outer: color,
                 ambient_tint: [
@@ -333,12 +342,34 @@ pub(crate) fn update_spotlight_uniforms(
                     modulated_ambient,
                 ],
                 fill_and_range: [0.0, 1_000_000.0, darkness.flash_level, 0.0],
+                ..Default::default()
+            };
+            if let Some(env) = draw_env {
+                let mut aux = [sh2_renderer::light::ParallelLightParams::default(); 3];
+                for i in 1..3 {
+                    let dl = env.directional_lights[i];
+                    let lum = dl.color[0].max(dl.color[1]).max(dl.color[2]);
+                    if lum > 1e-4 {
+                        aux[i] = sh2_renderer::light::ParallelLightParams {
+                            direction: dl.direction,
+                            color: [
+                                dl.color[0] * PARALLEL_LIGHT_LINEAR_SCALE,
+                                dl.color[1] * PARALLEL_LIGHT_LINEAR_SCALE,
+                                dl.color[2] * PARALLEL_LIGHT_LINEAR_SCALE,
+                            ],
+                            enabled: true,
+                        };
+                    }
+                }
+                u.set_parallel_lights(&aux);
             }
+            u.set_gun_and_dark_trim(0.0, 0.0, false);
+            u
         } else {
             // Dark room, Flashlight OFF: spotlight is completely OFF (`[0, 0, 0]`), while dark rooms receive
             // authentic `s_flash_level` ambient modulation (`0.75` pre-pickup -> `0.575` post-pickup)
             // and camera view-space directional fill (`0.075` pre-pickup -> `0.0225` post-pickup).
-            SpotlightUniforms {
+            let mut u = SpotlightUniforms {
                 position: [spot_pos.x, spot_pos.y, spot_pos.z, 1.0],
                 direction_inner: [light_dir.x, light_dir.y, light_dir.z, 0.90],
                 color_outer: [0.0, 0.0, 0.0, outer_cos],
@@ -354,7 +385,10 @@ pub(crate) fn update_spotlight_uniforms(
                     darkness.flash_level,
                     0.0,
                 ],
-            }
+                ..Default::default()
+            };
+            u.set_gun_and_dark_trim(0.0, 0.0, true);
+            u
         }
     };
     state.render_ctx.update_spotlight(&spot_uniforms);

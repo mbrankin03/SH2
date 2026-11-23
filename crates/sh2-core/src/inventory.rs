@@ -19,8 +19,43 @@ pub const FIRST_COMBO_ITEM_ID: u8 = 86;
 /// Last combination pseudo-item ID (`Horseshoe + Lighter + Wax doll`).
 pub const LAST_COMBO_ITEM_ID: u8 = 96;
 
-/// Ampoule stamina buff duration in seconds (`0x1f7d40c` in `0x49e7e0`).
+/// Ampoule stamina buff duration in seconds (`_DAT_01126904 = 0x44160000` = `600.0` in
+/// `SLUS_202.28` `ItemMedicineUse` `0x001ae020`; `DAT_01f7a80c = 0x44160000` in `sh2pc.exe` `0x0049ec70`).
 pub const AMPOULE_STAMINA_DURATION_SECS: f32 = 600.0;
+
+/// Threshold in seconds below which the Ampoule efficacy decays linearly to `0.0`
+/// (`300.0` in `SLUS_202.28` `ItemAmpolueEfficacy` `0x001ae180` and `sh2pc.exe` `0x0049ed40`).
+pub const AMPOULE_FULL_EFFICACY_THRESHOLD_SECS: f32 = 300.0;
+
+/// Resolves 1, 2, or 3 item IDs into the effective event-check item ID
+/// (`ItemCombinationUseCheck` in `SLUS_202.28` `0x001ae240` and `sh2pc.exe` `0x0049ed90`).
+///
+/// Sorts `(a, b, c)` ascending into `[lo, mid, hi]`:
+/// - If `mid == 0` (zero or one non-zero item supplied), returns `hi` directly (allowing a single
+///   item use without requiring a recipe match).
+/// - Otherwise searches the 11-entry retail combination table (`sh2pc.exe` `0x0088ec70`, shifted
+///   `+3` on ingredients and `+11` on outputs vs `SLUS_202.28` `cmb_check$1042` at `0x002b99f0`
+///   due to Born From a Wish item insertions) and returns the pseudo-item ID (`86..=96`), or `0`
+///   if the combination is invalid.
+pub fn item_combination_use_check(a: u8, b: u8, c: u8) -> u8 {
+    let mut v = [a, b, c];
+    if v[1] < v[0] {
+        v.swap(0, 1);
+    }
+    if v[2] < v[0] {
+        v.swap(0, 2);
+    }
+    if v[2] < v[1] {
+        v.swap(1, 2);
+    }
+    if v[1] == 0 {
+        return v[2];
+    }
+    ITEM_COMBOS
+        .iter()
+        .find(|combo| combo.parts == v)
+        .map_or(0, |combo| combo.result_id)
+}
 
 /// Director's Cut catalog ID for the Pocket Radio (`ITEM_CATALOG[18]`, `id: 19`).
 pub const ITEM_ID_RADIO: u8 = 19;
@@ -442,6 +477,33 @@ impl InventoryManager {
     /// Remaining seconds on the Ampoule stamina buff (`0x1f7d40c`).
     pub fn ampoule_stamina_timer(&self) -> f32 {
         self.ampoule_stamina_timer
+    }
+
+    /// Computes the current Ampoule stamina buff efficacy in `0.0..=1.0`
+    /// (`ItemAmpolueEfficacy` in `SLUS_202.28` `0x001ae180` and `sh2pc.exe` `0x0049ed40`).
+    ///
+    /// - `0.0` when the timer is `0.0`.
+    /// - `1.0` while `ampoule_stamina_timer > 300.0` (first 5 minutes of the 600s duration).
+    /// - `ampoule_stamina_timer / 300.0` during the final 5 minutes (`0.0 < timer <= 300.0`).
+    pub fn ampoule_efficacy(&self) -> f32 {
+        if self.ampoule_stamina_timer <= 0.0 {
+            0.0
+        } else if self.ampoule_stamina_timer > AMPOULE_FULL_EFFICACY_THRESHOLD_SECS {
+            1.0
+        } else {
+            self.ampoule_stamina_timer / AMPOULE_FULL_EFFICACY_THRESHOLD_SECS
+        }
+    }
+
+    /// Dispatches the stage shelf transfer callback (`ItemPutForShelf` in `SLUS_202.28`
+    /// `0x001ae330` and `sh2pc.exe` `0x0049ee00`), which invokes `stage->ev_prog[1]()`
+    /// (Lakeview Hotel 2F Employee Elevator cupboard) for the selected `item_id`.
+    pub fn item_put_for_shelf<R>(
+        &mut self,
+        item_id: u8,
+        stage_shelf_handler: impl FnOnce(&mut Self, u8) -> R,
+    ) -> R {
+        stage_shelf_handler(self, item_id)
     }
 
     fn record_pickup_stat(&mut self, item_id: u8) {

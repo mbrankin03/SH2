@@ -42,7 +42,7 @@ pub use cam::{
     VC_RD_USE_NEAR_ENEMY_F, VC_RD_USE_NO_ENEMY_F, VC_RD_WARP_IN_F, VC_RD_WARP_IN_OUT_FS,
     VC_RD_WARP_OUT_F,
 };
-pub use cld::{parse_cld, CldFile, FloorTriangle, WallSegment};
+pub use cld::{parse_cld, CldFile, FloorTriangle, HitPolyColumn, HitPolyPlane, WallSegment};
 pub use cls::{
     is_valid_cls_magic, parse_cls, parse_cls_block_at, ClsBlock, ClsFile, ClsKeyframe, ClsTrack,
     CLS_MAGIC_A, CLS_MAGIC_B, CLS_MAGIC_PROTO, MAX_FACIAL_CLUSTERS,

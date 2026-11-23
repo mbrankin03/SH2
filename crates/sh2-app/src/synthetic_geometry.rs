@@ -910,11 +910,18 @@ pub fn create_surface_sfx_test_room_cld() -> sh2_assets::formats::cld::CldFile {
         b1_cells[0].push(i);
     }
 
+    let raw_walls: Vec<sh2_assets::formats::cld::HitPolyPlane> = walls
+        .iter()
+        .map(sh2_assets::formats::cld::HitPolyPlane::from_wall_segment)
+        .collect();
+
     CldFile {
         origin: [0.0, 0.0],
         floors,
         walls,
+        raw_walls,
         b0_cells,
         b1_cells,
+        ..Default::default()
     }
 }

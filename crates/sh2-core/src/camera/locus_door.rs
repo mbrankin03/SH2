@@ -13,14 +13,72 @@ use sh2_assets::formats::cam::{
 };
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
-/// Initial doorway pullback offset along `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a868`; `sh2pc.exe` `0x0051b171` uses `-300.0`).
-pub const THROUGH_DOOR_INIT_ALONG_OFS_MM: f32 = -650.0;
-/// Base doorway longitudinal offset along `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a88c`).
+/// Retail PC initial doorway pullback offset along `rail_ang_y` in PS2 mm (`sh2pc.exe` `0x0051b0c0`).
+///
+/// Prototype-vs-retail drift: `SLUS_202.28` (`0x0019a820`) used `-650.0` mm (`THROUGH_DOOR_INIT_ALONG_OFS_PROTO_MM`).
+pub const THROUGH_DOOR_INIT_ALONG_OFS_MM: f32 = -300.0;
+/// PS2 prototype initial doorway pullback offset in PS2 mm (`SLUS_202.28` `0x0019a868`).
+pub const THROUGH_DOOR_INIT_ALONG_OFS_PROTO_MM: f32 = -650.0;
+/// Base doorway longitudinal offset along `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a88c`, `sh2pc.exe` `0x0051b0c0`).
 pub const THROUGH_DOOR_ALONG_BASE_MM: f32 = 375.0;
-/// Cosine amplitude along `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a898`; `sh2pc.exe` `0x0051b141` uses `475.0`).
-pub const THROUGH_DOOR_ALONG_AMP_MM: f32 = 350.0;
-/// Lateral sine amplitude perpendicular to `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a8a0`; `sh2pc.exe` `0x0051b162` uses `425.0`).
-pub const THROUGH_DOOR_SIDE_AMP_MM: f32 = 300.0;
+/// Retail PC cosine amplitude along `rail_ang_y` in PS2 mm (`sh2pc.exe` `0x0051b0c0`).
+///
+/// Prototype-vs-retail drift: `SLUS_202.28` (`0x0019a898`) used `350.0` mm (`THROUGH_DOOR_ALONG_AMP_PROTO_MM`).
+pub const THROUGH_DOOR_ALONG_AMP_MM: f32 = 475.0;
+/// PS2 prototype cosine amplitude along `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a898`).
+pub const THROUGH_DOOR_ALONG_AMP_PROTO_MM: f32 = 350.0;
+/// Retail PC lateral sine amplitude perpendicular to `rail_ang_y` in PS2 mm (`sh2pc.exe` `0x0051b0c0`).
+///
+/// Prototype-vs-retail drift: `SLUS_202.28` (`0x0019a8a0`) used `300.0` mm (`THROUGH_DOOR_SIDE_AMP_PROTO_MM`).
+pub const THROUGH_DOOR_SIDE_AMP_MM: f32 = 425.0;
+/// PS2 prototype lateral sine amplitude perpendicular to `rail_ang_y` in PS2 mm (`SLUS_202.28` `0x0019a8a0`).
+pub const THROUGH_DOOR_SIDE_AMP_PROTO_MM: f32 = 300.0;
+
+/// Normal indoor `_VC_CAM_MV_PARAM` (`[accel_xz, accel_y, max_spd_xz, max_spd_y]` in PS2 mm/s^2 and mm/s).
+/// Identical in `SLUS_202.28` (`cam_mv_prm_nrml` `0x00390570`) and `sh2pc.exe` (`0x006c8320`).
+pub const CAM_MV_PRM_NRML: crate::types::camera::CameraMoveParam =
+    crate::types::camera::CameraMoveParam {
+        accel_xz: 4000.0,
+        accel_y: 1500.0,
+        max_spd_xz: 2400.0,
+        max_spd_y: 1000.0,
+    };
+/// Outdoor `_VC_CAM_MV_PARAM` (`[accel_xz, accel_y, max_spd_xz, max_spd_y]` in PS2 mm/s^2 and mm/s).
+/// Identical in `SLUS_202.28` (`cam_mv_prm_outdoor` `0x00390580`) and `sh2pc.exe` (`0x006c8330`).
+pub const CAM_MV_PRM_OUTDOOR: crate::types::camera::CameraMoveParam =
+    crate::types::camera::CameraMoveParam {
+        accel_xz: 5625.0,
+        accel_y: 1687.5,
+        max_spd_xz: 3375.0,
+        max_spd_y: 1125.0,
+    };
+/// Retail PC Toluca Lake boat `_VC_CAM_MV_PARAM` (`cam_mv_prm_on_boat`, `sh2pc.exe` `0x006c8340`).
+///
+/// Prototype-vs-retail drift: `SLUS_202.28` (`0x00390590`) used `(1500.0, 450.0, 2400.0, 800.0)`;
+/// retail increased responsiveness to `(3600.0, 1200.0, 4500.0, 1500.0)`.
+pub const CAM_MV_PRM_ON_BOAT_RETAIL: crate::types::camera::CameraMoveParam =
+    crate::types::camera::CameraMoveParam {
+        accel_xz: 3600.0,
+        accel_y: 1200.0,
+        max_spd_xz: 4500.0,
+        max_spd_y: 1500.0,
+    };
+/// PS2 prototype Toluca Lake boat `_VC_CAM_MV_PARAM` (`SLUS_202.28` `cam_mv_prm_on_boat` `0x00390590`).
+pub const CAM_MV_PRM_ON_BOAT_PROTO: crate::types::camera::CameraMoveParam =
+    crate::types::camera::CameraMoveParam {
+        accel_xz: 1500.0,
+        accel_y: 450.0,
+        max_spd_xz: 2400.0,
+        max_spd_y: 800.0,
+    };
+/// Retail PC normal watch circle radius in PS2 mm on the Toluca Lake boat (`sh2pc.exe` `vcMakeNormalWatchTgtPos`).
+///
+/// Prototype-vs-retail drift: `SLUS_202.28` (`0x00198d80`) used `2000.0` mm.
+pub const BOAT_NML_TGT_WATCH_CIR_R_RETAIL_MM: f32 = 2550.0;
+/// Retail PC minimum camera-to-watch distance in PS2 mm on the Toluca Lake boat (`sh2pc.exe` `vcMakeNormalWatchTgtPos`).
+///
+/// Prototype-vs-retail drift: `SLUS_202.28` (`0x00198d80`) used `5000.0` mm.
+pub const BOAT_NML_CAM2WTH_MIN_DIST_RETAIL_MM: f32 = 5610.0;
 /// Elapsed seconds after which a nearby enemy aborts `ThroughDoor` (`SLUS_202.28` `0x001965e4`).
 pub const THROUGH_DOOR_ENEMY_ABORT_SEC: f32 = 1.2;
 /// Horizontal enemy distance in PS2 mm triggering early `ThroughDoor` exit (`SLUS_202.28` `0x00196610`).
@@ -355,8 +413,9 @@ mod tests {
             rail_sta_pos: [1000.0, -1137.5, 2000.0],
         };
         let ez = |y: f32, i: bool| evaluate_through_door_eye(&prm, &RoadArea::default(), y, i).z;
-        assert!((ez(0.0, true) - 1350.0).abs() < 1e-3 && (ez(0.0, false) - 2025.0).abs() < 1e-3);
-        assert!((ez(PI - 1e-4, false) - 2725.0).abs() < 1.0);
+        // Retail PC `sh2pc.exe` `0x0051b0c0`: init pullback = -300 -> 1700; yaw=0 -> 375-475=-100 -> 1900; yaw=PI -> 375+475=850 -> 2850
+        assert!((ez(0.0, true) - 1700.0).abs() < 1e-3 && (ez(0.0, false) - 1900.0).abs() < 1e-3);
+        assert!((ez(PI - 1e-4, false) - 2850.0).abs() < 1.0);
 
         let mut s = ThroughDoorSession::default();
         s.activate(Vec3::ZERO, 0.0, false);
@@ -382,7 +441,8 @@ mod tests {
         ctrl.set_cam_file(parse_cam(&buf).ok());
         ctrl.reset_to_player(Vec3::ZERO, FRAC_PI_2);
         assert_eq!(ctrl.mv_type, CameraMovementType::ThroughDoor);
-        assert!((ctrl.curr_snapshot.eye.x - 25.0).abs() < 1e-2);
+        // Retail PC `sh2pc.exe` `0x0051b0c0`: delta_yaw=0 -> along=375-475=-100 along +X
+        assert!((ctrl.curr_snapshot.eye.x - (-100.0)).abs() < 1e-2);
 
         let bg = std::path::Path::new(
             "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/bg",

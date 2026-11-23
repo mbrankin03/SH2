@@ -11,6 +11,7 @@
 
 pub mod abstract_daddy;
 pub mod anim;
+pub mod common;
 pub mod creeper;
 pub mod eddie;
 pub mod flesh_lips;
@@ -22,6 +23,12 @@ pub mod mary;
 pub mod nurse;
 pub mod pyramid_head;
 pub mod twin_pyramid_head;
+
+pub use common::{
+    apply_stage_hp_multipliers, en_check_sleep_in, en_check_sleep_out, CreatureStats, EnemySize,
+    StagePlace, TribeAlert, TribeCommunicationBus, EN_SLEEP_IN_DIST_MM, EN_SLEEP_OUT_DIST_MM,
+    MAX_TRIBE_COMM_SLOTS,
+};
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -84,76 +91,4 @@ pub enum CreatureState {
     Down,
     /// Dying / corpse state.
     Dying,
-}
-
-/// Dynamic combat and health statistics for an enemy creature.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CreatureStats {
-    pub health: f32,
-    pub max_health: f32,
-    pub endurance: f32,
-    pub max_endurance: f32,
-    /// Rate at which endurance recovers per second (`0x4c3e30`).
-    pub endurance_recovery_rate: f32,
-    /// Downed duration counter (seconds remaining).
-    pub down_timer: f32,
-    /// Flinch stagger timer (seconds remaining).
-    pub flinch_timer: f32,
-}
-
-impl CreatureStats {
-    pub fn new(health: f32, endurance: f32, endurance_recovery_rate: f32) -> Self {
-        Self {
-            health,
-            max_health: health,
-            endurance,
-            max_endurance: endurance,
-            endurance_recovery_rate,
-            down_timer: 0.0,
-            flinch_timer: 0.0,
-        }
-    }
-
-    /// Update recovery and stagger timers (`0x4c3e30`).
-    pub fn update(&mut self, dt: f32) {
-        if self.health <= 0.0 {
-            return;
-        }
-
-        if self.flinch_timer > 0.0 {
-            self.flinch_timer = (self.flinch_timer - dt).max(0.0);
-        }
-
-        if self.down_timer > 0.0 {
-            self.down_timer = (self.down_timer - dt).max(0.0);
-        } else {
-            // Recover endurance over time when not downed
-            if self.endurance < self.max_endurance {
-                self.endurance =
-                    (self.endurance + self.endurance_recovery_rate * dt).min(self.max_endurance);
-            }
-        }
-    }
-
-    /// Process incoming damage (AP) and stagger (SP) (`0x4c65d0`).
-    /// Returns true if the blow knocks the creature down.
-    pub fn take_damage(&mut self, ap: f32, sp: f32, random_roll: f32) -> bool {
-        self.health = (self.health - ap).max(0.0);
-        self.endurance = (self.endurance - sp).max(0.0);
-
-        if self.health <= 0.0 {
-            return true; // Knockdown / death
-        }
-
-        // PS2 knockdown formula: rand <= endurance * 0.002 + 0.8
-        // If endurance reaches 0 or roll fails threshold, creature falls down
-        let knockdown_threshold = self.endurance * 0.002 + 0.8;
-        if self.endurance <= 0.0 || random_roll > knockdown_threshold {
-            self.down_timer = 8.0; // Knocked down
-            true
-        } else {
-            self.flinch_timer = 0.5; // Flinch
-            false
-        }
-    }
 }

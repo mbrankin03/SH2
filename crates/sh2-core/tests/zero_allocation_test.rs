@@ -74,7 +74,7 @@ fn test_zero_allocation_simulation_tick() {
     // Warm-up ticks to settle any initial lazy initialization
     for i in 0..30 {
         sim.update(Duration::from_millis(16));
-        arena.tick_isolated(false, false, false, 1.0 / 60.0, i % arena.enemies.len());
+        arena.tick_isolated(false, false, false, 1.0 / 60.0, i % arena.ai.enemies.len());
     }
 
     // Engage continuous locomotion & turning
@@ -89,7 +89,7 @@ fn test_zero_allocation_simulation_tick() {
             i % 15 == 0,
             false,
             1.0 / 60.0,
-            i % arena.enemies.len(),
+            i % arena.ai.enemies.len(),
         );
     }
 
@@ -113,12 +113,13 @@ fn test_zero_allocation_simulation_tick() {
     for i in 0..240 {
         let ticks = sim.update(Duration::from_nanos(4_166_667));
         for _ in 0..ticks {
+            arena.tick(false, false, false, 1.0 / 60.0);
             arena.tick_isolated(
                 true,
                 i % 20 == 0,
                 false,
                 1.0 / 60.0,
-                i % arena.enemies.len(),
+                i % arena.ai.enemies.len(),
             );
             secondary.step(
                 1.0 / 60.0,

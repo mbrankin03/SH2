@@ -1,20 +1,19 @@
-//! Combat arena orchestration wiring `CombatController`, `CombatTargetEnemy`, hitboxes,
-//! auto-aim/LOS stomp targeting, and grapple lifecycle.
+//! Combat arena orchestration wiring `CombatController`, unified `AiSubsystem`,
+//! hitboxes, `shBattleAttackByEnemy*` dispatchers, auto-aim/LOS stomp targeting, and grapples.
 //!
 //! # Ground Truth & Binary References
 //! - **`shBattleExecAttackQueue` (`SLUS_202.28` `0x00123760` / `sh2pc.exe` `0x00544f90`):**
-//!   Dispatches attacks by `AttackDispatchKind` (GunshotTypeA, GunshotTypeB 10-pellet 3D cone,
-//!   HumanFog 5-ray cone, HumanFight swept blade quad, HumanFinish stomp/kick).
-//! - **`shBattleAttackByHumanFightType` (`SLUS_202.28` `0x00121370` / `sh2pc.exe` `0x00543ec0`):**
-//!   Tracks previous weapon tip (`prev_blade_tip`) to sweep a blade quad over `min_range..max_range`
-//!   and evaluates multi-hit frames for Great Knife (`19..=22`), Chainsaw (`23..=24`), and
-//!   Maria Chinese Cleaver (`28..=30`).
+//!   Dispatches player attacks (`GunshotTypeA`, `GunshotTypeB` 10-pellet 3D cone, `HumanFog`
+//!   5-ray cone, `HumanFight` swept blade quad, `HumanFinish` stomp/kick) and enemy attacks
+//!   (`shBattleAttackByEnemy{Slash,Strike,Fog,Hug,Needle,Shot}` `0x00122310..0x00122eb0`).
+//! - **`enExecTask` (`SLUS_202.28` `0x001413f0`):** All enemy state machines, stats, hitback,
+//!   sensory perception, sleep culling, and tribe alerts execute inside [`AiSubsystem`].
 //! - **`shBattleGetTargetEnemy` (`0x00124390`), `shBattleChangeTargetEnemy` (`0x001244d0`),
 //!   `shBattleGetNearDeadlyTargetEnemy` (`0x00124800`, `600.0` mm LOS-gated stomp).**
 
-use super::attack_list::{AttackDispatchKind, AttackSpec};
+use super::attack_list::{get_attack_spec, AttackDispatchKind, AttackSpec};
 use super::controller::{CombatController, CombatMode};
-use super::enemy::CombatTargetEnemy;
+use super::enemy_attack::dispatch_enemy_attack;
 use super::grapple::GrappleSession;
 use super::hitboxes::{
     generate_hyper_spray_rays, generate_shotgun_cone_rays, hyper_spray_effective_range, CombatRng,
@@ -24,13 +23,17 @@ use super::targeting::{
     aim_turn_toward_target, cycle_auto_aim_target, find_near_deadly_target, select_auto_aim_target,
     TargetCandidate, STOMP_TARGET_MAX_DIST_MM,
 };
+use crate::ai::creatures::EnemySpecies;
+use crate::ai::AiSubsystem;
 use glam::Vec3;
 
-/// Complete combat arena controller managing player, enemies, hit resolution, targeting, and grapples.
+/// Complete combat arena controller managing player, unified [`AiSubsystem`], hit resolution,
+/// enemy attack dispatch, targeting, and grapples.
 #[derive(Debug, Clone)]
 pub struct CombatArena {
     pub player: CombatController,
-    pub enemies: Vec<CombatTargetEnemy>,
+    /// Unified AI subsystem owning all active enemy actors (`enExecTask` `0x001413f0`).
+    pub ai: AiSubsystem,
     pub player_position: Vec3,
     pub player_yaw: f32,
     pub attack_hit_registered: bool,
@@ -46,6 +49,10 @@ pub struct CombatArena {
     pub grappling_enemy_idx: Option<usize>,
     /// Modular authentic PS2/PC grapple session state machine.
     pub grapple_session: Option<GrappleSession>,
+    /// Pending enemy attack SFX ID emitted by `shBattleAttackByEnemy*` (`0x00122310..0x00122eb0`).
+    pub pending_enemy_sfx: Option<u32>,
+    /// Reusable scratch buffer for `HumanFog` 5-ray deduplication (zero heap allocation per tick).
+    scratch_spray_hit_mask: Vec<bool>,
 }
 
 impl Default for CombatArena {
@@ -55,28 +62,63 @@ impl Default for CombatArena {
 }
 
 impl CombatArena {
-    /// Initialize a combat test arena with all monsters and bosses separated into
-    /// distinct thematic sections across the arena map.
+    /// Initialize a combat test arena with all monsters and bosses spawned into [`AiSubsystem`]
+    /// using authentic `SLUS_202.28` / `sh2pc.exe` stats and `enSetSize` collision radii.
     pub fn new() -> Self {
         let player = CombatController::new(false, false);
-        let enemies = vec![
-            // Section 1: Front Entry Courtyard (Z ~ 1500)
-            CombatTargetEnemy::new_lying_figure(1, Vec3::new(0.0, 0.0, 1500.0)),
-            CombatTargetEnemy::new_mannequin(2, Vec3::new(2200.0, 0.0, 1500.0)),
-            CombatTargetEnemy::new_creeper(8, Vec3::new(-2200.0, 0.0, 1500.0)),
-            // Section 2: Middle Gallery & Grate Chambers (Z ~ 3600)
-            CombatTargetEnemy::new_nurse(3, Vec3::new(-3000.0, 0.0, 3600.0)),
-            CombatTargetEnemy::new_mandarin(7, Vec3::new(0.0, 0.0, 3600.0)),
-            CombatTargetEnemy::new_flesh_lips(6, Vec3::new(3000.0, 0.0, 3600.0)),
-            // Section 3: Deep Boss Sanctuary (Z ~ 5800)
-            CombatTargetEnemy::new_abstract_daddy(5, Vec3::new(-2600.0, 0.0, 5800.0)),
-            CombatTargetEnemy::new_pyramid_head(4, Vec3::new(0.0, 0.0, 5800.0)),
-            CombatTargetEnemy::new_mary_boss(9, Vec3::new(2600.0, 0.0, 5800.0)),
-        ];
+        let mut ai = AiSubsystem::default();
+
+        // Section 1: Front Entry Courtyard (Z ~ 1500)
+        ai.spawn_enemy(
+            EnemySpecies::LyingFigure,
+            1,
+            Vec3::new(0.0, 0.0, 1500.0),
+            0.0,
+        );
+        ai.spawn_enemy(
+            EnemySpecies::Mannequin,
+            2,
+            Vec3::new(2200.0, 0.0, 1500.0),
+            0.0,
+        );
+        ai.spawn_enemy(
+            EnemySpecies::Creeper,
+            8,
+            Vec3::new(-2200.0, 0.0, 1500.0),
+            0.0,
+        );
+        // Section 2: Middle Gallery & Grate Chambers (Z ~ 3600)
+        ai.spawn_enemy(EnemySpecies::Nurse, 3, Vec3::new(-3000.0, 0.0, 3600.0), 0.0);
+        ai.spawn_enemy(EnemySpecies::Mandarin, 7, Vec3::new(0.0, 0.0, 3600.0), 0.0);
+        ai.spawn_enemy(
+            EnemySpecies::FleshLips,
+            6,
+            Vec3::new(3000.0, 0.0, 3600.0),
+            0.0,
+        );
+        // Section 3: Deep Boss Sanctuary (Z ~ 5800)
+        ai.spawn_enemy(
+            EnemySpecies::AbstractDaddy,
+            5,
+            Vec3::new(-2600.0, 0.0, 5800.0),
+            0.0,
+        );
+        ai.spawn_enemy(
+            EnemySpecies::PyramidHead,
+            4,
+            Vec3::new(0.0, 0.0, 5800.0),
+            0.0,
+        );
+        ai.spawn_enemy(
+            EnemySpecies::MaryBoss,
+            9,
+            Vec3::new(2600.0, 0.0, 5800.0),
+            0.0,
+        );
 
         Self {
             player,
-            enemies,
+            ai,
             player_position: Vec3::ZERO,
             player_yaw: 0.0,
             attack_hit_registered: false,
@@ -86,18 +128,21 @@ impl CombatArena {
             locked_target_idx: None,
             grappling_enemy_idx: None,
             grapple_session: None,
+            pending_enemy_sfx: None,
+            scratch_spray_hit_mask: Vec::with_capacity(32),
         }
     }
 
     fn build_target_candidates(&self) -> Vec<TargetCandidate> {
-        self.enemies
+        self.ai
+            .enemies
             .iter()
             .enumerate()
             .map(|(index, e)| TargetCandidate {
                 index,
-                position: e.position,
-                is_downed: e.is_downed,
-                is_dead: e.is_dead,
+                position: e.position(),
+                is_downed: e.is_downed(),
+                is_dead: e.is_dead(),
             })
             .collect()
     }
@@ -113,9 +158,13 @@ impl CombatArena {
     }
 
     /// Check if any enemy is currently downed within `600.0` mm (`shBattleGetNearDeadlyTargetEnemy`
-    /// `0x00124800`) assuming unobstructed arena LOS.
+    /// `0x00124800`) assuming unobstructed arena LOS (zero heap allocations per tick).
     pub fn has_downed_enemy_at_feet(&self) -> bool {
-        self.find_stomp_target_with_los(|_| true).is_some()
+        self.ai.enemies.iter().any(|e| {
+            e.is_downed()
+                && !e.is_dead()
+                && (e.position() - self.player_position).length() <= STOMP_TARGET_MAX_DIST_MM
+        })
     }
 
     /// Acquire the primary auto-aim target (`shBattleGetTargetEnemy`, `0x00124390`).
@@ -159,12 +208,12 @@ impl CombatArena {
     /// (`PlayerCheckAimingToEnemy`, `SLUS_202.28` `0x0021c7a0`).
     pub fn step_auto_aim_turn(&mut self, dt: f32) {
         if let Some(idx) = self.locked_target_idx {
-            if let Some(enemy) = self.enemies.get(idx) {
-                if !enemy.is_dead {
+            if let Some(enemy) = self.ai.enemies.get(idx) {
+                if !enemy.is_dead() {
                     self.player_yaw = aim_turn_toward_target(
                         self.player_position,
                         self.player_yaw,
-                        enemy.position,
+                        enemy.position(),
                         dt,
                     );
                     return;
@@ -208,7 +257,8 @@ impl CombatArena {
             return false;
         }
 
-        if let Some(enemy) = self.enemies.get_mut(enemy_idx) {
+        let diff_idx = self.ai.difficulty.as_index();
+        if let Some(enemy) = self.ai.enemies.get_mut(enemy_idx) {
             let player_p = self.player_position;
             if let Some(session) = GrappleSession::try_initiate(
                 enemy_idx,
@@ -216,7 +266,7 @@ impl CombatArena {
                 &mut self.player,
                 player_p,
                 &mut self.player_yaw,
-                2, // Normal difficulty
+                diff_idx,
             ) {
                 self.grappling_enemy_idx = Some(enemy_idx);
                 self.grapple_session = Some(session);
@@ -232,7 +282,7 @@ impl CombatArena {
             session.update(
                 dt,
                 &mut self.player,
-                &mut self.enemies,
+                &mut self.ai.enemies,
                 self.player_position,
                 self.player_yaw,
             );
@@ -246,7 +296,7 @@ impl CombatArena {
         }
     }
 
-    /// Execute simulation tick (60 Hz).
+    /// Execute simulation tick (60 Hz) routing all enemies through [`AiSubsystem`].
     pub fn tick(&mut self, ready_held: bool, action_pressed: bool, action_held: bool, dt: f32) {
         let has_downed = self.has_downed_enemy_at_feet();
         self.player
@@ -254,14 +304,22 @@ impl CombatArena {
 
         self.step_active_attack_hits(None);
 
-        let player_p = self.player_position;
         let is_in_grapple = self.grapple_session.is_some() || self.player.mode == CombatMode::Held;
+        self.ai.update_filtered(
+            self.player_position,
+            self.player_yaw,
+            true,
+            false,
+            true,
+            None,
+            dt,
+        );
 
-        for idx in 0..self.enemies.len() {
-            self.enemies[idx].update(player_p, dt);
+        for idx in 0..self.ai.enemies.len() {
             if !is_in_grapple {
                 self.check_enemy_grapple_initiation(idx);
             }
+            self.step_enemy_attack_dispatch(idx);
         }
 
         self.process_grapple_lifecycle(dt);
@@ -277,16 +335,16 @@ impl CombatArena {
         dt: f32,
         active_enemy_idx: usize,
     ) {
-        if self.enemies.is_empty() {
+        if self.ai.enemies.is_empty() {
             return;
         }
-        let isolated_idx = active_enemy_idx % self.enemies.len();
+        let isolated_idx = active_enemy_idx % self.ai.enemies.len();
 
         let has_downed = {
-            let e = &self.enemies[isolated_idx];
-            e.is_downed
-                && !e.is_dead
-                && (e.position - self.player_position).length() <= STOMP_TARGET_MAX_DIST_MM
+            let e = &self.ai.enemies[isolated_idx];
+            e.is_downed()
+                && !e.is_dead()
+                && (e.position() - self.player_position).length() <= STOMP_TARGET_MAX_DIST_MM
         };
 
         self.player
@@ -294,56 +352,76 @@ impl CombatArena {
 
         self.step_active_attack_hits(Some(isolated_idx));
 
-        let player_p = self.player_position;
         let is_in_grapple = self.grapple_session.is_some() || self.player.mode == CombatMode::Held;
-
-        let enemy = &mut self.enemies[isolated_idx];
-        enemy.update(player_p, dt);
+        self.ai.update_filtered(
+            self.player_position,
+            self.player_yaw,
+            true,
+            false,
+            true,
+            Some(isolated_idx),
+            dt,
+        );
 
         if !is_in_grapple {
             self.check_enemy_grapple_initiation(isolated_idx);
         }
+        self.step_enemy_attack_dispatch(isolated_idx);
 
         self.process_grapple_lifecycle(dt);
+        self.resolve_single_enemy_player_separation(isolated_idx);
+    }
 
-        if self.player.mode != CombatMode::Held {
-            let enemy = &mut self.enemies[isolated_idx];
-            if !enemy.is_dead
-                && !enemy.is_downed
-                && enemy.id != 8
-                && enemy.id != 6
-                && enemy.id != 7
-                && enemy.id != 9
-            {
-                let dx = self.player_position.x - enemy.position.x;
-                let dz = self.player_position.z - enemy.position.z;
-                let dist_sq = dx * dx + dz * dz;
+    /// Dispatch an active enemy attack against James via `shBattleAttackByEnemy{Slash,Strike,Fog,Hug,Needle,Shot}`
+    /// (`SLUS_202.28` `0x00122310..0x00122eb0`).
+    fn step_enemy_attack_dispatch(&mut self, enemy_idx: usize) {
+        if self.player.god_mode
+            || self.player.mode == CombatMode::Held
+            || self.player.mode == CombatMode::Dying
+            || self.player.mode == CombatMode::Dead
+            || self.player.invulnerability_timer > 0.0
+        {
+            return;
+        }
 
-                let enemy_col_radius = match enemy.id {
-                    4 => 200.0,
-                    5 => 220.0,
-                    _ => 130.0,
-                };
-                let min_dist = 130.0 + enemy_col_radius;
+        let Some(atk_id) = self.ai.enemies[enemy_idx].active_attack_id() else {
+            return;
+        };
+        let Some(atk) = get_attack_spec(atk_id as usize) else {
+            return;
+        };
 
-                if dist_sq < min_dist * min_dist {
-                    let dist = dist_sq.sqrt();
-                    let (nx, nz) = if dist > 1e-4 {
-                        (dx / dist, dz / dist)
-                    } else {
-                        (1.0, 0.0)
-                    };
-                    let penetration = min_dist - dist;
-                    let (push_player, push_enemy) = match enemy.id {
-                        4 | 5 => (penetration, 0.0),
-                        _ => (penetration * 0.6, penetration * 0.4),
-                    };
+        let is_outdoor = self.ai.is_outdoor;
+        let difficulty = self.ai.difficulty.as_index() as u8;
+        let enemy = &mut self.ai.enemies[enemy_idx];
+        let species = enemy.species();
+        let e_pos = enemy.position();
+        let e_yaw = enemy.yaw();
+        let anim_frame = (enemy.anim().clip_time() * 30.0) as u8;
 
-                    self.player_position.x += nx * push_player;
-                    self.player_position.z += nz * push_player;
-                    enemy.position.x -= nx * push_enemy;
-                    enemy.position.z -= nz * push_enemy;
-                }
+        let outcome = dispatch_enemy_attack(
+            species,
+            atk,
+            &mut enemy.attack_work,
+            anim_frame,
+            e_pos,
+            e_yaw,
+            self.player_position,
+            self.player_yaw,
+            &mut self.player.guard_state,
+            difficulty,
+            is_outdoor,
+        );
+
+        if let Some(sfx) = outcome.sfx_id {
+            self.pending_enemy_sfx = Some(sfx);
+        }
+
+        if outcome.hit_player {
+            if outcome.is_hug {
+                self.check_enemy_grapple_initiation(enemy_idx);
+            } else if !outcome.guarded && outcome.damage_ap > 0.0 {
+                self.player.apply_damage(outcome.damage_ap, outcome.is_fog);
             }
         }
     }
@@ -353,6 +431,9 @@ impl CombatArena {
             self.attack_hit_registered = false;
             self.last_multi_hit_frame = None;
             self.prev_blade_tip = None;
+            for enemy in &mut self.ai.enemies {
+                enemy.stats_mut().reset_multi_hit_if_idle();
+            }
             return;
         };
 
@@ -360,8 +441,6 @@ impl CombatArena {
         let in_window = hit_frame >= atk.first_hit_frame && hit_frame <= atk.last_hit_frame;
 
         if atk.is_multi_hit() {
-            // Multi-hit weapons (Great Knife 19..=22, Chainsaw 23..=24, Maria Cleaver 28..=30,
-            // Hyper Spray 8..=9) evaluate once per distinct 30 Hz frame in the hit window.
             if in_window && self.last_multi_hit_frame != Some(hit_frame) {
                 self.last_multi_hit_frame = Some(hit_frame);
                 self.resolve_attack_hits(&atk, isolated_idx);
@@ -372,84 +451,104 @@ impl CombatArena {
         }
     }
 
-    /// Resolve mutual character-to-enemy and enemy-to-enemy cylinder collision separations.
-    pub fn resolve_character_separations(&mut self) {
-        let is_held = self.player.mode == CombatMode::Held;
-
-        if !is_held {
-            for enemy in &mut self.enemies {
-                if enemy.is_dead || enemy.is_downed || enemy.id == 8 {
-                    continue;
-                }
-                if enemy.id == 6 || enemy.id == 7 || enemy.id == 9 {
-                    continue;
-                }
-
-                let dx = self.player_position.x - enemy.position.x;
-                let dz = self.player_position.z - enemy.position.z;
-                let dist_sq = dx * dx + dz * dz;
-
-                let enemy_col_radius = match enemy.id {
-                    4 => 200.0,
-                    5 => 220.0,
-                    _ => 130.0,
-                };
-                let min_dist = 130.0 + enemy_col_radius;
-
-                if dist_sq < min_dist * min_dist {
-                    let dist = dist_sq.sqrt();
-                    let (nx, nz) = if dist > 1e-4 {
-                        (dx / dist, dz / dist)
-                    } else {
-                        (1.0, 0.0)
-                    };
-                    let penetration = min_dist - dist;
-
-                    let (push_player, push_enemy) = match enemy.id {
-                        4 | 5 => (penetration, 0.0),
-                        _ => (penetration * 0.6, penetration * 0.4),
-                    };
-
-                    self.player_position.x += nx * push_player;
-                    self.player_position.z += nz * push_player;
-                    enemy.position.x -= nx * push_enemy;
-                    enemy.position.z -= nz * push_enemy;
-                }
-            }
+    fn resolve_single_enemy_player_separation(&mut self, idx: usize) {
+        if self.player.mode == CombatMode::Held {
+            return;
+        }
+        let enemy = &mut self.ai.enemies[idx];
+        if enemy.is_dead() || enemy.is_downed() {
+            return;
+        }
+        if matches!(
+            enemy.species(),
+            EnemySpecies::Creeper
+                | EnemySpecies::FleshLips
+                | EnemySpecies::Mandarin
+                | EnemySpecies::MaryBoss
+                | EnemySpecies::RoomInsect
+        ) {
+            return;
         }
 
-        let enemy_count = self.enemies.len();
+        let e_pos = enemy.position();
+        let dx = self.player_position.x - e_pos.x;
+        let dz = self.player_position.z - e_pos.z;
+        let dist_sq = dx * dx + dz * dz;
+
+        // Authentic `enSetSize` (`0x001426e0`) body radius + James collision radius (200mm)
+        let enemy_col_radius = enemy.size().radius;
+        let min_dist = self.ai.player_radius_mm + enemy_col_radius;
+
+        if dist_sq < min_dist * min_dist {
+            let dist = dist_sq.sqrt();
+            let (nx, nz) = if dist > 1e-4 {
+                (dx / dist, dz / dist)
+            } else {
+                (1.0, 0.0)
+            };
+            let penetration = min_dist - dist;
+            let (push_player, push_enemy) = match enemy.species() {
+                EnemySpecies::PyramidHead
+                | EnemySpecies::TwinPyramidHead
+                | EnemySpecies::AbstractDaddy => (penetration, 0.0),
+                _ => (penetration * 0.6, penetration * 0.4),
+            };
+
+            self.player_position.x += nx * push_player;
+            self.player_position.z += nz * push_player;
+            enemy.set_position(Vec3::new(
+                e_pos.x - nx * push_enemy,
+                e_pos.y,
+                e_pos.z - nz * push_enemy,
+            ));
+        }
+    }
+
+    /// Resolve mutual character-to-enemy and enemy-to-enemy cylinder collision separations
+    /// using authentic `enSetSize` (`0x001426e0`) radii.
+    pub fn resolve_character_separations(&mut self) {
+        for idx in 0..self.ai.enemies.len() {
+            self.resolve_single_enemy_player_separation(idx);
+        }
+
+        let enemy_count = self.ai.enemies.len();
         for i in 0..enemy_count {
-            if self.enemies[i].is_dead || self.enemies[i].is_downed || self.enemies[i].id == 8 {
-                continue;
-            }
-            if self.enemies[i].id == 6 || self.enemies[i].id == 7 || self.enemies[i].id == 9 {
+            if self.ai.enemies[i].is_dead()
+                || self.ai.enemies[i].is_downed()
+                || matches!(
+                    self.ai.enemies[i].species(),
+                    EnemySpecies::Creeper
+                        | EnemySpecies::FleshLips
+                        | EnemySpecies::Mandarin
+                        | EnemySpecies::MaryBoss
+                        | EnemySpecies::RoomInsect
+                )
+            {
                 continue;
             }
 
             for j in (i + 1)..enemy_count {
-                if self.enemies[j].is_dead || self.enemies[j].is_downed || self.enemies[j].id == 8 {
-                    continue;
-                }
-                if self.enemies[j].id == 6 || self.enemies[j].id == 7 || self.enemies[j].id == 9 {
+                if self.ai.enemies[j].is_dead()
+                    || self.ai.enemies[j].is_downed()
+                    || matches!(
+                        self.ai.enemies[j].species(),
+                        EnemySpecies::Creeper
+                            | EnemySpecies::FleshLips
+                            | EnemySpecies::Mandarin
+                            | EnemySpecies::MaryBoss
+                            | EnemySpecies::RoomInsect
+                    )
+                {
                     continue;
                 }
 
-                let dx = self.enemies[i].position.x - self.enemies[j].position.x;
-                let dz = self.enemies[i].position.z - self.enemies[j].position.z;
+                let pi = self.ai.enemies[i].position();
+                let pj = self.ai.enemies[j].position();
+                let dx = pi.x - pj.x;
+                let dz = pi.z - pj.z;
                 let dist_sq = dx * dx + dz * dz;
 
-                let r_i = match self.enemies[i].id {
-                    4 => 200.0,
-                    5 => 220.0,
-                    _ => 130.0,
-                };
-                let r_j = match self.enemies[j].id {
-                    4 => 200.0,
-                    5 => 220.0,
-                    _ => 130.0,
-                };
-                let min_dist = r_i + r_j;
+                let min_dist = self.ai.enemies[i].size().radius + self.ai.enemies[j].size().radius;
 
                 if dist_sq < min_dist * min_dist {
                     let dist = dist_sq.sqrt();
@@ -458,25 +557,31 @@ impl CombatArena {
                     } else {
                         (1.0, 0.0)
                     };
-                    let penetration = min_dist - dist;
-                    let half_pen = penetration * 0.5;
+                    let half_pen = (min_dist - dist) * 0.5;
 
-                    self.enemies[i].position.x += nx * half_pen;
-                    self.enemies[i].position.z += nz * half_pen;
-                    self.enemies[j].position.x -= nx * half_pen;
-                    self.enemies[j].position.z -= nz * half_pen;
+                    self.ai.enemies[i].set_position(Vec3::new(
+                        pi.x + nx * half_pen,
+                        pi.y,
+                        pi.z + nz * half_pen,
+                    ));
+                    self.ai.enemies[j].set_position(Vec3::new(
+                        pj.x - nx * half_pen,
+                        pj.y,
+                        pj.z - nz * half_pen,
+                    ));
                 }
             }
         }
     }
 
-    /// Test active attack collision against enemies in the arena (`shBattleExecAttackQueue` `0x00123760`).
+    /// Test active player attack collision against enemies in [`AiSubsystem`]
+    /// (`shBattleExecAttackQueue` `0x00123760`).
     fn resolve_attack_hits(&mut self, atk: &AttackSpec, isolated_idx: Option<usize>) {
         let forward = Vec3::new(self.player_yaw.sin(), 0.0, self.player_yaw.cos());
+        let dir_xz = [forward.x, forward.z];
 
         match atk.dispatch_kind() {
             AttackDispatchKind::GunshotTypeA => {
-                // Single ray from muzzle (`shBattleAttackByHumanGunshotTypeA` `0x00120cf0`)
                 let muzzle = self.player_position + Vec3::new(0.0, -1100.0, 0.0) + forward * 200.0;
                 if let Some(hit_idx) = self.find_closest_ray_hit(
                     muzzle,
@@ -485,11 +590,10 @@ impl CombatArena {
                     atk.max_range,
                     isolated_idx,
                 ) {
-                    self.enemies[hit_idx].receive_hit(atk);
+                    self.ai.enemies[hit_idx].receive_hit(atk, dir_xz);
                 }
             }
             AttackDispatchKind::GunshotTypeB => {
-                // 10 randomized 3D cone pellets (`shBattleAttackByHumanGunshotTypeB` `0x00120f30`)
                 let muzzle = self.player_position + Vec3::new(0.0, -1100.0, 0.0) + forward * 200.0;
                 let rays = generate_shotgun_cone_rays(forward, &mut self.rng);
                 for pellet_dir in rays {
@@ -500,12 +604,11 @@ impl CombatArena {
                         atk.max_range,
                         isolated_idx,
                     ) {
-                        self.enemies[hit_idx].receive_hit(atk);
+                        self.ai.enemies[hit_idx].receive_hit(atk, [pellet_dir.x, pellet_dir.z]);
                     }
                 }
             }
             AttackDispatchKind::HumanFog => {
-                // 5-ray Hyper Spray cone (`shGetHumanAttackSprayPos` `0x00121630` + `0x00121a40`)
                 let (min_r, max_r) = hyper_spray_effective_range(
                     self.player.hyper_spray_charge,
                     atk.min_range,
@@ -517,22 +620,22 @@ impl CombatArena {
                 let muzzle = self.player_position + Vec3::new(0.0, -1100.0, 0.0) + forward * 200.0;
                 let rays = generate_hyper_spray_rays(forward);
                 let color = self.player.hyper_spray_color;
-                let mut hit_mask = vec![false; self.enemies.len()];
+                self.scratch_spray_hit_mask.clear();
+                self.scratch_spray_hit_mask
+                    .resize(self.ai.enemies.len(), false);
 
                 for ray_dir in rays {
                     if let Some(hit_idx) =
                         self.find_closest_ray_hit(muzzle, ray_dir, min_r, max_r, isolated_idx)
                     {
-                        if !hit_mask[hit_idx] {
-                            hit_mask[hit_idx] = true;
-                            self.enemies[hit_idx].receive_hyper_spray_hit(atk, color);
+                        if !self.scratch_spray_hit_mask[hit_idx] {
+                            self.scratch_spray_hit_mask[hit_idx] = true;
+                            self.ai.enemies[hit_idx].receive_hyper_spray_hit(atk, color);
                         }
                     }
                 }
             }
             AttackDispatchKind::HumanFight => {
-                // Swept melee blade quad (`shBattleAttackByHumanFightType` `0x00121370`)
-                // Weapon hand root sits ~200mm forward of torso center at shoulder/chest height.
                 let weapon_origin =
                     self.player_position + Vec3::new(0.0, -1000.0, 0.0) + forward * 200.0;
                 let quad = SweptBladeQuad::new(
@@ -544,29 +647,29 @@ impl CombatArena {
                 );
                 self.prev_blade_tip = Some(quad.curr_tip);
 
-                for (idx, enemy) in self.enemies.iter_mut().enumerate() {
-                    if isolated_idx.is_some_and(|only| only != idx) || enemy.is_dead {
+                for (idx, enemy) in self.ai.enemies.iter_mut().enumerate() {
+                    if isolated_idx.is_some_and(|only| only != idx) || enemy.is_dead() {
                         continue;
                     }
                     if enemy.hitbox().intersects_swept_quad(&quad) {
-                        enemy.receive_hit(atk);
+                        enemy.receive_hit(atk, dir_xz);
                     }
                 }
             }
             AttackDispatchKind::HumanFinish => {
-                // Stomp / Kick against downed enemy (`shBattleAttackByHumanFinish` `0x00121f40`)
                 let feet_check = self.player_position + forward * 250.0;
-                for (idx, enemy) in self.enemies.iter_mut().enumerate() {
+                for (idx, enemy) in self.ai.enemies.iter_mut().enumerate() {
                     if isolated_idx.is_some_and(|only| only != idx)
-                        || !enemy.is_downed
-                        || enemy.is_dead
+                        || !enemy.is_downed()
+                        || enemy.is_dead()
                     {
                         continue;
                     }
-                    let dist =
-                        (Vec3::new(enemy.position.x, 0.0, enemy.position.z) - feet_check).length();
-                    if dist <= (enemy.hitbox_radius * 1.5 + atk.max_range) {
-                        enemy.receive_hit(atk);
+                    let pos = enemy.position();
+                    let dist = (Vec3::new(pos.x, 0.0, pos.z) - feet_check).length();
+                    let reach = enemy.size().battle_radius(enemy.species(), true) + atk.max_range;
+                    if dist <= reach {
+                        enemy.receive_hit(atk, dir_xz);
                     }
                 }
             }
@@ -583,8 +686,8 @@ impl CombatArena {
         isolated_idx: Option<usize>,
     ) -> Option<usize> {
         let mut closest: Option<(usize, f32)> = None;
-        for (idx, enemy) in self.enemies.iter().enumerate() {
-            if isolated_idx.is_some_and(|only| only != idx) || enemy.is_dead {
+        for (idx, enemy) in self.ai.enemies.iter().enumerate() {
+            if isolated_idx.is_some_and(|only| only != idx) || enemy.is_dead() {
                 continue;
             }
             if let Some(t) = enemy

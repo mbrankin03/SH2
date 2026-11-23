@@ -192,8 +192,8 @@ fn sync_combat_player_animation_and_sfx(state: &mut AppState) {
                 state
                     .combat_arena
                     .grappling_enemy_idx
-                    .and_then(|idx| state.combat_arena.enemies.get(idx))
-                    .and_then(|e| sh2_core::combat::BestiaryId::from_raw(e.id))
+                    .and_then(|idx| state.combat_arena.ai.enemies.get(idx))
+                    .and_then(|e| sh2_core::combat::BestiaryId::from_raw(e.id()))
                     .map(|sp| sh2_core::combat::GrappleAnchor::for_species(sp).struggle_clip)
                     .unwrap_or(sh2_core::animation::JamesBasicClips::STRUGGLE_TORSO)
             };
@@ -203,7 +203,7 @@ fn sync_combat_player_animation_and_sfx(state: &mut AppState) {
                     state
                         .combat_arena
                         .grappling_enemy_idx
-                        .and_then(|idx| state.combat_arena.enemies.get(idx).map(|e| e.id))
+                        .and_then(|idx| state.combat_arena.ai.enemies.get(idx).map(|e| e.id()))
                         .unwrap_or(0),
                     struggle_clip.start_frame,
                     struggle_clip.end_frame,
@@ -270,12 +270,14 @@ fn step_bgm_manager(state: &mut AppState, dt: Duration) {
         let p_pos = state.sim_core.scenario.player_position;
         let min_dist = state
             .combat_arena
+            .ai
             .enemies
             .iter()
-            .filter(|e| !e.is_dead && e.is_aggroed)
+            .filter(|e| !e.is_dead() && e.is_aggroed())
             .map(|e| {
-                let dx = e.position.x - p_pos.x;
-                let dz = e.position.z - p_pos.z;
+                let pos = e.position();
+                let dx = pos.x - p_pos.x;
+                let dz = pos.z - p_pos.z;
                 (dx * dx + dz * dz).sqrt()
             })
             .fold(None::<f32>, |acc, d| Some(acc.map_or(d, |a| a.min(d))));
@@ -584,8 +586,8 @@ fn evaluate_player_skinning(
             state
                 .combat_arena
                 .grappling_enemy_idx
-                .and_then(|idx| state.combat_arena.enemies.get(idx))
-                .map(|e| e.id)
+                .and_then(|idx| state.combat_arena.ai.enemies.get(idx))
+                .map(|e| e.id())
         } else {
             None
         };
@@ -822,17 +824,17 @@ fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
 
 fn evaluate_enemy_skinning(state: &mut AppState, alpha: f32) -> Option<EnemySkinSnapshot> {
     let active_enemy_snapshot = if state.active_test_room == TestRoomKind::CombatArena
-        && !state.combat_arena.enemies.is_empty()
+        && !state.combat_arena.ai.enemies.is_empty()
     {
-        let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
-        let enemy = &state.combat_arena.enemies[active_idx];
+        let active_idx = state.combat_enemy_idx % state.combat_arena.ai.enemies.len();
+        let enemy = &state.combat_arena.ai.enemies[active_idx];
         let (enemy_pos, enemy_yaw) = enemy.interpolated_pose(alpha);
         Some((
-            enemy.id,
+            enemy.id(),
             enemy_pos,
             enemy_yaw,
             enemy.is_grappling_player,
-            enemy.anim.evaluate_blended_cursor_at_alpha(alpha),
+            enemy.anim().evaluate_blended_cursor_at_alpha(alpha),
         ))
     } else {
         None
@@ -1056,19 +1058,16 @@ fn submit_scene_draw(
         debug_lines.extend(chara_lines);
 
         if state.active_test_room == TestRoomKind::CombatArena
-            && !state.combat_arena.enemies.is_empty()
+            && !state.combat_arena.ai.enemies.is_empty()
         {
-            let active_idx = state.combat_enemy_idx % state.combat_arena.enemies.len();
-            let e = &state.combat_arena.enemies[active_idx];
-            let enemy_radius = match e.id {
-                4 => 200.0,
-                5 => 220.0,
-                _ => 130.0,
-            };
+            let active_idx = state.combat_enemy_idx % state.combat_arena.ai.enemies.len();
+            let e = &state.combat_arena.ai.enemies[active_idx];
+            let sz = e.size();
+            let pos = e.position();
             let enemy_lines = sh2_debug::build_chara_collision_debug_lines(
-                [e.position.x, e.position.y, e.position.z],
-                enemy_radius,
-                1800.0,
+                [pos.x, pos.y, pos.z],
+                sz.radius,
+                sz.height * 2.0,
                 16,
                 [1.0, 0.2, 0.8, 1.0],
             );

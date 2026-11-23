@@ -20,7 +20,7 @@
 pub mod arena;
 pub mod attack_list;
 pub mod controller;
-pub mod enemy;
+pub mod enemy_attack;
 pub mod grapple;
 pub mod hitboxes;
 pub mod targeting;
@@ -39,7 +39,10 @@ pub use attack_list::{
     SE_RIFLE_SHOT, SE_SHOTGUN_DRY_FIRE, SE_SHOTGUN_SHOT, SH2_ATTACK_LIST,
 };
 pub use controller::{CombatController, CombatMode, HOLD_TIMER_THRESHOLD};
-pub use enemy::CombatTargetEnemy;
+pub use enemy_attack::{
+    dispatch_enemy_attack, enemy_fog_range_at_frame, select_enemy_dispatcher,
+    EnemyAttackDispatcher, EnemyAttackOutcome, EnemyAttackWork,
+};
 pub use grapple::{
     compute_creature_grapple_transform, compute_grapple_coupling, get_grapple_spec, BestiaryId,
     GrappleAnchor, GrappleFacingMode, GrapplePhase, GrappleSession, GrappleSpec, PS2_HUGGING_POS,
@@ -155,8 +158,8 @@ mod tests {
         let mut arena = CombatArena::new();
         let dt = 1.0 / 60.0;
 
-        assert_eq!(arena.enemies.len(), 9);
-        assert_eq!(arena.enemies[0].health, 700.0);
+        assert_eq!(arena.ai.enemies.len(), 9);
+        assert_eq!(arena.ai.enemies[0].stats().health, 700.0);
 
         // 1. Ready handgun and fire raycast at Lying Figure in front (Z=1500)
         arena.player.equip_weapon(WeaponGrip::Handgun);
@@ -168,7 +171,7 @@ mod tests {
 
         arena.player.anim_frame = 2.0;
         arena.tick(true, false, false, dt);
-        assert_eq!(arena.enemies[0].health, 580.0);
+        assert_eq!(arena.ai.enemies[0].stats().health, 580.0);
 
         arena.player.anim_ended = true;
         arena.tick(true, false, false, dt);
@@ -176,7 +179,7 @@ mod tests {
 
         // 2. Move Lying Figure within authentic Wooden Plank swept blade reach
         // (weapon_origin Z=200 + max_range 350 = 550mm; enemy at Z=500mm)
-        arena.enemies[0].position = Vec3::new(0.0, 0.0, 500.0);
+        arena.ai.enemies[0].snap_pose(Vec3::new(0.0, 0.0, 500.0), 0.0);
         arena.player.equip_weapon(WeaponGrip::WoodenPlank);
         arena.player.mode = CombatMode::Ready;
 
@@ -190,7 +193,7 @@ mod tests {
         arena.player.anim_frame = 8.0;
         arena.attack_hit_registered = false;
         arena.tick(true, false, false, dt);
-        assert_eq!(arena.enemies[0].health, 440.0);
+        assert_eq!(arena.ai.enemies[0].stats().health, 440.0);
     }
 
     #[test]
@@ -198,9 +201,8 @@ mod tests {
         let mut arena = CombatArena::new();
         let dt = 1.0 / 60.0;
 
-        arena.enemies[0].is_downed = true;
-        arena.enemies[0].down_timer = 10.0;
-        arena.enemies[0].position = Vec3::new(0.0, 0.0, 300.0);
+        arena.ai.enemies[0].force_downed(10.0);
+        arena.ai.enemies[0].snap_pose(Vec3::new(0.0, 0.0, 300.0), 0.0);
         assert!(arena.has_downed_enemy_at_feet());
 
         arena.player.equip_weapon(WeaponGrip::Handgun);
@@ -216,30 +218,32 @@ mod tests {
         arena.player.anim_frame = 3.0;
         arena.attack_hit_registered = false;
         arena.tick(true, false, true, dt);
-        assert!(arena.enemies[0].is_dead);
+        assert!(arena.ai.enemies[0].is_dead());
     }
 
     #[test]
     fn test_enemy_player_and_enemy_enemy_collision_separation() {
         let mut arena = CombatArena::new();
         arena.player_position = Vec3::ZERO;
-        arena.enemies[0].position = Vec3::new(100.0, 0.0, 0.0);
+        arena.ai.enemies[0].snap_pose(Vec3::new(100.0, 0.0, 0.0), 0.0);
         let initial_player_x = arena.player_position.x;
-        let initial_enemy_x = arena.enemies[0].position.x;
+        let initial_enemy_x = arena.ai.enemies[0].position().x;
 
         arena.resolve_character_separations();
 
-        let separation = (arena.player_position.x - arena.enemies[0].position.x).abs();
-        assert!(separation >= 259.0, "separation was {}", separation);
+        // James 200mm + SCU `enSetSize` 150mm = 350mm separation
+        let separation = (arena.player_position.x - arena.ai.enemies[0].position().x).abs();
+        assert!(separation >= 349.0, "separation was {}", separation);
         assert!(arena.player_position.x < initial_player_x);
-        assert!(arena.enemies[0].position.x > initial_enemy_x);
+        assert!(arena.ai.enemies[0].position().x > initial_enemy_x);
 
-        arena.enemies[1].position = Vec3::new(1000.0, 0.0, 0.0);
-        arena.enemies[3].position = Vec3::new(1100.0, 0.0, 0.0);
+        arena.ai.enemies[1].snap_pose(Vec3::new(1000.0, 0.0, 0.0), 0.0);
+        arena.ai.enemies[3].snap_pose(Vec3::new(1100.0, 0.0, 0.0), 0.0);
         arena.resolve_character_separations();
 
-        let enemy_sep = (arena.enemies[1].position.x - arena.enemies[3].position.x).abs();
-        assert!(enemy_sep >= 259.0, "enemy_sep was {}", enemy_sep);
+        // MKN 150mm + NSE 150mm = 300mm separation
+        let enemy_sep = (arena.ai.enemies[1].position().x - arena.ai.enemies[3].position().x).abs();
+        assert!(enemy_sep >= 299.0, "enemy_sep was {}", enemy_sep);
     }
 
     #[test]
@@ -248,20 +252,20 @@ mod tests {
         let dt = 1.0 / 30.0;
 
         let pap_idx = 6;
-        assert_eq!(arena.enemies[pap_idx].id, 5);
+        assert_eq!(arena.ai.enemies[pap_idx].id(), 5);
 
         arena.player_position = Vec3::ZERO;
         arena.player_yaw = 0.0;
-        arena.enemies[pap_idx].position = Vec3::new(0.0, 0.0, 400.0);
-        arena.enemies[pap_idx].is_attacking = true;
+        arena.ai.enemies[pap_idx].snap_pose(Vec3::new(0.0, 0.0, 400.0), 0.0);
+        arena.ai.enemies[pap_idx].set_attacking(true);
 
         arena.tick(false, false, false, dt);
 
         assert_eq!(arena.player.mode, CombatMode::Held);
         assert_eq!(arena.grappling_enemy_idx, Some(pap_idx));
-        assert!(arena.enemies[pap_idx].is_grappling_player);
+        assert!(arena.ai.enemies[pap_idx].is_grappling_player);
 
-        let pap_z = arena.enemies[pap_idx].position.z;
+        let pap_z = arena.ai.enemies[pap_idx].position().z;
         assert!((pap_z - 328.0524).abs() < 1e-2, "Pap Z was {}", pap_z);
 
         // 30 presses at 30 Hz drain the 1.0s Normal Abstract Daddy hold gauge
@@ -271,10 +275,10 @@ mod tests {
         arena.tick(false, false, false, dt);
 
         assert!(arena.grappling_enemy_idx.is_none());
-        assert!(!arena.enemies[pap_idx].is_grappling_player);
-        assert!(!arena.enemies[pap_idx].is_attacking);
-        assert!(arena.enemies[pap_idx].position.z > 328.0524 + 200.0);
-        assert!(arena.enemies[pap_idx].flinch_timer > 0.0);
+        assert!(!arena.ai.enemies[pap_idx].is_grappling_player);
+        assert!(!arena.ai.enemies[pap_idx].is_attacking());
+        assert!(arena.ai.enemies[pap_idx].position().z > 328.0524 + 200.0);
+        assert!(arena.ai.enemies[pap_idx].stats().flinch_timer > 0.0);
     }
 
     #[test]
@@ -293,28 +297,28 @@ mod tests {
 
         for (enemy_idx, expected_id, spawn_dist) in test_cases {
             let mut arena = CombatArena::new();
-            assert_eq!(arena.enemies[enemy_idx].id, expected_id);
+            assert_eq!(arena.ai.enemies[enemy_idx].id(), expected_id);
 
             arena.player_position = Vec3::ZERO;
             arena.player_yaw = 0.0;
             arena.player.mode = CombatMode::Free;
 
-            arena.enemies[enemy_idx].position = Vec3::new(0.0, 0.0, spawn_dist);
-            arena.enemies[enemy_idx].yaw = std::f32::consts::PI;
-            arena.enemies[enemy_idx].is_attacking = true;
+            arena.ai.enemies[enemy_idx]
+                .snap_pose(Vec3::new(0.0, 0.0, spawn_dist), std::f32::consts::PI);
+            arena.ai.enemies[enemy_idx].set_attacking(true);
 
             arena.tick(false, false, false, dt);
 
             assert_eq!(arena.player.mode, CombatMode::Held);
             assert_eq!(arena.grappling_enemy_idx, Some(enemy_idx));
-            assert!(arena.enemies[enemy_idx].is_grappling_player);
+            assert!(arena.ai.enemies[enemy_idx].is_grappling_player);
 
             arena.player.process_struggle_inputs(45, dt, false);
             arena.tick(false, false, false, dt);
 
             assert_eq!(arena.player.mode, CombatMode::Hurt);
             assert!(arena.grappling_enemy_idx.is_none());
-            assert!(!arena.enemies[enemy_idx].is_grappling_player);
+            assert!(!arena.ai.enemies[enemy_idx].is_grappling_player);
         }
     }
 

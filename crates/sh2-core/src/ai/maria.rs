@@ -17,13 +17,25 @@
 //! - Panic state:
 //!   - Triggers when an active hostile enemy is within 1,500 units.
 //!   - In panic mode, Maria cowers, covers her head, or retreats behind James.
-//! - Health & Game Over:
-//!   - Max health: 1,000 HP.
+//! - Health & Game Over (`shCharacterMariaWorkInitAtGameStart` `SLUS_202.28` `0x002205b0`):
+//!   - Max health: `160.0` HP (Beginner / Easy) or `80.0` HP (Normal / Hard).
 //!   - If Maria's health reaches 0, companion death event triggers game over.
 
 use crate::ai::creatures::anim::CreatureAnimationController;
+use crate::ai::sensory::DifficultyLevel;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+
+/// Authentic Maria starting/max HP (`shCharacterMariaWorkInitAtGameStart`, `SLUS_202.28` `0x002205b0`).
+///
+/// - Beginner (`0`) / Easy (`1`): `160.0` (`0x43200000`)
+/// - Normal (`2`) / Hard (`3`): `80.0` (`0x42a00000`)
+pub const fn maria_max_hp_for_difficulty(difficulty: DifficultyLevel) -> f32 {
+    match difficulty {
+        DifficultyLevel::Beginner | DifficultyLevel::Easy => 160.0,
+        DifficultyLevel::Normal | DifficultyLevel::Hard => 80.0,
+    }
+}
 
 /// Maria's current behavioral / companion state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -59,7 +71,7 @@ pub struct MariaCompanionController {
     pub position: Vec3,
     /// Facing yaw in radians.
     pub yaw: f32,
-    /// Current health (default 1000.0).
+    /// Current health (`160.0` Beginner/Easy, `80.0` Normal/Hard per `0x002205b0`).
     pub health: f32,
     pub max_health: f32,
     /// Current companion state.
@@ -84,12 +96,21 @@ pub struct MariaCompanionController {
 
 impl Default for MariaCompanionController {
     fn default() -> Self {
+        Self::new(DifficultyLevel::Normal)
+    }
+}
+
+impl MariaCompanionController {
+    /// Create Maria companion controller initialized for `difficulty`
+    /// (`shCharacterMariaWorkInitAtGameStart` `0x002205b0`: `160.0` Beginner/Easy, `80.0` Normal/Hard).
+    pub fn new(difficulty: DifficultyLevel) -> Self {
+        let hp = maria_max_hp_for_difficulty(difficulty);
         Self {
             is_present: false,
             position: Vec3::ZERO,
             yaw: 0.0,
-            health: 1000.0,
-            max_health: 1000.0,
+            health: hp,
+            max_health: hp,
             state: MariaState::Stand,
             trail: Vec::with_capacity(64),
             distance_to_james: 0.0,
@@ -101,9 +122,6 @@ impl Default for MariaCompanionController {
             anim: CreatureAnimationController::new_maria(),
         }
     }
-}
-
-impl MariaCompanionController {
     /// Spawn or initialize Maria in a room at an offset from James.
     pub fn spawn(&mut self, spawn_pos: Vec3, spawn_yaw: f32) {
         self.is_present = true;
@@ -314,12 +332,23 @@ mod tests {
         maria.update(Vec3::new(0.0, 0.0, 800.0), 0.0, &enemies, 0.016);
         assert_eq!(maria.state, MariaState::Panic);
 
+        // Normal difficulty HP is 80.0 (`shCharacterMariaWorkInitAtGameStart` 0x002205b0)
+        assert_eq!(maria.health, 80.0);
+        assert_eq!(
+            MariaCompanionController::new(DifficultyLevel::Easy).max_health,
+            160.0
+        );
+        assert_eq!(
+            MariaCompanionController::new(DifficultyLevel::Hard).max_health,
+            80.0
+        );
+
         // Friendly fire damage test (100 dmg * 0.1 = 10 dmg)
         maria.receive_damage(100.0, true);
-        assert_eq!(maria.health, 990.0);
+        assert_eq!(maria.health, 70.0);
 
         // Fatal enemy damage test
-        maria.receive_damage(1000.0, false);
+        maria.receive_damage(100.0, false);
         assert_eq!(maria.health, 0.0);
         assert_eq!(maria.state, MariaState::Dead);
     }

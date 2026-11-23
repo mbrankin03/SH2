@@ -77,14 +77,39 @@ pub struct PyramidHeadController {
 }
 
 impl PyramidHeadController {
+    /// Create Pyramid Head (`RED`, `0x208`) with authentic Normal boss HP/Endurance
+    /// (`enREDInitData` `SLUS_202.28` `0x0015d410`).
     pub fn new(id: u32, position: Vec3, yaw: f32) -> Self {
+        Self::new_with_difficulty(id, position, yaw, DifficultyLevel::Normal, true)
+    }
+
+    /// Create Pyramid Head (`RED`) with exact `SLUS_202.28` `enREDInitData` (`0x0015d410`) tables:
+    /// - Boss (subtype 6) HP (`0x2aaa70`): `[1200.0, 3000.0, 4000.0, 5000.0]`
+    /// - Non-boss invincible wander HP (`0x49742400`): `1_000_000.0`
+    /// - Endurance (`0x2aaa90`): `[500.0, 700.0, 1000.0, 2000.0]` (`× 0.3` in apartment boss subtype 6)
+    pub fn new_with_difficulty(
+        id: u32,
+        position: Vec3,
+        yaw: f32,
+        difficulty: DifficultyLevel,
+        is_boss_encounter: bool,
+    ) -> Self {
+        const RED_HP: [f32; 4] = [1200.0, 3000.0, 4000.0, 5000.0];
+        const RED_END: [f32; 4] = [500.0, 700.0, 1000.0, 2000.0];
+        let idx = difficulty.as_index();
+        let (hp, end) = if is_boss_encounter {
+            (RED_HP[idx], RED_END[idx] * 0.3)
+        } else {
+            (1_000_000.0, RED_END[idx])
+        };
+
         Self {
             id,
             position,
             yaw,
             state: RedState::Wander,
             sub_state: 0,
-            stats: CreatureStats::new(5000.0, 9999.0, 0.0), // Massive boss endurance (unflinching)
+            stats: CreatureStats::new(hp, end, 0.0),
             anim_finished: false,
             state_timer: 0.0,
             timer_ticks: 0.0,

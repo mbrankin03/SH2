@@ -380,7 +380,8 @@ fn retail_er01_cld_allows_james_to_walk_through_restroom_exit_corridor() {
     let cld = sh2_assets::formats::cld::parse_cld(&bytes).expect("parse er01.cld");
     let world = sh2_core::collision::CollisionWorld::from_cld(&cld);
     let cfg = sh2_core::collision::CollisionConfig::default();
-    assert_eq!(cfg.radius, 200.0);
+    assert_eq!(cfg.radius, 175.0);
+    assert_eq!(cfg.height, 800.0);
 
     // Walk in 30 mm increments along the L-shaped exit corridor:
     // 1. North from (-19025, 20600) -> (-19025, 21250) through 450 mm entrance (X=-19250..-18800)

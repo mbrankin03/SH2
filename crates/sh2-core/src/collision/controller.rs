@@ -1,23 +1,34 @@
-//! Centralized CollisionController and CollisionWorld subsystem (`cl_main.c` / `cl_calc.c`).
+//! Centralized CollisionController and CollisionWorld subsystem (`cl_main.c` / `cl_calc2.c`).
 //!
 //! Provides the primary simulation interface for:
-//! - Static `.cld` background geometry and spatial broadphase caching (`SpatialGrid`).
+//! - Static `.cld` background geometry (`raw_walls`, `raw_side_walls`, `columns`) and
+//!   authentic `clGetHitSectListMOVE` broadphase (`SpatialGrid`).
 //! - Dynamic extra walls/floors (`clAddDynamicWall`, `clAddDynamicFloor`).
-//! - Character cylinder management and separation (`clCheckColumn2ColumnHit`).
-//! - Wall pushback relaxation and surface sliding (`clCheckBg2Chara`).
+//! - Character cylinder management and 5-iteration interleaved separation (`clCollectCharaALL`).
+//! - 1:1 PS2/PC wall pushback relaxation (`clCheckBg2Chara` -> `clCheckColumn2WallHit` ->
+//!   `clCheckColumn2ColumnHit` -> `clMakeWallHitCollectVector`).
 //! - Floor height sampling and stair climbing (`clCollectCharaHeightNormal`).
 //! - Camera ray clamping against room barriers (`clCheckHitEyes`).
-//! - Safe spawn snapping (`col_spawn`).
-//! - Room / block collision merging (`col_merge`).
+//! - Safe spawn snapping (`col_spawn`) and room/block collision merging (`col_merge`).
 
 use glam::Vec3;
-use sh2_assets::formats::cld::{CldFile, FloorTriangle, WallSegment};
+use sh2_assets::formats::cld::{CldFile, FloorTriangle, HitPolyColumn, HitPolyPlane, WallSegment};
 
-use super::character::{CharacterCylinder, CharacterId};
+use super::character::{
+    CharacterCylinder, CharacterId, CollisionColumn, JAMES_HIT_RADIUS, JAMES_MOVE_RADIUS,
+    PLAYER_BASE_FORWARD_OFFSET, PLAYER_HIT_COL_HEIGHT, PLAYER_MOVE_COL_HEIGHT,
+    PLAYER_MOVE_COL_Y_BOTTOM_OFFSET,
+};
 use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
 use super::raycast::{
     clamp_camera_ray, raycast_acoustic_occlusion, AcousticOcclusionHit, RaycastFilter,
+};
+use super::solver::{
+    cl_check_column_to_bg_column_hit, cl_check_column_to_wall_hit, cl_collect_chara_all,
+    cl_make_wall_hit_collect_vector, quantize_collect_vector_1_16, sh_atan2, CharaCollectEntry,
+    WallCollectContext, WallHitRecord, CL_COLLECT_CHARA_ITERATIONS, CL_MAX_WALL_HITS,
+    CL_NO_MOVE_ANGLE,
 };
 
 /// Surface material category extracted from `.cld` / `.sfm` floor collision triangles (`FloorTriangle::material`),
@@ -77,18 +88,7 @@ impl SurfaceMaterial {
 
     /// Maps a raw `.cld` `FloorTriangle::material` attribute (`u32`) to a [`SurfaceMaterial`].
     ///
-    /// Matches `sh2pc.exe` `0x54A9A0` / `0x54AFC1` (James) and `0x5495C0` (Maria) switch table (`0..=12`)
-    /// verified against `.cld` room geometry across `ap`, `bw`, `ca..cd`, `hp`, `ps`, `rr`, `ru`, and `ma`:
-    /// - `0, 12` -> [`Self::Concrete`] (`11001` Concrete/Stone -> `sddata[147]`)
-    /// - `1, 3, 4` -> [`Self::Gravel`] (`11004` / `11007` Dirt/Gravel/Sand -> `sddata[150, 149]`)
-    /// - `2` -> [`Self::Grass`] (`11002` Grass -> `sddata[142]`)
-    /// - `5, 9, 11` -> [`Self::Metal`] (`11000` Metal Grating / `11006` Solid Metal -> `sddata[146, 143]`)
-    /// - `6` -> [`Self::Water`] (`11003` Water -> `sddata[148, 83, 84]`)
-    /// - `7` -> [`Self::Wood`] (`11005` Wood floorboards / Baldwin Mansion `ma` / Bowling `bw01` -> `sddata[151, 95]`)
-    /// - `8` -> [`Self::Carpet`] (`11009` / `11054` Carpeted Hotel `rr` & Apartment `ap` corridors -> `sddata[144, 145]`)
-    /// - `10` -> [`Self::Blood`] (`11008` Glass / Wet / Special -> `sddata[148, 141]`)
-    ///
-    /// Also supports synthetic test pad markers (`0x80..=0x87`) which map `1:1` to `SurfaceMaterial::from_index`.
+    /// Matches `sh2pc.exe` `0x54A9A0` / `0x54AFC1` (James) and `0x5495C0` (Maria) switch table (`0..=12`).
     #[inline]
     pub const fn from_cld_material(raw: u32) -> Self {
         if (raw & 0x80) != 0 {
@@ -129,10 +129,10 @@ impl SurfaceMaterial {
     }
 }
 
-/// Result of sampling the walkable floor beneath a character at $(X, Z)$, including both height and surface material.
+/// Result of sampling the walkable floor beneath a character at `(X, Z)`, including both height and surface material.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FloorSample {
-    /// Walkable floor height $Y$ in world units ($+Y$ points downward).
+    /// Walkable floor height `Y` in world units (`+Y` points downward).
     pub height_y: f32,
     /// Raw `.cld` floor triangle material attribute (`FloorTriangle::material`).
     pub raw_material: u32,
@@ -141,30 +141,43 @@ pub struct FloorSample {
 }
 
 /// Configuration constants for character collision and kinematics.
+///
+/// Defaults match `PlayerSetColumn_SetTarget` (`SLUS_202.28` `0x00107d40` / `sh2pc.exe` `0x0052f110`)
+/// and `clCollectCharaALL` (`0x00132e20`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollisionConfig {
-    /// Character cylinder collision radius in world units (mm).
-    /// Exact PS2 James collision radius from `PlayerInitOnConnect` (`SLUS_202.28` `0x00110ff0`:
-    /// `0x4348_0000` = `200.0f` mm, matching narrow `400 mm` retail doorways such as `er01.cld`).
+    /// Movement collision cylinder radius in world mm (`175.0` James, `150.0` playable Maria).
     pub radius: f32,
-    /// Character cylinder height from feet to head in world units (~1800.0 mm).
+    /// Movement collision cylinder height in world mm (`800.0`: `[-50.0 .. -850.0]`).
     pub height: f32,
-    /// Maximum vertical climb/step-up threshold (e.g. stair riser limit, ~250 mm).
+    /// Movement cylinder bottom Y offset relative to feet (`-50.0` mm).
+    pub y_bottom_offset: f32,
+    /// Combat hitbox cylinder radius in world mm (`150.0` James, `125.00001` playable Maria).
+    pub hit_radius: f32,
+    /// Combat hitbox cylinder height in world mm (`900.0`: `[0.0 .. -900.0]`).
+    pub hit_height: f32,
+    /// Forward cylinder offset along character yaw in world mm (`+25.0` mm).
+    pub forward_offset: f32,
+    /// Maximum vertical climb/step-up threshold (`250.0` mm).
     pub max_step_up: f32,
-    /// Maximum vertical drop/step-down threshold (~350 mm).
+    /// Maximum vertical drop/step-down threshold (`350.0` mm).
     pub max_step_down: f32,
-    /// Number of iterative wall pushback relaxation iterations.
+    /// Number of interleaved relaxation iterations (`5`, `clCollectCharaALL` `0x00132e20`).
     pub max_iterations: usize,
 }
 
 impl Default for CollisionConfig {
     fn default() -> Self {
         Self {
-            radius: 200.0,
-            height: 1800.0,
+            radius: JAMES_MOVE_RADIUS,
+            height: PLAYER_MOVE_COL_HEIGHT,
+            y_bottom_offset: PLAYER_MOVE_COL_Y_BOTTOM_OFFSET,
+            hit_radius: JAMES_HIT_RADIUS,
+            hit_height: PLAYER_HIT_COL_HEIGHT,
+            forward_offset: PLAYER_BASE_FORWARD_OFFSET,
             max_step_up: 250.0,
             max_step_down: 350.0,
-            max_iterations: 3,
+            max_iterations: CL_COLLECT_CHARA_ITERATIONS,
         }
     }
 }
@@ -172,19 +185,27 @@ impl Default for CollisionConfig {
 /// Static and dynamic collision state representing an active map room or combined streaming sectors.
 #[derive(Debug, Clone, Default)]
 pub struct CollisionWorld {
-    /// Room origin coordinates $(X, Z)$.
+    /// Room/block origin coordinates `(sx, sz)` in world mm.
     pub origin: [f32; 2],
+    /// Header `disable` flag (`+0x1c`). When non-zero, `clGetHitSectListMOVE` skips this `.cld`.
+    pub disable: i32,
     /// Floor triangles for height sampling and stepping.
     pub floors: Vec<FloorTriangle>,
-    /// Wall segments for lateral cylinder containment and sliding.
+    /// Derived 2D wall segments (for legacy raycast/audio consumers).
     pub walls: Vec<WallSegment>,
+    /// Raw `_CL_HITPOLY_PLANE` walls (`wld`, group 1), indexed 1:1 by `grid.wall_cells`.
+    pub raw_walls: Vec<HitPolyPlane>,
+    /// Raw `_CL_HITPOLY_PLANE` side walls (`swd`, group 3), indexed 1:1 by `grid.side_wall_cells`.
+    pub raw_side_walls: Vec<HitPolyPlane>,
+    /// Raw `_CL_HITPOLY_COLUMN` static BG columns (`cld`), indexed 1:1 by `grid.column_cells`.
+    pub columns: Vec<HitPolyColumn>,
     /// Extra transient or stage-added wall segments (`s_extra`).
     pub extra_walls: Vec<WallSegment>,
-    /// Dynamic stage wall obstacles.
+    /// Dynamic stage wall obstacles (`clAddDynamicWall`).
     pub dynamic_walls: Vec<DynamicWall>,
-    /// Dynamic stage floor obstacles.
+    /// Dynamic stage floor obstacles (`clAddDynamicFloor`).
     pub dynamic_floors: Vec<DynamicFloor>,
-    /// 4x4 spatial acceleration broadphase grid.
+    /// Authentic 4x4 spatial acceleration broadphase grid (`clGetHitSectListMOVE`).
     pub grid: SpatialGrid,
 }
 
@@ -199,8 +220,12 @@ impl CollisionWorld {
         let grid = SpatialGrid::from_cld(cld);
         Self {
             origin: cld.origin,
+            disable: cld.disable,
             floors: cld.floors.clone(),
             walls: cld.walls.clone(),
+            raw_walls: cld.raw_walls.clone(),
+            raw_side_walls: cld.raw_side_walls.clone(),
+            columns: cld.columns.clone(),
             extra_walls: Vec::new(),
             dynamic_walls: Vec::new(),
             dynamic_floors: Vec::new(),
@@ -252,6 +277,9 @@ impl CollisionWorld {
         for p in parts {
             merged.floors.extend_from_slice(&p.floors);
             merged.walls.extend_from_slice(&p.walls);
+            merged.raw_walls.extend_from_slice(&p.raw_walls);
+            merged.raw_side_walls.extend_from_slice(&p.raw_side_walls);
+            merged.columns.extend_from_slice(&p.columns);
             merged.extra_walls.extend_from_slice(&p.extra_walls);
             merged.dynamic_walls.extend_from_slice(&p.dynamic_walls);
             merged.dynamic_floors.extend_from_slice(&p.dynamic_floors);
@@ -262,21 +290,23 @@ impl CollisionWorld {
             origin: [0.0, 0.0],
             floors: merged.floors.clone(),
             walls: merged.walls.clone(),
-            b0_cells: Default::default(),
-            b1_cells: Default::default(),
+            raw_walls: merged.raw_walls.clone(),
+            raw_side_walls: merged.raw_side_walls.clone(),
+            columns: merged.columns.clone(),
+            ..Default::default()
         };
         merged.grid = SpatialGrid::from_cld(&cld);
         merged
     }
 
-    /// Sample the walkable floor height and surface material at $(x, z)$ closest to `y_ref` within step boundaries.
+    /// Sample the walkable floor height and surface material at `(x, z)` closest to `y_ref` within step boundaries.
     ///
     /// Authentic PS2 `clCollectCharaHeightNormal`:
-    /// Because world $+Y$ points downward:
-    /// - `up` is above feet: $y \ge y_{\text{ref}} - \text{up}$
-    /// - `down` is below feet: $y \le y_{\text{ref}} + \text{down}$
+    /// Because world `+Y` points downward:
+    /// - `up` is above feet: `y >= y_ref - up`
+    /// - `down` is below feet: `y <= y_ref + down`
     ///
-    /// Returns the highest floor (minimum numeric $Y$) within range along with its `FloorTriangle::material`.
+    /// Returns the highest floor (minimum numeric `Y`) within range along with its `FloorTriangle::material`.
     pub fn sample_floor_surface(
         &self,
         x: f32,
@@ -287,13 +317,44 @@ impl CollisionWorld {
     ) -> Option<FloorSample> {
         let mut best: Option<FloorSample> = None;
 
-        // 1. Broadphase: query floor triangles in the current grid cell
-        let cell = self.grid.point_to_cell(x, z);
-        let cell_tri_indices = &self.grid.floor_cells[cell];
+        // 1. Broadphase: query floor triangles in the current grid cell (gated on `disable == 0`)
+        if self.disable == 0 {
+            let cell = self.grid.point_to_cell(x, z);
+            let cell_tri_indices = &self.grid.floor_cells[cell];
 
-        if !cell_tri_indices.is_empty() {
-            for &idx in cell_tri_indices {
-                if let Some(tri) = self.floors.get(idx) {
+            if !cell_tri_indices.is_empty() {
+                for &idx in cell_tri_indices {
+                    if let Some(tri) = self.floors.get(idx) {
+                        if let Some(y) = tri.sample_height(x, z) {
+                            if y >= y_ref - up && y <= y_ref + down {
+                                match best {
+                                    None => {
+                                        best = Some(FloorSample {
+                                            height_y: y,
+                                            raw_material: tri.material,
+                                            surface: SurfaceMaterial::from_cld_material(
+                                                tri.material,
+                                            ),
+                                        });
+                                    }
+                                    Some(prev) if y < prev.height_y => {
+                                        best = Some(FloorSample {
+                                            height_y: y,
+                                            raw_material: tri.material,
+                                            surface: SurfaceMaterial::from_cld_material(
+                                                tri.material,
+                                            ),
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Broadphase cell empty or unindexed: fallback to all static floors
+                for tri in &self.floors {
                     if let Some(y) = tri.sample_height(x, z) {
                         if y >= y_ref - up && y <= y_ref + down {
                             match best {
@@ -313,31 +374,6 @@ impl CollisionWorld {
                                 }
                                 _ => {}
                             }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Broadphase cell empty or unindexed: fallback to all static floors
-            for tri in &self.floors {
-                if let Some(y) = tri.sample_height(x, z) {
-                    if y >= y_ref - up && y <= y_ref + down {
-                        match best {
-                            None => {
-                                best = Some(FloorSample {
-                                    height_y: y,
-                                    raw_material: tri.material,
-                                    surface: SurfaceMaterial::from_cld_material(tri.material),
-                                });
-                            }
-                            Some(prev) if y < prev.height_y => {
-                                best = Some(FloorSample {
-                                    height_y: y,
-                                    raw_material: tri.material,
-                                    surface: SurfaceMaterial::from_cld_material(tri.material),
-                                });
-                            }
-                            _ => {}
                         }
                     }
                 }
@@ -375,14 +411,7 @@ impl CollisionWorld {
         best
     }
 
-    /// Sample the walkable floor height at $(x, z)$ closest to `y_ref` within step boundaries.
-    ///
-    /// Authentic PS2 `clCollectCharaHeightNormal`:
-    /// Because world $+Y$ points downward:
-    /// - `up` is above feet: $y \ge y_{\text{ref}} - \text{up}$
-    /// - `down` is below feet: $y \le y_{\text{ref}} + \text{down}$
-    ///
-    /// Returns the highest floor (minimum numeric $Y$) within range.
+    /// Sample the walkable floor height at `(x, z)` closest to `y_ref` within step boundaries.
     pub fn sample_floor_height(
         &self,
         x: f32,
@@ -395,75 +424,154 @@ impl CollisionWorld {
             .map(|s| s.height_y)
     }
 
-    /// Resolve lateral wall collisions for a vertical cylinder with radius `config.radius`.
+    /// Exact 1:1 `clCheckBg2Chara` (`SLUS_202.28` `0x00133920` / `sh2pc.exe` `0x00525c90`):
     ///
-    /// Authentic 1:1 PS2 `clCheckBg2Chara` / `col_push`:
-    /// Iteratively projects the cylinder center onto wall segments in $(X, Z)$,
-    /// calculating the closest point $t \in [0, 1]$ and sliding/pushing along the normal
-    /// if the distance is less than the radius.
-    pub fn resolve_wall_pushback(&self, pos: &mut Vec3, config: &CollisionConfig) -> bool {
-        let mut pushed = false;
-        let y = pos.y;
-        let h = config.height;
-        let radius = config.radius;
-        let r_sq = radius * radius;
+    /// 1. Checks dynamic & extra walls via `clCheckColumn2WallHit`.
+    /// 2. Queries active cells via `SpatialGrid::query_move_cells` (`clGetHitSectListMOVE`).
+    /// 3. Checks `raw_walls` (`b1ofs`), `raw_side_walls` (`b3ofs`), and static BG `columns` (`clofs`).
+    /// 4. Combines hits via `clMakeWallHitCollectVector` and quantizes to `1/16` mm (`_vftoi4`/`_vitof4`).
+    pub fn check_bg_to_chara(&self, col: &CollisionColumn, ctx: &mut WallCollectContext) -> Vec3 {
+        if !col.active {
+            return Vec3::ZERO;
+        }
 
-        for _iter in 0..config.max_iterations {
-            let mut moved = false;
+        let mut hits = [WallHitRecord::EMPTY; CL_MAX_WALL_HITS];
+        let mut hit_count = 0usize;
 
-            for w in self.all_walls() {
-                // Group 2 is ceiling / hanging slab geometry; does not push characters
-                if w.group == 2 || !w.overlaps_vertical(y, h) {
-                    continue;
-                }
-
-                let dx = w.end[0] - w.start[0];
-                let dz = w.end[1] - w.start[1];
-                let len_sq = dx * dx + dz * dz;
-                if len_sq < 1e-3 {
-                    continue;
-                }
-
-                // Project cylinder center (pos.x, pos.z) onto segment start..end
-                let t = (((pos.x - w.start[0]) * dx + (pos.z - w.start[1]) * dz) / len_sq)
-                    .clamp(0.0, 1.0);
-
-                let px = w.start[0] + dx * t;
-                let pz = w.start[1] + dz * t;
-
-                let ox = pos.x - px;
-                let oz = pos.z - pz;
-                let dist_sq = ox * ox + oz * oz;
-
-                if dist_sq < r_sq {
-                    let d = dist_sq.sqrt();
-                    let (push_nx, push_nz) = if d < 1e-3 {
-                        // Exactly on segment: push along segment normal (-dz, dx)
-                        let l = len_sq.sqrt();
-                        (-dz / l, dx / l)
-                    } else {
-                        (ox / d, oz / d)
-                    };
-
-                    let pen = radius - d;
-                    pos.x += push_nx * pen;
-                    pos.z += push_nz * pen;
-                    moved = true;
-                    pushed = true;
-                }
+        // 1. Dynamic walls (`clCheckHitDynamicWallCollision` 0x00133fb0) & extra walls
+        for dw in &self.dynamic_walls {
+            if !dw.active || hit_count >= CL_MAX_WALL_HITS {
+                continue;
             }
-
-            if !moved {
+            let plane = HitPolyPlane::from_wall_segment(&dw.segment);
+            if let Some(hit) = cl_check_column_to_wall_hit(&plane, col) {
+                hits[hit_count] = hit;
+                hit_count += 1;
+            }
+        }
+        for ew in &self.extra_walls {
+            if hit_count >= CL_MAX_WALL_HITS {
                 break;
             }
+            let plane = HitPolyPlane::from_wall_segment(ew);
+            if let Some(hit) = cl_check_column_to_wall_hit(&plane, col) {
+                hits[hit_count] = hit;
+                hit_count += 1;
+            }
+        }
+
+        // 2. SpatialGrid broadphase (`clGetHitSectListMOVE` 0x00138b60)
+        if self.disable == 0 {
+            let (active_cells, cell_count) =
+                self.grid
+                    .query_move_cells_array(col.center_x, col.y_bottom, col.center_z);
+            let active_slice = &active_cells[..cell_count];
+
+            if !self.raw_walls.is_empty()
+                || !self.raw_side_walls.is_empty()
+                || !self.columns.is_empty()
+            {
+                // Pass A: group 1 walls (`wldofs` + `b1ofs`)
+                for &cell in active_slice {
+                    for &idx in &self.grid.wall_cells[cell] {
+                        if hit_count >= CL_MAX_WALL_HITS {
+                            break;
+                        }
+                        if let Some(plane) = self.raw_walls.get(idx) {
+                            if let Some(hit) = cl_check_column_to_wall_hit(plane, col) {
+                                hits[hit_count] = hit;
+                                hit_count += 1;
+                            }
+                        }
+                    }
+                }
+                // Pass B: group 3 side walls (`swdofs` + `b3ofs`)
+                for &cell in active_slice {
+                    for &idx in &self.grid.side_wall_cells[cell] {
+                        if hit_count >= CL_MAX_WALL_HITS {
+                            break;
+                        }
+                        if let Some(plane) = self.raw_side_walls.get(idx) {
+                            if let Some(hit) = cl_check_column_to_wall_hit(plane, col) {
+                                hits[hit_count] = hit;
+                                hit_count += 1;
+                            }
+                        }
+                    }
+                }
+                // Pass C: static BG columns (`cldofs` + `clofs`, `clCheckColumn2ColumnHit` 0x00134f60)
+                for &cell in active_slice {
+                    for &idx in &self.grid.column_cells[cell] {
+                        if hit_count >= CL_MAX_WALL_HITS {
+                            break;
+                        }
+                        if let Some(bg_col) = self.columns.get(idx) {
+                            if let Some(hit) = cl_check_column_to_bg_column_hit(bg_col, col) {
+                                hits[hit_count] = hit;
+                                hit_count += 1;
+                            }
+                        }
+                    }
+                }
+            } else if !self.walls.is_empty() {
+                // Legacy fallback for worlds constructed manually via `world.walls.push(...)`
+                for w in &self.walls {
+                    if w.group == 2 || hit_count >= CL_MAX_WALL_HITS {
+                        continue;
+                    }
+                    let plane = HitPolyPlane::from_wall_segment(w);
+                    if let Some(hit) = cl_check_column_to_wall_hit(&plane, col) {
+                        hits[hit_count] = hit;
+                        hit_count += 1;
+                    }
+                }
+            }
+        }
+
+        let (collect_vec, applied) = cl_make_wall_hit_collect_vector(&mut hits[..hit_count], ctx);
+        if applied == 0 {
+            Vec3::ZERO
+        } else {
+            quantize_collect_vector_1_16(collect_vec)
+        }
+    }
+
+    /// Resolve lateral wall & static BG column collisions for a vertical cylinder using
+    /// `clCheckBg2Chara` (`SpatialGrid` + `clCheckColumn2WallHit` + `clCheckColumn2ColumnHit` +
+    /// `clMakeWallHitCollectVector`).
+    pub fn resolve_wall_pushback(&self, pos: &mut Vec3, config: &CollisionConfig) -> bool {
+        let mut pushed = false;
+        let prev_pos = *pos;
+
+        for _iter in 0..config.max_iterations {
+            let y_bottom = pos.y + config.y_bottom_offset;
+            let y_top = y_bottom - config.height;
+            let col = CollisionColumn::new(pos.x, y_bottom, pos.z, y_top, config.radius, 1);
+
+            let mut ctx = WallCollectContext {
+                move_angle: CL_NO_MOVE_ANGLE,
+                cur_pos: *pos,
+                prev_pos,
+                chara_type: 1,
+                post_flag_timer: 0,
+                fps: 60.0,
+            };
+
+            let push = self.check_bg_to_chara(&col, &mut ctx);
+            if push.x == 0.0 && push.z == 0.0 {
+                break;
+            }
+            pos.x += push.x;
+            pos.z += push.z;
+            pushed = true;
         }
 
         pushed
     }
 
     /// Full kinematic collision update for character position:
-    /// 1. Raycast continuous collision prevention against tunneling through walls.
-    /// 2. Lateral wall pushback and sliding along surface normals.
+    /// 1. Continuous anti-tunneling sweep against walls in active `SpatialGrid` cells.
+    /// 2. 1:1 `clCheckBg2Chara` lateral wall & BG column pushback and sliding.
     /// 3. Vertical floor height snapping and step traversal.
     pub fn resolve_character_movement(
         &self,
@@ -473,23 +581,28 @@ impl CollisionWorld {
     ) -> Vec3 {
         let mut pos = desired_pos;
 
-        // 1. Raycast line segment intersection to prevent tunneling through thin/corner walls
-        let y = current_pos.y;
-        let h = config.height;
         let move_dx = desired_pos.x - current_pos.x;
         let move_dz = desired_pos.z - current_pos.z;
         let move_dist_sq = move_dx * move_dx + move_dz * move_dz;
+        let move_angle = if move_dx == 0.0 && move_dz == 0.0 {
+            CL_NO_MOVE_ANGLE
+        } else {
+            sh_atan2(move_dx, move_dz)
+        };
 
-        if move_dist_sq > 1e-4 {
+        // 1. Anti-tunneling segment check for large single-step displacements (> radius)
+        if move_dist_sq > config.radius * config.radius {
+            let y_bottom = current_pos.y + config.y_bottom_offset;
+            let y_top = y_bottom - config.height;
             let mut earliest_hit: Option<(f32, f32, f32)> = None;
 
             for w in self.all_walls() {
-                if w.group == 2 || !w.overlaps_vertical(y, h) {
+                if w.group == 2 || w.y_top >= y_bottom || w.y_bottom <= y_top {
                     continue;
                 }
 
-                let rx = desired_pos.x - current_pos.x;
-                let rz = desired_pos.z - current_pos.z;
+                let rx = move_dx;
+                let rz = move_dz;
                 let sx = w.end[0] - w.start[0];
                 let sz = w.end[1] - w.start[1];
 
@@ -517,18 +630,36 @@ impl CollisionWorld {
             }
 
             if let Some((_hit_t, hit_x, hit_z)) = earliest_hit {
-                // Stop short of the wall along movement direction by character radius
                 let move_len = move_dist_sq.sqrt();
                 let dir_x = move_dx / move_len;
                 let dir_z = move_dz / move_len;
-
                 pos.x = hit_x - dir_x * config.radius;
                 pos.z = hit_z - dir_z * config.radius;
             }
         }
 
-        // 2. Resolve lateral wall pushback and continuous sliding
-        self.resolve_wall_pushback(&mut pos, config);
+        // 2. 1:1 `clCheckBg2Chara` lateral wall & static BG column pushback
+        for _iter in 0..config.max_iterations {
+            let y_bottom = pos.y + config.y_bottom_offset;
+            let y_top = y_bottom - config.height;
+            let col = CollisionColumn::new(pos.x, y_bottom, pos.z, y_top, config.radius, 1);
+
+            let mut ctx = WallCollectContext {
+                move_angle,
+                cur_pos: pos,
+                prev_pos: current_pos,
+                chara_type: 1,
+                post_flag_timer: 0,
+                fps: 60.0,
+            };
+
+            let push = self.check_bg_to_chara(&col, &mut ctx);
+            if push.x == 0.0 && push.z == 0.0 {
+                break;
+            }
+            pos.x += push.x;
+            pos.z += push.z;
+        }
 
         // 3. Sample floor height
         if let Some(floor_y) = self.sample_floor_height(
@@ -574,7 +705,7 @@ impl CollisionWorld {
         )
     }
 
-    /// Find safe walkable spawn point closest to $(x, z)$ snapped to nearest floor centroid (`col_spawn`).
+    /// Find safe walkable spawn point closest to `(x, z)` snapped to nearest floor centroid (`col_spawn`).
     pub fn find_safe_spawn_point(&self, x: f32, z: f32) -> Option<Vec3> {
         let mut best_dist_sq = f32::INFINITY;
         let mut best_spawn: Option<Vec3> = None;
@@ -621,7 +752,6 @@ impl CollisionController {
 
     /// Per-frame lifecycle initialization (`clFrameInitCollisionData`).
     pub fn frame_init(&mut self) {
-        // Clear transient extra walls added for single-frame events
         self.world.extra_walls.clear();
     }
 
@@ -650,35 +780,70 @@ impl CollisionController {
             .raycast_acoustic_occlusion(emitter_pos, listener_head_pos)
     }
 
-    /// Resolve character-to-character separation pushes across all active cylinders (`clCheckColumn2ColumnHit`).
-    pub fn resolve_character_separations(&mut self) {
-        let len = self.characters.len();
-        if len < 2 {
-            return;
+    /// Exact 1:1 `clCollectCharaALL` (`SLUS_202.28` `0x00132e20` / `sh2pc.exe` `0x00526280`):
+    /// runs up to 5 interleaved BG + character-to-character relaxation iterations using the
+    /// discrete weight-diff table `[1.0, 0.98, 0.94, 0.90, 0.86]`.
+    ///
+    /// Returns the number of iterations executed (`1..=5`).
+    pub fn resolve_character_separations(&mut self) -> usize {
+        if self.characters.is_empty() {
+            return 0;
         }
 
-        for i in 0..len {
-            for j in (i + 1)..len {
-                let char_a = self.characters[i];
-                let char_b = self.characters[j];
-
-                let (delta_a, delta_b) = char_a.resolve_separation(&char_b);
-                if delta_a != Vec3::ZERO {
-                    self.characters[i].position += delta_a;
-                }
-                if delta_b != Vec3::ZERO {
-                    self.characters[j].position += delta_b;
-                }
-            }
+        // Exact PS2 `clCharaList[32]` fixed-capacity stack buffer (strictly zero-allocation)
+        const MAX_CL_CHARA: usize = 32;
+        let entry_count = self.characters.len().min(MAX_CL_CHARA);
+        let mut entries = [CharaCollectEntry::EMPTY; MAX_CL_CHARA];
+        for (slot, c) in entries[..entry_count]
+            .iter_mut()
+            .zip(self.characters.iter())
+        {
+            *slot = CharaCollectEntry {
+                col: c.move_column(),
+                move_vec: Vec3::ZERO,
+                push_vec: Vec3::ZERO,
+                prev_pos: c.position,
+                chara_type: 1,
+            };
         }
+
+        let world = &self.world;
+        let iterations = cl_collect_chara_all(&mut entries[..entry_count], |entry| {
+            let move_angle = if entry.move_vec.x == 0.0 && entry.move_vec.z == 0.0 {
+                CL_NO_MOVE_ANGLE
+            } else {
+                sh_atan2(entry.move_vec.x, entry.move_vec.z)
+            };
+            let mut ctx = WallCollectContext {
+                move_angle,
+                cur_pos: Vec3::new(entry.col.center_x, entry.prev_pos.y, entry.col.center_z),
+                prev_pos: entry.prev_pos,
+                chara_type: entry.chara_type,
+                post_flag_timer: 0,
+                fps: 60.0,
+            };
+            world.check_bg_to_chara(&entry.col, &mut ctx)
+        });
+
+        for (chara, entry) in self
+            .characters
+            .iter_mut()
+            .zip(entries[..entry_count].iter())
+        {
+            chara.position.x = entry.col.center_x;
+            chara.position.z = entry.col.center_z;
+        }
+
+        iterations
     }
 
-    /// Update a character's position through full environment collision and separation.
+    /// Update a character's position through full environment collision and 5-iteration separation.
     pub fn update_character_kinematics(&mut self, id: CharacterId, desired_pos: Vec3) -> Vec3 {
         let (current_pos, config) = if let Some(c) = self.characters.iter().find(|c| c.id == id) {
             let mut cfg = self.config;
             cfg.radius = c.radius;
             cfg.height = c.height;
+            cfg.y_bottom_offset = c.y_bottom_offset;
             (c.position, cfg)
         } else {
             (desired_pos, self.config)
@@ -689,15 +854,13 @@ impl CollisionController {
             .world
             .resolve_character_movement(current_pos, desired_pos, &config);
 
-        // Update stored cylinder position
         if let Some(c) = self.characters.iter_mut().find(|c| c.id == id) {
             c.position = resolved_pos;
         }
 
-        // 2. Resolve actor-to-actor separations
+        // 2. Resolve 5-iteration interleaved BG + actor-to-actor separations (`clCollectCharaALL`)
         self.resolve_character_separations();
 
-        // Return updated position
         self.characters
             .iter()
             .find(|c| c.id == id)
@@ -714,16 +877,16 @@ mod tests {
     fn test_wall_pushback_and_sliding() {
         // Enclosed square room 2000x2000 (X: -1000..1000, Z: -1000..1000)
         let world = CollisionWorld::create_synthetic_room(2000.0, 2000.0, 3000.0, 0.0, 0.0);
-        let config = CollisionConfig::default(); // radius = 200.0 (`PlayerInitOnConnect` 0x00110ff0)
+        let config = CollisionConfig::default(); // radius = 175.0 (`PlayerSetColumn_SetTarget` 0x00107d40)
 
         // Move player towards east wall (X = 1000.0) beyond the boundary
-        let current_pos = Vec3::new(900.0, 0.0, 0.0);
-        let desired_pos = Vec3::new(980.0, 0.0, 100.0); // should be pushed back to X <= 1000 - 200 = 800
+        let current_pos = Vec3::new(800.0, 0.0, 0.0);
+        let desired_pos = Vec3::new(980.0, 0.0, 100.0); // should be pushed back to X <= 1000 - 175 = 825
 
         let final_pos = world.resolve_character_movement(current_pos, desired_pos, &config);
 
         assert!(
-            final_pos.x <= 1000.0 - config.radius + 0.01,
+            final_pos.x <= 1000.0 - config.radius + 0.1,
             "Player X ({}) must be clamped by wall radius boundary {}",
             final_pos.x,
             1000.0 - config.radius
@@ -737,7 +900,7 @@ mod tests {
     fn test_center_pillar_collision() {
         // 4000x4000 room with center pillar 600x600 (-300..300, -300..300)
         let world = CollisionWorld::create_synthetic_room(4000.0, 4000.0, 3000.0, 600.0, 600.0);
-        let config = CollisionConfig::default(); // radius = 200.0 (`PlayerInitOnConnect` 0x00110ff0)
+        let config = CollisionConfig::default(); // radius = 175.0
 
         // Try walking into the pillar from the west
         let current_pos = Vec3::new(-500.0, 0.0, 0.0);
@@ -745,7 +908,7 @@ mod tests {
 
         let final_pos = world.resolve_character_movement(current_pos, desired_pos, &config);
 
-        // West wall of pillar is at X = -300, so cylinder center should be pushed to <= -300 - 200 = -500
+        // West wall of pillar is at X = -300, so cylinder center should be pushed to <= -300 - 175 = -475
         assert!(
             final_pos.x <= -300.0 - config.radius + 0.1,
             "Player should be pushed outside pillar boundary: pos.x={}",
@@ -756,7 +919,6 @@ mod tests {
     #[test]
     fn test_stair_stepping_and_gravity() {
         let mut world = CollisionWorld::new();
-        // Lower floor at Y = 0.0, step at Y = -150.0 (higher in Y-down space)
         world.floors.push(FloorTriangle::new(
             [[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0], [1000.0, 0.0, 1000.0]],
             0,
@@ -765,7 +927,6 @@ mod tests {
             [[0.0, 0.0, 0.0], [1000.0, 0.0, 1000.0], [0.0, 0.0, 1000.0]],
             0,
         ));
-        // Raised platform
         world.floors.push(FloorTriangle::new(
             [
                 [1000.0, -150.0, 0.0],
@@ -783,9 +944,8 @@ mod tests {
             0,
         ));
 
-        let config = CollisionConfig::default(); // max_step_up = 250.0
+        let config = CollisionConfig::default();
 
-        // Step from lower floor onto raised platform
         let current_pos = Vec3::new(900.0, 0.0, 500.0);
         let desired_pos = Vec3::new(1100.0, 0.0, 500.0);
 
@@ -801,13 +961,11 @@ mod tests {
         let world = CollisionWorld::create_synthetic_room(2000.0, 2000.0, 3000.0, 0.0, 0.0);
         let filter = RaycastFilter::default();
 
-        // Player is at (0, 0, 0). Camera tries to be outside north wall (Z = -1200, wall is at Z = -1000)
         let player_eye = Vec3::new(0.0, -1200.0, 0.0);
         let desired_camera = Vec3::new(0.0, -1200.0, -1500.0);
 
         let clamped = world.clamp_camera(player_eye, desired_camera, &filter);
 
-        // Clamped camera Z should stop safely before the wall at -1000.0
         assert!(
             clamped.z > -1000.0,
             "Camera ray must stop before wall: clamped.z={}",
@@ -822,15 +980,14 @@ mod tests {
         let config = CollisionConfig::default();
         let mut controller = CollisionController::new(world, config);
 
-        // James at (0, 0, 0) with radius 260
-        let james =
-            CharacterCylinder::new(CharacterId(1), Vec3::new(0.0, 0.0, 0.0), 260.0, 1800.0, 1.0);
-        // Nurse at (300, 0, 0) with radius 240. Combined radius = 500 > 300 (overlapping!)
+        // James at (0, 0, 0) with radius 175
+        let james = CharacterCylinder::james(CharacterId(1), Vec3::new(0.0, 0.0, 0.0));
+        // Nurse at (200, 0, 0) with radius 150. Combined radius = 325 > 200 (overlapping!)
         let nurse = CharacterCylinder::new(
             CharacterId(2),
-            Vec3::new(300.0, 0.0, 0.0),
-            240.0,
-            1800.0,
+            Vec3::new(200.0, 0.0, 0.0),
+            150.0,
+            800.0,
             1.0,
         );
 
@@ -852,8 +1009,8 @@ mod tests {
 
         let dist = (new_nurse.position.x - new_james.position.x).abs();
         assert!(
-            dist >= 499.9,
-            "Cylinders must be pushed apart to at least combined radius 500.0; got {}",
+            dist >= 324.9,
+            "Cylinders must be pushed apart to at least combined radius 325.0; got {}",
             dist
         );
     }
@@ -865,7 +1022,6 @@ mod tests {
             .find_safe_spawn_point(500.0, 500.0)
             .expect("Must find floor centroid");
 
-        // Synthetic floor quad (-2000..2000, -2000..2000) split into 2 triangles
         assert_eq!(spawn.y, 0.0);
         assert!(spawn.x.abs() <= 2000.0);
         assert!(spawn.z.abs() <= 2000.0);
@@ -876,13 +1032,13 @@ mod tests {
         let mut world = CollisionWorld::new();
         let config = CollisionConfig::default();
 
-        // Add a closed dynamic door wall at X = 500 across Z: -500..500
+        // Add a closed dynamic door wall at X = 500 across Z: -500..500 (normal points -X)
         world.add_dynamic_wall(DynamicWall::new(
             500.0, -500.0, 500.0, 500.0, -3000.0, 100.0, 0,
         ));
 
-        let current_pos = Vec3::new(400.0, 0.0, 0.0);
-        let desired_pos = Vec3::new(480.0, 0.0, 0.0);
+        let current_pos = Vec3::new(300.0, 0.0, 0.0);
+        let desired_pos = Vec3::new(400.0, 0.0, 0.0);
 
         let resolved = world.resolve_character_movement(current_pos, desired_pos, &config);
         assert!(

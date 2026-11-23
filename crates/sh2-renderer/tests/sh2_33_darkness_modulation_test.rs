@@ -159,6 +159,7 @@ fn sh2_33_pre_pickup_dark_room_renders_brighter_than_post_pickup_off() {
             pre.flash_level,
             0.0,
         ],
+        ..Default::default()
     });
     ctx.render_gpu_map(&gpu_map);
     let luma_pre = readback_mean_luma(&ctx);
@@ -186,6 +187,7 @@ fn sh2_33_pre_pickup_dark_room_renders_brighter_than_post_pickup_off() {
             post.flash_level,
             0.0,
         ],
+        ..Default::default()
     });
     ctx.render_gpu_map(&gpu_map);
     let luma_post_off = readback_mean_luma(&ctx);
@@ -218,6 +220,11 @@ fn sh2_33_pre_pickup_dark_room_renders_brighter_than_post_pickup_off() {
             on.flash_level,
             0.0,
         ],
+        ps2_falloff_params: sh2_renderer::light::compute_ps2_falloff_params(
+            sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
+            on.flashlight_reach_mm,
+        ),
+        ..Default::default()
     });
     ctx.render_gpu_map(&gpu_map);
     let luma_on = readback_mean_luma(&ctx);

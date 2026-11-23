@@ -91,6 +91,7 @@ pub struct RenderContext {
     pub spotlight_shadow_pipeline: fog::SpotlightShadowPipeline,
     pub pcss_shadow_pipeline: shadow::PcssShadowPipeline,
     pub stencil_shadow_pipeline: shadow::StencilShadowPipeline,
+    pub shadow_blur_pipeline: shadow::ShadowBlurPipeline,
     pub lens_flare_pipeline: effects::LensFlarePipeline,
     pub spray_mist_pipeline: effects::SprayMistPipeline,
     pub post_pipeline: post::PostProcessPipeline,
@@ -115,6 +116,9 @@ pub struct RenderContext {
     pub pcss_shadow_depth_view: wgpu::TextureView,
     pub stencil_depth_texture: wgpu::Texture,
     pub stencil_depth_view: wgpu::TextureView,
+    pub shadow_mask_texture: wgpu::Texture,
+    pub shadow_mask_view: wgpu::TextureView,
+    pub shadow_mask_bind_group: wgpu::BindGroup,
     pub fog_noise_texture: wgpu::Texture,
     pub fog_noise_view: wgpu::TextureView,
     pub fog_noise_sampler: wgpu::Sampler,
@@ -140,6 +144,9 @@ pub struct RenderContext {
     pub lens_flare_quad_count: std::sync::atomic::AtomicU32,
     pub spray_mist_particle_count: std::sync::atomic::AtomicU32,
     pub pcss_enabled: std::sync::atomic::AtomicBool,
+    pub soft_shadow_blur_enabled: std::sync::atomic::AtomicBool,
+    pub shadow_composite_mode: std::sync::atomic::AtomicU8,
+    pub clear_color_rgba: std::sync::atomic::AtomicU32,
     last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
     last_pcss_params: std::sync::Mutex<[f32; 4]>,
 
@@ -423,6 +430,15 @@ impl RenderContext {
             Self::DEPTH_FORMAT,
             &geometry_pipeline.bind_group_layout,
         );
+        let shadow_blur_pipeline = shadow::ShadowBlurPipeline::new(
+            &device,
+            Self::HDR_FORMAT,
+            shadow::StencilShadowPipeline::STENCIL_FORMAT,
+        );
+        shadow_blur_pipeline.update_uniforms(
+            &queue,
+            (shadow::PS2_DEFAULT_ROOM_SHADOW_COLOR as f32) / 128.0,
+        );
         let lens_flare_pipeline = effects::LensFlarePipeline::new(&device, Self::HDR_FORMAT);
         let spray_mist_pipeline =
             effects::SprayMistPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
@@ -575,6 +591,41 @@ impl RenderContext {
         });
         let stencil_depth_view =
             stencil_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let shadow_mask_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 Soft Stencil Shadow Mask Texture"),
+            size: wgpu::Extent3d {
+                width: config.width.max(1),
+                height: config.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: shadow::ShadowBlurPipeline::WORK_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_mask_view =
+            shadow_mask_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_mask_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PS2 Soft Stencil Shadow Mask Bind Group"),
+            layout: &shadow_blur_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&shadow_blur_pipeline.linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: shadow_blur_pipeline.uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
 
         let fog_noise_size = 256u32;
         let fog_noise_rgba = fog::generate_procedural_fog_noise_rgba(fog_noise_size);
@@ -924,6 +975,7 @@ impl RenderContext {
             spotlight_shadow_pipeline,
             pcss_shadow_pipeline,
             stencil_shadow_pipeline,
+            shadow_blur_pipeline,
             lens_flare_pipeline,
             spray_mist_pipeline,
             post_pipeline,
@@ -946,6 +998,9 @@ impl RenderContext {
             pcss_shadow_depth_view,
             stencil_depth_texture,
             stencil_depth_view,
+            shadow_mask_texture,
+            shadow_mask_view,
+            shadow_mask_bind_group,
             fog_noise_texture,
             fog_noise_view,
             fog_noise_sampler,
@@ -969,6 +1024,11 @@ impl RenderContext {
             lens_flare_quad_count: std::sync::atomic::AtomicU32::new(0),
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
+            soft_shadow_blur_enabled: std::sync::atomic::AtomicBool::new(true),
+            shadow_composite_mode: std::sync::atomic::AtomicU8::new(1),
+            clear_color_rgba: std::sync::atomic::AtomicU32::new(u32::from_le_bytes(
+                post::PS2_DEFAULT_NIGHT_CLEAR_RGBA,
+            )),
             last_shadow_view_proj: std::sync::Mutex::new(initial_shadow_vp),
             last_pcss_params: std::sync::Mutex::new(initial_pcss_uniforms.params),
             default_sampler,
@@ -979,6 +1039,50 @@ impl RenderContext {
 
     pub fn update_camera(&self, view_proj: glam::Mat4, inv_proj: glam::Mat4, cam_pos: glam::Vec3) {
         self.update_camera_with_mode(view_proj, inv_proj, cam_pos, 0.0);
+    }
+
+    /// Sets the dynamic PS2 room clear color (`SLUS_202.28` `kari_sh2setGS_clearcolor` `0x00175930`).
+    pub fn set_room_clear_color(&self, is_night: bool, room_clear_rgba: Option<[u8; 4]>) {
+        let rgba = post::resolve_ps2_room_clear_rgba(is_night, room_clear_rgba);
+        self.clear_color_rgba.store(
+            u32::from_le_bytes(rgba),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    /// Returns the active `wgpu::Color` for the main scene render pass (`kari_sh2setGS_clearcolor`).
+    #[must_use]
+    pub fn room_clear_color(&self) -> wgpu::Color {
+        let rgba = self
+            .clear_color_rgba
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .to_le_bytes();
+        post::ps2_clear_rgba_to_wgpu(rgba)
+    }
+
+    /// Enables or disables the 4-pass PS2 ping-pong soft stencil shadow blur (`0x001767e0`).
+    pub fn set_soft_shadow_blur_enabled(&self, enabled: bool) {
+        self.soft_shadow_blur_enabled
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Sets the PS2 GS stencil shadow composite blend mode (`0x00175f90`: `0x8000000052` vs `0x8000000046`).
+    pub fn set_shadow_composite_mode(&self, mode: shadow::ShadowCompositeMode) {
+        let val = match mode {
+            shadow::ShadowCompositeMode::Subtractive => 0u8,
+            shadow::ShadowCompositeMode::Multiplicative => 1u8,
+        };
+        self.shadow_composite_mode
+            .store(val, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns the active PS2 GS stencil shadow composite blend mode (`0x00175f90`).
+    #[must_use]
+    pub fn shadow_composite_mode(&self) -> shadow::ShadowCompositeMode {
+        let val = self
+            .shadow_composite_mode
+            .load(std::sync::atomic::Ordering::Relaxed);
+        shadow::ShadowCompositeMode::from_filter_param(val as i32)
     }
 
     /// Builds a right-handed `Depth32Float` perspective `(proj, inv_proj)` pair honoring a custom
@@ -1204,6 +1308,45 @@ impl RenderContext {
         self.stencil_depth_view =
             stencil_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.stencil_depth_texture = stencil_depth_texture;
+
+        let shadow_mask_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 Soft Stencil Shadow Mask Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: shadow::ShadowBlurPipeline::WORK_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_mask_view =
+            shadow_mask_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.shadow_mask_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PS2 Soft Stencil Shadow Mask Bind Group"),
+            layout: &self.shadow_blur_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_mask_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(
+                        &self.shadow_blur_pipeline.linear_sampler,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.shadow_blur_pipeline.uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        self.shadow_mask_view = shadow_mask_view;
+        self.shadow_mask_texture = shadow_mask_texture;
 
         let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
             Self::create_compute_bind_groups(

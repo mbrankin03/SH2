@@ -1,30 +1,63 @@
-//! Post-processing compute passes: ACES tonemapping and authentic PS2-style film grain / noise filter.
-//!
-//! Recreates the authentic PlayStation 2 film grain algorithm (and SH2:EE `PS2NoiseFilter` / `sh23ds` `noise.c`):
-//! - Four-level discrete luminance distribution (`[0, 5, 10, 15] / 15.0`) with PS2-calibrated 7.4x attenuation.
-//! - Authentic warm tint `0xde99` (`RGB(222, 210, 206)`).
-//! - Animated pseudo-random seed advancement per frame.
+//! Post-processing compute passes: optional ACES tonemapping (`native-upgrade`), authentic PS2
+//! 8-level brightness LUT (`0x001757b0`), 128×128 LCG 4×4 tiled noise (`0x00177c50`/`0x00177f30`),
+//! `Swap_GlowSoft` bloom (`0x00178d60`), `Swap_Soft` N×N DoF (`0x001785e0`), `Filter_Retain`
+//! feedback/pause freeze (`0x00179b10`), and Black/White/Red screen fades (`0x00179d60`/`0x0017a2e0`).
 
-/// Uniform buffer payload passed to the post-processing shader (`SH2-105`).
+pub mod clear_color;
+pub mod ps2_filters;
+
+pub use clear_color::{
+    pack_gs_clearcolor_rgbaq, ps2_clear_rgba_to_wgpu, resolve_ps2_room_clear_rgba,
+    PS2_DEFAULT_DAY_CLEAR_RGBA, PS2_DEFAULT_NIGHT_CLEAR_RGBA,
+};
+
+pub use ps2_filters::{
+    compute_swap_tap_offsets_12_4, ps2_brightness_byte, ps2_brightness_scale,
+    sample_ps2_noise_tiled_4x4, FilterRetainState, Ps2FadeKind, Ps2NoiseGenerator,
+    SwapGlowSoftParams, SwapSoftParams, SwapSoftTestMode, GS_FILTER_RETAIN_ALPHA_1,
+    PS2_BRIGHTNESS_LUT_U8, PS2_BRIGHTNESS_NEUTRAL_U8, PS2_FILTER_CMD_PAUSE_RETAIN,
+    PS2_NOISE_LCG_INC, PS2_NOISE_LCG_MUL, PS2_NOISE_TEX_SIZE, PS2_NOISE_TILE_GRID,
+};
+
+/// Bitflag in [`PostUniforms::flags`]: enables modern ACES filmic tonemapping (`native-upgrade`).
+/// When cleared (strict 1:1 Vanilla PS2 mode), ACES is bypassed and HDR values clamp directly
+/// after PS2 brightness LUT scaling (`sh2gfw_Set_Brightness` `0x001757b0`).
+pub const POST_FLAG_ACES_TONEMAP: u32 = 1 << 0;
+
+/// Bitflag in [`PostUniforms::flags`]: uses the 128×128 LCG 4×4 tiled PS2 noise pattern
+/// (`sh2gfw_test_MakeNoise` `0x00177c50`, `sh2gfw_SendDraw_Noise` `0x00177f30`).
+pub const POST_FLAG_PS2_LCG_NOISE: u32 = 1 << 1;
+
+/// Uniform buffer payload passed to the post-processing compute shader (`SH2-105`, `SH2-136`).
 ///
-/// Layout is 32 bytes (`2 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).
+/// Layout is 64 bytes (`4 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct PostUniforms {
     /// Advancing simulation / frame time in seconds (used as noise seed).
     pub time: f32,
-    /// Film grain noise intensity in percentage [0.0, 1.0] (derived from options `grain_intensity`).
+    /// Film grain noise intensity in percentage `[0.0, 1.0]` (derived from options `grain_intensity`).
     pub grain_intensity: f32,
-    /// Scene exposure multiplier for tonemapping.
+    /// Scene exposure / PS2 brightness LUT multiplier (`ps2_brightness_scale(level)`).
     pub exposure: f32,
     /// Frame counter to guarantee animated pseudo-randomness across frames.
     pub frame_count: u32,
-    /// PS2 `Kari_hisyakai` screen-space DoF / closet slat blur 2-tap offset in pixels `(val1, val2)` (`SH2-105`).
+    /// PS2 `Kari_hisyakai` / `Swap_Soft` screen-space DoF tap offset in pixels `(dx, dy)`.
     pub dof_tap_offset_px: [f32; 2],
-    /// Normalized PS2 DoF / closet bar blur blend weight `[0.0, 1.0]` (`SH2-105`).
+    /// Normalized PS2 DoF / `Swap_Soft` blend weight `[0.0, 1.0]`.
     pub dof_strength: f32,
-    /// Normalized PS2 `enSetBlur` motion blur strength `[0.0, 1.0]` (`SH2-105`).
+    /// Normalized PS2 `enSetBlur` motion blur strength `[0.0, 1.0]`.
     pub motion_blur_strength: f32,
+    /// Feature bitflags ([`POST_FLAG_ACES_TONEMAP`], [`POST_FLAG_PS2_LCG_NOISE`]).
+    pub flags: u32,
+    /// PS2 `Swap_GlowSoft` (`0x00178d60`) normalized luminance threshold (`aref / 255.0`).
+    pub glow_threshold: f32,
+    /// PS2 `Swap_GlowSoft` (`0x00178d60`) normalized additive bloom strength (`blend_alpha / 128.0`).
+    pub glow_strength: f32,
+    /// PS2 `Swap_Soft` / `Swap_GlowSoft` kernel tap radius in pixels (`step_param * 0.25`).
+    pub glow_step_px: f32,
+    /// PS2 Black/White/Red fade overlay (`[r, g, b, alpha]` from [`Ps2FadeKind::evaluate_rgba`]).
+    pub fade_rgba: [f32; 4],
 }
 
 impl Default for PostUniforms {
@@ -37,6 +70,11 @@ impl Default for PostUniforms {
             dof_tap_offset_px: [1.0 / 3.0, 2.0 / 3.0],
             dof_strength: 0.0,
             motion_blur_strength: 0.0,
+            flags: POST_FLAG_PS2_LCG_NOISE,
+            glow_threshold: 0.75,
+            glow_strength: 0.0,
+            glow_step_px: 1.0,
+            fade_rgba: [0.0, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -56,13 +94,21 @@ struct PostUniforms {
     dof_tap_offset_px: vec2<f32>,
     dof_strength: f32,
     motion_blur_strength: f32,
+    flags: u32,
+    glow_threshold: f32,
+    glow_strength: f32,
+    glow_step_px: f32,
+    fade_rgba: vec4<f32>,
 };
+
+const POST_FLAG_ACES_TONEMAP: u32 = 1u;
+const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
 
 @group(0) @binding(0) var<uniform> post: PostUniforms;
 @group(0) @binding(1) var hdr_in: texture_2d<f32>;
 @group(0) @binding(2) var ldr_out: texture_storage_2d<rgba8unorm, write>;
 
-// ACES filmic tonemapping approximation
+// Optional ACES filmic tonemapping approximation (native-upgrade, disabled in strict Vanilla PS2 mode)
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
     let b = 0.03;
@@ -72,19 +118,29 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// 32-bit integer hash / PCG-like pseudo-random generator for authentic per-frame grain
+// PS2 `sh2gfw_test_MakeNoise` (0x00177c50) LCG (`state * 0x19660d + 0x3c6ef35f`)
+// evaluated on 128x128 texel coordinates tiled 4x4 across the screen (`0x00177f30`).
+fn ps2_lcg_noise_4x4(pixel: vec2<u32>, dims: vec2<u32>, frame_seed: u32) -> f32 {
+    let u = fract((f32(pixel.x) / max(f32(dims.x), 1.0)) * 4.0);
+    let v = fract((f32(pixel.y) / max(f32(dims.y), 1.0)) * 4.0);
+    let tx = min(u32(u * 128.0), 127u);
+    let ty = min(u32(v * 128.0), 127u);
+    let idx = ty * 128u + tx;
+    var state = (idx ^ (frame_seed * 1664525u)) * 1664525u + 1013904223u;
+    state = state * 1664525u + 1013904223u;
+    return f32((state >> 24u) & 255u) / 255.0;
+}
+
+// Resolution-independent PCG hash fallback when PS2 tiled noise flag is off
 fn hash_u32(x: u32) -> u32 {
     var state = x * 747796405u + 2891336453u;
     let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
 }
 
-// Generates pseudo-random 2D noise from pixel coordinates and advancing frame seed.
-// Uses a 2D integer hash (PCG-style) to guarantee true resolution-independence without 1D row wraparound.
 fn random_val(pixel: vec2<u32>, frame: u32) -> f32 {
     let seed = (pixel.x * 1597334677u) ^ (pixel.y * 3812015801u) ^ (frame * 104729u);
-    let h = hash_u32(seed);
-    return f32(h) / 4294967295.0;
+    return f32(hash_u32(seed)) / 4294967295.0;
 }
 
 @compute @workgroup_size(16, 16)
@@ -97,8 +153,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let max_coord = vec2<i32>(dims) - vec2<i32>(1, 1);
     var hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
 
-    // 0a. PS2 `Kari_hisyakai` Screen-Space DoF / Closet Slat Blur (`SpecialFX.cpp` & `ClosetCutscene.cpp` `SH2-105`)
-    // Executed BEFORE the film grain pass so the PS2 noise filter cleanly overlaps the blurred closet bars (`ClosetCutscene.cpp:209`).
+    // 0a. PS2 `Swap_Soft` / `Kari_hisyakai` Screen-Space DoF (`0x001785e0`)
     if (post.dof_strength > 0.001) {
         let tap_delta = vec2<i32>(round(post.dof_tap_offset_px));
         let tap_double = vec2<i32>(round(post.dof_tap_offset_px * 2.0));
@@ -111,7 +166,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         hdr_color = mix(hdr_color, dof_avg, w_dof);
     }
 
-    // 0b. PS2 `enSetBlur` Motion Blur Pass (`PistonRoom.cpp` & `SpecialFX.cpp` `SH2-105`)
+    // 0b. PS2 `Swap_GlowSoft` additive bloom (`0x00178d60`)
+    if (post.glow_strength > 0.001) {
+        let step_px = max(i32(round(post.glow_step_px)), 1);
+        var glow_acc = vec3<f32>(0.0);
+        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+                let sc = clamp(pixel_coords + vec2<i32>(dx * step_px, dy * step_px), vec2<i32>(0), max_coord);
+                let s = textureLoad(hdr_in, sc, 0).rgb * post.exposure;
+                let luma = max(s.r, max(s.g, s.b));
+                if (luma >= post.glow_threshold) {
+                    glow_acc = glow_acc + s;
+                }
+            }
+        }
+        hdr_color = hdr_color + (glow_acc * (1.0 / 9.0)) * post.glow_strength;
+    }
+
+    // 0c. PS2 `enSetBlur` Motion Blur Pass
     if (post.motion_blur_strength > 0.001) {
         let center = vec2<f32>(dims) * 0.5;
         let radial = (vec2<f32>(global_id.xy) - center) * (0.015 * post.motion_blur_strength);
@@ -124,46 +196,32 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         hdr_color = mix(hdr_color, blur_rgb, w_mb);
     }
 
-    // 1. Apply ACES tonemapping
-    var ldr = aces_tonemap(hdr_color);
+    // 1. Optional ACES tonemapping (`native-upgrade`) vs strict 1:1 Vanilla PS2 linear clamp
+    var ldr: vec3<f32>;
+    if ((post.flags & POST_FLAG_ACES_TONEMAP) != 0u) {
+        ldr = aces_tonemap(hdr_color);
+    } else {
+        ldr = clamp(hdr_color, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
 
-    // 2. Authentic PS2 / SH2:EE film grain filter (noise.c / PS2NoiseFilter.cpp)
+    // 2. PS2 `sh2gfw_SendDraw_Noise` (0x00177f30) 128x128 4x4 tiled LCG film grain
     if (post.grain_intensity > 0.001) {
-        // Frame seed clocked at 30 Hz film-rate: avoids persistence-of-vision temporal wash out on high refresh rate (120/240Hz) OLEDs
         let frame_seed = u32(post.time * 30.0);
-        let rand_f = random_val(global_id.xy, frame_seed);
-
-        // PS2 authentic discrete 4-level quantization (levels 0, 1, 2, 3 mapped to 15, 0, 10, 5 in DXT1 / 4-bit luminance)
-        // Quantize random value into 4 discrete thresholds matching PS2 hardware noise texels
-        var texel_level: f32 = 0.0;
-        let bucket = u32(rand_f * 4.0) % 4u;
-        if (bucket == 0u) {
-            texel_level = 1.0;          // level 15 / 15
-        } else if (bucket == 1u) {
-            texel_level = 0.0;          // level 0 / 15
-        } else if (bucket == 2u) {
-            texel_level = 0.666667;     // level 10 / 15
+        var rand_f: f32;
+        if ((post.flags & POST_FLAG_PS2_LCG_NOISE) != 0u) {
+            rand_f = ps2_lcg_noise_4x4(global_id.xy, dims, frame_seed);
         } else {
-            texel_level = 0.333333;     // level 5 / 15
+            rand_f = random_val(global_id.xy, frame_seed);
         }
 
-        // Authentic Konami PS2 noise tint: 0xde99 (R: 222, G: 210, B: 206)
-        let grain_tint = vec3<f32>(222.0 / 255.0, 210.0 / 255.0, 206.0 / 255.0);
-
-        // Authentic Emotion Engine division factor 7.4 (noise.c / PS2NoiseFilter.cpp BrightnessControl)
-        // Calibrates texel amplitude from harsh digital snow down to natural, subtle analog film grit
-        let ps2_attenuation = 1.0 / 7.4;
-
-        // MODULATE2X of the grain texel, tint, and PS2 hardware attenuation
-        let grain_rgb = 2.0 * grain_tint * texel_level * ps2_attenuation;
-
-        // Authentic D3DBLEND_INVSRCALPHA / D3DBLEND_SRCALPHA blend (noise.c / PS2NoiseFilter):
-        // out = grain_rgb * (1.0 - scene_alpha) + ldr * scene_alpha
-        // Scaled so that the 25% natural film-grain sweetspot maps to 100% on the slider,
-        // ensuring the entire options range provides fine, delicate adjustment without ever becoming harsh.
         let grain_weight = clamp(0.05 * post.grain_intensity, 0.0, 0.05);
-        let scene_weight = 1.0 - grain_weight;
-        ldr = clamp(grain_rgb * grain_weight + ldr * scene_weight, vec3<f32>(0.0), vec3<f32>(1.0));
+        let grain_rgb = vec3<f32>(rand_f, rand_f, rand_f);
+        ldr = clamp(mix(ldr, grain_rgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+
+    // 3. PS2 Black/White/Red screen fade (`sh2gfw_Fade2` 0x00179d60, `sh2gfw_Fade3` 0x0017a2e0)
+    if (post.fade_rgba.a > 0.001) {
+        ldr = mix(ldr, post.fade_rgba.rgb, clamp(post.fade_rgba.a, 0.0, 1.0));
     }
 
     textureStore(ldr_out, pixel_coords, vec4<f32>(ldr, 1.0));
@@ -240,13 +298,16 @@ mod tests {
 
     #[test]
     fn test_post_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<PostUniforms>(), 32);
+        assert_eq!(std::mem::size_of::<PostUniforms>(), 64);
         let default = PostUniforms::default();
         assert_eq!(default.frame_count, 0);
         assert_eq!(default.exposure, 1.0);
         assert_eq!(default.grain_intensity, 0.65);
         assert_eq!(default.dof_strength, 0.0);
         assert_eq!(default.motion_blur_strength, 0.0);
+        // ACES is OFF by default for strict 1:1 Vanilla PS2 parity
+        assert_eq!(default.flags & POST_FLAG_ACES_TONEMAP, 0);
+        assert_ne!(default.flags & POST_FLAG_PS2_LCG_NOISE, 0);
     }
 
     #[test]
@@ -259,6 +320,11 @@ mod tests {
             dof_tap_offset_px: [1.5, -1.5],
             dof_strength: 0.85,
             motion_blur_strength: 0.45,
+            flags: POST_FLAG_ACES_TONEMAP | POST_FLAG_PS2_LCG_NOISE,
+            glow_threshold: 0.6,
+            glow_strength: 0.35,
+            glow_step_px: 2.0,
+            fade_rgba: [1.0, 0.0, 0.0, 0.5],
         };
 
         let bytes = bytemuck::bytes_of(&uniforms);

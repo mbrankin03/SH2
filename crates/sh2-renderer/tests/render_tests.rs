@@ -401,6 +401,7 @@ mod renderer_tests {
             dof_tap_offset_px: [1.5, -1.5],
             dof_strength: 0.85,
             motion_blur_strength: 0.60,
+            ..post::PostUniforms::default()
         });
         ctx.render_gpu_map(&gpu_multi);
         let _ = ctx.device.poll(wgpu::Maintain::wait());

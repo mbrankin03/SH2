@@ -6,6 +6,92 @@ use sh2_core::lighting::LensFlareQuad;
 /// Maximum simultaneous lens flare quads in the reusable GPU vertex buffer (`16 lights * 7 sprites = 112`).
 pub const MAX_GPU_LENS_FLARE_QUADS: usize = 128;
 
+/// Exponential visibility smoothing rate (`0.3`) from `SLUS_202.28` `kari_shLensFlareDraw`
+/// (`0x00184ef0`, `Lens/kari_lf_draw.c` line 236: `rate += delta * 0.3`).
+pub const PS2_LENS_FLARE_SMOOTH_RATE: f32 = 0.3;
+
+/// PS2 NTSC pixel aspect multiplier (`512.0 / 448.0`) applied to lens flare vertical radius in
+/// `SLUS_202.28` `shLensFlareDrawCommon` (`0x00184bf0`, `Lens/kari_lf_draw.c` line 183).
+pub const PS2_LENS_FLARE_Y_ASPECT: f32 = 512.0 / 448.0;
+
+/// Consecutive visible frames required before `shLensFlareLightCenterIsVisible` (`0x00187090`,
+/// `Lens/lens_flare.c` line 67: `_lf_flicker_on < 4`) reports the flare center as unoccluded.
+pub const PS2_LENS_FLARE_FLICKER_FRAMES: u32 = 4;
+
+/// Stateful PS2 lens flare visibility smoother matching `SLUS_202.28` `kari_shLensFlareDraw`
+/// (`0x00184ef0`), `shLensFlareDrawCommon` (`0x00184bf0`), and `shLensFlareLightCenterIsVisible`
+/// (`0x00187090`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct LensFlareSmoother {
+    /// Smoothed effect intensity rate (`_DAT_010137d8`, range `0.0..=2.0`).
+    pub current_rate: f32,
+    /// Consecutive unoccluded frames counter (`_lf_flicker_on` in `0x00187090`).
+    pub flicker_on_frames: u32,
+}
+
+impl LensFlareSmoother {
+    /// Advances the visibility debounce (`0x00187090`) and `0.3` exponential smoothing (`0x00184ef0`)
+    /// for one frame, returning the updated smoothed rate.
+    ///
+    /// When `camera_is_smooth` is `false` (`shLensFlareCameraIsSmooth` `0x00187070`, camera cut),
+    /// snaps `current_rate` immediately to `0.0`.
+    pub fn step(&mut self, center_visible: bool, target_rate: f32, camera_is_smooth: bool) -> f32 {
+        let debounced_visible = if !center_visible {
+            self.flicker_on_frames = 0;
+            false
+        } else if self.flicker_on_frames < PS2_LENS_FLARE_FLICKER_FRAMES {
+            self.flicker_on_frames += 1;
+            false
+        } else {
+            true
+        };
+
+        let delta = if debounced_visible {
+            target_rate - self.current_rate
+        } else {
+            -self.current_rate
+        };
+        self.current_rate += delta * PS2_LENS_FLARE_SMOOTH_RATE;
+
+        if !camera_is_smooth {
+            self.current_rate = 0.0;
+        }
+        self.current_rate
+    }
+
+    /// Evaluates the PS2 sprite radius scale factor `(rate + 3.0) / 4.0`
+    /// (`shLensFlareDrawCommon` `0x00184bf0` line 180).
+    #[must_use]
+    pub fn size_scale(rate: f32) -> f32 {
+        (rate + 3.0) / 4.0
+    }
+
+    /// Evaluates the PS2 `(half_w, half_h)` for a sprite with `base_half_w` and smoothed `rate`,
+    /// applying `(rate + 3.0) / 4.0` size scaling and `512.0 / 448.0` Y-aspect ratio
+    /// (`shLensFlareDrawCommon` `0x00184bf0` lines 180-183).
+    #[must_use]
+    pub fn evaluate_sprite_half_extents(base_half_w: f32, rate: f32) -> [f32; 2] {
+        let rx = base_half_w * Self::size_scale(rate);
+        let ry = rx * PS2_LENS_FLARE_Y_ASPECT;
+        [rx, ry]
+    }
+}
+
+/// Applies PS2 `kari_shLensFlareDraw` (`0x00184ef0`) / `shLensFlareDrawCommon` (`0x00184bf0`)
+/// size scaling `(rate + 3.0) / 4.0`, `512.0 / 448.0` Y aspect, and color intensity scaling
+/// in-place to a slice of [`GpuLensFlareQuad`]s.
+pub fn apply_ps2_lens_flare_smoothing(quads: &mut [GpuLensFlareQuad], rate: f32) {
+    let size_mul = LensFlareSmoother::size_scale(rate);
+    for q in quads {
+        let half_w = q.rect[2] * size_mul;
+        q.rect[2] = half_w;
+        q.rect[3] = half_w * PS2_LENS_FLARE_Y_ASPECT;
+        q.color[0] = (q.color[0] * rate).clamp(0.0, 1.0);
+        q.color[1] = (q.color[1] * rate).clamp(0.0, 1.0);
+        q.color[2] = (q.color[2] * rate).clamp(0.0, 1.0);
+    }
+}
+
 /// Instanced GPU quad record for [`LensFlarePipeline`] (`48` bytes, 16-byte aligned).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -221,4 +307,41 @@ pub fn generate_procedural_lens_flare_rgba(size: u32) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lens_flare_smoother_matches_slus_00184ef0_and_00187090() {
+        let mut s = LensFlareSmoother::default();
+        // First 4 visible frames debounce `_lf_flicker_on < 4` -> rate stays 0.0
+        for _ in 0..PS2_LENS_FLARE_FLICKER_FRAMES {
+            assert_eq!(s.step(true, 1.0, true), 0.0);
+        }
+        // Frame 5: visible -> 0.0 + (1.0 - 0.0) * 0.3 = 0.3
+        let r1 = s.step(true, 1.0, true);
+        assert!((r1 - 0.3).abs() < 1e-6);
+        // Frame 6: 0.3 + (1.0 - 0.3) * 0.3 = 0.51
+        let r2 = s.step(true, 1.0, true);
+        assert!((r2 - 0.51).abs() < 1e-6);
+        // Occluded: 0.51 + (-0.51) * 0.3 = 0.357, and flicker counter resets to 0
+        let r3 = s.step(false, 1.0, true);
+        assert!((r3 - 0.357).abs() < 1e-6);
+        assert_eq!(s.flicker_on_frames, 0);
+        // Camera cut (`camera_is_smooth == false`): snaps to 0.0
+        let r4 = s.step(true, 1.0, false);
+        assert_eq!(r4, 0.0);
+    }
+
+    #[test]
+    fn lens_flare_size_scale_and_y_aspect_match_slus_00184bf0() {
+        // `(rate + 3.0) / 4.0` at rate=1.0 -> 1.0; at rate=0.0 -> 0.75
+        assert!((LensFlareSmoother::size_scale(1.0) - 1.0).abs() < 1e-6);
+        assert!((LensFlareSmoother::size_scale(0.0) - 0.75).abs() < 1e-6);
+        let [rx, ry] = LensFlareSmoother::evaluate_sprite_half_extents(0.1, 1.0);
+        assert!((rx - 0.1).abs() < 1e-6);
+        assert!((ry - (0.1 * 512.0 / 448.0)).abs() < 1e-6);
+    }
 }

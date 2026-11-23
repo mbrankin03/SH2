@@ -99,16 +99,35 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
         ([1.0 / 3.0, 2.0 / 3.0], 0.0, 0.0)
     };
 
+    let aces_enabled = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .aces_tonemapping;
+    let brightness_level = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .brightness_level;
+    let mut post_flags = sh2_renderer::post::POST_FLAG_PS2_LCG_NOISE;
+    if aces_enabled {
+        post_flags |= sh2_renderer::post::POST_FLAG_ACES_TONEMAP;
+    }
+
     state
         .render_ctx
         .update_post(&sh2_renderer::post::PostUniforms {
             time: det_fog_time,
             grain_intensity,
-            exposure: 1.0,
+            exposure: sh2_renderer::post::ps2_brightness_scale(brightness_level),
             frame_count: state.frame_counter,
             dof_tap_offset_px,
             dof_strength,
             motion_blur_strength,
+            flags: post_flags,
+            ..sh2_renderer::post::PostUniforms::default()
         });
 
     // 8. Present to window surface swapchain

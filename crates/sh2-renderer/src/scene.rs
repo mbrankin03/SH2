@@ -108,12 +108,7 @@ impl RenderContext {
                     view: &self.hdr_color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.01,
-                            g: 0.01,
-                            b: 0.015,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.room_clear_color()),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -228,21 +223,41 @@ impl RenderContext {
             }
         }
 
-        // 1.5. PS2 / SH2:EE Two-Pass Stencil Shadow Volume + Darkening Quad (`0x445540`, `SH2-81`)
+        // 1.5. PS2 / SH2:EE Two-Pass Stencil Shadow Volume + 4-Pass Soft Blur (`0x001767e0`, `0x00175f90`)
         let stencil_verts = self
             .shadow_volume_vertex_count
             .load(std::sync::atomic::Ordering::Relaxed);
         if stencil_verts > 0 && !self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed) {
-            self.stencil_shadow_pipeline.encode_stencil_volume_pass(
-                &mut encoder,
-                &self.hdr_color_view,
-                &self.stencil_depth_view,
-                &self.geometry_bind_group,
-                &self.shadow_darken_bind_group,
-                gpu_map,
-                &self.shadow_volume_buffer,
-                stencil_verts,
-            );
+            if self
+                .soft_shadow_blur_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.stencil_shadow_pipeline.encode_soft_stencil_blur_pass(
+                    &mut encoder,
+                    &self.hdr_color_view,
+                    &self.stencil_depth_view,
+                    &self.shadow_mask_view,
+                    &self.shadow_mask_bind_group,
+                    &self.shadow_blur_pipeline,
+                    self.shadow_composite_mode(),
+                    &self.geometry_bind_group,
+                    &self.shadow_darken_bind_group,
+                    gpu_map,
+                    &self.shadow_volume_buffer,
+                    stencil_verts,
+                );
+            } else {
+                self.stencil_shadow_pipeline.encode_stencil_volume_pass(
+                    &mut encoder,
+                    &self.hdr_color_view,
+                    &self.stencil_depth_view,
+                    &self.geometry_bind_group,
+                    &self.shadow_darken_bind_group,
+                    gpu_map,
+                    &self.shadow_volume_buffer,
+                    stencil_verts,
+                );
+            }
         }
 
         // 1.75. Additive 7-Sprite Screen-Space Lens Flares (`Lens/lens_flare.c`, `SH2-81`)

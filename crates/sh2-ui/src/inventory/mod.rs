@@ -21,6 +21,7 @@ pub mod atlas;
 pub mod health_ecg;
 pub mod render;
 pub mod state;
+pub mod widgets;
 
 pub use atlas::{item_icon_rect, project_carousel_slot, CarouselSlotProjection, ItemIconRect};
 pub use health_ecg::{HealthEcgState, HealthStatus};
@@ -129,6 +130,8 @@ pub enum ItemCommand {
     TurnOn,
     /// Turn Flashlight or Radio OFF.
     TurnOff,
+    /// Adjust Pocket Radio volume (`look_volume` `0x001d9480`, levels `0..=15`).
+    Volume,
 }
 
 impl ItemCommand {
@@ -143,6 +146,7 @@ impl ItemCommand {
             Self::Combine => "Combine",
             Self::TurnOn => "ON",
             Self::TurnOff => "OFF",
+            Self::Volume => "Volume",
         }
     }
 }
@@ -157,6 +161,8 @@ pub enum InventoryFocus {
     Corner(CornerButton),
     /// Choosing an action inside the command pop-up window for the selected item.
     CommandWindow,
+    /// Adjusting the 16-bar Pocket Radio volume meter (`DAT_0116e3e4 == 1`, `look_volume` `0x001d9480`).
+    RadioVolume,
     /// Selecting a second item in the carousel to combine with `combine_first_item_id`.
     CombineTarget,
     /// Close-up `Look` examination overlay showing extended examination text.
@@ -188,6 +194,8 @@ pub enum InventoryAction {
     ToggleFlashlight,
     /// Toggle Radio power state (`ITEM_ID_RADIO = 19`).
     ToggleRadio,
+    /// Update Pocket Radio volume level (`0..=15`, `DAT_01126900` in `command_main` `0x001cf9e0`).
+    SetRadioVolume(u8),
     /// Attempt to use a key/puzzle item (`item_id`, or combined pseudo-item `86..=96`).
     UseKeyOrPuzzleItem(u8),
     /// Combined items produced pseudo-item `result_id` (`86..=96`).
@@ -197,6 +205,9 @@ pub enum InventoryAction {
         result_id: u8,
     },
 }
+
+/// Default Pocket Radio volume level (`SLUS_202.28` `ItemDataInit` `0x001ad860`: `DAT_01126900 = 0xc`).
+pub const DEFAULT_RADIO_VOLUME: u8 = 0x0c;
 
 /// Snapshot of runtime player status passed into [`InventoryScreen`] for rendering & commands.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -217,6 +228,8 @@ pub struct InventoryPlayerSnapshot {
     pub flashlight_on: bool,
     /// Whether the pocket radio is currently switched ON.
     pub radio_on: bool,
+    /// Pocket radio volume level (`0..=15`, `DAT_01126900` in `SLUS_202.28`).
+    pub radio_volume: u8,
     /// Whether the player has collected at least one memo (`MemoCommandCheck` `0x00230570`).
     pub has_any_memo: bool,
 }
@@ -232,6 +245,7 @@ impl Default for InventoryPlayerSnapshot {
             equipped_reserve_ammo: None,
             flashlight_on: false,
             radio_on: true,
+            radio_volume: DEFAULT_RADIO_VOLUME,
             has_any_memo: false,
         }
     }

@@ -50,6 +50,7 @@ pub(crate) fn build_player_snapshot(state: &AppState) -> InventoryPlayerSnapshot
         equipped_reserve_ammo: reserve_ammo,
         flashlight_on: state.sim_core.scenario.is_flashlight_active(),
         radio_on: state.sim_core.scenario.radio_on,
+        radio_volume: state.ingame_menus.inventory.radio_volume,
         has_any_memo: memo_command_check(&state.sim_core.scenario.flags),
     }
 }
@@ -205,6 +206,9 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
             } else {
                 "Radio switched OFF."
             });
+        }
+        InventoryAction::SetRadioVolume(vol) => {
+            state.ingame_menus.inventory.radio_volume = vol.min(15);
         }
         InventoryAction::UseKeyOrPuzzleItem(_item_id) => {
             state

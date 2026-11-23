@@ -3,111 +3,53 @@
 //! All layout coordinates are expressed directly in Silent Hill 2's native `512x448` PS2 logical
 //! coordinate space centered inside a 4:3 canvas (`ps2_ui_canvas_rect`) so every element matches
 //! `SLUS_202.28` and `CommandWindowMouseFix.cpp` 1:1 without horizontal stretching on 16:9/21:9:
-//! - **Top-left `Status` 3D snapshot (`look_hp` @ `0x001d9b6c..0x001d9bfc`):**
-//!   `(-230, -175)..(-90, -70)` centered → `(26, 49, 140, 105)` in `512x448`.
-//! - **Electric-blue horizontal glow bars (`lookline` @ `0x001d6d2c` `0x00f06030` = `RGB(48, 96, 240)`
-//!   & `sprite` @ `0x001d8c80..0x001d8d58`):** 3 columns of width `140` at `x0 = 26, 186, 346`,
-//!   top row `y = 224 - 189 = 35`, bottom row `y = 224 + 189 = 413`.
+//! - **Top-left `Status` 3D snapshot (`look_hp` @ `0x001d9660`):**
+//!   `(-230, -175)..(-90, -70)` centered → `(26, 49, 140, 105)` in `512x448`, with neutral-to-red
+//!   modulation and `10 - 10*(hp/max)` randomized 2px glitch scanlines.
+//! - **6-layer tapering cyan-blue header/footer bars (`sprite` @ `0x001d8890`, `scolor = 60`):**
+//!   3 columns of width `140` at `x0 = 26, 186, 346`, top `y = 35`, bottom `y = 413`, pulsing
+//!   toward bright white-cyan exclusively on the active tab.
 //! - **Top headers (`font_print` @ `0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50`):**
-//!   `Status` (`0x0c`, `x = 69`), `Equipment` (`0x0d`, `x = 205`), `Command` (`0x0e`, `x = 368`).
-//! - **Command list (`font_print` @ `0x001d5e14..0x001d5e38` & `CommandWindowMouseFix.cpp` `0x00472428`):**
-//!   `x = 0x168 = 360`, 3-row mouse bounds `y in 63..139` with row step `25` (`0x78 - 0x5f`).
-//! - **7-slot circular carousel (`item_position` @ `0x001d3270` + `TgsItemPitureDraw` @ `0x00209260`):**
-//!   floating `itemmenu2.tex` sprites framed by the electric-blue selection reticle with `- N -` quantity.
+//!   `Status`, `Equipment`, `Command`.
+//! - **Command list (`look_command` @ `0x001d8f50` & `look_volume` @ `0x001d9480`):**
+//!   `x = 0x168 = 360`, `26.0` px row pitch, full 140px (`346..486`) 6-layer green-teal eased glow
+//!   bar, and 16-bar green Radio volume meter in `InventoryFocus::RadioVolume`.
+//! - **7-slot circular carousel (`item_position` @ `0x001d3270`, `lookline` @ `0x001d6c30`,
+//!   `item_allay` @ `0x001d7640`, `stock_line` @ `0x001da170`, `look_combine` @ `0x001da490`):**
+//!   floating `itemmenu2.tex` sprites framed by the single `RGB(48,96,240)` reticle + active
+//!   L-bracket corners, pulsing double-chevron L/R arrows, `0xffa0a0a0` flanking bars for bare
+//!   counts and Flashlight/Radio `"ON"`/`"OFF"` badges, and 3 green-tinted combine preview slots.
 //! - **Item Name (`0x14 = 20, 0x145 = 325`) & Multi-Line Description (`0x2d = 45, 0x168 = 360`)**
 //!   from `font_print` (`0x001d5b50..0x001d5b90`).
-//! - **Bottom navigation row (`font_print` @ `0x001d5c50..0x001d5ca8` & `item_msg_e.mes` `0x09..0x0b`,
-//!   `y = 0x1ac = 428`):** `Option` (`x = 64`), `Map` (`x = 240`), `Memo` (`x = 391`).
+//! - **Bottom navigation row (`font_print` @ `0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428`):**
+//!   `Option`, `Map`, `Memo`.
 
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
 use crate::inventory::atlas::{item_icon_rect, project_carousel_slot};
-use crate::inventory::health_ecg::{
-    ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_W_512, STATUS_SNAPSHOT_Y_448,
+use crate::inventory::health_ecg::{ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_Y_448};
+use crate::inventory::widgets::{
+    draw_item_allay, draw_look_combine, draw_look_command, draw_look_volume, draw_lookline,
+    draw_sprite_bar, draw_stock_line, stock_line_width_for_count, Ps2Canvas,
+    LOOK_COMMAND_ROW_PITCH, PS2_UI_HEIGHT, PS2_UI_WIDTH, SPRITE_BAR_WIDTH, SPRITE_BAR_X0,
+    SPRITE_BOT_BAR_CY, SPRITE_TOP_BAR_CY, STOCK_LINE_WIDTH_ON_OFF,
 };
 use crate::inventory::{
     CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
-    CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_X_MAX, CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MIN,
+    CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_Y_MIN,
 };
+use sh2_core::inventory::ITEM_ID_RADIO;
+use sh2_core::lighting::darkness::ITEM_ID_FLASHLIGHT;
 use sh2_core::{item_metadata, InventoryManager};
 
-/// Authentic PS2 `lookline` electric-blue RGB (`0x00f06030` at `SLUS_202.28` `0x001d6d2c`).
-const SH2_BLUE_BAR_RGB: [u8; 3] = [48, 96, 240];
-
-/// Native PS2 2D UI framebuffer width (`SLUS_202.28` `font_print` `0x001d4c00`).
-const PS2_UI_WIDTH: f32 = 512.0;
-/// Native PS2 2D UI framebuffer height (`SLUS_202.28` `font_print` `0x001d4c00`).
-const PS2_UI_HEIGHT: f32 = 448.0;
-
-/// Column bar X origins in `512x448` space (`sprite` `0x001d8c80..0x001d8c84`: `-230 + 256 + col * 160`).
-const SPRITE_BAR_X0: [f32; 3] = [26.0, 186.0, 346.0];
-/// Column bar width in `512x448` space (`sprite` `0x001d8c84..0x001d8d58`: `-90 - (-230) = 140`).
-const SPRITE_BAR_WIDTH: f32 = STATUS_SNAPSHOT_W_512;
-/// Top row bar center Y in `512x448` space (`sprite` `0x001d8ce8..0x001d8cf4`: `224 - 189 = 35`).
-const SPRITE_TOP_BAR_CY: f32 = 35.0;
-/// Bottom row bar center Y in `512x448` space (`sprite` `0x001d8ce8..0x001d8cf4`: `224 + 189 = 413`).
-const SPRITE_BOT_BAR_CY: f32 = 413.0;
-
-/// Command list row vertical step in `512x448` space (`font_print` `0x001d5e18..0x001d5e34`: `0x78 - 0x5f = 25`).
-const COMMAND_ROW_STEP_Y: f32 = 25.0;
 /// Command list text X in `512x448` space (`font_print` `0x001d5e14`: `0x168 = 360`).
 const COMMAND_TEXT_X: f32 = 360.0;
-
-/// Full-texture `512x448` PS2 UI coordinate transform.
-///
-/// The rasterizer texture itself represents the 4:3 PS2 frame and is blitted into
-/// `ps2_ui_canvas_rect(surface_w, surface_h)` by `sh2-app`, guaranteeing 1:1 alignment with
-/// `HealthEcgState::snapshot_viewport_rect` across every monitor aspect ratio (4:3, 16:10,
-/// 16:9, 21:9, 32:9, and portrait).
-#[derive(Clone, Copy)]
-struct Ps2Canvas {
-    tex_w: f32,
-    tex_h: f32,
-    sx: f32,
-    sy: f32,
-}
-
-impl Ps2Canvas {
-    fn from_viewport(w: usize, h: usize) -> Self {
-        let tex_w = w.max(1) as f32;
-        let tex_h = h.max(1) as f32;
-        Self {
-            tex_w,
-            tex_h,
-            sx: tex_w / PS2_UI_WIDTH,
-            sy: tex_h / PS2_UI_HEIGHT,
-        }
-    }
-
-    fn x(&self, px: f32) -> f32 {
-        px * self.sx
-    }
-
-    fn y(&self, py: f32) -> f32 {
-        py * self.sy
-    }
-
-    fn xi(&self, px: f32) -> usize {
-        self.x(px).round().max(0.0) as usize
-    }
-
-    fn yi(&self, py: f32) -> usize {
-        self.y(py).round().max(0.0) as usize
-    }
-
-    /// Converts a desired physical-square height (in texture pixels) and `aspect` (`w / h`) into
-    /// texture-space width so that when this texture is blitted into a 4:3 viewport, the rendered
-    /// element has exact `aspect` on screen regardless of `(tex_w, tex_h)`.
-    fn width_for_height(&self, height_px: f32, aspect: f32) -> f32 {
-        (height_px / self.tex_h) * (aspect * 0.75) * self.tex_w
-    }
-}
 
 /// Renders the authentic 1:1 PS2 Status & Inventory screen onto `rasterizer`.
 ///
 /// The rasterizer begins fully transparent so the frozen 3D gameplay snapshot blitted into
 /// `HealthEcgState::snapshot_viewport_rect` remains visible inside the top-left `Status` box
-/// while `look_hp` applies its health tint over it.
+/// while `look_hp` applies its health modulation and glitch scanlines over it.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_inventory_screen(
     screen: &InventoryScreen,
@@ -131,77 +73,79 @@ pub fn draw_inventory_screen(
         return;
     }
 
-    // 1. Top-left `Status` health tint wash over the live frozen 3D game snapshot (`look_hp` `0x001d9660`)
+    // 1. Top-left `Status` health modulation + glitch scanlines (`look_hp` `0x001d9660`)
     screen
         .health_ecg
         .draw_snapshot_tint(snapshot.hp, snapshot.max_hp, rasterizer);
 
-    // 2. Top row headers with glowing blue bars (`font_print` `y = 50`: Status | Equipment | Command)
-    draw_top_headers(font, rasterizer, c);
+    // 2. Top row headers with 6-layer tapering cyan-blue bars (`sprite` `0x001d8890`)
+    draw_top_headers(screen, font, rasterizer, c);
 
-    // 3. Equipped weapon icon from `itemmenu2.tex` + ammo count beneath `Equipment`
+    // 3. Equipped weapon icon from `itemmenu2.tex` + bare ammo count flanked by `stock_line`
     draw_equipped_weapon_panel(snapshot, item_atlas_rgba, font, rasterizer, c);
 
-    // 4. Command list beneath `Command` (`font_print` `0x001d5e14` & `CommandWindowMouseFix.cpp`)
+    // 4. Command list with eased 6-layer green-teal glow (`look_command` `0x001d8f50`) or
+    //    16-bar green Radio volume meter (`look_volume` `0x001d9480`)
     draw_command_column(screen, inventory, snapshot, font, rasterizer, c);
 
-    // 5. 7-slot floating `itemmenu2.tex` circular carousel + electric-blue selection reticle
-    draw_carousel_arc(screen, inventory, item_atlas_rgba, font, rasterizer, c);
+    // 5. 7-slot floating `itemmenu2.tex` carousel, `lookline` reticle + L-brackets,
+    //    `item_allay` double-chevron arrows, and `stock_line` counts / ON-OFF badges
+    draw_carousel_arc(
+        screen,
+        inventory,
+        snapshot,
+        item_atlas_rgba,
+        font,
+        rasterizer,
+        c,
+    );
 
-    // 6. Item Name (`20, 325`) & Multi-Line Description (`45, 360`) from `font_print` (`0x001d5b50`)
+    // 6. 3 green-tinted combine preview slots at bottom-right (`look_combine` `0x001da490`)
+    draw_look_combine(
+        rasterizer,
+        c,
+        screen.combine_slots,
+        screen.combine_fade,
+        item_atlas_rgba,
+    );
+
+    // 7. Item Name (`20, 325`) & Multi-Line Description (`45, 360`) from `font_print` (`0x001d5b50`)
     draw_item_footer(screen, font, rasterizer, c);
 
-    // 7. Bottom navigation row with glowing blue bars (`font_print` `y = 428`: Option | Map | Memo)
+    // 8. Bottom navigation row with 6-layer tapering cyan-blue bars (`sprite` `0x001d8890`)
     draw_bottom_nav_bar(screen, snapshot, font, rasterizer, c);
 }
 
-/// Draws a Silent Hill 2 electric-blue horizontal glow bar (`lookline` `0x001d6d2c` `0x00f06030`).
-fn draw_sh2_blue_bar(
+fn draw_top_headers(
+    screen: &InventoryScreen,
+    font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
-    x0: usize,
-    cy: usize,
-    w: usize,
-    h: usize,
-    bright: bool,
+    c: Ps2Canvas,
 ) {
-    let [r, g, b] = SH2_BLUE_BAR_RGB;
-    let half_h = (h / 2).max(1);
-    let peak_a = if bright {
-        255.0f32
-    } else {
-        ECG_GS_ALPHA as f32
-    };
-    for dy in 0..h {
-        let dist_y = ((dy as f32 + 0.5) - half_h as f32).abs() / (half_h as f32);
-        let y_falloff = (1.0 - dist_y).clamp(0.0, 1.0);
-        let py = cy.saturating_sub(half_h) + dy;
-        for dx in 0..w {
-            let t = dx as f32 / w.max(1) as f32;
-            let x_falloff = (t * 6.0).min((1.0 - t) * 6.0).clamp(0.0, 1.0);
-            let a = (peak_a * y_falloff * x_falloff).round() as u8;
-            if a > 0 {
-                rasterizer.blend_pixel(x0 + dx, py, [r, g, b, a]);
-            }
-        }
-    }
-}
-
-fn draw_top_headers(font: &AtlasFont, rasterizer: &mut TextRasterizer, c: Ps2Canvas) {
     // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` in `512x448`) centered over each
-    // `sprite` (`0x001d8c80..0x001d8d58`) electric-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
+    // `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
     let font_px = ((22.0 * c.sy).round() as usize).max(12);
-    let bar_h = ((12.0 * c.sy).round() as usize).max(6);
-    let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
     let y_bar = c.yi(SPRITE_TOP_BAR_CY);
     let y_text = y_bar.saturating_sub(font_px / 2);
 
-    let cols: [(&str, f32); 3] = [
-        ("Status", SPRITE_BAR_X0[0]),
-        ("Equipment", SPRITE_BAR_X0[1]),
-        ("Command", SPRITE_BAR_X0[2]),
+    let cmd_active = matches!(
+        screen.focus,
+        InventoryFocus::CommandWindow | InventoryFocus::RadioVolume
+    );
+    let cols: [(&str, f32, bool); 3] = [
+        ("Status", SPRITE_BAR_X0[0], false),
+        ("Equipment", SPRITE_BAR_X0[1], false),
+        ("Command", SPRITE_BAR_X0[2], cmd_active),
     ];
-    for (label, bar_x) in cols {
-        draw_sh2_blue_bar(rasterizer, c.xi(bar_x), y_bar, bar_w, bar_h, true);
+    for (label, bar_x, active) in cols {
+        draw_sprite_bar(
+            rasterizer,
+            c,
+            bar_x,
+            SPRITE_TOP_BAR_CY,
+            active,
+            screen.tab_pulse,
+        );
         let cx = c.xi(bar_x + SPRITE_BAR_WIDTH * 0.5);
         font.draw_line_centered(
             rasterizer,
@@ -221,7 +165,8 @@ fn draw_equipped_weapon_panel(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Center of middle `Equipment` column (`sprite` col 1: `186 + 140/2 = 256`, `look_hp` vertical center `49 + 105/2 = 101.5`)
+    // Center of middle `Equipment` column (`sprite` col 1: `186 + 140/2 = 256`,
+    // `look_hp` vertical center `49 + 105/2 = 101.5`)
     let cx = c.x(SPRITE_BAR_X0[1] + SPRITE_BAR_WIDTH * 0.5);
     let cy = c.y(STATUS_SNAPSHOT_Y_448 + STATUS_SNAPSHOT_H_448 * 0.5);
     let Some(weapon_id) = snapshot.equipped_weapon_item_id else {
@@ -257,16 +202,16 @@ fn draw_equipped_weapon_panel(
         );
     }
 
+    // `font_print` (`0x001d4c00` lines 2482–2493) + `stock_line(width, 1)` (`0x001da170`):
+    // bare magazine count flanked by two 2px `0xffa0a0a0` bars (`0x1f` / `0x2d`).
     if let Some(loaded) = snapshot.equipped_magazine_rounds {
+        let width_512 = stock_line_width_for_count(loaded);
+        let (mid_x, mid_y) = draw_stock_line(rasterizer, c, width_512, true);
         let font_sm = ((15.0 * c.sy).round() as usize).clamp(10, 24);
         font.draw_line_centered(
             rasterizer,
-            &format!("- {} -", loaded),
-            (
-                c.xi(SPRITE_BAR_X0[1] + SPRITE_BAR_WIDTH),
-                c.yi(STATUS_SNAPSHOT_Y_448 + STATUS_SNAPSHOT_H_448)
-                    .saturating_sub(font_sm),
-            ),
+            &loaded.to_string(),
+            (c.xi(mid_x), c.yi(mid_y).saturating_sub(font_sm / 2)),
             font_sm,
             Sh2TextColor::White,
             true,
@@ -282,6 +227,24 @@ fn draw_command_column(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
+    let font_px = ((18.0 * c.sy).round() as usize).max(12);
+    let text_x = c.xi(COMMAND_TEXT_X);
+
+    // `command_main` case 7 (`DAT_0116e3e4 == 1`, `0x001d0790`) + `look_volume` (`0x001d9480`):
+    // render `"Volume"` header at `y = 0x5a = 90` and 16-bar green meter at `y = 104..124`.
+    if screen.focus == InventoryFocus::RadioVolume {
+        font.draw_line_styled(
+            rasterizer,
+            "Volume",
+            (c.xi(350.0), c.yi(74.0)),
+            font_px,
+            Sh2TextColor::White,
+            true,
+        );
+        draw_look_volume(rasterizer, c, snapshot.radio_volume);
+        return;
+    }
+
     let cmds = if screen.focus == InventoryFocus::CommandWindow {
         screen.active_commands.clone()
     } else if let Some(id) = screen.selected_item_id() {
@@ -290,29 +253,19 @@ fn draw_command_column(
         return;
     };
 
-    // Exact `font_print` (`0x001d5e14`: `x = 360`, row step `25`) aligned strictly inside
-    // `CommandWindowMouseFix.cpp` (`0x00472428`: `x in 356..439`, `y in 63..139`, rows `< 88`, `< 114`).
-    let text_x = c.xi(COMMAND_TEXT_X);
-    let bar_x = c.xi(CMD_WIN_MOUSE_X_MIN);
-    let bar_w = ((CMD_WIN_MOUSE_X_MAX - CMD_WIN_MOUSE_X_MIN) * c.sx).round() as usize;
-    let row_h = (COMMAND_ROW_STEP_Y * c.sy).round() as usize;
-    let y0 = c.yi(CMD_WIN_MOUSE_Y_MIN);
-    let font_px = ((18.0 * c.sy).round() as usize).max(12);
+    // Exact `look_command` (`0x001d8f50`): smoothly eased Y via `move_near`, `26.0` px/row pitch,
+    // full 140px Command column (`x = 90..230` centered = `346..486`), 6-layer green-teal glow.
+    let y0_448 = CMD_WIN_MOUSE_Y_MIN;
     let in_cmd = screen.focus == InventoryFocus::CommandWindow;
+    if screen.command_glow > 0.0 && !cmds.is_empty() {
+        let half_font_448 = (font_px as f32 / c.sy) * 0.5;
+        let bar_cy_448 = y0_448 + half_font_448 + screen.command_cursor_y * LOOK_COMMAND_ROW_PITCH;
+        draw_look_command(rasterizer, c, bar_cy_448, screen.command_glow);
+    }
 
     for (idx, cmd) in cmds.iter().enumerate() {
-        let ry = y0 + idx * row_h;
+        let ry = c.yi(y0_448 + (idx as f32) * LOOK_COMMAND_ROW_PITCH);
         let is_sel = in_cmd && idx == screen.command_index;
-        if is_sel {
-            draw_sh2_blue_bar(
-                rasterizer,
-                bar_x,
-                ry + font_px / 2,
-                bar_w,
-                ((8.0 * c.sy).round() as usize).max(4),
-                true,
-            );
-        }
         let color = if is_sel {
             Sh2TextColor::White
         } else if in_cmd {
@@ -324,9 +277,11 @@ fn draw_command_column(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_carousel_arc(
     screen: &InventoryScreen,
     inventory: &InventoryManager,
+    snapshot: &InventoryPlayerSnapshot,
     item_atlas_rgba: Option<(&[u8], usize, usize)>,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
@@ -349,41 +304,35 @@ fn draw_carousel_arc(
         return;
     }
 
-    // Square center selection reticle (`STATUS_SNAPSHOT_H_448 = 105` tall, aspect 1:1 on screen),
-    // colored strictly with `SH2_BLUE_BAR_RGB` (`lookline` `0x00f06030`) and `ECG_GS_ALPHA` (`0xa0`).
+    // `lookline` (`0x001d6c30`): single closed `RGB(48, 96, 240)` square reticle + two outer
+    // L-bracket corner accents at `(-6, -6)` and `(+6, +5)` when active on `Carousel`.
     let ret_h_f = STATUS_SNAPSHOT_H_448 * c.sy;
     let ret_h = ret_h_f.round() as usize;
     let ret_w = c.width_for_height(ret_h_f, 1.0).round() as usize;
     let rx = (cx as usize).saturating_sub(ret_w / 2);
     let ry = (cy as usize).saturating_sub(ret_h / 2);
-    let [br, bg, bb] = SH2_BLUE_BAR_RGB;
+    let is_carousel_active = screen.focus == InventoryFocus::Carousel;
     let ret_a = if matches!(
         screen.focus,
         InventoryFocus::Carousel | InventoryFocus::CombineTarget
     ) {
-        255
+        0xff
     } else {
         ECG_GS_ALPHA
     };
-    let border = (c.sy * 0.8).round().max(1.0) as usize;
-    let offset = (4.0 * c.sy).round().max(2.0) as usize;
-    // Authentic SH2 interlocking double-offset electric-blue reticle (both frames crisp blue)
-    rasterizer.draw_rect_outline(
-        rx.saturating_sub(offset / 2),
-        ry.saturating_sub(offset / 2),
+    draw_lookline(
+        rasterizer,
+        c,
+        rx,
+        ry,
         ret_w,
         ret_h,
-        border,
-        [br, bg, bb, ret_a],
+        ret_a,
+        is_carousel_active,
     );
-    rasterizer.draw_rect_outline(
-        rx + offset / 2,
-        ry + offset / 2,
-        ret_w,
-        ret_h,
-        border,
-        [br, bg, bb, ret_a],
-    );
+
+    // `item_allay` (`0x001d7640`): pulsing double-chevron L/R arrows flanking carousel reticle
+    draw_item_allay(rasterizer, c, screen.arrow_pulse, screen.arrow_fade);
 
     let total = screen.owned_items.len();
     let draw_order: &[isize] = if total >= 7 {
@@ -451,18 +400,41 @@ fn draw_carousel_arc(
             );
         }
 
-        // Centered `- N -` quantity inside bottom of blue reticle
+        // `stock_line` (`0x001da170`) & `font_print` (`0x001d4c00` lines 2444–2481):
+        // bare number flanked by two 2px `0xffa0a0a0` bars, or Flashlight/Radio `"ON"`/`"OFF"` badge.
         if ofs == 0 {
-            let count = inventory.count(item_id);
-            if count > 1 || item_metadata(item_id).is_some_and(|m| m.is_stackable()) {
-                font.draw_line_centered(
+            if item_id == ITEM_ID_FLASHLIGHT || item_id == ITEM_ID_RADIO {
+                let is_on = if item_id == ITEM_ID_FLASHLIGHT {
+                    snapshot.flashlight_on
+                } else {
+                    snapshot.radio_on
+                };
+                let (_mid_x, _mid_y) =
+                    draw_stock_line(rasterizer, c, STOCK_LINE_WIDTH_ON_OFF, false);
+                // `font_print` (`0x001d4c00` lines 2463–2480): `"ON"` at `(264, 290)`, `"OFF"` at `(261, 290)`
+                let (label, text_x_512) = if is_on { ("ON", 264.0) } else { ("OFF", 261.0) };
+                font.draw_line_styled(
                     rasterizer,
-                    &format!("- {} -", count),
-                    (cx as usize, ry + ret_h.saturating_sub(font_px + 4)),
+                    label,
+                    (c.xi(text_x_512), c.yi(290.0).saturating_sub(font_px)),
                     font_px,
                     Sh2TextColor::White,
                     true,
                 );
+            } else {
+                let count = inventory.count(item_id);
+                if count > 1 || item_metadata(item_id).is_some_and(|m| m.is_stackable()) {
+                    let width_512 = stock_line_width_for_count(count as u32);
+                    let (mid_x, mid_y) = draw_stock_line(rasterizer, c, width_512, false);
+                    font.draw_line_centered(
+                        rasterizer,
+                        &count.to_string(),
+                        (c.xi(mid_x), c.yi(mid_y).saturating_sub(font_px / 2)),
+                        font_px,
+                        Sh2TextColor::White,
+                        true,
+                    );
+                }
             }
         }
     }
@@ -526,10 +498,8 @@ fn draw_bottom_nav_bar(
     c: Ps2Canvas,
 ) {
     // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`: `Option | Map | Memo`) centered
-    // over each `sprite` (`0x001d8c80..0x001d8d58`) electric-blue bar (`cy = 413`).
+    // over each `sprite` (`0x001d8890`) 6-layer tapering cyan-blue bar (`cy = 413`).
     let font_px = ((22.0 * c.sy).round() as usize).max(12);
-    let bar_h = ((12.0 * c.sy).round() as usize).max(6);
-    let bar_w = (SPRITE_BAR_WIDTH * c.sx).round() as usize;
     let y_bar = c.yi(SPRITE_BOT_BAR_CY);
     let y_text = y_bar.saturating_sub(font_px / 2);
 
@@ -537,13 +507,13 @@ fn draw_bottom_nav_bar(
         let is_selected = screen.focus == InventoryFocus::Corner(btn);
         let disabled = btn == CornerButton::Memo && !snapshot.has_any_memo;
 
-        draw_sh2_blue_bar(
+        draw_sprite_bar(
             rasterizer,
-            c.xi(SPRITE_BAR_X0[col_idx]),
-            y_bar,
-            bar_w,
-            bar_h,
-            true,
+            c,
+            SPRITE_BAR_X0[col_idx],
+            SPRITE_BOT_BAR_CY,
+            is_selected,
+            screen.tab_pulse,
         );
         let text_color = if disabled {
             Sh2TextColor::MutedFooter
@@ -622,7 +592,7 @@ mod tests {
     #[test]
     fn test_draw_inventory_and_examine_overlay_opaque_black() {
         let mut inv = InventoryManager::new();
-        for id in [1u8, 2, 4, 20, 21] {
+        for id in [1u8, 2, 4, 18, 19, 20, 21] {
             inv.item_get_now(id);
         }
         let mut screen = InventoryScreen::new();
@@ -644,5 +614,72 @@ mod tests {
         rast.clear();
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
         assert_eq!(rast.pixels[3], 255);
+    }
+
+    #[test]
+    fn test_draw_inventory_all_parity_modes() {
+        let mut inv = InventoryManager::new();
+        for id in [1u8, 4, 18, 19, 24] {
+            inv.item_get_now(id);
+        }
+        let mut screen = InventoryScreen::new();
+        screen.open(&inv);
+        let snap = InventoryPlayerSnapshot {
+            hp: 35.0,
+            max_hp: 100.0,
+            equipped_weapon_item_id: Some(4),
+            equipped_magazine_rounds: Some(10),
+            flashlight_on: true,
+            radio_on: true,
+            radio_volume: 10,
+            has_any_memo: true,
+            ..Default::default()
+        };
+        let font = AtlasFont::shared(None);
+        let mut rast = TextRasterizer::new(512, 448);
+
+        // 1. CommandWindow: green-teal `look_command` glow + active `Command` bar pulse
+        screen.focus = InventoryFocus::CommandWindow;
+        screen.active_commands = screen.commands_for_item(24, &inv, &snap);
+        screen.command_index = 1;
+        for _ in 0..10 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        screen.tab_pulse = 1.0; // Peak active pulse -> bright white-cyan on Command bar
+        draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
+        // Status bar (col 0, x=26..166, y=35) must remain inactive cyan-blue [0, 60, 180]
+        let status_bar_px = &rast.pixels[(35 * 512 + 40) * 4..][..3];
+        assert_eq!(status_bar_px, &[0, 60, 180]);
+        // Command bar (col 2, x=346..486, y=35) must pulse bright white-cyan [240, 240, 240]
+        let cmd_bar_px = &rast.pixels[(35 * 512 + 355) * 4..][..3];
+        assert_eq!(cmd_bar_px, &[240, 240, 240]);
+        // Green-teal `look_command` bar spans full column (check x = 470, well past old 439 cutoff)
+        let cmd_glow_px = &rast.pixels[(98 * 512 + 470) * 4..][..3];
+        assert!(
+            cmd_glow_px[1] > cmd_glow_px[2] && cmd_glow_px[0] == 0,
+            "expected green-teal glow at x=470, got {cmd_glow_px:?}"
+        );
+
+        // 2. RadioVolume: 16-bar green meter
+        screen.focus = InventoryFocus::RadioVolume;
+        rast.clear();
+        draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
+        assert_eq!(&rast.pixels[(114 * 512 + 362) * 4..][..3], &[0, 0xb0, 0]);
+        assert_eq!(
+            &rast.pixels[(114 * 512 + (361 + 15 * 7 + 1)) * 4..][..3],
+            &[0, 0x30, 0]
+        );
+
+        // 3. CombineTarget: 3 green-tinted combine preview slots
+        screen.focus = InventoryFocus::CombineTarget;
+        screen.combine_first_item_id = Some(24);
+        for _ in 0..15 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        rast.clear();
+        draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
+        let combine_px = &rast.pixels[(290 * 512 + 370) * 4..][..4];
+        assert_eq!(combine_px[3], 160);
+        assert!(combine_px[1] > combine_px[0]);
     }
 }

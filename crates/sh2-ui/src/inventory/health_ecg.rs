@@ -1,23 +1,28 @@
-//! Authentic 1:1 PS2 Health Status Snapshot Tint (`look_hp` in `SLUS_202.28` at `0x001d9660`).
+//! Authentic 1:1 PS2 Health Status Snapshot Tint & Glitch Scanlines
+//! (`look_hp` in `SLUS_202.28` at `0x001d9660`).
 //!
-//! # Ground Truth (`SLUS_202.28` `look_hp` @ `0x001d9660..0x001d9be0`)
+//! # Ground Truth (`SLUS_202.28` `look_hp` @ `0x001d9660..0x001da16c`)
 //! In Silent Hill 2, the top-left `Status` box is a **live miniature snapshot of the frozen 3D
-//! gameplay frame**, tinted by player health (`Fine` green -> `Caution` yellow/amber -> `Danger`
-//! pulsing crimson red) with **no ECG waveform line and no status text label**:
+//! gameplay frame**, modulated by player health with **no ECG waveform line and no status text**:
 //! - Normalized health ratio: `ratio = (hp / max_hp).clamp(0.0, 1.0)` (`0x001d96d0`).
 //! - Damage factor: `damage = 1.0 - ratio` (`0x001d96e0`).
 //! - Horizontal sweep speed: `(1.4 + damage / 0.7) * 30.0 * dt` (`0x001d96e4..0x001d9724`),
 //!   wrapping when `sweep_x > -70.0` (`0xc28c0000`) back to `-210.0` (`0xc3520000`).
 //! - Heartbeat pulse cycle: `pulse_timer += dt / 2.0`, resets to `0.0` when
 //!   `pulse_timer > 0.2 + ratio` (`0x001d9818..0x001d9840`).
-//! - Heartbeat brightness modulation when `hp < 0.8 * max_hp` (`0x3f4ccccd`):
+//! - Heartbeat brightness modulation when `hp < 0.8 * max_hp` (`0x3f4ccccd`; retail PC `sh2pc.exe`
+//!   `0x0046edeb` raises this threshold slightly to `0.9 * max_hp`):
 //!   - `pulse_timer < 0.1`: `brightness = 1.0 - 6.0 * pulse_timer` (`0x001d9890..0x001d98ac`)
 //!   - `0.1 <= pulse_timer < 0.2`: `brightness = 6.0 * pulse_timer - 0.2` (`0x001d98bc..0x001d9918`)
 //!   - Otherwise: `brightness = 1.0` (`0x001d9924`).
-//! - Color shift (`0x001d9a3c..0x001d9b50`, base intensity `160.0` = `0x43200000`):
-//!   - `hp >= 0.5 * max_hp`: soft emerald green -> yellow-amber tint wash over the 3D snapshot.
-//!   - `hp < 0.5 * max_hp`: `R = 160.0 * brightness`, `G = 160.0 * brightness * (2.0 * ratio)`,
-//!     shifting smoothly to pulsing red as `hp -> 0`.
+//! - Color modulation (`0x001d9a3c..0x001d9b50`, base intensity `160.0` = `0x43200000`):
+//!   - `hp >= 0.5 * max_hp`: neutral monochrome `R = G = B = 160.0 * brightness`, `A = 0xa0`.
+//!   - `hp < 0.5 * max_hp`: `R = 160.0 * brightness`, `G = B = 160.0 * brightness * (2.0 * ratio)`,
+//!     shifting smoothly to pulsing crimson red as `hp -> 0`.
+//! - Randomized 2px glitch scanlines (`0x001d9c10..0x001da160`, identical in `sh2pc.exe` `0x0046f3c0`):
+//!   whenever `hp < max_hp`, iterates `i < 10.0 - 10.0 * ratio`, seeding `srand(_DAT_0116e664++)`
+//!   and with `1/6` probability (`rand() % 6 < 1`) drawing a 2px-tall glitch strip across the
+//!   `140x105` snapshot rect (`x in [26..166]`, `y in [49..154]`).
 
 use crate::font::TextRasterizer;
 
@@ -58,11 +63,11 @@ pub const STATUS_SNAPSHOT_H_448: f32 = 105.0;
 /// Coarse health status band reflected in the `Status` snapshot tint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthStatus {
-    /// `hp >= 0.8 * max_hp`: steady emerald green tint, no heartbeat pulse (`look_hp` `0x001d986c`).
+    /// `hp >= 0.8 * max_hp`: steady neutral brightness, no heartbeat pulse (`look_hp` `0x001d986c`).
     Fine,
-    /// `0.25 * max_hp <= hp < 0.8 * max_hp`: yellow/amber tint with rhythmic pulse.
+    /// `0.25 * max_hp <= hp < 0.8 * max_hp`: rhythmic heartbeat pulse (neutral `>= 50%`, crimson shift `< 50%`).
     Caution,
-    /// `hp < 0.25 * max_hp`: crimson red pulsing tint with subtle CRT interference.
+    /// `hp < 0.25 * max_hp`: deep crimson pulsing tint with dense glitch scanlines.
     Danger,
 }
 
@@ -147,7 +152,31 @@ impl HealthEcgState {
             self.pulse_brightness = 1.0;
         }
 
-        self.static_frame = self.static_frame.wrapping_add(1);
+        let glitch_iters = Self::glitch_scanline_iterations(hp, max_hp);
+        self.static_frame = self.static_frame.wrapping_add(glitch_iters.max(1));
+    }
+
+    /// Returns the exact `SLUS_202.28` `look_hp` (`0x001d9c10`) glitch scanline loop iteration
+    /// count: `ceil(10.0 - 10.0 * (hp / max_hp))` (`0` at 100% HP, `1..=10` whenever `hp < max_hp`).
+    pub fn glitch_scanline_iterations(hp: f32, max_hp: f32) -> u32 {
+        let ratio = if max_hp > 0.0 {
+            (hp / max_hp).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let limit = 10.0 - ratio * 10.0;
+        if limit <= 0.0 {
+            0
+        } else {
+            limit.ceil().clamp(0.0, 10.0) as u32
+        }
+    }
+
+    /// Deterministic C-standard LCG matching PS2 `srand`/`rand` used in `look_hp` (`0x001d9c30`).
+    #[inline]
+    fn lcg_rand(state: &mut u32) -> u32 {
+        *state = state.wrapping_mul(1103515245).wrapping_add(12345);
+        (*state >> 16) & 0x7fff
     }
 
     /// Computes the exact `SLUS_202.28` `look_hp` (`0x001d9a3c..0x001d9b50`) GS RGBA vertex color:
@@ -220,6 +249,29 @@ impl HealthEcgState {
                 rasterizer.fill_rect(x0, y0, w, h, [color[0], color[1], color[2], tint_a]);
             }
         }
+
+        // `look_hp` (`0x001d9c10..0x001da160`, `sh2pc 0x0046f3c0`): draw `10 - 10*(hp/max)`
+        // randomized 2px-tall glitch scanlines whenever `hp < max_hp`.
+        let iters = Self::glitch_scanline_iterations(hp, max_hp);
+        let strip_h = (2.0 * sy).round().max(1.0) as usize;
+        for i in 0..iters {
+            let mut rng = self.static_frame.wrapping_add(i);
+            let x_off = (Self::lcg_rand(&mut rng) % 0x8c) as f32;
+            let y_off = (Self::lcg_rand(&mut rng) % 0x69) as f32;
+            let mut strip_w_512 = (Self::lcg_rand(&mut rng) % 0x69) as f32;
+            let prob = Self::lcg_rand(&mut rng) % 6;
+            if prob < 1 {
+                if x_off + strip_w_512 > STATUS_SNAPSHOT_W_512 {
+                    strip_w_512 = STATUS_SNAPSHOT_W_512 - x_off;
+                }
+                if strip_w_512 > 0.0 {
+                    let gx = ((STATUS_SNAPSHOT_X_512 + x_off) * sx).round() as usize;
+                    let gy = ((STATUS_SNAPSHOT_Y_448 + y_off) * sy).round() as usize;
+                    let gw = (strip_w_512 * sx).round().max(1.0) as usize;
+                    rasterizer.fill_rect(gx, gy, gw, strip_h, color);
+                }
+            }
+        }
     }
 }
 
@@ -247,5 +299,36 @@ mod tests {
         let c = ecg.status_color_rgba(15.0, 100.0);
         assert!(c[0] > c[1]);
         assert!(c[3] < 200); // Translucent so live 3D game snapshot shows through
+
+        // `look_hp` (`0x001d9afc`): neutral R==G==B above 50% HP
+        let neutral = ecg.status_color_rgba(75.0, 100.0);
+        assert_eq!(neutral[0], neutral[1]);
+        assert_eq!(neutral[1], neutral[2]);
+        assert_eq!(neutral[3], ECG_GS_ALPHA);
+
+        // `look_hp` (`0x001d9c10`): `10 - 10*(hp/max)` glitch scanline iterations
+        assert_eq!(HealthEcgState::glitch_scanline_iterations(100.0, 100.0), 0);
+        assert_eq!(HealthEcgState::glitch_scanline_iterations(90.0, 100.0), 1);
+        assert_eq!(HealthEcgState::glitch_scanline_iterations(50.0, 100.0), 5);
+        assert_eq!(HealthEcgState::glitch_scanline_iterations(0.0, 100.0), 10);
+
+        // At 100% HP, zero glitch pixels are drawn; below 100% HP, glitch scanlines appear
+        let mut rast = TextRasterizer::new(512, 448);
+        ecg.pulse_brightness = 1.0;
+        ecg.draw_snapshot_tint(100.0, 100.0, &mut rast);
+        assert!(rast.pixels.iter().all(|&b| b == 0));
+
+        // Run a few frames at 60% HP (neutral tint, pulse=1.0 -> dim_a=0, only glitch scanlines draw)
+        let mut drew_glitch = false;
+        for frame in 0..32u32 {
+            rast.clear();
+            ecg.static_frame = frame;
+            ecg.draw_snapshot_tint(60.0, 100.0, &mut rast);
+            if rast.pixels.iter().any(|&b| b != 0) {
+                drew_glitch = true;
+                break;
+            }
+        }
+        assert!(drew_glitch, "expected 2px glitch scanlines at 60% HP");
     }
 }

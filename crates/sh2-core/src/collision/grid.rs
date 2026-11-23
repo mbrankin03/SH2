@@ -4,7 +4,7 @@
 //! - `clGetHitSectListMOVE` (`0x00138b60`): dispatches to `InDoor` or `OutDoor`.
 //! - `clGetHitSectListMOVEInDoor` (`0x00138df0`): checks `header.disable == 0` (`+0x1c`),
 //!   returns cell `0` only.
-//! - `clGetHitSectListMOVEOutDoor` (`0x00138bc0` / `sh2pc.exe` `0x005249d0`): checks
+//! - `clGetHitSectListMOVEOutDoor` (`0x00138bc0` / `sh2pc.exe` `0x00524940`): checks
 //!   `header.disable == 0`, then block distance `(x - sx)^2 + y^2 + (z - sz)^2 <= 900_000_000.0`
 //!   (`30_000.0^2`), then for each `(row, col)` in `0..4 x 0..4` with cell corner
 //!   `(sx + col * 5000.0, sz + row * 5000.0)` checks `(x - cx)^2 + (z - cz)^2 < 64_000_000.0`
@@ -219,7 +219,7 @@ impl SpatialGrid {
     }
 
     /// Authentic PS2/PC `clGetHitSectListMOVE` (`SLUS_202.28` `0x00138b60`, `0x00138bc0`,
-    /// `0x00138df0` / `sh2pc.exe` `0x005249d0`, `0x00524b10`).
+    /// `0x00138df0` / `sh2pc.exe` `0x00524940`, `0x00524b10`).
     ///
     /// Populates `out_cells` with active sector indices (`0..16`) for movement collision at `(x, y, z)`:
     /// - Returns empty if `self.disable != 0` (`.cld` header `+0x1c`).

@@ -142,15 +142,20 @@ fn test_player_dual_cylinders_and_close_to_target() {
     assert_eq!(cfg.max_iterations, CL_COLLECT_CHARA_ITERATIONS);
 
     // James normal state at origin, facing +Z (yaw = 0)
+    // PlayerSetColumn_SetTarget sets hit_col target Y to [0..-900], while PlayerSetColumn_CloseToTarget
+    // copies move_col Y [-50..-850] into the live hit_col (SLUS 0x00108010 / sh2pc 0x00535120).
     let mut james = PlayerColumnState::new(Vec3::ZERO, false);
-    james.step(Vec3::ZERO, 0.0, PlayerColumnAction::Normal, false);
+    let normal_target = james.compute_target(Vec3::ZERO, PlayerColumnAction::Normal, false);
+    assert_eq!(normal_target.hit_col.y_bottom, 0.0);
+    assert_eq!(normal_target.hit_col.y_top, -900.0);
+    james.close_to_target(Vec3::ZERO, 0.0, &normal_target);
     assert_eq!(james.move_col.radius, 175.0);
     assert_eq!(james.move_col.y_bottom, -50.0);
     assert_eq!(james.move_col.y_top, -850.0);
     assert_eq!(james.move_col.center_z, 25.0);
     assert_eq!(james.hit_col.radius, 150.0);
-    assert_eq!(james.hit_col.y_bottom, 0.0);
-    assert_eq!(james.hit_col.y_top, -900.0);
+    assert_eq!(james.hit_col.y_bottom, -50.0);
+    assert_eq!(james.hit_col.y_top, -850.0);
     assert_eq!(james.hit_col.center_z, 25.0);
 
     // Playable Maria (0x10e) at origin, facing +X (yaw = PI/2)
@@ -417,4 +422,64 @@ fn test_cl_collect_chara_all_5_iterations_and_weight_table() {
         "Interleaved BG check must keep James inside west wall: x={}",
         james.position.x
     );
+}
+
+#[test]
+fn test_regulate_angle_sentinel_no_hang_and_disabled_cld_floor_gating() {
+    use sh2_core::collision::{regulate_angle, CL_NO_MOVE_ANGLE};
+
+    // 1. regulate_angle must terminate in O(1) on CL_NO_MOVE_ANGLE (f32::MAX) and non-finite inputs
+    assert_eq!(regulate_angle(0.0 - CL_NO_MOVE_ANGLE), 0.0);
+    assert_eq!(regulate_angle(f32::INFINITY), 0.0);
+    assert_eq!(regulate_angle(f32::NAN), 0.0);
+    assert!((regulate_angle(3.0 * std::f32::consts::PI) - std::f32::consts::PI).abs() < 1e-5);
+
+    // 2. cl_make_wall_hit_collect_vector with post_flag_timer > 0 and stationary move_angle must not hang
+    let wall = HitPolyPlane::from_wall_segment(&WallSegment::new(
+        [0.0, 0.0],
+        [1000.0, 0.0],
+        -2000.0,
+        100.0,
+        1,
+        0,
+    ));
+    let mut hits = vec![
+        WallHitRecord {
+            kind: WallHitKind::Face,
+            collect_vec: Vec3::new(0.0, 0.0, 50.0),
+            plane_eq: Some(wall.plane_equation()),
+            normal_angle: 0.0,
+        },
+        WallHitRecord {
+            kind: WallHitKind::Face,
+            collect_vec: Vec3::new(0.0, 0.0, 30.0),
+            plane_eq: Some(wall.plane_equation()),
+            normal_angle: 0.0,
+        },
+    ];
+    let mut ctx = WallCollectContext {
+        move_angle: CL_NO_MOVE_ANGLE,
+        post_flag_timer: 2,
+        fps: 60.0,
+        ..Default::default()
+    };
+    let (_v, applied) = cl_make_wall_hit_collect_vector(&mut hits, &mut ctx);
+    assert!(applied > 0);
+    assert_eq!(ctx.post_flag_timer, 1);
+
+    // 3. Disabled .cld (`disable != 0`) must skip static floor sampling
+    let mut room = CollisionWorld::create_synthetic_room(2000.0, 2000.0, 3000.0, 0.0, 0.0);
+    assert!(room
+        .sample_floor_surface(0.0, 0.0, 0.0, 250.0, 350.0)
+        .is_some());
+    room.disable = 1;
+    assert!(
+        room.sample_floor_surface(0.0, 0.0, 0.0, 250.0, 350.0)
+            .is_none(),
+        "Disabled .cld must not return static floor samples"
+    );
+
+    // 4. Explicit discrete weight setter
+    let heavy = CharacterCylinder::james(CharacterId(9), Vec3::ZERO).with_weight(4);
+    assert_eq!(heavy.weight, 4);
 }

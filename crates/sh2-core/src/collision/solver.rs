@@ -8,7 +8,7 @@
 //! - `clAddWallCollectVector` (`0x00134b20` / `sh2pc 0x00522de0`)
 //! - `clAddCollectVector` (`0x001337b0` / `sh2pc 0x00522cf0`)
 //! - `clMakeWallHitCollectVector` (`0x001341a0` / `sh2pc 0x005254f0`)
-//! - `clCollectCharaALL` (`0x00132e20` / `sh2pc 0x00525f50`)
+//! - `clCollectCharaALL` (`0x00132e20` / `sh2pc 0x00526280`)
 
 use std::f32::consts::PI;
 
@@ -23,7 +23,7 @@ pub const CL_MAX_WALL_HITS: usize = 32;
 /// Number of interleaved relaxation iterations in `clCollectCharaALL` (`0x00132e20`: `if (4 < iVar7) return;`).
 pub const CL_COLLECT_CHARA_ITERATIONS: usize = 5;
 
-/// Discrete weight-difference pushback table (`SLUS_202.28` `0x002a9960` / `sh2pc.exe` `0x00525f50`).
+/// Discrete weight-difference pushback table (`SLUS_202.28` `0x002a9960` / `sh2pc.exe` `0x00526280`).
 ///
 /// Indexed by `0` when `weight_a < weight_b`, else `(weight_a - weight_b + 1).min(4)`.
 /// Recoil applied to the other actor is `-(1.0 - CL_WEIGHT_DIFF_TABLE[idx]) * push`.
@@ -89,16 +89,22 @@ impl WallHitRecord {
     };
 }
 
-/// Exact `shAngleRegulate` helper: normalizes an angle in radians to `[-PI, +PI]`.
+/// Exact `shAngleRegulate` helper: normalizes an angle in radians to `[-PI, +PI]` in O(1) time.
+///
+/// Guards against non-finite or extreme sentinel inputs (such as `CL_NO_MOVE_ANGLE == f32::MAX`
+/// in `clMakeWallHitCollectVector` Pass 3) so modular reduction can never loop indefinitely.
 #[inline]
-pub fn regulate_angle(mut angle: f32) -> f32 {
-    while angle > PI {
-        angle -= 2.0 * PI;
+pub fn regulate_angle(angle: f32) -> f32 {
+    if !angle.is_finite() || angle.abs() > 1e9 {
+        return 0.0;
     }
-    while angle < -PI {
-        angle += 2.0 * PI;
+    let two_pi = 2.0 * PI;
+    let wrapped = (angle + PI).rem_euclid(two_pi) - PI;
+    if wrapped <= -PI {
+        wrapped + two_pi
+    } else {
+        wrapped
     }
-    angle
 }
 
 /// Exact `shAtan2(x, z)` matching PS2/PC SH2 yaw convention (`0` = `+Z`, `+PI/2` = `+X`).
@@ -594,9 +600,11 @@ fn select_axis_step(move_axis: f32, push_axis: f32) -> f32 {
     }
 }
 
-/// Exact 1:1 `clCollectCharaALL` (`SLUS_202.28` `0x00132e20` / `sh2pc.exe` `0x00525f50`).
+/// Exact 1:1 `clCollectCharaALL` (`SLUS_202.28` `0x00132e20` / `sh2pc.exe` `0x00526280`).
 ///
-/// Runs up to **5 interleaved iterations** (`CL_COLLECT_CHARA_ITERATIONS = 5`), breaking early
+/// Runs up to **5 interleaved iterations** (`CL_COLLECT_CHARA_ITERATIONS = 5`, matching PS2
+/// `SLUS_202.28` `0x00132e20`; note retail PC `sh2pc.exe` `0x00526280` reduced the loop cap
+/// to 3 iterations and added the `<= radius` clamp on direct char-char pushout), breaking early
 /// when an iteration produces zero character-to-character overlaps.
 ///
 /// `bg_check` is invoked twice per active character per iteration (before and after character-to-character
@@ -617,15 +625,21 @@ where
         let mut chara_overlap_count = 0usize;
 
         for i in 0..n {
+            // Snapshot column position at the start of this iteration (`0x00132e20` lines 379-382 /
+            // `sh2pc 0x00526280` lines 3590-3593) before applying `select_axis_step`.
+            let saved_x = entries[i].col.center_x;
+            let saved_z = entries[i].col.center_z;
+
             // 1. Apply pending move_vec / push_vec along X and Z
             let step_x = select_axis_step(entries[i].move_vec.x, entries[i].push_vec.x);
             let step_z = select_axis_step(entries[i].move_vec.z, entries[i].push_vec.z);
             entries[i].col.center_x += step_x;
             entries[i].col.center_z += step_z;
 
-            // Clamp move_vec magnitude to <= col.radius (0x00132e20 lines 427-436)
-            let dx = entries[i].col.center_x - entries[i].prev_pos.x;
-            let dz = entries[i].col.center_z - entries[i].prev_pos.z;
+            // Compute this iteration's displacement `new_col_pos - saved_pos` and clamp to <= col.radius
+            // (`0x00132e20` lines 421-436 / `sh2pc 0x00526280` lines 3638-3650)
+            let dx = entries[i].col.center_x - saved_x;
+            let dz = entries[i].col.center_z - saved_z;
             let move_len = (dx * dx + dz * dz).sqrt();
             entries[i].move_vec = Vec3::new(dx, 0.0, dz);
             if move_len > 0.0 {
@@ -655,7 +669,7 @@ where
                         cl_check_sub_column_to_column(&entries[j].col, &entries[i].col)
                     {
                         push.y = 0.0;
-                        // Retail PC (`sh2pc.exe` 0x00525f50 lines 3709-3716) clamps push to <= radius_i
+                        // Retail PC (`sh2pc.exe` 0x00526280 lines 3709-3716) clamps push to <= radius_i
                         let push_len = (push.x * push.x + push.z * push.z).sqrt();
                         if push_len > entries[i].col.radius && push_len > 0.0 {
                             let s = entries[i].col.radius / push_len;

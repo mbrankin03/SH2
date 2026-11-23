@@ -317,9 +317,14 @@ impl PlayerColumnState {
         }
     }
 
-    /// Exact 1:1 `PlayerSetColumn_CloseToTarget` (`SLUS_202.28` `0x00108010`):
+    /// Exact 1:1 `PlayerSetColumn_CloseToTarget` (`SLUS_202.28` `0x00108010` / `sh2pc.exe` `0x00535120`):
     /// updates `move_col` and `hit_col` positions, converges radii and forward offsets by
     /// `5.0` mm/tick (`close_to_value`), and applies forward offset `(sin(yaw), cos(yaw))`.
+    ///
+    /// Note: Both `SLUS_202.28` (`0x00108010`, `m3_play.c:1124-1127`) and `sh2pc.exe`
+    /// (`0x00535120`) copy `move_col`'s vertical span (`pos.y - 50.0 .. pos.y - 850.0`) into the
+    /// live `hit_col` (`_DAT_003c81e4 = _DAT_003c81b4`, `_DAT_003c81f4 = _DAT_003c81c4`), while
+    /// `[0.0 .. -900.0]` exists only on the `PlayerSetColumn_SetTarget` target struct.
     pub fn close_to_target(&mut self, pos: Vec3, yaw: f32, target: &PlayerColumnTarget) {
         close_to_value(
             target.move_col.radius,
@@ -352,9 +357,9 @@ impl PlayerColumnState {
         self.move_col.active = self.move_col.radius > 0.0;
 
         self.hit_col.center_x = pos.x + self.hit_fwd_offset * sin_y;
-        self.hit_col.y_bottom = pos.y + PLAYER_HIT_COL_Y_BOTTOM_OFFSET;
+        self.hit_col.y_bottom = self.move_col.y_bottom;
         self.hit_col.center_z = pos.z + self.hit_fwd_offset * cos_y;
-        self.hit_col.y_top = pos.y + PLAYER_HIT_COL_Y_TOP_OFFSET;
+        self.hit_col.y_top = self.move_col.y_top;
         self.hit_col.active = self.hit_col.radius > 0.0;
     }
 
@@ -396,8 +401,12 @@ pub struct CharacterCylinder {
 }
 
 impl CharacterCylinder {
-    /// Constructs a new character cylinder with authentic default `y_bottom_offset = -50.0`,
-    /// `hit_radius = radius`, and discrete `weight` derived from `mass`.
+    /// Constructs a new character cylinder with authentic default `y_bottom_offset = -50.0`
+    /// and `hit_radius = radius`.
+    ///
+    /// Legacy adapter: maps floating-point `mass` into the discrete PS2 `weight` tier (`1..=4`,
+    /// where `<= 1.0` -> `1`, `<= 2.0` -> `2`, `<= 5.0` -> `3`, `> 5.0` -> `4`) for callers that
+    /// have not migrated to explicit [`Self::with_weight`].
     pub const fn new(id: CharacterId, position: Vec3, radius: f32, height: f32, mass: f32) -> Self {
         let weight = if mass <= 1.0 {
             1
@@ -420,6 +429,14 @@ impl CharacterCylinder {
             weight,
             active: true,
         }
+    }
+
+    /// Sets the explicit discrete PS2 `_CL_HITPOLY_COLUMN.weight` (`+0x04`) tier used by
+    /// `clCollectCharaALL` (`0x00132e20`).
+    #[inline]
+    pub const fn with_weight(mut self, weight: i32) -> Self {
+        self.weight = weight;
+        self
     }
 
     /// Constructs James's authentic dual-cylinder registration (`175mm / 800mm` move, `150mm / 900mm` hit).

@@ -317,13 +317,44 @@ impl CollisionWorld {
     ) -> Option<FloorSample> {
         let mut best: Option<FloorSample> = None;
 
-        // 1. Broadphase: query floor triangles in the current grid cell
-        let cell = self.grid.point_to_cell(x, z);
-        let cell_tri_indices = &self.grid.floor_cells[cell];
+        // 1. Broadphase: query floor triangles in the current grid cell (gated on `disable == 0`)
+        if self.disable == 0 {
+            let cell = self.grid.point_to_cell(x, z);
+            let cell_tri_indices = &self.grid.floor_cells[cell];
 
-        if !cell_tri_indices.is_empty() {
-            for &idx in cell_tri_indices {
-                if let Some(tri) = self.floors.get(idx) {
+            if !cell_tri_indices.is_empty() {
+                for &idx in cell_tri_indices {
+                    if let Some(tri) = self.floors.get(idx) {
+                        if let Some(y) = tri.sample_height(x, z) {
+                            if y >= y_ref - up && y <= y_ref + down {
+                                match best {
+                                    None => {
+                                        best = Some(FloorSample {
+                                            height_y: y,
+                                            raw_material: tri.material,
+                                            surface: SurfaceMaterial::from_cld_material(
+                                                tri.material,
+                                            ),
+                                        });
+                                    }
+                                    Some(prev) if y < prev.height_y => {
+                                        best = Some(FloorSample {
+                                            height_y: y,
+                                            raw_material: tri.material,
+                                            surface: SurfaceMaterial::from_cld_material(
+                                                tri.material,
+                                            ),
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Broadphase cell empty or unindexed: fallback to all static floors
+                for tri in &self.floors {
                     if let Some(y) = tri.sample_height(x, z) {
                         if y >= y_ref - up && y <= y_ref + down {
                             match best {
@@ -343,31 +374,6 @@ impl CollisionWorld {
                                 }
                                 _ => {}
                             }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Broadphase cell empty or unindexed: fallback to all static floors
-            for tri in &self.floors {
-                if let Some(y) = tri.sample_height(x, z) {
-                    if y >= y_ref - up && y <= y_ref + down {
-                        match best {
-                            None => {
-                                best = Some(FloorSample {
-                                    height_y: y,
-                                    raw_material: tri.material,
-                                    surface: SurfaceMaterial::from_cld_material(tri.material),
-                                });
-                            }
-                            Some(prev) if y < prev.height_y => {
-                                best = Some(FloorSample {
-                                    height_y: y,
-                                    raw_material: tri.material,
-                                    surface: SurfaceMaterial::from_cld_material(tri.material),
-                                });
-                            }
-                            _ => {}
                         }
                     }
                 }
@@ -774,7 +780,7 @@ impl CollisionController {
             .raycast_acoustic_occlusion(emitter_pos, listener_head_pos)
     }
 
-    /// Exact 1:1 `clCollectCharaALL` (`SLUS_202.28` `0x00132e20` / `sh2pc.exe` `0x00525f50`):
+    /// Exact 1:1 `clCollectCharaALL` (`SLUS_202.28` `0x00132e20` / `sh2pc.exe` `0x00526280`):
     /// runs up to 5 interleaved BG + character-to-character relaxation iterations using the
     /// discrete weight-diff table `[1.0, 0.98, 0.94, 0.90, 0.86]`.
     ///

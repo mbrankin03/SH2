@@ -620,14 +620,14 @@ impl DramaDemoPlayer {
         let mut effective_dt = safe_dt;
         let stream_start_f = self.info.stream_start.max(0) as f32;
 
-        // `DramaDemoMain` (`SLUS_202.28` `0x001b0f00`, `sh2pc.exe` `0x004a2110`) stream preload &
-        // voice-buffer readiness gate (`shSetDFZero` / `shResetDF`).
+        // `DramaDemoMain` (`SLUS_202.28` `0x001b0f00` `Event/demoview.c:93-116`,
+        // `sh2pc.exe` `FUN_004a2110` `0x004a2110`): stream preload (`0x80`) and stream-start
+        // readiness gate (`0x100`) are mutually exclusive (`if / else if`) per tick.
         if self.info.stream_no > 0 {
             if !self.voice_preload_requested {
                 self.voice_preload_requested = true;
                 df_hook = DemoDeltaFrameHook::ResetDeltaFrame;
-            }
-            if !self.voice_started
+            } else if !self.voice_started
                 && (self.scene_frame + safe_dt * CUTSCENE_NATIVE_FPS) >= stream_start_f
             {
                 match buffer_state {
@@ -1006,29 +1006,79 @@ mod tests {
         info.stream_start = 1;
         let mut player = DramaDemoPlayer::new(info, minimal_demo_script(100), false);
 
-        // First tick: stream_start=1 reached on 1/30s tick, but buffer is still Buffering -> FreezeDeltaFrame (`shSetDFZero`)
+        // Tick 1: `0x80` preload block fires alone (`shResetDF`); `0x100` does NOT execute on the same tick.
         let hook1 = player.tick_with_voice_buffer_sync(
             1.0 / 30.0,
             false,
             None,
             DemoVoiceBufferState::Buffering,
         );
-        assert_eq!(hook1, DemoDeltaFrameHook::FreezeDeltaFrame);
-        assert_eq!(player.scene_frame, 0.0);
+        assert_eq!(hook1, DemoDeltaFrameHook::ResetDeltaFrame);
+        assert!(player.voice_preload_requested);
+        assert!(!player.voice_started);
+        assert!((player.scene_frame - 1.0).abs() < 1e-4);
+        assert_eq!(player.voice_stall_secs, 0.0);
+
+        // Tick 2: `0x80` is now set and `scene_frame >= stream_start`, but buffer is still Buffering -> FreezeDeltaFrame (`shSetDFZero`)
+        let hook2 = player.tick_with_voice_buffer_sync(
+            1.0 / 30.0,
+            false,
+            None,
+            DemoVoiceBufferState::Buffering,
+        );
+        assert_eq!(hook2, DemoDeltaFrameHook::FreezeDeltaFrame);
+        assert!((player.scene_frame - 1.0).abs() < 1e-4);
         assert!(!player.voice_started);
         assert!((player.voice_stall_secs - (1.0 / 30.0)).abs() < 1e-5);
 
-        // Next tick: buffer becomes Ready -> ResetDeltaFrame (`shResetDF`), voice starts, frame advances
-        let hook2 = player.tick_with_voice_buffer_sync(
+        // Tick 3: buffer becomes Ready -> ResetDeltaFrame (`shResetDF`), voice starts (`0x100`), frame advances
+        let hook3 = player.tick_with_voice_buffer_sync(
             1.0 / 30.0,
             false,
             None,
             DemoVoiceBufferState::Ready,
         );
-        assert_eq!(hook2, DemoDeltaFrameHook::ResetDeltaFrame);
+        assert_eq!(hook3, DemoDeltaFrameHook::ResetDeltaFrame);
         assert!(player.voice_started);
         assert!(player.pending_voice_trigger);
-        assert!((player.scene_frame - 1.0).abs() < 1e-4);
+        assert!((player.scene_frame - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_drama_demo_main_preload_and_stream_start_mutually_exclusive_when_stream_start_le_1() {
+        for stream_start in [0i16, 1i16] {
+            let mut info = crate::cutscene::catalog::DRAMA_DEMO_CATALOG[0];
+            info.stream_no = 118;
+            info.stream_start = stream_start;
+            let mut player = DramaDemoPlayer::new(info, minimal_demo_script(100), false);
+
+            // Even with Ready buffer and `stream_start <= 1`, Tick 1 must ONLY run the `0x80` preload branch
+            // (`Event/demoview.c:93-116` / `sh2pc.exe` `FUN_004a2110` `if / else if`).
+            let hook1 = player.tick_with_voice_buffer_sync(
+                1.0 / 30.0,
+                false,
+                None,
+                DemoVoiceBufferState::Ready,
+            );
+            assert_eq!(hook1, DemoDeltaFrameHook::ResetDeltaFrame);
+            assert!(player.voice_preload_requested);
+            assert!(
+                !player.voice_started,
+                "0x80 preload and 0x100 stream_start must not both fire on tick 1 (stream_start={stream_start})"
+            );
+            assert!(!player.pending_voice_trigger);
+
+            // Tick 2 now enters the `else if` (`0x100`) branch and triggers voice playback.
+            let hook2 = player.tick_with_voice_buffer_sync(
+                1.0 / 30.0,
+                false,
+                None,
+                DemoVoiceBufferState::Ready,
+            );
+            assert_eq!(hook2, DemoDeltaFrameHook::ResetDeltaFrame);
+            assert!(player.voice_started);
+            assert!(player.pending_voice_trigger);
+        }
     }
 
     #[test]

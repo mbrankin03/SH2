@@ -20,6 +20,36 @@ use std::f32::consts::{FRAC_PI_4, FRAC_PI_6, PI};
 pub use sh2_assets::formats::cam::CamMovementType as CameraMovementType;
 pub use sh2_assets::formats::cam::CamSourceKind as CameraSourceKind;
 
+/// Default PS2 projection plane distance (`448.0`) used when a `.cam` record specifies `projection == 0.0`
+/// and as the PS2 vertical screen height (`scr_sy = 448.0`) in screen-framing math
+/// (`SLUS_202.28` `vcSetProjectionValue` `0x0019db80` / `sh2pc.exe` `FUN_0051d2b0` `0x0051d2b0`).
+pub const PS2_DEFAULT_PROJECTION_Z: f32 = 448.0;
+
+/// Non-bone fallback player head height offset in PS2 world mm (`-950.0` along Y-down)
+/// (`SLUS_202.28` `vcMoveAndSetCamera` `0x0019df50` `view/vc_util.c:219` /
+/// `sh2pc.exe` `FUN_005193a0` `0x005193a0` `sh2pc_00510000.c:7090`).
+pub const CHARA_FALLBACK_HEAD_HEIGHT_MM: f32 = 950.0;
+
+/// Retail standing player top height (`chara_top_y = player_pos.y - 937.5`) in PS2 world mm
+/// (`sh2pc.exe` `FUN_005193a0` `0x005193a0` `sh2pc_00510000.c:7097`; prototype `SLUS_202.28`
+/// `vcMoveAndSetCamera` `0x0019df50` `view/vc_util.c:230` used `925.0`).
+pub const CHARA_TOP_HEIGHT_MM: f32 = 937.5;
+
+/// Standing player vertical center offset (`(0.0 + 937.5) * 0.5 = 468.75` mm) derived from
+/// `vcSetSubjChara` (`SLUS_202.28` `0x00195f00` `view/vc_main.c:355` /
+/// `sh2pc.exe` `FUN_00519b90` `0x00519b90` `sh2pc_00510000.c:7306`).
+pub const CHARA_CENTER_HEIGHT_MM: f32 = CHARA_TOP_HEIGHT_MM * 0.5;
+
+/// Maximum XZ scan distance (`7500.0` mm) used as the sentinel when no enemy is in range
+/// (`SLUS_202.28` `vcSetNearestEnemyDataInVC_WORK` `0x00196f20` `view/vc_main.c:844-845,856` /
+/// `sh2pc.exe` `FUN_0051a270` `0x0051a270` `sh2pc_00510000.c:7587-7588`).
+pub const NEAREST_ENEMY_MAX_DIST_MM: f32 = 7500.0;
+
+/// Default vertical watch-target offset (`-450.0` mm along Y-down) used for doorway/far-watch
+/// framing when no enemy or item target is active (`SLUS_202.28` `vcPreSetDataInVC_WORK`
+/// `0x00196be0` `view/vc_main.c:775` and `vcMakeFarWatchTgtPos` `0x00199760` `view/vc_main.c:2193`).
+pub const DEFAULT_WATCH_TARGET_Y_OFFSET_MM: f32 = -450.0;
+
 /// Authentic PS2 `LOCUS_CIRCLE` (Mode 4) and `THROUGH_DOOR` (Mode 5) camera motion algorithms (`SH2-51`, `SH2-134`).
 pub mod locus_door;
 /// Authentic PS2 Mode 3 (`SELF_VIEW`) camera matrix breathing/handheld noise (`SH2-134`).
@@ -274,7 +304,7 @@ impl Ps2CameraController {
     ) -> (Vec3, Vec3, f32, CameraMovementType) {
         // PS2 projection focal conversion: 448.0 -> ~53 deg (~0.927 rad), 757.0 -> ~33 deg (~0.575 rad)
         let fov_y = if rec.projection > 0.0 {
-            (2.0 * ((0.5 * 448.0) / rec.projection).atan()).clamp(0.50, 1.15)
+            (2.0 * ((0.5 * PS2_DEFAULT_PROJECTION_Z) / rec.projection).atan()).clamp(0.50, 1.15)
         } else {
             FRAC_PI_4
         };
@@ -300,11 +330,15 @@ impl Ps2CameraController {
                 locus_eye
             }
             CameraMovementType::SelfView => {
-                let head_pos = Vec3::new(player_pos.x, player_pos.y - 937.5, player_pos.z);
+                let head_pos = Vec3::new(
+                    player_pos.x,
+                    player_pos.y - CHARA_FALLBACK_HEAD_HEIGHT_MM,
+                    player_pos.z,
+                );
                 self_view::make_ideal_cam_pos_by_head_pos(
                     0,
                     player_pos,
-                    player_pos.y - 468.75,
+                    player_pos.y - CHARA_CENTER_HEIGHT_MM,
                     head_pos,
                     player_yaw,
                 )
@@ -335,7 +369,8 @@ impl Ps2CameraController {
         }
 
         let fov_y = if effective_projection > 0.0 {
-            (2.0 * ((0.5 * 448.0) / effective_projection).atan()).clamp(0.50, 1.15)
+            (2.0 * ((0.5 * PS2_DEFAULT_PROJECTION_Z) / effective_projection).atan())
+                .clamp(0.50, 1.15)
         } else {
             fov_y
         };
@@ -384,13 +419,13 @@ impl Ps2CameraController {
         let scr_z = if effective_projection > 0.0 {
             effective_projection
         } else {
-            448.0
+            PS2_DEFAULT_PROJECTION_Z
         };
-        let scr_sy = 448.0f32;
+        let scr_sy = PS2_DEFAULT_PROJECTION_Z;
         let scr_half_wy = (scr_sy).atan2(scr_z) * 0.5;
 
         let chara_btm_y = rec.trace_btm_hy + (player_pos.y - 250.0);
-        let chara_top_y = player_pos.y - 937.5;
+        let chara_top_y = player_pos.y - CHARA_TOP_HEIGHT_MM;
 
         let vec_btm = Vec3::new(
             player_pos.x - eye.x,
@@ -596,12 +631,15 @@ impl Ps2CameraController {
         let target_mv_type: CameraMovementType;
         let mut cur_road_flags: u16 = 0;
         let mut cur_area_size = AreaSizeType::Wide;
-        let mut cur_projection: f32 = 448.0;
+        let mut cur_projection: f32 = PS2_DEFAULT_PROJECTION_Z;
         let mut warp_cut = false;
         let mut eye_lerp = crate::widescreen_rail::DEFAULT_SMOOTH_WARP_EYE_LERP;
         let mut target_lerp = crate::widescreen_rail::DEFAULT_SMOOTH_WARP_TARGET_LERP;
 
-        let nearest_enemy_dist = self.nearest_enemy.map(|(d, _)| d).unwrap_or(7500.0);
+        let nearest_enemy_dist = self
+            .nearest_enemy
+            .map(|(d, _)| d)
+            .unwrap_or(NEAREST_ENEMY_MAX_DIST_MM);
 
         if let Some(td_eye) = self.through_door_session.step(
             DT_60HZ,
@@ -610,7 +648,7 @@ impl Ps2CameraController {
             self.nearest_enemy.map(|(d, _)| d),
         ) {
             target_eye = td_eye;
-            target_look = player_pos + Vec3::new(0.0, -450.0, 0.0);
+            target_look = player_pos + Vec3::new(0.0, DEFAULT_WATCH_TARGET_Y_OFFSET_MM, 0.0);
             target_fov = FRAC_PI_4;
             target_mv_type = CameraMovementType::ThroughDoor;
         } else if let Some(ref cam_file) = self.cam_file {
@@ -693,7 +731,7 @@ impl Ps2CameraController {
                 cur_projection = if rec.projection > 0.0 {
                     rec.projection
                 } else {
-                    448.0
+                    PS2_DEFAULT_PROJECTION_Z
                 };
 
                 let (eval_eye, eval_look, eval_fov, eval_mv) =
@@ -741,8 +779,12 @@ impl Ps2CameraController {
             player_yaw,
         );
 
-        let head_pos = Vec3::new(player_pos.x, player_pos.y - 937.5, player_pos.z);
-        let chara_center_y = player_pos.y - 468.75;
+        let head_pos = Vec3::new(
+            player_pos.x,
+            player_pos.y - CHARA_FALLBACK_HEAD_HEIGHT_MM,
+            player_pos.z,
+        );
+        let chara_center_y = player_pos.y - CHARA_CENTER_HEIGHT_MM;
         let nearest_item_pair = self
             .nearest_item
             .center_y
@@ -798,7 +840,7 @@ impl Ps2CameraController {
                 target_look,
                 target_eye,
                 cur_projection,
-                448.0,
+                PS2_DEFAULT_PROJECTION_Z,
                 self.stage_id,
             );
         }

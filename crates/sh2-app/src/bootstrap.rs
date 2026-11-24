@@ -15,6 +15,7 @@ use crate::cli::CliArgs;
 use crate::rooms;
 use crate::rooms::fmv_room::open_fmv_session;
 use crate::state::AppState;
+use sh2_app::gamepad::GilrsGamepadPoller;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::TextureLoader;
 use sh2_audio::{AudioEngine, BgmManager, MenuAudioBank};
@@ -583,6 +584,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         story_progression_room: rooms::story_progression_room::StoryProgressionRoomState::default(),
         loading_screen_test: rooms::loading_screen_room::LoadingScreenTestState::default(),
         sim_core,
+        gamepad: GilrsGamepadPoller::new(),
         gpu_map,
         map_hd_assets,
         map_sh2e_assets,

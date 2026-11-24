@@ -14,6 +14,7 @@ use crate::rooms::loading_screen_room::LoadingScreenTestState;
 use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
 use crate::rooms::story_progression_room::StoryProgressionRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
+use sh2_app::gamepad::GilrsGamepadPoller;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
 use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank};
@@ -55,6 +56,7 @@ pub(crate) struct AppState {
     pub story_progression_room: StoryProgressionRoomState,
     pub loading_screen_test: LoadingScreenTestState,
     pub sim_core: SimulationCore,
+    pub gamepad: GilrsGamepadPoller,
     pub gpu_map: Arc<GpuMap>,
     pub map_hd_assets: MapTierAssets,
     pub map_sh2e_assets: Option<MapTierAssets>,

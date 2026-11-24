@@ -83,6 +83,7 @@ pub(crate) struct AppState {
     pub jms_spot_man: sh2_renderer::light::JmsSpotManager,
     pub char_light_pool: sh2_renderer::light::CharacterLightPool,
     pub last_fog_time: f32,
+    pub last_fog_blow_tick: u64,
     pub menu_ctrl: AppMenuController,
     pub ingame_menus: crate::ingame_menus::InGameMenuState,
     pub combat_arena: sh2_core::combat::CombatArena,

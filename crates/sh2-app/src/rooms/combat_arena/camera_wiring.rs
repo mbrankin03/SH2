@@ -262,10 +262,12 @@ pub(crate) fn update_spotlight_uniforms(
         {
             state.jms_spot_man.turn_off();
         }
-        let sim_tick =
-            (state.sim_core.deterministic_fog_time(alpha).max(0.0) * 60.0).floor() as u64;
+        // Step `Programed_Light_Set` (`SLUS_202.28` `0x0028eaf0`, called from 30 Hz `draw_main`
+        // `0x0019feb0:169`) at exact 30 Hz (`tick_counter / 2` from the 60 Hz sim clock) for 1:1
+        // flashlight turn-on (1.0 s), turn-off (0.2 s), flicker, and 15 s dark-trim adaptation.
+        let ps2_draw_tick_30hz = state.sim_core.tick_counter / 2;
         state.jms_spot_man.tick_at_sim_tick(
-            sim_tick,
+            ps2_draw_tick_30hz,
             is_dark_room,
             has_flashlight,
             packed_map_id.unwrap_or(0),

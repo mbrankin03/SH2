@@ -595,6 +595,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         jms_spot_man: sh2_renderer::light::JmsSpotManager::new(),
         char_light_pool: sh2_renderer::light::CharacterLightPool::new(),
         last_fog_time: 0.0,
+        last_fog_blow_tick: 0,
         menu_ctrl,
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),
         combat_arena,

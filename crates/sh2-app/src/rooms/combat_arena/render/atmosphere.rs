@@ -6,9 +6,11 @@ use sh2_ui::menu::TestRoomKind;
 
 pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     let det_fog_time = state.sim_core.deterministic_fog_time(alpha);
-    let prev_sim_tick = (state.last_fog_time.max(0.0) * 60.0).floor() as u64;
-    let curr_sim_tick = (det_fog_time.max(0.0) * 60.0).floor() as u64;
-    let blow_frame_steps = curr_sim_tick.saturating_sub(prev_sim_tick).min(6) as i32;
+    let curr_sim_tick = state.sim_core.tick_counter;
+    let blow_frame_steps = curr_sim_tick
+        .saturating_sub(state.last_fog_blow_tick)
+        .min(6) as i32;
+    state.last_fog_blow_tick = curr_sim_tick;
     let fog_dt = (det_fog_time - state.last_fog_time).clamp(0.0, 0.1);
     state.last_fog_time = det_fog_time;
     state.fog_uniforms.time = det_fog_time;

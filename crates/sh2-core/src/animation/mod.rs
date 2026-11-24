@@ -23,9 +23,9 @@ pub use gait_sync::{
 pub use head_tracking::{
     compute_desired_neck_angles, select_head_look_target, HeadLookTracker, LookTargetCandidate,
     LookTargetKind, DEFAULT_LOOK_SEARCH_RADIUS_MM, JAMES_HEAD_BONE_INDEX, JAMES_NECK_BONE_INDEX,
-    LOOK_ITEM_MAX_DY_MM, LOOK_ITEM_MIN_DY_MM, NECK_CRANIAL_SHARE, NECK_PITCH_MAX_RAD,
-    NECK_PITCH_MIN_RAD, NECK_TURN_SPEED, NECK_UPPER_SPINE_SHARE, NECK_YAW_MAX_RAD,
-    NECK_YAW_MIN_RAD,
+    LOOK_ITEM_MAX_DY_MM, LOOK_ITEM_MIN_DY_MM, MARIA_HEAD_BONE_INDEX, MARIA_NECK_BONE_INDEX,
+    NECK_CRANIAL_SHARE, NECK_PITCH_MAX_RAD, NECK_PITCH_MIN_RAD, NECK_TURN_SPEED,
+    NECK_UPPER_SPINE_SHARE, NECK_YAW_MAX_RAD, NECK_YAW_MIN_RAD,
 };
 pub use tables::{
     CharacterLocomotionClips, JamesBasicClips, JamesStageClips, MariaLocomotionClips,

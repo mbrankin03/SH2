@@ -311,9 +311,29 @@ impl CombatArena {
         collision: Option<&crate::collision::CollisionWorld>,
         dt: f32,
     ) {
-        let has_downed = self.has_downed_enemy_at_feet();
-        self.player
-            .handle_combat_inputs(ready_held, action_pressed, action_held, has_downed, dt);
+        self.tick_with_collision_input(
+            crate::combat::CombatInputSnapshot {
+                ready_held,
+                action_pressed,
+                action_held,
+                ..Default::default()
+            },
+            collision,
+            dt,
+        );
+    }
+
+    /// Execute simulation tick (60 Hz) with full [`crate::combat::CombatInputSnapshot`]
+    /// (PS2 pressure, `R2` analog trigger, native split bindings, running override) and optional
+    /// `.cld` collision probing (`SH2-83`).
+    pub fn tick_with_collision_input(
+        &mut self,
+        mut input: crate::combat::CombatInputSnapshot,
+        collision: Option<&crate::collision::CollisionWorld>,
+        dt: f32,
+    ) {
+        input.has_downed_enemy_nearby = self.has_downed_enemy_at_feet();
+        self.player.handle_combat_inputs_ex(input, dt);
 
         self.step_active_attack_hits(None);
 
@@ -349,20 +369,38 @@ impl CombatArena {
         dt: f32,
         active_enemy_idx: usize,
     ) {
+        self.tick_isolated_input(
+            crate::combat::CombatInputSnapshot {
+                ready_held,
+                action_pressed,
+                action_held,
+                ..Default::default()
+            },
+            dt,
+            active_enemy_idx,
+        );
+    }
+
+    /// Execute isolated-enemy simulation tick with full [`crate::combat::CombatInputSnapshot`] (`SH2-83`).
+    pub fn tick_isolated_input(
+        &mut self,
+        mut input: crate::combat::CombatInputSnapshot,
+        dt: f32,
+        active_enemy_idx: usize,
+    ) {
         if self.ai.enemies.is_empty() {
             return;
         }
         let isolated_idx = active_enemy_idx % self.ai.enemies.len();
 
-        let has_downed = {
+        input.has_downed_enemy_nearby = {
             let e = &self.ai.enemies[isolated_idx];
             e.is_downed()
                 && !e.is_dead()
                 && (e.position() - self.player_position).length() <= STOMP_TARGET_MAX_DIST_MM
         };
 
-        self.player
-            .handle_combat_inputs(ready_held, action_pressed, action_held, has_downed, dt);
+        self.player.handle_combat_inputs_ex(input, dt);
 
         self.step_active_attack_hits(Some(isolated_idx));
 

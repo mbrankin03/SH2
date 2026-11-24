@@ -47,6 +47,10 @@ pub const DEFAULT_LOOK_SEARCH_RADIUS_MM: f32 = 2000.0;
 pub const JAMES_NECK_BONE_INDEX: usize = 8;
 /// James's cranial head bone index (`lll_jms.mdl` / `hll_jms.mdl` / `hhh_jms.mdl`, `CharacterHeadRigSpec::JAMES`).
 pub const JAMES_HEAD_BONE_INDEX: usize = 15;
+/// Maria's neck/upper-spine bone index (`lll_mar.mdl` / `hhh_mar.mdl`, `parents[9] == 6`, parent of cranial bone `9`).
+pub const MARIA_NECK_BONE_INDEX: usize = 6;
+/// Maria's cranial head bone index (`lll_mar.mdl` / `hhh_mar.mdl`, `CharacterHeadRigSpec::MARIA`).
+pub const MARIA_HEAD_BONE_INDEX: usize = 9;
 
 /// Classification of a candidate look target (`kind >> 8` in `sh2pc.exe` `FUN_005426b0` `0x005426b0`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

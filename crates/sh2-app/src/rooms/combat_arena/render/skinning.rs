@@ -113,12 +113,69 @@ pub(super) fn evaluate_player_skinning(
                 .enable_secondary_physics;
             if !is_paused && ticks_processed > 0 {
                 let dt_physics = 1.0 / 60.0;
-                let head_suppressed = state
+                let head_rig = if state.active_maria {
+                    sh2_core::modern_camera::CharacterHeadRigSpec::MARIA
+                } else {
+                    sh2_core::modern_camera::CharacterHeadRigSpec::JAMES
+                };
+                let eye_pos =
+                    auth_player_pos + glam::Vec3::new(0.0, head_rig.fallback_model_eye.y, 0.0);
+
+                let enable_sh2ee_world_fixes = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .game
+                    .enable_sh2ee_world_fixes;
+                let mut look_candidates: Vec<sh2_core::LookTargetCandidate> = state
+                    .combat_arena
+                    .ai
+                    .enemies
+                    .iter()
+                    .map(|enemy| sh2_core::LookTargetCandidate {
+                        kind: sh2_core::LookTargetKind::Enemy,
+                        prop_kind: 0x0200,
+                        position: enemy.position(),
+                        is_combat_target: state.combat_arena.player.mode
+                            == sh2_core::CombatMode::Ready
+                            && !enemy.is_dead(),
+                        is_active: !enemy.is_dead(),
+                    })
+                    .collect();
+                if let Some(ref orch) = state.campaign_orchestrator {
+                    if let Some(ref manifest) = orch.active_manifest {
+                        for pickup in &manifest.room_pickups {
+                            if !state.sim_core.scenario.flags.get(pickup.flag_id as usize) {
+                                look_candidates.push(sh2_core::LookTargetCandidate {
+                                    kind: sh2_core::LookTargetKind::ItemOrProp,
+                                    prop_kind: 0x0700,
+                                    position: glam::Vec3::from_array(pickup.position_mm),
+                                    is_combat_target: false,
+                                    is_active: true,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                let chosen_target = sh2_core::animation::select_head_look_target(
+                    auth_player_pos,
+                    &look_candidates,
+                    sh2_core::animation::DEFAULT_LOOK_SEARCH_RADIUS_MM,
+                    &state.sim_core.scenario.flags,
+                    enable_sh2ee_world_fixes,
+                );
+                let is_cutscene = state
                     .drama_demo_session
                     .as_ref()
-                    .is_some_and(|s| s.player.locks_gameplay_input())
-                    || state.combat_arena.player.mode != sh2_core::CombatMode::Free;
-                let eye_pos = auth_player_pos + glam::Vec3::new(0.0, -844.6, 0.0);
+                    .is_some_and(|s| s.player.locks_gameplay_input());
+                let is_combat_ready_with_target = state.combat_arena.player.mode
+                    == sh2_core::CombatMode::Ready
+                    && chosen_target.is_some_and(|t| t.is_combat_target);
+                let head_suppressed = is_cutscene
+                    || (state.combat_arena.player.mode != sh2_core::CombatMode::Free
+                        && !is_combat_ready_with_target);
+
                 for _ in 0..ticks_processed {
                     c.secondary_physics.step_if_enabled(
                         secondary_physics_enabled,
@@ -126,8 +183,13 @@ pub(super) fn evaluate_player_skinning(
                         auth_player_pos,
                         auth_player_yaw,
                     );
-                    c.head_look
-                        .step(eye_pos, auth_player_yaw, None, head_suppressed, dt_physics);
+                    c.head_look.step(
+                        eye_pos,
+                        auth_player_yaw,
+                        chosen_target.map(|t| t.position),
+                        head_suppressed,
+                        dt_physics,
+                    );
                 }
             }
             c.dynamic_locals.copy_from_slice(&c.bind_locals);
@@ -137,7 +199,10 @@ pub(super) fn evaluate_player_skinning(
                 alpha,
             );
             let (neck_bone, head_bone) = if state.active_maria {
-                (8usize, 9usize)
+                (
+                    sh2_core::animation::MARIA_NECK_BONE_INDEX,
+                    sh2_core::animation::MARIA_HEAD_BONE_INDEX,
+                )
             } else {
                 (
                     sh2_core::animation::JAMES_NECK_BONE_INDEX,

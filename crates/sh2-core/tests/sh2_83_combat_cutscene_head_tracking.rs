@@ -9,8 +9,8 @@ use glam::Vec3;
 use sh2_core::animation::{
     select_head_look_target, HeadLookTracker, LookTargetCandidate, LookTargetKind,
     DEFAULT_LOOK_SEARCH_RADIUS_MM, JAMES_HEAD_BONE_INDEX, JAMES_NECK_BONE_INDEX,
-    NECK_CRANIAL_SHARE, NECK_PITCH_MAX_RAD, NECK_PITCH_MIN_RAD, NECK_UPPER_SPINE_SHARE,
-    NECK_YAW_MAX_RAD, NECK_YAW_MIN_RAD,
+    MARIA_HEAD_BONE_INDEX, MARIA_NECK_BONE_INDEX, NECK_CRANIAL_SHARE, NECK_PITCH_MAX_RAD,
+    NECK_PITCH_MIN_RAD, NECK_UPPER_SPINE_SHARE, NECK_YAW_MAX_RAD, NECK_YAW_MIN_RAD,
 };
 use sh2_core::combat::{
     CombatController, CombatInputSnapshot, CombatMode, WeaponGrip, ATK_CHAINSAW_LIGHT,
@@ -347,4 +347,15 @@ fn test_retail_james_mdl_head_tracking_and_right_hand_poses() {
         .primitives
         .iter()
         .any(|p| p.pose_index == JAMES_EMPTY_RIGHT_HAND_POSE));
+
+    // Verify Maria's neck/head bone parent hierarchy in retail lll_mar.mdl / hhh_mar.mdl
+    if let Some(mar_path) = resolver.resolve_file("chr/mar/lll_mar.mdl") {
+        let mar_data = std::fs::read(&mar_path).expect("read lll_mar.mdl");
+        let mar_model = sh2_assets::formats::mdls::parse_mdl(&mar_data).expect("parse lll_mar.mdl");
+        assert!(mar_model.bone_count > MARIA_HEAD_BONE_INDEX);
+        assert_eq!(
+            mar_model.parents[MARIA_HEAD_BONE_INDEX],
+            MARIA_NECK_BONE_INDEX as u8
+        );
+    }
 }

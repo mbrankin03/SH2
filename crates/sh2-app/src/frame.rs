@@ -608,7 +608,15 @@ fn render_title_menu_overlay(
                 );
             }
             TitlePhase::TransitionToGame => {
-                if let Some(ref ls) = state.loading_screen {
+                let use_hd_footmark = state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .video
+                    .texture_quality
+                    != sh2_core::WorldTextureQuality::OriginalPs2;
+                if let Some(ref mut ls) = state.loading_screen {
+                    ls.use_hd_footmark = use_hd_footmark;
                     ls.render(font, &mut state.inventory_rasterizer);
                 } else {
                     let label = state.menu_ctrl.title_sm.selected_test_room.label();

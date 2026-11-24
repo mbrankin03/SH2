@@ -6,10 +6,13 @@ use sh2_assets::resolver::AssetPathResolver;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Static footstep sprite loaded from `data/etc/effect/footmark.tbn2` (`FUN_004c8500`).
-static FOOTSTEP_SPRITE: OnceLock<FootstepSprite> = OnceLock::new();
+/// Static HD-preferred footstep sprite (`sh2e/effect/footmark.tbn2` 256×256 -> vanilla 64×64 fallback).
+static FOOTSTEP_SPRITE_HD: OnceLock<FootstepSprite> = OnceLock::new();
+/// Static strict 1:1 Vanilla PS2/PC footstep sprite (`data/etc/effect/footmark.tbn2` 64×64).
+static FOOTSTEP_SPRITE_VANILLA: OnceLock<FootstepSprite> = OnceLock::new();
 
-/// Pre-decoded footstep RGBA texture sprite (`64×64` from `data/etc/effect/footmark.tbn2`).
+/// Pre-decoded footstep RGBA texture sprite (`64×64` vanilla `data/etc/effect/footmark.tbn2`
+/// or `256×256` SH2:EE HD `sh2e/effect/footmark.tbn2`).
 ///
 /// `sh2pc.exe` `FUN_004c87e0` (`0x004c87e0`) renders `footmark.tbn2` with
 /// `D3DTSS_COLORARG1 = D3DTA_TEXTURE`, `D3DTSS_ALPHAARG1 = D3DTA_TEXTURE`,
@@ -21,40 +24,89 @@ pub struct FootstepSprite {
     pub rgba: Vec<u8>,
     /// `true` when loaded from retail `footmark.tbn2`, `false` when using the CI fallback.
     pub from_retail_asset: bool,
+    /// `true` when loaded from the SH2:EE HD `sh2e/effect/footmark.tbn2` (256×256) override.
+    pub is_hd_override: bool,
 }
 
 impl FootstepSprite {
-    /// Loads `data/etc/effect/footmark.tbn2` (`sh2pc.exe` `FUN_004c8500`), falling back to a
-    /// procedural 64×64 sole silhouette only when retail assets are absent (e.g. CI).
+    /// Loads the HD-preferred footstep sprite (`sh2e/effect/footmark.tbn2` 256×256 when present,
+    /// falling back to vanilla `data/etc/effect/footmark.tbn2` 64×64, then procedural CI fallback).
     pub fn get() -> &'static Self {
-        FOOTSTEP_SPRITE.get_or_init(|| {
-            if let Some(sprite) = Self::load_from_retail_assets() {
+        FOOTSTEP_SPRITE_HD.get_or_init(|| {
+            if let Some(sprite) = Self::load_from_retail_assets_with_hd(true) {
                 return sprite;
             }
             Self::generate_procedural_fallback()
         })
     }
 
-    /// Attempts to resolve and decode `data/etc/effect/footmark.tbn2` (`sh2pc.exe` `FUN_004c8500`).
-    pub fn load_from_retail_assets() -> Option<Self> {
-        let resolver = AssetPathResolver::resolve();
-        // Exact retail path first: `data/etc/effect/footmark.tbn2` (`FUN_004c8500`).
-        let candidate_rel_paths = [
-            "etc/effect/footmark.tbn2",
-            "pic/effect/footmark.tbn2",
-            "effect/footmark.tbn2",
-        ];
+    /// Loads the strict 1:1 Vanilla footstep sprite (`data/etc/effect/footmark.tbn2` 64×64).
+    pub fn get_vanilla() -> &'static Self {
+        FOOTSTEP_SPRITE_VANILLA.get_or_init(|| {
+            if let Some(sprite) = Self::load_from_retail_assets_with_hd(false) {
+                return sprite;
+            }
+            Self::generate_procedural_fallback()
+        })
+    }
 
+    /// Selects either the SH2:EE HD 256×256 sprite (`prefer_hd = true`) or the strict 1:1 Vanilla
+    /// 64×64 sprite (`prefer_hd = false`).
+    pub fn get_for_hd(prefer_hd: bool) -> &'static Self {
+        if prefer_hd {
+            Self::get()
+        } else {
+            Self::get_vanilla()
+        }
+    }
+
+    /// Attempts to resolve and decode `footmark.tbn2` preferring SH2:EE HD (`sh2e/effect/footmark.tbn2`).
+    pub fn load_from_retail_assets() -> Option<Self> {
+        Self::load_from_retail_assets_with_hd(true)
+    }
+
+    /// Attempts to resolve and decode `footmark.tbn2` (`sh2pc.exe` `FUN_004c8500`).
+    /// When `prefer_hd` is `true`, checks `sh2e/effect/footmark.tbn2` (256×256) first;
+    /// when `false`, loads strict 1:1 vanilla `data/etc/effect/footmark.tbn2` (64×64).
+    pub fn load_from_retail_assets_with_hd(prefer_hd: bool) -> Option<Self> {
+        let resolver = AssetPathResolver::resolve();
         let mut tbn2_path: Option<PathBuf> = None;
-        for rel in &candidate_rel_paths {
-            if let Some(path) = resolver.resolve_file(rel) {
-                tbn2_path = Some(path);
-                break;
+
+        if prefer_hd {
+            // `AssetPathResolver::resolve_file` checks `sh2e_dir` first, so `effect/footmark.tbn2`
+            // resolves to `sh2e/effect/footmark.tbn2` (256×256 SH2:EE HD) when installed.
+            for rel in &[
+                "effect/footmark.tbn2",
+                "etc/effect/footmark.tbn2",
+                "pic/effect/footmark.tbn2",
+            ] {
+                if let Some(path) = resolver.resolve_file(rel) {
+                    tbn2_path = Some(path);
+                    break;
+                }
+            }
+        } else {
+            // Strict 1:1 Vanilla PS2/PC: read directly from `data_dir`, skipping `sh2e` overrides.
+            for rel in &[
+                "etc/effect/footmark.tbn2",
+                "pic/effect/footmark.tbn2",
+                "effect/footmark.tbn2",
+            ] {
+                let cand = resolver.data_dir.join(rel);
+                if cand.is_file() {
+                    tbn2_path = Some(cand);
+                    break;
+                }
             }
         }
 
         if tbn2_path.is_none() {
-            let direct_candidates = [
+            let direct_hd = [
+                "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+                "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+                "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+            ];
+            let direct_vanilla = [
                 "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
                 "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
                 "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
@@ -62,7 +114,8 @@ impl FootstepSprite {
                 "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
                 "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
             ];
-            for cand in &direct_candidates {
+            let list: &[&str] = if prefer_hd { &direct_hd } else { &[] };
+            for cand in list.iter().chain(direct_vanilla.iter()) {
                 let p = Path::new(cand);
                 if p.is_file() {
                     tbn2_path = Some(p.to_path_buf());
@@ -72,6 +125,11 @@ impl FootstepSprite {
         }
 
         let path = tbn2_path?;
+        let is_hd_override = path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .contains("/sh2e/");
         let bytes = std::fs::read(&path).ok()?;
         let textures = parse_texture_container(&bytes, 0).ok()?;
         let tex = textures.first()?;
@@ -88,6 +146,7 @@ impl FootstepSprite {
             height,
             rgba,
             from_retail_asset: true,
+            is_hd_override,
         })
     }
 
@@ -135,6 +194,7 @@ impl FootstepSprite {
             height,
             rgba,
             from_retail_asset: false,
+            is_hd_override: false,
         }
     }
 }

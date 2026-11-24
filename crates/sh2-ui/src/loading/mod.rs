@@ -201,6 +201,9 @@ pub struct LoadingScreen {
     pub min_duration: f32,
     pub require_press_to_continue: bool,
     pub fade_alpha: f32,
+    /// Whether to use the SH2:EE HD `sh2e/effect/footmark.tbn2` (256×256) sprite when installed.
+    /// Set to `false` in strict 1:1 Vanilla PS2 mode (`WorldTextureQuality::OriginalPs2`).
+    pub use_hd_footmark: bool,
     pub target_room_label: String,
     /// PS2 prototype `_count_51` 30 Hz frame counter (`SLUS_202.28` `NowLoadingDraw` `0x00299170`).
     pub ps2_frame_counter: i32,
@@ -251,6 +254,7 @@ impl LoadingScreen {
             min_duration,
             require_press_to_continue: require_press,
             fade_alpha: 1.0,
+            use_hd_footmark: true,
             target_room_label: target_label.into(),
             ps2_frame_counter: 0,
             ps2_text_x_512: PS2_NOW_LOADING_BASE_XY,
@@ -646,17 +650,36 @@ mod tests {
         if !retail_path.is_file() {
             return;
         }
-        let sprite = FootstepSprite::load_from_retail_assets()
+        // Strict 1:1 Vanilla 64×64 (`data/etc/effect/footmark.tbn2`)
+        let vanilla = FootstepSprite::load_from_retail_assets_with_hd(false)
             .expect("retail data/etc/effect/footmark.tbn2 must resolve and decode");
-        assert!(sprite.from_retail_asset);
-        assert_eq!(sprite.width, 64);
-        assert_eq!(sprite.height, 64);
-        assert_eq!(sprite.rgba.len(), 64 * 64 * 4);
-        let pixels = sprite.rgba.as_chunks::<4>().0;
+        assert!(vanilla.from_retail_asset);
+        assert!(!vanilla.is_hd_override);
+        assert_eq!(vanilla.width, 64);
+        assert_eq!(vanilla.height, 64);
+        assert_eq!(vanilla.rgba.len(), 64 * 64 * 4);
+        let pixels = vanilla.rgba.as_chunks::<4>().0;
         assert!(pixels.iter().any(|px| px[3] > 128));
         // Verify full RGBA tread detail is preserved (not overwritten with flat solid white):
         // retail `footmark.tbn2` has opaque interior pixels (`alpha > 200`) with dark sole-tread RGB.
         assert!(pixels.iter().any(|px| px[3] > 200 && px[0] < 128));
         assert!(pixels.iter().any(|px| px[3] > 200 && px[0] > 160));
+
+        // SH2:EE HD 256×256 (`sh2e/effect/footmark.tbn2`) when present
+        let hd_path = std::path::Path::new(
+            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e/effect/footmark.tbn2",
+        );
+        if hd_path.is_file() {
+            let hd = FootstepSprite::load_from_retail_assets_with_hd(true)
+                .expect("SH2:EE sh2e/effect/footmark.tbn2 must resolve and decode");
+            assert!(hd.from_retail_asset);
+            assert!(hd.is_hd_override);
+            assert_eq!(hd.width, 256);
+            assert_eq!(hd.height, 256);
+            assert_eq!(hd.rgba.len(), 256 * 256 * 4);
+            let hd_pixels = hd.rgba.as_chunks::<4>().0;
+            assert!(hd_pixels.iter().any(|px| px[3] > 200 && px[0] > 160));
+            assert!(hd_pixels.iter().any(|px| px[3] > 0 && px[3] < 200));
+        }
     }
 }

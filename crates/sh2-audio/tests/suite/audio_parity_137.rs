@@ -323,14 +323,82 @@ fn test_retail_change_list_241_entries_and_roundtrip() {
     let mut pool = SePoolManager::with_retail_change_list();
 
     // Bank 2 (`sh2pc.exe` `0x008a4b90` entry 0: id_2d=12009 -> id_3d=40245, bank_id=2)
-    pool.active_3d_bank = 2;
+    pool.set_active_3d_bank_for_stage(5, 0, false);
+    assert_eq!(pool.active_3d_bank, 2);
     assert_eq!(pool.change_2d_to_3d(12_009), 40_245);
     assert_eq!(pool.change_3d_to_2d(40_245), 12_009);
 
-    // Born from a Wish bank 36 (`sh2pc.exe` `0x008a4b90`: id_2d=18862 -> id_3d=40069, bank_id=36)
-    pool.active_3d_bank = 36;
+    // Town East night (`flag(251) == true`) -> bank 3
+    pool.set_active_3d_bank_for_stage(5, 0, true);
+    assert_eq!(pool.active_3d_bank, 3);
+    assert_eq!(pool.change_2d_to_3d(12_500), 40_250);
+
+    // Hospital 1F Nightmare room 0x30 -> bank 16; other rooms -> bank 17
+    assert_eq!(sh2_audio::se_3d_bank_for_stage(22, 0x30, false), 16);
+    assert_eq!(sh2_audio::se_3d_bank_for_stage(22, 0x34, false), 17);
+
+    // Born from a Wish bank 36 (`Endings` 48..=51)
+    pool.set_active_3d_bank_for_stage(48, 0, false);
+    assert_eq!(pool.active_3d_bank, 36);
     assert_eq!(pool.change_2d_to_3d(18_862), 40_069);
     assert_eq!(pool.change_3d_to_2d(40_069), 18_862);
+
+    // Dispatch Play3d -> Update3d -> Stop3d lifecycle on promoted 40xxx ID
+    pool.set_active_3d_bank_for_stage(5, 0, false);
+    let listener = SeListenerContext {
+        camera_pos: Vec3::ZERO,
+        player_pos: Vec3::ZERO,
+        wvs_matrix: Mat4::IDENTITY,
+        room_id: 1,
+    };
+    let mut actions = Vec::new();
+    let res = pool.call_pos(
+        1.0,
+        12_009,
+        Some(Vec3::new(750.0, 0.0, 1000.0)),
+        SE_FLAG_PRIO_1,
+        &listener,
+        &mut actions,
+    );
+    assert_eq!(
+        res,
+        SeCallResult::Played3d {
+            channel: 0,
+            se_id: 40_245
+        }
+    );
+    assert!(matches!(
+        actions.as_slice(),
+        [SeBackendAction::Play3d {
+            channel: 0,
+            se_id: 40_245,
+            ..
+        }]
+    ));
+
+    actions.clear();
+    let finished = [false; sh2_audio::SE_3D_CHANNEL_COUNT];
+    pool.tick_3d(&listener, &finished, &mut actions);
+    assert!(matches!(
+        actions.as_slice(),
+        [SeBackendAction::Update3d {
+            channel: 0,
+            se_id: 40_245,
+            ..
+        }]
+    ));
+
+    // Room change auto-stops the promoted 3D channel
+    actions.clear();
+    let next_room = SeListenerContext {
+        room_id: 2,
+        ..listener
+    };
+    pool.tick_3d(&next_room, &finished, &mut actions);
+    assert!(actions.contains(&SeBackendAction::Stop3d {
+        channel: 0,
+        se_id: 40_245
+    }));
 }
 
 #[test]

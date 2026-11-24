@@ -1216,3 +1216,67 @@ pub const SE_CHANGE_LIST: [Se2d3dMapping; 241] = [
         bank_id: 36,
     },
 ];
+
+/// Resolves the active 3D SFX bank ID (`1..=36`, or `0` if none) for `(stage_id, room_id, is_night)`.
+///
+/// Ported from `SeSoundEffect3dLoad` (`SLUS_202.28` `0x00192fd0`) with retail PC `sh2pc.exe`
+/// `change_list` (`0x008a4b90`) bank indices (`2..=36`):
+/// - Prototype `SLUS_202.28` mapped Town East/West -> `1..=4`, Apartments -> `5..=10`,
+///   Hospital -> `11..=20`, Delusion/Prison/Labyrinth/Eddie -> `21..=27`, Hotel -> `28..=33`,
+///   Endings -> `34`.
+/// - Retail `sh2pc.exe` (`0x008a4b90`) shifted those bank IDs (`2..=36`) to align with retail
+///   `sddata.bin` and *Born from a Wish* (`Stg_maria_town` / `Stg_maria_apart`).
+pub const fn se_3d_bank_for_stage(stage_id: u32, room_id: u32, is_night: bool) -> u32 {
+    match stage_id {
+        5 => {
+            if is_night {
+                3
+            } else {
+                2
+            }
+        }
+        6 => 6,
+        7 => 7,
+        8 | 9 => 8,
+        10 => 9,
+        11 => 10,
+        12 => 11,
+        14 => {
+            if is_night {
+                5
+            } else {
+                4
+            }
+        }
+        18 => 12,
+        19 => 13,
+        20 => 14,
+        21 => 15,
+        22 => {
+            if room_id == 0x30 {
+                16
+            } else {
+                17
+            }
+        }
+        23 => 17,
+        24 => 18,
+        25 => 19,
+        26 => 20,
+        27 => 21,
+        29 => 22,
+        30..=32 => 24,
+        34..=36 => 27,
+        37 => 28,
+        39 => 29,
+        40 => 30,
+        41 => 31,
+        43 => 33,
+        44 => 34,
+        45 => 35,
+        48..=51 => 36,
+        54 => 5,
+        58 => 10,
+        _ => 0,
+    }
+}

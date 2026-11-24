@@ -296,6 +296,7 @@ fn step_se_pool_manager(
     dt: Duration,
     ducking_mode: sh2_audio::BgmDuckingMode,
 ) {
+    crate::audio_dispatch::sync_se_pool_3d_bank(state);
     let listener = sh2_audio::SeListenerContext {
         camera_pos: state.sim_core.active_camera_eye(1.0),
         player_pos: state.sim_core.scenario.player_position,
@@ -321,16 +322,5 @@ fn step_se_pool_manager(
     state
         .se_pool
         .tick_3d(&listener, &finished_channels, &mut actions);
-
-    if let Some(ref mut bank) = state.audio_bank {
-        for action in actions {
-            match action {
-                sh2_audio::SeBackendAction::Stop2d { se_id }
-                | sh2_audio::SeBackendAction::Stop3d { se_id, .. } => {
-                    bank.stop_spatial_se(se_id);
-                }
-                _ => {}
-            }
-        }
-    }
+    crate::audio_dispatch::dispatch_se_pool_actions(state, &actions);
 }

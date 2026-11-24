@@ -17,7 +17,10 @@ pub(super) fn step_simulation_and_audio(
         update_listener_acoustics_and_footsteps(state);
     }
 
-    if state.active_test_room == TestRoomKind::CombatArena && ticks_processed > 0 {
+    if (state.active_test_room == TestRoomKind::CombatArena
+        || state.campaign_orchestrator.is_some())
+        && ticks_processed > 0
+    {
         step_combat_arena_ticks(state, ticks_processed);
         sync_combat_player_animation_and_sfx(state);
     }
@@ -99,13 +102,25 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             struggle_presses = 0;
         }
 
-        state.combat_arena.tick_isolated(
-            ready_held,
-            atk_pressed,
-            atk_held,
-            tick_dt,
-            state.combat_enemy_idx,
-        );
+        if state.campaign_orchestrator.is_some() {
+            state.combat_arena.tick_with_collision(
+                ready_held,
+                atk_pressed,
+                atk_held,
+                Some(&state.sim_core.collision),
+                tick_dt,
+            );
+            let boss_events = state.combat_arena.ai.consume_boss_events();
+            state.sim_core.scenario.apply_boss_events(&boss_events);
+        } else {
+            state.combat_arena.tick_isolated(
+                ready_held,
+                atk_pressed,
+                atk_held,
+                tick_dt,
+                state.combat_enemy_idx,
+            );
+        }
         atk_pressed = false;
 
         state.sim_core.scenario.player_position = state.combat_arena.player_position;

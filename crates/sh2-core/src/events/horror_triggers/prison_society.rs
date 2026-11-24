@@ -100,6 +100,9 @@ impl StageEventDispatcher {
                 });
             }
             // 0x5846c0..0x58479c: Room 0x72 (southern cellblock invisible prisoner chanting "Ritual...")
+            // Verified in `SLUS_202.28` / `sh2pc.exe` (`stg_prison_s.c` `EvAllTimeFunc`): purely an
+            // event/spatial-audio trigger (`SE_PRISON_INVISIBLE_PRISONER`) with randomized cell
+            // coordinates — NOT an `en_*.c` enemy entity and has no auto-aim lock-on target.
             0x72 => {
                 self.prison_s_prisoner_timer -= ctx.dt;
                 out.sounds.push(SpatialSoundCommand::PosSet {

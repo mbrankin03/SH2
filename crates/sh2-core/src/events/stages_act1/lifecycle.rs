@@ -260,6 +260,15 @@ pub fn act1_eval_bgm_control(stage: Act1StageId, flags: &EventFlags, active_bgm_
     }
 }
 
+/// Applies Pyramid Head 1st-encounter retreat completion (`enREDCtrlBattleEnd` `0x0015eeb0`
+/// `_DAT_01126440 |= 0x40000`) to Act 1 `EventFlags`:
+/// - Sets `flag(148)` (triggers `ApartStair` water drain SE `0x2716` & `flag(149)` at `0x005964b9`)
+/// - Sets `flag(526)` (clears `EvBgmControl` air-raid siren/boss theme mask `1` at `0x00596640`)
+pub fn act1_apply_ph_battle_end(flags: &mut EventFlags) {
+    flags.set(148, true);
+    flags.set(526, true);
+}
+
 /// Evaluates `EvRoomInit`, `EvSoundCallAfterLoad`, and `EvAllTimeFunc` for an Act 1 stage & room.
 #[allow(clippy::too_many_arguments)]
 pub fn act1_eval_alltime_and_room(

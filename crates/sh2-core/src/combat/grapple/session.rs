@@ -62,7 +62,7 @@ impl GrappleSession {
         player_yaw: &mut f32,
         difficulty: usize,
     ) -> Option<Self> {
-        let species = BestiaryId::from_raw(enemy.id())?;
+        let species = BestiaryId::from_species(enemy.species())?;
         let spec = *get_grapple_spec(species)?;
 
         if !enemy.is_attacking()
@@ -142,7 +142,7 @@ impl GrappleSession {
 
         // Validate enemy existence and status
         let enemy = match enemies.get_mut(self.enemy_idx) {
-            Some(e) if e.id() == (self.species as u32) => e,
+            Some(e) if BestiaryId::from_species(e.species()) == Some(self.species) => e,
             _ => {
                 // Enemy array modified or enemy despawned: abort immediately to prevent ghost holds
                 self.terminate(player, None);

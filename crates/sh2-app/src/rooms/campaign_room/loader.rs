@@ -104,6 +104,13 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
     state.render_ctx.update_fog(&state.fog_uniforms);
     state.active_maria = state.sim_core.scenario.character == PlayableCharacter::Maria;
 
+    let ai_diff = state.sim_core.scenario.action_difficulty.into();
+    state.combat_arena.ai.is_outdoor = manifest.is_outdoor;
+    state
+        .combat_arena
+        .ai
+        .spawn_from_manifest(&manifest.enemy_spawns, ai_diff);
+
     state.apply_texture_quality(active_tex_quality);
     state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
 }

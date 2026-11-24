@@ -327,5 +327,80 @@ mod tests {
         );
         assert!(out.visibility.is_batch_visible(0x5b, 0, 1));
         assert_eq!(out.hotel_room_312_memo_flag, 0x2d6);
+
+        // 4. Blue Creek 1F (Stage 10, room 0x5c): 0 before meeting Eddie, 1 after
+        let out_bc_before = stageparts_tick(
+            &mut state,
+            &StagePartsContext {
+                stage_id: 10,
+                room_id: 0x5c,
+                cutscene_id: 0,
+                dt_secs: 0.0,
+                flags: &flags,
+                has_blue_gem: false,
+                enable_sh2ee_fixes: true,
+            },
+        );
+        assert!(out_bc_before.visibility.is_batch_visible(0x5c, 0, 1));
+        flags.set(FLAG_MET_EDDIE, true);
+        let out_bc_after = stageparts_tick(
+            &mut state,
+            &StagePartsContext {
+                stage_id: 10,
+                room_id: 0x5c,
+                cutscene_id: 0,
+                dt_secs: 0.0,
+                flags: &flags,
+                has_blue_gem: false,
+                enable_sh2ee_fixes: true,
+            },
+        );
+        assert!(out_bc_after.visibility.is_batch_visible(0x5c, 0, 2));
+
+        // 5. Hospital Garden (Stage 22, room 0xaa) & Otherworld Hospital 1F Lobby (Stage 23, room 0x97)
+        let out_garden = stageparts_tick(
+            &mut state,
+            &StagePartsContext {
+                stage_id: 22,
+                room_id: 0xaa,
+                cutscene_id: 0,
+                dt_secs: 0.0,
+                flags: &flags,
+                has_blue_gem: true,
+                enable_sh2ee_fixes: true,
+            },
+        );
+        assert!(out_garden.visibility.is_batch_visible(0xaa, 0, 1));
+
+        let out_hsp1f = stageparts_tick(
+            &mut state,
+            &StagePartsContext {
+                stage_id: 23,
+                room_id: R_HSP_ALT_LOBBY,
+                cutscene_id: CS_HSP_ALT_RPT_CHASE_3,
+                dt_secs: 0.0,
+                flags: &flags,
+                has_blue_gem: false,
+                enable_sh2ee_fixes: true,
+            },
+        );
+        assert!(out_hsp1f.visibility.is_batch_visible(0x97, 0, 2));
+
+        // 6. Toluca Lake (Stage 38): Blue Gem dock hint (0x01) + Rebirth epilogue water (0x0b)
+        flags.set(FLAG_USED_BLUE_GEM_FIRST, true);
+        let out_lake = stageparts_tick(
+            &mut state,
+            &StagePartsContext {
+                stage_id: 38,
+                room_id: 0x01,
+                cutscene_id: CS_END_REBIRTH_EPILOGUE,
+                dt_secs: 0.0,
+                flags: &flags,
+                has_blue_gem: true,
+                enable_sh2ee_fixes: true,
+            },
+        );
+        assert!(out_lake.visibility.is_batch_visible(0x01, 0, 1));
+        assert!(out_lake.visibility.is_batch_visible(0x0b, 0, 4));
     }
 }

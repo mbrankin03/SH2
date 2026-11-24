@@ -37,14 +37,16 @@ pub use dust::{
     PLURAL_PHENOMENON_RAISE_DUST_VEL, RAISE_DUST_BURST_COUNT,
 };
 pub use fixes::{
-    apply_draw_env_fixes, bfaw_attic_shadow_cutoff_y, evaluate_enemy_reveal_lighting,
-    flashlight_wall_brightness_multiplier, is_halogen_fullbright_room,
-    sh2ee_room_shadow_opacity_u8, should_disable_cutscene_shadows,
+    apply_draw_env_fixes, bfaw_attic_shadow_cutoff_y, bfaw_attic_shadow_cutoff_y_gated,
+    cemetery_lighting_id, evaluate_enemy_reveal_lighting, flashlight_wall_brightness_multiplier,
+    is_halogen_fullbright_room, lighting_transition_mode, sh2ee_room_shadow_opacity_u8,
+    should_disable_cutscene_flashlight, should_disable_cutscene_shadows,
     should_suppress_room312_balcony_shadow, specular_intensity_scale, ShadowChapter,
-    ShadowFadeController, ShadowFadePhase, DEMO6_TUNNEL_REVEAL_HOLD_FRAME, ENEMY_REVEAL_MAX_LEVEL,
-    ENEMY_REVEAL_MIN_LEVEL, HALOGEN_FULLBRIGHT_ROOMS, PC_ENVIRONMENT_BRIGHTNESS_MUL,
-    PS2_FLASHLIGHT_RANGE_MM, SH2EE_DEFAULT_SHADOW_OPACITY_U8, SH2EE_FLASHLIGHT_BRIGHTNESS_MUL,
-    SH2EE_FLASHLIGHT_RANGE_MM, SH2EE_SHADOW_FADE_IN_FRAMES_30HZ, SH2EE_SHADOW_FADE_OUT_FRAMES_30HZ,
+    ShadowFadeController, ShadowFadePhase, SpotLightTransitionMode, DEMO6_TUNNEL_REVEAL_HOLD_FRAME,
+    ENEMY_REVEAL_MAX_LEVEL, ENEMY_REVEAL_MIN_LEVEL, HALOGEN_FULLBRIGHT_ROOMS,
+    PC_ENVIRONMENT_BRIGHTNESS_MUL, PS2_FLASHLIGHT_RANGE_MM, SH2EE_DEFAULT_SHADOW_OPACITY_U8,
+    SH2EE_FLASHLIGHT_BRIGHTNESS_MUL, SH2EE_FLASHLIGHT_RANGE_MM, SH2EE_SHADOW_FADE_IN_FRAMES_30HZ,
+    SH2EE_SHADOW_FADE_OUT_FRAMES_30HZ,
 };
 pub use hyper_spray::{
     HyperSprayColorTier, HyperSprayEmitter, SprayParticle, SprayParticlePhase,

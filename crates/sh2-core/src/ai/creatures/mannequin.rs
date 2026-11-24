@@ -465,6 +465,47 @@ impl MannequinController {
         }
         self.anim.sync_mannequin(self.state, self.is_kick_next);
     }
+
+    /// SH2:EE `Patches/WoodsideMannequinState.cpp` (`0x0059BA35`):
+    /// In Wood Side Room 205 (`0x17`), if James has not yet acquired the flashlight,
+    /// corrects a mannequin mistakenly marked dead (`MknState::Dying`) back to dormant (`MknState::Stay`).
+    pub fn fix_woodside_205_mannequin_state(
+        &mut self,
+        room_id: u16,
+        flashlight_acquired: bool,
+        enable_sh2ee_world_fixes: bool,
+    ) {
+        const R_APT_E_RM_205: u16 = 0x17;
+        if enable_sh2ee_world_fixes
+            && room_id == R_APT_E_RM_205
+            && !flashlight_acquired
+            && self.state == MknState::Dying
+        {
+            self.state = MknState::Stay;
+        }
+    }
+}
+
+/// SH2:EE `Patches/RotatingMannequinGlitch.cpp` (`0x0048CBC5`):
+/// In Wood Side 2F Hallway (`R_APT_E_HALLWAY_2F = 0x15`) once the flashlight is acquired,
+/// transitions stuck mannequin animation state `0x206` to `0x207`.
+#[must_use]
+pub const fn fix_rotating_mannequin_glitch(
+    room_id: u16,
+    flashlight_acquired: bool,
+    anim_state: u32,
+    enable_sh2ee_world_fixes: bool,
+) -> u32 {
+    const R_APT_E_HALLWAY_2F: u16 = 0x15;
+    if enable_sh2ee_world_fixes
+        && room_id == R_APT_E_HALLWAY_2F
+        && flashlight_acquired
+        && anim_state == 0x206
+    {
+        0x207
+    } else {
+        anim_state
+    }
 }
 
 #[cfg(test)]
@@ -568,5 +609,29 @@ mod tests {
             1.0 / 60.0,
         );
         assert_eq!(mkn.sub_state, 4);
+    }
+
+    #[test]
+    fn woodside_205_mannequin_and_rotating_mannequin_fixes_respect_toggle() {
+        let mut mkn = MannequinController::new(10, Vec3::ZERO, 0.0, DifficultyLevel::Normal);
+        mkn.state = MknState::Dying;
+
+        // Vanilla leaves Dying untouched
+        mkn.fix_woodside_205_mannequin_state(0x17, false, false);
+        assert_eq!(mkn.state, MknState::Dying);
+
+        // SH2:EE resets Dying -> Stay (dormant) in Room 205 (0x17) before flashlight pickup
+        mkn.fix_woodside_205_mannequin_state(0x17, false, true);
+        assert_eq!(mkn.state, MknState::Stay);
+
+        // RotatingMannequinGlitch.cpp: 0x206 -> 0x207 in R_APT_E_HALLWAY_2F (0x15) with flashlight
+        assert_eq!(
+            fix_rotating_mannequin_glitch(0x15, true, 0x206, false),
+            0x206
+        );
+        assert_eq!(
+            fix_rotating_mannequin_glitch(0x15, true, 0x206, true),
+            0x207
+        );
     }
 }

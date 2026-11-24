@@ -104,7 +104,13 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
             .transition_to_room(cp.room_id, spawn_pos, spawn_yaw, true);
 
         // 4. Configure atmospheric fog and authentic pre-/post-Room-205 flashlight possession (`SH2-33`)
-        state.fog_uniforms = fog_for_checkpoint_room(cp.room_id);
+        let cfg = &state.menu_ctrl.options_menu.draft_config;
+        state.fog_uniforms = fog_for_checkpoint_room(
+            cp.room_id,
+            cfg.video.fog_quality,
+            cfg.video.volumetric_light,
+            cfg.game.enable_sh2ee_world_fixes,
+        );
         state.render_ctx.update_fog(&state.fog_uniforms);
         if is_pre_flashlight_checkpoint_room(cp.room_id) {
             state.sim_core.scenario.revoke_flashlight();
@@ -288,13 +294,21 @@ fn min_wall_clearance_xz(walls: &[WallSegment], px: f32, pz: f32) -> f32 {
     min_d
 }
 
-fn fog_for_checkpoint_room(room_id: &str) -> FogUniforms {
+fn fog_for_checkpoint_room(
+    room_id: &str,
+    fog_quality: sh2_core::config::FogQuality,
+    volumetric_light: bool,
+    enable_sh2ee_world_fixes: bool,
+) -> FogUniforms {
     let ps2_room_id = sh2_core::fog::room_id_from_stage_code(room_id);
-    let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
-        room_id: ps2_room_id,
-        ..Default::default()
-    });
-    FogUniforms::from_room_evaluation(&eval, sh2_core::config::FogQuality::ModernVolumetric, true)
+    let eval = sh2_core::fog::evaluate_room_fog_with_fixes(
+        &sh2_core::fog::RoomFogContext {
+            room_id: ps2_room_id,
+            ..Default::default()
+        },
+        enable_sh2ee_world_fixes,
+    );
+    FogUniforms::from_room_evaluation(&eval, fog_quality, volumetric_light)
 }
 
 #[cfg(test)]

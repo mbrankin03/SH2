@@ -62,15 +62,20 @@ pub use special_fx::{
     PS2_MOTION_BLUR_SCALE, SPECIAL_FX_REFERENCE_HEIGHT,
 };
 pub use stage_fixes::{
-    evaluate_hei_lau_widescreen_entry, evaluate_meeting_maria_fog_counters,
-    observation_deck_border_alpha_factor, observation_deck_fog_bounds_x,
-    observation_deck_wrap_particle_x, ClosetCutsceneFixState, FinalBossRoomFixState,
-    HeiLauWidescreenEntryState, PistonRoomFixState, CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME,
+    closet_cutscene_exit_camera_fov, closet_spawn_override, evaluate_eddie_laura_cutscene,
+    evaluate_hei_lau_widescreen_entry, evaluate_maria_cutscene_replacement,
+    evaluate_meeting_maria_fog_counters, observation_deck_border_alpha_factor,
+    observation_deck_fog_bounds_x, observation_deck_wrap_particle_x, ClosetCutsceneFixState,
+    EddieLauraCutsceneState, FinalBossRoomFixState, HeiLauWidescreenEntryState,
+    MariaCutsceneReplacementState, PistonRoomFixState, APT_307_CLOSET_SPAWN_POS_Z_SH2EE,
+    APT_307_CLOSET_SPAWN_ROT_X_SH2EE, CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME,
     CLOSET_BLURRED_BARS_HIDE_CAM_X, CLOSET_BLURRED_BARS_ORIG_DESPAWN_FRAME,
-    CLOSET_DISABLE_FLASHLIGHT_CAM_X, CLOSET_DISABLE_SHADOW_CAM_X,
+    CLOSET_DISABLE_FLASHLIGHT_CAM_X, CLOSET_DISABLE_SHADOW_CAM_X, CLOSET_EXIT_CAMERA_FOV_SH2EE,
     CLOSET_MANNEQUIN_FIXED_DESPAWN_FRAME, CLOSET_MANNEQUIN_ORIG_DESPAWN_FRAME,
-    CS_APT_RPT_CLOSET_DEMO_NO, CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO, CS_OUT_LAURA_ON_WALL_DEMO_NO,
+    CS_APT_RPT_CLOSET_DEMO_NO, CS_BOWL_LAURA_EDDIE_ID, CS_HTL_ALT_RPT_BOSS_INTRO_ID,
+    CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO, CS_OUT_LAURA_ON_WALL_DEMO_NO,
     CS_PS_ANGELA_BOSS_FINISH_DEMO_NO, CS_TOWN_WEST_MARIA_MEET_DEMO_NO,
+    EDDIE_LAURA_CUTSCENE_FADE_START_FRAME, EDDIE_LAURA_SECOND_HALF_OFFSET_FRAMES,
     FINAL_BOSS_EXTENDED_DRAW_DISTANCE, FINAL_BOSS_JAMES_ELEVATION_THRESHOLD_Y,
     FINAL_BOSS_LOWERED_SPAWN_Y, HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME,
     HEI_LAU_JAMES_PREROLL_START_FRAME, HEI_LAU_JAMES_WALK_VELOCITY_PER_FRAME,
@@ -79,6 +84,7 @@ pub use stage_fixes::{
     OBSERVATION_DECK_FOG_BORDER_WIDTH, OBSERVATION_DECK_FOG_PARTICLE_MAX,
     OBSERVATION_DECK_ORIG_MAX_POS_X, OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X,
     PISTON_DOORWAY_PROP_OFFSET, PISTON_ROOM_DOOR_OPEN_CAM_X, R_APT_E_RM_307_ID, R_FINAL_BOSS_RM_ID,
+    R_HTL_ALT_RPT_BOSS_RM_ID,
 };
 
 /// Native keyframe rate of Silent Hill 2 `.dds`, `.anm`, and `.cls` cutscene data (30.0 FPS).

@@ -45,6 +45,24 @@ impl BestiaryId {
             _ => None,
         }
     }
+
+    /// Map [`crate::ai::creatures::EnemySpecies`] to [`BestiaryId`] for grapple initiation
+    /// regardless of runtime instance ID (`GrappleSession::try_initiate`).
+    pub const fn from_species(species: crate::ai::creatures::EnemySpecies) -> Option<Self> {
+        use crate::ai::creatures::EnemySpecies;
+        match species {
+            EnemySpecies::LyingFigure => Some(Self::LyingFigure),
+            EnemySpecies::Mannequin => Some(Self::Mannequin),
+            EnemySpecies::Nurse => Some(Self::BubbleHeadNurse),
+            EnemySpecies::PyramidHead | EnemySpecies::TwinPyramidHead => Some(Self::PyramidHead),
+            EnemySpecies::AbstractDaddy => Some(Self::AbstractDaddy),
+            EnemySpecies::FleshLips => Some(Self::FleshLips),
+            EnemySpecies::Mandarin => Some(Self::Mandarin),
+            EnemySpecies::Creeper => Some(Self::Creeper),
+            EnemySpecies::MaryBoss => Some(Self::MaryBoss),
+            EnemySpecies::Eddie | EnemySpecies::RoomInsect => None,
+        }
+    }
 }
 
 /// Authentic 4D vectors from PS2 `hugging_pos[5]` table at virtual address `0x0034c200`

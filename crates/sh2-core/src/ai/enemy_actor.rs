@@ -388,16 +388,33 @@ impl EnemyActor {
     /// Apply a player weapon hit using authentic `enCheckDamage` (`0x001423a0`) +
     /// `enReduceHP` (`0x00142200`) + `enSetHitBack` (`0x00142630`).
     pub fn receive_hit(&mut self, atk: &AttackSpec, attack_dir_xz: [f32; 2]) {
+        let _ = self.receive_hit_with_overflow(atk, attack_dir_xz);
+    }
+
+    /// Apply a player weapon hit and return `(twin_id, overflow_damage)` when a
+    /// [`ActiveEnemy::TwinPyramidHead`] overflows HP below `0.0` (`enONISetDamage` `0x0022b370` /
+    /// `sh2pc 0x004bc8b0`: `(-next_hp) * 0.75` transferred to partner).
+    pub fn receive_hit_with_overflow(
+        &mut self,
+        atk: &AttackSpec,
+        attack_dir_xz: [f32; 2],
+    ) -> Option<(u32, f32)> {
         if self.is_dead() {
-            return;
+            return None;
         }
         let species = self.species();
         let was_downed = self.is_downed();
-        let Some(scaled_ap) =
+        let scaled_ap =
             self.stats_mut()
-                .check_damage(species, atk.id as u16, atk.ap, was_downed, None)
-        else {
-            return;
+                .check_damage(species, atk.id as u16, atk.ap, was_downed, None)?;
+
+        let twin_overflow = match &self.controller {
+            ActiveEnemy::TwinPyramidHead(t) => {
+                let overflow = (scaled_ap - t.stats.health).max(0.0)
+                    * crate::ai::creatures::twin_pyramid_head::ONI_SHARED_OVERFLOW_PC;
+                (overflow > 0.0).then_some((t.id, overflow))
+            }
+            _ => None,
         };
 
         self.attack_work.init();
@@ -424,6 +441,7 @@ impl EnemyActor {
             self.stats_mut().flinch_timer = 0.5;
             self.apply_post_damage_state(false, false);
         }
+        twin_overflow
     }
 
     /// Apply Hyper Spray aerosol hit (`enCheckDamage` `0x001423a0` + `enCheckSpray` `0x001425a0`).
@@ -548,7 +566,14 @@ impl EnemyActor {
                     OniState::Damage
                 };
             }
-            ActiveEnemy::PyramidHead(_) | ActiveEnemy::RoomInsect(_) => {}
+            ActiveEnemy::PyramidHead(e) => {
+                if dead && e.is_boss_encounter && e.state != RedState::Leave {
+                    e.state = RedState::Leave;
+                    e.sub_state = 0;
+                    e.active_attack_id = None;
+                }
+            }
+            ActiveEnemy::RoomInsect(_) => {}
         }
 
         if self.controller.anim().is_none() && (dead || downed) {

@@ -298,6 +298,19 @@ impl CombatArena {
 
     /// Execute simulation tick (60 Hz) routing all enemies through [`AiSubsystem`].
     pub fn tick(&mut self, ready_held: bool, action_pressed: bool, action_held: bool, dt: f32) {
+        self.tick_with_collision(ready_held, action_pressed, action_held, None, dt);
+    }
+
+    /// Execute simulation tick (60 Hz) with optional `.cld` [`crate::collision::CollisionWorld`]
+    /// floor probing for Mandarin grating checks.
+    pub fn tick_with_collision(
+        &mut self,
+        ready_held: bool,
+        action_pressed: bool,
+        action_held: bool,
+        collision: Option<&crate::collision::CollisionWorld>,
+        dt: f32,
+    ) {
         let has_downed = self.has_downed_enemy_at_feet();
         self.player
             .handle_combat_inputs(ready_held, action_pressed, action_held, has_downed, dt);
@@ -305,13 +318,14 @@ impl CombatArena {
         self.step_active_attack_hits(None);
 
         let is_in_grapple = self.grapple_session.is_some() || self.player.mode == CombatMode::Held;
-        self.ai.update_filtered(
+        self.ai.update_filtered_with_collision(
             self.player_position,
             self.player_yaw,
             true,
             false,
             true,
             None,
+            collision,
             dt,
         );
 
@@ -590,7 +604,7 @@ impl CombatArena {
                     atk.max_range,
                     isolated_idx,
                 ) {
-                    self.ai.enemies[hit_idx].receive_hit(atk, dir_xz);
+                    self.ai.apply_hit_to_enemy(hit_idx, atk, dir_xz);
                 }
             }
             AttackDispatchKind::GunshotTypeB => {
@@ -604,7 +618,8 @@ impl CombatArena {
                         atk.max_range,
                         isolated_idx,
                     ) {
-                        self.ai.enemies[hit_idx].receive_hit(atk, [pellet_dir.x, pellet_dir.z]);
+                        self.ai
+                            .apply_hit_to_enemy(hit_idx, atk, [pellet_dir.x, pellet_dir.z]);
                     }
                 }
             }
@@ -630,7 +645,7 @@ impl CombatArena {
                     {
                         if !self.scratch_spray_hit_mask[hit_idx] {
                             self.scratch_spray_hit_mask[hit_idx] = true;
-                            self.ai.enemies[hit_idx].receive_hyper_spray_hit(atk, color);
+                            self.ai.apply_hyper_spray_hit_to_enemy(hit_idx, atk, color);
                         }
                     }
                 }
@@ -647,29 +662,39 @@ impl CombatArena {
                 );
                 self.prev_blade_tip = Some(quad.curr_tip);
 
-                for (idx, enemy) in self.ai.enemies.iter_mut().enumerate() {
-                    if isolated_idx.is_some_and(|only| only != idx) || enemy.is_dead() {
+                for idx in 0..self.ai.enemies.len() {
+                    if isolated_idx.is_some_and(|only| only != idx) {
                         continue;
                     }
-                    if enemy.hitbox().intersects_swept_quad(&quad) {
-                        enemy.receive_hit(atk, dir_xz);
+                    let hit = {
+                        let enemy = &self.ai.enemies[idx];
+                        !enemy.is_dead() && enemy.hitbox().intersects_swept_quad(&quad)
+                    };
+                    if hit {
+                        self.ai.apply_hit_to_enemy(idx, atk, dir_xz);
                     }
                 }
             }
             AttackDispatchKind::HumanFinish => {
                 let feet_check = self.player_position + forward * 250.0;
-                for (idx, enemy) in self.ai.enemies.iter_mut().enumerate() {
-                    if isolated_idx.is_some_and(|only| only != idx)
-                        || !enemy.is_downed()
-                        || enemy.is_dead()
-                    {
+                for idx in 0..self.ai.enemies.len() {
+                    if isolated_idx.is_some_and(|only| only != idx) {
                         continue;
                     }
-                    let pos = enemy.position();
-                    let dist = (Vec3::new(pos.x, 0.0, pos.z) - feet_check).length();
-                    let reach = enemy.size().battle_radius(enemy.species(), true) + atk.max_range;
-                    if dist <= reach {
-                        enemy.receive_hit(atk, dir_xz);
+                    let hit = {
+                        let enemy = &self.ai.enemies[idx];
+                        if !enemy.is_downed() || enemy.is_dead() {
+                            false
+                        } else {
+                            let pos = enemy.position();
+                            let dist = (Vec3::new(pos.x, 0.0, pos.z) - feet_check).length();
+                            let reach =
+                                enemy.size().battle_radius(enemy.species(), true) + atk.max_range;
+                            dist <= reach
+                        }
+                    };
+                    if hit {
+                        self.ai.apply_hit_to_enemy(idx, atk, dir_xz);
                     }
                 }
             }

@@ -52,6 +52,8 @@ pub struct EnemyUpdateContext {
     pub mandarin_near_other_turn: Option<f32>,
     pub mandarin_over_grating: bool,
     pub insect_leader: Option<(InsectState, Vec3)>,
+    /// Deterministic hover sway sample in `[-250.0, 250.0]` (`shSway1f(-250.0, 0.1)` `enBOSMoveExec` `0x00140df0`).
+    pub mary_sway_y_sample: f32,
 }
 
 impl Default for EnemyUpdateContext {
@@ -66,6 +68,7 @@ impl Default for EnemyUpdateContext {
             mandarin_near_other_turn: None,
             mandarin_over_grating: true,
             insect_leader: None,
+            mary_sway_y_sample: 0.0,
         }
     }
 }
@@ -143,7 +146,7 @@ impl ActiveEnemy {
             Self::Mannequin(e) => e.stats.health <= 0.0,
             Self::Nurse(e) => e.stats.health <= 0.0,
             Self::Creeper(e) => e.stats.health <= 0.0,
-            Self::PyramidHead(e) => e.stats.health <= 0.0,
+            Self::PyramidHead(e) => e.battle_end_complete,
             Self::AbstractDaddy(e) => e.stats.health <= 0.0,
             Self::FleshLips(e) => e.stats.health <= 0.0,
             Self::Mandarin(e) => e.stats.health <= 0.0,
@@ -232,10 +235,81 @@ impl ActiveEnemy {
             ),
             Self::Eddie(e) => e.update(target, difficulty, dt),
             Self::TwinPyramidHead(e) => e.update(target, ctx.twin_partner, difficulty, dt),
-            Self::MaryBoss(e) => e.update(target, ctx.player_ammo_empty, 0.0, difficulty, dt),
+            Self::MaryBoss(e) => e.update(
+                target,
+                ctx.player_ammo_empty,
+                ctx.mary_sway_y_sample,
+                difficulty,
+                dt,
+            ),
             Self::RoomInsect(e) => e.update(target, ctx.insect_leader, ctx.player_spraying, dt),
         }
     }
+}
+
+/// Spawn variant flags derived from retail `Enemy_List` `kind` & `status`/`sub_type`
+/// (`enNSEInitData` `0x001577b0`, `enREDInitData` `0x0015d410`, `enPAPInitData` `0x0015a060`,
+/// `enEDBInitData` `0x001494c0`, `enBOSInitData` `0x0013fa10`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EnemySpawnVariant {
+    /// `0x20b` Town Tough Nurse (`enNSEInitData` `0x001577b0`: `1.2x` HP/endurance).
+    pub is_dark_nurse: bool,
+    /// Retail `sub_type` (`*(i32*)(chara + 0x100)`):
+    /// - `6` for Pyramid Head (Blue Creek stairwell boss), Abstract Daddy (Hotel boss), Eddie (Room 2)
+    /// - `0xd` (`13`) for Mary Boss (Phase 2 floor)
+    pub sub_type: i16,
+}
+
+impl EnemySpawnVariant {
+    /// Map retail `Enemy_List` `(kind, status)` to `(EnemySpecies, EnemySpawnVariant)`.
+    #[must_use]
+    pub const fn from_kind_and_status(kind: i16, status: i16) -> Option<(EnemySpecies, Self)> {
+        let (species, is_dark_nurse) = match kind {
+            0x200 => (EnemySpecies::LyingFigure, false),
+            0x201 => (EnemySpecies::Mannequin, false),
+            0x202 => (EnemySpecies::Creeper, false),
+            0x203 => (EnemySpecies::FleshLips, false),
+            0x204 => (EnemySpecies::AbstractDaddy, false),
+            0x205 => (EnemySpecies::Eddie, false),
+            0x206 => (EnemySpecies::MaryBoss, false),
+            0x207 => (EnemySpecies::Nurse, false),
+            0x208 => (EnemySpecies::PyramidHead, false),
+            0x209 => (EnemySpecies::TwinPyramidHead, false),
+            0x20a => (EnemySpecies::Mandarin, false),
+            0x20b => (EnemySpecies::Nurse, true),
+            0x20f => (EnemySpecies::RoomInsect, false),
+            _ => return None,
+        };
+        Some((
+            species,
+            Self {
+                is_dark_nurse,
+                sub_type: status,
+            },
+        ))
+    }
+}
+
+/// Boss completion signals emitted by active boss controllers for consumption by stage events
+/// and inventory (`sh2-core::events`, `sh2-core::campaign`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AiBossEvents {
+    /// Pyramid Head 1st encounter retreated down flooded stairwell (`enREDCtrlBattleEnd` `0x0015eeb0`).
+    pub ph_battle_end_complete: bool,
+    /// Last Flesh Lips defeated (`enIKECtrlDead` `0x001522b0`).
+    pub flesh_lips_battle_cleared: bool,
+    /// Abstract Daddy boss defeated (`enPAPCtrlDown` `0x0015baf0`).
+    pub abstract_daddy_defeated: bool,
+    /// Eddie Room 1 escaped (`enEDBCtrlEscape2` `0x0014c2b0`).
+    pub eddie_room1_escaped: bool,
+    /// Eddie Room 2 defeated (`enEDBCtrlDead` `0x0014c750`).
+    pub eddie_room2_dead: bool,
+    /// Twin Pyramid Heads reached suicide pose (`enONICtrlSuicide` `0x0022ad20`).
+    pub twin_ph_suicide_ready: bool,
+    /// Mary Boss Phase 1 cleared (`enBOSCtrlDead` `0x00140820`).
+    pub mary_phase1_cleared: bool,
+    /// Mary Boss Phase 2 defeated / ending triggered (`enBOSCtrlDead` `0x00140820`).
+    pub mary_ending_triggered: bool,
 }
 
 /// Global AI and Companion subsystem (`en_common.c` / `m3_maria_sub.c`).
@@ -265,6 +339,12 @@ pub struct AiSubsystem {
     pub player_spraying: bool,
     /// Player collision radius in mm (`enGetPlayerSize()`, `200.0` mm for James).
     pub player_radius_mm: f32,
+    /// Deterministic LCG state (`shRandI` equivalent for `TwinPyramidHead` spin-loop rolls).
+    rng_state: u32,
+    /// Accumulated phase for `MaryBoss` hover sway (`shSway1f(-250.0, 0.1)` `enBOSMoveExec` `0x00140df0`).
+    sway_phase: f32,
+    /// Next synthetic ID assigned to dynamically spawned Mary moth swarm insects.
+    next_dynamic_id: u32,
     /// Reusable scratch buffers to keep `update_filtered` 100% zero-allocation per tick.
     scratch_hostile_positions: Vec<Vec3>,
     scratch_radio_samples: Vec<RadioEnemySample>,
@@ -288,6 +368,9 @@ impl Default for AiSubsystem {
             player_ammo_empty: false,
             player_spraying: false,
             player_radius_mm: 200.0,
+            rng_state: 0x1999_0901,
+            sway_phase: 0.0,
+            next_dynamic_id: 10_000,
             scratch_hostile_positions: Vec::with_capacity(32),
             scratch_radio_samples: Vec::with_capacity(32),
             scratch_twin_snapshots: Vec::with_capacity(4),
@@ -306,6 +389,26 @@ impl AiSubsystem {
 
     /// Spawn an enemy into the active world with authentic `enSetHP` (`0x001420c0`) stage scaling.
     pub fn spawn_enemy(&mut self, species: EnemySpecies, id: u32, position: Vec3, yaw: f32) {
+        let default_variant = match species {
+            EnemySpecies::PyramidHead => EnemySpawnVariant {
+                sub_type: 6,
+                ..Default::default()
+            },
+            _ => EnemySpawnVariant::default(),
+        };
+        self.spawn_enemy_with_variant(species, id, position, yaw, default_variant);
+    }
+
+    /// Spawn an enemy with explicit retail `Enemy_List` variant flags (`0x20b` dark nurse,
+    /// `sub_type == 6` boss/room2, `sub_type == 0xd` Mary Phase 2).
+    pub fn spawn_enemy_with_variant(
+        &mut self,
+        species: EnemySpecies,
+        id: u32,
+        position: Vec3,
+        yaw: f32,
+        variant: EnemySpawnVariant,
+    ) {
         let twin_count = self
             .enemies
             .iter()
@@ -333,7 +436,7 @@ impl AiSubsystem {
                     position,
                     yaw,
                     self.difficulty,
-                    0,
+                    variant.sub_type.max(0) as u32,
                     self.stage_place,
                 ))
             }
@@ -342,7 +445,7 @@ impl AiSubsystem {
                 position,
                 yaw,
                 self.difficulty,
-                false,
+                variant.is_dark_nurse,
                 self.stage_place,
             )),
             EnemySpecies::Creeper => ActiveEnemy::Creeper(CreeperController::new_with_difficulty(
@@ -357,12 +460,18 @@ impl AiSubsystem {
                     position,
                     yaw,
                     self.difficulty,
-                    true,
+                    variant.sub_type == 6,
                 ))
             }
-            EnemySpecies::AbstractDaddy => ActiveEnemy::AbstractDaddy(
-                AbstractDaddyController::new(id, position, yaw, false, self.difficulty),
-            ),
+            EnemySpecies::AbstractDaddy => {
+                ActiveEnemy::AbstractDaddy(AbstractDaddyController::new(
+                    id,
+                    position,
+                    yaw,
+                    variant.sub_type == 6,
+                    self.difficulty,
+                ))
+            }
             EnemySpecies::FleshLips => {
                 ActiveEnemy::FleshLips(FleshLipsController::new(id, position, yaw, self.difficulty))
             }
@@ -373,7 +482,7 @@ impl AiSubsystem {
                 id,
                 position,
                 yaw,
-                false,
+                variant.sub_type == 6,
                 self.difficulty,
             )),
             EnemySpecies::TwinPyramidHead => ActiveEnemy::TwinPyramidHead(
@@ -383,7 +492,7 @@ impl AiSubsystem {
                 id,
                 position,
                 yaw,
-                false,
+                variant.sub_type == 0xd,
                 self.difficulty,
             )),
             EnemySpecies::RoomInsect => ActiveEnemy::RoomInsect(RoomInsectController::new(
@@ -394,6 +503,109 @@ impl AiSubsystem {
             )),
         };
         self.enemies.push(EnemyActor::new(enemy));
+    }
+
+    /// Populate enemies from a [`crate::campaign::RoomLoadManifest`] `enemy_spawns` list
+    /// (`connectRoomInit` `0x0020be10` / `enInitData`).
+    pub fn spawn_from_manifest(
+        &mut self,
+        spawns: &[crate::campaign::CampaignEnemySpawn],
+        difficulty: DifficultyLevel,
+    ) {
+        self.clear_enemies();
+        self.difficulty = difficulty;
+        for spawn in spawns {
+            if let Some((species, variant)) =
+                EnemySpawnVariant::from_kind_and_status(spawn.kind, spawn.status)
+            {
+                let yaw = (f32::from(spawn.rot_y_raw) / 4096.0) * std::f32::consts::TAU;
+                let pos = Vec3::from_array(spawn.position_mm);
+                let id = u32::try_from(spawn.id.max(0)).unwrap_or(0);
+                self.spawn_enemy_with_variant(species, id, pos, yaw, variant);
+            }
+        }
+    }
+
+    /// Apply a player weapon hit to `enemies[enemy_idx]` and transfer any `TwinPyramidHead`
+    /// HP overflow (`(-next_hp) * 0.75`) to its partner (`enONISetDamage` `0x0022b370` / `sh2pc 0x004bc8b0`).
+    pub fn apply_hit_to_enemy(
+        &mut self,
+        enemy_idx: usize,
+        atk: &crate::combat::attack_list::AttackSpec,
+        attack_dir_xz: [f32; 2],
+    ) {
+        let Some(enemy) = self.enemies.get_mut(enemy_idx) else {
+            return;
+        };
+        if let Some((hit_id, overflow)) = enemy.receive_hit_with_overflow(atk, attack_dir_xz) {
+            for other in &mut self.enemies {
+                if let ActiveEnemy::TwinPyramidHead(partner) = &mut other.controller {
+                    if partner.id != hit_id {
+                        partner.stats.health = (partner.stats.health - overflow).max(0.0);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply a Hyper Spray aerosol hit to `enemies[enemy_idx]`.
+    pub fn apply_hyper_spray_hit_to_enemy(
+        &mut self,
+        enemy_idx: usize,
+        atk: &crate::combat::attack_list::AttackSpec,
+        color: crate::combat::attack_list::HyperSprayColor,
+    ) -> bool {
+        let Some(enemy) = self.enemies.get_mut(enemy_idx) else {
+            return false;
+        };
+        enemy.receive_hyper_spray_hit(atk, color)
+    }
+
+    /// Poll and clear one-shot boss completion events emitted by active boss controllers.
+    pub fn consume_boss_events(&mut self) -> AiBossEvents {
+        let mut events = AiBossEvents::default();
+        for enemy in &mut self.enemies {
+            match &mut enemy.controller {
+                ActiveEnemy::PyramidHead(e) if e.battle_end_complete => {
+                    events.ph_battle_end_complete = true;
+                }
+                ActiveEnemy::FleshLips(e) if e.battle_cleared_event => {
+                    events.flesh_lips_battle_cleared = true;
+                    e.battle_cleared_event = false;
+                }
+                ActiveEnemy::AbstractDaddy(e) if e.boss_defeated_event => {
+                    events.abstract_daddy_defeated = true;
+                    e.boss_defeated_event = false;
+                }
+                ActiveEnemy::Eddie(e) => {
+                    if e.room1_escaped_event {
+                        events.eddie_room1_escaped = true;
+                        e.room1_escaped_event = false;
+                    }
+                    if e.room2_dead_event {
+                        events.eddie_room2_dead = true;
+                        e.room2_dead_event = false;
+                    }
+                }
+                ActiveEnemy::TwinPyramidHead(e) if e.suicide_cutscene_ready => {
+                    events.twin_ph_suicide_ready = true;
+                    e.suicide_cutscene_ready = false;
+                }
+                ActiveEnemy::MaryBoss(e) => {
+                    if e.phase1_cleared_event {
+                        events.mary_phase1_cleared = true;
+                        e.phase1_cleared_event = false;
+                    }
+                    if e.ending_triggered_event {
+                        events.mary_ending_triggered = true;
+                        e.ending_triggered_event = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        events
     }
 
     /// Primary 60 Hz AI simulation update loop (`enExecTask` `SLUS_202.28` `0x001413f0`).
@@ -430,6 +642,32 @@ impl AiSubsystem {
         only_enemy_idx: Option<usize>,
         dt: f32,
     ) {
+        self.update_filtered_with_collision(
+            player_pos,
+            player_yaw,
+            is_flashlight_on,
+            is_running,
+            radio_enabled,
+            only_enemy_idx,
+            None,
+            dt,
+        );
+    }
+
+    /// Update AI simulation with optional `.cld` [`crate::collision::CollisionWorld`] floor probing
+    /// (for Mandarin `enCheckFloor` grating checks) and cross-entity loopbacks.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_filtered_with_collision(
+        &mut self,
+        player_pos: Vec3,
+        player_yaw: f32,
+        is_flashlight_on: bool,
+        is_running: bool,
+        radio_enabled: bool,
+        only_enemy_idx: Option<usize>,
+        collision: Option<&crate::collision::CollisionWorld>,
+        dt: f32,
+    ) {
         // Collect active enemy positions for radio and companion awareness (zero-alloc scratch)
         self.scratch_hostile_positions.clear();
         for e in &self.enemies {
@@ -454,6 +692,7 @@ impl AiSubsystem {
         self.scratch_flesh_lips_info.clear();
         self.scratch_mandarin_positions.clear();
         let mut insect_leader: Option<(u32, InsectState, Vec3)> = None;
+        let mut has_alive_insects = false;
 
         for e in &self.enemies {
             match &e.controller {
@@ -471,28 +710,46 @@ impl AiSubsystem {
                 ActiveEnemy::Mandarin(m) if m.stats.health > 0.0 => {
                     self.scratch_mandarin_positions.push((m.id, m.position));
                 }
-                ActiveEnemy::RoomInsect(i)
+                ActiveEnemy::RoomInsect(i) => {
+                    if i.stats.health > 0.0 {
+                        has_alive_insects = true;
+                    }
                     if insect_leader.is_none()
                         && matches!(
                             i.state,
                             InsectState::Approach | InsectState::Attack | InsectState::Escape
-                        ) =>
-                {
-                    insect_leader = Some((i.id, i.state, i.position));
+                        )
+                    {
+                        insect_leader = Some((i.id, i.state, i.position));
+                    }
                 }
                 _ => {}
             }
         }
 
+        // Advance Mary hover sway (`shSway1f(-250.0, 0.1)` `enBOSMoveExec` `0x00140df0`).
+        self.sway_phase += dt * 60.0 * 0.1;
+        let mary_sway_y_sample = self.sway_phase.sin() * 250.0;
+        let has_collision_floors = collision.is_some_and(|c| c.all_floors().next().is_some());
+
+        let mut mary_swarm_spawn: Option<(Vec3, f32)> = None;
+        let mut insects_despawn_all = false;
+
         let twin_snapshots = &self.scratch_twin_snapshots;
         let flesh_lips_info = &self.scratch_flesh_lips_info;
         let mandarin_positions = &self.scratch_mandarin_positions;
 
-        for (idx, enemy) in self.enemies.iter_mut().enumerate() {
+        for idx in 0..self.enemies.len() {
             if only_enemy_idx.is_some_and(|only| only != idx) {
                 continue;
             }
 
+            self.rng_state = self
+                .rng_state
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            let rng_bits = self.rng_state;
+            let enemy = &mut self.enemies[idx];
             enemy.record_prev_pose();
 
             // Outdoor sleep culling (`enCheckSleepIn` 15000mm / `enCheckSleepOut` 7500mm)
@@ -506,6 +763,42 @@ impl AiSubsystem {
             } else if en_check_sleep_in(dist_to_player, self.is_outdoor, enemy.is_dead(), true) {
                 enemy.is_sleeping = true;
                 continue;
+            }
+
+            // Drive loopback fields from EnemyActor animation & grapple state (`*(i32*)(work+0x14) == -1`, `enCheckHuggedPlayer`).
+            let clip_finished = enemy.anim().is_clip_finished();
+            let is_grappling = enemy.is_grappling_player;
+            match &mut enemy.controller {
+                ActiveEnemy::Mannequin(e) => {
+                    e.anim_finished |= clip_finished;
+                }
+                ActiveEnemy::PyramidHead(e) => {
+                    e.anim_finished |= clip_finished;
+                    e.is_hugging_player = is_grappling;
+                }
+                ActiveEnemy::AbstractDaddy(e) => {
+                    e.anim_finished |= clip_finished;
+                    e.is_hugging_player = is_grappling;
+                }
+                ActiveEnemy::FleshLips(e) => {
+                    e.anim_finished |= clip_finished;
+                    e.is_hugging_player = is_grappling;
+                }
+                ActiveEnemy::Mandarin(e) => {
+                    e.anim_finished |= clip_finished;
+                }
+                ActiveEnemy::Eddie(e) => {
+                    e.anim_finished |= clip_finished;
+                }
+                ActiveEnemy::TwinPyramidHead(e) => {
+                    e.anim_finished |= clip_finished;
+                    e.spin_loop_rand_bits = rng_bits;
+                }
+                ActiveEnemy::MaryBoss(e) => {
+                    e.anim_finished |= clip_finished;
+                    e.is_hugging_player = is_grappling;
+                }
+                _ => {}
             }
 
             // While grappling James, `GrappleSession` owns enemy anchoring & pose.
@@ -527,6 +820,7 @@ impl AiSubsystem {
                 player_radius_mm: self.player_radius_mm,
                 player_ammo_empty: self.player_ammo_empty,
                 player_spraying: self.player_spraying,
+                mary_sway_y_sample,
                 ..EnemyUpdateContext::default()
             };
 
@@ -551,6 +845,16 @@ impl AiSubsystem {
                         .iter()
                         .filter(|(id, _)| *id != m.id)
                         .find_map(|(_, pos)| m.check_near_other(*pos));
+                    if has_collision_floors {
+                        if let Some(world) = collision {
+                            let probe = m.forward_grating_probe_pos();
+                            let hit = world
+                                .sample_floor_surface(probe.x, probe.y, probe.z, 1000.0, 2000.0);
+                            // `enCheckFloor` (`0x00145a80`): returns `2` for material `9` or `0xb`, `0` for none, `1` for solid.
+                            ctx.mandarin_over_grating =
+                                hit.is_none_or(|h| matches!(h.raw_material & 0x0F, 9 | 11));
+                        }
+                    }
                 }
                 ActiveEnemy::RoomInsect(i) => {
                     ctx.insect_leader = insect_leader
@@ -565,6 +869,39 @@ impl AiSubsystem {
                 .update_with_context(target, self.lighting, self.difficulty, ctx, dt);
             enemy.step_hitback();
             enemy.tick_fallback_anim(dt);
+
+            match &enemy.controller {
+                ActiveEnemy::MaryBoss(m)
+                    if m.moth_swarm_active && !has_alive_insects && mary_swarm_spawn.is_none() =>
+                {
+                    let to_player = player_pos - m.position;
+                    let yaw = to_player.x.atan2(to_player.z);
+                    mary_swarm_spawn = Some((m.position, yaw));
+                }
+                ActiveEnemy::RoomInsect(i) if i.despawn_all => {
+                    insects_despawn_all = true;
+                }
+                _ => {}
+            }
+        }
+
+        if insects_despawn_all {
+            self.enemies
+                .retain(|e| !matches!(e.controller, ActiveEnemy::RoomInsect(_)));
+            for e in &mut self.enemies {
+                if let ActiveEnemy::MaryBoss(m) = &mut e.controller {
+                    m.moth_swarm_active = false;
+                }
+            }
+        } else if let Some((spawn_pos, spawn_yaw)) = mary_swarm_spawn {
+            // `enBOSCtrlGenerate` (`0x00140090`): spawn RoomInsect swarm (leader + followers up to 32 slots).
+            let available_slots = 32usize.saturating_sub(self.enemies.len());
+            let spawn_count = available_slots.min(16);
+            for _ in 0..spawn_count {
+                let id = self.next_dynamic_id;
+                self.next_dynamic_id = self.next_dynamic_id.wrapping_add(1);
+                self.spawn_enemy(EnemySpecies::RoomInsect, id, spawn_pos, spawn_yaw);
+            }
         }
 
         // Decay tribe alert bus TTLs (`enExecTask` `0x001413f0` lines 272–282)

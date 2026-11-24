@@ -52,6 +52,12 @@ pub const RED_ATTACK_ID_CLEAVE_PC: u16 = 0x33;
 pub const RED_ATTACK_ID_SEIZE_PC: u16 = 0x35;
 pub const RED_ATTACK_ID_CHOKE_PC: u16 = 0x36;
 
+/// Blue Creek Apartments stairwell survival timer (`work+0xa4` in `enREDInitData` `SLUS 0x0015d410`).
+/// - Easy/Normal/Hard (`mode < 3`): `0x2a30` = `10800` ticks (180 s at 60 Hz).
+/// - Extra (`mode >= 3`): `18000` ticks (300 s at 60 Hz).
+pub const RED_STAIRWELL_TIMER_TICKS: f32 = 10_800.0;
+pub const RED_STAIRWELL_TIMER_EXTRA_TICKS: f32 = 18_000.0;
+
 #[derive(Debug, Clone)]
 pub struct PyramidHeadController {
     pub id: u32,
@@ -60,6 +66,10 @@ pub struct PyramidHeadController {
     pub state: RedState,
     pub sub_state: u8,
     pub stats: CreatureStats,
+    /// True for Blue Creek Apartments boss encounter (`sub_type == 6` / `work+0x05 == 2`, `enREDInitData` `0x0015d410`).
+    pub is_boss_encounter: bool,
+    /// Stairwell survival countdown in 60 Hz ticks (`work+0xa4` in `enREDCtrlAutomatic` `0x0015d6d0`).
+    pub stairwell_timer_ticks: f32,
     /// Set by animation driver when current clip finishes (`*(i32*)(work + 0x14) == -1`).
     pub anim_finished: bool,
     pub state_timer: f32,
@@ -87,6 +97,7 @@ impl PyramidHeadController {
     /// - Boss (subtype 6) HP (`0x2aaa70`): `[1200.0, 3000.0, 4000.0, 5000.0]`
     /// - Non-boss invincible wander HP (`0x49742400`): `1_000_000.0`
     /// - Endurance (`0x2aaa90`): `[500.0, 700.0, 1000.0, 2000.0]` (`× 0.3` in apartment boss subtype 6)
+    /// - Stairwell timer `work+0xa4`: `0x2a30` (`10800` ticks) if `mode < 3`, else `18000` ticks
     pub fn new_with_difficulty(
         id: u32,
         position: Vec3,
@@ -102,6 +113,13 @@ impl PyramidHeadController {
         } else {
             (1_000_000.0, RED_END[idx])
         };
+        let stairwell_timer_ticks = if !is_boss_encounter {
+            0.0
+        } else if idx >= 3 {
+            RED_STAIRWELL_TIMER_EXTRA_TICKS
+        } else {
+            RED_STAIRWELL_TIMER_TICKS
+        };
 
         Self {
             id,
@@ -110,6 +128,8 @@ impl PyramidHeadController {
             state: RedState::Wander,
             sub_state: 0,
             stats: CreatureStats::new(hp, end, 0.0),
+            is_boss_encounter,
+            stairwell_timer_ticks,
             anim_finished: false,
             state_timer: 0.0,
             timer_ticks: 0.0,
@@ -130,6 +150,20 @@ impl PyramidHeadController {
     ) {
         self.stats.update(dt);
         self.state_timer += dt;
+
+        // `enREDCtrlAutomatic` (`SLUS_202.28` `0x0015d6d0`):
+        // When `variant == 2` (`is_boss_encounter`) and `state != Leave` (`7`), decrement `work+0xa4`
+        // by `shGetDF()` (`dt * 60.0`); on expiry (`< 1`), transition to `Leave` and scale max HP by `1.5`.
+        if self.is_boss_encounter && self.state != RedState::Leave {
+            self.stairwell_timer_ticks -= dt * 60.0;
+            if self.stairwell_timer_ticks <= 0.0 {
+                self.stairwell_timer_ticks = 0.0;
+                self.state = RedState::Leave;
+                self.sub_state = 0;
+                self.stats.max_health *= 1.5;
+                self.active_attack_id = None;
+            }
+        }
 
         let dx = target.position.x - self.position.x;
         let dz = target.position.z - self.position.z;
@@ -431,9 +465,18 @@ impl PyramidHeadController {
         self.yaw = normalize_angle(self.yaw + step);
     }
 
+    /// Apply incoming hit (`enREDSetDamage` `SLUS_202.28` `0x0015f480`).
+    ///
+    /// In `variant == 2` (`is_boss_encounter`), `enReduceHP` drains HP and `enCheckDeath` (`<= 0.0`)
+    /// immediately transitions Pyramid Head into [`RedState::Leave`] (`state = 7, sub_state = 0`).
     pub fn receive_hit(&mut self, ap: f32, _sp: f32) {
         // Pyramid Head never flinches or falls down from gunfire or melee swings
         self.stats.health = (self.stats.health - ap).max(0.0);
+        if self.is_boss_encounter && self.stats.health <= 0.0 && self.state != RedState::Leave {
+            self.state = RedState::Leave;
+            self.sub_state = 0;
+            self.active_attack_id = None;
+        }
     }
 }
 

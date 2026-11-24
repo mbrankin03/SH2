@@ -104,6 +104,17 @@ impl DifficultyLevel {
     }
 }
 
+impl From<crate::config::ActionDifficulty> for DifficultyLevel {
+    fn from(diff: crate::config::ActionDifficulty) -> Self {
+        match diff {
+            crate::config::ActionDifficulty::Beginner => Self::Beginner,
+            crate::config::ActionDifficulty::Easy => Self::Easy,
+            crate::config::ActionDifficulty::Normal => Self::Normal,
+            crate::config::ActionDifficulty::Hard => Self::Hard,
+        }
+    }
+}
+
 /// Information about a perceivable character (James or Maria) passed to sensory routines.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PerceivableTarget {

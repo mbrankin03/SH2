@@ -95,6 +95,8 @@ pub struct ScenarioState {
     pub riddle_difficulty: RiddleDifficulty,
     /// Active action difficulty (`Easy`, `Normal`, `Hard`).
     pub action_difficulty: ActionDifficulty,
+    /// Accumulated boss completion signals emitted by [`crate::ai::AiSubsystem::consume_boss_events`].
+    pub boss_events: crate::ai::AiBossEvents,
 }
 
 impl Default for ScenarioState {
@@ -157,6 +159,7 @@ impl ScenarioState {
                     cutaway_overlay: CutawayOverlayEngine::new(),
                     riddle_difficulty,
                     action_difficulty: ActionDifficulty::Normal,
+                    boss_events: crate::ai::AiBossEvents::default(),
                 }
             }
             ScenarioKind::BornFromAWish => {
@@ -200,8 +203,49 @@ impl ScenarioState {
                     cutaway_overlay: CutawayOverlayEngine::new(),
                     riddle_difficulty: RiddleDifficulty::Normal,
                     action_difficulty: ActionDifficulty::Normal,
+                    boss_events: crate::ai::AiBossEvents::default(),
                 }
             }
+        }
+    }
+
+    /// Consume boss completion signals from [`crate::ai::AiSubsystem::consume_boss_events`]
+    /// into stage `EventFlags` and `Inventory` (e.g. PH stairwell siren clear + water drain,
+    /// Dual PH Rust-Colored & Scarlet Eggs).
+    pub fn apply_boss_events(&mut self, events: &crate::ai::AiBossEvents) {
+        if events.ph_battle_end_complete && !self.boss_events.ph_battle_end_complete {
+            crate::events::stages_act1::act1_apply_ph_battle_end(&mut self.flags);
+            self.event_flags.insert(148);
+            self.event_flags.insert(526);
+            self.boss_events.ph_battle_end_complete = true;
+        }
+        if events.flesh_lips_battle_cleared {
+            self.boss_events.flesh_lips_battle_cleared = true;
+        }
+        if events.abstract_daddy_defeated {
+            self.boss_events.abstract_daddy_defeated = true;
+        }
+        if events.eddie_room1_escaped {
+            self.boss_events.eddie_room1_escaped = true;
+        }
+        if events.eddie_room2_dead {
+            self.boss_events.eddie_room2_dead = true;
+        }
+        if events.twin_ph_suicide_ready && !self.boss_events.twin_ph_suicide_ready {
+            // `EvProgEggHoleOnDoor` (`0x005768c0`): Rust-colored egg (`72`) & Scarlet egg (`73`).
+            if !self.inventory_mgr.has_item(72) {
+                self.add_item(72, "Rust-colored egg", 1);
+            }
+            if !self.inventory_mgr.has_item(73) {
+                self.add_item(73, "Scarlet egg", 1);
+            }
+            self.boss_events.twin_ph_suicide_ready = true;
+        }
+        if events.mary_phase1_cleared {
+            self.boss_events.mary_phase1_cleared = true;
+        }
+        if events.mary_ending_triggered {
+            self.boss_events.mary_ending_triggered = true;
         }
     }
 

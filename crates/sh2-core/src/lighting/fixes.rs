@@ -409,8 +409,8 @@ pub const fn lighting_transition_mode(
 }
 
 /// Evaluates `RunLightingTransition` (`Patches/LightingTransition.cpp:186-200`):
-/// disables flashlight rendering during `CS_END_MARIA_EPILOGUE` (`0x5D`) and
-/// `CS_BOWL_LAURA_EDDIE` (`0x19`) when SH2:EE fixes are active.
+/// disables flashlight rendering during `CS_END_MARIA_EPILOGUE` (`0x5C`, `Patches.h:141`) and
+/// `CS_BOWL_LAURA_EDDIE` (`0x19`, `Patches.h:74`) when SH2:EE fixes are active.
 #[must_use]
 pub const fn should_disable_cutscene_flashlight(
     cutscene_id: u32,
@@ -420,7 +420,7 @@ pub const fn should_disable_cutscene_flashlight(
         return false;
     }
     const CS_BOWL_LAURA_EDDIE: u32 = 0x19;
-    const CS_END_MARIA_EPILOGUE: u32 = 0x5D;
+    const CS_END_MARIA_EPILOGUE: u32 = 0x5C;
     matches!(cutscene_id, CS_BOWL_LAURA_EDDIE | CS_END_MARIA_EPILOGUE)
 }
 
@@ -523,6 +523,14 @@ mod tests {
         );
         assert!(should_disable_cutscene_flashlight(
             0x19,
+            LightingProfile::EnhancedEdition
+        ));
+        assert!(should_disable_cutscene_flashlight(
+            0x5C,
+            LightingProfile::EnhancedEdition
+        ));
+        assert!(!should_disable_cutscene_flashlight(
+            0x5D,
             LightingProfile::EnhancedEdition
         ));
         assert!(!should_disable_cutscene_flashlight(

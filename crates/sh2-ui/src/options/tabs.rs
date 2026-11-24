@@ -7,7 +7,7 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 13,
+            OptionsTab::Video => 15,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     12
@@ -15,7 +15,7 @@ impl OptionsMenu {
                     11
                 }
             }
-            OptionsTab::Controls => 12,
+            OptionsTab::Controls => 13,
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
@@ -114,6 +114,22 @@ impl OptionsMenu {
                     "ON (Filmic HDR)".into()
                 } else {
                     "OFF (PS2 Linear)".into()
+                },
+            )),
+            13 => Some((
+                "Water Reflections",
+                if v.enable_water_reflections {
+                    "ON (Planar)".into()
+                } else {
+                    "OFF (PS2 1:1)".into()
+                },
+            )),
+            14 => Some((
+                "Oar Water Ripples",
+                if v.enable_oar_ripples {
+                    "ON (Native)".into()
+                } else {
+                    "OFF (PS2 1:1)".into()
                 },
             )),
             _ => None,
@@ -217,6 +233,14 @@ impl OptionsMenu {
             11 => Some((
                 "Controller Config (PS2)",
                 format!("{} [Right/Enter]", c.ps2_bindings.preset.label()),
+            )),
+            12 => Some((
+                "Analog Trigger Rowing",
+                if c.enable_analog_trigger_rowing {
+                    "ON (L2/R2)".into()
+                } else {
+                    "OFF (PS2 Sticks)".into()
+                },
             )),
             _ => None,
         }
@@ -483,6 +507,8 @@ impl OptionsMenu {
                 return Some(OptionsSoundCue::CursorMove);
             }
             12 => v.aces_tonemapping = !v.aces_tonemapping,
+            13 => v.enable_water_reflections = !v.enable_water_reflections,
+            14 => v.enable_oar_ripples = !v.enable_oar_ripples,
             _ => return Some(OptionsSoundCue::None),
         }
         None
@@ -723,6 +749,7 @@ impl OptionsMenu {
                 self.open_sub_screen(OptionsSubScreen::ControllerConfig);
                 return Some(OptionsSoundCue::CursorMove);
             }
+            12 => c.enable_analog_trigger_rowing = !c.enable_analog_trigger_rowing,
             _ => return Some(OptionsSoundCue::None),
         }
         None

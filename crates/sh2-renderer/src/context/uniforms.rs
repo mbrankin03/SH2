@@ -156,6 +156,9 @@ impl RenderContext {
             cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, shade_mode],
             inv_view_proj: inv_vp.to_cols_array_2d(),
         };
+        if let Ok(mut guard) = self.last_camera_uniforms.lock() {
+            *guard = uniforms;
+        }
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniforms));
     }

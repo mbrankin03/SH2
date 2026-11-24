@@ -402,6 +402,10 @@ impl RenderContext {
             lens_flare_smoother: std::sync::Mutex::new(effects::LensFlareSmoother::default()),
             last_shadow_view_proj: std::sync::Mutex::new(buffers.initial_shadow_vp),
             last_pcss_params: std::sync::Mutex::new(buffers.initial_pcss_params),
+            last_camera_uniforms: std::sync::Mutex::new(pipeline::CameraUniforms::default()),
+            water_plane_height_mm: std::sync::atomic::AtomicU32::new(
+                crate::water::DEFAULT_WATER_HEIGHT_MM.to_bits(),
+            ),
             default_sampler,
             default_view,
             default_texture_bind_group,

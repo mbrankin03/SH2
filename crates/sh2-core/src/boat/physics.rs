@@ -391,6 +391,53 @@ pub fn collect_oar_events(
     events
 }
 
+/// Retail PC idle rowing animation speed override (`±0x400` at `sh2pc.exe` `0x0053f770`).
+pub const BOAT_IDLE_ANIME_SPEED_Q12: i16 = 0x400;
+
+/// Retail PC minimum idle animation ID excluded from `±0x400` override (`0x28` at `0x0053f770`).
+pub const BOAT_IDLE_ANIM_EXCLUDE_MIN: i16 = 0x28;
+
+/// Retail PC maximum idle animation ID excluded from `±0x400` override (`0x2a` at `0x0053f770`).
+pub const BOAT_IDLE_ANIM_EXCLUDE_MAX: i16 = 0x2a;
+
+/// `m3_boat_jms.c` `BoatPlayerCheckControl` (`0x0026be30`) & `shUpdateBoatJamesPosAfterAnime` (`0x0026ee10`).
+///
+/// Syncs James's world position, yaw, and inverted pitch/roll (`-pitch`, `-roll`) to the boat
+/// (`*(float *)(_sh2jms + 0x230) = -*(float *)(_sh2jms + 0x30)` and `+0x238 = -+0x38` at `0x0026be30`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BoatJamesSyncPose {
+    pub position: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub inverted_pitch: f32,
+    pub inverted_roll: f32,
+    pub anim_frame: f32,
+    pub anim_speed_q12: i16,
+}
+
+/// Computes James's synchronized pose from the boat (`BoatPlayerCheckControl` `0x0026be30` / `shUpdateBoatJamesPosAfterAnime` `0x0026ee10`).
+#[inline]
+pub fn sync_james_to_boat_pose(
+    boat_pos: Vec3,
+    boat_yaw: f32,
+    boat_pitch: f32,
+    boat_roll: f32,
+    boat_anim_frame: f32,
+    boat_anim_speed_q12: i16,
+) -> BoatJamesSyncPose {
+    BoatJamesSyncPose {
+        position: boat_pos,
+        yaw: boat_yaw,
+        pitch: boat_pitch,
+        roll: boat_roll,
+        inverted_pitch: -boat_pitch,
+        inverted_roll: -boat_roll,
+        anim_frame: boat_anim_frame,
+        anim_speed_q12: boat_anim_speed_q12,
+    }
+}
+
 /// Returns the SH2:EE `RowboatSpawnFix` Hotel dock `(position, yaw)` if `kEnteredRowboatGameFlag` (`0x17B`) is set.
 #[inline]
 pub fn resolve_sh2ee_rowboat_spawn(

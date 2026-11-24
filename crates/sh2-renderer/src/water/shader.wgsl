@@ -1,10 +1,11 @@
 // Toluca Lake water surface shader (`SH2-80`).
 //
-// Supports two strictly separated modes:
-// - `enable_water_reflections == 0.0` (Strict 1:1 Vanilla PS2):
-//   PS2 water tint + `Specular_Calculator` (`0x0025bb80`, cos_cutoff = 0.939692) + depth fog.
-// - `enable_water_reflections > 0.5` (Native-Upgrade):
-//   Planar reflection sampling perturbed by animated wave + oar ripple normals and Fresnel blend.
+// Strictly separated modes:
+// - `enable_water_reflections == 0.0` & `enable_oar_ripples == 0.0` (Strict 1:1 Vanilla PS2):
+//   Uses `WaterGridSim` (`hh_class_water_00.c` `Object_Motion_00` `0x0025ba70`, 48x48 grid @ 500 mm)
+//   finite-difference heights & normals + `Specular_Calculator` (`0x0025bb80`, cos_cutoff = 0.939692) + fog.
+// - `enable_water_reflections > 0.5` / `enable_oar_ripples > 0.5` (Native-Upgrade):
+//   Samples planar `reflection_tex` perturbed by `WaterGridSim` + oar ripple normals and Fresnel blend.
 
 struct WaterUniforms {
     view_proj: mat4x4<f32>,
@@ -12,7 +13,7 @@ struct WaterUniforms {
     light_dir: vec4<f32>,
     water_tint: vec4<f32>,
     fog_color: vec4<f32>,
-    /// x = water_height_mm, y = time_secs, z = enable_water_reflections (0/1), w = enable_oar_ripples (0/1)
+    /// x = water_height_mm, y = grid_origin_x_mm, z = enable_water_reflections (0/1), w = enable_oar_ripples (0/1)
     params: vec4<f32>,
     /// x = fog_start, y = fog_end, z = reflection_strength, w = specular_strength
     fog_and_spec: vec4<f32>,
@@ -33,24 +34,41 @@ struct RippleBuffer {
 @group(0) @binding(1) var<uniform> u_ripples: RippleBuffer;
 @group(0) @binding(2) var reflection_tex: texture_2d<f32>;
 @group(0) @binding(3) var reflection_samp: sampler;
+@group(0) @binding(4) var<storage, read> grid_heights: array<f32, 2304>;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) grid_xy: vec2<u32>,
 };
 
 struct VertexOutput {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
-    @location(1) uv: vec2<f32>,
+    @location(1) normal: vec3<f32>,
 };
+
+fn sample_grid_height(gx: u32, gz: u32) -> f32 {
+    let cx = min(gx, 47u);
+    let cz = min(gz, 47u);
+    return grid_heights[cx + cz * 48u];
+}
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let world = vec3<f32>(in.position.x, u_water.params.x, in.position.z);
+    let gx = in.grid_xy.x;
+    let gz = in.grid_xy.y;
+    let h = sample_grid_height(gx, gz);
+    let h_l = sample_grid_height(max(gx, 1u) - 1u, gz);
+    let h_r = sample_grid_height(min(gx + 1u, 47u), gz);
+    let h_d = sample_grid_height(gx, max(gz, 1u) - 1u);
+    let h_u = sample_grid_height(gx, min(gz + 1u, 47u));
+
+    // `hh_class_water_00.c` `Object_Draw` (`0x0025bd00`): 500.0 mm grid spacing
+    let world = vec3<f32>(in.position.x, u_water.params.x + h, in.position.z);
     out.world_pos = world;
-    out.uv = in.uv;
+    out.normal = normalize(vec3<f32>(h_l - h_r, 1000.0, h_d - h_u));
     out.clip_pos = u_water.view_proj * vec4<f32>(world, 1.0);
     return out;
 }
@@ -96,12 +114,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(view_vec);
     let light_dir = normalize(u_water.light_dir.xyz);
 
-    let time = u_water.params.y;
-    let wave_dx = sin(in.world_pos.x * 0.0012 + time * 1.1) * 0.025;
-    let wave_dz = cos(in.world_pos.z * 0.0015 + time * 0.9) * 0.025;
-    var normal = normalize(vec3<f32>(wave_dx, 1.0, wave_dz));
+    var normal = normalize(in.normal);
     if (u_water.params.w > 0.5) {
-        normal = normalize(normal + eval_ripple_normal(in.world_pos.xz) - vec3<f32>(0.0, 1.0, 0.0));
+        let ripple_n = eval_ripple_normal(in.world_pos.xz);
+        normal = normalize(normal + ripple_n - vec3<f32>(0.0, 1.0, 0.0));
     }
 
     var color = u_water.water_tint.rgb;

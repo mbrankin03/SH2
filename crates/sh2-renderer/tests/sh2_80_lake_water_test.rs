@@ -46,10 +46,18 @@ fn headless_lake_water_vanilla_ps2_vs_native_reflection() {
     ctx.update_camera(vp, proj.inverse(), eye);
 
     // 1. Strict 1:1 Vanilla PS2 mode (`enable_water_reflections = 0.0`, `enable_oar_ripples = 0.0`)
+    //    Driven by `WaterGridSim` (`hh_class_water_00.c` `0x0025ba70`), zero planar reflection pass.
+    let mut grid = sh2_core::boat::WaterGridSim::default();
+    grid.add_impulse(24, 24, 15.0);
+    grid.step();
+    ctx.water_pipeline.update_grid(&ctx.queue, grid.heights());
+    ctx.water_reflection_pass_enabled
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+
     let mut uniforms = WaterUniforms {
         view_proj: vp.to_cols_array_2d(),
         cam_pos: [eye.x, eye.y, eye.z, 1.0],
-        params: [3690.0, 1.0, 0.0, 0.0],
+        params: [3690.0, 0.0, 0.0, 0.0],
         ..Default::default()
     };
     let mut ripples = WaterRippleBuffer::default();
@@ -72,7 +80,10 @@ fn headless_lake_water_vanilla_ps2_vs_native_reflection() {
     }
 
     // 2. Native-Upgrade mode (`enable_water_reflections = 1.0`, `enable_oar_ripples = 1.0`)
-    uniforms.params = [3690.0, 1.5, 1.0, 1.0];
+    //    Enables the mirrored planar reflection pass into `reflection_view` + oar ripples.
+    ctx.water_reflection_pass_enabled
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    uniforms.params = [3690.0, 0.0, 1.0, 1.0];
     ripples.ripples[0] = GpuOarRipple {
         pos_age: [0.0, 3690.0, -1500.0, 0.4],
         params: [900.0, 0.35, 600.0, 3.0],

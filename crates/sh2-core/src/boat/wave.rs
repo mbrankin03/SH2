@@ -182,20 +182,26 @@ impl LakeWaveSystem {
     }
 }
 
+/// `dev_0_105` neighbor sum divisor (`2.0` = `0x40000000` at `SLUS_202.28` `0x0036ed80`, `Object_Motion_00` `0x0025ba70`).
+pub const WATER_GRID_NEIGHBOR_DIVISOR: f32 = 2.0;
+
+/// `dev_1_106` damping divisor (`16.0` = `0x41800000` at `SLUS_202.28` `0x0036ed88`, `Object_Motion_00` `0x0025ba70`).
+pub const WATER_GRID_DAMPING_DIVISOR: f32 = 16.0;
+
 /// 48x48 finite-difference heightfield water grid (`Effect2/hh_class_water_00.c` `0x0025ba70`).
 #[derive(Debug, Clone)]
 pub struct WaterGridSim {
     buffers: [Vec<f32>; 2],
     active: usize,
-    /// Neighbor sum divisor (`dev_0_105`, default `2.0` for 4-neighbor wave equation).
+    /// Neighbor sum divisor (`dev_0_105` at `SLUS_202.28` `0x0036ed80`, `2.0`).
     pub neighbor_divisor: f32,
-    /// Damping divisor (`dev_1_106`, default `64.0`).
+    /// Damping divisor (`dev_1_106` at `SLUS_202.28` `0x0036ed88`, `16.0`).
     pub damping_divisor: f32,
 }
 
 impl Default for WaterGridSim {
     fn default() -> Self {
-        Self::new(2.0, 64.0)
+        Self::new(WATER_GRID_NEIGHBOR_DIVISOR, WATER_GRID_DAMPING_DIVISOR)
     }
 }
 

@@ -140,6 +140,8 @@ pub struct RenderContext {
     pub(crate) lens_flare_smoother: std::sync::Mutex<effects::LensFlareSmoother>,
     pub(crate) last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
     pub(crate) last_pcss_params: std::sync::Mutex<[f32; 4]>,
+    pub(crate) last_camera_uniforms: std::sync::Mutex<pipeline::CameraUniforms>,
+    pub(crate) water_plane_height_mm: std::sync::atomic::AtomicU32,
 
     pub default_sampler: wgpu::Sampler,
     pub default_view: wgpu::TextureView,

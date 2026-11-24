@@ -21,18 +21,21 @@ pub use input::{
     BOAT_STATUS_TABLE,
 };
 pub use physics::{
-    close_to_value, collect_oar_events, resolve_sh2ee_rowboat_spawn, RowboatOarEvent,
-    RowboatOarState, RowboatWaveState, BOAT_ANGULAR_ACCEL_SCALE, BOAT_ANGULAR_DAMPING,
-    BOAT_ANGULAR_DEADBAND, BOAT_ANIME_ACCEL_STEP, BOAT_ANIME_DECEL_STEP, BOAT_LINEAR_ACCEL_SCALE,
-    BOAT_LINEAR_DAMPING, BOAT_LINEAR_DEADBAND, BOAT_MAX_ANGULAR_SPEED, BOAT_MAX_ANIME_SPEED_Q12,
-    BOAT_MAX_FORWARD_SPEED_PC, BOAT_MIN_FORWARD_SPEED, BOAT_OAR_WATER_THRESHOLD_MM,
-    BOAT_WATER_BASE_OFFSET_PC, BOAT_WATER_BASE_OFFSET_PS2, BOAT_WORLD_SCALE_MM,
-    FLAG_ENTERED_ROWBOAT, ROWBOAT_ANIM_FIX_MAX_FRAME, ROWBOAT_HOTEL_DOCK_POS_MM,
-    ROWBOAT_HOTEL_DOCK_YAW_RAD, SFX_BOAT_OAR_LEFT, SFX_BOAT_OAR_RIGHT,
+    close_to_value, collect_oar_events, resolve_sh2ee_rowboat_spawn, sync_james_to_boat_pose,
+    BoatJamesSyncPose, RowboatOarEvent, RowboatOarState, RowboatWaveState,
+    BOAT_ANGULAR_ACCEL_SCALE, BOAT_ANGULAR_DAMPING, BOAT_ANGULAR_DEADBAND, BOAT_ANIME_ACCEL_STEP,
+    BOAT_ANIME_DECEL_STEP, BOAT_IDLE_ANIME_SPEED_Q12, BOAT_IDLE_ANIM_EXCLUDE_MAX,
+    BOAT_IDLE_ANIM_EXCLUDE_MIN, BOAT_LINEAR_ACCEL_SCALE, BOAT_LINEAR_DAMPING, BOAT_LINEAR_DEADBAND,
+    BOAT_MAX_ANGULAR_SPEED, BOAT_MAX_ANIME_SPEED_Q12, BOAT_MAX_FORWARD_SPEED_PC,
+    BOAT_MIN_FORWARD_SPEED, BOAT_OAR_WATER_THRESHOLD_MM, BOAT_WATER_BASE_OFFSET_PC,
+    BOAT_WATER_BASE_OFFSET_PS2, BOAT_WORLD_SCALE_MM, FLAG_ENTERED_ROWBOAT,
+    ROWBOAT_ANIM_FIX_MAX_FRAME, ROWBOAT_HOTEL_DOCK_POS_MM, ROWBOAT_HOTEL_DOCK_YAW_RAD,
+    SFX_BOAT_OAR_LEFT, SFX_BOAT_OAR_RIGHT,
 };
 pub use wave::{
     ps2_water_specular, LakeWaveRing, LakeWaveSample, LakeWaveSystem, WaterGridSim,
-    LAKE_WAVE_COUNT, LAKE_WAVE_MAX_POS, WATER_GRID_SIZE, WATER_SPECULAR_COS_CUTOFF,
+    LAKE_WAVE_COUNT, LAKE_WAVE_MAX_POS, WATER_GRID_DAMPING_DIVISOR, WATER_GRID_NEIGHBOR_DIVISOR,
+    WATER_GRID_SIZE, WATER_SPECULAR_COS_CUTOFF,
 };
 
 /// Outputs emitted by one 60 Hz tick of [`RowboatController::tick_full`].
@@ -44,6 +47,8 @@ pub struct RowboatTickOutput {
     pub james_anim_id: u16,
     /// Signed Q12 animation speed (`_DAT_0120256c` / `DAT_01f96820`).
     pub anim_speed_q12: i16,
+    /// Synchronized James pose (`m3_boat_jms.c` `BoatPlayerCheckControl` `0x0026be30`).
+    pub james_sync: BoatJamesSyncPose,
     /// Oar water entry/exit splash & SFX events (`BoatCheckEffect`).
     pub oar_events: Vec<RowboatOarEvent>,
 }
@@ -108,8 +113,8 @@ impl RowboatController {
     pub const MAX_FORWARD_SPEED: f32 = BOAT_MAX_FORWARD_SPEED_PC;
     /// Maximum turn rate (`1.5` rad/s at `0x0053f1d0`).
     pub const MAX_TURN_RATE: f32 = BOAT_MAX_ANGULAR_SPEED;
-    /// Base oar frames advanced per 60 Hz tick at full Q12 speed.
-    pub const OAR_FRAMES_PER_TICK: f32 = 0.5;
+    /// Q12 fixed-point (`4096.0`) at 30 Hz (`1 / 2` per 60 Hz tick) -> `8192.0` Q12 units per frame per 60 Hz tick.
+    pub const Q12_TO_60HZ_FRAME_DIVISOR: f32 = 4096.0 * 2.0;
 
     /// Initializes the rowboat at `(position, yaw)` (`HumanBOTInit` `0x0026c170`).
     pub fn new(position: Vec3, yaw: f32) -> Self {
@@ -262,9 +267,24 @@ impl RowboatController {
             BoatRowMode::Right => self.anm_speed_right.saturating_mul(2),
         };
 
-        // Advance oar stroke frame & enforce SH2:EE RowboatAnimationFix at frame 0x4C (76.0).
-        let frame_delta = (self.anim_speed_q12 as f32 / 4096.0) * Self::OAR_FRAMES_PER_TICK;
-        if frame_delta.abs() > 0.001 {
+        // Retail PC idle animation speed override (`0x0053f770` lines 9413-9420):
+        // When both sticks are idle (`status & 2`) and anim_id is outside `0x28..=0x2a`,
+        // apply `+0x400` if `forward_speed >= 0.0` else `-0x400`.
+        if (self.input_processor.lstick_status & 2) != 0
+            && (self.input_processor.rstick_status & 2) != 0
+            && (input.current_boat_anim_id < BOAT_IDLE_ANIM_EXCLUDE_MIN
+                || input.current_boat_anim_id > BOAT_IDLE_ANIM_EXCLUDE_MAX)
+        {
+            self.anim_speed_q12 = if self.forward_speed >= 0.0 {
+                BOAT_IDLE_ANIME_SPEED_Q12
+            } else {
+                -BOAT_IDLE_ANIME_SPEED_Q12
+            };
+        }
+
+        // Advance oar stroke frame from Q12 speed & enforce SH2:EE RowboatAnimationFix at frame 0x4C (76.0).
+        if self.anim_speed_q12 != 0 {
+            let frame_delta = self.anim_speed_q12 as f32 / Self::Q12_TO_60HZ_FRAME_DIVISOR;
             self.oar_anim_frame += frame_delta;
             if enable_sh2ee_anim_fix {
                 while self.oar_anim_frame > Self::MAX_OAR_STROKE_FRAME {
@@ -277,15 +297,24 @@ impl RowboatController {
         }
 
         // 6. BoatCheckOarStatus (`0x0026def0` / `0x0053fa60`) & BoatCheckEffect (`0x0026e040` / `0x0053fb40`)
+        // Oar tip Y > 3500.0 mm (`BOAT_OAR_WATER_THRESHOLD_MM`) indicates water submersion.
+        // Callers with evaluated `boat.mdl` bone transforms can override via `update_oar_status_from_bone_y`.
         let stroke_phase = (self.oar_anim_frame / Self::MAX_OAR_STROKE_FRAME) * TAU;
-        let oar_y_left = self.position.y - stroke_phase.sin() * 250.0;
-        let oar_y_right = self.position.y - stroke_phase.sin() * 250.0;
+        let stroke_submerged = stroke_phase.sin() > 0.0 && self.anim_speed_q12 != 0;
         self.oar_state.prev_left_in_water = self.oar_state.left_in_water;
         self.oar_state.prev_right_in_water = self.oar_state.right_in_water;
-        self.oar_state.left_in_water =
-            oar_y_left > BOAT_OAR_WATER_THRESHOLD_MM && self.anim_speed_q12 != 0;
-        self.oar_state.right_in_water =
-            oar_y_right > BOAT_OAR_WATER_THRESHOLD_MM && self.anim_speed_q12 != 0;
+        self.oar_state.left_in_water = match self.row_mode {
+            BoatRowMode::Both | BoatRowMode::Left => {
+                stroke_submerged && self.position.y > BOAT_OAR_WATER_THRESHOLD_MM
+            }
+            BoatRowMode::Right => false,
+        };
+        self.oar_state.right_in_water = match self.row_mode {
+            BoatRowMode::Both | BoatRowMode::Right => {
+                stroke_submerged && self.position.y > BOAT_OAR_WATER_THRESHOLD_MM
+            }
+            BoatRowMode::Left => false,
+        };
 
         let oar_events = collect_oar_events(
             &self.oar_state,
@@ -304,12 +333,42 @@ impl RowboatController {
             dt,
         );
 
+        // 8. m3_boat_jms.c `BoatPlayerCheckControl` (`0x0026be30`) & `shUpdateBoatJamesPosAfterAnime` (`0x0026ee10`)
+        let james_sync = sync_james_to_boat_pose(
+            self.position,
+            self.yaw,
+            self.pitch,
+            self.roll,
+            self.oar_anim_frame,
+            self.anim_speed_q12,
+        );
+
         RowboatTickOutput {
             row_mode: self.row_mode,
             james_anim_id: self.row_mode.james_anim_id(),
             anim_speed_q12: self.anim_speed_q12,
+            james_sync,
             oar_events,
         }
+    }
+
+    /// Evaluates `BoatCheckOarStatus` (`0x0026def0` / `0x0053fa60`) & `BoatCheckEffect` (`0x0053fb40`)
+    /// directly from `boat.mdl` skeletal oar-tip world Y coordinates (`> 3500.0` mm).
+    pub fn update_oar_status_from_bone_y(
+        &mut self,
+        left_oar_world_y_mm: f32,
+        right_oar_world_y_mm: f32,
+    ) -> Vec<RowboatOarEvent> {
+        self.oar_state.prev_left_in_water = self.oar_state.left_in_water;
+        self.oar_state.prev_right_in_water = self.oar_state.right_in_water;
+        self.oar_state.left_in_water = left_oar_world_y_mm > BOAT_OAR_WATER_THRESHOLD_MM;
+        self.oar_state.right_in_water = right_oar_world_y_mm > BOAT_OAR_WATER_THRESHOLD_MM;
+        collect_oar_events(
+            &self.oar_state,
+            self.position,
+            self.yaw,
+            self.anim_speed_q12,
+        )
     }
 
     /// Evaluates sub-frame interpolated `(position, yaw, oar_frame)` for `alpha` in `[0.0, 1.0]`.

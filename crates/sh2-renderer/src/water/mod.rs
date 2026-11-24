@@ -1,13 +1,15 @@
 //! Toluca Lake water surface & native planar reflection subsystem (`SH2-80`).
 //!
 //! - Strict 1:1 Vanilla PS2 mode (`enable_water_reflections = false`, `enable_oar_ripples = false`):
-//!   Renders the lake surface with PS2 water tint + `Specular_Calculator` (`0x0025bb80`).
+//!   Renders the 48x48 `WaterGridSim` (`Effect2/hh_class_water_00.c` `0x0025ba70` / `0x0025bd00`)
+//!   with PS2 `Specular_Calculator` (`0x0025bb80`).
 //! - Native-Upgrade mode (`enable_water_reflections = true` / `enable_oar_ripples = true`):
-//!   Renders a mirrored planar reflection pass across `y = water_height_mm` and perturbs
-//!   reflections/normals with interactive oar ripple rings driven by `BoatCheckEffect`.
+//!   Renders a mirrored planar reflection pass across `y = water_height_mm` into `reflection_view`
+//!   and perturbs reflections/normals with interactive oar ripple rings driven by `BoatCheckEffect`.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
+use sh2_core::boat::{BOAT_WATER_BASE_OFFSET_PC, BOAT_WORLD_SCALE_MM, WATER_GRID_SIZE};
 use wgpu::util::DeviceExt;
 
 /// Maximum simultaneous oar ripple rings tracked on the GPU.
@@ -16,12 +18,19 @@ pub const MAX_OAR_RIPPLES: usize = 8;
 /// Planar reflection render target resolution (width/height).
 pub const WATER_REFLECTION_SIZE: u32 = 512;
 
-/// GPU vertex for the Toluca Lake water plane.
+/// `hh_class_water_00.c` `Object_Draw` (`0x0025bd00`): `500.0` mm per grid cell.
+pub const WATER_GRID_SPACING_MM: f32 = BOAT_WORLD_SCALE_MM;
+
+/// Default retail PC Toluca Lake water height in mm (`7.38 * 500.0 = 3690.0`, `sh2pc.exe` `0x0053efa0`).
+pub const DEFAULT_WATER_HEIGHT_MM: f32 = BOAT_WATER_BASE_OFFSET_PC * BOAT_WORLD_SCALE_MM;
+
+/// GPU vertex for the 48x48 Toluca Lake `WaterGridSim` mesh (`Effect2/hh_class_water_00.c` `0x0025bd00`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct WaterVertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
+    pub grid_xy: [u32; 2],
 }
 
 /// GPU uniform block for Toluca Lake water rendering.
@@ -33,9 +42,9 @@ pub struct WaterUniforms {
     pub light_dir: [f32; 4],
     pub water_tint: [f32; 4],
     pub fog_color: [f32; 4],
-    /// `[water_height_mm, time_secs, enable_water_reflections, enable_oar_ripples]`
+    /// `[water_height_mm, 0.0, enable_water_reflections, enable_oar_ripples]`
     pub params: [f32; 4],
-    /// `[fog_start, fog_end, reflection_strength, specular_strength]`
+    /// `[fog_start_mm, fog_end_mm, reflection_strength, specular_strength]`
     pub fog_and_spec: [f32; 4],
 }
 
@@ -43,11 +52,11 @@ impl Default for WaterUniforms {
     fn default() -> Self {
         Self {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-            cam_pos: [0.0, 4500.0, 0.0, 1.0],
-            light_dir: [0.2, 0.9, 0.3, 0.0],
+            cam_pos: [0.0, DEFAULT_WATER_HEIGHT_MM + BOAT_WORLD_SCALE_MM, 0.0, 1.0],
+            light_dir: [0.0, 1.0, 0.0, 0.0],
             water_tint: [0.04, 0.08, 0.10, 0.88],
             fog_color: [0.12, 0.14, 0.16, 1.0],
-            params: [3690.0, 0.0, 0.0, 0.0],
+            params: [DEFAULT_WATER_HEIGHT_MM, 0.0, 0.0, 0.0],
             fog_and_spec: [4000.0, 45000.0, 0.75, 0.35],
         }
     }
@@ -67,7 +76,7 @@ impl Default for GpuOarRipple {
     fn default() -> Self {
         Self {
             pos_age: [0.0, 0.0, 0.0, -1.0],
-            params: [0.0, 0.0, 1200.0, 3.0],
+            params: [0.0, 0.0, BOAT_WORLD_SCALE_MM * 2.0, 3.0],
         }
     }
 }
@@ -116,8 +125,11 @@ pub struct LakeWaterPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub uniform_buffer: wgpu::Buffer,
     pub ripple_buffer: wgpu::Buffer,
+    pub grid_height_buffer: wgpu::Buffer,
     pub reflection_texture: wgpu::Texture,
     pub reflection_view: wgpu::TextureView,
+    pub reflection_depth_texture: wgpu::Texture,
+    pub reflection_depth_view: wgpu::TextureView,
     pub bind_group: wgpu::BindGroup,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -125,7 +137,7 @@ pub struct LakeWaterPipeline {
 }
 
 impl LakeWaterPipeline {
-    /// Creates the Toluca Lake water pipeline, planar reflection target, and 200m x 200m quad mesh.
+    /// Creates the Toluca Lake 48x48 `WaterGridSim` pipeline and planar reflection render target.
     pub fn new(device: &wgpu::Device, hdr_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Toluca Lake Water Shader"),
@@ -149,6 +161,23 @@ impl LakeWaterPipeline {
         let reflection_view =
             reflection_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        let reflection_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Water Planar Reflection Depth"),
+            size: wgpu::Extent3d {
+                width: WATER_REFLECTION_SIZE,
+                height: WATER_REFLECTION_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let reflection_depth_view =
+            reflection_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let reflection_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Water Reflection Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -168,6 +197,13 @@ impl LakeWaterPipeline {
             label: Some("Water Oar Ripples Buffer"),
             contents: bytemuck::bytes_of(&WaterRippleBuffer::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let zero_heights = vec![0.0f32; WATER_GRID_SIZE * WATER_GRID_SIZE];
+        let grid_height_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Water GridSim Height Buffer"),
+            contents: bytemuck::cast_slice(&zero_heights),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -209,6 +245,16 @@ impl LakeWaterPipeline {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -231,6 +277,10 @@ impl LakeWaterPipeline {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&reflection_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: grid_height_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -261,6 +311,11 @@ impl LakeWaterPipeline {
                             offset: 12,
                             shader_location: 1,
                             format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 20,
+                            shader_location: 2,
+                            format: wgpu::VertexFormat::Uint32x2,
                         },
                     ],
                 }],
@@ -293,34 +348,41 @@ impl LakeWaterPipeline {
             cache: None,
         });
 
-        let half = 120_000.0f32;
-        let vertices = [
-            WaterVertex {
-                position: [-half, 0.0, -half],
-                uv: [0.0, 0.0],
-            },
-            WaterVertex {
-                position: [half, 0.0, -half],
-                uv: [1.0, 0.0],
-            },
-            WaterVertex {
-                position: [half, 0.0, half],
-                uv: [1.0, 1.0],
-            },
-            WaterVertex {
-                position: [-half, 0.0, half],
-                uv: [0.0, 1.0],
-            },
-        ];
-        let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+        // Build 48x48 vertex grid (`hh_class_water_00.c` `0x0025bd00`: 500.0 mm spacing, centered around origin).
+        let half_span = ((WATER_GRID_SIZE - 1) as f32 * WATER_GRID_SPACING_MM) * 0.5;
+        let mut vertices = Vec::with_capacity(WATER_GRID_SIZE * WATER_GRID_SIZE);
+        for gz in 0..WATER_GRID_SIZE {
+            for gx in 0..WATER_GRID_SIZE {
+                let x = (gx as f32) * WATER_GRID_SPACING_MM - half_span;
+                let z = (gz as f32) * WATER_GRID_SPACING_MM - half_span;
+                vertices.push(WaterVertex {
+                    position: [x, 0.0, z],
+                    uv: [
+                        gx as f32 / (WATER_GRID_SIZE - 1) as f32,
+                        gz as f32 / (WATER_GRID_SIZE - 1) as f32,
+                    ],
+                    grid_xy: [gx as u32, gz as u32],
+                });
+            }
+        }
+        let mut indices = Vec::with_capacity((WATER_GRID_SIZE - 1) * (WATER_GRID_SIZE - 1) * 6);
+        for gz in 0..(WATER_GRID_SIZE - 1) {
+            for gx in 0..(WATER_GRID_SIZE - 1) {
+                let i0 = (gx + gz * WATER_GRID_SIZE) as u16;
+                let i1 = i0 + 1;
+                let i2 = i0 + WATER_GRID_SIZE as u16;
+                let i3 = i2 + 1;
+                indices.extend_from_slice(&[i0, i2, i1, i1, i2, i3]);
+            }
+        }
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Water Plane Vertex Buffer"),
+            label: Some("Water Grid Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Water Plane Index Buffer"),
+            label: Some("Water Grid Index Buffer"),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
         });
@@ -329,8 +391,11 @@ impl LakeWaterPipeline {
             pipeline,
             uniform_buffer,
             ripple_buffer,
+            grid_height_buffer,
             reflection_texture,
             reflection_view,
+            reflection_depth_texture,
+            reflection_depth_view,
             bind_group,
             vertex_buffer,
             index_buffer,
@@ -347,6 +412,13 @@ impl LakeWaterPipeline {
     ) {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
         queue.write_buffer(&self.ripple_buffer, 0, bytemuck::bytes_of(ripples));
+    }
+
+    /// Uploads the 48x48 `WaterGridSim` heightfield (`hh_class_water_00.c` `0x0025ba70`).
+    pub fn update_grid(&self, queue: &wgpu::Queue, heights: &[f32]) {
+        if heights.len() == WATER_GRID_SIZE * WATER_GRID_SIZE {
+            queue.write_buffer(&self.grid_height_buffer, 0, bytemuck::cast_slice(heights));
+        }
     }
 
     /// Encodes the water surface draw call inside an active scene render pass.

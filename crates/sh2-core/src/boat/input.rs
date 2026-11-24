@@ -32,8 +32,10 @@ pub const PC_BOAT_ANIM_MIN: i16 = 0x11;
 /// Retail PC maximum boat animation ID for active rowing input (`0x4f` = `79` at `0x0053eb10`).
 pub const PC_BOAT_ANIM_MAX: i16 = 0x4f;
 
-/// Rotational power multiplier (`round_power = (l - r) * 2.0` at `0x0026c420` / `0x0053eb10`).
-pub const ROUND_POWER_SCALE: f32 = 2.0;
+/// Retail PC rotational power multiplier (`_DAT_01d7f5ec = fVar1 - fVar2` = `1.0` at `sh2pc.exe` `0x0053eb10`).
+///
+/// Prototype drift: `SLUS_202.28` (`0x0026c420`) used `2.0` (`(_lstick_power - _rstick_power) * 2.0`).
+pub const ROUND_POWER_SCALE: f32 = 1.0;
 
 /// Straight propulsion multiplier (`straight_power = (l + r) * 0.5` at `0x0026c420` / `0x0053eb10`).
 pub const STRAIGHT_POWER_SCALE: f32 = 0.5;

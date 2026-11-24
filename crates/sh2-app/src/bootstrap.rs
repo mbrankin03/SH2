@@ -556,6 +556,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         audio_bank,
         audio_engine,
         bgm_manager,
+        se_pool: sh2_audio::SePoolManager::with_retail_change_list(),
         bgm_stage_override: None,
         audio_debug: rooms::audio_room::AudioDebugState::default(),
         surface_sfx_room: rooms::surface_sfx_room::SurfaceSfxRoomState::default(),

@@ -87,8 +87,8 @@ pub use ringbuffer::{
 pub use se_manager::{
     Se2d3dMapping, Se2dSlot, Se3dChannel, SeBackendAction, SeCallResult, SeListenerContext,
     SePoolManager, SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT, SE_3D_CHANNEL_COUNT,
-    SE_3D_ID_THRESHOLD, SE_3D_PRIORITY1_MAX, SE_FLAG_MANAGED_2D, SE_FLAG_NO_DISTANCE,
-    SE_FLAG_PRIO_1,
+    SE_3D_ID_THRESHOLD, SE_3D_PRIORITY1_MAX, SE_CHANGE_LIST, SE_FLAG_MANAGED_2D,
+    SE_FLAG_NO_DISTANCE, SE_FLAG_PRIO_1,
 };
 pub use sfx_bank::{
     build_ps2_wvs_matrix, compute_se_call_pos_distance_f, compute_se_call_pos_spatial,

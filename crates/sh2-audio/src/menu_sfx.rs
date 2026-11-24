@@ -656,6 +656,21 @@ impl MenuAudioBank {
         }
     }
 
+    /// Stops a single tracked 3D spatial sound handle or voice by `se_id` (`SeStop` `0x00193a80`).
+    pub fn stop_spatial_se(&mut self, se_id: u32) {
+        let tween = kira::tween::Tween {
+            duration: std::time::Duration::from_millis(40),
+            easing: kira::tween::Easing::Linear,
+            ..Default::default()
+        };
+        if let Some(mut handle) = self.active_spatial_handles.remove(&se_id) {
+            handle.stop(tween);
+        }
+        if let Some(voice) = self.active_spatial_voices.remove(&se_id) {
+            voice.stop();
+        }
+    }
+
     /// Stops all tracked 3D spatial sound handles (`SH2-47` & `SH2-84`).
     pub fn stop_all_spatial_handles(&mut self) {
         for (_, mut handle) in self.active_spatial_handles.drain() {

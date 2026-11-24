@@ -30,9 +30,11 @@
 //!   retried 3D and returned `-1`). [`SePoolManager::call_pos`] intentionally demotes via
 //!   `change_3d_to_2d(se_id)` before recursing with `flags - 1` so the 2D fallback actually succeeds.
 
+pub mod change_list;
 mod pools;
 pub mod types;
 
+pub use change_list::SE_CHANGE_LIST;
 pub use types::{
     Se2d3dMapping, Se2dSlot, Se3dChannel, SeBackendAction, SeCallResult, SeListenerContext,
     SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT, SE_3D_CHANNEL_COUNT, SE_3D_ID_THRESHOLD,
@@ -77,6 +79,12 @@ impl SePoolManager {
             active_3d_bank: 0,
             change_list,
         }
+    }
+
+    /// Creates a new `SePoolManager` preloaded with the 241-entry retail `change_list`
+    /// (`sh2pc.exe` `0x008a4b90`, `SLUS_202.28` `0x002b8880`).
+    pub fn with_retail_change_list() -> Self {
+        Self::new(SE_CHANGE_LIST.to_vec())
     }
 
     /// Resets all 2D slots and 3D channels (`SeCallReset` `0x00192060`).

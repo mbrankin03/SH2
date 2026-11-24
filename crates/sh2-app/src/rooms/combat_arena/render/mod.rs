@@ -12,6 +12,7 @@ use std::time::Duration;
 use crate::state::AppState;
 
 pub(crate) use atmosphere::update_atmosphere_fog_uniforms;
+pub(crate) use simulation::step_audio_managers;
 
 pub(super) fn tick_and_render_combat_arena_3d(
     state: &mut AppState,
@@ -20,12 +21,15 @@ pub(super) fn tick_and_render_combat_arena_3d(
     is_paused: bool,
     is_in_game: bool,
 ) {
-    // 1. Sync host keyboard/mouse axes + handoffs & advance 60 Hz simulation, combat, and BGM
+    // 1. Sync host keyboard/mouse axes + handoffs & advance 60 Hz simulation, combat, and audio
     let ticks_processed = if !is_paused {
         super::camera_wiring::sync_host_input_and_handoffs(state);
         super::camera_wiring::sync_player_pose_and_visibility(state);
         simulation::step_simulation_and_audio(state, dt, is_in_game)
     } else {
+        if is_in_game {
+            simulation::step_audio_managers(state, dt, true);
+        }
         0
     };
 

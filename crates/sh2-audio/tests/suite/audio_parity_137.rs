@@ -316,3 +316,48 @@ fn test_acoustics_native_upgrade_toggle_gate() {
     assert_eq!(enhanced.preset, EnvironmentalPreset::Corridor);
     assert!(enhanced.wet_mix > 0.4);
 }
+
+#[test]
+fn test_retail_change_list_241_entries_and_roundtrip() {
+    assert_eq!(sh2_audio::SE_CHANGE_LIST.len(), 241);
+    let mut pool = SePoolManager::with_retail_change_list();
+
+    // Bank 2 (`sh2pc.exe` `0x008a4b90` entry 0: id_2d=12009 -> id_3d=40245, bank_id=2)
+    pool.active_3d_bank = 2;
+    assert_eq!(pool.change_2d_to_3d(12_009), 40_245);
+    assert_eq!(pool.change_3d_to_2d(40_245), 12_009);
+
+    // Born from a Wish bank 36 (`sh2pc.exe` `0x008a4b90`: id_2d=18862 -> id_3d=40069, bank_id=36)
+    pool.active_3d_bank = 36;
+    assert_eq!(pool.change_2d_to_3d(18_862), 40_069);
+    assert_eq!(pool.change_3d_to_2d(40_069), 18_862);
+}
+
+#[test]
+fn test_bgm_event_flags_from_scenario_flag_bytes() {
+    let mut scenario = sh2_core::ScenarioState::default();
+    // Stage 2: flag 33 (`+0x04` bit 1 = `0x02`) transitions Restroom from Page 46 -> Page 47
+    scenario.set_flag(33);
+    // Stage 6: flag 85 (`+0x08` bit 21 = `0x0020_0000`) clears Room 0x1E override
+    scenario.set_flag(85);
+    // Stage 40: flag 472 (`+0x3B` bit 0 = `0x01`) marks Hotel 1F music box solved (Page 34)
+    scenario.set_flag(472);
+    // Stage 42: flag 527 (`+0x40` bit 15 = `0x8000`) marks Room 312 tape watched (Page 37)
+    scenario.set_flag(527);
+
+    let bgm_flags = sh2_audio::BgmEventFlags::from_event_flag_bytes(
+        scenario.flags.as_bytes(),
+        false,
+        false,
+        false,
+    );
+    assert_eq!(bgm_flags.flag_5e4 & 0x02, 0x02);
+    assert_eq!(bgm_flags.flag_5e8 & 0x0020_0000, 0x0020_0000);
+    assert_eq!(bgm_flags.flag_61b & 0x01, 0x01);
+    assert_eq!(bgm_flags.flag_620 & 0x8000, 0x8000);
+
+    assert_eq!(sh2_audio::pick_bgm_page(2, 0x02, &bgm_flags), 47);
+    assert_eq!(sh2_audio::pick_bgm_page(6, 0x1E, &bgm_flags), 4);
+    assert_eq!(sh2_audio::pick_bgm_page(40, 0x90, &bgm_flags), 34);
+    assert_eq!(sh2_audio::pick_bgm_page(42, 0xA2, &bgm_flags), 37);
+}

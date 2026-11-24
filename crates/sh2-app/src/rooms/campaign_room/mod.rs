@@ -291,8 +291,13 @@ impl RoomController for CampaignRoomController {
                 Some(CampaignPhase::FmvPlayback { .. })
             );
 
+        let mut campaign_step_spawned = false;
         if let Some(ref mut ls) = state.loading_screen {
             ls.tick(dt_sec);
+            campaign_step_spawned = ls.step_spawned_this_tick;
+        }
+        if campaign_step_spawned {
+            crate::frame::trigger_loading_footstep_sfx(state, sh2_core::SurfaceMaterial::Concrete);
         }
 
         let effects = if let Some(mut orch) = state.campaign_orchestrator.take() {

@@ -2,10 +2,26 @@
 //! Integrates `TitleStateMachine` and `OptionsMenu` into the interactive render loop.
 
 use sh2_core::config::{AppConfig, AudioPackDetectionStatus};
-use sh2_ui::menu::{MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine};
+use sh2_ui::menu::{
+    LaunchTarget, MainMenuOption, MenuNavAction, MenuSoundCue, TitlePhase, TitleStateMachine,
+};
 use sh2_ui::options::{OptionsMenu, OptionsSoundCue};
 use sh2_ui::pause::{PauseAction, PauseMenu, PauseSubPhase};
+use sh2_ui::LoadingScreen;
 use std::path::{Path, PathBuf};
+
+/// Outcome of advancing a single frame of the title-to-game [`LoadingScreen`] transition (`SH2-75`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LoadingTransitionStep {
+    /// `true` once the loading screen has rendered at least one frame and the caller should
+    /// preload target room assets (`.map`, `.cld`, `.cam`, GPU bind groups) before calling
+    /// [`LoadingScreen::mark_completed`].
+    pub needs_room_preload: bool,
+    /// `Some(is_right)` when a new footstep print was stamped on this tick (`FUN_00406be0`).
+    pub footstep_spawned: Option<bool>,
+    /// `true` on the frame that transitions cleanly into `in_game_active = true`.
+    pub entered_game: bool,
+}
 
 /// App-level menu manager coordinating title sequence, scenario selection, pause menu, and settings persistence.
 #[derive(Debug)]
@@ -96,19 +112,100 @@ impl AppMenuController {
             if self.title_sm.phase == TitlePhase::TransitionToGame
                 && (self.title_sm.fade_alpha <= 0.05 || !self.title_sm.is_fading_out)
             {
-                self.in_game_active = true;
-                self.title_sm.fade_alpha = 0.0;
-                self.title_sm.is_fading_out = false;
-                self.title_sm.is_fading_in = false;
-                self.revision = self.revision.wrapping_add(1);
-                tracing::info!(
-                    "Title sequence complete. Launching scenario: {:?}, Action: {:?}, Riddle: {:?}",
-                    self.title_sm.selected_scenario,
-                    self.title_sm.action_difficulty,
-                    self.title_sm.riddle_difficulty
-                );
+                self.complete_game_transition();
             }
         }
+    }
+
+    /// Immediately completes an active [`TitlePhase::TransitionToGame`] handoff into gameplay
+    /// once [`sh2_ui::LoadingScreen::transition_ready`] is `true` (or when instant transitions are
+    /// enabled), clearing title fade state so the loading screen cannot re-instantiate in a loop.
+    pub fn complete_game_transition(&mut self) {
+        if !self.in_game_active && self.title_sm.phase == TitlePhase::TransitionToGame {
+            self.in_game_active = true;
+            self.title_sm.fade_alpha = 0.0;
+            self.title_sm.is_fading_out = false;
+            self.title_sm.is_fading_in = false;
+            self.revision = self.revision.wrapping_add(1);
+            tracing::info!(
+                "Title sequence complete. Launching scenario: {:?}, Action: {:?}, Riddle: {:?}",
+                self.title_sm.selected_scenario,
+                self.title_sm.action_difficulty,
+                self.title_sm.riddle_difficulty
+            );
+        }
+    }
+
+    /// Advances the title menu and [`LoadingScreen`] transition lifecycle cleanly without looping
+    /// (`SH2-75`).
+    ///
+    /// - When `self.in_game_active` is already `true`, this is a no-op so in-game campaign loading
+    ///   screens are never overwritten or re-instantiated.
+    /// - On Frame 1 of [`TitlePhase::TransitionToGame`], instantiates [`LoadingScreen`] with
+    ///   `load_completed = false` and ticks once so the first footstep renders immediately.
+    /// - On Frame 2 (while `!ls.load_completed`), signals `needs_room_preload = true` so the host
+    ///   preloads `.map`/`.cld`/`.cam` + GPU bind groups before calling `ls.mark_completed()`.
+    /// - Once `ls.transition_ready` becomes `true`, clears `*loading_screen` and calls
+    ///   [`Self::complete_game_transition`] immediately so the screen never loops.
+    pub fn tick_with_loading(
+        &mut self,
+        loading_screen: &mut Option<LoadingScreen>,
+        dt: f32,
+    ) -> LoadingTransitionStep {
+        if self.in_game_active {
+            return LoadingTransitionStep::default();
+        }
+
+        if self.title_sm.phase != TitlePhase::TransitionToGame {
+            *loading_screen = None;
+            self.tick(dt);
+            return LoadingTransitionStep::default();
+        }
+
+        let debug = &self.options_menu.draft_config.debug;
+        let min_dur = debug.min_loading_screen_seconds as f32;
+        let require_press = debug.require_press_to_continue;
+        let instant = debug.instant_room_transitions;
+
+        if instant {
+            *loading_screen = None;
+            self.complete_game_transition();
+            return LoadingTransitionStep {
+                needs_room_preload: false,
+                footstep_spawned: None,
+                entered_game: self.in_game_active,
+            };
+        }
+
+        let just_created = if loading_screen.is_none() {
+            let label = match self.title_sm.launch_target {
+                LaunchTarget::Campaign { scenario, .. } => match scenario {
+                    sh2_core::ScenarioKind::LetterFromSilentHeaven => "Letter from Silent Heaven",
+                    sh2_core::ScenarioKind::BornFromAWish => "Born from a Wish",
+                },
+                LaunchTarget::TestRoom(room) => room.label(),
+            };
+            *loading_screen = Some(LoadingScreen::new(label, min_dur, require_press));
+            true
+        } else {
+            false
+        };
+
+        let mut step = LoadingTransitionStep::default();
+        if let Some(ref mut ls) = loading_screen {
+            // Signal preload on Frame 2 (after Frame 1 has presented the loading screen visibly).
+            if !just_created && !ls.load_completed {
+                step.needs_room_preload = true;
+            }
+            ls.tick(dt);
+            step.footstep_spawned = ls.spawned_step_this_tick();
+            if ls.transition_ready {
+                *loading_screen = None;
+                self.complete_game_transition();
+                step.entered_game = self.in_game_active;
+            }
+        }
+        step
     }
 
     /// Cleanly exits an active in-game session or debug room and returns to `target_phase`
@@ -618,6 +715,101 @@ mod tests {
         assert!(!controller.pause_menu.is_open);
         assert!(!controller.in_game_active);
         assert_eq!(controller.title_sm.phase, TitlePhase::MainMenu);
+
+        let _ = std::fs::remove_file(&cfg_path);
+    }
+
+    #[test]
+    fn test_loading_screen_transition_no_38x_reset_loop_and_preload() {
+        let temp_dir = std::env::temp_dir();
+        let cfg_path = temp_dir.join("test_sh2_loading_lifecycle_config.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
+        let mut controller = AppMenuController::new(&cfg_path);
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .min_loading_screen_seconds = 2;
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .require_press_to_continue = false;
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .instant_room_transitions = false;
+
+        // Enter TransitionToGame with active fade_out (fade_alpha = 1.0, is_fading_out = true)
+        controller.title_sm.phase = TitlePhase::TransitionToGame;
+        controller.title_sm.fade_alpha = 1.0;
+        controller.title_sm.start_fade_out();
+        controller.title_sm.launch_target =
+            LaunchTarget::TestRoom(sh2_ui::menu::TestRoomKind::ObservationDeck);
+
+        let mut loading_screen: Option<LoadingScreen> = None;
+        let mut instantiations = 0usize;
+        let mut preload_requests = 0usize;
+        let mut footsteps_triggered = 0usize;
+        let mut entered_game_ticks = 0usize;
+
+        // Simulate 200 frames at 60 Hz (~3.33s)
+        for _ in 0..200 {
+            let was_none = loading_screen.is_none();
+            let step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
+            if was_none && loading_screen.is_some() {
+                instantiations += 1;
+            }
+            if step.footstep_spawned.is_some() {
+                footsteps_triggered += 1;
+            }
+            if step.needs_room_preload {
+                preload_requests += 1;
+                if let Some(ref mut ls) = loading_screen {
+                    ls.mark_completed();
+                }
+            }
+            if step.entered_game {
+                entered_game_ticks += 1;
+            }
+        }
+
+        // LoadingScreen must be instantiated EXACTLY ONCE (never 38x reset loop)
+        assert_eq!(instantiations, 1);
+        assert_eq!(preload_requests, 1);
+        assert!(footsteps_triggered >= 2);
+        assert_eq!(entered_game_ticks, 1);
+        assert!(controller.in_game_active);
+        assert!(loading_screen.is_none());
+        assert_eq!(controller.title_sm.fade_alpha, 0.0);
+        assert!(!controller.title_sm.is_fading_out);
+
+        let _ = std::fs::remove_file(&cfg_path);
+    }
+
+    #[test]
+    fn test_loading_screen_instant_transition_completes_immediately() {
+        let temp_dir = std::env::temp_dir();
+        let cfg_path = temp_dir.join("test_sh2_loading_instant_config.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
+        let mut controller = AppMenuController::new(&cfg_path);
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .instant_room_transitions = true;
+        controller.title_sm.phase = TitlePhase::TransitionToGame;
+        controller.title_sm.fade_alpha = 1.0;
+        controller.title_sm.start_fade_out();
+
+        let mut loading_screen: Option<LoadingScreen> = None;
+        let step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
+        assert!(step.entered_game);
+        assert!(controller.in_game_active);
+        assert!(loading_screen.is_none());
 
         let _ = std::fs::remove_file(&cfg_path);
     }

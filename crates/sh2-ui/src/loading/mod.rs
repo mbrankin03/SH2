@@ -3,24 +3,23 @@
 //!
 //! Prototype (`SLUS_202.28`) vs Retail PC (`sh2pc.exe`) drift:
 //! - `SLUS_202.28` `now_loading.c` (`0x00298fa0..0x00299170`) has no footsteps; it triggers
-//!   `ScreenEffectFadeStart(4.0f, 1)` and draws jittered `\c\hNow loading` every 64 frames.
+//!   `ScreenEffectFadeStart(4.0f, 1)` (`0x40800000`) and draws jittered `\c\hNow loading` every
+//!   64 frames (`_count_51 & 0x3f == 0`) at `((count * 0xce5fdd) % 5 + 0xfe, (count * 0x2f6f) % 5 + 0xfe)`.
 //! - Retail PC `sh2pc.exe` loads `data/etc/effect/footmark.tbn2` (`FUN_004c8500`), stamps
 //!   alternating footsteps every `1.0f` second (`FUN_00406be0`), decays them over `4.0f` seconds
 //!   (`FUN_00406ab0` -> `FUN_004783b0(4.0f)`), and renders `"NOW LOADING..."` (`common_msg_e.mes`
 //!   ID `25`) at `(480/640 * W, 424/480 * H)` with `fontWide(16, 24)`.
 
-use crate::atlas_font::{AtlasFont, Sh2TextColor};
-use crate::font::TextRasterizer;
-use sh2_assets::formats::texture::parse_texture_container;
-use sh2_assets::resolver::AssetPathResolver;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+mod render;
+mod sprite;
+
+pub use sprite::FootstepSprite;
 
 /// Exact footstep cadence period in seconds (`sh2pc.exe` `FUN_00406be0` `0x0062edf4` = `1.0f`).
 pub const FOOTSTEP_CADENCE_SECS: f32 = 1.0;
 
 /// Exact footstep fade-to-black decay duration in seconds (`sh2pc.exe` `FUN_00406ab0` ->
-/// `FUN_004783b0(4.0f)` `0x40800000`).
+/// `FUN_004783b0(4.0f)` `0x40800000`; also `SLUS_202.28` `NowLoadingCheck` `0x00298fc0` = `4.0f`).
 pub const FOOTSTEP_DECAY_SECS: f32 = 4.0;
 
 /// Retail PC activation delay while faded black (`sh2pc.exe` `FUN_00406ab0`, `_DAT_0093268c >= 3.0f`).
@@ -47,122 +46,50 @@ pub const FOOTSTEP_UV_MAX: f32 = 61.0 / 64.0;
 pub const NOW_LOADING_NORM_X: f32 = 480.0 / 640.0;
 pub const NOW_LOADING_NORM_Y: f32 = 424.0 / 480.0;
 
-/// Static footstep sprite loaded from `data/etc/effect/footmark.tbn2` (`FUN_004c8500`).
-static FOOTSTEP_SPRITE: OnceLock<FootstepSprite> = OnceLock::new();
+/// PS2 prototype `NowLoadingDraw` (`SLUS_202.28` `0x00299170`) redraw mask (`_count_51 & 0x3f == 0`).
+pub const PS2_NOW_LOADING_PERIOD_MASK: i32 = 0x3f;
 
-/// Pre-decoded footstep alpha silhouette sprite (`64×64` from `footmark.tbn2`).
-pub struct FootstepSprite {
-    pub width: u32,
-    pub height: u32,
-    pub alpha: Vec<u8>,
+/// PS2 prototype `NowLoadingDraw` (`SLUS_202.28` `0x00299170`) X hash multiplier (`_count_51 * 0xce5fdd`).
+pub const PS2_NOW_LOADING_X_MULT: i32 = 0x00ce_5fdd;
+
+/// PS2 prototype `NowLoadingDraw` (`SLUS_202.28` `0x00299170`) Y hash multiplier (`_count_51 * 0x2f6f`).
+pub const PS2_NOW_LOADING_Y_MULT: i32 = 0x2f6f;
+
+/// PS2 prototype `NowLoadingDraw` (`SLUS_202.28` `0x00299170`) jitter modulus (`% 5`).
+pub const PS2_NOW_LOADING_JITTER_MOD: i32 = 5;
+
+/// PS2 prototype `NowLoadingDraw` (`SLUS_202.28` `0x00299170`) base X/Y virtual coordinate (`0xfe` = `254`).
+pub const PS2_NOW_LOADING_BASE_XY: i32 = 0xfe;
+
+/// Visual presentation mode for [`LoadingScreen`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoadingScreenMode {
+    /// Retail PC `sh2pc.exe` (`FUN_00406ab0` / `FUN_00406be0` / `FUN_004c8500..0x004c8bc0`)
+    /// animated `footmark.tbn2` footprints + `"NOW LOADING..."`.
+    #[default]
+    RetailPcFootsteps,
+    /// PS2 prototype `SLUS_202.28` `now_loading.c` (`NowLoadingCheck` `0x00298fc0`,
+    /// `NowLoadingDraw` `0x00299170`): jittered `"Now loading"` stamped every 64 frames
+    /// (`_count_51 & 0x3f == 0`) with 4.0s fade decay (`ScreenEffectFadeStart(4.0f, 1)`).
+    Ps2NowLoadingJitter,
 }
 
-impl FootstepSprite {
-    /// Loads `data/etc/effect/footmark.tbn2` (`sh2pc.exe` `FUN_004c8500`), falling back to a
-    /// procedural 64×64 sole silhouette only when retail assets are absent (e.g. CI).
-    pub fn get() -> &'static Self {
-        FOOTSTEP_SPRITE.get_or_init(|| {
-            if let Some(sprite) = Self::load_from_retail_assets() {
-                return sprite;
-            }
-            Self::generate_procedural_fallback()
-        })
+impl LoadingScreenMode {
+    /// Human-readable label for debug/preview HUDs.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::RetailPcFootsteps => "Retail PC Footsteps (sh2pc.exe FUN_004c8500)",
+            Self::Ps2NowLoadingJitter => "PS2 Prototype Text Jitter (SLUS_202.28 NowLoadingDraw)",
+        }
     }
 
-    fn load_from_retail_assets() -> Option<Self> {
-        let resolver = AssetPathResolver::resolve();
-        // Exact retail path first: `data/etc/effect/footmark.tbn2` (`FUN_004c8500`).
-        let candidate_rel_paths = [
-            "etc/effect/footmark.tbn2",
-            "pic/effect/footmark.tbn2",
-            "effect/footmark.tbn2",
-        ];
-
-        let mut tbn2_path: Option<PathBuf> = None;
-        for rel in &candidate_rel_paths {
-            if let Some(path) = resolver.resolve_file(rel) {
-                tbn2_path = Some(path);
-                break;
-            }
-        }
-
-        if tbn2_path.is_none() {
-            let direct_candidates = [
-                "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
-                "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
-                "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
-                "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
-                "../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
-                "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/pic/effect/footmark.tbn2",
-            ];
-            for cand in &direct_candidates {
-                let p = Path::new(cand);
-                if p.is_file() {
-                    tbn2_path = Some(p.to_path_buf());
-                    break;
-                }
-            }
-        }
-
-        let path = tbn2_path?;
-        let bytes = std::fs::read(&path).ok()?;
-        let textures = parse_texture_container(&bytes, 0).ok()?;
-        let tex = textures.first()?;
-        let rgba = tex.to_rgba().ok()?;
-
-        let width = tex.width as u32;
-        let height = tex.height as u32;
-        let mut alpha = Vec::with_capacity((width * height) as usize);
-        let (chunks, _) = rgba.as_chunks::<4>();
-        for chunk in chunks {
-            alpha.push(chunk[3]);
-        }
-
-        Some(Self {
-            width,
-            height,
-            alpha,
-        })
-    }
-
-    /// Procedural 64×64 sole fallback used only when `footmark.tbn2` is not present on disk.
-    fn generate_procedural_fallback() -> Self {
-        let width = 64u32;
-        let height = 64u32;
-        let mut alpha = vec![0u8; (width * height) as usize];
-
-        for y in 0..height {
-            let ny = y as f32 / height as f32;
-            for x in 0..width {
-                let nx = (x as f32 - 32.0) / 32.0;
-                let mut intensity = 0.0f32;
-                if (0.08..=0.52).contains(&ny) {
-                    let dx = nx / 0.36;
-                    let dy = (ny - 0.30) / 0.22;
-                    let d = dx * dx + dy * dy;
-                    if d <= 1.0 {
-                        intensity = 1.0 - ((d - 0.75) / 0.25).clamp(0.0, 1.0);
-                    }
-                } else if (0.52..=0.66).contains(&ny) && (-0.28..=0.14).contains(&nx) {
-                    intensity = 1.0;
-                } else if (0.66..=0.92).contains(&ny) {
-                    let dx = nx / 0.28;
-                    let dy = (ny - 0.79) / 0.13;
-                    let d = dx * dx + dy * dy;
-                    if d <= 1.0 {
-                        intensity = 1.0 - ((d - 0.75) / 0.25).clamp(0.0, 1.0);
-                    }
-                }
-                if intensity > 0.0 {
-                    alpha[(y * width + x) as usize] = (intensity * 255.0).clamp(0.0, 255.0) as u8;
-                }
-            }
-        }
-
-        Self {
-            width,
-            height,
-            alpha,
+    /// Toggles between [`Self::RetailPcFootsteps`] and [`Self::Ps2NowLoadingJitter`].
+    #[must_use]
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::RetailPcFootsteps => Self::Ps2NowLoadingJitter,
+            Self::Ps2NowLoadingJitter => Self::RetailPcFootsteps,
         }
     }
 }
@@ -207,6 +134,21 @@ impl LoadingPathPattern {
     pub const fn from_index(index: usize) -> Self {
         Self::ALL[index & 7]
     }
+
+    /// Human-readable label for debug/preview HUDs.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::TopEdgeRight => "0: TopEdgeRight (y=-230, x+=128, +135 deg)",
+            Self::BottomEdgeRight => "1: BottomEdgeRight (y=+230, x+=128, -135 deg)",
+            Self::LeftEdgeDown => "2: LeftEdgeDown (x=-230, y+=128, -45 deg)",
+            Self::RightEdgeDown => "3: RightEdgeDown (x=+230, y+=128, -135 deg)",
+            Self::BottomEdgeLeft => "4: BottomEdgeLeft (y=+230, x-=128, -45 deg)",
+            Self::TopEdgeLeft => "5: TopEdgeLeft (y=-230, x-=128, +45 deg)",
+            Self::RightEdgeUp => "6: RightEdgeUp (x=+230, y-=128, +135 deg)",
+            Self::LeftEdgeUp => "7: LeftEdgeUp (x=-230, y-=128, +45 deg)",
+        }
+    }
 }
 
 /// An individual stamped footstep quad in virtual 512×480 centered space (`FUN_004c87e0`).
@@ -239,7 +181,8 @@ struct FootstepPathState {
     active: bool,
 }
 
-/// Loading screen state machine porting `sh2pc.exe` `FUN_00406ab0` / `FUN_00406be0` / `FUN_004c8590..0x004c8bc0`.
+/// Loading screen state machine porting `sh2pc.exe` `FUN_00406ab0` / `FUN_00406be0` /
+/// `FUN_004c8590..0x004c8bc0` and `SLUS_202.28` `NowLoadingDraw` (`0x00299170`).
 #[derive(Debug, Clone)]
 pub struct LoadingScreen {
     pub elapsed_seconds: f32,
@@ -248,12 +191,26 @@ pub struct LoadingScreen {
     pub next_step_timer: f32,
     pub step_cadence: f32,
     pub path_pattern: LoadingPathPattern,
+    pub mode: LoadingScreenMode,
+    /// Set to `true` during [`Self::tick`] when a new footstep print was stamped this frame.
+    pub step_spawned_this_tick: bool,
+    /// Foot side (`true` = right, `false` = left) of the most recently stamped footstep (`FUN_004c8bc0`).
+    pub last_step_is_right: bool,
     pub load_completed: bool,
     pub transition_ready: bool,
     pub min_duration: f32,
     pub require_press_to_continue: bool,
     pub fade_alpha: f32,
     pub target_room_label: String,
+    /// PS2 prototype `_count_51` 30 Hz frame counter (`SLUS_202.28` `NowLoadingDraw` `0x00299170`).
+    pub ps2_frame_counter: i32,
+    /// Current jittered X coordinate in 512×480 virtual space (`(count * 0xce5fdd) % 5 + 0xfe`).
+    pub ps2_text_x_512: i32,
+    /// Current jittered Y coordinate in 512×480 virtual space (`(count * 0x2f6f) % 5 + 0xfe`).
+    pub ps2_text_y_480: i32,
+    /// Current `"Now loading"` opacity decaying over 4.0s (`ScreenEffectFadeStart(4.0f, 1)`).
+    pub ps2_text_alpha: f32,
+    ps2_frame_accum: f32,
     rng_state: u32,
     path_state: FootstepPathState,
 }
@@ -286,12 +243,20 @@ impl LoadingScreen {
             next_step_timer: 0.0, // Immediately stamps first footstep on tick (`FUN_00406be0`)
             step_cadence: FOOTSTEP_CADENCE_SECS,
             path_pattern,
+            mode: LoadingScreenMode::RetailPcFootsteps,
+            step_spawned_this_tick: false,
+            last_step_is_right: false,
             load_completed: false,
             transition_ready: false,
             min_duration,
             require_press_to_continue: require_press,
             fade_alpha: 1.0,
             target_room_label: target_label.into(),
+            ps2_frame_counter: 0,
+            ps2_text_x_512: PS2_NOW_LOADING_BASE_XY,
+            ps2_text_y_480: PS2_NOW_LOADING_BASE_XY,
+            ps2_text_alpha: 1.0,
+            ps2_frame_accum: 0.0,
             rng_state,
             path_state: FootstepPathState {
                 origin_x: 0.0,
@@ -313,9 +278,36 @@ impl LoadingScreen {
         self
     }
 
+    /// Sets the visual mode (`RetailPcFootsteps` vs `Ps2NowLoadingJitter`).
+    pub fn with_mode(mut self, mode: LoadingScreenMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /// Marks the background asset load as complete.
     pub fn mark_completed(&mut self) {
         self.load_completed = true;
+    }
+
+    /// Returns `Some(is_right)` if a footstep was stamped on the most recent [`Self::tick`].
+    #[must_use]
+    pub const fn spawned_step_this_tick(&self) -> Option<bool> {
+        if self.step_spawned_this_tick {
+            Some(self.last_step_is_right)
+        } else {
+            None
+        }
+    }
+
+    /// Computes exact PS2 `NowLoadingDraw` (`SLUS_202.28` `0x00299170`) virtual `(x, y)` coordinates
+    /// for frame counter `_count_51`.
+    #[must_use]
+    pub const fn ps2_now_loading_jitter_xy(count: i32) -> (i32, i32) {
+        let x = (count.wrapping_mul(PS2_NOW_LOADING_X_MULT) % PS2_NOW_LOADING_JITTER_MOD)
+            + PS2_NOW_LOADING_BASE_XY;
+        let y = (count.wrapping_mul(PS2_NOW_LOADING_Y_MULT) % PS2_NOW_LOADING_JITTER_MOD)
+            + PS2_NOW_LOADING_BASE_XY;
+        (x, y)
     }
 
     fn next_rand(&mut self) -> u32 {
@@ -400,24 +392,54 @@ impl LoadingScreen {
         };
     }
 
-    /// Advances loading screen timers, footstep cadence (`1.0s`), and `4.0s` fade-to-black decay.
+    /// Advances loading screen timers, footstep cadence (`1.0s`), `4.0s` fade-to-black decay,
+    /// and PS2 prototype `NowLoadingDraw` (`0x00299170`) 30 Hz jitter counter.
     pub fn tick(&mut self, dt: f32) {
         let dt = dt.max(0.0);
         self.elapsed_seconds += dt;
+        self.step_spawned_this_tick = false;
 
-        // Cadence timer (`FUN_00406be0`: decrement by `dt`, when `<= 0` add `1.0f` and stamp)
-        self.next_step_timer -= dt;
-        if self.next_step_timer <= 0.0 {
-            self.next_step_timer += self.step_cadence;
-            self.spawn_next_footstep();
-        }
+        match self.mode {
+            LoadingScreenMode::RetailPcFootsteps => {
+                // Cadence timer (`FUN_00406be0`: decrement by `dt`, when `<= 0` add `1.0f` and stamp)
+                self.next_step_timer -= dt;
+                if self.next_step_timer <= 0.0 {
+                    self.next_step_timer += self.step_cadence.max(0.1);
+                    self.spawn_next_footstep();
+                }
 
-        // Exact 4.0s linear decay (`FUN_00406ab0` -> `FUN_004783b0(4.0f)`)
-        let decay = dt / FOOTSTEP_DECAY_SECS;
-        for step in &mut self.footsteps {
-            step.alpha = (step.alpha - decay).max(0.0);
+                // Exact 4.0s linear decay (`FUN_00406ab0` -> `FUN_004783b0(4.0f)`)
+                let decay = dt / FOOTSTEP_DECAY_SECS;
+                for step in &mut self.footsteps {
+                    step.alpha = (step.alpha - decay).max(0.0);
+                }
+                self.footsteps.retain(|s| s.alpha > 0.01);
+            }
+            LoadingScreenMode::Ps2NowLoadingJitter => {
+                // `SLUS_202.28` `NowLoadingDraw` (`0x00299170`): `_count_51` advances at 30 Hz,
+                // redrawing jittered `Now loading` whenever `_count_51 & 0x3f == 0` and decaying
+                // over `4.0s` (`ScreenEffectFadeStart(4.0f, 1)` at `0x00298fc0`).
+                let prev_accum = self.ps2_frame_accum;
+                self.ps2_frame_accum += dt * 30.0;
+                let step_decay = (1.0 / 30.0) / FOOTSTEP_DECAY_SECS;
+                while self.ps2_frame_accum >= 1.0 {
+                    self.ps2_frame_accum -= 1.0;
+                    if (self.ps2_frame_counter & PS2_NOW_LOADING_PERIOD_MASK) == 0 {
+                        let (jx, jy) = Self::ps2_now_loading_jitter_xy(self.ps2_frame_counter);
+                        self.ps2_text_x_512 = jx;
+                        self.ps2_text_y_480 = jy;
+                        self.ps2_text_alpha = 1.0;
+                    }
+                    self.ps2_frame_counter = self.ps2_frame_counter.wrapping_add(1);
+                    self.ps2_text_alpha = (self.ps2_text_alpha - step_decay).max(0.0);
+                }
+                let frac_dt = (self.ps2_frame_accum - prev_accum).max(0.0) / 30.0;
+                if frac_dt > 0.0 {
+                    self.ps2_text_alpha =
+                        (self.ps2_text_alpha - frac_dt / FOOTSTEP_DECAY_SECS).max(0.0);
+                }
+            }
         }
-        self.footsteps.retain(|s| s.alpha > 0.01);
 
         if self.load_completed
             && !self.require_press_to_continue
@@ -441,7 +463,8 @@ impl LoadingScreen {
         self.step_counter += 1;
         self.path_state.local_y += self.path_state.stride_dy;
         self.path_state.foot_side ^= 1;
-        let local_x = if self.path_state.foot_side == 1 {
+        let is_right = self.path_state.foot_side == 1;
+        let local_x = if is_right {
             -FOOTSTEP_LATERAL_OFFSET
         } else {
             FOOTSTEP_LATERAL_OFFSET
@@ -458,12 +481,15 @@ impl LoadingScreen {
             self.path_state.active = false;
         }
 
+        self.step_spawned_this_tick = true;
+        self.last_step_is_right = is_right;
+
         self.footsteps.push(FootstepPrint {
             x: vx + 256.0,
             y: vy + 240.0,
             angle: self.path_state.angle_rad,
             scale: self.path_state.scale,
-            is_right: self.path_state.foot_side == 1,
+            is_right,
             alpha: 1.0,
         });
     }
@@ -477,155 +503,37 @@ impl LoadingScreen {
             false
         }
     }
-
-    /// Renders the retail PC footstep loading screen (`FUN_00406be0`, `FUN_004c87e0`) onto `rast`.
-    pub fn render(&self, font: &AtlasFont, rast: &mut TextRasterizer) {
-        // Fill opaque pitch-black backdrop (`#000000`, `FUN_00406ab0`)
-        let (chunks, _) = rast.pixels.as_chunks_mut::<4>();
-        for px in chunks {
-            *px = [0, 0, 0, 255];
-        }
-        let sprite = FootstepSprite::get();
-        let scale_x = rast.width as f32 / 512.0;
-        let scale_y = rast.height as f32 / 480.0;
-
-        for step in &self.footsteps {
-            let scr_x = (step.x * scale_x).round() as i32;
-            let scr_y = (step.y * scale_y).round() as i32;
-            let quad_h_px = (step.scale * 2.0) * scale_y;
-            let print_scale = quad_h_px / sprite.height.max(1) as f32;
-            draw_footstep_silhouette(rast, sprite, scr_x, scr_y, step, print_scale);
-        }
-
-        // `"NOW LOADING..."` (`common_msg_e.mes` ID 25) at `(480/640 * W, 424/480 * H)`, `fontWide(16, 24)`
-        let text_x = (rast.width as f32 * NOW_LOADING_NORM_X).round() as usize;
-        let text_y = (rast.height as f32 * NOW_LOADING_NORM_Y).round() as usize;
-        let text_h = (24.0 * scale_y * 0.7).round().max(11.0) as usize;
-
-        if self.load_completed
-            && self.elapsed_seconds >= self.min_duration
-            && self.require_press_to_continue
-        {
-            let blink_visible = (self.elapsed_seconds * 2.5).sin() > -0.2;
-            if blink_visible {
-                font.draw_line_centered(
-                    rast,
-                    "PRESS [ENTER / A] TO CONTINUE",
-                    (rast.width / 2, text_y),
-                    text_h,
-                    Sh2TextColor::White,
-                    true,
-                );
-            }
-        } else {
-            font.draw_line_centered(
-                rast,
-                "NOW LOADING...",
-                (text_x.min(rast.width.saturating_sub(90)), text_y),
-                text_h,
-                Sh2TextColor::White,
-                true,
-            );
-        }
-    }
-}
-
-/// Blits a footstep silhouette using exact `sh2pc.exe` UV crop `[3/64..61/64]` (`0x00890af0` / `0x00890b10`).
-fn draw_footstep_silhouette(
-    rast: &mut TextRasterizer,
-    sprite: &FootstepSprite,
-    center_x: i32,
-    center_y: i32,
-    step: &FootstepPrint,
-    scale: f32,
-) {
-    let spr_w = sprite.width as f32;
-    let spr_h = sprite.height as f32;
-    let rad = ((spr_w * spr_w + spr_h * spr_h).sqrt() * scale * 0.5).ceil() as i32;
-
-    let x_start = (center_x - rad).max(0);
-    let x_end = (center_x + rad).min(rast.width as i32 - 1);
-    let y_start = (center_y - rad).max(0);
-    let y_end = (center_y + rad).min(rast.height as i32 - 1);
-
-    let cos_a = (-step.angle).cos();
-    let sin_a = (-step.angle).sin();
-    let inv_scale = 1.0 / scale.max(0.001);
-    let uv_span = FOOTSTEP_UV_MAX - FOOTSTEP_UV_MIN;
-
-    for y in y_start..=y_end {
-        let dy = (y - center_y) as f32 * inv_scale;
-        for x in x_start..=x_end {
-            let dx = (x - center_x) as f32 * inv_scale;
-            let local_x = dx * cos_a - dy * sin_a;
-            let local_y = dx * sin_a + dy * cos_a;
-
-            let norm_x = (local_x / spr_w) + 0.5;
-            let norm_y = (local_y / spr_h) + 0.5;
-            if !(0.0..1.0).contains(&norm_x) || !(0.0..1.0).contains(&norm_y) {
-                continue;
-            }
-
-            let u = if step.is_right {
-                FOOTSTEP_UV_MAX - norm_x * uv_span
-            } else {
-                FOOTSTEP_UV_MIN + norm_x * uv_span
-            };
-            let v = FOOTSTEP_UV_MIN + norm_y * uv_span;
-
-            let fx = u * (spr_w - 1.0);
-            let fy = v * (spr_h - 1.0);
-            let x0 = (fx.floor() as u32).min(sprite.width - 1);
-            let y0 = (fy.floor() as u32).min(sprite.height - 1);
-            let x1 = (x0 + 1).min(sprite.width - 1);
-            let y1 = (y0 + 1).min(sprite.height - 1);
-            let rx = fx - x0 as f32;
-            let ry = fy - y0 as f32;
-
-            let a00 = sprite.alpha[(y0 * sprite.width + x0) as usize] as f32;
-            let a10 = sprite.alpha[(y0 * sprite.width + x1) as usize] as f32;
-            let a01 = sprite.alpha[(y1 * sprite.width + x0) as usize] as f32;
-            let a11 = sprite.alpha[(y1 * sprite.width + x1) as usize] as f32;
-            let interp =
-                (a00 * (1.0 - rx) + a10 * rx) * (1.0 - ry) + (a01 * (1.0 - rx) + a11 * rx) * ry;
-            if interp <= 0.001 {
-                continue;
-            }
-
-            let effective_alpha = (interp / 255.0) * step.alpha;
-            let dest_idx = (y as usize * rast.width + x as usize) * 4;
-            let er = rast.pixels[dest_idx] as f32;
-            let eg = rast.pixels[dest_idx + 1] as f32;
-            let eb = rast.pixels[dest_idx + 2] as f32;
-
-            rast.pixels[dest_idx] =
-                (255.0 * effective_alpha + er * (1.0 - effective_alpha)).min(255.0) as u8;
-            rast.pixels[dest_idx + 1] =
-                (255.0 * effective_alpha + eg * (1.0 - effective_alpha)).min(255.0) as u8;
-            rast.pixels[dest_idx + 2] =
-                (255.0 * effective_alpha + eb * (1.0 - effective_alpha)).min(255.0) as u8;
-            rast.pixels[dest_idx + 3] = 255;
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::atlas_font::AtlasFont;
+    use crate::font::TextRasterizer;
 
     #[test]
-    fn test_loading_screen_retail_cadence_and_decay() {
+    fn test_loading_screen_retail_cadence_decay_and_audio_flag() {
         let mut loading = LoadingScreen::new_with_seed("Observation Deck", 2.0, true, 0);
         assert_eq!(loading.step_cadence, 1.0);
+        assert!(!loading.step_spawned_this_tick);
 
-        // First tick stamps step 1; 1.0s later stamps step 2 (`FUN_00406be0`)
+        // First tick stamps step 1 and sets `step_spawned_this_tick` (`FUN_00406be0`)
         loading.tick(0.016);
         assert_eq!(loading.footsteps.len(), 1);
+        assert!(loading.step_spawned_this_tick);
+        assert_eq!(loading.spawned_step_this_tick(), Some(true));
         assert!((loading.footsteps[0].alpha - (1.0 - 0.016 / 4.0)).abs() < 1e-4);
 
-        loading.tick(1.0);
+        // Mid-cadence tick must clear `step_spawned_this_tick`
+        loading.tick(0.1);
+        assert!(!loading.step_spawned_this_tick);
+        assert_eq!(loading.spawned_step_this_tick(), None);
+
+        // 0.9s later (total 1.0s since step 1) stamps step 2 with opposite foot side (`FUN_004c8bc0`)
+        loading.tick(0.9);
         assert_eq!(loading.footsteps.len(), 2);
-        // Alternating left/right foot side (`FUN_004c8bc0`)
+        assert!(loading.step_spawned_this_tick);
+        assert_eq!(loading.spawned_step_this_tick(), Some(false));
         assert_ne!(loading.footsteps[0].is_right, loading.footsteps[1].is_right);
 
         // Confirm gated until load_completed && elapsed >= min_duration
@@ -638,9 +546,39 @@ mod tests {
     }
 
     #[test]
-    fn test_loading_screen_rendering_and_sprite() {
+    fn test_ps2_now_loading_jitter_formula_matches_slus_decomp() {
+        // Exact `SLUS_202.28` `NowLoadingDraw` (`0x00299170`):
+        // count = 0 -> (0 % 5 + 254, 0 % 5 + 254) = (254, 254)
+        assert_eq!(LoadingScreen::ps2_now_loading_jitter_xy(0), (254, 254));
+        // count = 64 -> x = (64 * 0xce5fdd) % 5 + 254 = 256, y = (64 * 0x2f6f) % 5 + 254 = 258
+        let (x64, y64) = LoadingScreen::ps2_now_loading_jitter_xy(64);
+        assert_eq!(x64, (64_i32.wrapping_mul(0x00ce_5fdd) % 5) + 0xfe);
+        assert_eq!(y64, (64_i32.wrapping_mul(0x2f6f) % 5) + 0xfe);
+        assert!((250..=258).contains(&x64));
+        assert!((250..=258).contains(&y64));
+
+        // Verify Ps2NowLoadingJitter mode never spawns footsteps and decays over 4.0s
+        let mut loading = LoadingScreen::new_with_seed("PS2 Test", 1.0, false, 0)
+            .with_mode(LoadingScreenMode::Ps2NowLoadingJitter);
+        loading.tick(1.0);
+        assert!(loading.footsteps.is_empty());
+        assert!(!loading.step_spawned_this_tick);
+        assert!((loading.ps2_text_alpha - 0.75).abs() < 0.05);
+
+        // Render both modes and verify non-empty output
+        let font = AtlasFont::load_embedded();
+        let mut rast = TextRasterizer::new(640, 480);
+        loading.render(&font, &mut rast);
+        let non_zero = rast.pixels.iter().step_by(4).filter(|&&p| p > 0).count();
+        assert!(non_zero > 20);
+    }
+
+    #[test]
+    fn test_loading_screen_rendering_and_retail_footmark_sprite() {
         let mut loading = LoadingScreen::new_with_seed("Restroom Start", 0.5, false, 3);
         loading.tick(0.016);
+        loading.tick(1.0);
+        loading.tick(1.0);
         loading.mark_completed();
 
         let font = AtlasFont::load_embedded();
@@ -650,7 +588,49 @@ mod tests {
         let non_zero = rast.pixels.iter().step_by(4).filter(|&&p| p > 0).count();
         assert!(non_zero > 50);
 
+        if let Ok(out_dir) = std::env::var("SH2_PREVIEW_OUT") {
+            let _ = std::fs::create_dir_all(&out_dir);
+            let _ = image::save_buffer(
+                format!("{out_dir}/loading_screen_footsteps.png"),
+                &rast.pixels,
+                rast.width as u32,
+                rast.height as u32,
+                image::ColorType::Rgba8,
+            );
+
+            let mut ps2_loading = LoadingScreen::new_with_seed("PS2 Jitter", 1.0, false, 0)
+                .with_mode(LoadingScreenMode::Ps2NowLoadingJitter);
+            ps2_loading.tick(0.033);
+            let mut ps2_rast = TextRasterizer::new(640, 480);
+            ps2_loading.render(&font, &mut ps2_rast);
+            let _ = image::save_buffer(
+                format!("{out_dir}/loading_screen_ps2_jitter.png"),
+                &ps2_rast.pixels,
+                ps2_rast.width as u32,
+                ps2_rast.height as u32,
+                image::ColorType::Rgba8,
+            );
+        }
+
         let sprite = FootstepSprite::get();
         assert!(sprite.width > 0 && sprite.height > 0);
+        assert!(sprite.alpha.iter().any(|&a| a > 128));
+    }
+
+    #[test]
+    fn test_retail_footmark_tbn2_asset_loads_when_present() {
+        let retail_path = std::path::Path::new(
+            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data/etc/effect/footmark.tbn2",
+        );
+        if !retail_path.is_file() {
+            return;
+        }
+        let sprite = FootstepSprite::load_from_retail_assets()
+            .expect("retail data/etc/effect/footmark.tbn2 must resolve and decode");
+        assert!(sprite.from_retail_asset);
+        assert_eq!(sprite.width, 64);
+        assert_eq!(sprite.height, 64);
+        assert_eq!(sprite.alpha.len(), 64 * 64);
+        assert!(sprite.alpha.iter().any(|&a| a > 128));
     }
 }

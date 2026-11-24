@@ -177,11 +177,15 @@ pub fn ps2_depth_fog_linear_coeffs(
     (fa, fb)
 }
 
+/// Room ID for Opening Restroom (`er01.map`, `RoomNameJms() == 1` in `PlayerSetReverseMode` `0x0024c190` line 198).
+pub const R_RESTROOM_START_ID: u32 = 0x01;
+
 /// Maps a lowercase stage/map code (e.g. `"ob01"`, `"ca11"`, `"ru73"`) to its canonical PS2/PC `room_id`.
 #[must_use]
 pub fn room_id_from_stage_code(stage_code: &str) -> u32 {
     let lower = stage_code.to_ascii_lowercase();
     match lower.as_str() {
+        "er01" => R_RESTROOM_START_ID,
         "ob01" => R_OBSV_DECK_ID,
         "ca11" | "ca12" | "ca13" => R_FOREST_CEMETERY_ID,
         "tw01" | "tw02" => R_TOWN_EAST_ID,
@@ -407,7 +411,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
                 final_boss_upper_override: upper,
             }
         }
-        R_HTL_RM_312_ID => RoomFogEvaluation {
+        R_RESTROOM_START_ID | R_HTL_RM_312_ID => RoomFogEvaluation {
             fog_color: [0.22, 0.21, 0.18, 1.0],
             fog_near_mm: 2000.0,
             fog_far_mm: 14000.0,

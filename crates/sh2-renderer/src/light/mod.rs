@@ -18,6 +18,7 @@
 //!     `UpdateReflections` (`0x00126f90`), `UpdateExtras` (`0x00127360`).
 
 pub mod character_pool;
+pub mod cutscene;
 pub mod jms_spot;
 pub mod uniforms;
 
@@ -25,6 +26,9 @@ pub use character_pool::{
     CharacterLightEntry, CharacterLightPool, CharacterLightType, FakeLightKind,
     CHARACTER_EXTRA_LIGHT_LIMIT, CHARACTER_LIGHT_SLOT_COUNT, CHARACTER_PARALLEL_MATRIX_LIMIT,
     MODEL3_LIGHT_ENV_RADIUS_MM, PS2_LUMA_WEIGHTS, PS2_NHM_UV_BIAS_COL,
+};
+pub use cutscene::{
+    build_cutscene_light_uniforms, CutsceneLightInput, CHARACTER_POOL_LINEAR_SCALE,
 };
 pub use jms_spot::{
     linear_trim, JmsSpotManager, BASE_REFLECTION_HIGHLIGHT_RGB, DARK_HOSEI,

@@ -79,6 +79,9 @@ pub struct ModelPrimitive {
     /// Specular highlight lobe sharpness scale (`ModelMaterial::specularHighlightScale` at `h + 48`,
     /// PS2 `SLUS_202.28` `DrawPart1` `+0x50` / `sh2pc.exe` `ActorOpaqueDraw` `[ebp + 0x34]`, typically `1.67..5.00`).
     pub specular_scale: f32,
+    /// Environment reflection map coefficient (`SLUS_202.28` `DrawPart1` / `MakeDrawPacket`
+    /// `0x0012d5a0` line 672 `*(char *)(part + 0x45)` -> `.mdl` header byte `h + 37`).
+    pub envmap_coeff: u8,
     /// Indicates whether primitive is rendered in the alpha transparency pass (`tprim`).
     pub is_transparent: bool,
 }
@@ -412,7 +415,10 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
 
         let mtype = data[h + 32];
         let pose = data[h + 34];
-        let cull = read_u32(data, h + 36)?;
+        // `MakeSpecularPacket` (`0x0012d090` line 532) reads `*(char *)(part + 0x44)` (`u8`) for
+        // backface culling; `h + 37` (`+0x45`) is the separate `envmap_coeff` byte.
+        let cull = u32::from(data[h + 36]);
+        let envmap_coeff = data[h + 37];
         let specular_scale = read_f32(data, h + 48)?;
 
         let diffuse = [
@@ -474,6 +480,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             ambient,
             specular,
             specular_scale,
+            envmap_coeff,
             is_transparent: false,
         });
 
@@ -699,7 +706,8 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             let tofs = read_u32(data, tp + 12)? as usize;
             let mtype = data[tp + 20];
             let pose = data[tp + 22];
-            let cull = read_u32(data, tp + 24)?;
+            let cull = u32::from(data[tp + 24]);
+            let envmap_coeff = data[tp + 25];
             let specular_scale = read_f32(data, tp + 36)?;
 
             let diffuse = [
@@ -750,6 +758,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
                 ambient,
                 specular,
                 specular_scale,
+                envmap_coeff,
                 is_transparent: true,
             });
 

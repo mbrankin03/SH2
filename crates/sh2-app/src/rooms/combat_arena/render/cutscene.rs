@@ -1,20 +1,17 @@
-//! In-engine 3D cutscene (`DramaDemoPlayer`) stepping, voice sync, sequence chaining, and cutscene
-//! spotlight uniform construction.
+//! In-engine 3D cutscene (`DramaDemoPlayer`) stepping, voice sync, and sequence chaining.
 
 use std::time::Duration;
 
 use crate::assets::{load_cutscene_voice_wav, open_drama_demo_session};
 use crate::state::AppState;
-use sh2_assets::formats::demo::{DemoLightKind, DemoLightState};
 use sh2_core::{CutsceneCameraSnapshot, CutsceneSequenceStep, DRAMA_DEMO_CATALOG};
 
 pub(super) fn step_cutscene_player(
     state: &mut AppState,
     dt: Duration,
     is_paused: bool,
-) -> (Option<CutsceneCameraSnapshot>, Option<DemoLightState>) {
+) -> Option<CutsceneCameraSnapshot> {
     let mut cutscene_camera_override = None;
-    let mut cutscene_light_override = None;
 
     if !is_paused {
         let subs_enabled = state.menu_ctrl.options_menu.draft_config.game.subtitles;
@@ -56,7 +53,6 @@ pub(super) fn step_cutscene_player(
                 finished_handoff = session.player.player_handoff_transform();
             } else {
                 cutscene_camera_override = Some(session.player.camera);
-                cutscene_light_override = session.player.primary_active_light().copied();
             }
         }
 
@@ -98,7 +94,6 @@ pub(super) fn step_cutscene_player(
                     open_drama_demo_session(&state.render_ctx, next_idx, false);
                 if let Some(ref s) = state.drama_demo_session {
                     cutscene_camera_override = Some(s.player.camera);
-                    cutscene_light_override = s.player.primary_active_light().copied();
                 }
             } else {
                 state.drama_demo_session = None;
@@ -114,67 +109,8 @@ pub(super) fn step_cutscene_player(
     } else if let Some(ref session) = state.drama_demo_session {
         if session.player.locks_gameplay_input() {
             cutscene_camera_override = Some(session.player.camera);
-            cutscene_light_override = session.player.primary_active_light().copied();
         }
     }
 
-    (cutscene_camera_override, cutscene_light_override)
-}
-
-pub(super) fn build_cutscene_spotlight_uniforms(
-    state: &AppState,
-    cs_light: DemoLightState,
-    player_pos: glam::Vec3,
-) -> sh2_renderer::light::SpotlightUniforms {
-    let ambient_tint = state
-        .drama_demo_session
-        .as_ref()
-        .filter(|s| s.player.locks_gameplay_input())
-        .map(|s| s.player.atmosphere.ambient_tint_rgba)
-        .unwrap_or([1.0, 1.0, 1.0, 1.0]);
-    let l_pos = glam::Vec3::from_array(cs_light.position);
-    let l_tgt = glam::Vec3::from_array(cs_light.interest);
-    let (_near_decay, far_decay) = match cs_light.kind {
-        DemoLightKind::Point | DemoLightKind::Spot => {
-            sh2_core::demo_light_decay_bounds(cs_light.decay[1])
-        }
-        DemoLightKind::Directional => (3000.0, 7500.0),
-    };
-    let boost = (far_decay / 3500.0).clamp(0.25, 0.55);
-    let (pos, dir, inner_cos, outer_cos) = match cs_light.kind {
-        DemoLightKind::Spot => (
-            l_pos,
-            (l_tgt - l_pos).normalize_or(glam::Vec3::Z),
-            cs_light.cone[0].cos().clamp(0.1, 0.99),
-            cs_light.cone[1].cos().clamp(0.05, 0.95),
-        ),
-        DemoLightKind::Point => (
-            l_pos,
-            (player_pos - l_pos).normalize_or(glam::Vec3::Y),
-            0.25,
-            -0.65,
-        ),
-        DemoLightKind::Directional => {
-            let safe_d = (-l_pos).normalize_or(glam::Vec3::Y);
-            (player_pos - safe_d * 50_000.0, safe_d, -1.0, -1.0)
-        }
-    };
-    let effective_far = far_decay.max(4500.0);
-    sh2_renderer::light::SpotlightUniforms {
-        position: [pos.x, pos.y, pos.z, 1.0],
-        direction_inner: [dir.x, dir.y, dir.z, inner_cos],
-        color_outer: [
-            cs_light.color[0].max(0.20) * boost,
-            cs_light.color[1].max(0.20) * boost,
-            cs_light.color[2].max(0.20) * boost,
-            outer_cos,
-        ],
-        ambient_tint,
-        fill_and_range: [0.0, effective_far, 0.0, 0.0],
-        ps2_falloff_params: sh2_renderer::light::compute_ps2_falloff_params(
-            sh2_renderer::light::PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
-            effective_far,
-        ),
-        ..Default::default()
-    }
+    cutscene_camera_override
 }

@@ -134,6 +134,73 @@ fn test_sh2_136_soft_stencil_blur_self_shadow_exclusion_clear_color_and_post_pip
     let _second_frame = expected_gen.generate_128x128();
     assert_eq!(next_seed, expected_gen.seed);
 
+    // 30 Hz cadence deduplication: multiple calls within the same 1/30s window (e.g. 240 FPS)
+    // only step once, then advance on the next 30 Hz boundary.
+    let s0 = ctx.post_pipeline.step_ps2_noise_at_time(&ctx.queue, 0.01);
+    assert!(s0.is_some());
+    assert!(ctx
+        .post_pipeline
+        .step_ps2_noise_at_time(&ctx.queue, 0.02)
+        .is_none());
+    let s1 = ctx.post_pipeline.step_ps2_noise_at_time(&ctx.queue, 0.04);
+    assert!(s1.is_some() && s1 != s0);
+
+    // Framerate-independent lens flare smoothing: 8 steps at 240 Hz == 1 step at 30 Hz
+    let mut lf30 = sh2_renderer::effects::LensFlareSmoother::default();
+    let mut lf240 = sh2_renderer::effects::LensFlareSmoother::default();
+    for _ in 0..5 {
+        lf30.step(true, 1.0, true);
+    }
+    for _ in 0..40 {
+        lf240.step_dt(true, 1.0, true, 1.0 / 240.0);
+    }
+    assert!(
+        (lf30.current_rate - lf240.current_rate).abs() < 1e-4,
+        "240 Hz step_dt ({}) must match 30 Hz step ({})",
+        lf240.current_rate,
+        lf30.current_rate
+    );
+
+    // 60 Hz sim-tick gating on JmsSpotManager: repeated render frames on the same sim_tick do not advance
+    let mut spot = sh2_renderer::light::JmsSpotManager::new();
+    spot.turn_on();
+    assert_eq!(spot.tick_at_sim_tick(10, true, true, 0), 1);
+    let r1 = spot.ramp_count;
+    assert_eq!(spot.tick_at_sim_tick(10, true, true, 0), 0);
+    assert_eq!(spot.ramp_count, r1);
+    assert_eq!(spot.tick_at_sim_tick(11, true, true, 0), 1);
+    assert_eq!(spot.ramp_count, r1 + 2);
+
+    // 60 Hz vs 240 Hz FogBlowSystem cadence parity: advancing strictly on 60 Hz tick boundaries
+    // produces bit-identical particle counts, positions, velocities, and alphas at any refresh rate.
+    let mut blow60 = sh2_renderer::fog::FogBlowSystem::new();
+    let mut blow240 = sh2_renderer::fog::FogBlowSystem::new();
+    blow60.set_room(0x8e);
+    blow240.set_room(0x8e);
+    for _ in 0..60 {
+        blow60.tick(1.0 / 60.0, 1, glam::Vec3::ZERO);
+    }
+    let mut last_t = 0.0f32;
+    for f in 1..=240 {
+        let t = (f as f32) / 240.0;
+        let prev_tick = (last_t * 60.0).floor() as u64;
+        let curr_tick = (t * 60.0).floor() as u64;
+        last_t = t;
+        for _ in 0..curr_tick.saturating_sub(prev_tick) {
+            blow240.tick(1.0 / 60.0, 1, glam::Vec3::ZERO);
+        }
+    }
+    let mut inst60 = Vec::new();
+    let mut inst240 = Vec::new();
+    blow60.write_gpu_instances([1.0, 1.0, 1.0], &mut inst60);
+    blow240.write_gpu_instances([1.0, 1.0, 1.0], &mut inst240);
+    assert!(!inst60.is_empty());
+    assert_eq!(inst60.len(), inst240.len());
+    for (a, b) in inst60.iter().zip(inst240.iter()) {
+        assert_eq!(a.world_pos_radius, b.world_pos_radius);
+        assert_eq!(a.color_alpha, b.color_alpha);
+    }
+
     ctx.pcss_enabled
         .store(false, std::sync::atomic::Ordering::Relaxed);
     ctx.set_soft_shadow_blur_enabled(true);

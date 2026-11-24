@@ -117,6 +117,9 @@ pub struct JmsSpotManager {
     pub dark_trim_factor: f32,
     /// Numerical Recipes LCG state (`DAT_002adaf0`, initial seed `1`).
     pub lcg_seed: u32,
+    /// Last 60 Hz simulation tick processed by [`Self::tick_at_sim_tick`] (decouples flashlight
+    /// ramp/flicker and gun-flash decay from 120/240/unlimited display refresh rates).
+    last_sim_tick: Option<u64>,
 }
 
 impl Default for JmsSpotManager {
@@ -152,6 +155,7 @@ impl JmsSpotManager {
             shadow_scale_factor: 1.0,
             dark_trim_factor: 1.0,
             lcg_seed: 1, // DAT_002adaf0 initial value in SLUS_202.28
+            last_sim_tick: None,
         }
     }
 
@@ -318,6 +322,29 @@ impl JmsSpotManager {
         if f64::from(self.spot_intensity) <= SPOT_OFF_THRESHOLD && self.ramp_step == 0 {
             self.true_off();
         }
+    }
+
+    /// Advances the full per-frame spotlight & dark-trim update (`Programed_Light_Set` `0x0028eaf0`
+    /// lines 490..528) strictly on fixed 60 Hz simulation ticks, decoupling ramp, flicker, and
+    /// gun-flash decay from 120/240/unlimited display refresh rates.
+    ///
+    /// Returns the number of 60 Hz ticks executed (`0` between 60 Hz boundaries, `1` on first call).
+    pub fn tick_at_sim_tick(
+        &mut self,
+        sim_tick: u64,
+        is_night: bool,
+        has_flashlight: bool,
+        packed_map_id: u32,
+    ) -> u32 {
+        let steps = match self.last_sim_tick {
+            None => 1,
+            Some(prev) => sim_tick.saturating_sub(prev).min(6) as u32,
+        };
+        self.last_sim_tick = Some(sim_tick);
+        for _ in 0..steps {
+            self.tick(is_night, has_flashlight, packed_map_id);
+        }
+        steps
     }
 
     /// Advances the full per-frame spotlight & dark-trim update (`Programed_Light_Set` `0x0028eaf0`

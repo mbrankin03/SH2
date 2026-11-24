@@ -52,6 +52,7 @@ impl AppConfig {
                 self.video.lighting_profile = LightingProfile::Ps2Authentic;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
                 self.video.aces_tonemapping = false;
+                self.video.grain_intensity = 100;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_dynamic_room_acoustics = false;

@@ -8,6 +8,7 @@
 
 pub mod clip;
 pub mod gait_sync;
+pub mod head_tracking;
 pub mod tables;
 
 pub use clip::{
@@ -18,6 +19,13 @@ pub use clip::{
 pub use gait_sync::{
     LocomotionAnimCommand, LocomotionAnimationSync, BASE_SPOT_TURN_RAD_PER_SEC,
     MAX_BACK_LINEAR_SPEED, MAX_WALK_LINEAR_SPEED,
+};
+pub use head_tracking::{
+    compute_desired_neck_angles, select_head_look_target, HeadLookTracker, LookTargetCandidate,
+    LookTargetKind, DEFAULT_LOOK_SEARCH_RADIUS_MM, JAMES_HEAD_BONE_INDEX, JAMES_NECK_BONE_INDEX,
+    LOOK_ITEM_MAX_DY_MM, LOOK_ITEM_MIN_DY_MM, MARIA_HEAD_BONE_INDEX, MARIA_NECK_BONE_INDEX,
+    NECK_CRANIAL_SHARE, NECK_PITCH_MAX_RAD, NECK_PITCH_MIN_RAD, NECK_TURN_SPEED,
+    NECK_UPPER_SPINE_SHARE, NECK_YAW_MAX_RAD, NECK_YAW_MIN_RAD,
 };
 pub use tables::{
     CharacterLocomotionClips, JamesBasicClips, JamesStageClips, MariaLocomotionClips,

@@ -15,13 +15,13 @@ impl OptionsMenu {
                     11
                 }
             }
-            OptionsTab::Controls => 12,
+            OptionsTab::Controls => 14,
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
-                    18
+                    19
                 } else {
-                    17
+                    18
                 }
             }
             OptionsTab::Debug => 6,
@@ -218,6 +218,11 @@ impl OptionsMenu {
                 "Controller Config (PS2)",
                 format!("{} [Right/Enter]", c.ps2_bindings.preset.label()),
             )),
+            12 => Some(("Combat Input Mode", c.combat_input_mode.label().to_string())),
+            13 => Some((
+                "R2 Heavy Threshold",
+                format!("{:.0}%", c.r2_heavy_pressure_threshold * 100.0),
+            )),
             _ => None,
         }
     }
@@ -368,7 +373,15 @@ impl OptionsMenu {
                     "OFF (Original PS2)".into()
                 },
             )),
-            17 if self.audio_pack_status.both_detected() => {
+            17 => Some((
+                "Cutscene Unequip",
+                if self.draft_config.game.enable_cutscene_unequip {
+                    "ON (Hide Weapon)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            18 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -578,7 +591,11 @@ impl OptionsMenu {
                 self.draft_config.game.enable_free_item_orbit =
                     !self.draft_config.game.enable_free_item_orbit;
             }
-            17 if self.audio_pack_status.both_detected() => {
+            17 => {
+                self.draft_config.game.enable_cutscene_unequip =
+                    !self.draft_config.game.enable_cutscene_unequip;
+            }
+            18 if self.audio_pack_status.both_detected() => {
                 let a = &mut self.draft_config.audio;
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()
@@ -722,6 +739,18 @@ impl OptionsMenu {
             11 => {
                 self.open_sub_screen(OptionsSubScreen::ControllerConfig);
                 return Some(OptionsSoundCue::CursorMove);
+            }
+            12 => {
+                c.combat_input_mode = if forward {
+                    c.combat_input_mode.next()
+                } else {
+                    c.combat_input_mode.prev()
+                };
+            }
+            13 => {
+                let step = if forward { 0.05 } else { -0.05 };
+                c.r2_heavy_pressure_threshold =
+                    (c.r2_heavy_pressure_threshold + step).clamp(0.25, 0.95);
             }
             _ => return Some(OptionsSoundCue::None),
         }

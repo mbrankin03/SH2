@@ -447,6 +447,10 @@ pub struct GameOptions {
     /// Native-upgrade free 3D item orbit & zoom in inventory Examine (`false` = 1:1 PS2 examine).
     #[serde(default)]
     pub enable_free_item_orbit: bool,
+    /// SH2:EE `CutsceneUnequip` (`Patches/RemoveWeaponFromCutscene.cpp`): auto-hide James's equipped
+    /// right-hand weapon mesh during `.dds` cutscenes (`false` in strict 1:1 Vanilla PS2 mode).
+    #[serde(default = "default_true")]
+    pub enable_cutscene_unequip: bool,
 }
 
 /// Debug and development options.
@@ -498,6 +502,7 @@ impl Default for GameOptions {
             enable_quicksave_autosave: false,
             enable_save_thumbnails: false,
             enable_free_item_orbit: false,
+            enable_cutscene_unequip: true,
         }
     }
 }

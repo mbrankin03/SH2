@@ -30,6 +30,7 @@ use super::hitboxes::{
     HYPER_SPRAY_INITIAL_SHAKES, HYPER_SPRAY_MAX_CHARGE_SECS, SHOTGUN_PELLET_COUNT,
 };
 use super::targeting::{check_guard_success, GuardState};
+use crate::config::{CombatInputMode, ControlOptions, PS2_HEAVY_PRESSURE_THRESHOLD_NORM};
 
 /// Current combat posture / action mode of the player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -54,6 +55,34 @@ pub enum CombatMode {
 /// Attack button tap-versus-hold timing threshold in seconds
 /// (Enhanced Edition `HoldToStomp` and `SwapLightHeavyAttack`).
 pub const HOLD_TIMER_THRESHOLD: f32 = 0.2;
+
+/// Minimum PS2/PC DualShock 2 button pressure (`0xC1 = 193`, i.e., `0xC0 < bVar4`)
+/// required to trigger Heavy melee swings and Two-Footed Stomps in `sh2pc.exe`
+/// `FUN_005343a0` (`0x005343a0`) and `FUN_005345c0` (`0x005345c0`).
+pub const PS2_PRESSURE_HEAVY_THRESHOLD: u8 = 0xC1;
+
+/// Per-tick combat input snapshot supporting Vanilla PS2 pressure, SH2:EE tap/hold,
+/// and Native zero-latency split bindings / `R2` analog trigger thresholds (`SH2-83`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CombatInputSnapshot {
+    /// Weapon ready / aim button held (`R2` / `R1`).
+    pub ready_held: bool,
+    /// Primary attack button rising edge this tick.
+    pub action_pressed: bool,
+    /// Primary attack button currently held.
+    pub action_held: bool,
+    /// Whether a downed enemy is within stomp/kick range (`_DAT_003c83fc != 0`).
+    pub has_downed_enemy_nearby: bool,
+    /// Whether the player is currently running (`param_2 != 0` in `PlayerRequestAttack` `0x00110530` / `0x005343a0`).
+    /// Forces light swing on `WoodenPlank` and `MariaChineseCleaver`.
+    pub is_running: bool,
+    /// Optional PS2 analog button pressure (`0..=255`) or `R2` trigger pressure (`r2 * 255.0`).
+    pub attack_pressure: Option<u8>,
+    /// Native zero-latency dedicated Light Attack / Quick Kick pulse (`CombatInputMode::NativeZeroLatency`).
+    pub native_light_pressed: bool,
+    /// Native zero-latency dedicated Heavy Attack / Two-Footed Stomp pulse (`CombatInputMode::NativeZeroLatency`).
+    pub native_heavy_pressed: bool,
+}
 
 /// Player combat state machine and inventory ammunition tracking.
 #[derive(Debug, Clone)]
@@ -118,6 +147,10 @@ pub struct CombatController {
     pub enable_hold_to_stomp: bool,
     /// Enable Swap-Light-Heavy-Attack (Enhanced Edition option).
     pub enable_swap_light_heavy: bool,
+    /// Active melee/stomp dispatch mode (`Ps2Pressure`, `Sh2eeTapHold`, `NativeZeroLatency`) (`SH2-83`).
+    pub combat_input_mode: CombatInputMode,
+    /// Normalized `R2` trigger threshold (`0.0..=1.0`, default `193.0 / 255.0`) (`SH2-83`).
+    pub r2_heavy_pressure_threshold: f32,
     /// Last audio cue emitted by combat state machine.
     pub pending_sfx: Option<u32>,
     /// Shotgun ray pellets count (`10` in `shBattleAttackByHumanGunshotTypeB` `0x00120f30`).
@@ -183,6 +216,8 @@ impl CombatController {
             muzzle_flash_timer: 0.0,
             enable_hold_to_stomp: true,
             enable_swap_light_heavy: true,
+            combat_input_mode: CombatInputMode::Sh2eeTapHold,
+            r2_heavy_pressure_threshold: PS2_HEAVY_PRESSURE_THRESHOLD_NORM,
             pending_sfx: None,
             shotgun_pellets: SHOTGUN_PELLET_COUNT as u32,
         }
@@ -455,6 +490,22 @@ impl CombatController {
         }
     }
 
+    /// Synchronizes combat input mode, tap/hold toggles, and `R2` threshold from [`ControlOptions`] (`SH2-83`).
+    pub fn apply_control_options(&mut self, opts: &ControlOptions) {
+        self.combat_input_mode = opts.combat_input_mode;
+        self.r2_heavy_pressure_threshold = opts.r2_heavy_pressure_threshold.clamp(0.05, 1.0);
+        match opts.combat_input_mode {
+            CombatInputMode::Ps2Pressure => {
+                self.enable_hold_to_stomp = false;
+                self.enable_swap_light_heavy = false;
+            }
+            CombatInputMode::Sh2eeTapHold | CombatInputMode::NativeZeroLatency => {
+                self.enable_hold_to_stomp = true;
+                self.enable_swap_light_heavy = true;
+            }
+        }
+    }
+
     /// Initiate weapon attack logic based on player input and target environment.
     pub fn handle_combat_inputs(
         &mut self,
@@ -464,6 +515,26 @@ impl CombatController {
         has_downed_enemy_nearby: bool,
         dt: f32,
     ) {
+        self.handle_combat_inputs_ex(
+            CombatInputSnapshot {
+                ready_held,
+                action_pressed,
+                action_held,
+                has_downed_enemy_nearby,
+                ..CombatInputSnapshot::default()
+            },
+            dt,
+        );
+    }
+
+    /// Extended combat input handler supporting PS2 analog pressure (`0xC0 < p`),
+    /// SH2:EE tap/hold (`0.2s`), running light-attack override (`0x005343a0`), and
+    /// Native zero-latency split bindings / `R2` trigger thresholds (`SH2-83`).
+    pub fn handle_combat_inputs_ex(&mut self, input: CombatInputSnapshot, dt: f32) {
+        let ready_held = input.ready_held;
+        let action_pressed = input.action_pressed;
+        let action_held = input.action_held;
+        let has_downed_enemy_nearby = input.has_downed_enemy_nearby;
         self.pending_sfx = None;
 
         if self.invulnerability_timer > 0.0 {
@@ -522,7 +593,11 @@ impl CombatController {
                     return;
                 }
 
-                if action_pressed {
+                // 1. Native zero-latency split bindings (0 ms frame-0 dispatch when enabled)
+                if self.combat_input_mode == CombatInputMode::NativeZeroLatency
+                    && (input.native_light_pressed || input.native_heavy_pressed)
+                {
+                    let want_heavy = input.native_heavy_pressed;
                     let can_stomp = self.weapon == WeaponGrip::None
                         || self.weapon.is_firearm()
                         || self.weapon == WeaponGrip::HyperSpray
@@ -531,11 +606,52 @@ impl CombatController {
                         || self.weapon == WeaponGrip::Chainsaw;
 
                     if can_stomp && has_downed_enemy_nearby {
-                        if self.enable_hold_to_stomp {
+                        self.start_stomp(want_heavy);
+                        return;
+                    } else if self.weapon.is_melee() {
+                        let force_light = input.is_running
+                            && matches!(
+                                self.weapon,
+                                WeaponGrip::WoodenPlank | WeaponGrip::MariaChineseCleaver
+                            );
+                        self.start_melee_attack(want_heavy && !force_light, false);
+                        return;
+                    }
+                }
+
+                if action_pressed {
+                    let can_stomp = self.weapon == WeaponGrip::None
+                        || self.weapon.is_firearm()
+                        || self.weapon == WeaponGrip::HyperSpray
+                        || self.weapon == WeaponGrip::SteelPipe
+                        || self.weapon == WeaponGrip::GreatKnife
+                        || self.weapon == WeaponGrip::Chainsaw;
+
+                    // Pressure threshold check (`sh2pc.exe` `0x005343a0` / `0x005345c0`: `0xC0 < pressure`)
+                    let pressure_threshold =
+                        if self.combat_input_mode == CombatInputMode::NativeZeroLatency {
+                            (self.r2_heavy_pressure_threshold * 255.0)
+                                .round()
+                                .clamp(1.0, 255.0) as u8
+                        } else {
+                            PS2_PRESSURE_HEAVY_THRESHOLD
+                        };
+                    let pressure_is_heavy = input.attack_pressure.map(|p| p >= pressure_threshold);
+
+                    if can_stomp && has_downed_enemy_nearby {
+                        if let Some(is_heavy) = pressure_is_heavy {
+                            if self.combat_input_mode != CombatInputMode::Sh2eeTapHold {
+                                self.start_stomp(is_heavy);
+                                return;
+                            }
+                        }
+                        if self.enable_hold_to_stomp
+                            && self.combat_input_mode != CombatInputMode::Ps2Pressure
+                        {
                             self.charge_timer = 0.0;
                             self.charge_is_stomp = true;
                         } else {
-                            self.start_stomp(true);
+                            self.start_stomp(pressure_is_heavy.unwrap_or(true));
                         }
                     } else if self.weapon == WeaponGrip::HyperSpray {
                         if self.hyper_spray_charge > 0.0 {
@@ -544,9 +660,30 @@ impl CombatController {
                             self.start_reload();
                         }
                     } else if self.weapon.is_melee() {
-                        if has_downed_enemy_nearby && self.weapon == WeaponGrip::WoodenPlank {
+                        let force_light = input.is_running
+                            && matches!(
+                                self.weapon,
+                                WeaponGrip::WoodenPlank | WeaponGrip::MariaChineseCleaver
+                            );
+                        if force_light {
+                            self.start_melee_attack(false, false);
+                        } else if has_downed_enemy_nearby && self.weapon == WeaponGrip::WoodenPlank
+                        {
                             self.start_melee_attack(true, false);
-                        } else if self.enable_swap_light_heavy {
+                        } else if let Some(is_heavy) = pressure_is_heavy {
+                            if self.combat_input_mode != CombatInputMode::Sh2eeTapHold {
+                                self.start_melee_attack(is_heavy, false);
+                                return;
+                            }
+                            if self.enable_swap_light_heavy {
+                                self.charge_timer = 0.0;
+                                self.charge_is_stomp = false;
+                            } else {
+                                self.start_melee_attack(is_heavy, false);
+                            }
+                        } else if self.enable_swap_light_heavy
+                            && self.combat_input_mode != CombatInputMode::Ps2Pressure
+                        {
                             self.charge_timer = 0.0;
                             self.charge_is_stomp = false;
                         } else {
@@ -573,7 +710,12 @@ impl CombatController {
                         if self.charge_is_stomp {
                             self.start_stomp(is_hold);
                         } else {
-                            self.start_melee_attack(is_hold, false);
+                            let force_light = input.is_running
+                                && matches!(
+                                    self.weapon,
+                                    WeaponGrip::WoodenPlank | WeaponGrip::MariaChineseCleaver
+                                );
+                            self.start_melee_attack(is_hold && !force_light, false);
                         }
                     }
                 }

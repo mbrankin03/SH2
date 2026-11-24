@@ -130,6 +130,12 @@ pub struct GamepadInputState {
     pub gyro_look_delta_yaw: f32,
     /// Accumulated gyro motion-sensor vertical pitch delta in radians for this 60 Hz tick (`SH2-87`/`SH2-93`).
     pub gyro_look_delta_pitch: f32,
+    /// Analog `R2` / Right Trigger 2 pressure (`0.0..=1.0`) for pressure-sensitive combat (`SH2-83`).
+    pub r2_analog_pressure: f32,
+    /// Zero-latency native split Light Attack / Quick Kick pulse (`SH2-83`).
+    pub native_light_attack_pressed: bool,
+    /// Zero-latency native split Heavy Attack / Two-Footed Stomp pulse (`SH2-83`).
+    pub native_heavy_attack_pressed: bool,
     /// Active controller speaker cue.
     pub pending_speaker_cue: Option<ControllerSpeakerCue>,
     /// Active haptic feedback command.
@@ -145,6 +151,8 @@ pub struct InputManager {
     pending_camera_cycle: bool,
     pending_shoulder_swap: bool,
     pending_quick_turn: bool,
+    pending_native_light_attack: bool,
+    pending_native_heavy_attack: bool,
     pending_mouse_look: [f32; 2],
     pending_gyro_look: [f32; 2],
     host_active: bool,
@@ -152,6 +160,7 @@ pub struct InputManager {
     host_look: [f32; 2],
     host_run: bool,
     host_ready: bool,
+    host_r2_pressure: f32,
     gamepad_ready: bool,
 }
 
@@ -167,6 +176,8 @@ impl InputManager {
             pending_camera_cycle: false,
             pending_shoulder_swap: false,
             pending_quick_turn: false,
+            pending_native_light_attack: false,
+            pending_native_heavy_attack: false,
             pending_mouse_look: [0.0; 2],
             pending_gyro_look: [0.0; 2],
             host_active: false,
@@ -174,6 +185,7 @@ impl InputManager {
             host_look: [0.0; 2],
             host_run: false,
             host_ready: false,
+            host_r2_pressure: 0.0,
             gamepad_ready: false,
         }
     }
@@ -231,6 +243,21 @@ impl InputManager {
         self.pending_gyro_look[1] += delta_pitch_rad;
     }
 
+    /// Pulses a zero-latency native split Light Attack / Quick Kick input for the next `update()` (`SH2-83`).
+    pub fn press_native_light_attack(&mut self) {
+        self.pending_native_light_attack = true;
+    }
+
+    /// Pulses a zero-latency native split Heavy Attack / Two-Footed Stomp input for the next `update()` (`SH2-83`).
+    pub fn press_native_heavy_attack(&mut self) {
+        self.pending_native_heavy_attack = true;
+    }
+
+    /// Sets simulated host `R2` analog trigger pressure (`0.0..=1.0`) for testing/keyboard-mouse (`SH2-83`).
+    pub fn set_host_r2_pressure(&mut self, pressure: f32) {
+        self.host_r2_pressure = pressure.clamp(0.0, 1.0);
+    }
+
     /// Set control scheme (Tank vs Analog).
     pub fn set_control_scheme(&mut self, scheme: ControlScheme) {
         self.config.scheme = scheme;
@@ -262,6 +289,10 @@ impl InputManager {
         self.state.map_pressed = false;
         self.state.inventory_pressed = false;
         self.state.quick_turn_pressed = std::mem::take(&mut self.pending_quick_turn);
+        self.state.native_light_attack_pressed =
+            std::mem::take(&mut self.pending_native_light_attack);
+        self.state.native_heavy_attack_pressed =
+            std::mem::take(&mut self.pending_native_heavy_attack);
         self.state.camera_mode_cycle_pressed = std::mem::take(&mut self.pending_camera_cycle);
         self.state.shoulder_swap_pressed = std::mem::take(&mut self.pending_shoulder_swap);
         self.state.mouse_look_delta_x = std::mem::take(&mut self.pending_mouse_look[0]);
@@ -282,6 +313,7 @@ impl InputManager {
         let mut pad_ly = 0.0_f32;
         let mut pad_rx = 0.0_f32;
         let mut pad_ry = 0.0_f32;
+        let mut pad_r2 = 0.0_f32;
         let mut pad_running = false;
         let mut has_gamepad_axes = false;
 
@@ -376,8 +408,14 @@ impl InputManager {
 
                 let stick_magnitude = (pad_lx * pad_lx + pad_ly * pad_ly).sqrt();
                 pad_running = stick_magnitude >= self.config.run_threshold;
+                pad_r2 = gamepad
+                    .button_data(Button::RightTrigger2)
+                    .map(|d| d.value().clamp(0.0, 1.0))
+                    .unwrap_or_else(|| gamepad.value(Axis::RightZ).clamp(0.0, 1.0));
             }
         }
+
+        self.state.r2_analog_pressure = pad_r2.max(self.host_r2_pressure);
 
         if self.host_active {
             self.state.left_stick_x = (pad_lx + self.host_move[0]).clamp(-1.0, 1.0);

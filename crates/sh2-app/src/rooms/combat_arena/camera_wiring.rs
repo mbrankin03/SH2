@@ -61,6 +61,22 @@ pub(crate) fn sync_host_input_and_handoffs(state: &mut AppState) {
 /// for First-Person head-bone eye anchoring and updates foreground `PlayerMeshVisibility` (`SH2-93`).
 pub(crate) fn sync_player_pose_and_visibility(state: &mut AppState) {
     let visibility = state.sim_core.player_mesh_visibility();
+    let is_dds_cutscene_active = state
+        .drama_demo_session
+        .as_ref()
+        .is_some_and(|s| s.player.locks_gameplay_input());
+    let enable_cutscene_unequip = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .enable_cutscene_unequip;
+    let right_hand_pose = sh2_core::effective_right_hand_pose(
+        state.combat_arena.player.weapon,
+        enable_cutscene_unequip,
+        is_dds_cutscene_active,
+    );
+
     if let Some(ref mut jms) = state.character {
         let vis = if state.active_maria && state.maria.is_some() {
             PlayerMeshVisibility::FullBody
@@ -72,6 +88,8 @@ pub(crate) fn sync_player_pose_and_visibility(state: &mut AppState) {
         // is only shown when James possesses the flashlight item (`item 0x12`, Wood Side Apt Rm 205).
         jms.gpu_mesh
             .set_pose_visible(0x15, state.sim_core.scenario.has_flashlight());
+        // `PlayerCheckModelParts` (`0x001098d0`) + `CutsceneUnequip` (`RemoveWeaponFromCutscene.cpp`).
+        jms.gpu_mesh.set_right_hand_pose(right_hand_pose);
     }
     if let Some(ref mut mar) = state.maria {
         let vis = if state.active_maria {

@@ -635,7 +635,7 @@ mod tests {
 
         let sprite = FootstepSprite::get();
         assert!(sprite.width > 0 && sprite.height > 0);
-        assert!(sprite.alpha.iter().any(|&a| a > 128));
+        assert!(sprite.rgba.as_chunks::<4>().0.iter().any(|px| px[3] > 128));
     }
 
     #[test]
@@ -651,7 +651,12 @@ mod tests {
         assert!(sprite.from_retail_asset);
         assert_eq!(sprite.width, 64);
         assert_eq!(sprite.height, 64);
-        assert_eq!(sprite.alpha.len(), 64 * 64);
-        assert!(sprite.alpha.iter().any(|&a| a > 128));
+        assert_eq!(sprite.rgba.len(), 64 * 64 * 4);
+        let pixels = sprite.rgba.as_chunks::<4>().0;
+        assert!(pixels.iter().any(|px| px[3] > 128));
+        // Verify full RGBA tread detail is preserved (not overwritten with flat solid white):
+        // retail `footmark.tbn2` has opaque interior pixels (`alpha > 200`) with dark sole-tread RGB.
+        assert!(pixels.iter().any(|px| px[3] > 200 && px[0] < 128));
+        assert!(pixels.iter().any(|px| px[3] > 200 && px[0] > 160));
     }
 }

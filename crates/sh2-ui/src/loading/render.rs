@@ -159,8 +159,8 @@ fn draw_footstep_silhouette(
             };
             let v = FOOTSTEP_UV_MIN + norm_y * uv_span;
 
-            let fx = u * (spr_w - 1.0);
-            let fy = v * (spr_h - 1.0);
+            let fx = (u * spr_w - 0.5).clamp(0.0, spr_w - 1.0);
+            let fy = (v * spr_h - 0.5).clamp(0.0, spr_h - 1.0);
             let x0 = (fx.floor() as u32).min(sprite.width - 1);
             let y0 = (fy.floor() as u32).min(sprite.height - 1);
             let x1 = (x0 + 1).min(sprite.width - 1);
@@ -168,28 +168,48 @@ fn draw_footstep_silhouette(
             let rx = fx - x0 as f32;
             let ry = fy - y0 as f32;
 
-            let a00 = sprite.alpha[(y0 * sprite.width + x0) as usize] as f32;
-            let a10 = sprite.alpha[(y0 * sprite.width + x1) as usize] as f32;
-            let a01 = sprite.alpha[(y1 * sprite.width + x0) as usize] as f32;
-            let a11 = sprite.alpha[(y1 * sprite.width + x1) as usize] as f32;
-            let interp =
-                (a00 * (1.0 - rx) + a10 * rx) * (1.0 - ry) + (a01 * (1.0 - rx) + a11 * rx) * ry;
-            if interp <= 0.001 {
+            let sample_premul = |tx: u32, ty: u32| -> [f32; 4] {
+                let i = ((ty * sprite.width + tx) * 4) as usize;
+                let a = sprite.rgba[i + 3] as f32;
+                let a_norm = a / 255.0;
+                [
+                    sprite.rgba[i] as f32 * a_norm,
+                    sprite.rgba[i + 1] as f32 * a_norm,
+                    sprite.rgba[i + 2] as f32 * a_norm,
+                    a,
+                ]
+            };
+
+            let p00 = sample_premul(x0, y0);
+            let p10 = sample_premul(x1, y0);
+            let p01 = sample_premul(x0, y1);
+            let p11 = sample_premul(x1, y1);
+
+            let w00 = (1.0 - rx) * (1.0 - ry);
+            let w10 = rx * (1.0 - ry);
+            let w01 = (1.0 - rx) * ry;
+            let w11 = rx * ry;
+
+            let interp_a = p00[3] * w00 + p10[3] * w10 + p01[3] * w01 + p11[3] * w11;
+            if interp_a <= 0.001 {
                 continue;
             }
+            let interp_r = p00[0] * w00 + p10[0] * w10 + p01[0] * w01 + p11[0] * w11;
+            let interp_g = p00[1] * w00 + p10[1] * w10 + p01[1] * w01 + p11[1] * w11;
+            let interp_b = p00[2] * w00 + p10[2] * w10 + p01[2] * w01 + p11[2] * w11;
 
-            let effective_alpha = (interp / 255.0) * step.alpha;
+            // `sh2pc.exe` `FUN_004c87e0`: `D3DBLEND_SRCALPHA` / `D3DBLEND_INVSRCALPHA` over black
+            // with full `footmark.tbn2` RGBA texture (`D3DTA_TEXTURE`) modulated by `step.alpha`.
+            let effective_alpha = (interp_a / 255.0) * step.alpha;
+            let inv_alpha = 1.0 - effective_alpha;
             let dest_idx = (y as usize * rast.width + x as usize) * 4;
             let er = rast.pixels[dest_idx] as f32;
             let eg = rast.pixels[dest_idx + 1] as f32;
             let eb = rast.pixels[dest_idx + 2] as f32;
 
-            rast.pixels[dest_idx] =
-                (255.0 * effective_alpha + er * (1.0 - effective_alpha)).min(255.0) as u8;
-            rast.pixels[dest_idx + 1] =
-                (255.0 * effective_alpha + eg * (1.0 - effective_alpha)).min(255.0) as u8;
-            rast.pixels[dest_idx + 2] =
-                (255.0 * effective_alpha + eb * (1.0 - effective_alpha)).min(255.0) as u8;
+            rast.pixels[dest_idx] = (interp_r * step.alpha + er * inv_alpha).min(255.0) as u8;
+            rast.pixels[dest_idx + 1] = (interp_g * step.alpha + eg * inv_alpha).min(255.0) as u8;
+            rast.pixels[dest_idx + 2] = (interp_b * step.alpha + eb * inv_alpha).min(255.0) as u8;
             rast.pixels[dest_idx + 3] = 255;
         }
     }

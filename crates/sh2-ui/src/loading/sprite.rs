@@ -9,11 +9,16 @@ use std::sync::OnceLock;
 /// Static footstep sprite loaded from `data/etc/effect/footmark.tbn2` (`FUN_004c8500`).
 static FOOTSTEP_SPRITE: OnceLock<FootstepSprite> = OnceLock::new();
 
-/// Pre-decoded footstep alpha silhouette sprite (`64×64` from `footmark.tbn2`).
+/// Pre-decoded footstep RGBA texture sprite (`64×64` from `data/etc/effect/footmark.tbn2`).
+///
+/// `sh2pc.exe` `FUN_004c87e0` (`0x004c87e0`) renders `footmark.tbn2` with
+/// `D3DTSS_COLORARG1 = D3DTA_TEXTURE`, `D3DTSS_ALPHAARG1 = D3DTA_TEXTURE`,
+/// `D3DRS_SRCBLEND = D3DBLEND_SRCALPHA (5)`, `D3DRS_DESTBLEND = D3DBLEND_INVSRCALPHA (6)`.
+/// Storing full RGBA preserves the retail boot-sole tread shading in RGB alongside the alpha mask.
 pub struct FootstepSprite {
     pub width: u32,
     pub height: u32,
-    pub alpha: Vec<u8>,
+    pub rgba: Vec<u8>,
     /// `true` when loaded from retail `footmark.tbn2`, `false` when using the CI fallback.
     pub from_retail_asset: bool,
 }
@@ -74,16 +79,14 @@ impl FootstepSprite {
 
         let width = tex.width as u32;
         let height = tex.height as u32;
-        let mut alpha = Vec::with_capacity((width * height) as usize);
-        let (chunks, _) = rgba.as_chunks::<4>();
-        for chunk in chunks {
-            alpha.push(chunk[3]);
+        if rgba.len() != (width * height * 4) as usize {
+            return None;
         }
 
         Some(Self {
             width,
             height,
-            alpha,
+            rgba,
             from_retail_asset: true,
         })
     }
@@ -92,7 +95,7 @@ impl FootstepSprite {
     fn generate_procedural_fallback() -> Self {
         let width = 64u32;
         let height = 64u32;
-        let mut alpha = vec![0u8; (width * height) as usize];
+        let mut rgba = vec![0u8; (width * height * 4) as usize];
 
         for y in 0..height {
             let ny = y as f32 / height as f32;
@@ -117,7 +120,12 @@ impl FootstepSprite {
                     }
                 }
                 if intensity > 0.0 {
-                    alpha[(y * width + x) as usize] = (intensity * 255.0).clamp(0.0, 255.0) as u8;
+                    let idx = ((y * width + x) * 4) as usize;
+                    let a = (intensity * 255.0).clamp(0.0, 255.0) as u8;
+                    rgba[idx] = 160;
+                    rgba[idx + 1] = 160;
+                    rgba[idx + 2] = 160;
+                    rgba[idx + 3] = a;
                 }
             }
         }
@@ -125,7 +133,7 @@ impl FootstepSprite {
         Self {
             width,
             height,
-            alpha,
+            rgba,
             from_retail_asset: false,
         }
     }

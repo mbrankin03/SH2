@@ -67,7 +67,9 @@ impl Default for LoadingScreenTestState {
             mode: LoadingScreenMode::RetailPcFootsteps,
             cadence_secs: FOOTSTEP_CADENCE_SECS,
             material_index: 0,
-            sfx_enabled: true,
+            // 1:1 Retail Parity (`SLUS_202.28` `now_loading.c` & `sh2pc.exe` `FUN_00406be0` /
+            // `FUN_004c8bc0`): loading screens are silent by default; `[V]` toggles preview SFX.
+            sfx_enabled: false,
             show_hud: true,
             restart_count: 0,
             last_sfx_trigger_count: 0,
@@ -300,7 +302,11 @@ impl RoomController for LoadingScreenTestRoomController {
                 format!(
                     "Footstep SFX [S/V]: {:?} ({}) | Triggered: {} | Sprite: {} ({}x{})",
                     test.current_material(),
-                    if test.sfx_enabled { "ON" } else { "MUTED" },
+                    if test.sfx_enabled {
+                        "ON (Preview)"
+                    } else {
+                        "OFF (1:1 Silent)"
+                    },
                     test.last_sfx_trigger_count,
                     sprite_src,
                     sprite.width,
@@ -370,11 +376,17 @@ mod tests {
 
         state.toggle_mode();
         assert_eq!(state.mode, LoadingScreenMode::RetailPcFootsteps);
-        // First tick in footstep mode stamps immediately and emits SFX
-        assert!(state.tick(0.016));
+        // Default is 1:1 retail silent (`sfx_enabled == false`): no SFX emitted on stamp
+        assert!(!state.sfx_enabled);
+        assert!(!state.tick(0.016));
+        assert_eq!(state.last_sfx_trigger_count, 0);
+
+        // Enabling preview SFX (`[V]`) emits SFX on subsequent footprint stamps
+        state.sfx_enabled = true;
+        assert!(state.tick(1.0));
         assert_eq!(state.last_sfx_trigger_count, 1);
 
-        // Mute suppresses SFX emission
+        // Disabling suppresses SFX emission again
         state.sfx_enabled = false;
         assert!(!state.tick(1.0));
         assert_eq!(state.last_sfx_trigger_count, 1);

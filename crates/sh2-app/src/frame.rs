@@ -167,9 +167,9 @@ fn tick_menu_and_loading_screen(state: &mut AppState, dt_sec: f32) {
         .menu_ctrl
         .tick_with_loading(&mut state.loading_screen, dt_sec);
 
-    if step.footstep_spawned.is_some() {
-        trigger_loading_footstep_sfx(state, sh2_core::SurfaceMaterial::Concrete);
-    }
+    // 1:1 Retail Parity (`SLUS_202.28` `now_loading.c` & `sh2pc.exe` `FUN_00406be0` /
+    // `FUN_004c8bc0`): neither PS2 nor PC retail plays footstep SFX during loading screens.
+    let _ = step.footstep_spawned;
 
     if step.needs_room_preload {
         preload_launch_target_for_loading_screen(state);

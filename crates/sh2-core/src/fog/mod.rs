@@ -61,6 +61,27 @@ pub const R_EDI_BOSS_CORRIDOR_ID: u32 = 0x8E;
 pub const R_EDI_BOSS_RM_1_ID: u32 = 0x8F;
 /// Room ID for Eddie Boss Room 2 (`R_EDI_BOSS_RM_2 = 0x90` in `Patches.h`; `ps193` in `fogSetBlowPoint` `0x00274cb0`).
 pub const R_EDI_BOSS_RM_2_ID: u32 = 0x90;
+/// Room ID for Otherworld Hotel Reading Room (`R_HTL_ALT_READING_RM = 0xB0` in `Patches.h`).
+pub const R_HTL_ALT_READING_RM_ID: u32 = 0xB0;
+/// Room ID for Dog Ending Room (`R_END_DOG_RM = 0xBF` in `Patches.h`).
+pub const R_END_DOG_RM_ID: u32 = 0xBF;
+/// Room ID for Baldwin Mansion Grand Entrance (`R_MAN_GRAND_ENTRANCE = 0xC0` in `Patches.h`).
+pub const R_MAN_GRAND_ENTRANCE_ID: u32 = 0xC0;
+/// Room ID for Baldwin Mansion 2F Lounge (`R_MAN_LOUNGE_2F = 0xC2` in `Patches.h`).
+pub const R_MAN_LOUNGE_2F_ID: u32 = 0xC2;
+/// Room ID for Baldwin Mansion Servant Room (`R_MAN_SERV_RM = 0xC4` in `Patches.h`).
+pub const R_MAN_SERV_RM_ID: u32 = 0xC4;
+/// Room ID for Baldwin Mansion Long Hallway (`R_MAN_LONG_HALLWAY = 0xCA` in `Patches.h`).
+pub const R_MAN_LONG_HALLWAY_ID: u32 = 0xCA;
+/// Room ID for Baldwin Mansion Outside Entrance (`R_MAN_OUTSIDE_ENTRANCE = 0xD3` in `Patches.h`).
+pub const R_MAN_OUTSIDE_ENTRANCE_ID: u32 = 0xD3;
+/// Room ID for Baldwin Mansion / Blue Creek Entrance (`R_MAN_BLUE_CREEK_ENTRANCE = 0xD4` in `Patches.h`).
+pub const R_MAN_BLUE_CREEK_ENTRANCE_ID: u32 = 0xD4;
+
+/// Default PC/PS2 base draw distance in mm (`0x45ea6000 = 7500.0f` at `sh2pc.exe` `0x0047c199`).
+pub const DEFAULT_DRAW_DISTANCE_MM: f32 = 7500.0;
+/// SH2:EE extended base draw distance in mm (`Patches/DrawDistance.cpp:90`: `11000.0f`).
+pub const SH2EE_EXTENDED_DRAW_DISTANCE_MM: f32 = 11_000.0;
 
 /// Default PS2 fog particle count (`fog_defset_data + 0x00` @ `0x002ab530` in `SLUS_202.28`).
 pub const PS2_DEFAULT_FOG_PARTICLE_COUNT: usize = 500;
@@ -271,19 +292,44 @@ pub struct RoomFogEvaluation {
 /// Covers Toluca Lake Observation Deck (`R_OBSV_DECK`), Forest Trail (`R_FOREST_CEMETERY`),
 /// Town East/West (`R_TOWN_EAST`, `R_TOWN_WEST`), Wood Side Courtyard (`R_APT_E_COURTYARD`),
 /// Blue Creek Room 209 flashlight toggle (`R_APT_W_RM_208_209`), Eddie Boss Arenas,
-/// Hotel Room 312, and Final Boss Arena (`R_FINAL_BOSS_RM`).
+/// Baldwin Mansion rooms, Hotel Room 312, and Final Boss Arena (`R_FINAL_BOSS_RM`).
 #[must_use]
 pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
+    evaluate_room_fog_with_fixes(ctx, true)
+}
+
+/// Evaluates room fog parameters with explicit `enable_sh2ee_world_fixes` gating for
+/// `Patches/FogAdjustments.cpp` (`BlueCreekNewFog` `4200.0` vs `3000.0` and `RunFogSpeed`
+/// across Forest/Town/Baldwin Mansion/Eddie arenas).
+#[must_use]
+pub fn evaluate_room_fog_with_fixes(
+    ctx: &RoomFogContext,
+    enable_sh2ee_world_fixes: bool,
+) -> RoomFogEvaluation {
     let base_layers = Ps2FogLayerParams::default();
 
-    let speed_mult = match ctx.room_id {
-        R_FOREST_CEMETERY_ID | R_TOWN_EAST_ID | R_TOWN_WEST_ID | R_FINAL_BOSS_RM_ID => {
-            FOG_SPEED_OUTDOOR_SLOW
+    let speed_mult = if enable_sh2ee_world_fixes {
+        match ctx.room_id {
+            R_FOREST_CEMETERY_ID
+            | R_TOWN_EAST_ID
+            | R_TOWN_WEST_ID
+            | R_EDI_BOSS_CORRIDOR_ID
+            | R_HTL_ALT_READING_RM_ID
+            | R_FINAL_BOSS_RM_ID
+            | R_END_DOG_RM_ID
+            | R_MAN_GRAND_ENTRANCE_ID
+            | R_MAN_LOUNGE_2F_ID
+            | R_MAN_LONG_HALLWAY_ID
+            | R_MAN_SERV_RM_ID
+            | R_MAN_OUTSIDE_ENTRANCE_ID
+            | R_MAN_BLUE_CREEK_ENTRANCE_ID => FOG_SPEED_OUTDOOR_SLOW,
+            R_APT_E_COURTYARD_ID | R_EDI_BOSS_RM_1_ID | R_EDI_BOSS_RM_2_ID => {
+                FOG_SPEED_COURTYARD_MEDIUM
+            }
+            _ => 1.0,
         }
-        R_APT_E_COURTYARD_ID | R_EDI_BOSS_RM_1_ID | R_EDI_BOSS_RM_2_ID => {
-            FOG_SPEED_COURTYARD_MEDIUM
-        }
-        _ => 1.0,
+    } else {
+        1.0
     };
 
     let james_fog_influence_mm = if ctx.room_id == R_FOREST_CEMETERY_ID
@@ -369,7 +415,7 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
             final_boss_upper_override: false,
         },
         R_APT_W_RM_208_209_ID => {
-            let fog_near_mm = if ctx.flashlight_on {
+            let fog_near_mm = if enable_sh2ee_world_fixes && ctx.flashlight_on {
                 BLUE_CREEK_FLASHLIGHT_FOG_NEAR_MM
             } else {
                 BLUE_CREEK_ORIGINAL_FOG_NEAR_MM
@@ -447,6 +493,37 @@ pub fn evaluate_room_fog(ctx: &RoomFogContext) -> RoomFogEvaluation {
             final_boss_upper_override: false,
         },
     }
+}
+
+/// Evaluates `RunDynamicDrawDistance` (`Patches/DrawDistance.cpp:221-244`, `sh2pc.exe` `0x0047D824`):
+///
+/// - `enable_sh2ee_world_fixes == false`: `1.0` (1:1 vanilla PS2/PC).
+/// - `R_FOREST_CEMETERY` (`0x03`): `44.0`
+/// - `R_EDI_BOSS_RM_2` (`0x90`) or `R_MAN_BLUE_CREEK_ENTRANCE` (`0xD4`): `2.0`
+/// - Other rooms: `1.0`
+#[must_use]
+pub const fn dynamic_draw_distance_scale(room_id: u32, enable_sh2ee_world_fixes: bool) -> f32 {
+    if !enable_sh2ee_world_fixes {
+        return 1.0;
+    }
+    match room_id {
+        R_FOREST_CEMETERY_ID => 44.0,
+        R_EDI_BOSS_RM_2_ID | R_MAN_BLUE_CREEK_ENTRANCE_ID => 2.0,
+        _ => 1.0,
+    }
+}
+
+/// Computes the effective far-clip / draw distance in PS2 mm for `room_id`, combining
+/// `PatchDrawDistance` (`7500.0` mm vanilla `0x0047c199` vs `11000.0` mm SH2:EE `DrawDistance.cpp:90`)
+/// with [`dynamic_draw_distance_scale`].
+#[must_use]
+pub fn room_draw_distance_mm(room_id: u32, enable_sh2ee_world_fixes: bool) -> f32 {
+    let base = if enable_sh2ee_world_fixes {
+        SH2EE_EXTENDED_DRAW_DISTANCE_MM
+    } else {
+        DEFAULT_DRAW_DISTANCE_MM
+    };
+    base * dynamic_draw_distance_scale(room_id, enable_sh2ee_world_fixes)
 }
 
 #[cfg(test)]
@@ -552,5 +629,48 @@ mod tests {
         assert_eq!(room_id_from_stage_code("ed01"), R_EDI_BOSS_RM_1_ID);
         assert_eq!(room_id_from_stage_code("ps193"), R_EDI_BOSS_RM_2_ID);
         assert_eq!(room_id_from_stage_code("ed02"), R_EDI_BOSS_RM_2_ID);
+    }
+
+    #[test]
+    fn sh2ee_draw_distance_and_baldwin_mansion_fog_speed_respect_toggle() {
+        // DrawDistance.cpp: vanilla = 1.0x (7500mm), SH2:EE = 11000mm * scale
+        assert_eq!(
+            dynamic_draw_distance_scale(R_FOREST_CEMETERY_ID, false),
+            1.0
+        );
+        assert_eq!(
+            dynamic_draw_distance_scale(R_FOREST_CEMETERY_ID, true),
+            44.0
+        );
+        assert_eq!(dynamic_draw_distance_scale(R_EDI_BOSS_RM_2_ID, true), 2.0);
+        assert_eq!(
+            dynamic_draw_distance_scale(R_MAN_BLUE_CREEK_ENTRANCE_ID, true),
+            2.0
+        );
+        assert_eq!(room_draw_distance_mm(R_FOREST_CEMETERY_ID, false), 7500.0);
+        assert_eq!(
+            room_draw_distance_mm(R_MAN_BLUE_CREEK_ENTRANCE_ID, true),
+            22_000.0
+        );
+
+        // FogAdjustments.cpp: Baldwin Mansion FogSpeed = 0.25f and BlueCreekNewFog = 4200.0f
+        let mansion = evaluate_room_fog_with_fixes(
+            &RoomFogContext {
+                room_id: R_MAN_BLUE_CREEK_ENTRANCE_ID,
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(mansion.speed_mult, FOG_SPEED_OUTDOOR_SLOW);
+
+        let bc_vanilla = evaluate_room_fog_with_fixes(
+            &RoomFogContext {
+                room_id: R_APT_W_RM_208_209_ID,
+                flashlight_on: true,
+                ..Default::default()
+            },
+            false,
+        );
+        assert_eq!(bc_vanilla.fog_near_mm, BLUE_CREEK_ORIGINAL_FOG_NEAR_MM);
     }
 }

@@ -299,6 +299,27 @@ impl TextureLoader {
         Ok(map)
     }
 
+    /// Loads a `.map` level geometry file according to the active enhancement mode (`SH2-108`):
+    ///
+    /// - `prefer_sh2ee == false`: Strict 1:1 Vanilla PS2/PC (`load_vanilla_map`, `data/` only).
+    /// - `prefer_sh2ee == true && !apply_4k`: SH2:EE revitalized `.map` geometry & textures (`load_sh2e_map`, `sh2e/`).
+    /// - `prefer_sh2ee == true && apply_4k`: SH2:EE `.map` + 4K AI Master texture overrides (`load_map_with_hd_overrides`).
+    pub fn load_map_for_enhancement(
+        &self,
+        relative_map_path: impl AsRef<Path>,
+        map_name: &str,
+        prefer_sh2ee: bool,
+        apply_4k: bool,
+    ) -> Result<crate::formats::map::MapFile, AssetError> {
+        if !prefer_sh2ee {
+            self.load_vanilla_map(relative_map_path, map_name)
+        } else if apply_4k {
+            self.load_map_with_hd_overrides(relative_map_path, map_name)
+        } else {
+            self.load_sh2e_map(relative_map_path, map_name)
+        }
+    }
+
     /// Applies 4K AI Master texture overrides (`map/<tex_id>.dds` or `.png`, or `sh2_4k_textures.zip`) to a parsed [`MapFile`](crate::formats::map::MapFile),
     /// replacing any embedded texture where the 4K AI pack provides a higher-resolution surface.
     pub fn apply_4k_map_texture_overrides(&self, target_map: &mut crate::formats::map::MapFile) {
@@ -737,5 +758,30 @@ mod tests {
                 .expect("er01.map should contain texture 3332");
             assert_eq!((tex_3332.width, tex_3332.height), (2048, 2048));
         }
+    }
+
+    #[test]
+    fn load_map_for_enhancement_toggles_vanilla_vs_sh2e_geometry() {
+        let resolver = crate::AssetPathResolver::resolve();
+        if !resolver.data_dir.join("bg/ob/ob01.map").is_file() {
+            return;
+        }
+        let Some(sh2e_dir) = resolver.sh2e_dir.as_deref() else {
+            return;
+        };
+        if !sh2e_dir.join("bg/ob/ob01.map").is_file() {
+            return;
+        }
+
+        let loader = TextureLoader::new(&resolver.data_dir, Some(sh2e_dir));
+        let vanilla = loader
+            .load_map_for_enhancement("bg/ob/ob01.map", "ob01", false, false)
+            .expect("load vanilla ob01.map");
+        let sh2ee = loader
+            .load_map_for_enhancement("bg/ob/ob01.map", "ob01", true, false)
+            .expect("load sh2e ob01.map");
+
+        assert_eq!(vanilla.materials.len(), 27);
+        assert_eq!(sh2ee.materials.len(), 31);
     }
 }

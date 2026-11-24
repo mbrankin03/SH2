@@ -321,15 +321,117 @@ pub fn should_disable_cutscene_shadows(cutscene_id: u32, camera_pos_x: f32) -> b
 }
 
 /// Evaluates `BFaWAtticFix` (`Patches/AtticShadowFixes.cpp:73-83`):
-/// returns `-10.0` in Baldwin Mansion attic (`R_MAN_ATTIC = 0xD8`) when `camera_pos_y == -1450.0`
-/// to hide the dead shadow caster, and `10.0` otherwise.
+/// returns `-10.0` in Baldwin Mansion attic (`R_MAN_ATTIC = 0xC7` in `Patches.h`, or `0xD8`)
+/// when `camera_pos_y == -1450.0` to hide the dead shadow caster, and `10.0` otherwise.
 #[must_use]
 pub fn bfaw_attic_shadow_cutoff_y(room_id: u32, camera_pos_y: f32) -> f32 {
-    const R_MAN_ATTIC: u32 = 0xD8;
-    if room_id == R_MAN_ATTIC && (camera_pos_y - (-1450.0)).abs() < 1.0 {
+    const R_MAN_ATTIC_PATCHES_H: u32 = 0xC7;
+    const R_MAN_ATTIC_LEGACY: u32 = 0xD8;
+    if (room_id == R_MAN_ATTIC_PATCHES_H || room_id == R_MAN_ATTIC_LEGACY)
+        && (camera_pos_y - (-1450.0)).abs() < 1.0
+    {
         -10.0
     } else {
         10.0
+    }
+}
+
+/// Evaluates `BFaWAtticFix` (`Patches/AtticShadowFixes.cpp:73-83`) gated on `enable_sh2ee_world_fixes`.
+/// Returns `10.0` in strict 1:1 Vanilla PS2 mode (`enable_sh2ee_world_fixes == false`).
+#[must_use]
+pub fn bfaw_attic_shadow_cutoff_y_gated(
+    room_id: u32,
+    camera_pos_y: f32,
+    enable_sh2ee_world_fixes: bool,
+) -> f32 {
+    if !enable_sh2ee_world_fixes {
+        10.0
+    } else {
+        bfaw_attic_shadow_cutoff_y(room_id, camera_pos_y)
+    }
+}
+
+/// Light slot mode written by `sh_Kari_LightSetSpot` (`SLUS_202.28` `0x001265f0`, `sh2pc.exe`
+/// `0x0050d6c0` `(&DAT_00aa9cf8)[param_1 * 0x26] = 3`) vs `LightSetPoint` (`0x00126320`, `*__s = 2`),
+/// patched by `Patches/LightingTransition.cpp:35-72`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SpotLightTransitionMode {
+    /// `2` = Point light (`LightSetPoint`, used for smooth lighting transitions in specific rooms).
+    Point = 2,
+    /// `3` = Spot light (`sh_Kari_LightSetSpot`, vanilla default).
+    Spot = 3,
+}
+
+/// Evaluates `LightingTransitionASM` (`Patches/LightingTransition.cpp:35-72`, hooking
+/// `sh2pc.exe` `0x0050d6f0` inside `FUN_0050d6c0`):
+///
+/// - In [`LightingProfile::Ps2Authentic`]: always returns [`SpotLightTransitionMode::Spot`] (`3`).
+/// - In `EnhancedEdition` / `NativeEnhanced`:
+///   - `R_MAN_S_HALL_2F` (`0xD0`): [`SpotLightTransitionMode::Point`] (`2`) for all objects.
+///   - `R_APT_W_RM_203` (`0x27`), `R_HTL_W_HALL_2F` (`0xA0`), `R_HTL_ALT_EMPLOYEE_STAIRS` (`0xAB`),
+///     `R_HTL_ALT_W_ROOM_HALL_2F` (`0xB1`), `R_HTL_ALT_W_HALL_2F` (`0xB2`),
+///     `R_HTL_ALT_E_ROOM_HALL_2F` (`0xB4`): [`SpotLightTransitionMode::Point`] (`2`) for James,
+///     [`SpotLightTransitionMode::Spot`] (`3`) for other objects.
+#[must_use]
+pub const fn lighting_transition_mode(
+    room_id: u32,
+    is_player_james: bool,
+    profile: LightingProfile,
+) -> SpotLightTransitionMode {
+    if matches!(profile, LightingProfile::Ps2Authentic) {
+        return SpotLightTransitionMode::Spot;
+    }
+    const R_APT_W_RM_203: u32 = 0x27;
+    const R_HTL_W_HALL_2F: u32 = 0xA0;
+    const R_HTL_ALT_EMPLOYEE_STAIRS: u32 = 0xAB;
+    const R_HTL_ALT_W_ROOM_HALL_2F: u32 = 0xB1;
+    const R_HTL_ALT_W_HALL_2F: u32 = 0xB2;
+    const R_HTL_ALT_E_ROOM_HALL_2F: u32 = 0xB4;
+    const R_MAN_S_HALL_2F: u32 = 0xD0;
+
+    match room_id {
+        R_MAN_S_HALL_2F => SpotLightTransitionMode::Point,
+        R_APT_W_RM_203
+        | R_HTL_W_HALL_2F
+        | R_HTL_ALT_EMPLOYEE_STAIRS
+        | R_HTL_ALT_W_ROOM_HALL_2F
+        | R_HTL_ALT_W_HALL_2F
+        | R_HTL_ALT_E_ROOM_HALL_2F => {
+            if is_player_james {
+                SpotLightTransitionMode::Point
+            } else {
+                SpotLightTransitionMode::Spot
+            }
+        }
+        _ => SpotLightTransitionMode::Spot,
+    }
+}
+
+/// Evaluates `RunLightingTransition` (`Patches/LightingTransition.cpp:186-200`):
+/// disables flashlight rendering during `CS_END_MARIA_EPILOGUE` (`0x5D`) and
+/// `CS_BOWL_LAURA_EDDIE` (`0x19`) when SH2:EE fixes are active.
+#[must_use]
+pub const fn should_disable_cutscene_flashlight(
+    cutscene_id: u32,
+    profile: LightingProfile,
+) -> bool {
+    if matches!(profile, LightingProfile::Ps2Authentic) {
+        return false;
+    }
+    const CS_BOWL_LAURA_EDDIE: u32 = 0x19;
+    const CS_END_MARIA_EPILOGUE: u32 = 0x5D;
+    matches!(cutscene_id, CS_BOWL_LAURA_EDDIE | CS_END_MARIA_EPILOGUE)
+}
+
+/// Evaluates `CemeteryLightingASM` (`Patches/LightingPatch.cpp:33-36`, `sh2pc.exe` `0x0047C2DB`):
+/// remaps `0x0001000E` to `0x0001000D` when SH2:EE lighting fixes are active.
+#[must_use]
+pub const fn cemetery_lighting_id(raw_id: u32, profile: LightingProfile) -> u32 {
+    if !matches!(profile, LightingProfile::Ps2Authentic) && raw_id == 0x0001_000E {
+        0x0001_000D
+    } else {
+        raw_id
     }
 }
 
@@ -398,5 +500,48 @@ mod tests {
             ),
             0.7
         );
+    }
+
+    #[test]
+    fn lighting_transition_cemetery_and_attic_fixes_respect_profile() {
+        // LightingTransition.cpp: Point (2) for James in R_APT_W_RM_203, Spot (3) for others/vanilla
+        assert_eq!(
+            lighting_transition_mode(0x27, true, LightingProfile::Ps2Authentic),
+            SpotLightTransitionMode::Spot
+        );
+        assert_eq!(
+            lighting_transition_mode(0x27, true, LightingProfile::EnhancedEdition),
+            SpotLightTransitionMode::Point
+        );
+        assert_eq!(
+            lighting_transition_mode(0x27, false, LightingProfile::EnhancedEdition),
+            SpotLightTransitionMode::Spot
+        );
+        assert_eq!(
+            lighting_transition_mode(0xD0, false, LightingProfile::EnhancedEdition),
+            SpotLightTransitionMode::Point
+        );
+        assert!(should_disable_cutscene_flashlight(
+            0x19,
+            LightingProfile::EnhancedEdition
+        ));
+        assert!(!should_disable_cutscene_flashlight(
+            0x19,
+            LightingProfile::Ps2Authentic
+        ));
+
+        // LightingPatch.cpp: CemeteryLightingASM
+        assert_eq!(
+            cemetery_lighting_id(0x0001_000E, LightingProfile::EnhancedEdition),
+            0x0001_000D
+        );
+        assert_eq!(
+            cemetery_lighting_id(0x0001_000E, LightingProfile::Ps2Authentic),
+            0x0001_000E
+        );
+
+        // AtticShadowFixes.cpp: R_MAN_ATTIC = 0xC7
+        assert_eq!(bfaw_attic_shadow_cutoff_y_gated(0xC7, -1450.0, true), -10.0);
+        assert_eq!(bfaw_attic_shadow_cutoff_y_gated(0xC7, -1450.0, false), 10.0);
     }
 }

@@ -445,3 +445,210 @@ pub fn evaluate_hei_lau_widescreen_entry(
         anm_frame_override: None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// 6. Bowling Alley Cutscene Continuity (`EddieLauraCutscene.cpp`, `demo_no = 25` / `0x19`)
+// ---------------------------------------------------------------------------
+
+/// Cutscene ID for Eddie & Laura in the bowling alley (`CS_BOWL_LAURA_EDDIE = 0x19`, `Patches.h:74`).
+pub const CS_BOWL_LAURA_EDDIE_ID: u16 = 0x19;
+
+/// Original retail fade-out frame (`kEddieLauraCutsceneFadeStart = 1190.0f`, `EddieLauraCutscene.cpp:29`).
+pub const EDDIE_LAURA_CUTSCENE_FADE_START_FRAME: f32 = 1190.0;
+
+/// Second-half animation frame offset (`764`, `EddieLauraCutscene.cpp:136`).
+pub const EDDIE_LAURA_SECOND_HALF_OFFSET_FRAMES: u16 = 764;
+
+/// Evaluated state of `EddieLauraCutscene` (`Patches/EddieLauraCutscene.cpp`, `sh2pc.exe` `0x0059179E`, `0x004A1F36`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EddieLauraCutsceneState {
+    /// Whether `CS_BOWL_LAURA_EDDIE` is active.
+    pub active: bool,
+    /// Whether the fade-out at the end of the extended cutscene is active (`cutscene_timer > 1189.0`).
+    pub fade_out_active: bool,
+    /// Effective maximum cutscene frame (clipped to `1190.0` when disabled, `max_cutscene_frame` when enabled).
+    pub effective_max_frame: f32,
+    /// Adjusted `AnimInfo::frame_count` for Eddie, Laura, and Pizza (`max_frame - 764`) when extended.
+    pub second_half_anim_frame_count: Option<u16>,
+    /// Adjusted `AnimInfo::end_frame` (`frame_count - 1`) when extended.
+    pub second_half_anim_end_frame: Option<u16>,
+}
+
+/// Evaluates `PatchEddieLauraCutscene` & `RunEddieLauraCutscene` (`Patches/EddieLauraCutscene.cpp:42-150`).
+#[must_use]
+pub fn evaluate_eddie_laura_cutscene(
+    cutscene_id: u16,
+    cutscene_timer: f32,
+    max_cutscene_frame: f32,
+    enable_sh2ee_world_fixes: bool,
+) -> EddieLauraCutsceneState {
+    if cutscene_id != CS_BOWL_LAURA_EDDIE_ID || max_cutscene_frame <= 0.0 {
+        return EddieLauraCutsceneState {
+            active: false,
+            fade_out_active: false,
+            effective_max_frame: max_cutscene_frame,
+            second_half_anim_frame_count: None,
+            second_half_anim_end_frame: None,
+        };
+    }
+
+    if enable_sh2ee_world_fixes {
+        let fade_out_active = cutscene_timer > (EDDIE_LAURA_CUTSCENE_FADE_START_FRAME - 1.0);
+        let frame_count =
+            (max_cutscene_frame as u16).saturating_sub(EDDIE_LAURA_SECOND_HALF_OFFSET_FRAMES);
+        let end_frame = frame_count.saturating_sub(1);
+        EddieLauraCutsceneState {
+            active: true,
+            fade_out_active,
+            effective_max_frame: max_cutscene_frame,
+            second_half_anim_frame_count: Some(frame_count),
+            second_half_anim_end_frame: Some(end_frame),
+        }
+    } else {
+        EddieLauraCutsceneState {
+            active: true,
+            fade_out_active: false,
+            effective_max_frame: max_cutscene_frame.min(EDDIE_LAURA_CUTSCENE_FADE_START_FRAME),
+            second_half_anim_frame_count: None,
+            second_half_anim_end_frame: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Wood Side Rm 307 Closet Spawn & FOV Continuity (`ChangeClosetSpawn.cpp`)
+// ---------------------------------------------------------------------------
+
+/// SH2:EE James spawn Z coordinate in Wood Side Rm 307 (`-101525.0f`, `ChangeClosetSpawn.cpp:39`,
+/// patching `sh2pc.exe` `0x00599226 + 0x24`).
+pub const APT_307_CLOSET_SPAWN_POS_Z_SH2EE: f32 = -101_525.0;
+
+/// SH2:EE James spawn X rotation in Wood Side Rm 307 (`0.3f`, `ChangeClosetSpawn.cpp:41`).
+pub const APT_307_CLOSET_SPAWN_ROT_X_SH2EE: f32 = 0.3;
+
+/// SH2:EE restored camera FOV after exiting `CS_APT_RPT_CLOSET` (`448.0f`, `ChangeClosetSpawn.cpp:63`).
+pub const CLOSET_EXIT_CAMERA_FOV_SH2EE: f32 = 448.0;
+
+/// Returns `Some((pos_z, rot_x))` for James's Wood Side Rm 307 spawn when `ChangeClosetSpawn.cpp`
+/// is enabled, or `None` in strict 1:1 Vanilla PS2/PC mode.
+#[must_use]
+pub const fn closet_spawn_override(enable_sh2ee_world_fixes: bool) -> Option<(f32, f32)> {
+    if enable_sh2ee_world_fixes {
+        Some((
+            APT_307_CLOSET_SPAWN_POS_Z_SH2EE,
+            APT_307_CLOSET_SPAWN_ROT_X_SH2EE,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Returns `Some(448.0)` on the frame `CS_APT_RPT_CLOSET` (`0x0E`) transitions to gameplay when
+/// `ChangeClosetSpawn.cpp:61-64` is enabled, or `None` otherwise.
+#[must_use]
+pub const fn closet_cutscene_exit_camera_fov(
+    prev_cutscene_id: u16,
+    curr_cutscene_id: u16,
+    enable_sh2ee_world_fixes: bool,
+) -> Option<f32> {
+    if enable_sh2ee_world_fixes
+        && prev_cutscene_id == CS_APT_RPT_CLOSET_DEMO_NO
+        && curr_cutscene_id != CS_APT_RPT_CLOSET_DEMO_NO
+    {
+        Some(CLOSET_EXIT_CAMERA_FOV_SH2EE)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Otherworld Hotel RPT Boss Intro Maria Model (`MariaCutsceneReplacement.cpp`)
+// ---------------------------------------------------------------------------
+
+/// Cutscene ID for Otherworld Hotel RPT Boss Intro (`CS_HTL_ALT_RPT_BOSS_INTRO = 0x54`, `Patches.h:133`).
+pub const CS_HTL_ALT_RPT_BOSS_INTRO_ID: u16 = 0x54;
+
+/// Room ID for Otherworld Hotel RPT Boss Room (`R_HTL_ALT_RPT_BOSS_RM = 0xAC`, `Patches.h:328`).
+pub const R_HTL_ALT_RPT_BOSS_RM_ID: u32 = 0xAC;
+
+/// Evaluated state for `MariaCutsceneReplacement.cpp` (`sh2e/model/dmr.glb` vs vanilla `dmr.mdl`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MariaCutsceneReplacementState {
+    /// Whether `sh2e/model/dmr.glb` should be preloaded on room entry (`R_HTL_ALT_RPT_BOSS_RM`).
+    pub preload_dmr_glb: bool,
+    /// Whether the translucent `dmr.mdl` blend pass should be skipped in favor of `dmr.glb`.
+    pub use_dmr_glb_replacement: bool,
+}
+
+/// Evaluates `RunMariaCutsceneModel` / `PatchMariaCutsceneModel` (`Patches/MariaCutsceneReplacement.cpp:56-178`,
+/// `sh2pc.exe` `0x00504E00`, `0x0050DB13`).
+#[must_use]
+pub const fn evaluate_maria_cutscene_replacement(
+    cutscene_id: u16,
+    room_id: u32,
+    dmr_glb_available: bool,
+    enable_sh2ee_world_fixes: bool,
+) -> MariaCutsceneReplacementState {
+    if !enable_sh2ee_world_fixes || !dmr_glb_available {
+        return MariaCutsceneReplacementState {
+            preload_dmr_glb: false,
+            use_dmr_glb_replacement: false,
+        };
+    }
+    MariaCutsceneReplacementState {
+        preload_dmr_glb: room_id == R_HTL_ALT_RPT_BOSS_RM_ID,
+        use_dmr_glb_replacement: cutscene_id == CS_HTL_ALT_RPT_BOSS_INTRO_ID,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eddie_laura_closet_spawn_and_maria_replacement_respect_toggle() {
+        // EddieLauraCutscene.cpp
+        let ext = evaluate_eddie_laura_cutscene(CS_BOWL_LAURA_EDDIE_ID, 1195.0, 1400.0, true);
+        assert!(ext.active);
+        assert!(ext.fade_out_active);
+        assert_eq!(ext.effective_max_frame, 1400.0);
+        assert_eq!(ext.second_half_anim_frame_count, Some(636));
+        assert_eq!(ext.second_half_anim_end_frame, Some(635));
+
+        let vanilla = evaluate_eddie_laura_cutscene(CS_BOWL_LAURA_EDDIE_ID, 1195.0, 1400.0, false);
+        assert!(!vanilla.fade_out_active);
+        assert_eq!(vanilla.effective_max_frame, 1190.0);
+        assert_eq!(vanilla.second_half_anim_frame_count, None);
+
+        // ChangeClosetSpawn.cpp
+        assert_eq!(closet_spawn_override(false), None);
+        assert_eq!(closet_spawn_override(true), Some((-101_525.0, 0.3)));
+        assert_eq!(
+            closet_cutscene_exit_camera_fov(CS_APT_RPT_CLOSET_DEMO_NO, 0, true),
+            Some(448.0)
+        );
+        assert_eq!(
+            closet_cutscene_exit_camera_fov(CS_APT_RPT_CLOSET_DEMO_NO, 0, false),
+            None
+        );
+
+        // MariaCutsceneReplacement.cpp
+        let maria = evaluate_maria_cutscene_replacement(
+            CS_HTL_ALT_RPT_BOSS_INTRO_ID,
+            R_HTL_ALT_RPT_BOSS_RM_ID,
+            true,
+            true,
+        );
+        assert!(maria.preload_dmr_glb);
+        assert!(maria.use_dmr_glb_replacement);
+
+        let maria_vanilla = evaluate_maria_cutscene_replacement(
+            CS_HTL_ALT_RPT_BOSS_INTRO_ID,
+            R_HTL_ALT_RPT_BOSS_RM_ID,
+            true,
+            false,
+        );
+        assert!(!maria_vanilla.preload_dmr_glb);
+        assert!(!maria_vanilla.use_dmr_glb_replacement);
+    }
+}

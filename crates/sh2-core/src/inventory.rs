@@ -256,6 +256,14 @@ impl InventoryManager {
         self.counts[item_id as usize]
     }
 
+    /// Restores inventory counts from a saved `(item_id, count)` slice.
+    pub fn restore_items(&mut self, items: &[(u8, u16)]) {
+        self.counts.fill(0);
+        for &(id, count) in items {
+            self.counts[id as usize] = count;
+        }
+    }
+
     /// Returns `true` if the player owns at least one of `item_id`, or all parts of a combination
     /// pseudo-item (`86..=96`).
     pub fn has_item(&self, item_id: u8) -> bool {

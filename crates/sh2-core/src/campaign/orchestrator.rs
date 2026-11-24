@@ -301,6 +301,9 @@ impl CampaignOrchestrator {
                     } => {
                         self.request_transition(current_stage, command, None);
                     }
+                    GameplayStepOutcome::TriggerEnding(ending_stage) => {
+                        self.trigger_ending(ending_stage);
+                    }
                 }
             }
             CampaignPhase::DoorTransition {

@@ -6,13 +6,14 @@ use crate::events::engine::{EventEngine, EventEngineEffects, StageTransitionComm
 use crate::events::stages_act1::act1_stage_descriptor;
 use crate::events::stages_act2::stage_table_act2;
 use crate::events::triggers::EventEvalInput;
-use crate::events::{ClearData, Sh2Rng};
+use crate::events::{ClearData, Sh2Rng, PROG_KEY_A, PROG_KEY_B};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
+use crate::types::ItemListEntry;
 use crate::world::OutdoorTileStreamer;
 
 use super::io::{CampaignEffects, CampaignTickInput};
-use super::retail_events::evaluate_retail_stage_events;
+use super::retail_events::{evaluate_retail_item_pickups, evaluate_retail_stage_events};
 use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest};
 use super::state::{
     CampaignPhase, ConnectStep, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
@@ -32,6 +33,8 @@ pub(crate) enum GameplayStepOutcome {
         current_stage: u16,
         command: StageTransitionCommand,
     },
+    /// `p_game_end` triggered an ending sequence (`GameendMain` `0x001c4830`).
+    TriggerEnding(u16),
 }
 
 /// Executes `PlayableMain` step `0` (`0x0020b414`: `FlagInit`, `ItemDataInit`,
@@ -117,35 +120,84 @@ pub(crate) fn run_active_gameplay(
         return GameplayStepOutcome::OpenOverlay(menu_kind);
     }
 
-    // 3. Evaluate `EventMainStandard` (`0x001a7b50`) against the active stage's `Event_List`
+    // 3. Advance active `StageProgramRunner` (`ev_prog` / `EventExecProgram` `0x001a9e00`),
+    //    or evaluate `EventMainStandard` (`0x001a7b50`) against the active stage's `Event_List` + `Item_List`.
     let stage_id = sim.scenario.current_stage;
-    let eval_input = EventEvalInput {
-        player_pos: sim.scenario.player_position.to_array(),
-        player_rot_y: sim.scenario.player_yaw,
-        action_pressed: input.action_pressed,
-        used_item_id: (input.item_use_id != 0).then_some(input.item_use_id),
-        action_difficulty: sim.scenario.action_difficulty,
-        ..EventEvalInput::default()
-    };
-
-    let ev_effects = tick_stage_events(event_engine, sim, stage_id, &eval_input, input);
-    if let Some(lock) = ev_effects.player_lock_change {
-        *player_locked = lock;
-    }
-    effects.common_message = ev_effects.common_message;
-    effects.stage_message = ev_effects.stage_message;
-    effects.clear_message = ev_effects.clear_message;
-    effects.sound_effects.extend(ev_effects.sound_effects);
-    effects
-        .positional_sounds
-        .extend(ev_effects.positional_sounds);
-
-    if let Some(cmd) = ev_effects.stage_transition {
-        return GameplayStepOutcome::RequestTransition {
-            current_stage: stage_id,
-            command: cmd,
+    if sim.scenario.prog_runner.is_running() {
+        let down = (if input.action_pressed { PROG_KEY_A } else { 0 })
+            | (if input.cancel_pressed { PROG_KEY_B } else { 0 });
+        let riddle = sim.scenario.riddle_difficulty;
+        let scen = &mut sim.scenario;
+        let still_running = scen.prog_runner.tick(
+            down,
+            down,
+            dt_sec,
+            &mut scen.flags,
+            &mut scen.puzzle_state,
+            &mut scen.inventory_mgr,
+            &mut scen.cutaway_overlay,
+            riddle,
+        );
+        *player_locked = still_running && scen.prog_runner.is_player_locked();
+        effects
+            .sound_effects
+            .extend_from_slice(scen.prog_runner.sound_effects());
+        if let Some(msg_id) = scen.prog_runner.active_message_id() {
+            if msg_id >= 0 {
+                effects.stage_message = Some(msg_id as u16);
+            }
+        } else if !still_running {
+            effects.clear_message = true;
+        }
+        if let Some(_ending_bit) = scen.prog_runner.take_triggered_ending() {
+            return GameplayStepOutcome::TriggerEnding(stage_id);
+        }
+    } else {
+        let eval_input = EventEvalInput {
+            player_pos: sim.scenario.player_position.to_array(),
+            player_rot_y: sim.scenario.player_yaw,
+            action_pressed: input.action_pressed,
+            used_item_id: (input.item_use_id != 0).then_some(input.item_use_id),
+            action_difficulty: sim.scenario.action_difficulty,
+            ..EventEvalInput::default()
         };
+
+        let ev_effects = tick_stage_events(event_engine, sim, stage_id, &eval_input, input);
+        if let Some(lock) = ev_effects.player_lock_change {
+            *player_locked = lock;
+        }
+        effects.common_message = ev_effects.common_message;
+        effects.stage_message = ev_effects.stage_message;
+        effects.clear_message = ev_effects.clear_message;
+        effects.sound_effects.extend(ev_effects.sound_effects);
+        effects
+            .positional_sounds
+            .extend(ev_effects.positional_sounds);
+
+        if let Some(prog_no) = ev_effects.active_prog_index {
+            sim.scenario.prog_runner.start(
+                stage_id as u8,
+                prog_no,
+                ev_effects.active_prog_completion_flag,
+            );
+            *player_locked = sim.scenario.prog_runner.is_player_locked();
+        }
+
+        if ev_effects.save_point_name_id.is_some() {
+            return GameplayStepOutcome::OpenOverlay(OverlayMenuKind::Save);
+        }
+
+        if let Some(cmd) = ev_effects.stage_transition {
+            return GameplayStepOutcome::RequestTransition {
+                current_stage: stage_id,
+                command: cmd,
+            };
+        }
     }
+
+    // Keep PlayingInfo item counters synchronized with InventoryManager.
+    sim.scenario.playing_info.item_get = sim.scenario.inventory_mgr.total_items_picked_up();
+    sim.scenario.playing_info.hidden_item_get = sim.scenario.inventory_mgr.secret_items_mask();
 
     // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240`) and switch active outdoor
     //    tile (`.map`, `.cld`, `.cam`) seamlessly when crossing a 20,000 mm `BlockNumber` cell.
@@ -191,25 +243,81 @@ fn tick_stage_events(
 ) -> EventEngineEffects {
     if stage_id <= 27 {
         if let Some(act1) = act1_stage_descriptor(stage_id as u8) {
-            return evaluate_retail_stage_events(
+            let mut effects = evaluate_retail_stage_events(
                 act1.event_list,
                 act1.ev_pos,
                 stage_id as u8,
                 eval_input,
                 &mut sim.scenario.flags,
-                &sim.scenario.inventory_mgr,
+                &mut sim.scenario.inventory_mgr,
             );
+            if eval_input.action_pressed
+                && eval_input.player_can_search
+                && effects.stage_transition.is_none()
+                && effects.common_message.is_none()
+                && effects.stage_message.is_none()
+                && effects.active_prog_index.is_none()
+                && !act1.item_list.is_empty()
+            {
+                let items: Vec<ItemListEntry> = act1
+                    .item_list
+                    .iter()
+                    .map(|e| ItemListEntry {
+                        pos_x: e.pos_x,
+                        pos_z: e.pos_z,
+                        pos_y: e.pos_y as u16,
+                        rot_y: e.rot_y as u16,
+                        flag: e.st,
+                    })
+                    .collect();
+                evaluate_retail_item_pickups(
+                    &items,
+                    eval_input,
+                    &mut sim.scenario.flags,
+                    &mut sim.scenario.inventory_mgr,
+                    &mut effects,
+                );
+            }
+            return effects;
         }
     }
     if let Some(act2) = stage_table_act2(stage_id) {
-        return evaluate_retail_stage_events(
+        let mut effects = evaluate_retail_stage_events(
             act2.event_list,
             act2.pos_list,
             stage_id as u8,
             eval_input,
             &mut sim.scenario.flags,
-            &sim.scenario.inventory_mgr,
+            &mut sim.scenario.inventory_mgr,
         );
+        if eval_input.action_pressed
+            && eval_input.player_can_search
+            && effects.stage_transition.is_none()
+            && effects.common_message.is_none()
+            && effects.stage_message.is_none()
+            && effects.active_prog_index.is_none()
+            && !act2.retail_items.is_empty()
+        {
+            let items: Vec<ItemListEntry> = act2
+                .retail_items
+                .iter()
+                .map(|e| ItemListEntry {
+                    pos_x: e.pos_x(),
+                    pos_z: e.pos_z(),
+                    pos_y: (f32::from_bits(u32::from(e.pos_y_hi16) << 16) as i16) as u16,
+                    rot_y: e.rot_y_hi16,
+                    flag: e.flags_packed,
+                })
+                .collect();
+            evaluate_retail_item_pickups(
+                &items,
+                eval_input,
+                &mut sim.scenario.flags,
+                &mut sim.scenario.inventory_mgr,
+                &mut effects,
+            );
+        }
+        return effects;
     }
     EventEngineEffects::default()
 }

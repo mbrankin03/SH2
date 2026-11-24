@@ -44,6 +44,7 @@ impl CampaignRoomController {
 
         state.drama_demo_session = None;
         state.fmv_session = None;
+        state.campaign_credits_seq = None;
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());
 
@@ -334,6 +335,40 @@ impl RoomController for CampaignRoomController {
                     sl.tick(dt_sec);
                 }
             }
+            Some(CampaignPhase::OverlayMenu(OverlayMenuKind::Map)) => {
+                if !state.ingame_menus.map_viewer.is_open {
+                    crate::ingame_menus::open_map_direct(state, false);
+                }
+            }
+            Some(CampaignPhase::OverlayMenu(OverlayMenuKind::Inventory)) => {
+                if !state.ingame_menus.inventory.is_open {
+                    crate::ingame_menus::open_inventory(state);
+                }
+            }
+            Some(CampaignPhase::OverlayMenu(OverlayMenuKind::Memo)) => {
+                if !state.ingame_menus.memo_reader.is_open {
+                    crate::ingame_menus::open_memo_reader(state);
+                }
+            }
+            Some(CampaignPhase::EndingCredits {
+                ending_stage,
+                showing_results: false,
+            }) => {
+                let stage = *ending_stage;
+                let seq = state.campaign_credits_seq.get_or_insert_with(|| {
+                    let ending = match stage {
+                        48 => sh2_core::endings::GameEnding::Leave,
+                        49 => sh2_core::endings::GameEnding::Maria,
+                        50 => sh2_core::endings::GameEnding::InWater,
+                        51 => sh2_core::endings::GameEnding::Rebirth,
+                        52 => sh2_core::endings::GameEnding::Dog,
+                        54 => sh2_core::endings::GameEnding::BornFromAWish,
+                        _ => sh2_core::endings::GameEnding::Leave,
+                    };
+                    sh2_ui::credits::EndingCreditsSequence::start(ending)
+                });
+                seq.tick(dt_sec, false);
+            }
             _ => {}
         }
 
@@ -463,34 +498,40 @@ impl RoomController for CampaignRoomController {
                 } else {
                     sh2_core::endings::RankingRuleset::PcDirectorCut
                 };
-                let info = sh2_core::endings::PlayingInfo {
-                    stage: ending_stage as u8,
-                    time: play_time_secs as f32,
-                    savecount: state
+                let mut info = state.sim_core.scenario.playing_info.clone();
+                info.stage = ending_stage as u8;
+                info.time = play_time_secs as f32;
+                info.savecount = info.savecount.max(
+                    state
                         .ingame_menus
                         .save_load
                         .as_ref()
                         .and_then(|sl| sl.slots.iter().map(|s| s.snapshot.save_count).max())
                         .unwrap_or(0) as u16,
-                    clear_end_kind: sh2_core::endings::ClearEndKind::from_clear_data(
-                        clear_profile.clear_data,
-                    ),
-                    clear_end_number: clear_profile.clear_data.clear_count,
-                    battle_level: match action {
-                        sh2_core::config::ActionDifficulty::Beginner => 0,
-                        sh2_core::config::ActionDifficulty::Easy => 1,
-                        sh2_core::config::ActionDifficulty::Normal => 2,
-                        sh2_core::config::ActionDifficulty::Hard => 3,
-                    },
-                    riddle_level: match riddle {
-                        sh2_core::config::RiddleDifficulty::Easy => 0,
-                        sh2_core::config::RiddleDifficulty::Normal => 1,
-                        sh2_core::config::RiddleDifficulty::Hard => 2,
-                        sh2_core::config::RiddleDifficulty::Extra => 3,
-                    },
-                    item_get: state.sim_core.scenario.inventory.len() as u16,
-                    ..Default::default()
+                );
+                info.clear_end_kind =
+                    sh2_core::endings::ClearEndKind::from_clear_data(clear_profile.clear_data);
+                info.clear_end_number = clear_profile.clear_data.clear_count;
+                info.battle_level = match action {
+                    sh2_core::config::ActionDifficulty::Beginner => 0,
+                    sh2_core::config::ActionDifficulty::Easy => 1,
+                    sh2_core::config::ActionDifficulty::Normal => 2,
+                    sh2_core::config::ActionDifficulty::Hard => 3,
                 };
+                info.riddle_level = match riddle {
+                    sh2_core::config::RiddleDifficulty::Easy => 0,
+                    sh2_core::config::RiddleDifficulty::Normal => 1,
+                    sh2_core::config::RiddleDifficulty::Hard => 2,
+                    sh2_core::config::RiddleDifficulty::Extra => 3,
+                };
+                info.item_get = info.item_get.max(
+                    state
+                        .sim_core
+                        .scenario
+                        .inventory_mgr
+                        .total_items_picked_up(),
+                );
+                info.hidden_item_get = state.sim_core.scenario.inventory_mgr.secret_items_mask();
                 let results =
                     sh2_ui::ResultsScreen::from_playing_info(&info, action, riddle, ruleset);
                 state.begin_hud_overlay();
@@ -498,27 +539,28 @@ impl RoomController for CampaignRoomController {
                 state.finish_hud_overlay(encoder, surface_view);
                 return;
             }
+            CampaignPhase::EndingCredits {
+                showing_results: false,
+                ..
+            } => {
+                state.begin_hud_overlay();
+                if let Some(ref seq) = state.campaign_credits_seq {
+                    seq.render(&mut state.menu_rasterizer, font);
+                }
+                state.finish_hud_overlay(encoder, surface_view);
+                return;
+            }
+            CampaignPhase::OverlayMenu(_) => {
+                crate::ingame_menus::render_overlay(state, encoder, surface_view);
+                return;
+            }
             _ => {}
         }
-
-        let status_line: Option<String> = match &phase_snapshot {
-            CampaignPhase::OverlayMenu(kind) => {
-                Some(format!("CAMPAIGN OVERLAY: {:?}  [M/I/ESC to Resume]", kind))
-            }
-            CampaignPhase::EndingCredits {
-                ending_stage,
-                showing_results: false,
-            } => Some(format!(
-                "ENDING CREDITS (Stage {}) — Press [ENTER] for Results",
-                ending_stage
-            )),
-            _ => None,
-        };
 
         let show_red_cross = matches!(phase_snapshot, CampaignPhase::ActiveGameplay)
             && state.ingame_menus.red_cross.alpha_u8() > 0;
 
-        if fade_alpha <= 0.005 && status_line.is_none() && !show_red_cross {
+        if fade_alpha <= 0.005 && !show_red_cross {
             CombatArenaRoomController::render_hud(state, encoder, surface_view);
             return;
         }
@@ -543,11 +585,6 @@ impl RoomController for CampaignRoomController {
             let h = state.menu_rasterizer.height;
             let a = (fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
             state.menu_rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
-        }
-        if let Some(ref line) = status_line {
-            state
-                .menu_rasterizer
-                .draw_text(line, 40, 40, 2, [235, 225, 200, 255], true);
         }
         state.finish_hud_overlay(encoder, surface_view);
     }

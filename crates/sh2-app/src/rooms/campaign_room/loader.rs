@@ -6,9 +6,7 @@
 
 use std::path::PathBuf;
 
-use crate::assets::{
-    build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
-};
+use crate::assets::{find_cld_file_for_room, find_map_file_for_room, MapTierAssets};
 use crate::state::AppState;
 use sh2_assets::formats::cld::parse_cld;
 use sh2_assets::formats::TextureLoader;
@@ -16,7 +14,6 @@ use sh2_core::campaign::RoomLoadManifest;
 use sh2_core::collision::CollisionWorld;
 use sh2_core::scenario::PlayableCharacter;
 use sh2_renderer::fog::FogUniforms;
-use sh2_renderer::GpuMap;
 use sh2_ui::menu::TestRoomKind;
 
 /// Loads the GPU `.map` geometry, multi-tier textures (4K / SH2:EE / Vanilla), `.cld` collision
@@ -58,16 +55,15 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
                 .or_else(|_| loader.load_sh2e_map(&manifest.map_rel_path, &manifest.room_id)),
         };
         if let Ok(active_map) = loaded {
-            state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &active_map);
-            let active_bgs = build_map_texture_bind_groups(&state.render_ctx, &active_map);
-            state.map_hd_texture_bind_groups = active_bgs.clone();
-            state.map_sh2e_texture_bind_groups = match active_tex_quality {
-                sh2_core::config::WorldTextureQuality::Sh2eeHd => active_bgs.clone(),
-                _ => Vec::new(),
+            let active_assets = MapTierAssets::from_map(&state.render_ctx, &active_map);
+            state.map_hd_assets = active_assets.clone();
+            state.map_sh2e_assets = match active_tex_quality {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd => Some(active_assets.clone()),
+                _ => None,
             };
-            state.map_vanilla_texture_bind_groups = match active_tex_quality {
-                sh2_core::config::WorldTextureQuality::OriginalPs2 => active_bgs,
-                _ => Vec::new(),
+            state.map_vanilla_assets = match active_tex_quality {
+                sh2_core::config::WorldTextureQuality::OriginalPs2 => Some(active_assets),
+                _ => None,
             };
             loaded_map = true;
             tracing::info!(
@@ -86,11 +82,10 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
     if !loaded_map {
         let fallback_room = fallback_test_room_for_stage(manifest.stage_id);
         let (fb_map, _fb_pos, _fb_yaw, fb_fog) = find_map_file_for_room(fallback_room);
-        state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &fb_map);
-        let bgs = build_map_texture_bind_groups(&state.render_ctx, &fb_map);
-        state.map_hd_texture_bind_groups = bgs.clone();
-        state.map_sh2e_texture_bind_groups = bgs.clone();
-        state.map_vanilla_texture_bind_groups = bgs;
+        let fb_assets = MapTierAssets::from_map(&state.render_ctx, &fb_map);
+        state.map_hd_assets = fb_assets.clone();
+        state.map_sh2e_assets = Some(fb_assets.clone());
+        state.map_vanilla_assets = Some(fb_assets);
         state.fog_uniforms = fb_fog;
     } else {
         let video = &state.menu_ctrl.options_menu.draft_config.video;

@@ -901,6 +901,34 @@ pub(crate) fn find_sh2e_map_file_for_room(room: TestRoomKind) -> Option<MapFile>
     None
 }
 
+/// Paired GPU geometry and per-material diffuse texture bind groups compiled from the same
+/// [`MapFile`] so `GpuMapBatch::material_index` can never index into a mismatched material table
+/// when switching between `Original PS2 / PC`, `SH2:EE`, and `4K AI Master` (`SH2-121`).
+#[derive(Clone)]
+pub(crate) struct MapTierAssets {
+    pub gpu_map: Arc<sh2_renderer::GpuMap>,
+    pub texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+}
+
+impl MapTierAssets {
+    /// Compiles both the [`sh2_renderer::GpuMap`] vertex/index buffers and matching per-material
+    /// diffuse texture bind groups from `map_file` in lockstep.
+    pub fn from_map(render_ctx: &RenderContext, map_file: &MapFile) -> Self {
+        let gpu_map = Arc::new(sh2_renderer::GpuMap::from_map(&render_ctx.device, map_file));
+        let texture_bind_groups = build_map_texture_bind_groups(render_ctx, map_file);
+        debug_assert!(
+            gpu_map.all_batches_within_material_table(texture_bind_groups.len()),
+            "GpuMap '{}' has batch material_index >= texture_bind_groups.len() ({})",
+            map_file.name,
+            texture_bind_groups.len()
+        );
+        Self {
+            gpu_map,
+            texture_bind_groups,
+        }
+    }
+}
+
 /// Builds GPU diffuse texture bind groups for every material in a [`MapFile`], caching by `texture_id`
 /// to avoid redundant VRAM allocations and parallelizing CPU RGBA conversion, mipmap generation,
 /// and BC1/BC3 compression across available CPU threads.

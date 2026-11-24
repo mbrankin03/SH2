@@ -7,9 +7,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 use crate::assets::{
-    build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
-    find_sh2e_map_file_for_room, find_vanilla_map_file_for_room, load_anm_file,
-    load_character_asset, load_viewer_entry_asset, room_cam_id_for_test_room,
+    find_cld_file_for_room, find_map_file_for_room, find_sh2e_map_file_for_room,
+    find_vanilla_map_file_for_room, load_anm_file, load_character_asset, load_viewer_entry_asset,
+    room_cam_id_for_test_room,
 };
 use crate::cli::CliArgs;
 use crate::rooms;
@@ -20,7 +20,7 @@ use sh2_assets::formats::TextureLoader;
 use sh2_audio::{AudioEngine, BgmManager, MenuAudioBank};
 use sh2_core::{ControlScheme, ScenarioKind, SimulationCore};
 use sh2_debug::{FmvViewerState, GrappleViewerState, ModelViewerState};
-use sh2_renderer::{FmvVideoPipeline, GpuMap, RenderContext, RendererConfig, SurfaceBlitter};
+use sh2_renderer::{FmvVideoPipeline, RenderContext, RendererConfig, SurfaceBlitter};
 use sh2_ui::menu::{TestRoomKind, TitlePhase};
 use sh2_ui::{ButtonSpriteSheet, TextRasterizer};
 
@@ -126,19 +126,15 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         .unwrap_or(TestRoomKind::ObservationDeck);
     let (map_file, player_pos, player_yaw, fog_uniforms) = find_map_file_for_room(initial_room);
 
-    let gpu_map = GpuMap::from_map(&device, &map_file);
+    let map_hd_assets = crate::assets::MapTierAssets::from_map(&render_ctx, &map_file);
+    let map_sh2e_assets = find_sh2e_map_file_for_room(initial_room)
+        .map(|sh2e_map| crate::assets::MapTierAssets::from_map(&render_ctx, &sh2e_map));
+    let map_vanilla_assets = find_vanilla_map_file_for_room(initial_room)
+        .map(|van_map| crate::assets::MapTierAssets::from_map(&render_ctx, &van_map));
+    let gpu_map = Arc::clone(&map_hd_assets.gpu_map);
+    let map_texture_bind_groups = map_hd_assets.texture_bind_groups.clone();
     let blitter = SurfaceBlitter::new(&device, surface_format);
     let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
-
-    // Build level diffuse texture bind groups per material (cached by texture_id to avoid redundant VRAM allocations)
-    let map_hd_texture_bind_groups = build_map_texture_bind_groups(&render_ctx, &map_file);
-    let map_sh2e_texture_bind_groups = find_sh2e_map_file_for_room(initial_room)
-        .map(|sh2e_map| build_map_texture_bind_groups(&render_ctx, &sh2e_map))
-        .unwrap_or_else(|| map_hd_texture_bind_groups.clone());
-    let map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(initial_room)
-        .map(|van_map| build_map_texture_bind_groups(&render_ctx, &van_map))
-        .unwrap_or_else(|| map_sh2e_texture_bind_groups.clone());
-    let map_texture_bind_groups = map_hd_texture_bind_groups.clone();
 
     // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
     let character = load_character_asset(
@@ -569,9 +565,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         story_progression_room: rooms::story_progression_room::StoryProgressionRoomState::default(),
         sim_core,
         gpu_map,
-        map_hd_texture_bind_groups,
-        map_sh2e_texture_bind_groups,
-        map_vanilla_texture_bind_groups,
+        map_hd_assets,
+        map_sh2e_assets,
+        map_vanilla_assets,
         map_texture_bind_groups,
         character,
         maria,

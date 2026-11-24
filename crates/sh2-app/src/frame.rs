@@ -3,15 +3,14 @@
 use std::time::Instant;
 
 use crate::assets::{
-    build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
-    find_sh2e_map_file_for_room, find_vanilla_map_file_for_room, load_viewer_entry_asset,
-    open_drama_demo_session, room_cam_id_for_test_room,
+    find_cld_file_for_room, find_map_file_for_room, find_sh2e_map_file_for_room,
+    find_vanilla_map_file_for_room, load_viewer_entry_asset, open_drama_demo_session,
+    room_cam_id_for_test_room,
 };
 use crate::menu_events::apply_pending_engine_config;
 use crate::rooms;
 use crate::rooms::fmv_room::open_fmv_session;
 use crate::state::AppState;
-use sh2_renderer::GpuMap;
 use sh2_ui::menu::{LaunchTarget, TestRoomKind, TitlePhase};
 use sh2_ui::pause::PauseSubPhase;
 use sh2_ui::LoadingScreen;
@@ -224,15 +223,11 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         let new_room = state.menu_ctrl.title_sm.selected_test_room;
         tracing::info!("Switching test environment to: {:?}", new_room);
         let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
-        state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
-        state.map_hd_texture_bind_groups =
-            build_map_texture_bind_groups(&state.render_ctx, &new_map);
-        state.map_sh2e_texture_bind_groups = find_sh2e_map_file_for_room(new_room)
-            .map(|sh2e_map| build_map_texture_bind_groups(&state.render_ctx, &sh2e_map))
-            .unwrap_or_else(|| state.map_hd_texture_bind_groups.clone());
-        state.map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(new_room)
-            .map(|van_map| build_map_texture_bind_groups(&state.render_ctx, &van_map))
-            .unwrap_or_else(|| state.map_sh2e_texture_bind_groups.clone());
+        state.map_hd_assets = crate::assets::MapTierAssets::from_map(&state.render_ctx, &new_map);
+        state.map_sh2e_assets = find_sh2e_map_file_for_room(new_room)
+            .map(|sh2e_map| crate::assets::MapTierAssets::from_map(&state.render_ctx, &sh2e_map));
+        state.map_vanilla_assets = find_vanilla_map_file_for_room(new_room)
+            .map(|van_map| crate::assets::MapTierAssets::from_map(&state.render_ctx, &van_map));
         let active_tex_quality = state
             .menu_ctrl
             .options_menu

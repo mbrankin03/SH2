@@ -4,7 +4,8 @@
 use crate::state::AppState;
 use sh2_core::config::VideoOptions;
 use sh2_core::fog::{
-    evaluate_room_fog, room_id_from_stage_code, RoomFogContext, RoomFogEvaluation, R_OBSV_DECK_ID,
+    evaluate_room_fog_with_fixes, room_id_from_stage_code, RoomFogContext, RoomFogEvaluation,
+    R_OBSV_DECK_ID,
 };
 use sh2_renderer::fog::{
     FogUniforms, GpuFogParticle, PS2_DEFAULT_FOG_WIND_VEC, PS2_FOG_DEFAULT_COLOR_ALPHA_U8,
@@ -28,8 +29,8 @@ pub(crate) fn resolve_ps2_room_id(current_room: &str, active_test_room: TestRoom
     }
 }
 
-/// Evaluates per-frame room fog (`evaluate_room_fog`) and applies it to `base_fog` when
-/// `ps2_room_id != 0`, followed by `VideoOptions` (`fog_quality`, `volumetric_light`).
+/// Evaluates per-frame room fog (`evaluate_room_fog_with_fixes`) and applies it to `base_fog`
+/// when `ps2_room_id != 0`, followed by `VideoOptions` (`fog_quality`, `volumetric_light`).
 pub(crate) fn evaluate_effective_room_fog(
     base_fog: &FogUniforms,
     ps2_room_id: u32,
@@ -37,14 +38,18 @@ pub(crate) fn evaluate_effective_room_fog(
     camera_pos_y_mm: f32,
     flashlight_on: bool,
     video: &VideoOptions,
+    enable_sh2ee_world_fixes: bool,
 ) -> (FogUniforms, RoomFogEvaluation) {
-    let room_eval = evaluate_room_fog(&RoomFogContext {
-        room_id: ps2_room_id,
-        james_pos_y_mm: player_pos_y_mm,
-        camera_pos_y_mm,
-        flashlight_on,
-        extended_observation_deck_range: true,
-    });
+    let room_eval = evaluate_room_fog_with_fixes(
+        &RoomFogContext {
+            room_id: ps2_room_id,
+            james_pos_y_mm: player_pos_y_mm,
+            camera_pos_y_mm,
+            flashlight_on,
+            extended_observation_deck_range: enable_sh2ee_world_fixes,
+        },
+        enable_sh2ee_world_fixes,
+    );
     let mut effective_fog = *base_fog;
     if ps2_room_id != 0 {
         effective_fog.apply_room_evaluation(&room_eval);
@@ -83,6 +88,12 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     );
 
     let video = &state.menu_ctrl.options_menu.draft_config.video;
+    let enable_sh2ee_world_fixes = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .enable_sh2ee_world_fixes;
     let (mut effective_fog, room_eval) = evaluate_effective_room_fog(
         &state.fog_uniforms,
         ps2_room_id,
@@ -90,6 +101,7 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         cam_eye.y,
         state.sim_core.scenario.is_flashlight_active(),
         video,
+        enable_sh2ee_world_fixes,
     );
 
     if let Some(ref session) = state.drama_demo_session {
@@ -223,14 +235,17 @@ mod tests {
         let video = VideoOptions::default();
 
         let (off_fog, off_eval) =
-            evaluate_effective_room_fog(&base, room_id, 0.0, -500.0, false, &video);
+            evaluate_effective_room_fog(&base, room_id, 0.0, -500.0, false, &video, true);
         let (on_fog, _on_eval) =
-            evaluate_effective_room_fog(&base, room_id, 0.0, -500.0, true, &video);
+            evaluate_effective_room_fog(&base, room_id, 0.0, -500.0, true, &video, true);
+        let (vanilla_on_fog, _vanilla_eval) =
+            evaluate_effective_room_fog(&base, room_id, 0.0, -500.0, true, &video, false);
 
         assert!(!off_eval.outdoor_layers_enabled);
         assert_eq!(off_fog.layer2_params[3], 0.0);
         assert_eq!(off_fog.fog_near, BLUE_CREEK_ORIGINAL_FOG_NEAR_MM);
         assert_eq!(on_fog.fog_near, BLUE_CREEK_FLASHLIGHT_FOG_NEAR_MM);
+        assert_eq!(vanilla_on_fog.fog_near, BLUE_CREEK_ORIGINAL_FOG_NEAR_MM);
         assert_ne!(off_fog.depth_fog_params, on_fog.depth_fog_params);
     }
 
@@ -241,9 +256,9 @@ mod tests {
         let video = VideoOptions::default();
 
         let (lower_fog, lower_eval) =
-            evaluate_effective_room_fog(&base, room_id, 0.0, -12000.0, true, &video);
+            evaluate_effective_room_fog(&base, room_id, 0.0, -12000.0, true, &video, true);
         let (upper_fog, upper_eval) =
-            evaluate_effective_room_fog(&base, room_id, 0.0, -16000.0, true, &video);
+            evaluate_effective_room_fog(&base, room_id, 0.0, -16000.0, true, &video, true);
 
         assert!(!lower_eval.final_boss_upper_override);
         assert!(upper_eval.final_boss_upper_override);
@@ -270,6 +285,7 @@ mod tests {
                 -500.0,
                 true,
                 &VideoOptions::default(),
+                true,
             );
             assert!(!eval.outdoor_layers_enabled);
             assert!(fog.density > 0.0);

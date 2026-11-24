@@ -138,6 +138,12 @@ pub(crate) fn update_camera_uniforms(
 /// into `RenderContext` (`SH2-93`).
 pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
     let (spot_pos, light_dir) = state.sim_core.interpolated_flashlight_ray(alpha);
+    let lighting_profile = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .lighting_profile;
     let active_demo_snapshot = state
         .drama_demo_session
         .as_ref()
@@ -153,7 +159,11 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
                     .player_handoff_transform()
                     .map(|(pos, _)| pos)
                     .unwrap_or(state.sim_core.scenario.player_position),
-                s.player.closet_fix.flashlight_suppressed,
+                s.player.closet_fix.flashlight_suppressed
+                    || sh2_core::lighting::should_disable_cutscene_flashlight(
+                        u32::from(s.player.info.demo_no),
+                        lighting_profile,
+                    ),
                 demo_lights,
             )
         });

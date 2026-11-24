@@ -41,19 +41,27 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         // Load ONLY the active `WorldTextureQuality` tier synchronously to avoid parsing the `.map`
         // and decoding/uploading all 3 full texture tiers (including 4K AI Master PNGs) on every
         // room transition.
-        let loaded = match active_tex_quality {
-            sh2_core::config::WorldTextureQuality::Ai4kMaster => {
-                loader.load_map_with_hd_overrides(&manifest.map_rel_path, &manifest.room_id)
-            }
-            sh2_core::config::WorldTextureQuality::Sh2eeHd => loader
-                .load_sh2e_map(&manifest.map_rel_path, &manifest.room_id)
-                .or_else(|_| {
-                    loader.load_map_with_hd_overrides(&manifest.map_rel_path, &manifest.room_id)
-                }),
-            sh2_core::config::WorldTextureQuality::OriginalPs2 => loader
-                .load_vanilla_map(&manifest.map_rel_path, &manifest.room_id)
-                .or_else(|_| loader.load_sh2e_map(&manifest.map_rel_path, &manifest.room_id)),
+        let (prefer_sh2ee, apply_4k) = match active_tex_quality {
+            sh2_core::config::WorldTextureQuality::Ai4kMaster => (true, true),
+            sh2_core::config::WorldTextureQuality::Sh2eeHd => (true, false),
+            sh2_core::config::WorldTextureQuality::OriginalPs2 => (false, false),
         };
+        let loaded = loader
+            .load_map_for_enhancement(
+                &manifest.map_rel_path,
+                &manifest.room_id,
+                prefer_sh2ee,
+                apply_4k,
+            )
+            .or_else(|err| match active_tex_quality {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd => {
+                    loader.load_map_with_hd_overrides(&manifest.map_rel_path, &manifest.room_id)
+                }
+                sh2_core::config::WorldTextureQuality::OriginalPs2 => {
+                    loader.load_sh2e_map(&manifest.map_rel_path, &manifest.room_id)
+                }
+                sh2_core::config::WorldTextureQuality::Ai4kMaster => Err(err),
+            });
         if let Ok(active_map) = loaded {
             let active_assets = MapTierAssets::from_map(&state.render_ctx, &active_map);
             state.map_hd_assets = active_assets.clone();
@@ -89,8 +97,18 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         state.fog_uniforms = fb_fog;
     } else {
         let video = &state.menu_ctrl.options_menu.draft_config.video;
-        state.fog_uniforms =
-            fog_for_campaign_manifest(manifest, video.fog_quality, video.volumetric_light);
+        let enable_sh2ee_world_fixes = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .game
+            .enable_sh2ee_world_fixes;
+        state.fog_uniforms = fog_for_campaign_manifest(
+            manifest,
+            video.fog_quality,
+            video.volumetric_light,
+            enable_sh2ee_world_fixes,
+        );
     }
 
     // Load retail `.cld` collision world, falling back gracefully if absent in headless/CI builds.
@@ -127,11 +145,15 @@ fn fog_for_campaign_manifest(
     manifest: &RoomLoadManifest,
     fog_quality: sh2_core::config::FogQuality,
     volumetric_light: bool,
+    enable_sh2ee_world_fixes: bool,
 ) -> FogUniforms {
     let ps2_room_id = sh2_core::fog::room_id_from_stage_code(&manifest.room_id);
-    let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
-        room_id: ps2_room_id,
-        ..Default::default()
-    });
+    let eval = sh2_core::fog::evaluate_room_fog_with_fixes(
+        &sh2_core::fog::RoomFogContext {
+            room_id: ps2_room_id,
+            ..Default::default()
+        },
+        enable_sh2ee_world_fixes,
+    );
     FogUniforms::from_room_evaluation(&eval, fog_quality, volumetric_light)
 }

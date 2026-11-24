@@ -30,6 +30,62 @@ impl Default for CameraUniforms {
     }
 }
 
+/// Authentic PS2/PC quantized 8-bit alpha-test cutoff (`alpha > 0` in `[0..=255]`):
+/// - `SLUS_202.28` `shGs_InitDefaultRegsEnv` (`0x001909e0`) & `InitEnv1` (`0x002a9780`):
+///   `TEST_1 = 0x5000d` (`ATE = 1`, `ATST = 6 [GREATER]`, `AREF = 0`, `AFAIL = 0 [KEEP]`).
+/// - `sh2pc.exe` `FUN_005b4cc0` (`0x005b4cc0`, Opaque/Transparent `.map` pass) and
+///   `0x005b1694` (`sh2pc_005a0000.c:7565-7569`, Decal pass):
+///   `D3DRS_ALPHATESTENABLE = 1`, `D3DRS_ALPHAFUNC = 5 (D3DCMP_GREATER)`, `D3DRS_ALPHAREF = 0`.
+pub const MAP_ALPHA_TEST_THRESHOLD: f32 = 0.5 / 255.0;
+
+/// Verified hardware render-state contract for a `.map` [`sh2_assets::formats::map::BatchGroup`].
+///
+/// Derived 1:1 from `sh2pc.exe`:
+/// - `D3DRS_CULLMODE (0x16) = 2 (D3DCULL_CW)` -> CCW front-face with hardware backface culling
+///   across `Opaque`, `Transparent` (`FUN_005b4cc0` `0x005b4cc0`), and `Decal`
+///   (`sh2pc_005a0000.c:7534,7547`).
+/// - `D3DRS_ALPHATESTENABLE = 1`, `D3DCMP_GREATER`, `D3DRS_ALPHAREF = 0` across all three groups
+///   (`FUN_005b4cc0` `0x005b4cc0` & `SLUS_202.28` `shGs_InitDefaultRegsEnv` `0x001909e0`).
+/// - `MapMaterial.mode` (`FUN_005b2d40` `0x005b2d40` / `DAT_008f0338`) selects lighting/specular
+///   shader mode only and never overrides `D3DRS_CULLMODE` or `D3DRS_ALPHATESTENABLE`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MapBatchRenderState {
+    /// Hardware primitive cull mode (`Some(Face::Back)` = `D3DCULL_CW` with `FrontFace::Ccw`).
+    pub cull_mode: Option<wgpu::Face>,
+    /// Front-face winding (`FrontFace::Ccw`, matching `D3DCULL_CW` in `sh2pc.exe`).
+    pub front_face: wgpu::FrontFace,
+    /// Whether depth writes are enabled (`true` for `Opaque`, `false` for `Decal`/`Transparent`).
+    pub depth_write_enabled: bool,
+    /// Whether alpha blending is enabled (`false` for `Opaque`, `true` for `Decal`/`Transparent`).
+    pub alpha_blending: bool,
+    /// Quantized alpha-test discard threshold (`MAP_ALPHA_TEST_THRESHOLD` = `0.5 / 255.0`).
+    pub alpha_test_threshold: f32,
+}
+
+/// Returns the 1:1 `sh2pc.exe` / `SLUS_202.28` hardware render state for `group`.
+#[must_use]
+pub const fn map_batch_render_state(
+    group: sh2_assets::formats::map::BatchGroup,
+) -> MapBatchRenderState {
+    use sh2_assets::formats::map::BatchGroup;
+    match group {
+        BatchGroup::Opaque => MapBatchRenderState {
+            cull_mode: Some(wgpu::Face::Back),
+            front_face: wgpu::FrontFace::Ccw,
+            depth_write_enabled: true,
+            alpha_blending: false,
+            alpha_test_threshold: MAP_ALPHA_TEST_THRESHOLD,
+        },
+        BatchGroup::Decal | BatchGroup::Transparent => MapBatchRenderState {
+            cull_mode: Some(wgpu::Face::Back),
+            front_face: wgpu::FrontFace::Ccw,
+            depth_write_enabled: false,
+            alpha_blending: true,
+            alpha_test_threshold: MAP_ALPHA_TEST_THRESHOLD,
+        },
+    }
+}
+
 pub struct GeometryPipeline {
     /// Primary opaque + alpha-cutout level geometry pipeline (`depth_write_enabled: true`).
     pub pipeline: wgpu::RenderPipeline,
@@ -102,12 +158,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
+fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
     // Sample diffuse texture in uniform control flow before alpha-test discard.
     // Exact PS2/PC alpha-test (`SLUS_202.28` `shGs_InitDefaultRegsEnv` `0x001909e0` & `InitEnv1`
     // GIF packet `0x002a9780`: `TEST_1 = 0x5000d` -> `ATE = 1`, `ATST = 6 (GREATER)`, `AREF = 0`,
-    // `AFAIL = 0 (KEEP)`; `sh2pc.exe` `FUN_00503800` `0x00503800`: `D3DRS_ALPHATESTENABLE = 1`,
-    // `D3DRS_ALPHAFUNC = 5 (D3DCMP_GREATER)`, `D3DRS_ALPHAREF = 0`): discard quantized 8-bit `alpha == 0`.
+    // `AFAIL = 0 (KEEP)`; `sh2pc.exe` `FUN_005b4cc0` `0x005b4cc0` & `FUN_00503800` `0x00503800`:
+    // `D3DRS_ALPHATESTENABLE = 1`, `D3DRS_ALPHAFUNC = 5 (D3DCMP_GREATER)`, `D3DRS_ALPHAREF = 0`):
+    // discard quantized 8-bit `alpha == 0`. Backface culling is performed in hardware via
+    // `PrimitiveState { front_face: Ccw, cull_mode: Some(Face::Back) }` (`D3DRS_CULLMODE = 2`).
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let out_alpha = in.color.a * tex_color.a;
     if (out_alpha < (0.5 / 255.0)) {
@@ -117,12 +175,6 @@ fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
     // Ambient term (with pre-lit skybox/vista boost when vertex normal is zero-length, stride == 0x14)
     let n_len = length(in.normal);
     let has_normal = n_len > 1e-4;
-    // Hardware geometric backface culling for lit single-sided surfaces (`stride >= 0x20`, e.g.
-    // coplanar interior dumpster walls in `ob01.map`) while keeping pre-lit `stride == 0x14`
-    // skybox/foliage cards double-sided and never discarding grazing corners via vertex normals.
-    if (has_normal && !is_front) {
-        discard;
-    }
     let base_ambient = select(vec3<f32>(0.18, 0.19, 0.21), vec3<f32>(0.07, 0.075, 0.085), has_normal);
 
     // Dynamic Spotlight calculation matching dbg_spotL_ctl
@@ -201,16 +253,16 @@ fn shade_geometry_fragment(in: VertexOutput, is_front: bool) -> vec4<f32> {
 }
 
 @fragment
-fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
-    return shade_geometry_fragment(in, is_front);
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return shade_geometry_fragment(in);
 }
 
 // Opaque geometry entry point (`BlendState::REPLACE`): encodes PS2 GS `PRIM.FGE` (Fog Enable)
 // in `color_in.a` (`1.0` for lit 3D world geometry `stride >= 0x20`, `0.0` for pre-lit
 // skybox/vista geometry `stride == 0x14` such as Toluca Lake & distant hills in `ob01.map`).
 @fragment
-fn fs_opaque(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
-    let shaded = shade_geometry_fragment(in, is_front);
+fn fs_opaque(in: VertexOutput) -> @location(0) vec4<f32> {
+    let shaded = shade_geometry_fragment(in);
     let fge = select(0.0, 1.0, length(in.normal) > 1e-4);
     return vec4<f32>(shaded.rgb, fge);
 }
@@ -355,11 +407,14 @@ fn fs_opaque(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @locati
             attributes: &vertex_attributes,
         }];
 
+        let opaque_state = map_batch_render_state(sh2_assets::formats::map::BatchGroup::Opaque);
+        // Hardware backface culling matching `sh2pc.exe` `D3DRS_CULLMODE (0x16) = 2 (D3DCULL_CW)`
+        // inherited by `FUN_005b4cc0` (`0x005b4cc0`) and restored for decals (`0x005b1694`).
         let primitive_state = wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None, // Don't cull PS2 double-sided geometry prematurely
+            front_face: opaque_state.front_face,
+            cull_mode: opaque_state.cull_mode,
             polygon_mode: wgpu::PolygonMode::Fill,
             unclipped_depth: false,
             conservative: false,

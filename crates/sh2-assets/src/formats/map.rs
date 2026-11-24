@@ -441,11 +441,20 @@ fn parse_mesh_group(
                 if p + 8 > data.len() {
                     break;
                 }
+                // Exact `sh2pc.exe` `FUN_005b4940` (`0x005b4940`) 8-byte part entry layout:
+                // - `+0..+2`: `u16` base count (`*puVar8`)
+                // - `+2`: `u8` primitive-type index into `DAT_008f0378`
+                //   (`0 => D3DPT_TRIANGLESTRIP [5]`, `1 => D3DPT_TRIANGLELIST [4]`)
+                // - `+3`: `u8` index multiplier (`1` for strip, `3` for list)
                 let strip_len = read_u16(data, p)? as usize;
-                let prim = data[p + 3];
+                let prim_type_idx = data[p + 2];
+                let index_mult = data[p + 3] as usize;
                 p += 8;
 
-                let n = if prim == 3 { strip_len * 3 } else { strip_len };
+                let (n, prim) = match prim_type_idx {
+                    1 => (strip_len * index_mult.max(3), 3u8),
+                    _ => (strip_len * index_mult.max(1), 1u8),
+                };
 
                 if cursor + n <= indices.len() {
                     let sub_indices = &indices[cursor..cursor + n];

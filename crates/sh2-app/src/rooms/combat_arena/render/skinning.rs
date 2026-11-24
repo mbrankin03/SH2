@@ -112,6 +112,12 @@ pub(super) fn evaluate_player_skinning(
                 .draft_config
                 .game
                 .enable_secondary_physics;
+            let foot_ik_enabled = state
+                .menu_ctrl
+                .options_menu
+                .draft_config
+                .game
+                .enable_foot_ik;
             if !is_paused && ticks_processed > 0 {
                 let dt_physics = 1.0 / 60.0;
                 let head_rig = if state.active_maria {
@@ -218,6 +224,25 @@ pub(super) fn evaluate_player_skinning(
                 &c.dynamic_locals,
                 &c.frame_scratch_a,
                 &mut c.pose_scratch,
+            );
+            let ik_dt = if is_paused {
+                0.0
+            } else {
+                (ticks_processed.max(1) as f32) * (1.0 / 60.0)
+            };
+            c.foot_ik.solve_if_enabled(
+                foot_ik_enabled,
+                &state.sim_core.collision,
+                player_pos,
+                player_yaw,
+                ik_dt,
+                &c.model.parents,
+                &mut c.pose_scratch,
+            );
+            c.secondary_physics.resolve_thigh_collisions_if_enabled(
+                secondary_physics_enabled,
+                &mut c.pose_scratch,
+                &c.model.parents,
             );
             compute_skin_matrices_with_inv_into(
                 &c.pose_scratch,

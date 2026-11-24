@@ -102,6 +102,78 @@ pub struct SecondaryJointState {
     pub angular_velocity: Vec3,
 }
 
+/// Analytical thigh-capsule collision rig for preventing cloth/skirt clipping (`SH2-85`).
+///
+/// Bone indices and radii are derived from retail `.mdl` bind-pose geometry (`hll_jms.mdl` /
+/// `hhh_jms.mdl` and `lll_mar.mdl`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThighCapsuleSpec {
+    /// Left hip/thigh bone index.
+    pub left_hip: usize,
+    /// Left knee bone index.
+    pub left_knee: usize,
+    /// Right hip/thigh bone index.
+    pub right_hip: usize,
+    /// Right knee bone index.
+    pub right_knee: usize,
+    /// Analytical thigh capsule radius in SH2 mm.
+    pub radius_mm: f32,
+    /// Cloth bone indices tested against both thigh capsules.
+    pub cloth_bones: &'static [usize],
+}
+
+impl ThighCapsuleSpec {
+    /// James Sunderland jacket coat-tail collision against thighs (`hll_jms.mdl` / `hhh_jms.mdl`,
+    /// `4->6` left thigh, `5->7` right thigh, `70.0` mm core radius inside `85.93` mm thigh mesh
+    /// and `74.7` mm bind-pose clearance on bone `23`).
+    pub const JAMES: Self = Self {
+        left_hip: 4,
+        left_knee: 6,
+        right_hip: 5,
+        right_knee: 7,
+        radius_mm: 70.0,
+        cloth_bones: &[11, 12, 16, 17, 23, 24],
+    };
+
+    /// Maria skirt collision against thighs (`lll_mar.mdl`, `3->7` left thigh, `5->8` right thigh,
+    /// `35.0` mm inner core radius inside `52.88` mm thigh mesh and `36.0` mm bind-pose clearance
+    /// on skirt bone `14`).
+    pub const MARIA: Self = Self {
+        left_hip: 3,
+        left_knee: 7,
+        right_hip: 5,
+        right_knee: 8,
+        radius_mm: 35.0,
+        cloth_bones: &[13, 14, 18, 19],
+    };
+}
+
+/// Returns the closest point to `p` on the finite line segment `[a, b]`.
+#[must_use]
+pub fn closest_point_on_segment(p: Vec3, a: Vec3, b: Vec3) -> Vec3 {
+    let ab = b - a;
+    let len_sq = ab.length_squared();
+    if len_sq < 1e-6 {
+        return a;
+    }
+    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+    a + ab * t
+}
+
+/// Computes the outward push vector if `bone_pos` penetrates capsule `([a, b], radius)`.
+#[must_use]
+pub fn resolve_capsule_penetration(bone_pos: Vec3, a: Vec3, b: Vec3, radius: f32) -> Option<Vec3> {
+    let closest = closest_point_on_segment(bone_pos, a, b);
+    let delta = bone_pos - closest;
+    let dist_sq = delta.length_squared();
+    if dist_sq >= radius * radius {
+        return None;
+    }
+    let dist = dist_sq.sqrt();
+    let dir = if dist > 1e-4 { delta / dist } else { Vec3::Z };
+    Some(dir * (radius - dist))
+}
+
 /// Multi-joint secondary physics solver managing real-time bone perturbations.
 #[derive(Debug, Clone)]
 pub struct SecondaryBonePhysics {
@@ -109,6 +181,8 @@ pub struct SecondaryBonePhysics {
     configs: HashMap<usize, SecondaryJointConfig>,
     /// Simulation state keyed by skeleton bone index.
     states: HashMap<usize, SecondaryJointState>,
+    /// Optional analytical thigh-capsule collision specification.
+    thigh_capsules: Option<ThighCapsuleSpec>,
     /// Previous character world position for velocity estimation.
     last_position: Vec3,
     /// Filtered character linear velocity in character-local coordinates.
@@ -131,6 +205,7 @@ impl SecondaryBonePhysics {
         Self {
             configs: HashMap::new(),
             states: HashMap::new(),
+            thigh_capsules: None,
             last_position: Vec3::ZERO,
             filtered_local_velocity: Vec3::ZERO,
             last_yaw: 0.0,
@@ -153,6 +228,7 @@ impl SecondaryBonePhysics {
         for &bone in &[27, 28, 31, 32] {
             sim.register_bone(bone, jacket);
         }
+        sim.thigh_capsules = Some(ThighCapsuleSpec::JAMES);
 
         sim
     }
@@ -173,6 +249,7 @@ impl SecondaryBonePhysics {
         for &bone in &[13, 14, 18, 19] {
             sim.register_bone(bone, chest);
         }
+        sim.thigh_capsules = Some(ThighCapsuleSpec::MARIA);
 
         sim
     }
@@ -337,6 +414,58 @@ impl SecondaryBonePhysics {
             *state = SecondaryJointState::default();
         }
     }
+
+    /// Resolves analytical thigh-capsule collisions on evaluated model-space `pose_world`
+    /// matrices (`SH2-85`) only when `enabled` is `true`.
+    pub fn resolve_thigh_collisions_if_enabled(
+        &self,
+        enabled: bool,
+        pose_world: &mut [[[f32; 4]; 4]],
+        parents: &[u8],
+    ) {
+        if enabled {
+            self.resolve_thigh_collisions_into(pose_world, parents);
+        }
+    }
+
+    /// Pushes penetrating cloth/skirt bones outside the character's analytical thigh capsules.
+    pub fn resolve_thigh_collisions_into(&self, pose_world: &mut [[[f32; 4]; 4]], parents: &[u8]) {
+        let Some(spec) = self.thigh_capsules else {
+            return;
+        };
+        let max_leg = spec
+            .left_hip
+            .max(spec.left_knee)
+            .max(spec.right_hip)
+            .max(spec.right_knee);
+        if max_leg >= pose_world.len() || parents.len() < pose_world.len() {
+            return;
+        }
+        let pos_of = |m: &[[f32; 4]; 4]| Vec3::new(m[0][3], m[1][3], m[2][3]);
+        let l_hip = pos_of(&pose_world[spec.left_hip]);
+        let l_knee = pos_of(&pose_world[spec.left_knee]);
+        let r_hip = pos_of(&pose_world[spec.right_hip]);
+        let r_knee = pos_of(&pose_world[spec.right_knee]);
+
+        for &bone in spec.cloth_bones {
+            if bone >= pose_world.len() {
+                continue;
+            }
+            let mut bone_pos = pos_of(&pose_world[bone]);
+            let mut total_push = Vec3::ZERO;
+            for (a, b) in [(l_hip, l_knee), (r_hip, r_knee)] {
+                if let Some(push) = resolve_capsule_penetration(bone_pos, a, b, spec.radius_mm) {
+                    bone_pos += push;
+                    total_push += push;
+                }
+            }
+            if total_push.length_squared() > 1e-8 {
+                pose_world[bone][0][3] += total_push.x;
+                pose_world[bone][1][3] += total_push.y;
+                pose_world[bone][2][3] += total_push.z;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -416,6 +545,76 @@ mod tests {
         assert_eq!(
             locals, orig,
             "Disabled secondary physics must leave bind pose matrices untouched"
+        );
+    }
+
+    #[test]
+    fn test_thigh_capsule_collision_james_and_maria() {
+        let mut pose = vec![
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
+            36
+        ];
+        let parents = vec![255u8; 36];
+
+        // Place James left thigh (4->6) at X=-52, Y=-472..-258, Z=-30
+        pose[4][0][3] = -52.0;
+        pose[4][1][3] = -472.0;
+        pose[4][2][3] = -30.0;
+        pose[6][0][3] = -44.0;
+        pose[6][1][3] = -258.0;
+        pose[6][2][3] = -30.0;
+        // Place James coat tail bone 23 inside the left thigh capsule (only 10 mm away)
+        pose[23][0][3] = -52.0;
+        pose[23][1][3] = -360.0;
+        pose[23][2][3] = -20.0;
+
+        let sim_james = SecondaryBonePhysics::for_james();
+        sim_james.resolve_thigh_collisions_if_enabled(true, &mut pose, &parents);
+        let pushed_pos = Vec3::new(pose[23][0][3], pose[23][1][3], pose[23][2][3]);
+        let closest = closest_point_on_segment(
+            pushed_pos,
+            Vec3::new(-52.0, -472.0, -30.0),
+            Vec3::new(-44.0, -258.0, -30.0),
+        );
+        assert!(
+            pushed_pos.distance(closest) >= ThighCapsuleSpec::JAMES.radius_mm - 1e-3,
+            "Coat tail bone 23 must be pushed outside James thigh capsule"
+        );
+
+        // Place Maria left thigh (3->7) and penetrating skirt bone 13
+        pose[3][0][3] = -39.0;
+        pose[3][1][3] = -461.0;
+        pose[3][2][3] = -10.0;
+        pose[7][0][3] = -36.0;
+        pose[7][1][3] = -286.0;
+        pose[7][2][3] = -2.0;
+        pose[13][0][3] = -39.0;
+        pose[13][1][3] = -363.0;
+        pose[13][2][3] = -1.0;
+
+        let sim_maria = SecondaryBonePhysics::for_maria();
+        let before_maria = pose[13];
+        sim_maria.resolve_thigh_collisions_if_enabled(false, &mut pose, &parents);
+        assert_eq!(
+            pose[13], before_maria,
+            "Disabled toggle must not move skirt"
+        );
+
+        sim_maria.resolve_thigh_collisions_if_enabled(true, &mut pose, &parents);
+        let pushed_maria = Vec3::new(pose[13][0][3], pose[13][1][3], pose[13][2][3]);
+        let closest_m = closest_point_on_segment(
+            pushed_maria,
+            Vec3::new(-39.0, -461.0, -10.0),
+            Vec3::new(-36.0, -286.0, -2.0),
+        );
+        assert!(
+            pushed_maria.distance(closest_m) >= ThighCapsuleSpec::MARIA.radius_mm - 1e-3,
+            "Skirt bone 13 must be pushed outside Maria thigh capsule"
         );
     }
 }

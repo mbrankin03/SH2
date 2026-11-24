@@ -51,6 +51,7 @@ pub(crate) struct CharacterAsset {
     pub texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub secondary_physics: SecondaryBonePhysics,
     pub head_look: sh2_core::HeadLookTracker,
+    pub foot_ik: sh2_core::FootIkSolver,
 }
 
 /// Locate and load authentic `.cld` collision file for the given test room, falling back to procedural bounds.
@@ -774,10 +775,16 @@ pub(crate) fn load_character_asset(
         anm.frames.len()
     );
 
-    let secondary_physics = if character_name.contains("Maria") {
-        SecondaryBonePhysics::for_maria()
+    let (secondary_physics, foot_ik) = if character_name.contains("Maria") {
+        (
+            SecondaryBonePhysics::for_maria(),
+            sh2_core::FootIkSolver::for_maria(),
+        )
     } else {
-        SecondaryBonePhysics::for_james()
+        (
+            SecondaryBonePhysics::for_james(),
+            sh2_core::FootIkSolver::for_james(),
+        )
     };
 
     let dynamic_locals = bind_locals.clone();
@@ -814,6 +821,7 @@ pub(crate) fn load_character_asset(
         texture_bind_groups,
         secondary_physics,
         head_look: sh2_core::HeadLookTracker::default(),
+        foot_ik,
     })
 }
 

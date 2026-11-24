@@ -21,7 +21,7 @@ use super::character::{
 };
 use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
-use super::raycast::{raycast_acoustic_occlusion, AcousticOcclusionHit};
+use super::raycast::{raycast_acoustic_occlusion, AcousticOcclusionHit, EyeRayHit};
 use super::solver::{
     cl_check_column_to_bg_column_hit, cl_check_column_to_wall_hit, cl_collect_chara_all,
     cl_make_wall_hit_collect_vector, quantize_collect_vector_1_16, sh_atan2, CharaCollectEntry,
@@ -781,6 +781,12 @@ impl CollisionController {
     ) -> AcousticOcclusionHit {
         self.world
             .raycast_acoustic_occlusion(emitter_pos, listener_head_pos)
+    }
+
+    /// Exact 1:1 `clCheckHitEyesOnlyFloor` (`SLUS_202.28` `0x00138f10`):
+    /// casts a segment against dynamic floors and static `.cld` floors, skipping `material == 12`.
+    pub fn check_hit_eyes_only_floor(&self, origin: Vec3, target: Vec3) -> Option<EyeRayHit> {
+        self.world.check_hit_eyes_only_floor(origin, target)
     }
 
     /// Exact 1:1 `clCollectCharaALL` (`SLUS_202.28` `0x00132e20` / `sh2pc.exe` `0x00526280`):

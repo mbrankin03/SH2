@@ -328,6 +328,37 @@ impl AssetPathResolver {
             cam_file,
         }))
     }
+
+    /// Resolves an optional SH2:EE 3D replacement model under `sh2e/model/<filename>`
+    /// (e.g., `"ty3.glb"`, `"mon.glb"`, `"dmr.glb"`), returning `None` if `sh2e/` or the
+    /// requested `.glb` file is absent on disk.
+    pub fn resolve_sh2e_model(&self, filename: &str) -> Option<PathBuf> {
+        let sh2e = self.sh2e_dir.as_deref()?;
+        let model_dir = sh2e.join("model");
+        let exact = model_dir.join(filename);
+        if exact.is_file() {
+            return Some(exact);
+        }
+        if let Ok(entries) = std::fs::read_dir(&model_dir) {
+            let target_lower = filename.to_ascii_lowercase();
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file()
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.to_ascii_lowercase() == target_lower)
+                {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns `true` when an optional SH2:EE `.glb` replacement model exists in `sh2e/model/`.
+    pub fn has_sh2e_model(&self, filename: &str) -> bool {
+        self.resolve_sh2e_model(filename).is_some()
+    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ mod context;
 pub mod effects;
 pub mod fmv;
 pub mod fog;
+pub mod glb_model;
 pub mod gpu_map;
 pub mod light;
 mod lighting_ops;
@@ -22,6 +23,9 @@ pub use context::{
     SkeletalDrawItem,
 };
 pub use fmv::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
+pub use glb_model::{
+    evaluate_glb_skin_matrices, glb_vertex_to_skeletal, GlbGpuModel, GlbGpuPrimitive, GlbGpuTexture,
+};
 pub use gpu_map::{GpuMap, GpuMapBatch};
 pub use skeletal::{
     classify_primitive_body_region, cranial_bone_mask, decode_model_textures_for_inspection,

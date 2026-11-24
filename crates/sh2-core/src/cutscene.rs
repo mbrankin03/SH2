@@ -9,6 +9,7 @@ mod anim_info;
 mod atmosphere;
 mod catalog;
 mod culling;
+mod dog_room;
 mod piston_kinematics;
 mod player;
 mod special_fx;
@@ -39,6 +40,10 @@ pub use culling::{
     camera_basis_vectors, is_sphere_inside_4x3_frustum, should_cull_parked_offscreen_actor,
     ActorBoundingSphere, DEFAULT_BOSS_BOUNDING_RADIUS, DEFAULT_HUMANOID_BOUNDING_RADIUS,
     DEFAULT_ITEM_BOUNDING_RADIUS, DEFAULT_PROP_BOUNDING_RADIUS, PARKED_ACTOR_VELOCITY_EPSILON,
+};
+pub use dog_room::{
+    DogRoomLeversRenderCmd, DogRoomLeversState, DOG_CUTSCENE_TIMER_HZ, DOG_MODEL_OFFSET_TABLE,
+    DOG_ROOM_PRELOAD_EVENT_INDEX, LEVERS_MODEL_OFFSET_TABLE, R_END_DOG_RM_ID, STAGE_END_DOG_ID,
 };
 pub use piston_kinematics::{
     ClosetDoorReplacementState, PistonArrayRuntime, PistonAxisDir,

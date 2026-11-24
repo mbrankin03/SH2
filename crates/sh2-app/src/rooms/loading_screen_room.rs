@@ -225,12 +225,8 @@ impl RoomController for LoadingScreenTestRoomController {
         });
 
         // 2. Render full-brightness LoadingScreen in centered 4:3 PS2 UI viewport
-        let tint = [
-            1.0f32,
-            1.0,
-            1.0,
-            state.loading_screen_test.loading_screen.fade_alpha,
-        ];
+        let loading_alpha = state.loading_screen_test.loading_screen.fade_alpha;
+        let tint = [1.0f32, 1.0, 1.0, loading_alpha];
         state.render_ctx.queue.write_buffer(
             &state.menu_uniform_buffer,
             0,
@@ -249,7 +245,26 @@ impl RoomController for LoadingScreenTestRoomController {
         if !state.loading_screen_test.show_hud {
             return;
         }
-        state.begin_hud_overlay();
+        // Avoid overwriting `menu_uniform_buffer` before GPU submission: when the loading pass
+        // used a non-opaque alpha, flush it on its own submission before writing the opaque HUD
+        // tint; otherwise reuse `[1.0, 1.0, 1.0, 1.0]` without a second `write_buffer`.
+        if (loading_alpha - 1.0).abs() > f32::EPSILON {
+            let next_encoder =
+                state
+                    .render_ctx
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("LoadingScreenTest HUD Encoder"),
+                    });
+            let prev_encoder = std::mem::replace(encoder, next_encoder);
+            state
+                .render_ctx
+                .queue
+                .submit(std::iter::once(prev_encoder.finish()));
+            state.begin_hud_overlay();
+        } else {
+            state.menu_rasterizer.clear();
+        }
         let test = &state.loading_screen_test;
         let ls = &test.loading_screen;
         let sprite = FootstepSprite::get();

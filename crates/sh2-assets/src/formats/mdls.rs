@@ -415,7 +415,9 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
 
         let mtype = data[h + 32];
         let pose = data[h + 34];
-        let cull = read_u32(data, h + 36)?;
+        // `MakeSpecularPacket` (`0x0012d090` line 532) reads `*(char *)(part + 0x44)` (`u8`) for
+        // backface culling; `h + 37` (`+0x45`) is the separate `envmap_coeff` byte.
+        let cull = u32::from(data[h + 36]);
         let envmap_coeff = data[h + 37];
         let specular_scale = read_f32(data, h + 48)?;
 
@@ -704,7 +706,7 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
             let tofs = read_u32(data, tp + 12)? as usize;
             let mtype = data[tp + 20];
             let pose = data[tp + 22];
-            let cull = read_u32(data, tp + 24)?;
+            let cull = u32::from(data[tp + 24]);
             let envmap_coeff = data[tp + 25];
             let specular_scale = read_f32(data, tp + 36)?;
 

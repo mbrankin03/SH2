@@ -159,6 +159,10 @@ pub(crate) struct AppState {
     pub last_frame: Instant,
     pub frame_counter: u32,
     pub sim_time: f32,
+    pub cockroach_swarm: sh2_core::CockroachSwarmState,
+    pub dog_room_levers: sh2_core::DogRoomLeversState,
+    pub sh2ee_ty3_glb: Option<sh2_renderer::GlbGpuModel>,
+    pub sh2ee_mon_glb: Option<sh2_renderer::GlbGpuModel>,
 }
 
 impl AppState {

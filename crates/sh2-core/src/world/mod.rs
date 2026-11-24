@@ -8,6 +8,7 @@
 //!   and `loadBgAll_PrepareAround` (`0x002715d0`).
 
 pub mod bg_obj;
+pub mod cockroach_swarm;
 pub mod elevator_panel;
 pub mod loadbg;
 pub mod outdoor_grid;
@@ -20,6 +21,14 @@ pub use bg_obj::{
     BG_CHARA_BLOCK_SIZE_BYTES, BG_OBJECT_SHADOW_Y_OFFSET_MM, DEFAULT_CHARA_BOUND_R_MM,
     MIRROR_WALL_POS_ROOM_01_X_MM, MIRROR_WALL_POS_ROOM_24_Z_MM, MODEL_ID_SPECIAL_PI_YAW,
     OUTDOOR_PROP_CULL_MARGIN_MM, STAY_OBJECT_SHADOW_Y_OFFSET_MM,
+};
+pub use cockroach_swarm::{
+    evaluate_roach_jiggle, CockroachDrawAction, CockroachSwarmState, RoachJiggleParams,
+    CHARA_ID_TY2, CHARA_ID_TY3, CHARA_ID_TYU, COCKROACH_TIMER_SEED_MAX_SEC, MAX_COCKROACH_TIMERS,
+    R_BUG_RM_ID, TY2_BODY_NUM_VERTICES, TY2_BODY_PRIM_COUNT, TY2_LIMB_PRIM_COUNT,
+    TY3_BODY_NUM_VERTICES, TY3_BODY_PRIM_COUNT, TY3_LIMB_PRIM_COUNTS, TY3_SHADOW_NUM_VERTICES,
+    TY3_SHADOW_PRIM_COUNT, VANILLA_ROACH_JIGGLE_POS_MAX, VANILLA_ROACH_JIGGLE_POS_MIN,
+    VANILLA_ROACH_JIGGLE_YAW_MAX, VANILLA_ROACH_JIGGLE_YAW_MIN,
 };
 pub use elevator_panel::{
     hospital_chase_elevator_stab_param, hotel_employee_elevator_cursor_color, ElevatorCursorColor,

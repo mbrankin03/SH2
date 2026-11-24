@@ -129,6 +129,13 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         .ai
         .spawn_from_manifest(&manifest.enemy_spawns, ai_diff);
 
+    let ps2_room_id = sh2_core::fog::room_id_from_stage_code(&manifest.room_id);
+    crate::rooms::sh2ee_glb_hooks::preload_room_glb_models(
+        state,
+        &resolver,
+        ps2_room_id,
+        sh2_core::DOG_ROOM_PRELOAD_EVENT_INDEX,
+    );
     state.apply_texture_quality(active_tex_quality);
     state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
 }

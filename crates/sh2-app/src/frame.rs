@@ -514,9 +514,19 @@ fn render_title_menu_overlay(
 
     let bg_to_draw = match phase {
         TitlePhase::SplashIntro => state
-            .splash_konami_bg
-            .as_ref()
-            .or(state.splash_title_bg.as_ref()),
+            .menu_ctrl
+            .title_sm
+            .boot_sequence
+            .current_logo()
+            .and_then(|logo| {
+                let idx = match logo {
+                    sh2_ui::menu::BootLogoKind::CesaWarning => 0,
+                    sh2_ui::menu::BootLogoKind::SceWarning => 1,
+                    sh2_ui::menu::BootLogoKind::KonamiLogo => 2,
+                    sh2_ui::menu::BootLogoKind::SplashLogo => 3,
+                };
+                state.boot_logo_bgs[idx].as_ref()
+            }),
         TitlePhase::OptionsMenu | TitlePhase::TestRoomsSelect | TitlePhase::TransitionToGame => {
             None // Authentic PS2 draws over pure black backdrop
         }
@@ -554,7 +564,8 @@ fn render_title_menu_overlay(
 
     // Render dynamic 2D overlay at 1920x1440 (exact 4:3) into centered `ps2_ui_viewport()`
     // so Title, Difficulty, Options, Credits, ExitConfirm, and Loading stay 4K-sharp with zero stretch on any monitor.
-    if phase != TitlePhase::SplashIntro {
+    // During `SplashIntro`, only render the 2D fallback text if the `.tex` logo is unavailable on disk.
+    if phase != TitlePhase::SplashIntro || bg_to_draw.is_none() {
         if phase == TitlePhase::ExitConfirm {
             state.draw_fullscreen_dim_scrim(encoder, surface_view, 165);
         }

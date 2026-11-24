@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod gamepad;
 pub mod menu_controller;
 pub mod synthetic_geometry;
 

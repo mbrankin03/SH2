@@ -14,6 +14,60 @@ fn default_true() -> bool {
     true
 }
 
+/// Exact PS2/PC pressure-sensitive heavy-attack threshold (`0xC1 / 255.0`,
+/// `sh2pc.exe` `FUN_005343a0` `0x005343a0` & `FUN_005345c0` `0x005345c0`: `0xC0 < pressure`).
+pub const PS2_HEAVY_PRESSURE_THRESHOLD_NORM: f32 = 193.0 / 255.0;
+
+fn default_r2_heavy_pressure_threshold() -> f32 {
+    PS2_HEAVY_PRESSURE_THRESHOLD_NORM
+}
+
+/// Melee & stomp combat input dispatch mode (`SH2-83`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CombatInputMode {
+    /// Strict 1:1 Vanilla PS2 / unpatched PC behavior (`SLUS_202.28` `0x00110530`, `sh2pc.exe` `0x005343a0` / `0x005345c0`):
+    /// uses analog button pressure (`> 0xC0`) when available; digital presses default to heavy/stomp.
+    Ps2Pressure,
+    /// SH2:EE `HoldToStomp` & `SwapLightHeavyAttack` (`200 ms` tap = Light/Kick, hold = Heavy/Stomp).
+    #[default]
+    Sh2eeTapHold,
+    /// Native zero-latency split bindings (dedicated Light/Kick & Heavy/Stomp inputs on frame 0)
+    /// plus `R2` analog trigger pressure threshold (`> 0xC0 / 255.0`) and tap/hold fallback.
+    NativeZeroLatency,
+}
+
+impl CombatInputMode {
+    /// User-facing label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ps2Pressure => "Vanilla PS2 Pressure",
+            Self::Sh2eeTapHold => "SH2:EE Tap/Hold (200ms)",
+            Self::NativeZeroLatency => "Native Split / R2 Analog",
+        }
+    }
+
+    /// Cycle forward.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Ps2Pressure => Self::Sh2eeTapHold,
+            Self::Sh2eeTapHold => Self::NativeZeroLatency,
+            Self::NativeZeroLatency => Self::Ps2Pressure,
+        }
+    }
+
+    /// Cycle backward.
+    #[must_use]
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Ps2Pressure => Self::NativeZeroLatency,
+            Self::Sh2eeTapHold => Self::Ps2Pressure,
+            Self::NativeZeroLatency => Self::Sh2eeTapHold,
+        }
+    }
+}
+
 /// Controller button prompt glyph style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ButtonGlyphStyle {
@@ -280,6 +334,13 @@ pub struct ControlOptions {
     /// Native-upgrade L2/R2 analog trigger rowing on Toluca Lake (`SH2-80`). Disabled in strict 1:1 Vanilla PS2 mode.
     #[serde(default)]
     pub enable_analog_trigger_rowing: bool,
+    /// Melee & stomp combat input dispatch mode (`Ps2Pressure`, `Sh2eeTapHold`, or `NativeZeroLatency`) (`SH2-83`).
+    #[serde(default)]
+    pub combat_input_mode: CombatInputMode,
+    /// Normalized `R2` analog trigger threshold (`0.0..=1.0`, default `193.0 / 255.0` matching `0xC0 < bVar4`
+    /// in `sh2pc.exe` `0x005343a0` / `0x005345c0`) above which a trigger pull registers as Heavy/Stomp (`SH2-83`).
+    #[serde(default = "default_r2_heavy_pressure_threshold")]
+    pub r2_heavy_pressure_threshold: f32,
 }
 
 impl Default for ControlOptions {
@@ -298,6 +359,8 @@ impl Default for ControlOptions {
             first_person_head_bob: true,
             ps2_bindings: Ps2ControllerBindings::default(),
             enable_analog_trigger_rowing: false,
+            combat_input_mode: CombatInputMode::default(),
+            r2_heavy_pressure_threshold: default_r2_heavy_pressure_threshold(),
         }
     }
 }

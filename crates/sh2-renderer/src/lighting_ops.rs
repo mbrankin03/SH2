@@ -102,6 +102,20 @@ impl RenderContext {
             .store(count as u32, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Uploads `Effect2/hh_class_dust_00.c` airborne dust mote billboard instances for the next frame (`SH2-98`).
+    pub fn update_dust_particles(&self, particles: &[effects::GpuDustParticle]) {
+        let count = particles.len().min(effects::MAX_GPU_DUST_PARTICLES);
+        if count > 0 {
+            self.queue.write_buffer(
+                &self.dust_buffer,
+                0,
+                bytemuck::cast_slice(&particles[..count]),
+            );
+        }
+        self.dust_particle_count
+            .store(count as u32, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Replaces the lens flare atlas texture with decoded RGBA8 data from retail `lens_flare.tbn2`.
     pub fn upload_lens_flare_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
         let w = width.max(1);
@@ -213,6 +227,68 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&self.spray_mist_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                },
+            ],
+        });
+    }
+
+    /// Replaces the airborne dust mote atlas texture with decoded RGBA8 data from retail `playable0.tbn2`.
+    pub fn upload_dust_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if rgba.len() < (w * h * 4) as usize {
+            return;
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Retail Effect2 Dust Texture (playable0.tbn2)"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.dust_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.dust_texture = tex;
+        self.dust_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Airborne Dust Mote Bind Group"),
+            layout: &self.dust_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.dust_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,

@@ -14,6 +14,7 @@ use crate::rooms::loading_screen_room::LoadingScreenTestState;
 use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
 use crate::rooms::story_progression_room::StoryProgressionRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
+use sh2_app::gamepad::GilrsGamepadPoller;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
 use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank};
@@ -35,6 +36,8 @@ pub(crate) struct AppState {
     pub blit_bind_group: wgpu::BindGroup,
     pub splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
     pub splash_title_bg: Option<Arc<wgpu::BindGroup>>,
+    /// Boot sequence logo textures `[CesaWarning, SceWarning, KonamiLogo, SplashLogo]`.
+    pub boot_logo_bgs: [Option<Arc<wgpu::BindGroup>>; 4],
     pub menu_uniform_buffer: wgpu::Buffer,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
@@ -55,6 +58,7 @@ pub(crate) struct AppState {
     pub story_progression_room: StoryProgressionRoomState,
     pub loading_screen_test: LoadingScreenTestState,
     pub sim_core: SimulationCore,
+    pub gamepad: GilrsGamepadPoller,
     pub gpu_map: Arc<GpuMap>,
     pub map_hd_assets: MapTierAssets,
     pub map_sh2e_assets: Option<MapTierAssets>,
@@ -82,12 +86,18 @@ pub(crate) struct AppState {
     pub screen_fog_state: sh2_renderer::fog::ScreenFogState,
     pub last_screen_fog_cam: glam::Vec3,
     pub fog_blow_system: sh2_renderer::fog::FogBlowSystem,
+    pub dust_system: sh2_core::lighting::DustSystem,
+    pub dust_particle_scratch: Vec<sh2_renderer::effects::GpuDustParticle>,
+    pub dust_spotlight: sh2_core::lighting::DustSpotlightParams,
     pub jms_spot_man: sh2_renderer::light::JmsSpotManager,
     pub char_light_pool: sh2_renderer::light::CharacterLightPool,
     pub last_fog_time: f32,
     pub last_fog_blow_tick: u64,
+    pub last_dust_tick: u64,
     pub menu_ctrl: AppMenuController,
     pub ingame_menus: crate::ingame_menus::InGameMenuState,
+    /// Active campaign ending credits sequence (`EndingCreditsSequence`).
+    pub campaign_credits_seq: Option<sh2_ui::credits::EndingCreditsSequence>,
     pub combat_arena: sh2_core::combat::CombatArena,
     pub enemy_scu_asset: Option<CharacterAsset>,
     pub enemy_mkn_asset: Option<CharacterAsset>,
@@ -98,6 +108,9 @@ pub(crate) struct AppState {
     pub enemy_arm_asset: Option<CharacterAsset>,
     pub enemy_tyu_asset: Option<CharacterAsset>,
     pub enemy_bos_asset: Option<CharacterAsset>,
+    pub enemy_xoo_asset: Option<CharacterAsset>,
+    pub enemy_oni_asset: Option<CharacterAsset>,
+    pub enemy_edi_asset: Option<CharacterAsset>,
     pub key_ready_held: bool,
     pub key_attack_pressed: bool,
     pub key_attack_held: bool,
@@ -177,6 +190,54 @@ impl AppState {
             8 => self.enemy_tyu_asset.as_mut(),
             9 => self.enemy_bos_asset.as_mut(),
             _ => None,
+        }
+    }
+
+    /// Returns an immutable reference to a preloaded creature asset by [`EnemySpecies`] (`0x200..=0x20b`).
+    pub fn enemy_asset_for_species(
+        &self,
+        species: sh2_core::ai::creatures::EnemySpecies,
+        is_dark_nurse: bool,
+    ) -> Option<&CharacterAsset> {
+        use sh2_core::ai::creatures::EnemySpecies;
+        match species {
+            EnemySpecies::LyingFigure => self.enemy_scu_asset.as_ref(),
+            EnemySpecies::Mannequin => self.enemy_mkn_asset.as_ref(),
+            EnemySpecies::Nurse if is_dark_nurse => self.enemy_xoo_asset.as_ref(),
+            EnemySpecies::Nurse => self.enemy_nse_asset.as_ref(),
+            EnemySpecies::PyramidHead => self.enemy_red_asset.as_ref(),
+            EnemySpecies::TwinPyramidHead => self.enemy_oni_asset.as_ref(),
+            EnemySpecies::AbstractDaddy => self.enemy_pap_asset.as_ref(),
+            EnemySpecies::FleshLips => self.enemy_ike_asset.as_ref(),
+            EnemySpecies::Mandarin => self.enemy_arm_asset.as_ref(),
+            EnemySpecies::Creeper => self.enemy_tyu_asset.as_ref(),
+            EnemySpecies::MaryBoss => self.enemy_bos_asset.as_ref(),
+            EnemySpecies::Eddie => self.enemy_edi_asset.as_ref(),
+            EnemySpecies::RoomInsect => None,
+        }
+    }
+
+    /// Returns a mutable reference to a preloaded creature asset by [`EnemySpecies`] (`0x200..=0x20b`).
+    pub fn enemy_asset_for_species_mut(
+        &mut self,
+        species: sh2_core::ai::creatures::EnemySpecies,
+        is_dark_nurse: bool,
+    ) -> Option<&mut CharacterAsset> {
+        use sh2_core::ai::creatures::EnemySpecies;
+        match species {
+            EnemySpecies::LyingFigure => self.enemy_scu_asset.as_mut(),
+            EnemySpecies::Mannequin => self.enemy_mkn_asset.as_mut(),
+            EnemySpecies::Nurse if is_dark_nurse => self.enemy_xoo_asset.as_mut(),
+            EnemySpecies::Nurse => self.enemy_nse_asset.as_mut(),
+            EnemySpecies::PyramidHead => self.enemy_red_asset.as_mut(),
+            EnemySpecies::TwinPyramidHead => self.enemy_oni_asset.as_mut(),
+            EnemySpecies::AbstractDaddy => self.enemy_pap_asset.as_mut(),
+            EnemySpecies::FleshLips => self.enemy_ike_asset.as_mut(),
+            EnemySpecies::Mandarin => self.enemy_arm_asset.as_mut(),
+            EnemySpecies::Creeper => self.enemy_tyu_asset.as_mut(),
+            EnemySpecies::MaryBoss => self.enemy_bos_asset.as_mut(),
+            EnemySpecies::Eddie => self.enemy_edi_asset.as_mut(),
+            EnemySpecies::RoomInsect => None,
         }
     }
 
@@ -452,6 +513,9 @@ impl AppState {
         sync_char(&mut self.enemy_arm_asset);
         sync_char(&mut self.enemy_tyu_asset);
         sync_char(&mut self.enemy_bos_asset);
+        sync_char(&mut self.enemy_xoo_asset);
+        sync_char(&mut self.enemy_oni_asset);
+        sync_char(&mut self.enemy_edi_asset);
         sync_char(&mut self.viewer_asset);
 
         if let Some(ref mut session) = self.drama_demo_session {

@@ -15,8 +15,9 @@ pub use audio::{
     SpeakerConfiguration, PS2_VOLUME_MAX_LEVEL,
 };
 pub use controls::{
-    ButtonGlyphStyle, CameraCyclePreset, ControlOptions, ControllerPreset, GameplayCameraMode,
-    OtsShoulderSide, Ps2ControllerBindings, ReticleMode,
+    ButtonGlyphStyle, CameraCyclePreset, CombatInputMode, ControlOptions, ControllerPreset,
+    GameplayCameraMode, OtsShoulderSide, Ps2ControllerBindings, ReticleMode,
+    PS2_HEAVY_PRESSURE_THRESHOLD_NORM,
 };
 pub use game::{
     ActionDifficulty, BloodColor, BulletMultiplier, DebugOptions, EnhancedPreset, GameLanguage,
@@ -62,6 +63,7 @@ impl AppConfig {
                 self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
                 self.controls.enable_analog_trigger_rowing = false;
+                self.controls.combat_input_mode = CombatInputMode::Ps2Pressure;
                 self.game.enable_delayed_fade_in = false;
                 self.game.enable_secondary_physics = false;
                 self.game.enable_sh2ee_world_fixes = false;
@@ -69,6 +71,7 @@ impl AppConfig {
                 self.game.enable_quicksave_autosave = false;
                 self.game.enable_save_thumbnails = false;
                 self.game.enable_free_item_orbit = false;
+                self.game.enable_cutscene_unequip = false;
             }
             EnhancedPreset::Sh2ee => {
                 self.video.texture_quality = WorldTextureQuality::Sh2eeHd;
@@ -87,6 +90,7 @@ impl AppConfig {
                 self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
                 self.controls.enable_analog_trigger_rowing = false;
+                self.controls.combat_input_mode = CombatInputMode::Sh2eeTapHold;
                 self.game.enable_delayed_fade_in = true;
                 self.game.enable_secondary_physics = false;
                 self.game.enable_sh2ee_world_fixes = true;
@@ -94,6 +98,7 @@ impl AppConfig {
                 self.game.enable_quicksave_autosave = false;
                 self.game.enable_save_thumbnails = false;
                 self.game.enable_free_item_orbit = false;
+                self.game.enable_cutscene_unequip = true;
             }
             EnhancedPreset::NativeEnhanced => {
                 self.video.texture_quality = WorldTextureQuality::Ai4kMaster;
@@ -112,6 +117,7 @@ impl AppConfig {
                 self.audio.audio_pack_source = AudioPackPreference::Auto;
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
                 self.controls.enable_analog_trigger_rowing = true;
+                self.controls.combat_input_mode = CombatInputMode::NativeZeroLatency;
                 self.game.enable_delayed_fade_in = true;
                 self.game.enable_secondary_physics = true;
                 self.game.enable_sh2ee_world_fixes = true;
@@ -119,6 +125,7 @@ impl AppConfig {
                 self.game.enable_quicksave_autosave = true;
                 self.game.enable_save_thumbnails = true;
                 self.game.enable_free_item_orbit = true;
+                self.game.enable_cutscene_unequip = true;
             }
             EnhancedPreset::Custom => {}
         }
@@ -143,13 +150,15 @@ impl AppConfig {
             && !self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
             && !self.controls.enable_analog_trigger_rowing
+            && self.controls.combat_input_mode == CombatInputMode::Ps2Pressure
             && !self.game.enable_delayed_fade_in
             && !self.game.enable_secondary_physics
             && !self.game.enable_sh2ee_world_fixes
             && !self.game.enable_unlimited_save_slots
             && !self.game.enable_quicksave_autosave
             && !self.game.enable_save_thumbnails
-            && !self.game.enable_free_item_orbit;
+            && !self.game.enable_free_item_orbit
+            && !self.game.enable_cutscene_unequip;
         if is_ps2 {
             return EnhancedPreset::Ps2Authentic;
         }
@@ -169,13 +178,15 @@ impl AppConfig {
             && self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
             && !self.controls.enable_analog_trigger_rowing
+            && self.controls.combat_input_mode == CombatInputMode::Sh2eeTapHold
             && self.game.enable_delayed_fade_in
             && !self.game.enable_secondary_physics
             && self.game.enable_sh2ee_world_fixes
             && !self.game.enable_unlimited_save_slots
             && !self.game.enable_quicksave_autosave
             && !self.game.enable_save_thumbnails
-            && !self.game.enable_free_item_orbit;
+            && !self.game.enable_free_item_orbit
+            && self.game.enable_cutscene_unequip;
         if is_sh2ee {
             return EnhancedPreset::Sh2ee;
         }
@@ -195,13 +206,15 @@ impl AppConfig {
             && self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder
             && self.controls.enable_analog_trigger_rowing
+            && self.controls.combat_input_mode == CombatInputMode::NativeZeroLatency
             && self.game.enable_delayed_fade_in
             && self.game.enable_secondary_physics
             && self.game.enable_sh2ee_world_fixes
             && self.game.enable_unlimited_save_slots
             && self.game.enable_quicksave_autosave
             && self.game.enable_save_thumbnails
-            && self.game.enable_free_item_orbit;
+            && self.game.enable_free_item_orbit
+            && self.game.enable_cutscene_unequip;
         if is_native {
             return EnhancedPreset::NativeEnhanced;
         }

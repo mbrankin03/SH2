@@ -38,7 +38,10 @@ pub use attack_list::{
     SE_HYPER_SPRAY_SHOT, SE_MELEE_SWISH, SE_PIPE_OR_FINISH, SE_PLANK_SWING, SE_RIFLE_DRY_FIRE,
     SE_RIFLE_SHOT, SE_SHOTGUN_DRY_FIRE, SE_SHOTGUN_SHOT, SH2_ATTACK_LIST,
 };
-pub use controller::{CombatController, CombatMode, HOLD_TIMER_THRESHOLD};
+pub use controller::{
+    CombatController, CombatInputSnapshot, CombatMode, HOLD_TIMER_THRESHOLD,
+    PS2_PRESSURE_HEAVY_THRESHOLD,
+};
 pub use enemy_attack::{
     dispatch_enemy_attack, enemy_fog_range_at_frame, select_enemy_dispatcher,
     EnemyAttackDispatcher, EnemyAttackOutcome, EnemyAttackWork,

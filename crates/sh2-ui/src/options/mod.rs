@@ -465,7 +465,7 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Controls;
-        assert_eq!(menu.item_count(), 13);
+        assert_eq!(menu.item_count(), 15);
 
         // Camera Mode: ClassicPs2Rail -> OverTheShoulder -> FirstPerson
         menu.selected_index = 5;
@@ -512,7 +512,7 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Enhanced;
-        assert_eq!(menu.item_count(), 18);
+        assert_eq!(menu.item_count(), 19);
         assert!(!menu.draft_config.game.enable_secondary_physics);
         assert!(!menu.draft_config.game.enable_unlimited_save_slots);
         assert!(!menu.draft_config.game.enable_quicksave_autosave);

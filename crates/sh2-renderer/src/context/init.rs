@@ -112,6 +112,8 @@ impl RenderContext {
         let spray_mist_pipeline =
             effects::SprayMistPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let water_pipeline = crate::water::LakeWaterPipeline::new(&device, Self::HDR_FORMAT);
+        let dust_pipeline =
+            effects::DustParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let post_pipeline = post::PostProcessPipeline::new(&device, &queue);
 
         let buffers = create_initial_buffers(&device);
@@ -201,6 +203,25 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&textures.spray_mist_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&textures.fog_noise_sampler),
+                },
+            ],
+        });
+
+        let dust_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Airborne Dust Mote Bind Group"),
+            layout: &dust_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&textures.dust_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -339,6 +360,7 @@ impl RenderContext {
             lens_flare_pipeline,
             spray_mist_pipeline,
             water_pipeline,
+            dust_pipeline,
             post_pipeline,
             camera_buffer: buffers.camera_buffer,
             spotlight_buffer: buffers.spotlight_buffer,
@@ -349,6 +371,7 @@ impl RenderContext {
             drop_shadow_buffer: buffers.drop_shadow_buffer,
             lens_flare_buffer: buffers.lens_flare_buffer,
             spray_mist_buffer: buffers.spray_mist_buffer,
+            dust_buffer: buffers.dust_buffer,
             fog_buffer: buffers.fog_buffer,
             fog_particle_buffer: buffers.fog_particle_buffer,
             post_buffer: buffers.post_buffer,
@@ -369,6 +392,8 @@ impl RenderContext {
             lens_flare_view: textures.lens_flare_view,
             spray_mist_texture: textures.spray_mist_texture,
             spray_mist_view: textures.spray_mist_view,
+            dust_texture: textures.dust_texture,
+            dust_view: textures.dust_view,
             specular_sphere_texture: textures.specular_sphere_texture,
             specular_sphere_view: textures.specular_sphere_view,
             specular_sphere_sampler: textures.specular_sphere_sampler,
@@ -378,6 +403,7 @@ impl RenderContext {
             shadow_darken_bind_group,
             lens_flare_bind_group,
             spray_mist_bind_group,
+            dust_bind_group,
             fog_particle_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -387,6 +413,7 @@ impl RenderContext {
             drop_shadow_vertex_count: std::sync::atomic::AtomicU32::new(0),
             lens_flare_quad_count: std::sync::atomic::AtomicU32::new(0),
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
+            dust_particle_count: std::sync::atomic::AtomicU32::new(0),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
             lake_water_enabled: std::sync::atomic::AtomicBool::new(false),
             water_reflection_pass_enabled: std::sync::atomic::AtomicBool::new(false),

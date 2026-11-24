@@ -15,6 +15,7 @@ use crate::cli::CliArgs;
 use crate::rooms;
 use crate::rooms::fmv_room::open_fmv_session;
 use crate::state::AppState;
+use sh2_app::gamepad::GilrsGamepadPoller;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::TextureLoader;
 use sh2_audio::{AudioEngine, BgmManager, MenuAudioBank};
@@ -219,6 +220,24 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         &["data/chr/bos/bos.mdl"],
         &["data/chr/bos/bos.anm"],
     );
+    let enemy_xoo_asset = load_character_asset(
+        &render_ctx,
+        "Bubble Head Nurse Variant (xoo)",
+        &["data/chr/xoo/xoo.mdl"],
+        &["data/chr/xoo/xoo.anm"],
+    );
+    let enemy_oni_asset = load_character_asset(
+        &render_ctx,
+        "Pyramid Head Spear (oni)",
+        &["data/chr/oni/oni.mdl"],
+        &["data/chr/oni/oni.anm"],
+    );
+    let enemy_edi_asset = load_character_asset(
+        &render_ctx,
+        "Eddie Boss (lll_edi)",
+        &["data/chr/edi/lll_edi.mdl"],
+        &["data/chr/edi/lll_edi.anm"],
+    );
 
     let mut combat_arena = sh2_core::combat::CombatArena::new();
     // Only pre-equip the Wooden Plank inside the CombatArena test room; Campaign starts unarmed.
@@ -268,6 +287,20 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         );
     }
 
+    // Upload authentic retail PS2/PC Effect2 dust atlas (`data/pic/effect/playable0.tbn2`) (`SH2-98`)
+    if let Ok(dust_tex) = tex_loader.load_texture("pic/effect/playable0.tbn2") {
+        render_ctx.upload_dust_texture(
+            &dust_tex.rgba,
+            dust_tex.width as u32,
+            dust_tex.height as u32,
+        );
+        tracing::info!(
+            "Uploaded retail playable0.tbn2 ({}x{}) to airborne dust mote pipeline.",
+            dust_tex.width,
+            dust_tex.height
+        );
+    }
+
     let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
     let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Menu Blit Uniform Buffer"),
@@ -289,6 +322,38 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
                 Some("Konami Splash Texture"),
             )
         });
+
+    let load_boot_logo = |path: &str, label: &str| {
+        tex_loader.load_texture(path).ok().map(|t| {
+            render_ctx.create_blitter_bind_group(
+                &blitter,
+                t.width as u32,
+                t.height as u32,
+                &t.rgba,
+                &menu_uniform_buffer,
+                Some(label),
+            )
+        })
+    };
+    let boot_logo_bgs = [
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::CesaWarning.asset_path(),
+            "CESA Warning Texture",
+        ),
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::SceWarning.asset_path(),
+            "SCE Warning Texture",
+        ),
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::KonamiLogo.asset_path(),
+            "Konami Boot Logo Texture",
+        )
+        .or_else(|| splash_konami_bg.clone()),
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::SplashLogo.asset_path(),
+            "Splash Logo Texture",
+        ),
+    ];
 
     let splash_title_bg = tex_loader
         .load_texture("pic/etc/start00.tex")
@@ -545,6 +610,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         blit_bind_group,
         splash_konami_bg,
         splash_title_bg,
+        boot_logo_bgs,
         menu_uniform_buffer,
         menu_text_texture,
         menu_text_bind_group,
@@ -565,6 +631,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         story_progression_room: rooms::story_progression_room::StoryProgressionRoomState::default(),
         loading_screen_test: rooms::loading_screen_room::LoadingScreenTestState::default(),
         sim_core,
+        gamepad: GilrsGamepadPoller::new(),
         gpu_map,
         map_hd_assets,
         map_sh2e_assets,
@@ -589,12 +656,17 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         screen_fog_state: sh2_renderer::fog::ScreenFogState::default(),
         last_screen_fog_cam: glam::Vec3::ZERO,
         fog_blow_system: sh2_renderer::fog::FogBlowSystem::new(),
+        dust_system: sh2_core::lighting::DustSystem::new(),
+        dust_particle_scratch: Vec::with_capacity(sh2_renderer::effects::MAX_GPU_DUST_PARTICLES),
+        dust_spotlight: sh2_core::lighting::DustSpotlightParams::default(),
         jms_spot_man: sh2_renderer::light::JmsSpotManager::new(),
         char_light_pool: sh2_renderer::light::CharacterLightPool::new(),
         last_fog_time: 0.0,
         last_fog_blow_tick: 0,
+        last_dust_tick: 0,
         menu_ctrl,
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),
+        campaign_credits_seq: None,
         combat_arena,
         enemy_scu_asset,
         enemy_mkn_asset,
@@ -605,6 +677,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         enemy_arm_asset,
         enemy_tyu_asset,
         enemy_bos_asset,
+        enemy_xoo_asset,
+        enemy_oni_asset,
+        enemy_edi_asset,
         key_ready_held: false,
         key_attack_pressed: false,
         key_attack_held: false,

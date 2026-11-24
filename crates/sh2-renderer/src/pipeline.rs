@@ -172,10 +172,13 @@ fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
         discard;
     }
 
-    // Ambient term (with pre-lit skybox/vista boost when vertex normal is zero-length, stride == 0x14)
+    // Ambient floor from `SLUS_202.28` `DrawEnvData::base_ambient` (`+0x1c0` -> `DAT_002ad900` = `0x3d3851ec` = `0.045f`
+    // in `SetupDrawEnvData` `0x00251370`, `sh2gfw_setparal3LGT_blk` `0x0017d7f0`, `sh2gfw_setsp1para2LGT_blk` `0x0017ddd0`).
+    // Pre-lit skybox/vista geometry (`stride == 0x14`, `has_normal == false`) uses `0.045 * 4.0 = 0.18`
+    // (`PS2_VU1_WORLD_LIGHT_SCALE = 0x40800000 = 4.0f` in `0x0017d7f0` / `0x0017ddd0`).
     let n_len = length(in.normal);
     let has_normal = n_len > 1e-4;
-    let base_ambient = select(vec3<f32>(0.18, 0.19, 0.21), vec3<f32>(0.07, 0.075, 0.085), has_normal);
+    let base_ambient = select(vec3<f32>(0.18, 0.18, 0.18), vec3<f32>(0.045, 0.045, 0.045), has_normal);
 
     // Dynamic Spotlight calculation matching dbg_spotL_ctl
     let light_to_frag = in.world_pos - spotlight.position.xyz;
@@ -244,6 +247,8 @@ fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
     let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x);
     let dark_trim_scale = 1.0 + spotlight.gun_and_dark_trim.y * spotlight.gun_and_dark_trim.z;
 
+    // `shade_mode >= 1` is exclusively the non-PS2 Model Viewer / Studio inspection rig;
+    // Vanilla PS2 gameplay (`shade_mode == 0`) uses `base_ambient` (`0.045` / `0.18`) directly.
     let shade_mode = i32(round(camera.cam_pos.w));
     let studio_ambient = select(base_ambient, vec3<f32>(0.22, 0.23, 0.25), shade_mode >= 1);
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
@@ -646,5 +651,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         });
 
         Self { pipeline }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GeometryPipeline;
+
+    #[test]
+    fn map_shader_uses_slus_draw_env_base_ambient_002ad900() {
+        let src = GeometryPipeline::WGSL_SHADER;
+        assert!(src.contains("vec3<f32>(0.045, 0.045, 0.045)"));
+        assert!(src.contains("vec3<f32>(0.18, 0.18, 0.18)"));
+        assert!(!src.contains("0.07, 0.075, 0.085"));
+        assert!(!src.contains("0.18, 0.19, 0.21"));
     }
 }

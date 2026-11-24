@@ -50,6 +50,11 @@ pub(crate) fn sync_host_input_and_handoffs(state: &mut AppState) {
         state.key_run_held && !cutscene_locked,
         state.key_ready_held && !cutscene_locked,
     );
+    let gamepad_snapshot = state.gamepad.poll();
+    state
+        .sim_core
+        .input
+        .set_host_gamepad_state(gamepad_snapshot);
     state
         .sim_core
         .sync_cutscene_handoff(state.drama_demo_session.as_ref().map(|s| &s.player));
@@ -61,6 +66,22 @@ pub(crate) fn sync_host_input_and_handoffs(state: &mut AppState) {
 /// for First-Person head-bone eye anchoring and updates foreground `PlayerMeshVisibility` (`SH2-93`).
 pub(crate) fn sync_player_pose_and_visibility(state: &mut AppState) {
     let visibility = state.sim_core.player_mesh_visibility();
+    let is_dds_cutscene_active = state
+        .drama_demo_session
+        .as_ref()
+        .is_some_and(|s| s.player.locks_gameplay_input());
+    let enable_cutscene_unequip = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .enable_cutscene_unequip;
+    let right_hand_pose = sh2_core::effective_right_hand_pose(
+        state.combat_arena.player.weapon,
+        enable_cutscene_unequip,
+        is_dds_cutscene_active,
+    );
+
     if let Some(ref mut jms) = state.character {
         let vis = if state.active_maria && state.maria.is_some() {
             PlayerMeshVisibility::FullBody
@@ -72,6 +93,8 @@ pub(crate) fn sync_player_pose_and_visibility(state: &mut AppState) {
         // is only shown when James possesses the flashlight item (`item 0x12`, Wood Side Apt Rm 205).
         jms.gpu_mesh
             .set_pose_visible(0x15, state.sim_core.scenario.has_flashlight());
+        // `PlayerCheckModelParts` (`0x001098d0`) + `CutsceneUnequip` (`RemoveWeaponFromCutscene.cpp`).
+        jms.gpu_mesh.set_right_hand_pose(right_hand_pose);
     }
     if let Some(ref mut mar) = state.maria {
         let vis = if state.active_maria {
@@ -531,6 +554,22 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
             + spot_uniforms.color_outer[1]
             + spot_uniforms.color_outer[2])
             > 0.01;
+    state.dust_spotlight = sh2_core::lighting::DustSpotlightParams {
+        enabled: has_active_spotlight_cone,
+        position_mm: glam::Vec3::new(
+            spot_uniforms.position[0],
+            spot_uniforms.position[1],
+            spot_uniforms.position[2],
+        ),
+        direction: glam::Vec3::new(
+            spot_uniforms.direction_inner[0],
+            spot_uniforms.direction_inner[1],
+            spot_uniforms.direction_inner[2],
+        )
+        .normalize_or(glam::Vec3::NEG_Z),
+        outer_cos: spot_uniforms.color_outer[3],
+        range_mm: spot_uniforms.fill_and_range[1],
+    };
     let effective_shadow_mode = if has_active_spotlight_cone {
         video.shadow_quality
     } else {

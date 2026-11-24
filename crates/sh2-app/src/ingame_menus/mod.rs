@@ -8,6 +8,7 @@
 //! room BGM playback (`PatchInventoryBGM.cpp` @ `0x005166e8`).
 
 mod actions;
+mod save_load;
 
 use actions::{
     apply_inventory_action, ensure_examine_tex_loaded, ensure_item_atlas_loaded,
@@ -17,6 +18,8 @@ pub(crate) use actions::{
     build_player_snapshot, ensure_gameover_tex_loaded, ensure_red_cross_tex_loaded,
     ensure_savebg_loaded,
 };
+use save_load::handle_save_load_key;
+pub(crate) use save_load::open_save_load;
 
 use winit::keyboard::KeyCode;
 
@@ -84,12 +87,13 @@ pub(crate) struct InGameMenuState {
 }
 
 impl InGameMenuState {
-    /// Returns `true` if Inventory, Paper Map, Memo Reader, or Inventory->Options is open.
+    /// Returns `true` if Inventory, Paper Map, Memo Reader, Save/Load, or Inventory->Options is open.
     pub fn is_any_open(&self) -> bool {
         self.inventory.is_open
             || self.map_viewer.is_open
             || self.memo_reader.is_open
             || self.options_from_inventory
+            || self.save_load.is_some()
     }
 
     /// Closes all single-screen in-game menus cleanly (e.g. when returning to Main Menu).
@@ -99,9 +103,10 @@ impl InGameMenuState {
         self.memo_reader.close();
         self.held_map_pan = [false; 4];
         self.options_from_inventory = false;
+        self.save_load = None;
     }
 
-    /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/pan/transcription, memo dim).
+    /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/pan/transcription, memo dim, save/load blink).
     pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) {
         if self.inventory.is_open {
             self.inventory.tick(dt, snapshot);
@@ -116,6 +121,9 @@ impl InGameMenuState {
         }
         if self.memo_reader.is_open {
             self.memo_reader.tick(dt);
+        }
+        if let Some(ref mut sl) = self.save_load {
+            sl.tick(dt);
         }
     }
 }
@@ -277,6 +285,11 @@ pub(crate) fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed:
         return;
     }
 
+    if state.ingame_menus.save_load.is_some() {
+        handle_save_load_key(state, key_code);
+        return;
+    }
+
     if state.ingame_menus.map_viewer.is_open {
         let nav = key_to_nav(key_code, true, false);
         if let Some(nav) = nav {
@@ -418,6 +431,17 @@ pub(crate) fn render_overlay(
         let vp = state.ps2_ui_viewport();
         state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
         return;
+    } else if state.ingame_menus.save_load.is_some() {
+        let scenario = state.menu_ctrl.title_sm.selected_scenario;
+        ensure_savebg_loaded(state, scenario);
+        let bg = state
+            .ingame_menus
+            .cached_savebg_tex
+            .as_ref()
+            .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
+        if let Some(ref sl) = state.ingame_menus.save_load {
+            sh2_ui::draw_save_load_screen(sl, bg, font, &mut state.menu_rasterizer);
+        }
     } else if state.ingame_menus.map_viewer.is_open {
         let cur_id = state.ingame_menus.map_viewer.current_map_id;
         let sheet = state

@@ -10,6 +10,7 @@ pub mod cld;
 pub mod cls;
 pub mod demo;
 pub mod dxt;
+pub mod enemy_rig;
 pub mod kg;
 pub mod map;
 pub mod mdls;

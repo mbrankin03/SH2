@@ -34,8 +34,9 @@ pub mod world;
 // Re-exports for convenience
 pub use animation::{
     AnimationClip, AnimationStateKind, BlendMode, CharacterAnimationController,
-    CharacterLocomotionClips, JamesBasicClips, JamesStageClips, LocomotionAnimCommand,
-    LocomotionAnimationSync, MariaLocomotionClips,
+    CharacterLocomotionClips, HeadLookTracker, JamesBasicClips, JamesStageClips,
+    LocomotionAnimCommand, LocomotionAnimationSync, LookTargetCandidate, LookTargetKind,
+    MariaLocomotionClips,
 };
 pub use camera::{CameraMovementType, CameraSnapshot, CameraSourceKind, Ps2CameraController};
 pub use campaign::{
@@ -55,20 +56,21 @@ pub use combat::{
     aim_turn_toward_target, check_guard_success, cycle_auto_aim_target, find_near_deadly_target,
     generate_hyper_spray_rays, generate_shotgun_cone_rays, get_attack_spec,
     hyper_spray_effective_range, is_guardable_attack, select_auto_aim_target, AttackDispatchKind,
-    AttackSpec, CombatArena, CombatController, CombatHitbox, CombatMode, CombatRng, GuardState,
-    HyperSprayColor, SweptBladeQuad, TargetCandidate, WeaponGrip, ATK_CHAINSAW_LIGHT,
-    ATK_CHAINSAW_THRUST, ATK_GREAT_KNIFE_OVERHEAD_1, ATK_GREAT_KNIFE_OVERHEAD_2,
-    ATK_GREAT_KNIFE_SWING_1, ATK_GREAT_KNIFE_SWING_2, ATK_HANDGUN, ATK_HANDGUN_STANDING,
-    ATK_HUNTING_RIFLE, ATK_HYPER_SPRAY_1, ATK_HYPER_SPRAY_2, ATK_KICKS, ATK_MARIA_CLEAVER_COMBO,
-    ATK_MARIA_CLEAVER_HEAVY, ATK_MARIA_CLEAVER_LIGHT, ATK_MARIA_REVOLVER_1, ATK_MARIA_REVOLVER_2,
-    ATK_PIPE_COMBO, ATK_PIPE_LUNGE, ATK_PIPE_OVERHEAD, ATK_PIPE_SWING, ATK_PLANK_COMBO,
-    ATK_PLANK_HEAVY, ATK_PLANK_LIGHT, ATK_SHOTGUN, ATK_STOMPS, SH2_ATTACK_LIST,
+    AttackSpec, CombatArena, CombatController, CombatHitbox, CombatInputSnapshot, CombatMode,
+    CombatRng, GuardState, HyperSprayColor, SweptBladeQuad, TargetCandidate, WeaponGrip,
+    ATK_CHAINSAW_LIGHT, ATK_CHAINSAW_THRUST, ATK_GREAT_KNIFE_OVERHEAD_1,
+    ATK_GREAT_KNIFE_OVERHEAD_2, ATK_GREAT_KNIFE_SWING_1, ATK_GREAT_KNIFE_SWING_2, ATK_HANDGUN,
+    ATK_HANDGUN_STANDING, ATK_HUNTING_RIFLE, ATK_HYPER_SPRAY_1, ATK_HYPER_SPRAY_2, ATK_KICKS,
+    ATK_MARIA_CLEAVER_COMBO, ATK_MARIA_CLEAVER_HEAVY, ATK_MARIA_CLEAVER_LIGHT,
+    ATK_MARIA_REVOLVER_1, ATK_MARIA_REVOLVER_2, ATK_PIPE_COMBO, ATK_PIPE_LUNGE, ATK_PIPE_OVERHEAD,
+    ATK_PIPE_SWING, ATK_PLANK_COMBO, ATK_PLANK_HEAVY, ATK_PLANK_LIGHT, ATK_SHOTGUN, ATK_STOMPS,
+    HOLD_TIMER_THRESHOLD, PS2_PRESSURE_HEAVY_THRESHOLD, SH2_ATTACK_LIST,
 };
 pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
-    AudioPackSource, BulletMultiplier, ButtonGlyphStyle, ControlOptions, EnhancedPreset,
-    FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution, LightingProfile,
-    OutdoorStreamingMode, RiddleDifficulty, ShadowQualityMode, SpatialAudioMode,
+    AudioPackSource, BulletMultiplier, ButtonGlyphStyle, CombatInputMode, ControlOptions,
+    EnhancedPreset, FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution,
+    LightingProfile, OutdoorStreamingMode, RiddleDifficulty, ShadowQualityMode, SpatialAudioMode,
     SpeakerConfiguration, VideoOptions, WindowDisplayMode, WorldTextureQuality,
 };
 pub use cutaway::{
@@ -80,19 +82,19 @@ pub use cutaway::{
 pub use cutscene::{
     authored_4x3_fov_radians, camera_basis_vectors, compute_widescreen_scr_z,
     demo_fov_scale_for_demo_no, demo_light_decay_bounds, derive_demo_actor_anm_and_cls_paths,
-    evaluate_eddie_boss_death_blur, evaluate_hei_lau_widescreen_entry,
+    effective_right_hand_pose, evaluate_eddie_boss_death_blur, evaluate_hei_lau_widescreen_entry,
     evaluate_mary_boss_blur_factor, evaluate_meeting_maria_fog_counters, find_drama_demo_anim_info,
     find_drama_demo_by_id, find_drama_demo_by_no, is_sphere_inside_4x3_frustum,
     observation_deck_border_alpha_factor, observation_deck_fog_bounds_x,
     observation_deck_wrap_particle_x, resolve_cutscene_room_id, should_cull_parked_offscreen_actor,
-    ActorBoundingSphere, AtmosphereEvalInput, AtmosphereGradingEvaluation, ClosetCutsceneFixState,
-    ClosetDoorReplacementState, CutsceneActorRuntime, CutsceneBorderMode, CutsceneCameraSnapshot,
-    CutsceneSequenceStep, CutsceneWidescreenMode, DramaDemoAnimInfo, DramaDemoPlayInfo,
-    DramaDemoPlayer, DramaDemoStep, FinalBossRoomFixState, HeiLauWidescreenEntryState,
-    MotionBlurRampWindow, PistonArrayRuntime, PistonAxisDir, PistonRoomFixState,
-    ScreenTransitionState, SpecialFxEvalInput, SpecialFxEvaluation, SubtitleWindow,
-    TreeLightingMode, ANGELA_ABSTRACT_DADDY_BLUR_RAMPS, AUTHORED_4X3_ASPECT,
-    CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME, CLOSET_BLURRED_BARS_HIDE_CAM_X,
+    should_unequip_weapon_in_cutscene, ActorBoundingSphere, AtmosphereEvalInput,
+    AtmosphereGradingEvaluation, ClosetCutsceneFixState, ClosetDoorReplacementState,
+    CutsceneActorRuntime, CutsceneBorderMode, CutsceneCameraSnapshot, CutsceneSequenceStep,
+    CutsceneWidescreenMode, DramaDemoAnimInfo, DramaDemoPlayInfo, DramaDemoPlayer, DramaDemoStep,
+    FinalBossRoomFixState, HeiLauWidescreenEntryState, MotionBlurRampWindow, PistonArrayRuntime,
+    PistonAxisDir, PistonRoomFixState, ScreenTransitionState, SpecialFxEvalInput,
+    SpecialFxEvaluation, SubtitleWindow, TreeLightingMode, ANGELA_ABSTRACT_DADDY_BLUR_RAMPS,
+    AUTHORED_4X3_ASPECT, CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME, CLOSET_BLURRED_BARS_HIDE_CAM_X,
     CLOSET_BLURRED_BARS_ORIG_DESPAWN_FRAME, CLOSET_BONUS_AUDIO_TRIGGER_FRAME,
     CLOSET_BONUS_AUDIO_WAV_PATH, CLOSET_DARKENED_AMBIENT_SCALE, CLOSET_DISABLE_FLASHLIGHT_CAM_X,
     CLOSET_DISABLE_SHADOW_CAM_X, CLOSET_DOOR_HIDE_END_FRAME, CLOSET_DOOR_HIDE_START_FRAME,
@@ -110,8 +112,8 @@ pub use cutscene::{
     FLESH_LIPS_CUTSCENE_MOTION_BLUR_FACTOR, FLESH_LIPS_DEATH_MOTION_BLUR_FACTOR,
     HEI_LAU_JAMES_AUTHORED_WALK_START_FRAME, HEI_LAU_JAMES_PREROLL_START_FRAME,
     HEI_LAU_JAMES_WALK_VELOCITY_PER_FRAME, HOTEL_ROOM_312_SUNSET_TINT_RGB,
-    MARIA_ENDING_HORIZON_FOG_RGB, MARIA_JAIL_CELL_BLUR_FACTORS, MARY_BOSS_BLUR_SCALE,
-    MEETING_MARIA_FOG_COUNTER_ONE_FIXED, MEETING_MARIA_FOG_COUNTER_ONE_ORIG,
+    JAMES_EMPTY_RIGHT_HAND_POSE, MARIA_ENDING_HORIZON_FOG_RGB, MARIA_JAIL_CELL_BLUR_FACTORS,
+    MARY_BOSS_BLUR_SCALE, MEETING_MARIA_FOG_COUNTER_ONE_FIXED, MEETING_MARIA_FOG_COUNTER_ONE_ORIG,
     MEETING_MARIA_FOG_COUNTER_TWO_FIXED, MEETING_MARIA_FOG_COUNTER_TWO_ORIG,
     OBSERVATION_DECK_FOG_BORDER_WIDTH, OBSERVATION_DECK_FOG_PARTICLE_MAX,
     OBSERVATION_DECK_ORIG_MAX_POS_X, OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X,
@@ -200,8 +202,8 @@ pub use fog::{
     R_FOREST_CEMETERY_ID, R_OBSV_DECK_ID, R_TOWN_EAST_ID, R_TOWN_WEST_ID,
 };
 pub use input::{
-    ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,
-    InputManager,
+    ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, GamepadSnapshot,
+    HapticFeedback, InputManager,
 };
 pub use inventory::{
     combine_items, item_combination_use_check, item_metadata, HealResult, InventoryManager,

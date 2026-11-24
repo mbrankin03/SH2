@@ -54,14 +54,28 @@ fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
     }
     if state.sim_core.footstep_triggered_since_last_poll {
         state.sim_core.footstep_triggered_since_last_poll = false;
+        let is_running = state.sim_core.last_locomotion.state.is_running();
         if let (Some(eng), Some(bank)) = (state.audio_engine.as_mut(), state.audio_bank.as_mut()) {
             let _ = bank.play_footstep(
                 eng,
                 state.active_maria,
                 state.sim_core.active_floor_material,
-                state.sim_core.last_locomotion.state.is_running(),
+                is_running,
                 state.sim_core.last_locomotion.footstep_volume,
             );
+        }
+        // Kick up `Effect2/hh_class_raise_dust_phenomenon_00.c` (`0x0025b2e0`) airborne dust motes
+        // on running footsteps using exact `HH_Effect_Object_Ground_Impact_Post` (`0x0025aa30`
+        // line 221: `y - 50.0`) and `HH_Class_Plural_Phenomenon_01` (`0x00286ea0` line 216,
+        // `0x0037b490`: `[0.0, -2500.0, 0.0]`).
+        if is_running {
+            let spawn_pos = p_pos
+                + glam::Vec3::new(0.0, sh2_core::lighting::GROUND_IMPACT_FOOT_Y_OFFSET_MM, 0.0);
+            let impact_vel =
+                glam::Vec3::from_array(sh2_core::lighting::PLURAL_PHENOMENON_RAISE_DUST_VEL);
+            state
+                .dust_system
+                .spawn_raise_dust(spawn_pos, impact_vel, p_pos.y);
         }
     }
 }
@@ -102,24 +116,37 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             struggle_presses = 0;
         }
 
+        state
+            .combat_arena
+            .player
+            .apply_control_options(&state.menu_ctrl.options_menu.draft_config.controls);
+
+        let r2 = state.sim_core.input.state.r2_analog_pressure;
+        let attack_pressure = (r2 > 0.0).then(|| (r2 * 255.0).round().clamp(1.0, 255.0) as u8);
+        let combat_input = sh2_core::combat::CombatInputSnapshot {
+            ready_held,
+            action_pressed: atk_pressed,
+            action_held: atk_held,
+            has_downed_enemy_nearby: false,
+            is_running: state.sim_core.last_locomotion.state.is_running()
+                || state.sim_core.input.state.is_running,
+            attack_pressure,
+            native_light_pressed: state.sim_core.input.state.native_light_attack_pressed,
+            native_heavy_pressed: state.sim_core.input.state.native_heavy_attack_pressed,
+        };
+
         if state.campaign_orchestrator.is_some() {
-            state.combat_arena.tick_with_collision(
-                ready_held,
-                atk_pressed,
-                atk_held,
+            state.combat_arena.tick_with_collision_input(
+                combat_input,
                 Some(&state.sim_core.collision),
                 tick_dt,
             );
             let boss_events = state.combat_arena.ai.consume_boss_events();
             state.sim_core.scenario.apply_boss_events(&boss_events);
         } else {
-            state.combat_arena.tick_isolated(
-                ready_held,
-                atk_pressed,
-                atk_held,
-                tick_dt,
-                state.combat_enemy_idx,
-            );
+            state
+                .combat_arena
+                .tick_isolated_input(combat_input, tick_dt, state.combat_enemy_idx);
         }
         atk_pressed = false;
 

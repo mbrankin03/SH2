@@ -117,6 +117,39 @@ impl StageProgramRunner {
         self.triggered_ending
     }
 
+    /// Consumes and returns any cutscene demo ID requested by `p_demo`.
+    pub fn take_requested_demo(&mut self) -> Option<u32> {
+        self.requested_demo.take()
+    }
+
+    /// Consumes and returns any ending bit triggered by `p_game_end`.
+    pub fn take_triggered_ending(&mut self) -> Option<u8> {
+        self.triggered_ending.take()
+    }
+
+    /// Resolves the retail `sh2pc.exe` `ev_prog` function VA for `(stage, prog_no)` from
+    /// `stages_act1::act1_stage_descriptor` (`ev_prog_addrs`) or `stages_act2::stage_table_act2`
+    /// (`ev_prog_vas`). Returns `None` if `prog_no == 0` or the entry is null/out-of-bounds.
+    #[must_use]
+    pub fn resolve_ev_prog_va(stage: u8, prog_no: u8) -> Option<u32> {
+        let idx = usize::from(prog_no);
+        if idx == 0 {
+            return None;
+        }
+        let va = if stage <= 27 {
+            super::stages_act1::act1_stage_descriptor(stage)?
+                .ev_prog_addrs
+                .get(idx)
+                .copied()?
+        } else {
+            super::stages_act2::stage_table_act2(u16::from(stage))?
+                .ev_prog_vas
+                .get(idx)
+                .copied()?
+        };
+        (va != 0).then_some(va)
+    }
+
     /// Advances the active stage program by one frame (`dt` seconds, `down` newly pressed keys,
     /// `held` currently held keys). Returns `true` while the program continues running, or `false`
     /// when the program finishes (setting `completion_flag` if `flag_set` is still `true`).
@@ -138,7 +171,7 @@ impl StageProgramRunner {
         };
 
         let finished = match (p.stage, p.prog_no) {
-            // Stage 2 #1: Opening observation deck restroom start (s02_game_start)
+            // Stage 2 #1: Opening observation deck restroom start (s02_game_start, `0x005a14a0`)
             (2, 1) => {
                 p.locked = true;
                 self.requested_demo = Some(201);
@@ -146,6 +179,46 @@ impl StageProgramRunner {
                 p.locked = false;
                 true
             }
+            // Stage 2 #3: Restroom stall / door prompt (`0x005a1710`: `EvSubMessage(5)` / `EvSubQuestion(1)`)
+            (2, 3) => match p.step {
+                0 => {
+                    p.locked = true;
+                    p.flag_set = false;
+                    self.active_message_id = Some(5);
+                    p.step = 1;
+                    false
+                }
+                1 => {
+                    if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
+                        self.active_message_id = None;
+                        p.locked = false;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => true,
+            },
+            // Stage 2 #4: Restroom mirror inspection (`0x005a1830`: `EvSubMessage(6)`)
+            (2, 4) => match p.step {
+                0 => {
+                    p.locked = true;
+                    p.flag_set = false;
+                    self.active_message_id = Some(6);
+                    p.step = 1;
+                    false
+                }
+                1 => {
+                    if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
+                        self.active_message_id = None;
+                        p.locked = false;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => true,
+            },
             // Stage 3 #1: Observation deck car map pickup (s03_item_in_car, 0x5a0bd0)
             // Displays out_p_incar with out/p_incar_map sprite, waits for button, fades map over 1.0s
             // with SE 0x2b17, shows message 49 ("Got the map of Silent Hill."), and sets flag 28.
@@ -480,7 +553,33 @@ impl StageProgramRunner {
                 self.sound_effects.push(0x2b21);
                 true
             }
+            // Stage 48 (`stage_end_recovery` / Leave ending, `STAGE_END_RECOVERY_PROGS`)
+            (48, 1..=4) => {
+                self.triggered_ending = Some(0x01);
+                true
+            }
+            // Stage 49 (`stage_end_maria` / Maria ending, `STAGE_END_MARIA_PROGS`)
+            (49, 1..=2) => {
+                self.triggered_ending = Some(0x02);
+                true
+            }
+            // Stage 50 (`stage_end_suicide` / In Water ending, `STAGE_END_SUICIDE_PROGS`)
+            (50, 1..=4) => {
+                self.triggered_ending = Some(0x04);
+                true
+            }
+            // Stage 51 (`stage_end_rebirth` / Rebirth ending, `STAGE_END_REBIRTH_PROGS`)
+            (51, 1..=2) => {
+                self.triggered_ending = Some(0x08);
+                true
+            }
+            // Stage 52 (`stage_end_dog` / Dog ending, `0x00574430`)
+            (52, 1) => {
+                self.triggered_ending = Some(0x10);
+                true
+            }
             _ => {
+                let _va = Self::resolve_ev_prog_va(p.stage, p.prog_no);
                 let _ = riddle;
                 true
             }

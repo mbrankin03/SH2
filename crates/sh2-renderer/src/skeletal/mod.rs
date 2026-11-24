@@ -7,6 +7,7 @@ pub mod material;
 mod mesh;
 mod pipeline;
 mod shader;
+pub mod socket;
 pub mod specular;
 
 pub use body_region::{
@@ -30,6 +31,11 @@ pub use mesh::{
     GpuSkeletalMesh, GpuSkeletalPrimitive, SkeletalVertex, SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
 pub use pipeline::{SkeletalPassStage, SkeletalPipeline};
+pub use socket::{
+    compute_attachment_skin_matrix, enemy_sockets_for, evaluate_socket_world,
+    set_enemy_weapon_visible, EnemyModelKey, EnemyModelSpec, EvaluatedSocket, SkeletalSocketKind,
+    WeaponSocketSpec, ENEMY_MODEL_SPECS,
+};
 pub use specular::{
     composite_gs_specular, compute_sphere_map_uv, environ_packet_alpha,
     generate_specular_sphere_map_rgba, ENVIRON_PACKET_RGB_U8, GS_ALPHA_1_SPECULAR_DAY,

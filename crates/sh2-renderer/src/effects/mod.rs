@@ -2,8 +2,11 @@
 //! - [`lens_flare`]: Additive screen-space 7-sprite halo flares (`lens_flare.tbn2`).
 //! - [`spray_mist`]: Alpha-blended 3D billboard clouds for Hyper Spray & Lying Figure mist.
 
+pub mod dust;
 pub mod lens_flare;
 pub mod spray_mist;
+
+pub use dust::{DustParticlePipeline, GpuDustParticle, MAX_GPU_DUST_PARTICLES};
 
 pub use lens_flare::{
     apply_ps2_lens_flare_smoothing, generate_procedural_lens_flare_rgba, GpuLensFlareQuad,

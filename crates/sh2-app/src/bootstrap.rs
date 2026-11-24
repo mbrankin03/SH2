@@ -287,6 +287,20 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         );
     }
 
+    // Upload authentic retail PS2/PC Effect2 dust atlas (`data/pic/effect/playable0.tbn2`) (`SH2-98`)
+    if let Ok(dust_tex) = tex_loader.load_texture("pic/effect/playable0.tbn2") {
+        render_ctx.upload_dust_texture(
+            &dust_tex.rgba,
+            dust_tex.width as u32,
+            dust_tex.height as u32,
+        );
+        tracing::info!(
+            "Uploaded retail playable0.tbn2 ({}x{}) to airborne dust mote pipeline.",
+            dust_tex.width,
+            dust_tex.height
+        );
+    }
+
     let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
     let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Menu Blit Uniform Buffer"),
@@ -642,10 +656,14 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         screen_fog_state: sh2_renderer::fog::ScreenFogState::default(),
         last_screen_fog_cam: glam::Vec3::ZERO,
         fog_blow_system: sh2_renderer::fog::FogBlowSystem::new(),
+        dust_system: sh2_core::lighting::DustSystem::new(),
+        dust_particle_scratch: Vec::with_capacity(sh2_renderer::effects::MAX_GPU_DUST_PARTICLES),
+        dust_spotlight: sh2_core::lighting::DustSpotlightParams::default(),
         jms_spot_man: sh2_renderer::light::JmsSpotManager::new(),
         char_light_pool: sh2_renderer::light::CharacterLightPool::new(),
         last_fog_time: 0.0,
         last_fog_blow_tick: 0,
+        last_dust_tick: 0,
         menu_ctrl,
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),
         campaign_credits_seq: None,

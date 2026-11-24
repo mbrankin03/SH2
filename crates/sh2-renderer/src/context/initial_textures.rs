@@ -21,6 +21,8 @@ pub(super) struct InitialTextures {
     pub lens_flare_view: wgpu::TextureView,
     pub spray_mist_texture: wgpu::Texture,
     pub spray_mist_view: wgpu::TextureView,
+    pub dust_texture: wgpu::Texture,
+    pub dust_view: wgpu::TextureView,
     pub specular_sphere_texture: wgpu::Texture,
     pub specular_sphere_view: wgpu::TextureView,
     pub specular_sphere_sampler: wgpu::Sampler,
@@ -237,6 +239,41 @@ pub(super) fn create_initial_textures(
     );
     let spray_mist_view = spray_mist_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+    let dust_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Airborne Dust Mote Texture (playable0.tbn2 fallback)"),
+        size: wgpu::Extent3d {
+            width: fog_noise_size,
+            height: fog_noise_size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &dust_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &fog_noise_rgba,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(fog_noise_size * 4),
+            rows_per_image: Some(fog_noise_size),
+        },
+        wgpu::Extent3d {
+            width: fog_noise_size,
+            height: fog_noise_size,
+            depth_or_array_layers: 1,
+        },
+    );
+    let dust_view = dust_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
     // 1:1 PS2/PC 64x64 sphere-map specular texture (`mdl_SpecularMappingMakeTexture` @ 0x0012f0c0)
     let spec_dim = skeletal::SPECULAR_SPHERE_MAP_DIM;
     let spec_rgba = skeletal::generate_specular_sphere_map_rgba();
@@ -303,6 +340,8 @@ pub(super) fn create_initial_textures(
         lens_flare_view,
         spray_mist_texture,
         spray_mist_view,
+        dust_texture,
+        dust_view,
         specular_sphere_texture,
         specular_sphere_view,
         specular_sphere_sampler,

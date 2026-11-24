@@ -204,6 +204,26 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     state
         .render_ctx
         .update_fog_particles(&state.fog_particle_scratch);
+
+    // Step `Effect2/hh_class_dust_00.c` (`0x00257f30`) airborne dust motes on fixed 60 Hz ticks
+    // and evaluate `HH_ClassWrapper_SpotLight_ColorRatio_Calculator` (`0x00269840`).
+    let dust_steps = curr_sim_tick.saturating_sub(state.last_dust_tick).min(6) as u32;
+    state.last_dust_tick = curr_sim_tick;
+    for _ in 0..dust_steps {
+        state.dust_system.tick(sh2_core::lighting::DUST_DT_60HZ);
+    }
+    state.dust_particle_scratch.clear();
+    for mote in &state.dust_system.motes {
+        state
+            .dust_particle_scratch
+            .push(sh2_renderer::effects::GpuDustParticle::from_mote(
+                mote,
+                &state.dust_spotlight,
+            ));
+    }
+    state
+        .render_ctx
+        .update_dust_particles(&state.dust_particle_scratch);
 }
 
 #[cfg(test)]

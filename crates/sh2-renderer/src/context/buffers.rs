@@ -16,6 +16,7 @@ pub(super) struct InitialBuffers {
     pub drop_shadow_buffer: wgpu::Buffer,
     pub lens_flare_buffer: wgpu::Buffer,
     pub spray_mist_buffer: wgpu::Buffer,
+    pub dust_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
     pub fog_particle_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
@@ -101,6 +102,14 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         mapped_at_creation: false,
     });
 
+    let dust_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Airborne Dust Mote Instance Buffer"),
+        size: (effects::MAX_GPU_DUST_PARTICLES * std::mem::size_of::<effects::GpuDustParticle>())
+            as wgpu::BufferAddress,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     let fog_uniforms = fog::FogUniforms {
         shadow_view_proj: initial_shadow_vp,
         ..fog::FogUniforms::default()
@@ -145,6 +154,7 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         drop_shadow_buffer,
         lens_flare_buffer,
         spray_mist_buffer,
+        dust_buffer,
         fog_buffer,
         fog_particle_buffer,
         post_buffer,

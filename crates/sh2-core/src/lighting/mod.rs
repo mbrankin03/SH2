@@ -5,6 +5,7 @@ pub mod character_light;
 pub mod darkness;
 pub mod draw_env;
 pub mod draw_env_tables;
+pub mod dust;
 pub mod fixes;
 pub mod hyper_spray;
 pub mod lens_flare;
@@ -27,6 +28,14 @@ pub use draw_env::{
     ENV_FLASH_OFF_POST_PICKUP, ENV_FLASH_OFF_PRE_PICKUP, FLAG_WOODSIDE_FLASHLIGHT_PICKUP,
 };
 pub use draw_env_tables::{StageDrawEnvTable, ALL_STAGE_DRAW_ENV_TABLES};
+pub use dust::{
+    evaluate_dust_motion, spotlight_color_ratio, DustMote, DustSpotlightParams, DustSystem,
+    DUST_AMBIENT_ALPHA_GS, DUST_BASE_HALF_EXTENT_MM, DUST_BASE_RGB_GS, DUST_BASE_RGB_NORM,
+    DUST_DT_60HZ, DUST_GRAVITY_Y_MM_S2, DUST_MOTION_INFO, DUST_RGBA_END, DUST_RGBA_START,
+    DUST_SCALE_END, DUST_SCALE_START, DUST_TOTAL_LIFETIME_SEC, DUST_UV_QUADRANTS,
+    DUST_VEL_XZ_SCALE, DUST_VEL_Y_SCALE, GROUND_IMPACT_FOOT_Y_OFFSET_MM, MAX_DUST_MOTES,
+    PLURAL_PHENOMENON_RAISE_DUST_VEL, RAISE_DUST_BURST_COUNT,
+};
 pub use fixes::{
     apply_draw_env_fixes, bfaw_attic_shadow_cutoff_y, evaluate_enemy_reveal_lighting,
     flashlight_wall_brightness_multiplier, is_halogen_fullbright_room,

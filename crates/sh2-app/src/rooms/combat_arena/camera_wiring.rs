@@ -554,6 +554,22 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
             + spot_uniforms.color_outer[1]
             + spot_uniforms.color_outer[2])
             > 0.01;
+    state.dust_spotlight = sh2_core::lighting::DustSpotlightParams {
+        enabled: has_active_spotlight_cone,
+        position_mm: glam::Vec3::new(
+            spot_uniforms.position[0],
+            spot_uniforms.position[1],
+            spot_uniforms.position[2],
+        ),
+        direction: glam::Vec3::new(
+            spot_uniforms.direction_inner[0],
+            spot_uniforms.direction_inner[1],
+            spot_uniforms.direction_inner[2],
+        )
+        .normalize_or(glam::Vec3::NEG_Z),
+        outer_cos: spot_uniforms.color_outer[3],
+        range_mm: spot_uniforms.fill_and_range[1],
+    };
     let effective_shadow_mode = if has_active_spotlight_cone {
         video.shadow_quality
     } else {

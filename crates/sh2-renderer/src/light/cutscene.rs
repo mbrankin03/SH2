@@ -22,7 +22,6 @@ use super::character_pool::{CharacterLightPool, CharacterLightType, MODEL3_LIGHT
 use super::jms_spot::{BASE_REFLECTION_HIGHLIGHT_RGB, DAYTIME_REFLECTION_HIGHLIGHT_SCALE};
 use super::uniforms::{
     compute_ps2_falloff_params, DemoPointLightParams, ParallelLightParams, SpotlightUniforms,
-    PS2_DEFAULT_FLASHLIGHT_NEAR_MM,
 };
 use crate::skeletal::ENVIRON_PACKET_RGB_U8;
 
@@ -42,7 +41,7 @@ const MAX_DEMO_PARALLEL_LIGHTS: usize = 2;
 pub struct CutsceneLightInput<'a> {
     /// Active room `DrawEnvData` preset (`lookup_draw_env` + `apply_draw_env_fixes`), if resolved.
     pub draw_env: Option<&'a DrawEnvData>,
-    /// All currently visible `.dds` dynamic lights (`DramaDemoPlayer::active_lights`).
+    /// Full `.dds` dynamic light slice (`DramaDemoPlayer::dds_lights`, preserving exact slot indices).
     pub demo_lights: &'a [DemoLightState],
     /// Atmospheric grading ambient tint `(R, G, B, scale)` from `DramaDemoPlayer::atmosphere`.
     pub ambient_tint: [f32; 4],
@@ -123,51 +122,56 @@ pub fn build_cutscene_light_uniforms(
         pool.set_reflection(7, view_dir, refl_color);
     }
 
-    // 2. Layer active `.dds` cutscene lights (`DramaDemoMain` `0x001b0f00` lines 444–551):
-    //    - Directional -> overrides parallel slots `1..=2` (`sh2gfw_Set_PallarelLight`, `slot + 1`)
-    //    - Point -> appended into slots `8..11` (`sh2gfw_Set_DemoPointLight`, up to 3 slots)
-    //    - Spot -> captured for `Spot1Parallel2` in dark rooms (`sh2gfw_Set_SpotLight`)
-    let mut demo_parallel_idx = 0usize;
-    let mut demo_point_idx = 0usize;
+    // 2. Layer `.dds` cutscene lights preserving exact `.dds` per-kind slot indices
+    //    (`DramaDemoMain` `0x001b0f00` lines 444–551):
+    //    - Point (`lVar5` in `0..3`) -> `sh2gfw_Set_DemoPointLight(..., lVar5, ...)` (`slots 8..11`)
+    //    - Spot (`lVar5`) -> `sh2gfw_Set_SpotLight` (`Spot1Parallel2` in dark rooms)
+    //    - Directional (`lVar5` in `0..2`) -> `sh2gfw_Set_PallarelLight(..., (int)lVar5 + 1)` (`slots 1..=2`)
+    let mut demo_point_slot = 0usize;
+    let mut demo_parallel_slot = 0usize;
     let mut active_demo_spot: Option<DemoLightState> = None;
 
     for &light in input.demo_lights {
-        if !light.visible {
-            continue;
-        }
-        let col = Vec3::from_array(light.color);
-        if col.max_element() <= 1e-4 {
-            continue;
-        }
         match light.kind {
-            DemoLightKind::Directional => {
-                if demo_parallel_idx < MAX_DEMO_PARALLEL_LIGHTS {
-                    let dir = (-Vec3::from_array(light.position)).normalize_or(Vec3::Y);
-                    pool.set_parallel(1 + demo_parallel_idx, dir, col);
-                    demo_parallel_idx += 1;
-                }
-            }
             DemoLightKind::Point => {
-                if demo_point_idx < MAX_DEMO_POINT_LIGHTS {
-                    let (near_mm, far_mm) = if light.decay[1] > light.decay[0] + 1.0 {
-                        (light.decay[0].max(0.0), light.decay[1])
-                    } else {
-                        sh2_core::demo_light_decay_bounds(light.decay[1])
-                    };
-                    pool.set_point(
-                        8 + demo_point_idx,
-                        Vec3::from_array(light.position),
-                        col,
-                        near_mm,
-                        far_mm,
-                    );
-                    demo_point_idx += 1;
+                let slot_idx = demo_point_slot;
+                demo_point_slot += 1;
+                if !light.visible || slot_idx >= MAX_DEMO_POINT_LIGHTS {
+                    continue;
                 }
+                let col = Vec3::from_array(light.color);
+                if col.max_element() <= 1e-4 {
+                    continue;
+                }
+                // `DramaDemoMain` (`0x001b0f00` lines 457–461) passes `decay[0]` (near) and `decay[1]` (far) directly.
+                pool.set_point(
+                    8 + slot_idx,
+                    Vec3::from_array(light.position),
+                    col,
+                    light.decay[0],
+                    light.decay[1],
+                );
             }
             DemoLightKind::Spot => {
-                if active_demo_spot.is_none() {
-                    active_demo_spot = Some(light);
+                if light.visible && active_demo_spot.is_none() {
+                    let col = Vec3::from_array(light.color);
+                    if col.max_element() > 1e-4 {
+                        active_demo_spot = Some(light);
+                    }
                 }
+            }
+            DemoLightKind::Directional => {
+                let slot_idx = demo_parallel_slot;
+                demo_parallel_slot += 1;
+                if !light.visible || slot_idx >= MAX_DEMO_PARALLEL_LIGHTS {
+                    continue;
+                }
+                let col = Vec3::from_array(light.color);
+                if col.max_element() <= 1e-4 {
+                    continue;
+                }
+                let dir = (-Vec3::from_array(light.position)).normalize_or(Vec3::Y);
+                pool.set_parallel(1 + slot_idx, dir, col);
             }
         }
     }
@@ -237,14 +241,12 @@ pub fn build_cutscene_light_uniforms(
             let l_pos = Vec3::from_array(spot.position);
             let l_tgt = Vec3::from_array(spot.interest);
             let dir = (l_tgt - l_pos).normalize_or(Vec3::Z);
-            let inner_cos = spot.cone[0].cos().clamp(0.1, 0.99);
-            let outer_cos = spot.cone[1].cos().clamp(0.05, 0.95);
-            let (near_mm, far_mm) = if spot.decay[1] > spot.decay[0] + 1.0 {
-                (spot.decay[0].max(0.0), spot.decay[1])
-            } else {
-                sh2_core::demo_light_decay_bounds(spot.decay[1])
-            };
-            let effective_far = far_mm.max(4500.0);
+            // `DramaDemoMain` (`0x001b0f00` lines 506–510) passes `decay[0]`/`decay[1]` and
+            // `cone[0]`/`cone[1]` directly to `sh2gfw_Set_SpotLight` (`0x0017d750`).
+            let inner_cos = spot.cone[0].cos();
+            let outer_cos = spot.cone[1].cos();
+            let near_mm = spot.decay[0];
+            let far_mm = spot.decay[1];
             SpotlightUniforms {
                 position: [l_pos.x, l_pos.y, l_pos.z, 1.0],
                 direction_inner: [dir.x, dir.y, dir.z, inner_cos],
@@ -255,11 +257,8 @@ pub fn build_cutscene_light_uniforms(
                     outer_cos,
                 ],
                 ambient_tint: scaled_ambient_tint,
-                fill_and_range: [0.0, effective_far, 0.0, 0.0],
-                ps2_falloff_params: compute_ps2_falloff_params(
-                    near_mm.max(PS2_DEFAULT_FLASHLIGHT_NEAR_MM * 0.25),
-                    effective_far,
-                ),
+                fill_and_range: [0.0, far_mm, 0.0, 0.0],
+                ps2_falloff_params: compute_ps2_falloff_params(near_mm, far_mm),
                 ..Default::default()
             }
         } else {

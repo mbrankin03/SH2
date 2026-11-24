@@ -178,7 +178,9 @@ impl SkeletalMaterialUniforms {
                 shininess,
             ],
             specular_cull: [spec_rgb[0], spec_rgb[1], spec_rgb[2], cull_flag],
-            _reserved: [0.0; 4],
+            // `MakeDrawPacket` (`0x0012d5a0` line 672) checks `*(char *)(part + 0x45) != 0`
+            // (`ModelPrimitive::envmap_coeff`) before dispatching `MakeEnvironPacket` (`0x0012cf20`).
+            _reserved: [f32::from(prim.envmap_coeff) / 128.0, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -392,6 +394,7 @@ mod tests {
             ambient: [0.3, 0.3, 0.3],
             specular: spec,
             specular_scale: spec_scale,
+            envmap_coeff: 0,
             is_transparent: false,
         }
     }
@@ -412,9 +415,11 @@ mod tests {
         assert_eq!(u_eyes.specular_cull[0], MAX_NORMALIZED_SPECULAR_COMPONENT);
 
         // `material_type == 2` and `3` must zero specular even if raw bytes are non-zero (`arm.mdl`, `tyu.mdl`)
-        let arm_prim = sample_prim(3, 0, [85.38, 83.20, 84.61], 0.0);
+        let mut arm_prim = sample_prim(3, 0, [85.38, 83.20, 84.61], 0.0);
+        arm_prim.envmap_coeff = 0x40;
         let u_arm = SkeletalMaterialUniforms::from_primitive(&arm_prim);
         assert_eq!(u_arm.specular_cull, [0.0, 0.0, 0.0, 0.0]);
+        assert!((u_arm._reserved[0] - 0.5).abs() < 1e-6);
     }
 
     #[test]

@@ -144,7 +144,7 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
         .filter(|s| s.player.locks_gameplay_input())
         .map(|s| {
             let demo_lights: Vec<sh2_assets::formats::demo::DemoLightState> =
-                s.player.active_lights().copied().collect();
+                s.player.dds_lights().to_vec();
             (
                 s.player.info.stage_name,
                 s.player.atmosphere.ambient_tint_rgba,

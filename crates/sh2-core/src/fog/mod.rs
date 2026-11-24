@@ -55,9 +55,11 @@ pub const R_APT_E_COURTYARD_ID: u32 = 0x07;
 pub const R_TOWN_WEST_ID: u32 = 0x08;
 /// Room ID for Blue Creek Apartments Rooms 208/209 (`R_APT_W_RM_208_209 = 0x28` in `Patches.h`).
 pub const R_APT_W_RM_208_209_ID: u32 = 0x28;
-/// Room ID for Eddie Boss Room 1 (`R_EDI_BOSS_RM_1 = 0x8F` in `Patches.h`).
+/// Room ID for Meat Locker Corridor (`ps185`, `fogSetBlowPoint` `SLUS_202.28` `0x00274cb0` `param_1 == 0x8e`).
+pub const R_EDI_BOSS_CORRIDOR_ID: u32 = 0x8E;
+/// Room ID for Eddie Boss Room 1 (`R_EDI_BOSS_RM_1 = 0x8F` in `Patches.h`; `ps189` in `fogSetBlowPoint` `0x00274cb0`).
 pub const R_EDI_BOSS_RM_1_ID: u32 = 0x8F;
-/// Room ID for Eddie Boss Room 2 (`R_EDI_BOSS_RM_2 = 0x90` in `Patches.h`).
+/// Room ID for Eddie Boss Room 2 (`R_EDI_BOSS_RM_2 = 0x90` in `Patches.h`; `ps193` in `fogSetBlowPoint` `0x00274cb0`).
 pub const R_EDI_BOSS_RM_2_ID: u32 = 0x90;
 
 /// Default PS2 fog particle count (`fog_defset_data + 0x00` @ `0x002ab530` in `SLUS_202.28`).
@@ -192,8 +194,9 @@ pub fn room_id_from_stage_code(stage_code: &str) -> u32 {
         "tw11" | "tw12" => R_TOWN_WEST_ID,
         "ap07" => R_APT_E_COURTYARD_ID,
         "ap28" | "bc209" => R_APT_W_RM_208_209_ID,
-        "ed01" => R_EDI_BOSS_RM_1_ID,
-        "ed02" => R_EDI_BOSS_RM_2_ID,
+        "ps185" => R_EDI_BOSS_CORRIDOR_ID,
+        "ed01" | "ps189" => R_EDI_BOSS_RM_1_ID,
+        "ed02" | "ps193" => R_EDI_BOSS_RM_2_ID,
         "rr91" | "hp99" => R_HTL_RM_312_ID,
         "ru73" => R_FINAL_BOSS_RM_ID,
         _ => 0,
@@ -539,5 +542,15 @@ mod tests {
             ]
         );
         assert!(eval.outdoor_layers_enabled);
+    }
+
+    #[test]
+    fn eddie_meat_locker_stage_codes_map_to_fog_blow_rooms() {
+        assert_eq!(room_id_from_stage_code("ps185"), R_EDI_BOSS_CORRIDOR_ID);
+        assert_eq!(room_id_from_stage_code("PS185"), 0x8E);
+        assert_eq!(room_id_from_stage_code("ps189"), R_EDI_BOSS_RM_1_ID);
+        assert_eq!(room_id_from_stage_code("ed01"), R_EDI_BOSS_RM_1_ID);
+        assert_eq!(room_id_from_stage_code("ps193"), R_EDI_BOSS_RM_2_ID);
+        assert_eq!(room_id_from_stage_code("ed02"), R_EDI_BOSS_RM_2_ID);
     }
 }

@@ -156,6 +156,10 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
     }
 
     /// Encodes the spotlight shadow depth render pass for static opaque map geometry.
+    ///
+    /// Intentionally excludes `GpuSkeletalMesh` characters: James carries the flashlight at chest
+    /// height with `near = 50.0` mm, so rendering skeletal meshes here would self-occlude the
+    /// volumetric god-ray cone. Character surface shadows are rendered by [`crate::shadow::PcssShadowPipeline`].
     pub fn encode_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,

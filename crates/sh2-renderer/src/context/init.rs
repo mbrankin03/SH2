@@ -386,6 +386,7 @@ impl RenderContext {
             lens_flare_quad_count: std::sync::atomic::AtomicU32::new(0),
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
+            volumetric_god_rays_enabled: std::sync::atomic::AtomicBool::new(true),
             soft_shadow_blur_enabled: std::sync::atomic::AtomicBool::new(true),
             shadow_composite_mode: std::sync::atomic::AtomicU8::new(1),
             shadow_draw_order: std::sync::atomic::AtomicU8::new(

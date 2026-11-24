@@ -34,9 +34,9 @@ pub mod world;
 // Re-exports for convenience
 pub use animation::{
     AnimationClip, AnimationStateKind, BlendMode, CharacterAnimationController,
-    CharacterLocomotionClips, HeadLookTracker, JamesBasicClips, JamesStageClips,
-    LocomotionAnimCommand, LocomotionAnimationSync, LookTargetCandidate, LookTargetKind,
-    MariaLocomotionClips,
+    CharacterLocomotionClips, FootGroundSample, FootIkRigSpec, FootIkSolver, HeadLookTracker,
+    JamesBasicClips, JamesStageClips, LegChainSpec, LocomotionAnimCommand, LocomotionAnimationSync,
+    LookTargetCandidate, LookTargetKind, MariaLocomotionClips,
 };
 pub use camera::{CameraMovementType, CameraSnapshot, CameraSourceKind, Ps2CameraController};
 pub use campaign::{
@@ -234,7 +234,9 @@ pub use room_loader::{
     StageRoomDescriptor,
 };
 pub use scenario::{GameItem, PlayableCharacter, ScenarioKind, ScenarioState, StageData};
-pub use secondary_physics::{SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState};
+pub use secondary_physics::{
+    SecondaryBonePhysics, SecondaryJointConfig, SecondaryJointState, ThighCapsuleSpec,
+};
 pub use simulation::SimulationCore;
 pub use timing::{lerp_angle_shortest, FlashlightSweepState, RowboatController, TimingConstants};
 pub use widescreen_rail::{

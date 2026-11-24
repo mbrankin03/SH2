@@ -404,6 +404,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Enhanced, "Secondary Cloth Physics") => {
             "Native procedural spring-damper jacket/skirt physics vs Original PS2 keyframed cloth"
         }
+        (OptionsTab::Enhanced, "Foot IK (Stairs)") => {
+            "Analytical 2-bone Foot IK on .cld stairs & slopes (Native) vs Original PS2"
+        }
         (OptionsTab::Enhanced, "ACES Tonemapping") => {
             "Modern ACES filmic HDR tonemapping (Native) vs strict PS2 linear clamp (1:1)"
         }

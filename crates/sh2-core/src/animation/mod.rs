@@ -7,6 +7,7 @@
 //!   Mode 10 gait phase preservation across 24-frame stride cycles).
 
 pub mod clip;
+pub mod foot_ik;
 pub mod gait_sync;
 pub mod head_tracking;
 pub mod tables;
@@ -15,6 +16,12 @@ pub use clip::{
     ps2_speed_to_fps, AnimationClip, AnimationStateKind, BlendMode, BlendedFrameCursor,
     FrameCursor, MODE10_GAIT_SYNC_BLEND_DURATION_SECS, MODE4_POSE_BLEND_DURATION_SECS,
     PS2_BASE_FPS, PS2_SPEED_UNIT_30FPS,
+};
+pub use foot_ik::{
+    clamped_normal_alignment, model_to_world_pos, probe_foot_ground, solve_two_bone_ik_angles,
+    world_to_model_dir, FootGroundSample, FootIkRigSpec, FootIkSolver, LegChainSpec,
+    FOOT_IK_SMOOTH_SPEED, FOOT_PROBE_DOWN_MM, FOOT_PROBE_UP_MM, MAX_ANKLE_TILT_RAD,
+    MAX_FOOT_IK_STEP_MM,
 };
 pub use gait_sync::{
     LocomotionAnimCommand, LocomotionAnimationSync, BASE_SPOT_TURN_RAD_PER_SEC,

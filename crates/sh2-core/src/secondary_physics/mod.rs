@@ -14,6 +14,12 @@
 //! - $c$: Critical damping coefficient preventing oscillation.
 //! - $\tau_{\text{inertial}}$: Driving inertial torque derived from character movement and turning rate.
 
+mod capsule;
+#[cfg(test)]
+mod tests;
+
+pub use capsule::{closest_point_on_segment, resolve_capsule_penetration, ThighCapsuleSpec};
+
 use glam::{FloatExt, Mat4, Quat, Vec3};
 use std::collections::HashMap;
 
@@ -109,6 +115,8 @@ pub struct SecondaryBonePhysics {
     configs: HashMap<usize, SecondaryJointConfig>,
     /// Simulation state keyed by skeleton bone index.
     states: HashMap<usize, SecondaryJointState>,
+    /// Optional analytical thigh-capsule collision specification.
+    thigh_capsules: Option<ThighCapsuleSpec>,
     /// Previous character world position for velocity estimation.
     last_position: Vec3,
     /// Filtered character linear velocity in character-local coordinates.
@@ -131,6 +139,7 @@ impl SecondaryBonePhysics {
         Self {
             configs: HashMap::new(),
             states: HashMap::new(),
+            thigh_capsules: None,
             last_position: Vec3::ZERO,
             filtered_local_velocity: Vec3::ZERO,
             last_yaw: 0.0,
@@ -153,6 +162,7 @@ impl SecondaryBonePhysics {
         for &bone in &[27, 28, 31, 32] {
             sim.register_bone(bone, jacket);
         }
+        sim.thigh_capsules = Some(ThighCapsuleSpec::JAMES);
 
         sim
     }
@@ -173,6 +183,7 @@ impl SecondaryBonePhysics {
         for &bone in &[13, 14, 18, 19] {
             sim.register_bone(bone, chest);
         }
+        sim.thigh_capsules = Some(ThighCapsuleSpec::MARIA);
 
         sim
     }
@@ -189,25 +200,21 @@ impl SecondaryBonePhysics {
             return;
         }
 
-        // 1. Calculate world displacement and project into character-local coordinate space
         let world_delta = current_position - self.last_position;
         self.last_position = current_position;
 
         let raw_world_vel = world_delta / dt;
         let (s_yaw, c_yaw) = current_yaw.sin_cos();
 
-        // Local X = Lateral, Local Z = Forward/Backward
         let local_vx = raw_world_vel.x * c_yaw - raw_world_vel.z * s_yaw;
         let local_vz = raw_world_vel.x * s_yaw + raw_world_vel.z * c_yaw;
         let target_local_vel = Vec3::new(local_vx, raw_world_vel.y, local_vz);
 
-        // Exponential smoothing filter for velocity
         let vel_alpha = (dt * 15.0).clamp(0.0, 1.0);
         self.filtered_local_velocity = self
             .filtered_local_velocity
             .lerp(target_local_vel, vel_alpha);
 
-        // 2. Calculate turning yaw rate
         let mut yaw_delta = (current_yaw - self.last_yaw) % std::f32::consts::TAU;
         if yaw_delta > std::f32::consts::PI {
             yaw_delta -= std::f32::consts::TAU;
@@ -222,29 +229,22 @@ impl SecondaryBonePhysics {
             .filtered_yaw_rate
             .lerp(raw_yaw_rate.clamp(-8.0, 8.0), yaw_alpha);
 
-        // 3. Integrate spring-damper dynamics for each registered bone
         for (&bone, config) in &self.configs {
             let state = self.states.entry(bone).or_default();
             state.prev_deflection = state.deflection;
 
-            // Driving inertial forces:
-            // Forward movement pitches flaps backward; turning rate causes lateral roll/sway
             let driving_pitch = self.filtered_local_velocity.z * config.linear_coupling;
             let driving_roll = self.filtered_yaw_rate * config.angular_coupling
                 + self.filtered_local_velocity.x * config.linear_coupling;
 
             let target_torque = Vec3::new(driving_pitch, 0.0, driving_roll);
-
-            // Hooke's Law spring acceleration: a = -k * x - c * v + torque
             let spring_force =
                 -config.stiffness * state.deflection - config.damping * state.angular_velocity;
             let total_accel = spring_force + target_torque;
 
-            // Semi-implicit Euler integration
             state.angular_velocity += total_accel * dt;
             state.deflection += state.angular_velocity * dt;
 
-            // Clamp deflection to physical bounds
             state.deflection.x = state.deflection.x.clamp(config.min_pitch, config.max_pitch);
             state.deflection.z = state.deflection.z.clamp(-config.max_sway, config.max_sway);
             state.deflection.y = state.deflection.y.clamp(-config.max_sway, config.max_sway);
@@ -271,8 +271,6 @@ impl SecondaryBonePhysics {
                 continue;
             }
 
-            // Convert previous and current Euler deflections (pitch X, yaw Y, roll Z) into unit quaternions
-            // and interpolate along the shortest geodesic arc via Slerp.
             let q_prev = Quat::from_euler(
                 glam::EulerRot::ZYX,
                 state.prev_deflection.z,
@@ -289,7 +287,6 @@ impl SecondaryBonePhysics {
             let rot_mat = Mat4::from_quat(rot_delta);
 
             let mut orig = Mat4::from_cols_array_2d(&locals[bone]);
-            // Modulate upper-left 3x3 rotation: M_new = M_orig * R_delta
             orig *= rot_mat;
             locals[bone] = orig.to_cols_array_2d();
         }
@@ -297,9 +294,6 @@ impl SecondaryBonePhysics {
 
     /// Advances the simulation clock by `dt` seconds only when `enabled` is `true`
     /// (`GameOptions::enable_secondary_physics`, default `false` for 1:1 PS2 parity).
-    ///
-    /// When `enabled` is `false`, resets all spring deflections to resting zero so toggling
-    /// the option off at runtime immediately restores the authentic PS2 keyframed pose.
     pub fn step_if_enabled(
         &mut self,
         enabled: bool,
@@ -314,8 +308,7 @@ impl SecondaryBonePhysics {
         }
     }
 
-    /// Applies sub-frame Slerp-interpolated secondary deflection transforms only when `enabled` is `true`
-    /// (`GameOptions::enable_secondary_physics`, default `false` for 1:1 PS2 parity).
+    /// Applies sub-frame Slerp-interpolated secondary deflection transforms only when `enabled` is `true`.
     pub fn apply_to_locals_if_enabled(
         &self,
         enabled: bool,
@@ -337,85 +330,24 @@ impl SecondaryBonePhysics {
             *state = SecondaryJointState::default();
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_secondary_physics_presets_and_step() {
-        let mut sim_james = SecondaryBonePhysics::for_james();
-        assert!(sim_james.configs.contains_key(&11)); // coat tail root left
-        assert!(sim_james.configs.contains_key(&12)); // coat tail root right
-        assert!(sim_james.configs.contains_key(&16)); // mid tail left
-        assert!(sim_james.configs.contains_key(&17)); // mid tail right
-        assert!(sim_james.configs.contains_key(&23)); // lower tip left
-        assert!(sim_james.configs.contains_key(&24)); // lower tip right
-
-        let sim_maria = SecondaryBonePhysics::for_maria();
-        assert!(sim_maria.configs.contains_key(&12)); // skirt left
-        assert!(sim_maria.configs.contains_key(&17)); // skirt right
-        assert!(sim_maria.configs.contains_key(&13)); // chest
-        assert!(sim_maria.configs.contains_key(&14)); // chest
-
-        // Test forward motion reaction
-        let dt = 1.0 / 60.0;
-        let p0 = Vec3::new(0.0, 0.0, 0.0);
-        let p1 = Vec3::new(0.0, 0.0, 25.0); // Moving forward (+Z)
-
-        sim_james.step(dt, p0, 0.0);
-        sim_james.step(dt, p1, 0.0);
-
-        let st11 = sim_james.states.get(&11).unwrap();
-        // Moving forward causes pitch deflection due to inertia
-        assert!(st11.deflection.x != 0.0 || st11.angular_velocity.x != 0.0);
-
-        // Test applying transforms to locals
-        let mut locals = vec![[[0.0; 4]; 4]; 40];
-        for loc in &mut locals {
-            loc[0][0] = 1.0;
-            loc[1][1] = 1.0;
-            loc[2][2] = 1.0;
-            loc[3][3] = 1.0;
+    /// Resolves analytical thigh-capsule collisions on evaluated model-space `pose_world`
+    /// matrices (`SH2-85`) only when `enabled` is `true`.
+    pub fn resolve_thigh_collisions_if_enabled(
+        &self,
+        enabled: bool,
+        pose_world: &mut [[[f32; 4]; 4]],
+        parents: &[u8],
+    ) {
+        if enabled {
+            self.resolve_thigh_collisions_into(pose_world, parents);
         }
-
-        sim_james.apply_to_locals(&mut locals);
-        // Bone 11 should have been modified
-        assert_ne!(locals[11][0][0], 0.0);
     }
 
-    #[test]
-    fn test_secondary_physics_native_upgrade_toggle_gate() {
-        use crate::config::{AppConfig, EnhancedPreset, GameOptions};
-
-        // Default config must disable synthetic secondary physics for 1:1 PS2 parity
-        assert!(!GameOptions::default().enable_secondary_physics);
-        let mut cfg = AppConfig::default();
-        cfg.apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
-        assert!(!cfg.game.enable_secondary_physics);
-        cfg.apply_enhanced_preset(EnhancedPreset::NativeEnhanced);
-        assert!(cfg.game.enable_secondary_physics);
-
-        let mut sim = SecondaryBonePhysics::for_james();
-        let dt = 1.0 / 60.0;
-        sim.step_if_enabled(false, dt, Vec3::ZERO, 0.0);
-        sim.step_if_enabled(false, dt, Vec3::new(0.0, 0.0, 50.0), 0.5);
-
-        let mut locals = vec![
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ];
-            40
-        ];
-        let orig = locals.clone();
-        sim.apply_to_locals_if_enabled(false, &mut locals, 1.0);
-        assert_eq!(
-            locals, orig,
-            "Disabled secondary physics must leave bind pose matrices untouched"
-        );
+    /// Pushes penetrating cloth/skirt bones outside the character's analytical thigh capsules.
+    pub fn resolve_thigh_collisions_into(&self, pose_world: &mut [[[f32; 4]; 4]], parents: &[u8]) {
+        if let Some(spec) = self.thigh_capsules {
+            capsule::resolve_thigh_collisions(spec, pose_world, parents);
+        }
     }
 }

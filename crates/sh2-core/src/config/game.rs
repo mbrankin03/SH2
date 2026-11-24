@@ -451,6 +451,10 @@ pub struct GameOptions {
     /// right-hand weapon mesh during `.dds` cutscenes (`false` in strict 1:1 Vanilla PS2 mode).
     #[serde(default = "default_true")]
     pub enable_cutscene_unequip: bool,
+    /// Native-upgrade analytical 2-bone Foot IK on stairs and slopes (`animation::foot_ik`).
+    /// Default `false` for strict 1:1 original PS2 parity (AGENTS.md Rule 3.4).
+    #[serde(default)]
+    pub enable_foot_ik: bool,
 }
 
 /// Debug and development options.
@@ -503,6 +507,7 @@ impl Default for GameOptions {
             enable_save_thumbnails: false,
             enable_free_item_orbit: false,
             enable_cutscene_unequip: true,
+            enable_foot_ik: false,
         }
     }
 }

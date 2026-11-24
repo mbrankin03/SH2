@@ -72,6 +72,7 @@ impl AppConfig {
                 self.game.enable_save_thumbnails = false;
                 self.game.enable_free_item_orbit = false;
                 self.game.enable_cutscene_unequip = false;
+                self.game.enable_foot_ik = false;
             }
             EnhancedPreset::Sh2ee => {
                 self.video.texture_quality = WorldTextureQuality::Sh2eeHd;
@@ -99,6 +100,7 @@ impl AppConfig {
                 self.game.enable_save_thumbnails = false;
                 self.game.enable_free_item_orbit = false;
                 self.game.enable_cutscene_unequip = true;
+                self.game.enable_foot_ik = false;
             }
             EnhancedPreset::NativeEnhanced => {
                 self.video.texture_quality = WorldTextureQuality::Ai4kMaster;
@@ -126,6 +128,7 @@ impl AppConfig {
                 self.game.enable_save_thumbnails = true;
                 self.game.enable_free_item_orbit = true;
                 self.game.enable_cutscene_unequip = true;
+                self.game.enable_foot_ik = true;
             }
             EnhancedPreset::Custom => {}
         }
@@ -158,7 +161,8 @@ impl AppConfig {
             && !self.game.enable_quicksave_autosave
             && !self.game.enable_save_thumbnails
             && !self.game.enable_free_item_orbit
-            && !self.game.enable_cutscene_unequip;
+            && !self.game.enable_cutscene_unequip
+            && !self.game.enable_foot_ik;
         if is_ps2 {
             return EnhancedPreset::Ps2Authentic;
         }
@@ -186,7 +190,8 @@ impl AppConfig {
             && !self.game.enable_quicksave_autosave
             && !self.game.enable_save_thumbnails
             && !self.game.enable_free_item_orbit
-            && self.game.enable_cutscene_unequip;
+            && self.game.enable_cutscene_unequip
+            && !self.game.enable_foot_ik;
         if is_sh2ee {
             return EnhancedPreset::Sh2ee;
         }
@@ -214,7 +219,8 @@ impl AppConfig {
             && self.game.enable_quicksave_autosave
             && self.game.enable_save_thumbnails
             && self.game.enable_free_item_orbit
-            && self.game.enable_cutscene_unequip;
+            && self.game.enable_cutscene_unequip
+            && self.game.enable_foot_ik;
         if is_native {
             return EnhancedPreset::NativeEnhanced;
         }

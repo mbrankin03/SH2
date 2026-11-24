@@ -2,7 +2,7 @@
 //! thin `sh2-app` runtime shell (`AGENTS.md` §1).
 
 use crate::events::engine::EventPositionalSound;
-use crate::world::TileStreamingPlan;
+use crate::world::{ActiveRoomPickup, TileStreamingPlan};
 
 use super::cutscene_handoff::{DramaDemoTrigger, FmvTrigger};
 use super::stage_loader::RoomLoadManifest;
@@ -30,6 +30,9 @@ pub struct CampaignTickInput {
     pub item_use_id: u8,
     /// Prefer SH2:EE `.cam`/asset overrides (`true` by default).
     pub prefer_sh2ee: bool,
+    /// Enable SH2:EE world & event fixes (`FlashlightClockPush`, `ElevatorCursorColorFix`,
+    /// `HospitalChase`, `CreatureVehicleSpawn`). `false` in strict 1:1 Vanilla PS2 mode.
+    pub enable_sh2ee_world_fixes: bool,
 }
 
 /// Pure side-effect commands emitted by [`CampaignOrchestrator::step`](super::CampaignOrchestrator::step)
@@ -65,6 +68,8 @@ pub struct CampaignEffects {
     pub clear_message: bool,
     /// `true` when `GameOver` or `EndingCredits` completed and the app should return to Title.
     pub return_to_title: bool,
+    /// Active 3D `Item_List` (`0x07xx`) room pickups for the current stage/room.
+    pub active_room_pickups: Vec<ActiveRoomPickup>,
     /// `true` when gameplay simulation ticks (`SimulationCore::update`) are permitted this frame.
     pub allow_gameplay_sim: bool,
 }

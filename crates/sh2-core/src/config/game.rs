@@ -431,6 +431,10 @@ pub struct GameOptions {
     /// (`secondary_physics.rs`). Default `false` for strict 1:1 original PS2 parity (AGENTS.md Rule 3.4).
     #[serde(default)]
     pub enable_secondary_physics: bool,
+    /// SH2:EE world & event bugfixes (`FlashlightClockPush`, `ElevatorCursorColorFix`,
+    /// `HospitalChase`, `CreatureVehicleSpawn`). `false` in strict 1:1 Vanilla PS2 mode.
+    #[serde(default = "default_true")]
+    pub enable_sh2ee_world_fixes: bool,
 }
 
 /// Debug and development options.
@@ -477,6 +481,7 @@ impl Default for GameOptions {
             walk_run_control: WalkRunControlMode::default(),
             brightness_level: PS2_DEFAULT_BRIGHTNESS_LEVEL,
             enable_secondary_physics: false,
+            enable_sh2ee_world_fixes: true,
         }
     }
 }

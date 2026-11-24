@@ -1,60 +1,86 @@
 //! Static PS2 stage event lookup tables (`ITEM_KIND_TABLE`, `DOOR_SE_TABLE`, `CONNECT_STAGE_PAIRS`).
 
-/// 8-byte pickup kind descriptor (`item_kind[8]` at `SLUS_202.28` `0x002b97e0`).
+/// 8-byte pickup kind descriptor (`eei_data_2043[8]` at `SLUS_202.28` `0x002b97e0`,
+/// `DAT_0088a0b8` in `sh2pc.exe`).
+///
+/// Prototype vs retail PC drift:
+/// - `SLUS_202.28` (`0x002b97e0`) has `[7] = { 0, 0, 0 }` (sentinel) because *Born from a Wish*
+///   did not exist yet.
+/// - `sh2pc.exe` (`0x0088a0b8`) populates `[7] = { 11, 23, 0x0749 }` (Revolver bullets,
+///   `data/chr2/item/x_bullt_revolver.mdl`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemKindEntry {
-    /// Inventory item ID granted by `ItemGet`.
+    /// Inventory item ID granted by `ItemGet` (`0` = none).
     pub item_id: i16,
-    /// Common `.mes` message ID displayed on pickup.
+    /// Common `.mes` message ID displayed on pickup (`0` = none).
     pub msg_id: u16,
-    /// 3D character/prop model ID (`0x4xx`) deleted when picked up.
+    /// 3D character/prop model ID (`0x07xx`) spawned in room and deleted on pickup.
     pub chr_id: i32,
 }
 
-/// Canonical PS2 `item_kind[8]` pickup table (`SLUS_202.28` `0x002b97e0`).
+/// Canonical retail `eei_data` pickup table (`SLUS_202.28` `0x002b97e0`, `sh2pc.exe` `0x0088a0b8`).
+///
+/// Indexed directly by `ItemListEntry::item_kind_index()` (`(flag >> 29) & 7`, `1..=7`; `0` = null).
 pub const ITEM_KIND_TABLE: [ItemKindEntry; 8] = [
-    ItemKindEntry {
-        item_id: 1,
-        msg_id: 10,
-        chr_id: 0x0401,
-    }, // Health drink
-    ItemKindEntry {
-        item_id: 2,
-        msg_id: 11,
-        chr_id: 0x0402,
-    }, // First-aid kit
-    ItemKindEntry {
-        item_id: 3,
-        msg_id: 12,
-        chr_id: 0x0403,
-    }, // Ampoule
-    ItemKindEntry {
-        item_id: 5,
-        msg_id: 13,
-        chr_id: 0x0405,
-    }, // Handgun bullets
-    ItemKindEntry {
-        item_id: 7,
-        msg_id: 14,
-        chr_id: 0x0407,
-    }, // Shotgun shells
-    ItemKindEntry {
-        item_id: 9,
-        msg_id: 15,
-        chr_id: 0x0409,
-    }, // Rifle shells
-    ItemKindEntry {
-        item_id: 11,
-        msg_id: 50,
-        chr_id: 0x040b,
-    }, // Revolver bullets (Born from a Wish)
     ItemKindEntry {
         item_id: 0,
         msg_id: 0,
-        chr_id: 0,
-    }, // Sentinel
+        chr_id: 0x0000,
+    }, // 0: Null / unused
+    ItemKindEntry {
+        item_id: 5,
+        msg_id: 9,
+        chr_id: 0x0703,
+    }, // 1: Handgun bullets (`data/chr/item/x_handbul.mdl`, `SLUS_202.28` `0x0034dbb0`)
+    ItemKindEntry {
+        item_id: 7,
+        msg_id: 10,
+        chr_id: 0x0724,
+    }, // 2: Shotgun shells (`data/chr/item/x_shotbul.mdl`, `SLUS_202.28` `0x0034dbb8`)
+    ItemKindEntry {
+        item_id: 9,
+        msg_id: 11,
+        chr_id: 0x0723,
+    }, // 3: Rifle shells (`data/chr/item/x_riflebul.mdl`, `SLUS_202.28` `0x0034dbc0`)
+    ItemKindEntry {
+        item_id: 1,
+        msg_id: 12,
+        chr_id: 0x0700,
+    }, // 4: Health drink (`data/chr/item/x_drink.mdl`, `SLUS_202.28` `0x0034dbc8`)
+    ItemKindEntry {
+        item_id: 2,
+        msg_id: 13,
+        chr_id: 0x0701,
+    }, // 5: First-aid kit (`data/chr/item/x_firstaid.mdl`, `SLUS_202.28` `0x0034dbd0`)
+    ItemKindEntry {
+        item_id: 3,
+        msg_id: 14,
+        chr_id: 0x0733,
+    }, // 6: Ampoule (`data/chr/item/x_ample.mdl`, `SLUS_202.28` `0x0034dbd8`)
+    ItemKindEntry {
+        item_id: 11,
+        msg_id: 23,
+        chr_id: 0x0749,
+    }, // 7: Revolver bullets (`data/chr2/item/x_bullt_revolver.mdl`, `sh2pc.exe` `0x0088a0b8+0x38`)
 ];
+
+/// Resolves the relative `.mdl` path under `data/` for a 3D room pickup `chr_id` (`0x07xx`).
+///
+/// Verified 1:1 against `SLUS_202.28` `0x0034dbb0..0x0034dbdf` and `sh2pc.exe` `STRINGS.tsv`.
+#[must_use]
+pub const fn pickup_model_rel_path(chr_id: i32) -> Option<&'static str> {
+    match chr_id {
+        0x0703 => Some("chr/item/x_handbul.mdl"),
+        0x0724 => Some("chr/item/x_shotbul.mdl"),
+        0x0723 => Some("chr/item/x_riflebul.mdl"),
+        0x0700 => Some("chr/item/x_drink.mdl"),
+        0x0701 => Some("chr/item/x_firstaid.mdl"),
+        0x0733 => Some("chr/item/x_ample.mdl"),
+        0x0749 => Some("chr2/item/x_bullt_revolver.mdl"),
+        _ => None,
+    }
+}
 
 /// 12-byte door sound effect entry (`door_se[22]` at `SLUS_202.28` `0x002b96d0`).
 #[repr(C)]

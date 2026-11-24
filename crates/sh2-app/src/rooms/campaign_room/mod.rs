@@ -276,6 +276,12 @@ impl RoomController for CampaignRoomController {
             .video
             .texture_quality
             != sh2_core::config::WorldTextureQuality::OriginalPs2;
+        tick_input.enable_sh2ee_world_fixes = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .game
+            .enable_sh2ee_world_fixes;
         let in_drama_demo = matches!(
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::DramaDemo { .. })

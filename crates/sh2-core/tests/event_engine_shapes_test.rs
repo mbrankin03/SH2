@@ -111,8 +111,13 @@ fn ps2_event_struct_sizes_and_bitfields_match_rosetta_stone() {
 
     assert_eq!(DOOR_SE_TABLE[1].open, 11000);
     assert_eq!(DOOR_SE_TABLE[1].lock, 11002);
-    assert_eq!(ITEM_KIND_TABLE[0].item_id, 1);
-    assert_eq!(ITEM_KIND_TABLE[0].chr_id, 0x0401);
+    assert_eq!(ITEM_KIND_TABLE[0].item_id, 0);
+    assert_eq!(ITEM_KIND_TABLE[1].item_id, 5);
+    assert_eq!(ITEM_KIND_TABLE[1].chr_id, 0x0703);
+    assert_eq!(ITEM_KIND_TABLE[4].item_id, 1);
+    assert_eq!(ITEM_KIND_TABLE[4].chr_id, 0x0700);
+    assert_eq!(ITEM_KIND_TABLE[7].item_id, 11);
+    assert_eq!(ITEM_KIND_TABLE[7].chr_id, 0x0749);
     assert!(is_connected_stage_pair(6, 7));
     assert!(is_connected_stage_pair(11, 10));
     assert!(!is_connected_stage_pair(6, 11));

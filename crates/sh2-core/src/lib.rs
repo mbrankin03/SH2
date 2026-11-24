@@ -242,8 +242,18 @@ pub use widescreen_rail::{
     PS2_OUTDOOR_MIN_IN_ROAD_DIST_MM, PS2_REFERENCE_4X3_ASPECT,
 };
 pub use world::{
-    OutdoorArea, OutdoorTileId, OutdoorTileStreamer, TileLoadRequest, TileStreamingPlan,
-    CA_OUTDOOR_BLOCKS, CB_OUTDOOR_BLOCKS, CC_OUTDOOR_BLOCKS, CD_OUTDOOR_BLOCKS,
-    LOADBG_DIST_BANDS_MM, LOADBG_PREFETCH_CUTOFF_MM, OUTDOOR_GRID_OFFSET, OUTDOOR_TILE_HALF_MM,
-    OUTDOOR_TILE_SIZE_MM,
+    bg_chara_block_count, bg_chara_is_id, chara_bound_radius_mm, event_main_sys_flag_mask,
+    hospital_chase_elevator_stab_param, hotel_employee_elevator_cursor_color,
+    is_within_outdoor_prop_range, resolve_active_room_pickups, ActiveRoomPickup, BgCharaSlots,
+    BgObjectState, ElevatorCursorColor, ElevatorFloor, ElevatorKind, MirrorMode, MirrorPlane,
+    MultiFloorElevatorPanel, OutdoorArea, OutdoorTileId, OutdoorTileStreamer, PushableObjectKind,
+    StayObjectState, TileLoadRequest, TileStreamingPlan, BG_CHARA_BLOCK_SIZE_BYTES,
+    BG_OBJECT_SHADOW_Y_OFFSET_MM, CA_OUTDOOR_BLOCKS, CB_OUTDOOR_BLOCKS, CC_OUTDOOR_BLOCKS,
+    CD_OUTDOOR_BLOCKS, DEFAULT_CHARA_BOUND_R_MM, FLAG_APART_CLOCK_PUSHED, FLAG_APART_CLOCK_SOLVED,
+    FLAG_HOSPITAL_B1_SHELF_PUSHED, FLASHLIGHT_CLOCK_PUSH_CAM_Y_MM, HOSPITAL_CHASE_STAB_PARAM_FIXED,
+    HOSPITAL_CHASE_STAB_X_THRESHOLD_MM, LOADBG_DIST_BANDS_MM, LOADBG_PREFETCH_CUTOFF_MM,
+    MIRROR_WALL_POS_ROOM_01_X_MM, MIRROR_WALL_POS_ROOM_24_Z_MM, MODEL_ID_SPECIAL_PI_YAW,
+    OUTDOOR_GRID_OFFSET, OUTDOOR_PROP_CULL_MARGIN_MM, OUTDOOR_TILE_HALF_MM, OUTDOOR_TILE_SIZE_MM,
+    ROOM_APT_E_RM_208, ROOM_HSP_ALT_RPT_HALLWAY, STAY_OBJECT_SHADOW_Y_OFFSET_MM,
+    SYS_FLAG_MASK_CLOCK_PUSH_FIX, SYS_FLAG_MASK_VANILLA,
 };

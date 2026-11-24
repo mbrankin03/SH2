@@ -197,12 +197,20 @@ pub fn dilate_transparent_border_rgb(width: u32, height: u32, rgba: &mut [u8], p
     }
 }
 
+/// Maximum number of 8-connected border dilation passes returned by [`scaled_border_dilation_passes`].
+///
+/// Caps CPU startup cost for extreme custom 8K/16K texture packs while still covering up to 6 full
+/// 4x4 BC3 blocks and 4 mipmap levels of gutter protection.
+pub const MAX_BORDER_DILATION_PASSES: usize = 24;
+
 /// Computes the UV-space-equivalent border dilation pass count for a texture of dimensions
 /// `(dst_w, dst_h)` relative to its vanilla `(van_w, van_h)` base dimensions and `base_passes`.
 ///
 /// Scales `base_passes` linearly by `ceil(max(dst_w / van_w, dst_h / van_h))` (e.g., `2` passes at
-/// 1x vanilla -> `8` passes at 4x 4K) so hardware bilinear filtering, 4x4 BC3 compression blocks,
-/// and mip levels 1–2 never bleed dark `(0, 0, 0, 0)` gutter texels into hair/fringe edges.
+/// 1x vanilla -> `8` passes at 4x 4K) and clamps to [`MAX_BORDER_DILATION_PASSES`] so hardware
+/// bilinear filtering, 4x4 BC3 compression blocks, and mip levels 1–2 never bleed dark
+/// `(0, 0, 0, 0)` gutter texels into hair/fringe edges while keeping startup cost bounded for
+/// extreme 8K/16K custom packs.
 #[must_use]
 pub fn scaled_border_dilation_passes(
     van_w: u32,
@@ -212,11 +220,13 @@ pub fn scaled_border_dilation_passes(
     base_passes: usize,
 ) -> usize {
     if base_passes == 0 || van_w == 0 || van_h == 0 {
-        return base_passes;
+        return base_passes.min(MAX_BORDER_DILATION_PASSES);
     }
     let scale_x = dst_w.div_ceil(van_w).max(1) as usize;
     let scale_y = dst_h.div_ceil(van_h).max(1) as usize;
-    base_passes.saturating_mul(scale_x.max(scale_y))
+    base_passes
+        .saturating_mul(scale_x.max(scale_y))
+        .min(MAX_BORDER_DILATION_PASSES)
 }
 
 /// Transfers SH2:EE RGB color corrections (such as Maria's restored pink hair tips on `tid = 1246`
@@ -253,11 +263,16 @@ pub fn refine_4k_chr_texture_from_sources(
 
     let van_pixels = van_raw_rgba.as_chunks::<4>().0;
     let has_zero_alpha = van_pixels.iter().any(|px| px[3] == 0);
+    let non_opaque_count = van_pixels.iter().filter(|px| px[3] < 255).count();
     let mid_alpha_count = van_pixels
         .iter()
         .filter(|px| px[3] > 0 && px[3] < 240)
         .count();
-    let is_binary_cutout_source = has_zero_alpha && mid_alpha_count * 100 < van_pixels.len();
+    // Evaluate intermediate alpha relative to non-opaque (`alpha < 255`) texels rather than total
+    // image texels so a sheet with mostly opaque skin plus a small smooth-alpha eyelash island is
+    // not misclassified as a strict binary `{0, 255}` cutout.
+    let is_binary_cutout_source =
+        has_zero_alpha && non_opaque_count > 0 && mid_alpha_count * 100 < non_opaque_count;
 
     let sh2e_edit = sh2e_raw.and_then(|(sw, sh, s_rgba)| {
         let sw_u = sw as usize;
@@ -311,7 +326,7 @@ pub fn refine_4k_chr_texture_from_sources(
 
     let sh2e_dil = sh2e_edit.map(|(sw, sh, s_rgba)| {
         let mut buf = s_rgba.to_vec();
-        let sh2e_passes = scaled_border_dilation_passes(van_w, van_h, sw, sh, 6).min(24);
+        let sh2e_passes = scaled_border_dilation_passes(van_w, van_h, sw, sh, 6);
         dilate_transparent_border_rgb(sw, sh, &mut buf, sh2e_passes);
         (sw as usize, sh as usize, buf)
     });
@@ -544,6 +559,15 @@ mod tests {
         assert_eq!(scaled_border_dilation_passes(1024, 512, 2048, 1024, 2), 4);
         assert_eq!(scaled_border_dilation_passes(1024, 512, 4096, 2048, 2), 8);
         assert_eq!(scaled_border_dilation_passes(256, 256, 1024, 1024, 2), 8);
+        // Extreme 8K/16K custom packs are capped to `MAX_BORDER_DILATION_PASSES` (`24`).
+        assert_eq!(
+            scaled_border_dilation_passes(256, 256, 8192, 8192, 2),
+            MAX_BORDER_DILATION_PASSES
+        );
+        assert_eq!(
+            scaled_border_dilation_passes(256, 256, 16384, 16384, 2),
+            MAX_BORDER_DILATION_PASSES
+        );
         assert_eq!(scaled_border_dilation_passes(0, 0, 1024, 1024, 2), 2);
         assert_eq!(scaled_border_dilation_passes(256, 256, 1024, 1024, 0), 0);
     }
@@ -622,5 +646,26 @@ mod tests {
         assert_eq!(dst_4k[11], 140);
         // Hallucinated background speck strictly outside vanilla silhouette clamped to 0
         assert_eq!(dst_4k[6 * 4 + 3], 0);
+    }
+
+    #[test]
+    fn refine_4k_chr_texture_preserves_tiny_smooth_eyelash_island_on_mostly_opaque_sheet() {
+        // 100x2 sheet (200 texels): 198 opaque skin texels (99%) + 1 smooth-alpha eyelash texel
+        // (`a = 128`) + 1 fully transparent texel (`a = 0`). Evaluating mid-alpha relative to
+        // non-opaque (`a < 255`) texels yields 50% smooth alpha -> MUST NOT be binarized!
+        let mut van = vec![0u8; 200 * 4];
+        for i in 0..198 {
+            van[i * 4..i * 4 + 4].copy_from_slice(&[200, 165, 145, 255]);
+        }
+        van[198 * 4..198 * 4 + 4].copy_from_slice(&[40, 30, 25, 128]); // smooth eyelash
+        van[199 * 4..199 * 4 + 4].copy_from_slice(&[0, 0, 0, 0]); // transparent gutter
+
+        // 100x2 destination matching vanilla dimensions with smooth alpha `128` at pixel 198
+        let mut dst = van.clone();
+        refine_4k_chr_texture_from_sources(100, 2, &van, None, 100, 2, &mut dst);
+
+        // Smooth eyelash alpha `128` must remain untouched (NOT binarized to 0 or 255).
+        assert_eq!(dst[198 * 4 + 3], 128);
+        assert_eq!(dst[199 * 4 + 3], 0);
     }
 }

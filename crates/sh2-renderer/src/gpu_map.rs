@@ -33,6 +33,11 @@ pub struct GpuMapBatch {
 pub struct GpuMap {
     /// Compiled GPU draw batches.
     pub batches: Vec<GpuMapBatch>,
+    /// Number of [`sh2_assets::formats::map::MapMaterial`] entries in the source [`MapFile`].
+    ///
+    /// Used to verify that paired texture bind-group tables match the `.map` geometry tier
+    /// (`Original PS2 / PC` vs `SH2:EE` / `4K AI Master`, `SH2-121`).
+    pub material_count: usize,
     /// Base room or outdoor tile numeric ID (e.g. `0x1d` for `cb29.map`, `0x2e` for `cb46.map`).
     pub base_room_id: u16,
     /// Optional per-frame `stageparts` display-control filter (`EvDispControlModelExec`).
@@ -50,12 +55,17 @@ impl GpuMap {
 
     /// Compiles a parsed [`MapFile`] into GPU-resident vertex and index buffers tagged with its
     /// numeric `base_room_id` for `stageparts` display-control filtering (`SH2-78`).
+    ///
+    /// Untextured batches (`MapMaterial::texture_id == 0`) have their vertex RGB modulated by
+    /// [`sh2_assets::formats::map::MapMaterial::diffuse_rgba_f32`] (`sh2pc.exe` `FUN_005b2190`
+    /// `0x005b2190`, `SH2-121`).
     pub fn from_map_with_room_id(device: &wgpu::Device, map: &MapFile, base_room_id: u16) -> Self {
         let mut batches = Vec::with_capacity(map.batches.len());
         let mut total_gpu_bytes = 0usize;
 
         for batch in &map.batches {
-            let interleaved = batch.interleaved_vertices();
+            let material = map.materials.get(batch.material_index);
+            let interleaved = batch.interleaved_vertices_for_material(material);
             if batch.indices.is_empty() || interleaved.is_empty() {
                 continue;
             }
@@ -92,10 +102,20 @@ impl GpuMap {
         }
         Self {
             batches,
+            material_count: map.materials.len(),
             base_room_id,
             visibility_filter: None,
             total_gpu_bytes,
         }
+    }
+
+    /// Returns `true` if every compiled batch's `material_index` is strictly within `0..bind_group_count`.
+    #[inline]
+    #[must_use]
+    pub fn all_batches_within_material_table(&self, bind_group_count: usize) -> bool {
+        self.batches
+            .iter()
+            .all(|b| b.material_index < bind_group_count)
     }
 
     /// Installs or clears the active per-frame `stageparts` visibility filter.

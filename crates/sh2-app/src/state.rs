@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use winit::window::Window;
 
-use crate::assets::{ActiveDramaDemoSession, CharacterAsset};
+use crate::assets::{ActiveDramaDemoSession, CharacterAsset, MapTierAssets};
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
 use crate::rooms::horror_triggers_room::HorrorTriggersRoomState;
@@ -55,10 +55,10 @@ pub(crate) struct AppState {
     pub story_progression_room: StoryProgressionRoomState,
     pub loading_screen_test: LoadingScreenTestState,
     pub sim_core: SimulationCore,
-    pub gpu_map: GpuMap,
-    pub map_hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
-    pub map_sh2e_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
-    pub map_vanilla_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    pub gpu_map: Arc<GpuMap>,
+    pub map_hd_assets: MapTierAssets,
+    pub map_sh2e_assets: Option<MapTierAssets>,
+    pub map_vanilla_assets: Option<MapTierAssets>,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub character: Option<CharacterAsset>,
     pub maria: Option<CharacterAsset>,
@@ -403,28 +403,27 @@ impl AppState {
         );
     }
 
-    /// Synchronizes all active map, character, enemy, and cutscene texture bind groups with
-    /// the given [`sh2_core::config::WorldTextureQuality`] (`Ai4kMaster` / `Sh2eeHd` / `OriginalPs2`).
+    /// Synchronizes all active map geometry + texture bind groups, character, enemy, and cutscene
+    /// stage assets with the given [`sh2_core::config::WorldTextureQuality`]
+    /// (`Ai4kMaster` / `Sh2eeHd` / `OriginalPs2`).
+    ///
+    /// Swapping `gpu_map` and `map_texture_bind_groups` together from the same [`MapTierAssets`]
+    /// prevents `batch.material_index` out-of-bounds fallbacks when `sh2e/` and retail `data/`
+    /// `.map` files have different material counts (e.g. `ob01.map` 31 vs 27 materials, `SH2-121`).
     pub fn apply_texture_quality(&mut self, quality: sh2_core::config::WorldTextureQuality) {
-        self.map_texture_bind_groups = match quality {
-            sh2_core::config::WorldTextureQuality::Ai4kMaster => {
-                self.map_hd_texture_bind_groups.clone()
-            }
+        let selected_map = match quality {
+            sh2_core::config::WorldTextureQuality::Ai4kMaster => &self.map_hd_assets,
             sh2_core::config::WorldTextureQuality::Sh2eeHd => {
-                if !self.map_sh2e_texture_bind_groups.is_empty() {
-                    self.map_sh2e_texture_bind_groups.clone()
-                } else {
-                    self.map_hd_texture_bind_groups.clone()
-                }
+                self.map_sh2e_assets.as_ref().unwrap_or(&self.map_hd_assets)
             }
-            sh2_core::config::WorldTextureQuality::OriginalPs2 => {
-                if !self.map_vanilla_texture_bind_groups.is_empty() {
-                    self.map_vanilla_texture_bind_groups.clone()
-                } else {
-                    self.map_hd_texture_bind_groups.clone()
-                }
-            }
+            sh2_core::config::WorldTextureQuality::OriginalPs2 => self
+                .map_vanilla_assets
+                .as_ref()
+                .or(self.map_sh2e_assets.as_ref())
+                .unwrap_or(&self.map_hd_assets),
         };
+        self.gpu_map = Arc::clone(&selected_map.gpu_map);
+        self.map_texture_bind_groups = selected_map.texture_bind_groups.clone();
 
         let sync_char = |c: &mut Option<CharacterAsset>| {
             if let Some(asset) = c.as_mut() {
@@ -459,21 +458,23 @@ impl AppState {
             for actor_asset in &mut session.actor_assets {
                 sync_char(actor_asset);
             }
-            let chosen_stage_bgs = match quality {
+            let chosen_stage = match quality {
                 sh2_core::config::WorldTextureQuality::Ai4kMaster => {
-                    session.stage_hd_texture_bind_groups.clone()
+                    session.stage_hd_assets.as_ref()
                 }
                 sh2_core::config::WorldTextureQuality::Sh2eeHd => session
-                    .stage_sh2e_texture_bind_groups
-                    .clone()
-                    .or_else(|| session.stage_hd_texture_bind_groups.clone()),
+                    .stage_sh2e_assets
+                    .as_ref()
+                    .or(session.stage_hd_assets.as_ref()),
                 sh2_core::config::WorldTextureQuality::OriginalPs2 => session
-                    .stage_vanilla_texture_bind_groups
-                    .clone()
-                    .or_else(|| session.stage_hd_texture_bind_groups.clone()),
+                    .stage_vanilla_assets
+                    .as_ref()
+                    .or(session.stage_sh2e_assets.as_ref())
+                    .or(session.stage_hd_assets.as_ref()),
             };
-            if chosen_stage_bgs.is_some() {
-                session.stage_texture_bind_groups = chosen_stage_bgs;
+            if let Some(stage) = chosen_stage {
+                session.stage_gpu_map = Some(Arc::clone(&stage.gpu_map));
+                session.stage_texture_bind_groups = Some(stage.texture_bind_groups.clone());
             }
         }
     }

@@ -106,10 +106,10 @@ pub(super) fn submit_scene_draw(
         .filter(|s| s.player.locks_gameplay_input())
         .and_then(|s| {
             s.stage_gpu_map
-                .as_ref()
+                .as_deref()
                 .zip(s.stage_texture_bind_groups.as_ref())
         })
-        .unwrap_or((&state.gpu_map, &state.map_texture_bind_groups));
+        .unwrap_or((state.gpu_map.as_ref(), &state.map_texture_bind_groups));
 
     if state.debug_collision_overlay {
         let floors_iter = state.sim_core.collision.floors.iter().map(|f| f.v);

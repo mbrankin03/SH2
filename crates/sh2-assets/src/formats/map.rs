@@ -41,19 +41,87 @@ pub const MAP_MAGIC_BYTES: [u8; 4] = [0x10, 0x05, 0x01, 0x20];
 
 /// Surface material definition applied to geometry batches.
 ///
-/// Corresponds to the 16-byte material records at the end of geometry subfiles.
+/// Corresponds to the 16-byte material records at the end of PC `.map` (`0x20010510`) geometry
+/// subfiles, parsed by `sh2pc.exe` `FUN_005b3e50` (`0x005b3e50`) into 20-byte runtime material
+/// records.
+///
+/// ### PS2 Prototype vs PC Retail Format Note
+/// On PS2 (`SLUS_202.28` `sh2gfw_parse_HEAD` `0x00180800` / `sh2gfw_Geom_MakePacket` `0x0017f980`),
+/// `.map` files store pre-compiled GS/VU1 GIF packets where untextured primitives set `PRIM.TME = 0`
+/// and carry flat/vertex RGBA directly. For the PC port (`sh2pc.exe`), Creature Labs converted this
+/// into an explicit 16-byte `MapMaterial` table where `texture_id == 0` binds `NULL` (`SetTexture(0, 0)`
+/// in `FUN_005b4940` `0x005b4940`) and `color` (`D3DCOLOR` `0xAARRGGBB`) is uploaded via `FUN_005b2190`
+/// (`0x005b2190`) into vertex shader constant `c26`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapMaterial {
-    /// Rendering mode / shader flag (e.g., standard shading, vertex color modulation, specular).
+    /// Rendering mode / shader flag (`u8` low byte indexes `DAT_008f0338` via `sh2pc.exe` `FUN_005b2d40` `0x005b2d40`).
     pub mode: u16,
-    /// Index into the map's texture table.
+    /// Texture ID looked up via `sh2pc.exe` `FUN_0045a2f0`; `0` denotes an untextured material (`IDirect3DTexture8* == NULL`).
     pub texture_id: u16,
-    /// RGBA tint / diffuse color stored in packed 32-bit format.
+    /// Diffuse tint stored in `D3DCOLOR` `0xAARRGGBB` layout (`sh2pc.exe` `FUN_005b2190` `0x005b2190`).
     pub color: u32,
-    /// Overlay color / blend factor.
+    /// Specular/overlay tint stored in `D3DCOLOR` `0xAARRGGBB` layout (`sh2pc.exe` `FUN_005b2240` `0x005b2240`).
     pub overlay: u32,
-    /// Specular reflection power exponent.
+    /// Specular reflection power exponent (`sh2pc.exe` `FUN_005b6300` LUT when non-zero).
     pub specularity: f32,
+}
+
+impl MapMaterial {
+    /// Returns `true` when this material has no diffuse texture (`texture_id == 0`).
+    ///
+    /// Verified 1:1 against `sh2pc.exe` `FUN_005b3e50` (`0x005b3e50`) + `FUN_005b4940` (`0x005b4940`),
+    /// where `texture_id == 0` yields `puVar1[2] = NULL` (`SetTexture(0, NULL)`).
+    #[inline]
+    #[must_use]
+    pub const fn is_untextured(&self) -> bool {
+        self.texture_id == 0
+    }
+
+    /// Returns `true` when this material's shader mode multiplies lit diffuse color by vertex
+    /// shader constant `c26` ([`Self::color`]).
+    ///
+    /// Verified 1:1 against `sh2pc.exe` `FUN_005b2d40` (`0x005b2d40`) and the mode-to-shader table
+    /// `DAT_008f0338` → `DAT_008f0280`:
+    /// - `mode & 0xff` in `{1, 2, 6}` → `VS[5]` (`0x008ef230`) / `VS[7]` (`0x008efa10`):
+    ///   `mul r3.xyz, r3.xyzz, c26.xyzz` + `add oD0.xyz, r3.xyzz, r3.xyzz` (**uses `c26`**).
+    /// - `mode & 0xff == 0` → `VS[1]` (`0x008ef700`) / `VS[3]` (`0x008ef880`): `mov oD0, c14.wwww`
+    ///   (`1.0`, **ignores `c26`**).
+    /// - `mode & 0xff == 3` → `VS[2]` (`0x008ef7c0`) / `VS[4]` (`0x008ef940`): `mov oD0, v5`
+    ///   (**ignores `c26`**).
+    /// - `mode & 0xff` in `{4, 5, 7}` → `VS[6]` (`0x008ef490`) / `VS[8]` (`0x008efb68`):
+    ///   `mul r4.xyz, v5.xyzz, c22.xyzz` (**ignores `c26`**, uses per-vertex color `v5`).
+    #[inline]
+    #[must_use]
+    pub const fn uses_diffuse_color_constant(&self) -> bool {
+        matches!(self.mode & 0xff, 1 | 2 | 6)
+    }
+
+    /// Unpacks [`Self::color`] (`D3DCOLOR` `0xAARRGGBB`) into `[R, G, B, 255]` bytes.
+    ///
+    /// Verified 1:1 against `sh2pc.exe` `FUN_005b2190` (`0x005b2190`), which extracts
+    /// `R = (color >> 16) & 0xff`, `G = (color >> 8) & 0xff`, `B = color & 0xff` and forces `A = 1.0`.
+    #[inline]
+    #[must_use]
+    pub const fn diffuse_rgba_u8(&self) -> [u8; 4] {
+        [
+            ((self.color >> 16) & 0xff) as u8,
+            ((self.color >> 8) & 0xff) as u8,
+            (self.color & 0xff) as u8,
+            0xff,
+        ]
+    }
+
+    /// Unpacks [`Self::color`] (`D3DCOLOR` `0xAARRGGBB`) into normalized `[R, G, B, 1.0]` floats.
+    ///
+    /// Exact 1:1 parity with `sh2pc.exe` `FUN_005b2190` (`0x005b2190`), which populates vertex
+    /// shader constant `c26` (`_DAT_01db8880..0x01db888c`) using `* (1.0 / 255.0)` (`0.003921569`)
+    /// for RGB and `1.0` (`0x3f800000`) for alpha.
+    #[inline]
+    #[must_use]
+    pub fn diffuse_rgba_f32(&self) -> [f32; 4] {
+        let [r, g, b, _] = self.diffuse_rgba_u8();
+        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+    }
 }
 
 /// An embedded texture stored inside a `.map` sub-file.
@@ -200,6 +268,38 @@ impl MapBatch {
 
     /// Converts parallel vertex attributes (`positions`, `normals`, `uvs`, `colors`) into interleaved [`MapVertex`] structs for direct GPU consumption.
     pub fn interleaved_vertices(&self) -> Vec<MapVertex> {
+        self.interleaved_vertices_for_material(None)
+    }
+
+    /// Converts parallel vertex attributes into interleaved [`MapVertex`] structs, modulating vertex
+    /// RGB by [`MapMaterial::diffuse_rgba_f32`] when `material` is untextured (`texture_id == 0`)
+    /// **and** its shader mode consumes constant `c26` ([`MapMaterial::uses_diffuse_color_constant`],
+    /// `mode & 0xff` in `{1, 2, 6}`).
+    ///
+    /// Verified 1:1 against `sh2pc.exe` `FUN_005b4940` (`0x005b4940`), `FUN_005b2190` (`0x005b2190`),
+    /// `FUN_005b2d40` (`0x005b2d40`), and `VS[1..8]` (`0x008ef700..0x008efb68`), where untextured
+    /// `mode 1/2/6` batches bind `NULL` (sampling white `1.0`) and modulate diffuse RGB by `c26.xyz`
+    /// (`material.color` RGB / 255.0) while preserving vertex alpha (`c26.w = 1.0`). Untextured
+    /// `mode 0/3/4/5/7` shaders ignore `c26` (many retail `.map` files store `color = 0xff000000`
+    /// on `mode 0` fullbright and `mode 4` vertex-colored batches).
+    ///
+    /// Note: Textured `mode 1/2/6` materials intentionally leave `c26` unapplied here because
+    /// `VS[5]` (`0x008ef230`) / `VS[7]` (`0x008efa10`) pair `mul r3.xyz, r3.xyzz, c26.xyzz` with
+    /// `add oD0.xyz, r3.xyzz, r3.xyzz` (2x PS2 GS overbright), whereas `sh2-renderer`'s WGSL
+    /// geometry shader does not yet implement the 2x scale; applying `0xffb2b2b2` alone would
+    /// darken 2,448+ textured retail materials by ~30%.
+    pub fn interleaved_vertices_for_material(
+        &self,
+        material: Option<&MapMaterial>,
+    ) -> Vec<MapVertex> {
+        let mat_rgb = material
+            .filter(|m| m.is_untextured() && m.uses_diffuse_color_constant())
+            .map(|m| {
+                let [r, g, b, _] = m.diffuse_rgba_f32();
+                [r, g, b]
+            })
+            .unwrap_or([1.0, 1.0, 1.0]);
+
         let count = self.positions.len();
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
@@ -208,9 +308,9 @@ impl MapBatch {
             let uv = self.uvs.get(i).copied().unwrap_or([0.0, 0.0]);
             let c = self.colors.get(i).copied().unwrap_or([255, 255, 255, 255]);
             let col = [
-                c[0] as f32 / 255.0,
-                c[1] as f32 / 255.0,
-                c[2] as f32 / 255.0,
+                (c[0] as f32 / 255.0) * mat_rgb[0],
+                (c[1] as f32 / 255.0) * mat_rgb[1],
+                (c[2] as f32 / 255.0) * mat_rgb[2],
                 c[3] as f32 / 255.0,
             ];
             out.push(MapVertex {
@@ -780,4 +880,153 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_material_d3dcolor_unpacking_matches_sh2pc_005b2190() {
+        // Retail `data/bg/ob/ob01.map` mat[2] / mat[11]: untextured, color = 0xffb2b2b2
+        let mat_light_grey = MapMaterial {
+            mode: 1,
+            texture_id: 0,
+            color: 0xffb2_b2b2,
+            overlay: 0xff00_0000,
+            specularity: 0.0,
+        };
+        assert!(mat_light_grey.is_untextured());
+        assert_eq!(mat_light_grey.diffuse_rgba_u8(), [0xb2, 0xb2, 0xb2, 0xff]);
+        let f = mat_light_grey.diffuse_rgba_f32();
+        assert!((f[0] - (178.0 / 255.0)).abs() < 1e-6);
+        assert!((f[1] - (178.0 / 255.0)).abs() < 1e-6);
+        assert!((f[2] - (178.0 / 255.0)).abs() < 1e-6);
+        assert_eq!(f[3], 1.0);
+
+        // Retail `data/bg/ob/ob01.map` mat[22]: untextured, color = 0xff7f7f7f
+        let mat_mid_grey = MapMaterial {
+            mode: 1,
+            texture_id: 0,
+            color: 0xff7f_7f7f,
+            overlay: 0xff00_0000,
+            specularity: 0.0,
+        };
+        assert!(mat_mid_grey.is_untextured());
+        assert_eq!(mat_mid_grey.diffuse_rgba_u8(), [0x7f, 0x7f, 0x7f, 0xff]);
+
+        // Asymmetric channel order check (`0xAARRGGBB` -> R=0xaa, G=0x55, B=0x11, A forced to 1.0
+        // per `sh2pc.exe` `FUN_005b2190` `0x005b2190`: `_DAT_01db888c = 0x3f800000`)
+        let mat_asym = MapMaterial {
+            mode: 1,
+            texture_id: 0,
+            color: 0x33aa_5511,
+            overlay: 0,
+            specularity: 0.0,
+        };
+        assert_eq!(mat_asym.diffuse_rgba_u8(), [0xaa, 0x55, 0x11, 0xff]);
+        let fa = mat_asym.diffuse_rgba_f32();
+        assert!((fa[0] - (0xaa as f32 / 255.0)).abs() < 1e-6);
+        assert!((fa[1] - (0x55 as f32 / 255.0)).abs() < 1e-6);
+        assert!((fa[2] - (0x11 as f32 / 255.0)).abs() < 1e-6);
+        assert_eq!(fa[3], 1.0);
+    }
+
+    #[test]
+    fn test_interleaved_vertices_modulates_untextured_material_color_only() {
+        let batch = MapBatch {
+            group: BatchGroup::Opaque,
+            material_index: 0,
+            geo_id: 0,
+            positions: vec![[0.0, 0.0, 0.0]],
+            uvs: vec![[0.5, 0.5]],
+            colors: vec![[255, 255, 255, 128]],
+            normals: vec![[0.0, 1.0, 0.0]],
+            indices: vec![0],
+        };
+
+        let untextured = MapMaterial {
+            mode: 1,
+            texture_id: 0,
+            color: 0xff80_4020,
+            overlay: 0,
+            specularity: 0.0,
+        };
+        let verts_untex = batch.interleaved_vertices_for_material(Some(&untextured));
+        assert!((verts_untex[0].color[0] - (0x80 as f32 / 255.0)).abs() < 1e-6);
+        assert!((verts_untex[0].color[1] - (0x40 as f32 / 255.0)).abs() < 1e-6);
+        assert!((verts_untex[0].color[2] - (0x20 as f32 / 255.0)).abs() < 1e-6);
+        // Vertex alpha must be preserved (`c26.w = 1.0`).
+        assert!((verts_untex[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
+
+        let textured = MapMaterial {
+            mode: 1,
+            texture_id: 4654,
+            color: 0xff80_4020,
+            overlay: 0,
+            specularity: 0.0,
+        };
+        let verts_tex = batch.interleaved_vertices_for_material(Some(&textured));
+        assert_eq!(verts_tex[0].color[0], 1.0);
+        assert_eq!(verts_tex[0].color[1], 1.0);
+        assert_eq!(verts_tex[0].color[2], 1.0);
+        assert!((verts_tex[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_interleaved_vertices_respects_shader_mode_c26_gating() {
+        let batch = MapBatch {
+            group: BatchGroup::Opaque,
+            material_index: 0,
+            geo_id: 0,
+            positions: vec![[0.0, 0.0, 0.0]],
+            uvs: vec![[0.5, 0.5]],
+            colors: vec![[200, 150, 100, 128]],
+            normals: vec![[0.0, 1.0, 0.0]],
+            indices: vec![0],
+        };
+
+        // Modes 0, 3, 4, 5, 7 ignore `c26` in `sh2pc.exe` (`VS[1..4, 6, 8]`).
+        // Even with `color == 0xff000000` (seen on 19 retail `data/bg/` untextured batches),
+        // vertex RGB and alpha must remain untouched.
+        for mode in [0u16, 3, 4, 5, 7] {
+            let mat = MapMaterial {
+                mode,
+                texture_id: 0,
+                color: 0xff00_0000,
+                overlay: 0,
+                specularity: 0.0,
+            };
+            assert!(
+                !mat.uses_diffuse_color_constant(),
+                "mode {mode} must not consume c26"
+            );
+            let verts = batch.interleaved_vertices_for_material(Some(&mat));
+            assert!((verts[0].color[0] - (200.0 / 255.0)).abs() < 1e-6);
+            assert!((verts[0].color[1] - (150.0 / 255.0)).abs() < 1e-6);
+            assert!((verts[0].color[2] - (100.0 / 255.0)).abs() < 1e-6);
+            assert!((verts[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
+        }
+
+        // Modes 1, 2, 6 consume `c26` (`VS[5]` `0x008ef230` / `VS[7]` `0x008efa10`), modulating
+        // vertex RGB by `diffuse_rgba_f32()` while preserving vertex alpha.
+        for mode in [1u16, 2, 6] {
+            let mat = MapMaterial {
+                mode,
+                texture_id: 0,
+                color: 0xff80_4020,
+                overlay: 0,
+                specularity: 0.0,
+            };
+            assert!(
+                mat.uses_diffuse_color_constant(),
+                "mode {mode} must consume c26"
+            );
+            let verts = batch.interleaved_vertices_for_material(Some(&mat));
+            assert!((verts[0].color[0] - (200.0 / 255.0) * (0x80 as f32 / 255.0)).abs() < 1e-6);
+            assert!((verts[0].color[1] - (150.0 / 255.0) * (0x40 as f32 / 255.0)).abs() < 1e-6);
+            assert!((verts[0].color[2] - (100.0 / 255.0) * (0x20 as f32 / 255.0)).abs() < 1e-6);
+            assert!((verts[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
+        }
+    }
 }

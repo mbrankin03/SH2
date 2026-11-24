@@ -9,16 +9,13 @@ use std::path::PathBuf;
 use super::story_progression_3d::{
     Story3dCheckpointSpec, STORY_3D_CHECKPOINTS, STORY_3D_CHECKPOINT_COUNT,
 };
-use crate::assets::{
-    build_map_texture_bind_groups, find_cld_file_for_room, find_map_file_for_room,
-};
+use crate::assets::{find_cld_file_for_room, find_map_file_for_room, MapTierAssets};
 use crate::state::AppState;
 use sh2_assets::formats::cam::CamFile;
 use sh2_assets::formats::cld::{parse_cld, WallSegment};
 use sh2_assets::formats::TextureLoader;
 use sh2_core::collision::CollisionWorld;
 use sh2_renderer::fog::FogUniforms;
-use sh2_renderer::GpuMap;
 
 /// Loads the retail 3D `.map`, `.cld`, and `.cam` stage assets for Story Checkpoint `cp_idx` (`0..12`),
 /// grounding James onto a verified `.cld` floor triangle inside a `.cam` trigger volume and updating
@@ -53,21 +50,18 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
             Some(PathBuf::from(base).join("sh2e")),
         );
         if let Ok(hd_map) = loader.load_map_with_hd_overrides(cp.map_rel_path, cp.room_id) {
-            state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &hd_map);
-            let hd_bgs = build_map_texture_bind_groups(&state.render_ctx, &hd_map);
-            let sh2e_bgs = loader
+            let hd_assets = MapTierAssets::from_map(&state.render_ctx, &hd_map);
+            let sh2e_assets = loader
                 .load_sh2e_map(cp.map_rel_path, cp.room_id)
                 .ok()
-                .map(|m| build_map_texture_bind_groups(&state.render_ctx, &m))
-                .unwrap_or_else(|| hd_bgs.clone());
-            let van_bgs = loader
+                .map(|m| MapTierAssets::from_map(&state.render_ctx, &m));
+            let van_assets = loader
                 .load_vanilla_map(cp.map_rel_path, cp.room_id)
                 .ok()
-                .map(|m| build_map_texture_bind_groups(&state.render_ctx, &m))
-                .unwrap_or_else(|| sh2e_bgs.clone());
-            state.map_hd_texture_bind_groups = hd_bgs;
-            state.map_sh2e_texture_bind_groups = sh2e_bgs;
-            state.map_vanilla_texture_bind_groups = van_bgs;
+                .map(|m| MapTierAssets::from_map(&state.render_ctx, &m));
+            state.map_hd_assets = hd_assets;
+            state.map_sh2e_assets = sh2e_assets;
+            state.map_vanilla_assets = van_assets;
             loaded_retail_map = true;
             tracing::info!(
                 "[Story Checkpoint {:02}/12] Loaded retail 3D stage '{}' ({}) from base={}",
@@ -82,11 +76,10 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
 
     if !loaded_retail_map {
         let (fb_map, fb_pos, fb_yaw, fb_fog) = find_map_file_for_room(cp.target_room);
-        state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &fb_map);
-        let bgs = build_map_texture_bind_groups(&state.render_ctx, &fb_map);
-        state.map_hd_texture_bind_groups = bgs.clone();
-        state.map_sh2e_texture_bind_groups = bgs.clone();
-        state.map_vanilla_texture_bind_groups = bgs;
+        let fb_assets = MapTierAssets::from_map(&state.render_ctx, &fb_map);
+        state.map_hd_assets = fb_assets.clone();
+        state.map_sh2e_assets = Some(fb_assets.clone());
+        state.map_vanilla_assets = Some(fb_assets);
         state.fog_uniforms = fb_fog;
         state.render_ctx.update_fog(&state.fog_uniforms);
         state.sim_core.collision = find_cld_file_for_room(cp.target_room);

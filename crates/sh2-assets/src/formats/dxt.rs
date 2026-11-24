@@ -393,11 +393,11 @@ pub fn encode_dxt_rgba(rgba: &[u8], width: usize, height: usize, kind: u8) -> Ve
 
             let dst_ofs = (by * bw + bx) * block_size;
             if kind == 1 {
-                let cblock = encode_bc1_color_block(&block_px);
+                let cblock = encode_bc1_color_block(&block_px, false);
                 out[dst_ofs..dst_ofs + 8].copy_from_slice(&cblock);
             } else {
                 let ablock = encode_bc3_alpha_block(&block_px);
-                let cblock = encode_bc1_color_block(&block_px);
+                let cblock = encode_bc1_color_block(&block_px, true);
                 out[dst_ofs..dst_ofs + 8].copy_from_slice(&ablock);
                 out[dst_ofs + 8..dst_ofs + 16].copy_from_slice(&cblock);
             }
@@ -413,13 +413,27 @@ fn rgb8_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
     (r5 << 11) | (g6 << 5) | b5
 }
 
-fn encode_bc1_color_block(pixels: &[[u8; 4]; 16]) -> [u8; 8] {
+fn encode_bc1_color_block(pixels: &[[u8; 4]; 16], ignore_zero_alpha: bool) -> [u8; 8] {
     let mut min_rgb = [255u8; 3];
     let mut max_rgb = [0u8; 3];
-    for px in pixels {
-        for c in 0..3 {
-            min_rgb[c] = min_rgb[c].min(px[c]);
-            max_rgb[c] = max_rgb[c].max(px[c]);
+    let mut used_visible = false;
+    if ignore_zero_alpha {
+        for px in pixels {
+            if px[3] > 0 {
+                used_visible = true;
+                for c in 0..3 {
+                    min_rgb[c] = min_rgb[c].min(px[c]);
+                    max_rgb[c] = max_rgb[c].max(px[c]);
+                }
+            }
+        }
+    }
+    if !used_visible {
+        for px in pixels {
+            for c in 0..3 {
+                min_rgb[c] = min_rgb[c].min(px[c]);
+                max_rgb[c] = max_rgb[c].max(px[c]);
+            }
         }
     }
 
@@ -599,5 +613,63 @@ mod tests {
         assert!((dec_rgba[0] as i32 - 120).abs() <= 8);
         assert_eq!(dec_rgba[3], 255);
         assert_eq!(dec_rgba[7], 64);
+    }
+
+    #[test]
+    fn test_bc3_encoder_ignores_zero_alpha_gutter_rgb_while_preserving_bc1_and_all_transparent() {
+        // 4x4 block with 8 bright blonde-pink hair pixels (`a == 255`) and 8 black cutout gutter
+        // pixels (`(0, 0, 0, 0)`). BC3 (`kind == 5`) must ignore `a == 0` pixels when fitting
+        // RGB endpoints so visible hair texels stay bright and undarkened.
+        let mut mixed_rgba = Vec::with_capacity(4 * 4 * 4);
+        for i in 0..16 {
+            if i < 8 {
+                let shade = if i % 2 == 0 {
+                    [184u8, 140, 112, 255]
+                } else {
+                    [168u8, 120, 96, 255]
+                };
+                mixed_rgba.extend_from_slice(&shade);
+            } else {
+                mixed_rgba.extend_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+
+        let bc3 = encode_dxt_rgba(&mixed_rgba, 4, 4, 5);
+        assert_eq!(bc3.len(), 16);
+        let c0 = u16::from_le_bytes([bc3[8], bc3[9]]);
+        let c1 = u16::from_le_bytes([bc3[10], bc3[11]]);
+        assert_ne!(
+            c1, 0,
+            "BC3 min endpoint must not be dragged to black (0x0000) by alpha == 0 gutter texels"
+        );
+        assert!(
+            c0 >= c1,
+            "BC3 color endpoints must stay ordered c0 >= c1 ({c0:#06x} vs {c1:#06x})"
+        );
+
+        let dec_bc3 = decode_dxt(&bc3, 4, 4, 5).expect("BC3 decode should succeed");
+        for i in 0..8 {
+            let px = &dec_bc3[i * 4..(i + 1) * 4];
+            assert_eq!(px[3], 255);
+            assert!(
+                px[0] >= 155 && px[1] >= 110 && px[2] >= 85,
+                "Visible pixel {i} darkened by alpha==0 gutter: {px:?}"
+            );
+        }
+        for i in 8..16 {
+            assert_eq!(dec_bc3[i * 4 + 3], 0);
+        }
+
+        // All-transparent 4x4 BC3 block must fall back safely without panicking.
+        let all_zero = vec![0u8; 4 * 4 * 4];
+        let bc3_zero = encode_dxt_rgba(&all_zero, 4, 4, 5);
+        let dec_zero = decode_dxt(&bc3_zero, 4, 4, 5).expect("all-zero BC3 decode");
+        assert!(dec_zero.as_chunks::<4>().0.iter().all(|px| px[3] == 0));
+
+        // BC1 (`kind == 1`) continues to fit all 16 pixels (including dark texels) without panicking.
+        let bc1 = encode_dxt_rgba(&mixed_rgba, 4, 4, 1);
+        assert_eq!(bc1.len(), 8);
+        let dec_bc1 = decode_dxt(&bc1, 4, 4, 1).expect("BC1 decode should succeed");
+        assert_eq!(dec_bc1.len(), 4 * 4 * 4);
     }
 }

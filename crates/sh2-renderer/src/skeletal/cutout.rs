@@ -197,10 +197,47 @@ pub fn dilate_transparent_border_rgb(width: u32, height: u32, rgba: &mut [u8], p
     }
 }
 
+/// Maximum number of 8-connected border dilation passes returned by [`scaled_border_dilation_passes`].
+///
+/// Caps CPU startup cost for extreme custom 8K/16K texture packs while still covering up to 6 full
+/// 4x4 BC3 blocks and 4 mipmap levels of gutter protection.
+pub const MAX_BORDER_DILATION_PASSES: usize = 24;
+
+/// Computes the UV-space-equivalent border dilation pass count for a texture of dimensions
+/// `(dst_w, dst_h)` relative to its vanilla `(van_w, van_h)` base dimensions and `base_passes`.
+///
+/// Scales `base_passes` linearly by `ceil(max(dst_w / van_w, dst_h / van_h))` (e.g., `2` passes at
+/// 1x vanilla -> `8` passes at 4x 4K) and clamps to [`MAX_BORDER_DILATION_PASSES`] so hardware
+/// bilinear filtering, 4x4 BC3 compression blocks, and mip levels 1–2 never bleed dark
+/// `(0, 0, 0, 0)` gutter texels into hair/fringe edges while keeping startup cost bounded for
+/// extreme 8K/16K custom packs.
+#[must_use]
+pub fn scaled_border_dilation_passes(
+    van_w: u32,
+    van_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    base_passes: usize,
+) -> usize {
+    if base_passes == 0 || van_w == 0 || van_h == 0 {
+        return base_passes.min(MAX_BORDER_DILATION_PASSES);
+    }
+    let scale_x = dst_w.div_ceil(van_w).max(1) as usize;
+    let scale_y = dst_h.div_ceil(van_h).max(1) as usize;
+    base_passes
+        .saturating_mul(scale_x.max(scale_y))
+        .min(MAX_BORDER_DILATION_PASSES)
+}
+
 /// Transfers SH2:EE RGB color corrections (such as Maria's restored pink hair tips on `tid = 1246`
 /// in `sh2e/chr/mar/lll_mar.mdl` and `sh2e/chr2/mar/lxx_mar.mdl`) onto a 4K AI Master override
-/// texture while preserving 4K strand detail, and strips offline-upscaler `(255,255,255,0)` /
-/// `(0,0,0,0)` gutter bleed along binary cutout borders.
+/// texture while preserving 4K strand detail, reconstructs clean binary cutout alpha from the
+/// vanilla silhouette to eliminate offline-upscaler / DXT5 stippled hair-tip shredding, clamps
+/// stray upscaler alpha specks outside smooth-alpha silhouettes (e.g., `hhh_mar` `tid = 1247`),
+/// and strips `(255, 255, 255, 0)` / `(0, 0, 0, 0)` gutter bleed along cutout borders.
+///
+/// Only invoked when the 4K Textures Options toggle is active; strict 1:1 Vanilla PS2 textures are
+/// never modified by this function.
 pub fn refine_4k_chr_texture_from_sources(
     van_w: u32,
     van_h: u32,
@@ -226,36 +263,83 @@ pub fn refine_4k_chr_texture_from_sources(
 
     let van_pixels = van_raw_rgba.as_chunks::<4>().0;
     let has_zero_alpha = van_pixels.iter().any(|px| px[3] == 0);
+    let non_opaque_count = van_pixels.iter().filter(|px| px[3] < 255).count();
     let mid_alpha_count = van_pixels
         .iter()
         .filter(|px| px[3] > 0 && px[3] < 240)
         .count();
-    let is_binary_cutout_source = has_zero_alpha && mid_alpha_count * 100 < van_pixels.len();
+    // Evaluate intermediate alpha relative to non-opaque (`alpha < 255`) texels rather than total
+    // image texels so a sheet with mostly opaque skin plus a small smooth-alpha eyelash island is
+    // not misclassified as a strict binary `{0, 255}` cutout.
+    let is_binary_cutout_source =
+        has_zero_alpha && non_opaque_count > 0 && mid_alpha_count * 100 < non_opaque_count;
 
-    let sh2e_edit_slice = sh2e_raw.and_then(|(sw, sh, s_rgba)| {
-        if sw == van_w && sh == van_h && s_rgba.len() == van_raw_rgba.len() {
-            let differs_rgb = van_pixels
+    let sh2e_edit = sh2e_raw.and_then(|(sw, sh, s_rgba)| {
+        let sw_u = sw as usize;
+        let sh_u = sh as usize;
+        if sw_u == 0 || sh_u == 0 || s_rgba.len() != sw_u * sh_u * 4 {
+            return None;
+        }
+        let differs_rgb = if sw == van_w && sh == van_h {
+            van_pixels
                 .iter()
                 .zip(s_rgba.as_chunks::<4>().0.iter())
-                .any(|(v, s)| v[0] != s[0] || v[1] != s[1] || v[2] != s[2]);
-            differs_rgb.then_some(s_rgba)
+                .any(|(v, s)| v[0] != s[0] || v[1] != s[1] || v[2] != s[2])
         } else {
-            None
-        }
+            // Compare SH2:EE RGB at each vanilla texel center when SH2:EE has different dimensions
+            // (e.g., 2x HD SH2:EE character texture vs 1x vanilla `.mdl`).
+            let sx_step = (sw_u as f32) / (vw as f32);
+            let sy_step = (sh_u as f32) / (vh as f32);
+            let mut found = false;
+            'outer: for vy in 0..vh {
+                let sy = (((vy as f32 + 0.5) * sy_step - 0.5)
+                    .round()
+                    .clamp(0.0, (sh_u - 1) as f32)) as usize;
+                for vx in 0..vw {
+                    let sx = (((vx as f32 + 0.5) * sx_step - 0.5)
+                        .round()
+                        .clamp(0.0, (sw_u - 1) as f32)) as usize;
+                    let vi = (vy * vw + vx) * 4;
+                    let si = (sy * sw_u + sx) * 4;
+                    if van_raw_rgba[vi] != s_rgba[si]
+                        || van_raw_rgba[vi + 1] != s_rgba[si + 1]
+                        || van_raw_rgba[vi + 2] != s_rgba[si + 2]
+                    {
+                        found = true;
+                        break 'outer;
+                    }
+                }
+            }
+            found
+        };
+        differs_rgb.then_some((sw, sh, s_rgba))
     });
 
-    if !is_binary_cutout_source && sh2e_edit_slice.is_none() {
+    if !has_zero_alpha && sh2e_edit.is_none() {
         return;
     }
 
     let mut van_dil = van_raw_rgba.to_vec();
-    dilate_transparent_border_rgb(van_w, van_h, &mut van_dil, 6);
+    if is_binary_cutout_source || sh2e_edit.is_some() {
+        dilate_transparent_border_rgb(van_w, van_h, &mut van_dil, 6);
+    }
 
-    let sh2e_dil = sh2e_edit_slice.map(|s_rgba| {
+    let sh2e_dil = sh2e_edit.map(|(sw, sh, s_rgba)| {
         let mut buf = s_rgba.to_vec();
-        dilate_transparent_border_rgb(van_w, van_h, &mut buf, 6);
-        buf
+        let sh2e_passes = scaled_border_dilation_passes(van_w, van_h, sw, sh, 6);
+        dilate_transparent_border_rgb(sw, sh, &mut buf, sh2e_passes);
+        (sw as usize, sh as usize, buf)
     });
+
+    // Exact 8-bit UNORM midpoints:
+    // - `BINARY_ALPHA_ISOCONTOUR = 127.5` (`255.0 * 0.5`): 0.5 level-set of the bilinearly
+    //   reconstructed vanilla `{0, 255}` binary silhouette mask, producing smooth unbroken 4K hair
+    //   strands that match vanilla's exact `{0, 255}` alpha distribution (passing `TransparentCore`
+    //   `>= PS2_ALPHA_OPAQUE_THRESHOLD` without DXT5 stipple shredding).
+    // - `TRANSPARENT_OUTSIDE_EPS = 0.5` (`PS2_ALPHA_TEST_THRESHOLD * 255.0`): strictly `0` across
+    //   all four surrounding vanilla texels (`SLUS_202.28` `TEST_1 = 0x5000d` `ATST=GREATER, AREF=0`).
+    const BINARY_ALPHA_ISOCONTOUR: f32 = 127.5;
+    const TRANSPARENT_OUTSIDE_EPS: f32 = 0.5;
 
     let scale_x = (vw as f32) / (dw as f32);
     let scale_y = (vh as f32) / (dh as f32);
@@ -266,13 +350,20 @@ pub fn refine_4k_chr_texture_from_sources(
         let y1 = (y0 + 1).min(vh - 1);
         let fy = sy - (y0 as f32);
 
+        let sh2e_y = sh2e_dil.as_ref().map(|(_, sh_u, _)| {
+            let s_scale_y = (*sh_u as f32) / (dh as f32);
+            let ssy = ((y4 as f32 + 0.5) * s_scale_y - 0.5).clamp(0.0, (*sh_u - 1) as f32);
+            let sy0 = ssy.floor() as usize;
+            let sy1 = (sy0 + 1).min(*sh_u - 1);
+            (sy0, sy1, ssy - (sy0 as f32))
+        });
+
         for x4 in 0..dw {
             let sx = ((x4 as f32 + 0.5) * scale_x - 0.5).clamp(0.0, (vw - 1) as f32);
             let x0 = sx.floor() as usize;
             let x1 = (x0 + 1).min(vw - 1);
             let fx = sx - (x0 as f32);
 
-            let van_rgb = bilerp_rgb(&van_dil, vw, x0, y0, x1, y1, fx, fy);
             let dst_base = (y4 * dw + x4) * 4;
             let mut rgb = [
                 dst_4k_rgba[dst_base] as f32,
@@ -280,18 +371,53 @@ pub fn refine_4k_chr_texture_from_sources(
                 dst_4k_rgba[dst_base + 2] as f32,
             ];
 
+            let src_a = if has_zero_alpha {
+                bilerp_alpha(van_raw_rgba, vw, x0, y0, x1, y1, fx, fy)
+            } else {
+                255.0
+            };
+
+            let van_rgb = if is_binary_cutout_source || sh2e_dil.is_some() {
+                bilerp_rgb(&van_dil, vw, x0, y0, x1, y1, fx, fy)
+            } else {
+                rgb
+            };
+
             if is_binary_cutout_source {
-                let src_a = bilerp_alpha(van_raw_rgba, vw, x0, y0, x1, y1, fx, fy);
-                if src_a < 254.0 {
+                // Reconstruct clean binary cutout alpha from the bilinearly upscaled vanilla mask,
+                // eliminating offline-upscaler / DXT5 stippled dots and noisy `1..=254` halos.
+                let clean_a = if src_a >= BINARY_ALPHA_ISOCONTOUR {
+                    255u8
+                } else {
+                    0u8
+                };
+                dst_4k_rgba[dst_base + 3] = clean_a;
+
+                if clean_a == 0 {
+                    // Fill transparent gutter with clean dilated vanilla RGB (then SH2:EE tinted below)
+                    // so bilinear filtering, 4x4 BC3 blocks, and mipmaps never bleed black `(0,0,0)`.
+                    rgb = van_rgb;
+                } else if src_a < 254.0 {
+                    // Decontaminate offline-upscaler dark/white gutter bleed along cutout borders.
                     let w_clean = ((254.0 - src_a) * (1.0 / 50.0)).clamp(0.0, 1.0);
                     for c in 0..3 {
                         rgb[c] = rgb[c] * (1.0 - w_clean) + van_rgb[c] * w_clean;
                     }
                 }
+            } else if has_zero_alpha && src_a < TRANSPARENT_OUTSIDE_EPS {
+                // Smooth-alpha cutout texture (e.g., `hhh_mar` `tid = 1247`): clamp hallucinated
+                // 4K upscaler background specks outside the vanilla silhouette back to `alpha == 0`.
+                dst_4k_rgba[dst_base + 3] = 0;
             }
 
-            if let Some(ref s_dil) = sh2e_dil {
-                let sh2e_rgb = bilerp_rgb(s_dil, vw, x0, y0, x1, y1, fx, fy);
+            if let (Some((sw_u, _, ref s_dil)), Some((sy0, sy1, sfy))) = (&sh2e_dil, sh2e_y) {
+                let s_scale_x = (*sw_u as f32) / (dw as f32);
+                let ssx = ((x4 as f32 + 0.5) * s_scale_x - 0.5).clamp(0.0, (*sw_u - 1) as f32);
+                let sx0 = ssx.floor() as usize;
+                let sx1 = (sx0 + 1).min(*sw_u - 1);
+                let sfx = ssx - (sx0 as f32);
+
+                let sh2e_rgb = bilerp_rgb(s_dil, *sw_u, sx0, sy0, sx1, sy1, sfx, sfy);
                 for c in 0..3 {
                     let ratio = (sh2e_rgb[c] + 12.0) / (van_rgb[c] + 12.0);
                     rgb[c] = (rgb[c] * ratio).clamp(0.0, 255.0);
@@ -413,12 +539,133 @@ mod tests {
             "Expected rose-pink R-G spread >= 50, got {:?}",
             &dst_4k[0..4]
         );
-        // Fringe pixel (`alpha = 140`) is decontaminated from `(60, 50, 35)` up to bright pink-blonde!
+        // Fringe pixel (`sx = 0.25`, `src_a = 191.25 >= 127.5`) is decontaminated from `(60, 50, 35)`
+        // up to bright pink-blonde AND its noisy upscaler alpha (`140`) is reconstructed cleanly to `255`!
         assert!(
             dst_4k[4] >= 150,
             "Expected gutter-decontaminated red >= 150, got {:?}",
             &dst_4k[4..8]
         );
-        assert_eq!(dst_4k[7], 140);
+        assert_eq!(dst_4k[7], 255);
+        // Cutout pixels (`sx = 0.75`, `src_a = 63.75 < 127.5`) remain strictly `alpha == 0` with
+        // clean dilated hair RGB instead of black `(0, 0, 0)`.
+        assert_eq!(dst_4k[11], 0);
+        assert!(dst_4k[8] >= 150);
+    }
+
+    #[test]
+    fn scaled_border_dilation_passes_scales_proportionally_for_hd_and_4k() {
+        assert_eq!(scaled_border_dilation_passes(1024, 512, 1024, 512, 2), 2);
+        assert_eq!(scaled_border_dilation_passes(1024, 512, 2048, 1024, 2), 4);
+        assert_eq!(scaled_border_dilation_passes(1024, 512, 4096, 2048, 2), 8);
+        assert_eq!(scaled_border_dilation_passes(256, 256, 1024, 1024, 2), 8);
+        // Extreme 8K/16K custom packs are capped to `MAX_BORDER_DILATION_PASSES` (`24`).
+        assert_eq!(
+            scaled_border_dilation_passes(256, 256, 8192, 8192, 2),
+            MAX_BORDER_DILATION_PASSES
+        );
+        assert_eq!(
+            scaled_border_dilation_passes(256, 256, 16384, 16384, 2),
+            MAX_BORDER_DILATION_PASSES
+        );
+        assert_eq!(scaled_border_dilation_passes(0, 0, 1024, 1024, 2), 2);
+        assert_eq!(scaled_border_dilation_passes(256, 256, 1024, 1024, 0), 0);
+    }
+
+    #[test]
+    fn refine_4k_chr_texture_transfers_sh2e_colors_when_sh2e_resolution_differs_from_vanilla() {
+        // 2x1 vanilla: [blonde (168, 148, 110, 255), cutout (0, 0, 0, 0)]
+        let van = vec![168, 148, 110, 255, 0, 0, 0, 0];
+        // 4x1 SH2:EE (2x wider than vanilla): pink-dyed tips across pixels 0..2, cutout at 2..4
+        let sh2e_2x = vec![
+            168, 108, 94, 255, // x = 0
+            168, 108, 94, 255, // x = 1
+            0, 0, 0, 0, // x = 2
+            0, 0, 0, 0, // x = 3
+        ];
+        // 8x1 4K (4x wider than vanilla)
+        let mut dst_4k = vec![
+            170, 150, 112, 255, // 0
+            170, 150, 112, 255, // 1
+            170, 150, 112, 240, // 2 (noisy upscaler alpha)
+            60, 50, 35, 90, // 3 (darkened upscaler fringe)
+            0, 0, 0, 40, // 4 (stray upscaler alpha dot in cutout)
+            0, 0, 0, 0, // 5
+            0, 0, 0, 0, // 6
+            0, 0, 0, 0, // 7
+        ];
+
+        refine_4k_chr_texture_from_sources(
+            2,
+            1,
+            &van,
+            Some((4, 1, sh2e_2x.as_slice())),
+            8,
+            1,
+            &mut dst_4k,
+        );
+
+        // SH2:EE rose-pink tint transferred despite `4x1 != 2x1` resolution mismatch
+        assert!(dst_4k[0] >= 165);
+        assert!(dst_4k[1] <= 115);
+        assert!(dst_4k[0] as i32 - dst_4k[1] as i32 >= 50);
+        // Binary silhouette reconstructed cleanly: pixels 0..4 are solid 255, pixels 4..8 are 0
+        for i in 0..4 {
+            assert_eq!(dst_4k[i * 4 + 3], 255, "pixel {i} should be opaque 255");
+        }
+        for i in 4..8 {
+            assert_eq!(dst_4k[i * 4 + 3], 0, "pixel {i} should be cutout 0");
+        }
+    }
+
+    #[test]
+    fn refine_4k_chr_texture_clamps_stray_upscaler_specks_on_smooth_alpha_textures() {
+        // 4x1 smooth-alpha vanilla (`tid = 1247` style): 50% intermediate alpha -> not binary cutout
+        let van = vec![
+            160, 130, 100, 200, // x = 0 (smooth hair)
+            160, 130, 100, 120, // x = 1 (soft fringe)
+            0, 0, 0, 0, // x = 2 (transparent background)
+            0, 0, 0, 0, // x = 3 (transparent background)
+        ];
+        // 8x1 4K with intact smooth hair at 0..4 and a hallucinated white speck at pixel 6 (`a = 180`)
+        let mut dst_4k = vec![
+            160, 130, 100, 205, // 0
+            160, 130, 100, 195, // 1
+            160, 130, 100, 140, // 2
+            160, 130, 100, 95, // 3
+            0, 0, 0, 0, // 4
+            0, 0, 0, 0, // 5
+            255, 255, 255, 180, // 6: hallucinated speck strictly outside vanilla silhouette
+            0, 0, 0, 0, // 7
+        ];
+
+        refine_4k_chr_texture_from_sources(4, 1, &van, None, 8, 1, &mut dst_4k);
+
+        // Interior smooth alpha preserved bit-identically
+        assert_eq!(dst_4k[3], 205);
+        assert_eq!(dst_4k[11], 140);
+        // Hallucinated background speck strictly outside vanilla silhouette clamped to 0
+        assert_eq!(dst_4k[6 * 4 + 3], 0);
+    }
+
+    #[test]
+    fn refine_4k_chr_texture_preserves_tiny_smooth_eyelash_island_on_mostly_opaque_sheet() {
+        // 100x2 sheet (200 texels): 198 opaque skin texels (99%) + 1 smooth-alpha eyelash texel
+        // (`a = 128`) + 1 fully transparent texel (`a = 0`). Evaluating mid-alpha relative to
+        // non-opaque (`a < 255`) texels yields 50% smooth alpha -> MUST NOT be binarized!
+        let mut van = vec![0u8; 200 * 4];
+        for i in 0..198 {
+            van[i * 4..i * 4 + 4].copy_from_slice(&[200, 165, 145, 255]);
+        }
+        van[198 * 4..198 * 4 + 4].copy_from_slice(&[40, 30, 25, 128]); // smooth eyelash
+        van[199 * 4..199 * 4 + 4].copy_from_slice(&[0, 0, 0, 0]); // transparent gutter
+
+        // 100x2 destination matching vanilla dimensions with smooth alpha `128` at pixel 198
+        let mut dst = van.clone();
+        refine_4k_chr_texture_from_sources(100, 2, &van, None, 100, 2, &mut dst);
+
+        // Smooth eyelash alpha `128` must remain untouched (NOT binarized to 0 or 255).
+        assert_eq!(dst[198 * 4 + 3], 128);
+        assert_eq!(dst[199 * 4 + 3], 0);
     }
 }

@@ -14,6 +14,12 @@
 //! - $c$: Critical damping coefficient preventing oscillation.
 //! - $\tau_{\text{inertial}}$: Driving inertial torque derived from character movement and turning rate.
 
+mod capsule;
+#[cfg(test)]
+mod tests;
+
+pub use capsule::{closest_point_on_segment, resolve_capsule_penetration, ThighCapsuleSpec};
+
 use glam::{FloatExt, Mat4, Quat, Vec3};
 use std::collections::HashMap;
 
@@ -100,78 +106,6 @@ pub struct SecondaryJointState {
     pub deflection: Vec3,
     /// Angular velocity $(\dot{\text{pitch}}, \dot{\text{yaw}}, \dot{\text{roll}})$ in radians/sec.
     pub angular_velocity: Vec3,
-}
-
-/// Analytical thigh-capsule collision rig for preventing cloth/skirt clipping (`SH2-85`).
-///
-/// Bone indices and radii are derived from retail `.mdl` bind-pose geometry (`hll_jms.mdl` /
-/// `hhh_jms.mdl` and `lll_mar.mdl`).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ThighCapsuleSpec {
-    /// Left hip/thigh bone index.
-    pub left_hip: usize,
-    /// Left knee bone index.
-    pub left_knee: usize,
-    /// Right hip/thigh bone index.
-    pub right_hip: usize,
-    /// Right knee bone index.
-    pub right_knee: usize,
-    /// Analytical thigh capsule radius in SH2 mm.
-    pub radius_mm: f32,
-    /// Cloth bone indices tested against both thigh capsules.
-    pub cloth_bones: &'static [usize],
-}
-
-impl ThighCapsuleSpec {
-    /// James Sunderland jacket coat-tail collision against thighs (`hll_jms.mdl` / `hhh_jms.mdl`,
-    /// `4->6` left thigh, `5->7` right thigh, `70.0` mm core radius inside `85.93` mm thigh mesh
-    /// and `74.7` mm bind-pose clearance on bone `23`).
-    pub const JAMES: Self = Self {
-        left_hip: 4,
-        left_knee: 6,
-        right_hip: 5,
-        right_knee: 7,
-        radius_mm: 70.0,
-        cloth_bones: &[11, 12, 16, 17, 23, 24],
-    };
-
-    /// Maria skirt collision against thighs (`lll_mar.mdl`, `3->7` left thigh, `5->8` right thigh,
-    /// `35.0` mm inner core radius inside `52.88` mm thigh mesh and `36.0` mm bind-pose clearance
-    /// on skirt bone `14`).
-    pub const MARIA: Self = Self {
-        left_hip: 3,
-        left_knee: 7,
-        right_hip: 5,
-        right_knee: 8,
-        radius_mm: 35.0,
-        cloth_bones: &[13, 14, 18, 19],
-    };
-}
-
-/// Returns the closest point to `p` on the finite line segment `[a, b]`.
-#[must_use]
-pub fn closest_point_on_segment(p: Vec3, a: Vec3, b: Vec3) -> Vec3 {
-    let ab = b - a;
-    let len_sq = ab.length_squared();
-    if len_sq < 1e-6 {
-        return a;
-    }
-    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
-    a + ab * t
-}
-
-/// Computes the outward push vector if `bone_pos` penetrates capsule `([a, b], radius)`.
-#[must_use]
-pub fn resolve_capsule_penetration(bone_pos: Vec3, a: Vec3, b: Vec3, radius: f32) -> Option<Vec3> {
-    let closest = closest_point_on_segment(bone_pos, a, b);
-    let delta = bone_pos - closest;
-    let dist_sq = delta.length_squared();
-    if dist_sq >= radius * radius {
-        return None;
-    }
-    let dist = dist_sq.sqrt();
-    let dir = if dist > 1e-4 { delta / dist } else { Vec3::Z };
-    Some(dir * (radius - dist))
 }
 
 /// Multi-joint secondary physics solver managing real-time bone perturbations.
@@ -266,25 +200,21 @@ impl SecondaryBonePhysics {
             return;
         }
 
-        // 1. Calculate world displacement and project into character-local coordinate space
         let world_delta = current_position - self.last_position;
         self.last_position = current_position;
 
         let raw_world_vel = world_delta / dt;
         let (s_yaw, c_yaw) = current_yaw.sin_cos();
 
-        // Local X = Lateral, Local Z = Forward/Backward
         let local_vx = raw_world_vel.x * c_yaw - raw_world_vel.z * s_yaw;
         let local_vz = raw_world_vel.x * s_yaw + raw_world_vel.z * c_yaw;
         let target_local_vel = Vec3::new(local_vx, raw_world_vel.y, local_vz);
 
-        // Exponential smoothing filter for velocity
         let vel_alpha = (dt * 15.0).clamp(0.0, 1.0);
         self.filtered_local_velocity = self
             .filtered_local_velocity
             .lerp(target_local_vel, vel_alpha);
 
-        // 2. Calculate turning yaw rate
         let mut yaw_delta = (current_yaw - self.last_yaw) % std::f32::consts::TAU;
         if yaw_delta > std::f32::consts::PI {
             yaw_delta -= std::f32::consts::TAU;
@@ -299,29 +229,22 @@ impl SecondaryBonePhysics {
             .filtered_yaw_rate
             .lerp(raw_yaw_rate.clamp(-8.0, 8.0), yaw_alpha);
 
-        // 3. Integrate spring-damper dynamics for each registered bone
         for (&bone, config) in &self.configs {
             let state = self.states.entry(bone).or_default();
             state.prev_deflection = state.deflection;
 
-            // Driving inertial forces:
-            // Forward movement pitches flaps backward; turning rate causes lateral roll/sway
             let driving_pitch = self.filtered_local_velocity.z * config.linear_coupling;
             let driving_roll = self.filtered_yaw_rate * config.angular_coupling
                 + self.filtered_local_velocity.x * config.linear_coupling;
 
             let target_torque = Vec3::new(driving_pitch, 0.0, driving_roll);
-
-            // Hooke's Law spring acceleration: a = -k * x - c * v + torque
             let spring_force =
                 -config.stiffness * state.deflection - config.damping * state.angular_velocity;
             let total_accel = spring_force + target_torque;
 
-            // Semi-implicit Euler integration
             state.angular_velocity += total_accel * dt;
             state.deflection += state.angular_velocity * dt;
 
-            // Clamp deflection to physical bounds
             state.deflection.x = state.deflection.x.clamp(config.min_pitch, config.max_pitch);
             state.deflection.z = state.deflection.z.clamp(-config.max_sway, config.max_sway);
             state.deflection.y = state.deflection.y.clamp(-config.max_sway, config.max_sway);
@@ -348,8 +271,6 @@ impl SecondaryBonePhysics {
                 continue;
             }
 
-            // Convert previous and current Euler deflections (pitch X, yaw Y, roll Z) into unit quaternions
-            // and interpolate along the shortest geodesic arc via Slerp.
             let q_prev = Quat::from_euler(
                 glam::EulerRot::ZYX,
                 state.prev_deflection.z,
@@ -366,7 +287,6 @@ impl SecondaryBonePhysics {
             let rot_mat = Mat4::from_quat(rot_delta);
 
             let mut orig = Mat4::from_cols_array_2d(&locals[bone]);
-            // Modulate upper-left 3x3 rotation: M_new = M_orig * R_delta
             orig *= rot_mat;
             locals[bone] = orig.to_cols_array_2d();
         }
@@ -374,9 +294,6 @@ impl SecondaryBonePhysics {
 
     /// Advances the simulation clock by `dt` seconds only when `enabled` is `true`
     /// (`GameOptions::enable_secondary_physics`, default `false` for 1:1 PS2 parity).
-    ///
-    /// When `enabled` is `false`, resets all spring deflections to resting zero so toggling
-    /// the option off at runtime immediately restores the authentic PS2 keyframed pose.
     pub fn step_if_enabled(
         &mut self,
         enabled: bool,
@@ -391,8 +308,7 @@ impl SecondaryBonePhysics {
         }
     }
 
-    /// Applies sub-frame Slerp-interpolated secondary deflection transforms only when `enabled` is `true`
-    /// (`GameOptions::enable_secondary_physics`, default `false` for 1:1 PS2 parity).
+    /// Applies sub-frame Slerp-interpolated secondary deflection transforms only when `enabled` is `true`.
     pub fn apply_to_locals_if_enabled(
         &self,
         enabled: bool,
@@ -430,191 +346,8 @@ impl SecondaryBonePhysics {
 
     /// Pushes penetrating cloth/skirt bones outside the character's analytical thigh capsules.
     pub fn resolve_thigh_collisions_into(&self, pose_world: &mut [[[f32; 4]; 4]], parents: &[u8]) {
-        let Some(spec) = self.thigh_capsules else {
-            return;
-        };
-        let max_leg = spec
-            .left_hip
-            .max(spec.left_knee)
-            .max(spec.right_hip)
-            .max(spec.right_knee);
-        if max_leg >= pose_world.len() || parents.len() < pose_world.len() {
-            return;
+        if let Some(spec) = self.thigh_capsules {
+            capsule::resolve_thigh_collisions(spec, pose_world, parents);
         }
-        let pos_of = |m: &[[f32; 4]; 4]| Vec3::new(m[0][3], m[1][3], m[2][3]);
-        let l_hip = pos_of(&pose_world[spec.left_hip]);
-        let l_knee = pos_of(&pose_world[spec.left_knee]);
-        let r_hip = pos_of(&pose_world[spec.right_hip]);
-        let r_knee = pos_of(&pose_world[spec.right_knee]);
-
-        for &bone in spec.cloth_bones {
-            if bone >= pose_world.len() {
-                continue;
-            }
-            let mut bone_pos = pos_of(&pose_world[bone]);
-            let mut total_push = Vec3::ZERO;
-            for (a, b) in [(l_hip, l_knee), (r_hip, r_knee)] {
-                if let Some(push) = resolve_capsule_penetration(bone_pos, a, b, spec.radius_mm) {
-                    bone_pos += push;
-                    total_push += push;
-                }
-            }
-            if total_push.length_squared() > 1e-8 {
-                pose_world[bone][0][3] += total_push.x;
-                pose_world[bone][1][3] += total_push.y;
-                pose_world[bone][2][3] += total_push.z;
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_secondary_physics_presets_and_step() {
-        let mut sim_james = SecondaryBonePhysics::for_james();
-        assert!(sim_james.configs.contains_key(&11)); // coat tail root left
-        assert!(sim_james.configs.contains_key(&12)); // coat tail root right
-        assert!(sim_james.configs.contains_key(&16)); // mid tail left
-        assert!(sim_james.configs.contains_key(&17)); // mid tail right
-        assert!(sim_james.configs.contains_key(&23)); // lower tip left
-        assert!(sim_james.configs.contains_key(&24)); // lower tip right
-
-        let sim_maria = SecondaryBonePhysics::for_maria();
-        assert!(sim_maria.configs.contains_key(&12)); // skirt left
-        assert!(sim_maria.configs.contains_key(&17)); // skirt right
-        assert!(sim_maria.configs.contains_key(&13)); // chest
-        assert!(sim_maria.configs.contains_key(&14)); // chest
-
-        // Test forward motion reaction
-        let dt = 1.0 / 60.0;
-        let p0 = Vec3::new(0.0, 0.0, 0.0);
-        let p1 = Vec3::new(0.0, 0.0, 25.0); // Moving forward (+Z)
-
-        sim_james.step(dt, p0, 0.0);
-        sim_james.step(dt, p1, 0.0);
-
-        let st11 = sim_james.states.get(&11).unwrap();
-        // Moving forward causes pitch deflection due to inertia
-        assert!(st11.deflection.x != 0.0 || st11.angular_velocity.x != 0.0);
-
-        // Test applying transforms to locals
-        let mut locals = vec![[[0.0; 4]; 4]; 40];
-        for loc in &mut locals {
-            loc[0][0] = 1.0;
-            loc[1][1] = 1.0;
-            loc[2][2] = 1.0;
-            loc[3][3] = 1.0;
-        }
-
-        sim_james.apply_to_locals(&mut locals);
-        // Bone 11 should have been modified
-        assert_ne!(locals[11][0][0], 0.0);
-    }
-
-    #[test]
-    fn test_secondary_physics_native_upgrade_toggle_gate() {
-        use crate::config::{AppConfig, EnhancedPreset, GameOptions};
-
-        // Default config must disable synthetic secondary physics for 1:1 PS2 parity
-        assert!(!GameOptions::default().enable_secondary_physics);
-        let mut cfg = AppConfig::default();
-        cfg.apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
-        assert!(!cfg.game.enable_secondary_physics);
-        cfg.apply_enhanced_preset(EnhancedPreset::NativeEnhanced);
-        assert!(cfg.game.enable_secondary_physics);
-
-        let mut sim = SecondaryBonePhysics::for_james();
-        let dt = 1.0 / 60.0;
-        sim.step_if_enabled(false, dt, Vec3::ZERO, 0.0);
-        sim.step_if_enabled(false, dt, Vec3::new(0.0, 0.0, 50.0), 0.5);
-
-        let mut locals = vec![
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ];
-            40
-        ];
-        let orig = locals.clone();
-        sim.apply_to_locals_if_enabled(false, &mut locals, 1.0);
-        assert_eq!(
-            locals, orig,
-            "Disabled secondary physics must leave bind pose matrices untouched"
-        );
-    }
-
-    #[test]
-    fn test_thigh_capsule_collision_james_and_maria() {
-        let mut pose = vec![
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ];
-            36
-        ];
-        let parents = vec![255u8; 36];
-
-        // Place James left thigh (4->6) at X=-52, Y=-472..-258, Z=-30
-        pose[4][0][3] = -52.0;
-        pose[4][1][3] = -472.0;
-        pose[4][2][3] = -30.0;
-        pose[6][0][3] = -44.0;
-        pose[6][1][3] = -258.0;
-        pose[6][2][3] = -30.0;
-        // Place James coat tail bone 23 inside the left thigh capsule (only 10 mm away)
-        pose[23][0][3] = -52.0;
-        pose[23][1][3] = -360.0;
-        pose[23][2][3] = -20.0;
-
-        let sim_james = SecondaryBonePhysics::for_james();
-        sim_james.resolve_thigh_collisions_if_enabled(true, &mut pose, &parents);
-        let pushed_pos = Vec3::new(pose[23][0][3], pose[23][1][3], pose[23][2][3]);
-        let closest = closest_point_on_segment(
-            pushed_pos,
-            Vec3::new(-52.0, -472.0, -30.0),
-            Vec3::new(-44.0, -258.0, -30.0),
-        );
-        assert!(
-            pushed_pos.distance(closest) >= ThighCapsuleSpec::JAMES.radius_mm - 1e-3,
-            "Coat tail bone 23 must be pushed outside James thigh capsule"
-        );
-
-        // Place Maria left thigh (3->7) and penetrating skirt bone 13
-        pose[3][0][3] = -39.0;
-        pose[3][1][3] = -461.0;
-        pose[3][2][3] = -10.0;
-        pose[7][0][3] = -36.0;
-        pose[7][1][3] = -286.0;
-        pose[7][2][3] = -2.0;
-        pose[13][0][3] = -39.0;
-        pose[13][1][3] = -363.0;
-        pose[13][2][3] = -1.0;
-
-        let sim_maria = SecondaryBonePhysics::for_maria();
-        let before_maria = pose[13];
-        sim_maria.resolve_thigh_collisions_if_enabled(false, &mut pose, &parents);
-        assert_eq!(
-            pose[13], before_maria,
-            "Disabled toggle must not move skirt"
-        );
-
-        sim_maria.resolve_thigh_collisions_if_enabled(true, &mut pose, &parents);
-        let pushed_maria = Vec3::new(pose[13][0][3], pose[13][1][3], pose[13][2][3]);
-        let closest_m = closest_point_on_segment(
-            pushed_maria,
-            Vec3::new(-39.0, -461.0, -10.0),
-            Vec3::new(-36.0, -286.0, -2.0),
-        );
-        assert!(
-            pushed_maria.distance(closest_m) >= ThighCapsuleSpec::MARIA.radius_mm - 1e-3,
-            "Skirt bone 13 must be pushed outside Maria thigh capsule"
-        );
     }
 }

@@ -653,11 +653,18 @@ pub(crate) fn load_character_asset(
                             }
                             sh2e_raw_for_4k =
                                 Some((hd_tex.width as u32, hd_tex.height as u32, hd_rgba.clone()));
+                            let sh2e_passes = sh2_renderer::scaled_border_dilation_passes(
+                                tex.width as u32,
+                                tex.height as u32,
+                                hd_tex.width as u32,
+                                hd_tex.height as u32,
+                                2,
+                            );
                             sh2_renderer::dilate_transparent_border_rgb(
                                 hd_tex.width as u32,
                                 hd_tex.height as u32,
                                 &mut hd_rgba,
-                                2,
+                                sh2e_passes,
                             );
                             ctx.create_texture_bind_group(
                                 hd_tex.width as u32,
@@ -706,11 +713,18 @@ pub(crate) fn load_character_asset(
                                 &mut dec.rgba,
                             );
                         }
+                        let hd_passes = sh2_renderer::scaled_border_dilation_passes(
+                            tex.width as u32,
+                            tex.height as u32,
+                            dec.width as u32,
+                            dec.height as u32,
+                            2,
+                        );
                         sh2_renderer::dilate_transparent_border_rgb(
                             dec.width as u32,
                             dec.height as u32,
                             &mut dec.rgba,
-                            2,
+                            hd_passes,
                         );
                         tracing::info!(
                             "Loaded 4K AI Master character texture override for '{}' tex_id={} ({}x{})",

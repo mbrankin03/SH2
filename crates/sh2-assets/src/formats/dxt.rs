@@ -393,11 +393,11 @@ pub fn encode_dxt_rgba(rgba: &[u8], width: usize, height: usize, kind: u8) -> Ve
 
             let dst_ofs = (by * bw + bx) * block_size;
             if kind == 1 {
-                let cblock = encode_bc1_color_block(&block_px);
+                let cblock = encode_bc1_color_block(&block_px, false);
                 out[dst_ofs..dst_ofs + 8].copy_from_slice(&cblock);
             } else {
                 let ablock = encode_bc3_alpha_block(&block_px);
-                let cblock = encode_bc1_color_block(&block_px);
+                let cblock = encode_bc1_color_block(&block_px, true);
                 out[dst_ofs..dst_ofs + 8].copy_from_slice(&ablock);
                 out[dst_ofs + 8..dst_ofs + 16].copy_from_slice(&cblock);
             }
@@ -413,13 +413,27 @@ fn rgb8_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
     (r5 << 11) | (g6 << 5) | b5
 }
 
-fn encode_bc1_color_block(pixels: &[[u8; 4]; 16]) -> [u8; 8] {
+fn encode_bc1_color_block(pixels: &[[u8; 4]; 16], ignore_zero_alpha: bool) -> [u8; 8] {
     let mut min_rgb = [255u8; 3];
     let mut max_rgb = [0u8; 3];
-    for px in pixels {
-        for c in 0..3 {
-            min_rgb[c] = min_rgb[c].min(px[c]);
-            max_rgb[c] = max_rgb[c].max(px[c]);
+    let mut used_visible = false;
+    if ignore_zero_alpha {
+        for px in pixels {
+            if px[3] > 0 {
+                used_visible = true;
+                for c in 0..3 {
+                    min_rgb[c] = min_rgb[c].min(px[c]);
+                    max_rgb[c] = max_rgb[c].max(px[c]);
+                }
+            }
+        }
+    }
+    if !used_visible {
+        for px in pixels {
+            for c in 0..3 {
+                min_rgb[c] = min_rgb[c].min(px[c]);
+                max_rgb[c] = max_rgb[c].max(px[c]);
+            }
         }
     }
 

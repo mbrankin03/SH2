@@ -512,8 +512,12 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Enhanced;
-        assert_eq!(menu.item_count(), 14);
+        assert_eq!(menu.item_count(), 18);
         assert!(!menu.draft_config.game.enable_secondary_physics);
+        assert!(!menu.draft_config.game.enable_unlimited_save_slots);
+        assert!(!menu.draft_config.game.enable_quicksave_autosave);
+        assert!(!menu.draft_config.game.enable_save_thumbnails);
+        assert!(!menu.draft_config.game.enable_free_item_orbit);
         assert!(!menu.draft_config.audio.enable_dynamic_room_acoustics);
 
         // Row 0: Version Preset snaps to PS2 Authentic (1:1 Original)

@@ -362,3 +362,49 @@ pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
         ));
     }
 }
+
+/// Lazily loads `pic/etc/gameover1.tex` for `GameoverMain` (`0x001c4c70` / `0x00497ad0`).
+pub(crate) fn ensure_gameover_tex_loaded(state: &mut AppState) {
+    if state.ingame_menus.gameover_tex_loaded {
+        return;
+    }
+    state.ingame_menus.gameover_tex_loaded = true;
+    let resolver = AssetPathResolver::resolve();
+    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    if let Ok(tex) = loader.load_texture(sh2_ui::GAMEOVER_TEX_PATH) {
+        state.ingame_menus.cached_gameover_tex = Some((tex.width, tex.height, tex.rgba));
+    }
+}
+
+/// Lazily loads `pic/etc/RedCrossIcon.png` (`sh2pc.exe` `0x004f6380`).
+pub(crate) fn ensure_red_cross_tex_loaded(state: &mut AppState) {
+    if state.ingame_menus.red_cross_tex_loaded {
+        return;
+    }
+    state.ingame_menus.red_cross_tex_loaded = true;
+    let resolver = AssetPathResolver::resolve();
+    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    if let Ok(tex) = loader.load_texture(sh2_ui::RED_CROSS_ICON_PATH) {
+        state.ingame_menus.cached_red_cross_tex = Some((tex.width, tex.height, tex.rgba));
+    }
+}
+
+/// Lazily loads `menu/mc/savebg.tbn2` (Main) or `menu/mc/savebg2.tbn2` (Born from a Wish, `0x0044b3e0`).
+pub(crate) fn ensure_savebg_loaded(
+    state: &mut AppState,
+    scenario: sh2_core::scenario::ScenarioKind,
+) {
+    if state.ingame_menus.savebg_tex_loaded == Some(scenario) {
+        return;
+    }
+    state.ingame_menus.savebg_tex_loaded = Some(scenario);
+    let path = match scenario {
+        sh2_core::scenario::ScenarioKind::LetterFromSilentHeaven => sh2_ui::SAVEBG_TBN2_PATH,
+        sh2_core::scenario::ScenarioKind::BornFromAWish => sh2_ui::SAVEBG2_TBN2_PATH,
+    };
+    let resolver = AssetPathResolver::resolve();
+    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    if let Ok(tex) = loader.load_texture(path) {
+        state.ingame_menus.cached_savebg_tex = Some((tex.width, tex.height, tex.rgba));
+    }
+}

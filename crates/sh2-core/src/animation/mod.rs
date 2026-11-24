@@ -383,6 +383,9 @@ mod tests {
         let idle = JamesBasicClips::IDLE;
         assert_eq!(idle.frame_count(), 10);
         assert!(idle.looping);
+        assert!((idle.fps - 3.75).abs() < 1e-4);
+        assert!((idle.duration_seconds() - (10.0 / 3.75)).abs() < 1e-4);
+        assert_eq!(MariaLocomotionClips::IDLE, idle);
 
         let walk = JamesBasicClips::WALK;
         assert_eq!(walk.frame_count(), 24);

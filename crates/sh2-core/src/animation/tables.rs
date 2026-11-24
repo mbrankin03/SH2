@@ -11,7 +11,7 @@ use super::clip::AnimationClip;
 /// Default standard animation clips for James Sunderland in `jms_basic1.anm` (`pjames_anim[34]` at `0x6ceac4`).
 ///
 /// Authentic frame ranges and fixed-point speeds (`2048 = 30.0 FPS`) matching original PS2/PC engine:
-/// - `Clip 101` (`STAND` / `IDLE`): frames `1..=10` (speed `256` = `3.75 fps` subtle breathing, or `15.0 fps` legacy)
+/// - `Clip 101` (`STAND` / `IDLE`): frames `1..=10` (speed `256` = `3.75 fps` subtle breathing, `SLUS_202.28` `pjames_anim[1]` @ `0x0038b24c`)
 /// - `Clip 102` (`TURN_RIGHT`): frames `14..=28` (speed `1280` = `18.75 fps`, scaled by `tx`)
 /// - `Clip 103` (`TURN_LEFT`): frames `34..=48` (speed `1280` = `18.75 fps`, scaled by `tx`)
 /// - `Clip 104` (`WALK`): frames `51..=74` (speed `1408` = `20.625 fps`, scaled by `ty`)
@@ -32,10 +32,11 @@ use super::clip::AnimationClip;
 pub struct JamesBasicClips;
 
 impl JamesBasicClips {
-    /// Authentic standing idle loop (`Clip 101`, frames `1..=10`, 15.0 fps nominal / 3.75 fps PS2 speed 256).
-    pub const IDLE: AnimationClip = AnimationClip::new(1, 10, 15.0, true);
-    /// Exact PS2 fixed-point standing idle (`Clip 101`, frames `1..=10`, speed `256` = `3.75 fps`).
-    pub const STAND_PS2: AnimationClip = AnimationClip::from_ps2_speed(1, 10, 256, true);
+    /// Authentic standing idle loop (`Clip 101`, frames `1..=10`, speed `256` = `3.75 fps`;
+    /// `SLUS_202.28` `Chacter/m3_play.c` `pjames_anim[1]` at `0x0038b24c` / `sh2pc.exe` `0x6ceac4`).
+    pub const IDLE: AnimationClip = AnimationClip::from_ps2_speed(1, 10, 256, true);
+    /// Alias for [`Self::IDLE`] (`Clip 101`, frames `1..=10`, speed `256` = `3.75 fps`).
+    pub const STAND_PS2: AnimationClip = Self::IDLE;
     /// Turn right on the spot (`Clip 102`, frames `14..=28`, speed `1280` = `18.75 fps`).
     pub const TURN_RIGHT: AnimationClip = AnimationClip::from_ps2_speed(14, 28, 1280, true);
     /// Turn left on the spot (`Clip 103`, frames `34..=48`, speed `1280` = `18.75 fps`).

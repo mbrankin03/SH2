@@ -128,54 +128,45 @@ impl FogUniforms {
         fog_quality: FogQuality,
         volumetric_light: bool,
     ) -> Self {
-        let depth_coeffs = DepthFogCoeffs::from_ps2_params(
-            eval.fog_far_mm,
-            eval.fog_near_mm,
-            PS2_DEFAULT_FOG_MAX,
-            PS2_DEFAULT_FOG_MIN,
-        );
-        Self {
-            fog_color: eval.fog_color,
-            fog_near: eval.fog_near_mm,
-            fog_far: eval.fog_far_mm,
-            density: eval.density,
-            time: 0.0,
-            step_count: match fog_quality {
-                FogQuality::ClassicPs2 => 1,
-                FogQuality::ModernVolumetric => 24,
+        let mut uniforms = Self::default();
+        uniforms.apply_room_evaluation(eval);
+        uniforms.apply_video_options(fog_quality, volumetric_light);
+        uniforms
+    }
+
+    /// Updates room-driven fog parameters (`fog_color`, `fog_near`, `fog_far`, `density`,
+    /// `curve_type`, `speed_mult`, layer scales/transparencies, and `depth_fog_params`) from a
+    /// [`RoomFogEvaluation`] without clobbering `time`, `shadow_view_proj`, `screen_fog_uv`, or
+    /// user video quality toggles (`FogQuality` / `volumetric_light`).
+    pub fn apply_room_evaluation(&mut self, eval: &RoomFogEvaluation) {
+        self.fog_color = eval.fog_color;
+        self.density = eval.density;
+        self.curve_type = eval.curve as u32;
+        self.speed_mult = eval.speed_mult;
+        self.layer1_uv_scale = [
+            eval.layers.layer1_x1,
+            eval.layers.layer1_y1,
+            eval.layers.layer1_x2,
+            eval.layers.layer1_y2,
+        ];
+        self.layer2_params = [
+            eval.layers.layer2_complexity,
+            eval.layers.layer2_density_mult,
+            eval.layers.layer2_density_add,
+            if eval.outdoor_layers_enabled {
+                1.0
+            } else {
+                0.0
             },
-            curve_type: eval.curve as u32,
-            speed_mult: eval.speed_mult,
-            ambient_fog_coupling: 1.0,
-            layer1_uv_scale: [
-                eval.layers.layer1_x1,
-                eval.layers.layer1_y1,
-                eval.layers.layer1_x2,
-                eval.layers.layer1_y2,
-            ],
-            layer2_params: [
-                eval.layers.layer2_complexity,
-                eval.layers.layer2_density_mult,
-                eval.layers.layer2_density_add,
-                if eval.outdoor_layers_enabled {
-                    1.0
-                } else {
-                    0.0
-                },
-            ],
-            layer_transparencies: [
-                f32::from(eval.layers.transparency_layer1) / 255.0,
-                f32::from(eval.layers.transparency_layer2) / 255.0,
-                match fog_quality {
-                    FogQuality::ClassicPs2 => 0.0,
-                    FogQuality::ModernVolumetric => 1.0,
-                },
-                if volumetric_light { 1.0 } else { 0.0 },
-            ],
-            shadow_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            depth_fog_params: depth_coeffs.to_gpu_vec4(),
-            screen_fog_uv: [0.5, 0.5, SCREEN_FOG_UV_HALF_SPAN, 0.0],
-        }
+        ];
+        self.layer_transparencies[0] = f32::from(eval.layers.transparency_layer1) / 255.0;
+        self.layer_transparencies[1] = f32::from(eval.layers.transparency_layer2) / 255.0;
+        self.set_depth_fog_bounds(
+            eval.fog_near_mm,
+            eval.fog_far_mm,
+            PS2_DEFAULT_FOG_MIN,
+            PS2_DEFAULT_FOG_MAX,
+        );
     }
 
     /// Recomputes `depth_fog_params` (`sh2gfw_Set_DepthFog` `0x00175df0`) for explicit

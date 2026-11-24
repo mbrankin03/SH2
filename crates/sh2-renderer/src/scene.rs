@@ -80,8 +80,13 @@ impl RenderContext {
         }
 
         // 0. Spotlight Shadow Depth Passes:
-        //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`)
-        if self.config.enable_fog {
+        //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`), gated on
+        //        `enable_fog`, `ModernVolumetric`, `volumetric_light`, and `density > 0.0`.
+        if self.config.enable_fog
+            && self
+                .volumetric_god_rays_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
             self.spotlight_shadow_pipeline.encode_pass(
                 &mut encoder,
                 &self.shadow_depth_view,

@@ -165,6 +165,11 @@ impl RenderContext {
         if let Ok(guard) = self.last_shadow_view_proj.lock() {
             effective.shadow_view_proj = *guard;
         }
+        let god_rays_active = effective.layer_transparencies[2] > 0.5
+            && effective.layer_transparencies[3] > 0.5
+            && effective.density > 0.0;
+        self.volumetric_god_rays_enabled
+            .store(god_rays_active, std::sync::atomic::Ordering::Relaxed);
         self.queue
             .write_buffer(&self.fog_buffer, 0, bytemuck::bytes_of(&effective));
     }

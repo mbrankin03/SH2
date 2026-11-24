@@ -128,6 +128,8 @@ pub struct RenderContext {
     pub lens_flare_quad_count: std::sync::atomic::AtomicU32,
     pub spray_mist_particle_count: std::sync::atomic::AtomicU32,
     pub pcss_enabled: std::sync::atomic::AtomicBool,
+    /// True when `ModernVolumetric` + `volumetric_light` + `density > 0.0` require the 512x512 god-ray shadow pass (`SH2-32`).
+    pub volumetric_god_rays_enabled: std::sync::atomic::AtomicBool,
     pub soft_shadow_blur_enabled: std::sync::atomic::AtomicBool,
     pub shadow_composite_mode: std::sync::atomic::AtomicU8,
     pub shadow_draw_order: std::sync::atomic::AtomicU8,

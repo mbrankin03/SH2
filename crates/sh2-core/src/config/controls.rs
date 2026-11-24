@@ -331,6 +331,9 @@ pub struct ControlOptions {
     /// PS2 13-action controller preset & remapping table (`Item/otn_option.c` `config_main` `0x00213a50`).
     #[serde(default)]
     pub ps2_bindings: Ps2ControllerBindings,
+    /// Native-upgrade L2/R2 analog trigger rowing on Toluca Lake (`SH2-80`). Disabled in strict 1:1 Vanilla PS2 mode.
+    #[serde(default)]
+    pub enable_analog_trigger_rowing: bool,
     /// Melee & stomp combat input dispatch mode (`Ps2Pressure`, `Sh2eeTapHold`, or `NativeZeroLatency`) (`SH2-83`).
     #[serde(default)]
     pub combat_input_mode: CombatInputMode,
@@ -355,6 +358,7 @@ impl Default for ControlOptions {
             first_person_fov_deg: default_first_person_fov_deg(),
             first_person_head_bob: true,
             ps2_bindings: Ps2ControllerBindings::default(),
+            enable_analog_trigger_rowing: false,
             combat_input_mode: CombatInputMode::default(),
             r2_heavy_pressure_threshold: default_r2_heavy_pressure_threshold(),
         }

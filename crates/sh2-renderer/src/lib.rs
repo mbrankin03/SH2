@@ -14,6 +14,7 @@ pub mod scene;
 pub mod shadow;
 pub mod skeletal;
 pub mod tile_pool;
+pub mod water;
 
 pub use blitter::SurfaceBlitter;
 pub use context::{

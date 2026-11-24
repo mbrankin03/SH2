@@ -2,6 +2,7 @@
 
 pub mod ai;
 pub mod animation;
+pub mod boat;
 pub mod camera;
 pub mod campaign;
 pub mod clock;

@@ -353,7 +353,7 @@ mod tests {
         let mut menu = OptionsMenu::new(original);
 
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 13);
+        assert_eq!(menu.item_count(), 15);
 
         // Adjust Resolution
         menu.adjust_value(1);
@@ -465,7 +465,7 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Controls;
-        assert_eq!(menu.item_count(), 14);
+        assert_eq!(menu.item_count(), 15);
 
         // Camera Mode: ClassicPs2Rail -> OverTheShoulder -> FirstPerson
         menu.selected_index = 5;

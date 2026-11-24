@@ -111,6 +111,7 @@ impl RenderContext {
         let lens_flare_pipeline = effects::LensFlarePipeline::new(&device, Self::HDR_FORMAT);
         let spray_mist_pipeline =
             effects::SprayMistPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let water_pipeline = crate::water::LakeWaterPipeline::new(&device, Self::HDR_FORMAT);
         let dust_pipeline =
             effects::DustParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let post_pipeline = post::PostProcessPipeline::new(&device, &queue);
@@ -358,6 +359,7 @@ impl RenderContext {
             shadow_blur_pipeline,
             lens_flare_pipeline,
             spray_mist_pipeline,
+            water_pipeline,
             dust_pipeline,
             post_pipeline,
             camera_buffer: buffers.camera_buffer,
@@ -413,6 +415,8 @@ impl RenderContext {
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
             dust_particle_count: std::sync::atomic::AtomicU32::new(0),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
+            lake_water_enabled: std::sync::atomic::AtomicBool::new(false),
+            water_reflection_pass_enabled: std::sync::atomic::AtomicBool::new(false),
             volumetric_god_rays_enabled: std::sync::atomic::AtomicBool::new(true),
             soft_shadow_blur_enabled: std::sync::atomic::AtomicBool::new(true),
             shadow_composite_mode: std::sync::atomic::AtomicU8::new(1),
@@ -425,6 +429,10 @@ impl RenderContext {
             lens_flare_smoother: std::sync::Mutex::new(effects::LensFlareSmoother::default()),
             last_shadow_view_proj: std::sync::Mutex::new(buffers.initial_shadow_vp),
             last_pcss_params: std::sync::Mutex::new(buffers.initial_pcss_params),
+            last_camera_uniforms: std::sync::Mutex::new(pipeline::CameraUniforms::default()),
+            water_plane_height_mm: std::sync::atomic::AtomicU32::new(
+                crate::water::DEFAULT_WATER_HEIGHT_MM.to_bits(),
+            ),
             default_sampler,
             default_view,
             default_texture_bind_group,

@@ -53,6 +53,8 @@ impl AppConfig {
                 self.video.lighting_profile = LightingProfile::Ps2Authentic;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
                 self.video.aces_tonemapping = false;
+                self.video.enable_water_reflections = false;
+                self.video.enable_oar_ripples = false;
                 self.video.grain_intensity = 100;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
@@ -60,6 +62,7 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = false;
                 self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.controls.enable_analog_trigger_rowing = false;
                 self.controls.combat_input_mode = CombatInputMode::Ps2Pressure;
                 self.game.enable_delayed_fade_in = false;
                 self.game.enable_secondary_physics = false;
@@ -78,12 +81,15 @@ impl AppConfig {
                 self.video.lighting_profile = LightingProfile::EnhancedEdition;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::ClassicPs2LoadBg2x2;
                 self.video.aces_tonemapping = false;
+                self.video.enable_water_reflections = false;
+                self.video.enable_oar_ripples = false;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_dynamic_room_acoustics = false;
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.controls.enable_analog_trigger_rowing = false;
                 self.controls.combat_input_mode = CombatInputMode::Sh2eeTapHold;
                 self.game.enable_delayed_fade_in = true;
                 self.game.enable_secondary_physics = false;
@@ -102,12 +108,15 @@ impl AppConfig {
                 self.video.lighting_profile = LightingProfile::NativeEnhanced;
                 self.video.outdoor_streaming_mode = OutdoorStreamingMode::NativeWholeTown;
                 self.video.aces_tonemapping = true;
+                self.video.enable_water_reflections = true;
+                self.video.enable_oar_ripples = true;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
                 self.audio.enable_dynamic_room_acoustics = true;
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Auto;
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
+                self.controls.enable_analog_trigger_rowing = true;
                 self.controls.combat_input_mode = CombatInputMode::NativeZeroLatency;
                 self.game.enable_delayed_fade_in = true;
                 self.game.enable_secondary_physics = true;
@@ -133,11 +142,14 @@ impl AppConfig {
             && self.video.lighting_profile == LightingProfile::Ps2Authentic
             && self.video.outdoor_streaming_mode == OutdoorStreamingMode::ClassicPs2LoadBg2x2
             && !self.video.aces_tonemapping
+            && !self.video.enable_water_reflections
+            && !self.video.enable_oar_ripples
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_dynamic_room_acoustics
             && !self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
+            && !self.controls.enable_analog_trigger_rowing
             && self.controls.combat_input_mode == CombatInputMode::Ps2Pressure
             && !self.game.enable_delayed_fade_in
             && !self.game.enable_secondary_physics
@@ -158,11 +170,14 @@ impl AppConfig {
             && self.video.lighting_profile == LightingProfile::EnhancedEdition
             && self.video.outdoor_streaming_mode == OutdoorStreamingMode::ClassicPs2LoadBg2x2
             && !self.video.aces_tonemapping
+            && !self.video.enable_water_reflections
+            && !self.video.enable_oar_ripples
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_dynamic_room_acoustics
             && self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
+            && !self.controls.enable_analog_trigger_rowing
             && self.controls.combat_input_mode == CombatInputMode::Sh2eeTapHold
             && self.game.enable_delayed_fade_in
             && !self.game.enable_secondary_physics
@@ -183,11 +198,14 @@ impl AppConfig {
             && self.video.lighting_profile == LightingProfile::NativeEnhanced
             && self.video.outdoor_streaming_mode == OutdoorStreamingMode::NativeWholeTown
             && self.video.aces_tonemapping
+            && self.video.enable_water_reflections
+            && self.video.enable_oar_ripples
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion
             && self.audio.enable_dynamic_room_acoustics
             && self.audio.enable_restored_cut_audio
             && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder
+            && self.controls.enable_analog_trigger_rowing
             && self.controls.combat_input_mode == CombatInputMode::NativeZeroLatency
             && self.game.enable_delayed_fade_in
             && self.game.enable_secondary_physics

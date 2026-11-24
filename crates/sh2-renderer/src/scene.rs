@@ -105,6 +105,95 @@ impl RenderContext {
             );
         }
 
+        // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`):
+        //     When `lake_water_enabled` && `water_reflection_pass_enabled`, mirror the camera
+        //     across `y = water_plane_height_mm` and render `Opaque` map + skeletal meshes into
+        //     `water_pipeline.reflection_view`, then restore the main camera uniforms.
+        if self
+            .lake_water_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+            && self
+                .water_reflection_pass_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            if let Ok(main_cam) = self.last_camera_uniforms.lock().map(|g| *g) {
+                let plane_y = f32::from_bits(
+                    self.water_plane_height_mm
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                );
+                let main_vp = glam::Mat4::from_cols_array_2d(&main_cam.view_proj);
+                let refl_vp = crate::water::mirrored_reflection_view_proj(main_vp, plane_y);
+                let refl_cam_pos = crate::water::LakeWaterPipeline::mirrored_camera_pos(
+                    glam::Vec3::new(
+                        main_cam.cam_pos[0],
+                        main_cam.cam_pos[1],
+                        main_cam.cam_pos[2],
+                    ),
+                    plane_y,
+                );
+                let refl_uniforms = crate::pipeline::CameraUniforms {
+                    view_proj: refl_vp.to_cols_array_2d(),
+                    inv_proj: main_cam.inv_proj,
+                    cam_pos: [
+                        refl_cam_pos.x,
+                        refl_cam_pos.y,
+                        refl_cam_pos.z,
+                        main_cam.cam_pos[3],
+                    ],
+                    inv_view_proj: if refl_vp.determinant().abs() > 1e-12 {
+                        refl_vp.inverse().to_cols_array_2d()
+                    } else {
+                        main_cam.inv_view_proj
+                    },
+                };
+                self.queue
+                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&refl_uniforms));
+                let mut refl_encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Water Planar Reflection Encoder"),
+                        });
+                {
+                    let mut rpass = refl_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Water Planar Reflection Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &self.water_pipeline.reflection_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(self.room_clear_color()),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.water_pipeline.reflection_depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    if let Some(map) = gpu_map {
+                        self.draw_map_batches_for_group(
+                            &mut rpass,
+                            map,
+                            map_texture_bind_groups,
+                            BatchGroup::Opaque,
+                            &self.geometry_pipeline.pipeline,
+                        );
+                    }
+                    if !skeletal_meshes.is_empty() {
+                        self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
+                    }
+                }
+                self.queue.submit(Some(refl_encoder.finish()));
+                self.queue
+                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_cam));
+            }
+        }
+
         // Determine PS2 `Check_DrawOrder` (`0x001a08a0`): on maps `0x000a007d` / `0x00090016`
         // during gameplay, stencil shadows are composited onto the static room BEFORE characters.
         let stencil_verts = self
@@ -178,6 +267,14 @@ impl RenderContext {
                     BatchGroup::Transparent,
                     &self.geometry_pipeline.transparent_pipeline,
                 );
+            }
+
+            // 1d-1. Render Toluca Lake water surface (`SH2-80`: strict PS2 specular vs native planar reflections + oar ripples)
+            if self
+                .lake_water_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.water_pipeline.draw(&mut rpass);
             }
 
             // 1d-2. Render flattened PS2 `.kg1` floor drop shadows (`0x5a7c90`) when active (`SH2-81`)

@@ -199,8 +199,8 @@ pub use fog::{
     R_FOREST_CEMETERY_ID, R_OBSV_DECK_ID, R_TOWN_EAST_ID, R_TOWN_WEST_ID,
 };
 pub use input::{
-    ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, HapticFeedback,
-    InputManager,
+    ControlScheme, ControllerConfig, ControllerSpeakerCue, GamepadInputState, GamepadSnapshot,
+    HapticFeedback, InputManager,
 };
 pub use inventory::{
     combine_items, item_combination_use_check, item_metadata, HealResult, InventoryManager,

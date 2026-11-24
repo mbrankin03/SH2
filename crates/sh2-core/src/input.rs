@@ -1,12 +1,10 @@
-//! Gamepad and controller input subsystem using `gilrs` and SDL Gamepad DB.
+//! Backend-agnostic gamepad and controller input subsystem.
 //!
 //! Provides support for:
 //! - Tank controls (classic Silent Hill 2) vs 2D / 3D camera-relative directional controls.
 //! - Deadzone calibration and analog walk/run thresholds.
 //! - DualSense PS5 controller feature routing (speaker audio cues, voice-coil haptics/rumble).
-//! - Cross-platform input mapping (Windows XInput/WGI, Linux evdev/udev).
-
-use gilrs::{Axis, Button, Event, EventType, GamepadId, Gilrs};
+//! - Clean merging of host keyboard/mouse axes with platform-polled gamepad snapshots (`SH2-93`, `SH2-145`).
 
 /// Control movement scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -136,12 +134,62 @@ pub struct GamepadInputState {
     pub active_haptic: HapticFeedback,
 }
 
-/// Gamepad manager wrapping `gilrs` event pump and state tracking.
+/// Backend-agnostic raw gamepad snapshot produced by the host platform layer (`sh2-app`)
+/// and consumed by [`InputManager`] during 60 Hz simulation ticks (`SH2-145`).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GamepadSnapshot {
+    /// Whether an active gamepad is connected and providing axis readings.
+    pub connected: bool,
+    /// Raw left stick X axis (`-1.0..=1.0`, before deadzone filtering).
+    pub raw_left_stick_x: f32,
+    /// Raw left stick Y axis (`-1.0..=1.0`, before deadzone filtering).
+    pub raw_left_stick_y: f32,
+    /// Raw right stick X axis (`-1.0..=1.0`, before deadzone filtering).
+    pub raw_right_stick_x: f32,
+    /// Raw right stick Y axis (`-1.0..=1.0`, before deadzone filtering).
+    pub raw_right_stick_y: f32,
+    /// Action / Inspect / Attack button currently held (`South`).
+    pub action_pressed: bool,
+    /// Cancel / Walk modifier button currently held (`East`).
+    pub cancel_pressed: bool,
+    /// Ready weapon / Aim button currently held (`RightTrigger2`).
+    pub ready_weapon_pressed: bool,
+    /// Strafe left button currently held (`LeftTrigger`).
+    pub strafe_left: bool,
+    /// Strafe right button currently held (`RightTrigger`).
+    pub strafe_right: bool,
+    /// Flashlight toggle edge-triggered press (`North`).
+    pub light_toggle_pressed: bool,
+    /// Map button edge-triggered press (`Select`).
+    pub map_pressed: bool,
+    /// Inventory button edge-triggered press (`Start`).
+    pub inventory_pressed: bool,
+    /// Quick turn (180 degrees) edge-triggered press (`DPadDown`).
+    pub quick_turn_pressed: bool,
+    /// Camera mode live-cycle edge-triggered press (`RightThumb`).
+    pub camera_mode_cycle_pressed: bool,
+    /// Over-the-Shoulder left/right shoulder swap edge-triggered press (`LeftThumb`).
+    pub shoulder_swap_pressed: bool,
+}
+
+/// Applies symmetric radial-axis deadzone filtering with linear rescaling to `[-1.0, 1.0]`.
+#[inline]
+pub fn filter_deadzone(val: f32, deadzone: f32) -> f32 {
+    if val.abs() < deadzone {
+        0.0
+    } else {
+        let sign = val.signum();
+        (val.abs() - deadzone) / (1.0 - deadzone) * sign
+    }
+}
+
+/// Backend-agnostic input manager that merges host keyboard/mouse/gamepad snapshots into [`GamepadInputState`].
 pub struct InputManager {
-    gilrs: Option<Gilrs>,
-    active_gamepad: Option<GamepadId>,
     pub config: ControllerConfig,
     pub state: GamepadInputState,
+    pending_light_toggle: bool,
+    pending_map: bool,
+    pending_inventory: bool,
     pending_camera_cycle: bool,
     pending_shoulder_swap: bool,
     pending_quick_turn: bool,
@@ -152,18 +200,20 @@ pub struct InputManager {
     host_look: [f32; 2],
     host_run: bool,
     host_ready: bool,
+    host_gamepad_active: bool,
+    host_gamepad: GamepadSnapshot,
     gamepad_ready: bool,
 }
 
 impl InputManager {
-    /// Create a new input manager. Safely falls back if no gamepad driver is present.
+    /// Create a new backend-agnostic input manager.
     pub fn new(config: ControllerConfig) -> Self {
-        let gilrs = Gilrs::new().ok();
         Self {
-            gilrs,
-            active_gamepad: None,
             config,
             state: GamepadInputState::default(),
+            pending_light_toggle: false,
+            pending_map: false,
+            pending_inventory: false,
             pending_camera_cycle: false,
             pending_shoulder_swap: false,
             pending_quick_turn: false,
@@ -174,6 +224,8 @@ impl InputManager {
             host_look: [0.0; 2],
             host_run: false,
             host_ready: false,
+            host_gamepad_active: false,
+            host_gamepad: GamepadSnapshot::default(),
             gamepad_ready: false,
         }
     }
@@ -194,7 +246,7 @@ impl InputManager {
     }
 
     /// Supplies held desktop keyboard/mouse axes (`WASD`, `IJKL`, `Shift`, `R`/Right-Click) in normalized
-    /// `[-1.0, 1.0]` units so 60 Hz ticks merge keyboard and `gilrs` gamepad state cleanly (`SH2-93`).
+    /// `[-1.0, 1.0]` units so 60 Hz ticks merge keyboard and gamepad state cleanly (`SH2-93`, `SH2-145`).
     pub fn set_host_keyboard_state(
         &mut self,
         move_x: f32,
@@ -255,12 +307,40 @@ impl InputManager {
         self.state.active_haptic = scaled;
     }
 
-    /// Update controller input states from `gilrs` event loop.
+    /// Supplies a backend-agnostic gamepad snapshot polled by the host platform layer (`SH2-145`).
+    ///
+    /// Edge-triggered button presses are latched until the next 60 Hz `update()` tick so they are
+    /// never dropped on sub-tick frames or duplicated on multi-tick catch-up frames.
+    pub fn set_host_gamepad_state(&mut self, snapshot: GamepadSnapshot) {
+        if snapshot.light_toggle_pressed {
+            self.pending_light_toggle = true;
+        }
+        if snapshot.map_pressed {
+            self.pending_map = true;
+        }
+        if snapshot.inventory_pressed {
+            self.pending_inventory = true;
+        }
+        if snapshot.quick_turn_pressed {
+            self.pending_quick_turn = true;
+        }
+        if snapshot.camera_mode_cycle_pressed {
+            self.pending_camera_cycle = true;
+        }
+        if snapshot.shoulder_swap_pressed {
+            self.pending_shoulder_swap = true;
+        }
+        self.gamepad_ready = snapshot.ready_weapon_pressed;
+        self.host_gamepad = snapshot;
+        self.host_gamepad_active = true;
+    }
+
+    /// Update controller input states from queued host keyboard, mouse, gyro, and gamepad snapshots.
     pub fn update(&mut self) {
-        // Reset single-frame pulse triggers and flush queued host mouse/gyro/R3/quick-turn inputs
-        self.state.light_toggle_pressed = false;
-        self.state.map_pressed = false;
-        self.state.inventory_pressed = false;
+        // Reset single-frame pulse triggers and flush queued host mouse/gyro/gamepad inputs
+        self.state.light_toggle_pressed = std::mem::take(&mut self.pending_light_toggle);
+        self.state.map_pressed = std::mem::take(&mut self.pending_map);
+        self.state.inventory_pressed = std::mem::take(&mut self.pending_inventory);
         self.state.quick_turn_pressed = std::mem::take(&mut self.pending_quick_turn);
         self.state.camera_mode_cycle_pressed = std::mem::take(&mut self.pending_camera_cycle);
         self.state.shoulder_swap_pressed = std::mem::take(&mut self.pending_shoulder_swap);
@@ -268,7 +348,12 @@ impl InputManager {
         self.state.mouse_look_delta_y = std::mem::take(&mut self.pending_mouse_look[1]);
         self.state.gyro_look_delta_yaw = std::mem::take(&mut self.pending_gyro_look[0]);
         self.state.gyro_look_delta_pitch = std::mem::take(&mut self.pending_gyro_look[1]);
-        self.state.pending_speaker_cue = None;
+        self.state.pending_speaker_cue =
+            if self.state.light_toggle_pressed && self.config.dualsense_speaker_enabled {
+                Some(ControllerSpeakerCue::FlashlightClick)
+            } else {
+                None
+            };
 
         // Decrement haptic timer
         if self.state.active_haptic.duration_ticks > 0 {
@@ -285,94 +370,32 @@ impl InputManager {
         let mut pad_running = false;
         let mut has_gamepad_axes = false;
 
-        if let Some(ref mut gilrs) = self.gilrs {
-            while let Some(Event { id, event, .. }) = gilrs.next_event() {
-                self.active_gamepad = Some(id);
-                match event {
-                    EventType::ButtonPressed(Button::South, _) => self.state.action_pressed = true,
-                    EventType::ButtonReleased(Button::South, _) => {
-                        self.state.action_pressed = false
-                    }
+        if self.host_gamepad_active {
+            self.state.action_pressed = self.host_gamepad.action_pressed;
+            self.state.cancel_pressed = self.host_gamepad.cancel_pressed;
+            self.state.strafe_left = self.host_gamepad.strafe_left;
+            self.state.strafe_right = self.host_gamepad.strafe_right;
+            self.state.ready_weapon_pressed =
+                self.gamepad_ready || (self.host_active && self.host_ready);
 
-                    EventType::ButtonPressed(Button::East, _) => self.state.cancel_pressed = true,
-                    EventType::ButtonReleased(Button::East, _) => self.state.cancel_pressed = false,
-
-                    EventType::ButtonPressed(Button::RightTrigger2, _) => {
-                        self.gamepad_ready = true;
-                        self.state.ready_weapon_pressed = true;
-                    }
-                    EventType::ButtonReleased(Button::RightTrigger2, _) => {
-                        self.gamepad_ready = false;
-                        self.state.ready_weapon_pressed = self.host_active && self.host_ready;
-                    }
-
-                    EventType::ButtonPressed(Button::North, _) => {
-                        self.state.light_toggle_pressed = true;
-                        if self.config.dualsense_speaker_enabled {
-                            self.state.pending_speaker_cue =
-                                Some(ControllerSpeakerCue::FlashlightClick);
-                        }
-                    }
-
-                    EventType::ButtonPressed(Button::Select, _) => {
-                        self.state.map_pressed = true;
-                    }
-
-                    EventType::ButtonPressed(Button::Start, _) => {
-                        self.state.inventory_pressed = true;
-                    }
-
-                    EventType::ButtonPressed(Button::DPadDown, _) => {
-                        self.state.quick_turn_pressed = true;
-                    }
-
-                    EventType::ButtonPressed(Button::LeftTrigger, _) => {
-                        self.state.strafe_left = true;
-                    }
-                    EventType::ButtonReleased(Button::LeftTrigger, _) => {
-                        self.state.strafe_left = false;
-                    }
-
-                    EventType::ButtonPressed(Button::RightTrigger, _) => {
-                        self.state.strafe_right = true;
-                    }
-                    EventType::ButtonReleased(Button::RightTrigger, _) => {
-                        self.state.strafe_right = false;
-                    }
-
-                    EventType::ButtonPressed(Button::RightThumb, _) => {
-                        self.state.camera_mode_cycle_pressed = true;
-                    }
-
-                    EventType::ButtonPressed(Button::LeftThumb, _) => {
-                        self.state.shoulder_swap_pressed = true;
-                    }
-
-                    _ => {}
-                }
-            }
-
-            if let Some(id) = self.active_gamepad {
+            if self.host_gamepad.connected {
                 has_gamepad_axes = true;
-                let gamepad = gilrs.gamepad(id);
-                let raw_lx = gamepad.value(Axis::LeftStickX);
-                let raw_ly = gamepad.value(Axis::LeftStickY);
-                let raw_rx = gamepad.value(Axis::RightStickX);
-                let raw_ry = gamepad.value(Axis::RightStickY);
-
-                let filter_deadzone = |val: f32, deadzone: f32| -> f32 {
-                    if val.abs() < deadzone {
-                        0.0
-                    } else {
-                        let sign = val.signum();
-                        (val.abs() - deadzone) / (1.0 - deadzone) * sign
-                    }
-                };
-
-                pad_lx = filter_deadzone(raw_lx, self.config.stick_deadzone);
-                pad_ly = filter_deadzone(raw_ly, self.config.stick_deadzone);
-                pad_rx = filter_deadzone(raw_rx, self.config.stick_deadzone);
-                pad_ry = filter_deadzone(raw_ry, self.config.stick_deadzone);
+                pad_lx = filter_deadzone(
+                    self.host_gamepad.raw_left_stick_x,
+                    self.config.stick_deadzone,
+                );
+                pad_ly = filter_deadzone(
+                    self.host_gamepad.raw_left_stick_y,
+                    self.config.stick_deadzone,
+                );
+                pad_rx = filter_deadzone(
+                    self.host_gamepad.raw_right_stick_x,
+                    self.config.stick_deadzone,
+                );
+                pad_ry = filter_deadzone(
+                    self.host_gamepad.raw_right_stick_y,
+                    self.config.stick_deadzone,
+                );
 
                 let stick_magnitude = (pad_lx * pad_lx + pad_ly * pad_ly).sqrt();
                 pad_running = stick_magnitude >= self.config.run_threshold;
@@ -439,5 +462,91 @@ mod tests {
         assert!(!mgr.state.camera_mode_cycle_pressed);
         assert!(!mgr.state.shoulder_swap_pressed);
         assert!(mgr.state.mouse_look_delta_x.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_filter_deadzone_and_run_threshold() {
+        assert!((filter_deadzone(0.10, 0.15)).abs() < f32::EPSILON);
+        assert!((filter_deadzone(-0.14, 0.15)).abs() < f32::EPSILON);
+        assert!((filter_deadzone(1.0, 0.15) - 1.0).abs() < 1e-6);
+        assert!((filter_deadzone(-1.0, 0.15) + 1.0).abs() < 1e-6);
+
+        let mid = filter_deadzone(0.575, 0.15);
+        assert!((mid - 0.5).abs() < 1e-6);
+
+        let mut mgr = InputManager::new(ControllerConfig::default());
+        mgr.set_host_gamepad_state(GamepadSnapshot {
+            connected: true,
+            raw_left_stick_x: 0.10,
+            raw_left_stick_y: 0.575,
+            ..Default::default()
+        });
+        mgr.update();
+        assert!(mgr.state.left_stick_x.abs() < f32::EPSILON);
+        assert!((mgr.state.left_stick_y - 0.5).abs() < 1e-6);
+        assert!(!mgr.state.is_running);
+
+        mgr.set_host_gamepad_state(GamepadSnapshot {
+            connected: true,
+            raw_left_stick_y: 0.90,
+            ..Default::default()
+        });
+        mgr.update();
+        assert!(mgr.state.is_running);
+    }
+
+    #[test]
+    fn test_gamepad_snapshot_buttons_and_keyboard_merge() {
+        let mut mgr = InputManager::new(ControllerConfig::default());
+        mgr.set_host_keyboard_state(0.5, 0.0, 0.0, 0.0, false, true);
+        mgr.set_host_gamepad_state(GamepadSnapshot {
+            connected: true,
+            raw_left_stick_x: 1.0,
+            raw_left_stick_y: 0.0,
+            action_pressed: true,
+            cancel_pressed: true,
+            strafe_left: true,
+            strafe_right: false,
+            ready_weapon_pressed: false,
+            light_toggle_pressed: true,
+            map_pressed: true,
+            inventory_pressed: true,
+            quick_turn_pressed: true,
+            camera_mode_cycle_pressed: true,
+            shoulder_swap_pressed: true,
+            ..Default::default()
+        });
+
+        mgr.update();
+        assert!((mgr.state.left_stick_x - 1.0).abs() < 1e-6);
+        assert!(mgr.state.action_pressed);
+        assert!(mgr.state.cancel_pressed);
+        assert!(mgr.state.strafe_left);
+        assert!(!mgr.state.strafe_right);
+        assert!(mgr.state.ready_weapon_pressed);
+        assert!(mgr.state.light_toggle_pressed);
+        assert!(mgr.state.map_pressed);
+        assert!(mgr.state.inventory_pressed);
+        assert!(mgr.state.quick_turn_pressed);
+        assert!(mgr.state.camera_mode_cycle_pressed);
+        assert!(mgr.state.shoulder_swap_pressed);
+        assert_eq!(
+            mgr.state.pending_speaker_cue,
+            Some(ControllerSpeakerCue::FlashlightClick)
+        );
+
+        // Next poll with no edge presses clears single-tick pulses
+        mgr.set_host_gamepad_state(GamepadSnapshot {
+            connected: true,
+            ..Default::default()
+        });
+        mgr.update();
+        assert!(!mgr.state.light_toggle_pressed);
+        assert!(!mgr.state.map_pressed);
+        assert!(!mgr.state.inventory_pressed);
+        assert!(!mgr.state.quick_turn_pressed);
+        assert!(!mgr.state.camera_mode_cycle_pressed);
+        assert!(!mgr.state.shoulder_swap_pressed);
+        assert_eq!(mgr.state.pending_speaker_cue, None);
     }
 }

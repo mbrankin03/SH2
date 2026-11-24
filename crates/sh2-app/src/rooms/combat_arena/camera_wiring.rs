@@ -50,6 +50,11 @@ pub(crate) fn sync_host_input_and_handoffs(state: &mut AppState) {
         state.key_run_held && !cutscene_locked,
         state.key_ready_held && !cutscene_locked,
     );
+    let gamepad_snapshot = state.gamepad.poll();
+    state
+        .sim_core
+        .input
+        .set_host_gamepad_state(gamepad_snapshot);
     state
         .sim_core
         .sync_cutscene_handoff(state.drama_demo_session.as_ref().map(|s| &s.player));

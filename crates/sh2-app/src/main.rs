@@ -2,6 +2,7 @@
 //! Runs the pure PS2 camera, 60 Hz simulation core, volumetric fog, character skeletal animation, and gamepad controls.
 
 mod assets;
+mod audio_dispatch;
 mod bootstrap;
 mod cli;
 mod frame;

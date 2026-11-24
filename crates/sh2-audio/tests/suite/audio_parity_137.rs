@@ -316,3 +316,116 @@ fn test_acoustics_native_upgrade_toggle_gate() {
     assert_eq!(enhanced.preset, EnvironmentalPreset::Corridor);
     assert!(enhanced.wet_mix > 0.4);
 }
+
+#[test]
+fn test_retail_change_list_241_entries_and_roundtrip() {
+    assert_eq!(sh2_audio::SE_CHANGE_LIST.len(), 241);
+    let mut pool = SePoolManager::with_retail_change_list();
+
+    // Bank 2 (`sh2pc.exe` `0x008a4b90` entry 0: id_2d=12009 -> id_3d=40245, bank_id=2)
+    pool.set_active_3d_bank_for_stage(5, 0, false);
+    assert_eq!(pool.active_3d_bank, 2);
+    assert_eq!(pool.change_2d_to_3d(12_009), 40_245);
+    assert_eq!(pool.change_3d_to_2d(40_245), 12_009);
+
+    // Town East night (`flag(251) == true`) -> bank 3
+    pool.set_active_3d_bank_for_stage(5, 0, true);
+    assert_eq!(pool.active_3d_bank, 3);
+    assert_eq!(pool.change_2d_to_3d(12_500), 40_250);
+
+    // Hospital 1F Nightmare room 0x30 -> bank 16; other rooms -> bank 17
+    assert_eq!(sh2_audio::se_3d_bank_for_stage(22, 0x30, false), 16);
+    assert_eq!(sh2_audio::se_3d_bank_for_stage(22, 0x34, false), 17);
+
+    // Born from a Wish bank 36 (`Endings` 48..=51)
+    pool.set_active_3d_bank_for_stage(48, 0, false);
+    assert_eq!(pool.active_3d_bank, 36);
+    assert_eq!(pool.change_2d_to_3d(18_862), 40_069);
+    assert_eq!(pool.change_3d_to_2d(40_069), 18_862);
+
+    // Dispatch Play3d -> Update3d -> Stop3d lifecycle on promoted 40xxx ID
+    pool.set_active_3d_bank_for_stage(5, 0, false);
+    let listener = SeListenerContext {
+        camera_pos: Vec3::ZERO,
+        player_pos: Vec3::ZERO,
+        wvs_matrix: Mat4::IDENTITY,
+        room_id: 1,
+    };
+    let mut actions = Vec::new();
+    let res = pool.call_pos(
+        1.0,
+        12_009,
+        Some(Vec3::new(750.0, 0.0, 1000.0)),
+        SE_FLAG_PRIO_1,
+        &listener,
+        &mut actions,
+    );
+    assert_eq!(
+        res,
+        SeCallResult::Played3d {
+            channel: 0,
+            se_id: 40_245
+        }
+    );
+    assert!(matches!(
+        actions.as_slice(),
+        [SeBackendAction::Play3d {
+            channel: 0,
+            se_id: 40_245,
+            ..
+        }]
+    ));
+
+    actions.clear();
+    let finished = [false; sh2_audio::SE_3D_CHANNEL_COUNT];
+    pool.tick_3d(&listener, &finished, &mut actions);
+    assert!(matches!(
+        actions.as_slice(),
+        [SeBackendAction::Update3d {
+            channel: 0,
+            se_id: 40_245,
+            ..
+        }]
+    ));
+
+    // Room change auto-stops the promoted 3D channel
+    actions.clear();
+    let next_room = SeListenerContext {
+        room_id: 2,
+        ..listener
+    };
+    pool.tick_3d(&next_room, &finished, &mut actions);
+    assert!(actions.contains(&SeBackendAction::Stop3d {
+        channel: 0,
+        se_id: 40_245
+    }));
+}
+
+#[test]
+fn test_bgm_event_flags_from_scenario_flag_bytes() {
+    let mut scenario = sh2_core::ScenarioState::default();
+    // Stage 2: flag 33 (`+0x04` bit 1 = `0x02`) transitions Restroom from Page 46 -> Page 47
+    scenario.set_flag(33);
+    // Stage 6: flag 85 (`+0x08` bit 21 = `0x0020_0000`) clears Room 0x1E override
+    scenario.set_flag(85);
+    // Stage 40: flag 472 (`+0x3B` bit 0 = `0x01`) marks Hotel 1F music box solved (Page 34)
+    scenario.set_flag(472);
+    // Stage 42: flag 527 (`+0x40` bit 15 = `0x8000`) marks Room 312 tape watched (Page 37)
+    scenario.set_flag(527);
+
+    let bgm_flags = sh2_audio::BgmEventFlags::from_event_flag_bytes(
+        scenario.flags.as_bytes(),
+        false,
+        false,
+        false,
+    );
+    assert_eq!(bgm_flags.flag_5e4 & 0x02, 0x02);
+    assert_eq!(bgm_flags.flag_5e8 & 0x0020_0000, 0x0020_0000);
+    assert_eq!(bgm_flags.flag_61b & 0x01, 0x01);
+    assert_eq!(bgm_flags.flag_620 & 0x8000, 0x8000);
+
+    assert_eq!(sh2_audio::pick_bgm_page(2, 0x02, &bgm_flags), 47);
+    assert_eq!(sh2_audio::pick_bgm_page(6, 0x1E, &bgm_flags), 4);
+    assert_eq!(sh2_audio::pick_bgm_page(40, 0x90, &bgm_flags), 34);
+    assert_eq!(sh2_audio::pick_bgm_page(42, 0xA2, &bgm_flags), 37);
+}

@@ -30,9 +30,11 @@
 //!   retried 3D and returned `-1`). [`SePoolManager::call_pos`] intentionally demotes via
 //!   `change_3d_to_2d(se_id)` before recursing with `flags - 1` so the 2D fallback actually succeeds.
 
+pub mod change_list;
 mod pools;
 pub mod types;
 
+pub use change_list::{se_3d_bank_for_stage, SE_CHANGE_LIST};
 pub use types::{
     Se2d3dMapping, Se2dSlot, Se3dChannel, SeBackendAction, SeCallResult, SeListenerContext,
     SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT, SE_3D_CHANNEL_COUNT, SE_3D_ID_THRESHOLD,
@@ -79,6 +81,12 @@ impl SePoolManager {
         }
     }
 
+    /// Creates a new `SePoolManager` preloaded with the 241-entry retail `change_list`
+    /// (`sh2pc.exe` `0x008a4b90`, `SLUS_202.28` `0x002b8880`).
+    pub fn with_retail_change_list() -> Self {
+        Self::new(SE_CHANGE_LIST.to_vec())
+    }
+
     /// Resets all 2D slots and 3D channels (`SeCallReset` `0x00192060`).
     pub fn reset(&mut self) {
         self.slots_2d = [None; SE_2D_SLOT_COUNT];
@@ -86,6 +94,12 @@ impl SePoolManager {
         self.se_3d_channel_max = SE_3D_PRIORITY1_MAX;
         self.se_3d_channel_number = 0;
         self.active_3d_bank = 0;
+    }
+
+    /// Sets `active_3d_bank` (`_se_3d_load_data`) for `(stage_id, room_id, is_night)`
+    /// (`SeSoundEffect3dLoad` `SLUS_202.28` `0x00192fd0` / `sh2pc.exe` `0x008a4b90`).
+    pub fn set_active_3d_bank_for_stage(&mut self, stage_id: u32, room_id: u32, is_night: bool) {
+        self.active_3d_bank = se_3d_bank_for_stage(stage_id, room_id, is_night);
     }
 
     /// Looks up the 3D counterpart of a 2D `se_id` in the active 3D bank (`SeChange2Dto3D` `0x00194d90`).

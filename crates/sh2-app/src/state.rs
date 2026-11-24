@@ -17,7 +17,7 @@ use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
 use sh2_app::gamepad::GilrsGamepadPoller;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::anm::AnimationFile;
-use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank};
+use sh2_audio::{AudioEngine, BgmEventFlags, BgmManager, MenuAudioBank, SePoolManager};
 use sh2_core::campaign::{CampaignOrchestrator, CampaignTickInput};
 use sh2_core::{FramePacer, SimulationCore};
 use sh2_debug::{
@@ -49,6 +49,7 @@ pub(crate) struct AppState {
     pub audio_bank: Option<MenuAudioBank>,
     pub audio_engine: Option<AudioEngine>,
     pub bgm_manager: BgmManager,
+    pub se_pool: SePoolManager,
     pub bgm_stage_override: Option<u32>,
     pub audio_debug: AudioDebugState,
     pub surface_sfx_room: SurfaceSfxRoomState,
@@ -543,9 +544,9 @@ impl AppState {
         }
     }
 
-    /// Maps the active [`TestRoomKind`] (or user stage override) to a retail Silent Hill 2 stage ID
-    /// and default [`BgmEventFlags`] so `SeBgmChange` and `SeBgmManager` stream and spatially mix
-    /// the authentic stage BGM / AIX layers.
+    /// Maps the active Campaign [`ScenarioState`] (or [`TestRoomKind`] / user stage override)
+    /// to a retail Silent Hill 2 stage ID and [`BgmEventFlags`] so `SeBgmChange` (`0x00515fd0`)
+    /// and `SeBgmManager` (`0x00516430`) stream and spatially mix the authentic stage BGM / AIX layers.
     pub fn active_bgm_stage_and_flags(&self) -> (u32, BgmEventFlags) {
         let enable_restored_cut_audio = self
             .menu_ctrl
@@ -553,6 +554,32 @@ impl AppState {
             .original_config
             .audio
             .enable_restored_cut_audio;
+
+        if matches!(self.active_launch_target, LaunchTarget::Campaign { .. })
+            || self.campaign_orchestrator.is_some()
+        {
+            let stage_id = self
+                .bgm_stage_override
+                .unwrap_or_else(|| u32::from(self.sim_core.scenario.current_stage));
+            let event_mode_active = self
+                .drama_demo_session
+                .as_ref()
+                .is_some_and(|s| s.player.step != sh2_core::cutscene::DramaDemoStep::Finished);
+            let hotel_music_box_active = stage_id == 40
+                && self
+                    .sim_core
+                    .scenario
+                    .cutaway_overlay
+                    .active_picture()
+                    .is_some();
+            let flags = BgmEventFlags::from_event_flag_bytes(
+                self.sim_core.scenario.flags.as_bytes(),
+                hotel_music_box_active,
+                event_mode_active,
+                enable_restored_cut_audio,
+            );
+            return (stage_id, flags);
+        }
 
         if let Some(stage_override) = self.bgm_stage_override {
             let mut flags = BgmEventFlags {

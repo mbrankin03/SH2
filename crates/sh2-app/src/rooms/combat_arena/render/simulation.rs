@@ -26,10 +26,40 @@ pub(super) fn step_simulation_and_audio(
     }
 
     if is_in_game {
-        step_bgm_manager(state, dt);
+        step_audio_managers(state, dt, false);
     }
 
     ticks_processed
+}
+
+/// Steps both `BgmManager` (`SeBgmManager` `0x00194300` / `0x00516430`) and `SePoolManager`
+/// (`Se2dManager` `0x001932f0` / `Se3dManager` `0x00193790`), including global pause/demo ducking.
+pub(crate) fn step_audio_managers(state: &mut AppState, dt: Duration, is_paused: bool) {
+    let ducking_mode = resolve_audio_ducking_mode(state, is_paused);
+    step_bgm_manager(state, dt, ducking_mode);
+    step_se_pool_manager(state, dt, ducking_mode);
+}
+
+fn resolve_audio_ducking_mode(state: &AppState, is_paused: bool) -> sh2_audio::BgmDuckingMode {
+    let in_overlay = matches!(
+        state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+        Some(sh2_core::campaign::CampaignPhase::OverlayMenu(_))
+    );
+    let game_mode = if is_paused
+        || state.menu_ctrl.pause_menu.is_open
+        || state.ingame_menus.is_any_open()
+        || in_overlay
+    {
+        5 // Pause / Inventory / Map / Memo / Options (`0.5` ducking)
+    } else {
+        4 // Normal gameplay
+    };
+    let drama_demo_id = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.step != sh2_core::cutscene::DramaDemoStep::Finished)
+        .map_or(0, |s| s.player.info.demo_no as i32);
+    sh2_audio::bgm_ducking_mode_from_game_state(game_mode, drama_demo_id)
 }
 
 fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
@@ -244,13 +274,20 @@ fn sync_combat_player_animation_and_sfx(state: &mut AppState) {
     }
 }
 
-fn step_bgm_manager(state: &mut AppState, dt: Duration) {
+fn step_bgm_manager(state: &mut AppState, dt: Duration, ducking_mode: sh2_audio::BgmDuckingMode) {
     let (bgm_stage_id, bgm_flags) = state.active_bgm_stage_and_flags();
     state.bgm_manager.event_flags = bgm_flags;
-    let (hp_ratio, min_enemy_dist_xz) = if state.active_test_room == TestRoomKind::CombatArena {
-        let p_hp = (state.combat_arena.player.health
-            / state.combat_arena.player.max_health.max(1.0))
-        .clamp(0.0, 1.0);
+    state.bgm_manager.set_ducking_mode(ducking_mode);
+    let (hp_ratio, min_enemy_dist_xz) = if state.active_test_room == TestRoomKind::CombatArena
+        || state.campaign_orchestrator.is_some()
+    {
+        let p_hp = if state.campaign_orchestrator.is_some() {
+            (state.sim_core.scenario.health / state.sim_core.scenario.max_health.max(1.0))
+                .clamp(0.0, 1.0)
+        } else {
+            (state.combat_arena.player.health / state.combat_arena.player.max_health.max(1.0))
+                .clamp(0.0, 1.0)
+        };
         let p_pos = state.sim_core.scenario.player_position;
         let min_dist = state
             .combat_arena
@@ -279,4 +316,38 @@ fn step_bgm_manager(state: &mut AppState, dt: Duration) {
     ) {
         tracing::warn!("[BGM] SeBgmManager tick warning: {:?}", e);
     }
+}
+
+fn step_se_pool_manager(
+    state: &mut AppState,
+    dt: Duration,
+    ducking_mode: sh2_audio::BgmDuckingMode,
+) {
+    crate::audio_dispatch::sync_se_pool_3d_bank(state);
+    let listener = sh2_audio::SeListenerContext {
+        camera_pos: state.sim_core.active_camera_eye(1.0),
+        player_pos: state.sim_core.scenario.player_position,
+        wvs_matrix: state.sim_core.active_view_matrix(1.0),
+        room_id: state.bgm_manager.room_id as u16,
+    };
+    let mut actions = Vec::new();
+    state
+        .se_pool
+        .tick_2d(&listener, ducking_mode, dt.as_secs_f32(), &mut actions);
+    let mut finished_channels = [false; sh2_audio::SE_3D_CHANNEL_COUNT];
+    if let Some(ref bank) = state.audio_bank {
+        for (idx, ch_opt) in state.se_pool.channels_3d.iter().enumerate() {
+            if let Some(ch) = ch_opt {
+                let playing = bank.active_spatial_handles.contains_key(&ch.se_id)
+                    || bank.active_spatial_voices.contains_key(&ch.se_id);
+                if !playing {
+                    finished_channels[idx] = true;
+                }
+            }
+        }
+    }
+    state
+        .se_pool
+        .tick_3d(&listener, &finished_channels, &mut actions);
+    crate::audio_dispatch::dispatch_se_pool_actions(state, &actions);
 }

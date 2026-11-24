@@ -47,6 +47,8 @@ impl CampaignRoomController {
         state.campaign_credits_seq = None;
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());
+        state.se_pool.reset();
+        crate::audio_dispatch::sync_se_pool_3d_bank(state);
 
         let orchestrator = if is_continue {
             let stage = state.sim_core.scenario.current_stage.max(2);
@@ -107,7 +109,11 @@ impl CampaignRoomController {
         }
 
         if let Some(manifest) = effects.load_room {
+            if u32::from(manifest.stage_id) != state.bgm_manager.stage_id {
+                state.se_pool.reset();
+            }
             loader::load_manifest_into_app_state(state, &manifest);
+            crate::audio_dispatch::sync_se_pool_3d_bank(state);
             if let Some(ref mut ls) = state.loading_screen {
                 ls.mark_completed();
             }
@@ -120,9 +126,7 @@ impl CampaignRoomController {
             state.loading_screen = None;
         }
 
-        if let Some(stage_id) = effects.bgm_stage_id {
-            state.bgm_stage_override = Some(stage_id);
-        }
+        let _ = effects.bgm_stage_id;
 
         // Dispatch 2D non-positional SFX (`shSdCall` / `SeCall`) and 3D positional SFX (`SeCallPos`).
         if !effects.sound_effects.is_empty() {
@@ -135,27 +139,28 @@ impl CampaignRoomController {
             }
         }
         if !effects.positional_sounds.is_empty() {
-            let p_local = state.sim_core.scenario.player_position;
-            let (listener_yaw, listener_pitch) = state.sim_core.active_listener_yaw_pitch(1.0);
-            if let (Some(eng), Some(bank)) =
-                (state.audio_engine.as_mut(), state.audio_bank.as_mut())
-            {
-                for ps in &effects.positional_sounds {
-                    if ps.se_id > 0 {
-                        let _ = bank.play_se_id_3d_tracked_with_occlusion(
-                            eng,
-                            ps.se_id as u32,
-                            p_local,
-                            listener_yaw,
-                            listener_pitch,
-                            state.active_maria,
-                            glam::Vec3::from_array(ps.pos),
-                            ps.volume,
-                            Some(&state.sim_core.collision),
-                        );
-                    }
+            crate::audio_dispatch::sync_se_pool_3d_bank(state);
+            let se_listener = sh2_audio::SeListenerContext {
+                camera_pos: state.sim_core.active_camera_eye(1.0),
+                player_pos: state.sim_core.scenario.player_position,
+                wvs_matrix: state.sim_core.active_view_matrix(1.0),
+                room_id: state.bgm_manager.room_id as u16,
+            };
+            let mut pool_actions = Vec::new();
+            for ps in &effects.positional_sounds {
+                if ps.se_id > 0 {
+                    let pos = glam::Vec3::from_array(ps.pos);
+                    state.se_pool.call_pos(
+                        ps.volume,
+                        ps.se_id as u32,
+                        Some(pos),
+                        sh2_audio::SE_FLAG_PRIO_1,
+                        &se_listener,
+                        &mut pool_actions,
+                    );
                 }
             }
+            crate::audio_dispatch::dispatch_se_pool_actions(state, &pool_actions);
         }
 
         if let Some(demo) = effects.start_drama_demo {
@@ -388,6 +393,16 @@ impl RoomController for CampaignRoomController {
             Some(CampaignPhase::FmvPlayback { .. })
         );
         if is_fmv {
+            let keep_bgm_active = state
+                .fmv_session
+                .as_ref()
+                .and_then(|s| sh2_audio::cutscene_bgm::find_cutscene_audio_mapping(s.entry.id))
+                .is_some_and(|m| {
+                    m.bgm_action == sh2_audio::cutscene_bgm::CutsceneBgmAction::KeepActive
+                });
+            if keep_bgm_active && is_in_game {
+                crate::rooms::combat_arena::render::step_audio_managers(state, dt, is_paused);
+            }
             FmvRoomController::tick_and_render_3d(
                 state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
             );

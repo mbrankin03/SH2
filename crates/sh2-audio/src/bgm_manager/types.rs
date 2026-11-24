@@ -133,3 +133,58 @@ pub struct BgmEventFlags {
     /// Whether SH2:EE restored cut/unused audio (`MusicBoxVolume.cpp` 7th-layer Hotel 1F/2F music box attenuation) is enabled (`SH2-62`).
     pub enable_restored_cut_audio: bool,
 }
+
+impl BgmEventFlags {
+    /// Extracts [`BgmEventFlags`] from the 2048-byte `flag_work` / `game_flag` bitset
+    /// (`sh2pc.exe` `0x01f7a9e0`, `SLUS_202.28` `0x01126430`) used by `SeBgmChange` (`0x00515fd0`)
+    /// and stage `EvBgmControl` routines.
+    ///
+    /// Byte offsets relative to `flag_work` base (`0x01f7a9e0` / `0x01126430`):
+    /// - `+0x04` -> `flag_5e4` (`u8`)
+    /// - `+0x08` -> `flag_5e8` (`u32`)
+    /// - `+0x0C` -> `flag_5ec` (`u32`)
+    /// - `+0x10` -> `flag_5f0` (`u32`)
+    /// - `+0x28` -> `flag_608` (`u32`)
+    /// - `+0x2C` -> `flag_60c` (`u32`)
+    /// - `+0x2E` -> `flag_60e` (`u8`)
+    /// - `+0x38` -> `flag_618` (`u32`)
+    /// - `+0x3B` -> `flag_61b` (`u8`)
+    /// - `+0x3C` -> `flag_61c` (`u32`)
+    /// - `+0x40` -> `flag_620` (`u32`)
+    /// - `+0x42` -> `flag_622` (`u8`)
+    /// - `+0x4C` -> `flag_62c` (`u32`)
+    pub fn from_event_flag_bytes(
+        bytes: &[u8],
+        hotel_music_box_active: bool,
+        event_mode_active: bool,
+        enable_restored_cut_audio: bool,
+    ) -> Self {
+        let read_u8 = |off: usize| -> u8 { bytes.get(off).copied().unwrap_or(0) };
+        let read_u32 = |off: usize| -> u32 {
+            bytes
+                .get(off..off + 4)
+                .and_then(|s| s.try_into().ok())
+                .map(u32::from_le_bytes)
+                .unwrap_or(0)
+        };
+        Self {
+            flag_5e4: read_u8(0x04),
+            flag_5e8: read_u32(0x08),
+            flag_5ec: read_u32(0x0C),
+            flag_5f0: read_u32(0x10),
+            flag_608: read_u32(0x28),
+            flag_60c: read_u32(0x2C),
+            flag_60e: read_u8(0x2E),
+            flag_618: read_u32(0x38),
+            flag_61b: read_u8(0x3B),
+            flag_61c: read_u32(0x3C),
+            flag_620: read_u32(0x40),
+            flag_622: read_u8(0x42),
+            flag_62c: read_u32(0x4C),
+            hotel_music_box_active,
+            event_mode_active,
+            ev_bgm_override: None,
+            enable_restored_cut_audio,
+        }
+    }
+}

@@ -304,6 +304,8 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
     rooms::combat_arena::story_progression_3d::sync_checkpoint_with_room_entry(state, new_room);
     state.bgm_stage_override = None;
     state.bgm_manager.stop_all(state.audio_engine.as_mut());
+    state.se_pool.reset();
+    crate::audio_dispatch::sync_se_pool_3d_bank(state);
     if let Some(ref mut bank) = state.audio_bank {
         bank.stop_all_spatial_handles();
         bank.stop_active_cut_audio();

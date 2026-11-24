@@ -132,6 +132,31 @@ impl EventFlags {
     pub fn as_bytes_mut(&mut self) -> &mut [u8; EV_FLAG_BYTES] {
         &mut self.bytes
     }
+
+    /// Packs the 2048-byte flag block into 512 little-endian `u32` words (`game_flag` in `SLUS_202.28`).
+    #[must_use]
+    pub fn to_words(&self) -> Vec<u32> {
+        self.bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
+            .collect()
+    }
+
+    /// Restores the flag block from little-endian `u32` words (`game_flag` in `SLUS_202.28`).
+    pub fn from_words(&mut self, words: &[u32]) {
+        self.bytes.fill(0);
+        for (dst, &w) in self
+            .bytes
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(words.iter())
+        {
+            dst.copy_from_slice(&w.to_le_bytes());
+        }
+    }
 }
 
 /// 32-byte puzzle state block (`s_puzzle` at `0x1f7da60..0x1f7da7f`).

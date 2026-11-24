@@ -319,6 +319,21 @@ impl SimulationCore {
         if out.footstep_triggered {
             self.footstep_triggered_since_last_poll = true;
         }
+        let delta_mm = (self.scenario.player_position - self.prev_player_position).length();
+        let is_running = matches!(
+            out.state,
+            LocomotionState::Run1
+                | LocomotionState::Run2
+                | LocomotionState::Run3
+                | LocomotionState::StrafeLeftRun
+                | LocomotionState::StrafeRightRun
+        );
+        self.scenario
+            .playing_info
+            .record_move_distance(delta_mm, is_running);
+        if self.scenario.current_stage == 38 {
+            self.scenario.playing_info.boat_clear_time += dt;
+        }
         self.last_locomotion = out;
 
         // 3b. Synchronize character animation playback rate and gait phase with locomotion output (SH2-26 / 0x531a00)

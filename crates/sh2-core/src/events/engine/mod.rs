@@ -196,6 +196,8 @@ pub struct EventEngineEffects {
     pub deleted_item_model: Option<(i32, u16)>,
     /// Stage `ev_prog` index (`1..`) invoked when `ev_m_step == Program`.
     pub active_prog_index: Option<u8>,
+    /// Completion flag (`rslt1 & 0x3fff`) passed to `StageProgramRunner::start` for `Program`.
+    pub active_prog_completion_flag: u16,
 }
 
 /// High-level `EventMainStandard` (`SLUS_202.28` `0x001a77b0`) coordinator combining

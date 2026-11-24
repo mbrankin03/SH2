@@ -97,6 +97,8 @@ pub struct ScenarioState {
     pub action_difficulty: ActionDifficulty,
     /// Accumulated boss completion signals emitted by [`crate::ai::AiSubsystem::consume_boss_events`].
     pub boss_events: crate::ai::AiBossEvents,
+    /// Authentic `Playing_Info` runtime telemetry (`SLUS_202.28` `0x0122b310` / `sh2pc.exe` `0x01dbbf80`).
+    pub playing_info: crate::endings::PlayingInfo,
 }
 
 impl Default for ScenarioState {
@@ -160,6 +162,7 @@ impl ScenarioState {
                     riddle_difficulty,
                     action_difficulty: ActionDifficulty::Normal,
                     boss_events: crate::ai::AiBossEvents::default(),
+                    playing_info: crate::endings::PlayingInfo::default(),
                 }
             }
             ScenarioKind::BornFromAWish => {
@@ -204,6 +207,7 @@ impl ScenarioState {
                     riddle_difficulty: RiddleDifficulty::Normal,
                     action_difficulty: ActionDifficulty::Normal,
                     boss_events: crate::ai::AiBossEvents::default(),
+                    playing_info: crate::endings::PlayingInfo::default(),
                 }
             }
         }

@@ -35,6 +35,8 @@ pub(crate) struct AppState {
     pub blit_bind_group: wgpu::BindGroup,
     pub splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
     pub splash_title_bg: Option<Arc<wgpu::BindGroup>>,
+    /// Boot sequence logo textures `[CesaWarning, SceWarning, KonamiLogo, SplashLogo]`.
+    pub boot_logo_bgs: [Option<Arc<wgpu::BindGroup>>; 4],
     pub menu_uniform_buffer: wgpu::Buffer,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
@@ -88,6 +90,8 @@ pub(crate) struct AppState {
     pub last_fog_blow_tick: u64,
     pub menu_ctrl: AppMenuController,
     pub ingame_menus: crate::ingame_menus::InGameMenuState,
+    /// Active campaign ending credits sequence (`EndingCreditsSequence`).
+    pub campaign_credits_seq: Option<sh2_ui::credits::EndingCreditsSequence>,
     pub combat_arena: sh2_core::combat::CombatArena,
     pub enemy_scu_asset: Option<CharacterAsset>,
     pub enemy_mkn_asset: Option<CharacterAsset>,

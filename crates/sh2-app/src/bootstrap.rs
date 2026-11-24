@@ -290,6 +290,38 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             )
         });
 
+    let load_boot_logo = |path: &str, label: &str| {
+        tex_loader.load_texture(path).ok().map(|t| {
+            render_ctx.create_blitter_bind_group(
+                &blitter,
+                t.width as u32,
+                t.height as u32,
+                &t.rgba,
+                &menu_uniform_buffer,
+                Some(label),
+            )
+        })
+    };
+    let boot_logo_bgs = [
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::CesaWarning.asset_path(),
+            "CESA Warning Texture",
+        ),
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::SceWarning.asset_path(),
+            "SCE Warning Texture",
+        ),
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::KonamiLogo.asset_path(),
+            "Konami Boot Logo Texture",
+        )
+        .or_else(|| splash_konami_bg.clone()),
+        load_boot_logo(
+            sh2_ui::menu::BootLogoKind::SplashLogo.asset_path(),
+            "Splash Logo Texture",
+        ),
+    ];
+
     let splash_title_bg = tex_loader
         .load_texture("pic/etc/start00.tex")
         .ok()
@@ -545,6 +577,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         blit_bind_group,
         splash_konami_bg,
         splash_title_bg,
+        boot_logo_bgs,
         menu_uniform_buffer,
         menu_text_texture,
         menu_text_bind_group,
@@ -595,6 +628,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         last_fog_blow_tick: 0,
         menu_ctrl,
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),
+        campaign_credits_seq: None,
         combat_arena,
         enemy_scu_asset,
         enemy_mkn_asset,

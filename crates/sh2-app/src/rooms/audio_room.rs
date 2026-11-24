@@ -724,7 +724,7 @@ impl AudioDebugRoomController {
         }
         super::combat_arena::camera_wiring::sync_player_pose_and_visibility(state);
         super::combat_arena::camera_wiring::update_camera_uniforms(state, alpha, None);
-        super::combat_arena::camera_wiring::update_spotlight_uniforms(state, alpha, None);
+        super::combat_arena::camera_wiring::update_spotlight_uniforms(state, alpha);
 
         let mut skeletal_draw = Vec::new();
         if let Some(ref c) = state.character {

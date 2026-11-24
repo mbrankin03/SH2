@@ -251,11 +251,12 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
 
     var final_rgb = total_diffuse_light * in.color.rgb * tex_color.rgb;
 
-    // MakeEnvironPacket (`SLUS_202.28` `0x0012cf20`): optional environment reflection pass
-    // modulated by part header byte `+0x45` (`reflection_color.w` in `0..=1`), projected via the
-    // `UpdateReflections` (`0x00126f90`) NHM halfway axis (`spotlight.reflection_dir.xyz`), and
-    // gated to specular/reflective primitives (`mat_type == 4u`) so matte cloth is never washed out.
-    if mat_type == 4u && spotlight.reflection_color.w > 0.001 {
+    // MakeEnvironPacket (`SLUS_202.28` `0x0012cf20`, dispatched by `MakeDrawPacket` `0x0012d5a0`
+    // line 672 ONLY when part header byte `+0x45` (`material._reserved.x`) != 0): optional
+    // environment reflection pass projected via the `UpdateReflections` (`0x00126f90`) NHM halfway
+    // axis (`spotlight.reflection_dir.xyz`). Never fires on matte or eye `mat_type == 4` submeshes
+    // whose `+0x45` byte is 0 (e.g. `hhh_jms.mdl` `prim[1]` eyes).
+    if material._reserved.x > 0.001 && spotlight.reflection_color.w > 0.001 {
         let env_dir = select(
             view_dir,
             normalize(spotlight.reflection_dir.xyz),
@@ -308,13 +309,12 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
 
         let spec_scale = select(1.0, pcss_u.params.w, pcss_u.params.w > 0.01);
         let active_spec = select(spec_spot, spec_studio, shade_mode == 3) * env_tint_rgb * spec_scale * spec_rgb;
-        // Exact PS2 GS `ALPHA_1` specular composite (`sh2gfw_Set_SpecularAlpha` `0x00181be0`):
-        // - Night (`gun_and_dark_trim.w > 0.5`, `ALPHA_1 = 0x58`): `Cs * Ad + Cd` (additive)
-        // - Day (`gun_and_dark_trim.w <= 0.5`, `ALPHA_1 = 0x54`): `(Cs - Cd) * Ad + Cd` (`mix`)
-        let is_night_spec = spotlight.gun_and_dark_trim.w > 0.5;
-        let night_spec_rgb = final_rgb + active_spec * gloss_mask;
-        let day_spec_rgb = mix(final_rgb, active_spec, gloss_mask);
-        final_rgb = select(day_spec_rgb, night_spec_rgb, is_night_spec);
+        // Exact PS2 GS `ALPHA_1 = 0x58` (`Cs * Ad + Cd`, destination-alpha additive) from
+        // `InitAllDataOne` (`SLUS_202.28` `Chacter_Draw/model3_vu1_n.c` `0x0012be90` line 93,
+        // `_all_data + 0x680`) used by `MakeSpecularPacket` (`0x0012d090` line 537) for all
+        // `material_type == 4` character primitives in both day and night.
+        // (`sh2gfw_Set_SpecularAlpha` `0x00181be0` `0x54` lerp applies only to background `.map` `EM_env`.)
+        final_rgb = final_rgb + active_spec * gloss_mask;
     }
 
     return vec4<f32>(final_rgb, out_alpha);
@@ -341,14 +341,9 @@ mod tests {
     use super::WGSL_SKINNING_SHADER;
 
     #[test]
-    fn wgsl_skinning_shader_supports_day_0x54_and_night_0x58_specular_branches() {
-        assert!(WGSL_SKINNING_SHADER
-            .contains("let is_night_spec = spotlight.gun_and_dark_trim.w > 0.5;"));
-        assert!(WGSL_SKINNING_SHADER
+    fn wgsl_skinning_shader_uses_unconditional_model3_alpha_1_0x58_additive_specular() {
+        assert!(WGSL_SKINNING_SHADER.contains("final_rgb = final_rgb + active_spec * gloss_mask;"));
+        assert!(!WGSL_SKINNING_SHADER
             .contains("let day_spec_rgb = mix(final_rgb, active_spec, gloss_mask);"));
-        assert!(WGSL_SKINNING_SHADER
-            .contains("let night_spec_rgb = final_rgb + active_spec * gloss_mask;"));
-        assert!(WGSL_SKINNING_SHADER
-            .contains("final_rgb = select(day_spec_rgb, night_spec_rgb, is_night_spec);"));
     }
 }

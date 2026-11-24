@@ -31,8 +31,7 @@ pub(super) fn tick_and_render_combat_arena_3d(
 
     // 2. Advance active in-engine 3D cutscene (`DramaDemoPlayer`, `SH2-63` / `SH2-77`)
     let alpha = state.sim_core.interpolation_alpha();
-    let (cutscene_camera_override, cutscene_light_override) =
-        cutscene::step_cutscene_player(state, dt, is_paused);
+    let cutscene_camera_override = cutscene::step_cutscene_player(state, dt, is_paused);
 
     // 3. Sample player, cutscene actor, & enemy skeletal animations at sub-frame alpha,
     //    then feed animated `.mdl` head-bone pose & submesh visibility into `sim_core` / `gpu_mesh`
@@ -51,9 +50,7 @@ pub(super) fn tick_and_render_combat_arena_3d(
 
     // 4. Upload active camera (PS2 Rail / OTS / First-Person / Cutscene), look-coupled flashlight, & fog
     super::camera_wiring::update_camera_uniforms(state, alpha, cutscene_camera_override);
-    let cs_spot = cutscene_light_override
-        .map(|l| cutscene::build_cutscene_spotlight_uniforms(state, l, player_pos));
-    super::camera_wiring::update_spotlight_uniforms(state, alpha, cs_spot);
+    super::camera_wiring::update_spotlight_uniforms(state, alpha);
     update_atmosphere_fog_uniforms(state, alpha);
 
     // 5. Submit 3D map, skeletal meshes (plus full-body planar mirror reflections in RestroomStart), and optional collision wireframe overlay

@@ -91,36 +91,31 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let res_scale = max(f32(dims.y) / PS2_VIRTUAL_HEIGHT_PX, 1.0);
     var hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
 
-    // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) 2x2 ping-pong DoF blur:
-    //     Tap offsets (`compute_swap_tap_offsets_12_4(2, step)`): `[-1.5 * step - 0.25, +0.5 * step - 0.25]` px.
-    //     GS `ALPHA_1 = (FIX << 32) | 0x64` (`A=Cs, B=Cd, C=FIX, D=Cd` => `dst = mix(dst, tap, FIX / 128.0)`).
+    // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) 2x2 DoF blur:
+    //     `post.dof_tap_offset_px` is already display-scaled by `SpecialFxEvaluation`
+    //     (`base * (viewport_height / 1080.0)`), so sample the 2x2 box symmetrically at
+    //     `[-0.5, +0.5] * dof_tap_offset_px` without double-scaling by `res_scale`, and
+    //     accumulate all 4 taps into the running buffer (GS `ALPHA_1 = (FIX << 32) | 0x64`).
     if (post.dof_strength > 0.001) {
         let dof_alpha = clamp(post.dof_strength, 0.0, 1.0);
-        let ox0 = -1.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let ox0 = -0.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;
         let ox1 = 0.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;
-        let oy0 = -1.5 * post.dof_tap_offset_px.y + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let oy0 = -0.5 * post.dof_tap_offset_px.y + PS2_SWAP_SUBPIXEL_BIAS_PX;
         let oy1 = 0.5 * post.dof_tap_offset_px.y + PS2_SWAP_SUBPIXEL_BIAS_PX;
-        var buf_a = hdr_color;
-        var buf_b = hdr_color;
-        var flip: u32 = 1u;
+        var tap_sum = vec3<f32>(0.0);
         for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
             let dy = select(oy0, oy1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(ox0, ox1, ix == 1);
-                let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-                if (flip == 1u) {
-                    buf_b = mix(buf_b, tap, dof_alpha);
-                } else {
-                    buf_a = mix(buf_a, tap, dof_alpha);
-                }
-                flip = flip ^ 1u;
+                tap_sum = tap_sum + tap;
             }
         }
-        hdr_color = buf_a;
+        hdr_color = mix(hdr_color, tap_sum * 0.25, dof_alpha);
     }
 
-    // 0b. PS2 `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 2x2 ping-pong additive bloom:
+    // 0b. PS2 `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 2x2 additive bloom:
     //     Tap offsets (`compute_swap_tap_offsets_12_4(2, step_param)`): `[-1.5 * step_px - 0.25, +0.5 * step_px - 0.25]` px.
     //     GS `TEST_1 = (aref << 4) | 0x3800b` (`ATST = 5 GEQUAL`) and `ALPHA_1 = (FIX << 32) | 0x68`
     //     (`A=Cs, B=0, C=FIX, D=Cd` => `dst = dst + tap * (FIX / 128.0)`).
@@ -128,9 +123,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let glow_alpha = clamp(post.glow_strength, 0.0, 1.0);
         let go0 = -1.5 * post.glow_step_px + PS2_SWAP_SUBPIXEL_BIAS_PX;
         let go1 = 0.5 * post.glow_step_px + PS2_SWAP_SUBPIXEL_BIAS_PX;
-        var buf_a = hdr_color;
-        var buf_b = hdr_color;
-        var flip: u32 = 1u;
+        var acc = hdr_color;
         for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
             let dy = select(go0, go1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
@@ -139,16 +132,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
                 let luma = max(tap.r, max(tap.g, tap.b));
                 if (luma >= post.glow_threshold) {
-                    if (flip == 1u) {
-                        buf_b = buf_b + tap * glow_alpha;
-                    } else {
-                        buf_a = buf_a + tap * glow_alpha;
-                    }
+                    acc = acc + tap * (glow_alpha * 0.25);
                 }
-                flip = flip ^ 1u;
             }
         }
-        hdr_color = buf_a;
+        hdr_color = acc;
     }
 
     // 0c. PS2 `sh2gfw_Filter_Blur` (`0x00177440` / `enSetBlur` `0x00146c30` `param_2 = 0x60`):
@@ -156,26 +144,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     //     evaluated over the `Swap_Soft` 2x2 unit-step (`step_px = 1.0`) tap grid.
     if (post.motion_blur_strength > 0.001) {
         let mb_alpha = clamp(post.motion_blur_strength, 0.0, 1.0);
-        let mo0 = -1.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
+        let mo0 = -0.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
         let mo1 = 0.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
-        var buf_a = hdr_color;
-        var buf_b = hdr_color;
-        var flip: u32 = 1u;
+        var tap_sum = vec3<f32>(0.0);
         for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
             let dy = select(mo0, mo1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(mo0, mo1, ix == 1);
                 let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-                if (flip == 1u) {
-                    buf_b = mix(buf_b, tap, mb_alpha);
-                } else {
-                    buf_a = mix(buf_a, tap, mb_alpha);
-                }
-                flip = flip ^ 1u;
+                tap_sum = tap_sum + tap;
             }
         }
-        hdr_color = buf_a;
+        hdr_color = mix(hdr_color, tap_sum * 0.25, mb_alpha);
     }
 
     // 1. Optional ACES tonemapping (`native-upgrade`) vs strict 1:1 Vanilla PS2 linear clamp

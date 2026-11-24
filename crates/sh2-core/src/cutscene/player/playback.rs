@@ -374,9 +374,11 @@ impl DramaDemoPlayer {
         self.sync_camera_and_actors();
     }
 
-    /// Returns the primary active dynamic light from the `.dds` light slots (`0..DEMO_MAX_LIGHTS`),
-    /// suitable for driving the stage spotlight / point light shader uniform.
-    pub fn primary_active_light(&self) -> Option<&DemoLightState> {
+    /// Returns all currently visible dynamic lights from the `.dds` light slots
+    /// (`0..total_lights().min(DEMO_MAX_LIGHTS)`), preserving exact `.dds` slot order
+    /// (`Point`, then `Spot`, then `Directional`) matching `DramaDemoMain`
+    /// (`SLUS_202.28` `Event/demoview.c` `0x001b0f00` lines 444–551).
+    pub fn active_lights(&self) -> impl Iterator<Item = &DemoLightState> {
         let total_lights = self
             .evaluator
             .script
@@ -387,7 +389,13 @@ impl DramaDemoPlayer {
             .lights
             .iter()
             .take(total_lights)
-            .find(|l| l.visible)
+            .filter(|l| l.visible)
+    }
+
+    /// Returns the primary active dynamic light from the `.dds` light slots (`0..DEMO_MAX_LIGHTS`),
+    /// suitable for driving the stage spotlight / point light shader uniform.
+    pub fn primary_active_light(&self) -> Option<&DemoLightState> {
+        self.active_lights().next()
     }
 
     /// Returns the final player (`hhh_jms_pos` / `hhl_jms_pos` / `hll_jms_pos` / `lll_jms_pos` / `hhh_mar_pos` / `lll_mar_pos`)

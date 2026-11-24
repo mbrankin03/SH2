@@ -431,6 +431,10 @@ pub struct GameOptions {
     /// (`secondary_physics.rs`). Default `false` for strict 1:1 original PS2 parity (AGENTS.md Rule 3.4).
     #[serde(default)]
     pub enable_secondary_physics: bool,
+    /// SH2:EE world & event bugfixes (`FlashlightClockPush`, `ElevatorCursorColorFix`,
+    /// `HospitalChase`, `CreatureVehicleSpawn`). `false` in strict 1:1 Vanilla PS2 mode.
+    #[serde(default = "default_true")]
+    pub enable_sh2ee_world_fixes: bool,
     /// Native-upgrade unlimited save slots + JSON/bincode export (`false` = 1:1 PS2 2 cards × 15 slots).
     #[serde(default)]
     pub enable_unlimited_save_slots: bool,
@@ -489,6 +493,7 @@ impl Default for GameOptions {
             walk_run_control: WalkRunControlMode::default(),
             brightness_level: PS2_DEFAULT_BRIGHTNESS_LEVEL,
             enable_secondary_physics: false,
+            enable_sh2ee_world_fixes: true,
             enable_unlimited_save_slots: false,
             enable_quicksave_autosave: false,
             enable_save_thumbnails: false,

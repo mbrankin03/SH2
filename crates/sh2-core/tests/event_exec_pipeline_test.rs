@@ -216,8 +216,8 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
         &mut inventory,
     );
     assert!(flags.get(501));
-    assert!(inventory.has_item(1));
-    assert_eq!(fx1.common_message, Some(10));
+    assert!(inventory.has_item(5));
+    assert_eq!(fx1.common_message, Some(9));
     assert_eq!(engine.step_state.ev_e_step, 2);
 
     let fx2 = engine.tick_standard(
@@ -234,7 +234,7 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
         &mut inventory,
     );
     assert_eq!(fx2.sound_effects, vec![0x2b21]);
-    assert_eq!(fx2.deleted_item_model, Some((0x0401, 500)));
+    assert_eq!(fx2.deleted_item_model, Some((0x0703, 500)));
     assert_eq!(engine.step_state.ev_e_step, 5);
 
     engine.tick_standard(

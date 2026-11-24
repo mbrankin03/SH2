@@ -13,7 +13,8 @@ pub use entries::{
 };
 pub use enums::{EventDestShapeKind, EventResultKind, EventShapeKind, EventTriggerKind};
 pub use tables::{
-    EventDoorSound, ItemKindEntry, CONNECT_STAGE_PAIRS, DOOR_SE_TABLE, ITEM_KIND_TABLE,
+    pickup_model_rel_path, EventDoorSound, ItemKindEntry, CONNECT_STAGE_PAIRS, DOOR_SE_TABLE,
+    ITEM_KIND_TABLE,
 };
 
 use std::f32::consts::{PI, TAU};

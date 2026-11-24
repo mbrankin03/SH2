@@ -61,6 +61,7 @@ impl AppConfig {
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
                 self.game.enable_delayed_fade_in = false;
                 self.game.enable_secondary_physics = false;
+                self.game.enable_sh2ee_world_fixes = false;
                 self.game.enable_unlimited_save_slots = false;
                 self.game.enable_quicksave_autosave = false;
                 self.game.enable_save_thumbnails = false;
@@ -82,6 +83,7 @@ impl AppConfig {
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
                 self.game.enable_delayed_fade_in = true;
                 self.game.enable_secondary_physics = false;
+                self.game.enable_sh2ee_world_fixes = true;
                 self.game.enable_unlimited_save_slots = false;
                 self.game.enable_quicksave_autosave = false;
                 self.game.enable_save_thumbnails = false;
@@ -103,6 +105,7 @@ impl AppConfig {
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
                 self.game.enable_delayed_fade_in = true;
                 self.game.enable_secondary_physics = true;
+                self.game.enable_sh2ee_world_fixes = true;
                 self.game.enable_unlimited_save_slots = true;
                 self.game.enable_quicksave_autosave = true;
                 self.game.enable_save_thumbnails = true;
@@ -130,6 +133,7 @@ impl AppConfig {
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
             && !self.game.enable_delayed_fade_in
             && !self.game.enable_secondary_physics
+            && !self.game.enable_sh2ee_world_fixes
             && !self.game.enable_unlimited_save_slots
             && !self.game.enable_quicksave_autosave
             && !self.game.enable_save_thumbnails
@@ -152,6 +156,7 @@ impl AppConfig {
             && self.controls.default_camera_mode == GameplayCameraMode::ClassicPs2Rail
             && self.game.enable_delayed_fade_in
             && !self.game.enable_secondary_physics
+            && self.game.enable_sh2ee_world_fixes
             && !self.game.enable_unlimited_save_slots
             && !self.game.enable_quicksave_autosave
             && !self.game.enable_save_thumbnails
@@ -174,6 +179,7 @@ impl AppConfig {
             && self.controls.default_camera_mode == GameplayCameraMode::OverTheShoulder
             && self.game.enable_delayed_fade_in
             && self.game.enable_secondary_physics
+            && self.game.enable_sh2ee_world_fixes
             && self.game.enable_unlimited_save_slots
             && self.game.enable_quicksave_autosave
             && self.game.enable_save_thumbnails

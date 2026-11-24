@@ -77,6 +77,9 @@ pub struct LyingFigureController {
     pub lie_face_up: bool,
     /// True if an overhead obstacle (e.g., car) blocks standing up (`enSCUCheckUpper` `SLUS 0x00164070`).
     pub overhead_blocked: bool,
+    /// `enSCUCtrlWaitCar` (`sh2pc.exe` `0x004c5c42`) `work+0x10 |= 8` bit while hiding under a
+    /// vehicle (`true` in Vanilla PS2/PC, `false` when `Patches/CreatureVehicleSpawn.cpp` is active).
+    pub under_vehicle_collision_bit: bool,
     /// Deterministic roll in `[0.0, 1.0)` used for the 80/20 crawl-vs-stand check (`enSCUCtrlDown` `0x00163010`).
     pub recovery_roll: f32,
     /// Active ambush entry when in [`ScuState::Ambush`] (`work+0xc0` in `enSCUCtrlAmbush` `0x00161600`).
@@ -126,6 +129,7 @@ impl LyingFigureController {
             is_crawling: false,
             lie_face_up: false,
             overhead_blocked: false,
+            under_vehicle_collision_bit: false,
             recovery_roll: 0.5,
             active_ambush: None,
             confuse_timer_ticks: 0.0,
@@ -370,6 +374,7 @@ impl LyingFigureController {
                 // lies under car until player enters 2000.0 mm, then faces player and enters Crawl.
                 if dist < 2000.0 {
                     self.yaw = target_dir;
+                    self.under_vehicle_collision_bit = false;
                     self.is_crawling = true;
                     self.state = ScuState::Crawl;
                     self.sub_state = 0;
@@ -398,6 +403,16 @@ impl LyingFigureController {
         // Synchronize and update skeletal animation controller with root motion displacement
         self.anim.sync_lying_figure(self.state);
         self.anim.update(dt, self.yaw);
+    }
+
+    /// Places this Lying Figure into [`ScuState::WaitCar`] (`Enemy_List` `status == 0x18`),
+    /// applying `Patches/CreatureVehicleSpawn.cpp` (`0x004c5c42`) when `enable_sh2ee_world_fixes` is `true`.
+    pub fn spawn_under_car(&mut self, enable_sh2ee_world_fixes: bool) {
+        self.state = ScuState::WaitCar;
+        self.sub_state = 0;
+        self.state_timer = 0.0;
+        self.overhead_blocked = true;
+        self.under_vehicle_collision_bit = !enable_sh2ee_world_fixes;
     }
 
     /// Turn smoothly towards desired direction.

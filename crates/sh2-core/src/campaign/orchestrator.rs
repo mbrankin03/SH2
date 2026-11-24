@@ -267,6 +267,15 @@ impl CampaignOrchestrator {
                 });
             }
             CampaignPhase::ActiveGameplay => {
+                if let Some(ref manifest) = self.active_manifest {
+                    effects.active_room_pickups = crate::world::resolve_active_room_pickups(
+                        &manifest.room_pickups,
+                        &sim.scenario.flags,
+                        sim.scenario.action_difficulty,
+                        manifest.is_outdoor,
+                        sim.scenario.player_position.to_array(),
+                    );
+                }
                 let outcome = run_active_gameplay(
                     sim,
                     &mut self.event_engine,

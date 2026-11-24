@@ -168,6 +168,17 @@ pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCod
                 riddle_difficulty: state.menu_ctrl.title_sm.riddle_difficulty,
                 play_time_secs: state.menu_ctrl.pause_menu.play_time_secs,
                 save_count: prev_count.saturating_add(1),
+                save_version: sh2_core::campaign::SAVE_FORMAT_VERSION,
+                save_point_name_id: 0,
+                secondary_timer_secs: 0.0,
+                player_hp: state.sim_core.scenario.health,
+                player_max_hp: state.sim_core.scenario.max_health,
+                clear_data: sh2_core::events::ClearData::default(),
+                previous_total_rank: 0,
+                spray_pow: 0,
+                event_flags_words: Vec::new(),
+                inventory_items: Vec::new(),
+                thumbnail_rgba: None,
             };
             match snapshot.save_to_file(&save_path) {
                 Ok(()) => {

@@ -332,3 +332,115 @@ mod tests {
         assert!(drew_glitch, "expected 2px glitch scanlines at 60% HP");
     }
 }
+
+/// Retail PC low-health warning icon path (`sh2pc.exe` `FUN_004f6380` `0x004f6380`).
+pub const RED_CROSS_ICON_PATH: &str = "pic/etc/RedCrossIcon.png";
+/// Minimum pulse multiplier in `FUN_00476280` (`0.1` at `0x00476280`).
+pub const RED_CROSS_MIN_PULSE: f32 = 0.1;
+/// Maximum pulse multiplier in `FUN_00476280` (`1.0` at `0x00476280`).
+pub const RED_CROSS_MAX_PULSE: f32 = 1.0;
+/// Per-30Hz-frame pulse step (`_DAT_007f3e10 = -0.03f` at `0x00476280`).
+pub const RED_CROSS_PULSE_STEP: f32 = -0.03;
+
+/// Low-Health Red Cross Icon state (`sh2pc.exe` `FUN_00476280` `0x00476280` & `FUN_004f66d0` `0x004f66d0`).
+#[derive(Debug, Clone, Copy)]
+pub struct RedCrossIconState {
+    /// Current oscillating pulse multiplier `[0.1, 1.0]` (`_DAT_007f3e14`).
+    pub pulse: f32,
+    /// Current step direction (`-0.03` or `+0.03`, `_DAT_007f3e10`).
+    pub pulse_step: f32,
+    /// Computed opacity `[0.0, 1.0]` passed to `FUN_004f66d0`.
+    pub intensity: f32,
+}
+
+impl Default for RedCrossIconState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RedCrossIconState {
+    /// Creates a new [`RedCrossIconState`] matching `sh2pc.exe` globals (`_DAT_007f3e14 = 1.0`,
+    /// `_DAT_007f3e10 = -0.03`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            pulse: RED_CROSS_MAX_PULSE,
+            pulse_step: RED_CROSS_PULSE_STEP,
+            intensity: 0.0,
+        }
+    }
+
+    /// Advances the Red Cross pulse state (`FUN_00476280` `0x00476280`) for `hp` / `max_hp`.
+    pub fn tick(&mut self, dt_sec: f32, hp: f32, max_hp: f32) {
+        if max_hp <= 0.0 || hp >= max_hp * ECG_DANGER_COLOR_RATIO {
+            self.pulse = RED_CROSS_MAX_PULSE;
+            self.intensity = 0.0;
+            return;
+        }
+        let steps = (dt_sec * 30.0).max(0.0);
+        let raw = ((max_hp - hp) / max_hp) * self.pulse;
+        self.intensity = raw.clamp(0.0, 1.0);
+        self.pulse += self.pulse_step * steps;
+        if self.pulse < RED_CROSS_MIN_PULSE {
+            self.pulse = RED_CROSS_MIN_PULSE;
+            self.pulse_step = -self.pulse_step;
+        } else if self.pulse > RED_CROSS_MAX_PULSE {
+            self.pulse = RED_CROSS_MAX_PULSE;
+            self.pulse_step = -self.pulse_step;
+        }
+    }
+
+    /// Returns `0..=255` alpha for `RedCrossIcon.png` (`FUN_004f66d0`).
+    #[must_use]
+    pub fn alpha_u8(&self) -> u8 {
+        (self.intensity * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+
+    /// Draws `RedCrossIcon.png` at bottom-right `(0.95 * w, 0.95 * h)` (`FUN_004f66d0` `0x004f66d0`).
+    pub fn draw(&self, icon_rgba: Option<(&[u8], usize, usize)>, rasterizer: &mut TextRasterizer) {
+        let alpha = self.alpha_u8();
+        if alpha == 0 {
+            return;
+        }
+        let x1 = ((rasterizer.width as f32) * 0.95).round() as usize;
+        let y1 = ((rasterizer.height as f32) * 0.95).round() as usize;
+        let icon_size = ((rasterizer.height as f32) * (36.0 / 448.0))
+            .round()
+            .max(16.0) as usize;
+        let x0 = x1.saturating_sub(icon_size);
+        let y0 = y1.saturating_sub(icon_size);
+
+        if let Some((src, sw, sh)) = icon_rgba {
+            let a_mul = f32::from(alpha) / 255.0;
+            for dy in 0..icon_size {
+                let py = y0 + dy;
+                if py >= rasterizer.height {
+                    break;
+                }
+                let sy = (dy * sh) / icon_size;
+                for dx in 0..icon_size {
+                    let px = x0 + dx;
+                    if px >= rasterizer.width {
+                        break;
+                    }
+                    let sx = (dx * sw) / icon_size;
+                    let si = (sy * sw + sx) * 4;
+                    if si + 3 >= src.len() {
+                        continue;
+                    }
+                    let sa = (f32::from(src[si + 3]) * a_mul).round() as u8;
+                    if sa > 0 {
+                        rasterizer.blend_pixel(px, py, [src[si], src[si + 1], src[si + 2], sa]);
+                    }
+                }
+            }
+        } else {
+            // Procedural red cross fallback if texture wasn't passed.
+            let arm = (icon_size / 3).max(4);
+            let off = (icon_size - arm) / 2;
+            rasterizer.fill_rect(x0 + off, y0, arm, icon_size, [210, 24, 24, alpha]);
+            rasterizer.fill_rect(x0, y0 + off, icon_size, arm, [210, 24, 24, alpha]);
+        }
+    }
+}

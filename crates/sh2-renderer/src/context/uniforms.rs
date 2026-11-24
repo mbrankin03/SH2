@@ -102,6 +102,26 @@ impl RenderContext {
         rate
     }
 
+    /// Framerate-independent variant of [`Self::update_lens_flares_smoothed`] for 60/120/240/unlimited Hz
+    /// rendering (`LensFlareSmoother::step_dt`).
+    pub fn update_lens_flares_smoothed_dt(
+        &self,
+        quads: &mut [effects::GpuLensFlareQuad],
+        center_visible: bool,
+        target_rate: f32,
+        camera_is_smooth: bool,
+        dt_secs: f32,
+    ) -> f32 {
+        let rate = self
+            .lens_flare_smoother
+            .lock()
+            .map(|mut s| s.step_dt(center_visible, target_rate, camera_is_smooth, dt_secs))
+            .unwrap_or(0.0);
+        effects::apply_ps2_lens_flare_smoothing(quads, rate);
+        self.update_lens_flares(quads);
+        rate
+    }
+
     /// Builds a right-handed `Depth32Float` perspective `(proj, inv_proj)` pair honoring a custom
     /// `near_clip` in SH2 world units (e.g. `8.0` in First-Person vs `25.0` in Third-Person/Rail) (`SH2-93`).
     #[inline]

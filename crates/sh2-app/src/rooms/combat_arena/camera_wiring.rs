@@ -262,9 +262,14 @@ pub(crate) fn update_spotlight_uniforms(
         {
             state.jms_spot_man.turn_off();
         }
-        state
-            .jms_spot_man
-            .tick(is_dark_room, has_flashlight, packed_map_id.unwrap_or(0));
+        let sim_tick =
+            (state.sim_core.deterministic_fog_time(alpha).max(0.0) * 60.0).floor() as u64;
+        state.jms_spot_man.tick_at_sim_tick(
+            sim_tick,
+            is_dark_room,
+            has_flashlight,
+            packed_map_id.unwrap_or(0),
+        );
         let gun_light = state.jms_spot_man.gun_light();
         let dark_trim = state.jms_spot_man.dark_trim_factor();
         let spot_active = state.jms_spot_man.spot_on;

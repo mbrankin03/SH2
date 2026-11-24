@@ -137,8 +137,10 @@ const PS2_NOISE_BLEND_WEIGHT: f32 = (128.0 - 96.0) / 128.0;
 const PS2_NOISE_TILES_Y: f32 = 448.0 / 128.0;
 
 // PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) & `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 12.4 sub-pixel
-// half-texel bias (`-4` in 12.4 fixed-point = `-4.0 / 16.0 = -0.25` px).
+// half-texel bias (`-4` in 12.4 fixed-point = `-4.0 / 16.0 = -0.25` px) and PS2 NTSC vertical
+// framebuffer height (`448.0` px) used to scale virtual tap offsets proportionally at 1080p/1440p/4K.
 const PS2_SWAP_SUBPIXEL_BIAS_PX: f32 = -0.25;
+const PS2_VIRTUAL_HEIGHT_PX: f32 = 448.0;
 
 @group(0) @binding(0) var<uniform> post: PostUniforms;
 @group(0) @binding(1) var hdr_in: texture_2d<f32>;
@@ -176,6 +178,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let pixel_coords = vec2<i32>(global_id.xy);
     let max_coord = vec2<i32>(dims) - vec2<i32>(1, 1);
+    let res_scale = max(f32(dims.y) / PS2_VIRTUAL_HEIGHT_PX, 1.0);
     var hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
 
     // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) 2x2 ping-pong DoF blur:
@@ -194,7 +197,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let dy = select(oy0, oy1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(ox0, ox1, ix == 1);
-                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
                 if (flip == 1u) {
                     buf_b = mix(buf_b, tap, dof_alpha);
@@ -222,7 +225,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let dy = select(go0, go1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(go0, go1, ix == 1);
-                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
                 let luma = max(tap.r, max(tap.g, tap.b));
                 if (luma >= post.glow_threshold) {
@@ -252,7 +255,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let dy = select(mo0, mo1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(mo0, mo1, ix == 1);
-                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
                 if (flip == 1u) {
                     buf_b = mix(buf_b, tap, mb_alpha);
@@ -532,6 +535,7 @@ mod tests {
         assert!(src.contains("PS2_NOISE_VTX_MODULATE"));
         assert!(src.contains("PS2_NOISE_BLEND_WEIGHT"));
         assert!(src.contains("PS2_NOISE_TILES_Y"));
+        assert!(src.contains("PS2_VIRTUAL_HEIGHT_PX"));
         assert!(src.contains("PS2_SWAP_SUBPIXEL_BIAS_PX"));
         assert!(!src.contains("0.05 * post.grain_intensity"));
         assert!(!src.contains("1.0 / 9.0"));

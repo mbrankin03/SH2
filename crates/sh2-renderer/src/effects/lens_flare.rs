@@ -18,6 +18,11 @@ pub const PS2_LENS_FLARE_Y_ASPECT: f32 = 512.0 / 448.0;
 /// `Lens/lens_flare.c` line 67: `_lf_flicker_on < 4`) reports the flare center as unoccluded.
 pub const PS2_LENS_FLARE_FLICKER_FRAMES: u32 = 4;
 
+/// Authentic PS2 lens flare evaluation cadence (`30.0` Hz `draw_main` loop) used by
+/// [`LensFlareSmoother::step_dt`] to make the `0.3` exponential smoothing and 4-frame debounce
+/// framerate-independent at 60/120/240/unlimited Hz.
+pub const PS2_LENS_FLARE_CADENCE_HZ: f32 = 30.0;
+
 /// Stateful PS2 lens flare visibility smoother matching `SLUS_202.28` `kari_shLensFlareDraw`
 /// (`0x00184ef0`), `shLensFlareDrawCommon` (`0x00184bf0`), and `shLensFlareLightCenterIsVisible`
 /// (`0x00187090`).
@@ -27,6 +32,8 @@ pub struct LensFlareSmoother {
     pub current_rate: f32,
     /// Consecutive unoccluded frames counter (`_lf_flicker_on` in `0x00187090`).
     pub flicker_on_frames: u32,
+    /// Continuous-time unoccluded accumulator in seconds for framerate-independent [`Self::step_dt`].
+    pub flicker_on_secs: f32,
 }
 
 impl LensFlareSmoother {
@@ -52,6 +59,54 @@ impl LensFlareSmoother {
             -self.current_rate
         };
         self.current_rate += delta * PS2_LENS_FLARE_SMOOTH_RATE;
+
+        if !camera_is_smooth {
+            self.current_rate = 0.0;
+        }
+        self.current_rate
+    }
+
+    /// Framerate-independent equivalent of [`Self::step`] for 60/120/240/unlimited Hz rendering.
+    ///
+    /// Converts PS2's 30 Hz `0.3` per-frame smoothing (`0x00184ef0`) into exact continuous time
+    /// `alpha = 1.0 - (1.0 - 0.3).powf(dt_secs * 30.0)` and measures the 4-frame debounce
+    /// (`0x00187090`) as `4.0 / 30.0` seconds. At `dt_secs == 1.0 / 30.0`, matches [`Self::step`]
+    /// identically.
+    pub fn step_dt(
+        &mut self,
+        center_visible: bool,
+        target_rate: f32,
+        camera_is_smooth: bool,
+        dt_secs: f32,
+    ) -> f32 {
+        let safe_dt = if dt_secs.is_finite() && dt_secs > 0.0 {
+            dt_secs
+        } else {
+            0.0
+        };
+        let debounce_secs = (PS2_LENS_FLARE_FLICKER_FRAMES as f32) / PS2_LENS_FLARE_CADENCE_HZ;
+        let debounced_visible = if !center_visible {
+            self.flicker_on_secs = 0.0;
+            self.flicker_on_frames = 0;
+            false
+        } else if self.flicker_on_secs < debounce_secs - 1e-6 {
+            self.flicker_on_secs += safe_dt;
+            self.flicker_on_frames =
+                (self.flicker_on_secs * PS2_LENS_FLARE_CADENCE_HZ).floor() as u32;
+            false
+        } else {
+            self.flicker_on_frames = PS2_LENS_FLARE_FLICKER_FRAMES;
+            true
+        };
+
+        let alpha =
+            1.0 - (1.0 - PS2_LENS_FLARE_SMOOTH_RATE).powf(safe_dt * PS2_LENS_FLARE_CADENCE_HZ);
+        let delta = if debounced_visible {
+            target_rate - self.current_rate
+        } else {
+            -self.current_rate
+        };
+        self.current_rate += delta * alpha;
 
         if !camera_is_smooth {
             self.current_rate = 0.0;

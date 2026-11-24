@@ -6,6 +6,9 @@ use sh2_ui::menu::TestRoomKind;
 
 pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     let det_fog_time = state.sim_core.deterministic_fog_time(alpha);
+    let prev_sim_tick = (state.last_fog_time.max(0.0) * 60.0).floor() as u64;
+    let curr_sim_tick = (det_fog_time.max(0.0) * 60.0).floor() as u64;
+    let blow_frame_steps = curr_sim_tick.saturating_sub(prev_sim_tick).min(6) as i32;
     let fog_dt = (det_fog_time - state.last_fog_time).clamp(0.0, 0.1);
     state.last_fog_time = det_fog_time;
     state.fog_uniforms.time = det_fog_time;
@@ -134,7 +137,9 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         if state.fog_blow_system.active_room_id != ps2_room_id {
             state.fog_blow_system.set_room(ps2_room_id);
         }
-        state.fog_blow_system.tick(fog_dt, 1, player_pos);
+        state
+            .fog_blow_system
+            .tick(fog_dt, blow_frame_steps, player_pos);
         state
             .fog_blow_system
             .write_gpu_instances(fog_rgb, &mut state.fog_particle_scratch);

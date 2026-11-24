@@ -145,6 +145,32 @@ fn test_sh2_136_soft_stencil_blur_self_shadow_exclusion_clear_color_and_post_pip
     let s1 = ctx.post_pipeline.step_ps2_noise_at_time(&ctx.queue, 0.04);
     assert!(s1.is_some() && s1 != s0);
 
+    // Framerate-independent lens flare smoothing: 8 steps at 240 Hz == 1 step at 30 Hz
+    let mut lf30 = sh2_renderer::effects::LensFlareSmoother::default();
+    let mut lf240 = sh2_renderer::effects::LensFlareSmoother::default();
+    for _ in 0..5 {
+        lf30.step(true, 1.0, true);
+    }
+    for _ in 0..40 {
+        lf240.step_dt(true, 1.0, true, 1.0 / 240.0);
+    }
+    assert!(
+        (lf30.current_rate - lf240.current_rate).abs() < 1e-4,
+        "240 Hz step_dt ({}) must match 30 Hz step ({})",
+        lf240.current_rate,
+        lf30.current_rate
+    );
+
+    // 60 Hz sim-tick gating on JmsSpotManager: repeated render frames on the same sim_tick do not advance
+    let mut spot = sh2_renderer::light::JmsSpotManager::new();
+    spot.turn_on();
+    assert_eq!(spot.tick_at_sim_tick(10, true, true, 0), 1);
+    let r1 = spot.ramp_count;
+    assert_eq!(spot.tick_at_sim_tick(10, true, true, 0), 0);
+    assert_eq!(spot.ramp_count, r1);
+    assert_eq!(spot.tick_at_sim_tick(11, true, true, 0), 1);
+    assert_eq!(spot.ramp_count, r1 + 2);
+
     ctx.pcss_enabled
         .store(false, std::sync::atomic::Ordering::Relaxed);
     ctx.set_soft_shadow_blur_enabled(true);

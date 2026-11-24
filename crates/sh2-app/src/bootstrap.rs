@@ -728,6 +728,10 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         last_frame: Instant::now(),
         frame_counter: 0,
         sim_time: 0.0,
+        cockroach_swarm: sh2_core::CockroachSwarmState::default(),
+        dog_room_levers: sh2_core::DogRoomLeversState::default(),
+        sh2ee_ty3_glb: None,
+        sh2ee_mon_glb: None,
     };
     state.apply_texture_quality(initial_tex_quality);
     state

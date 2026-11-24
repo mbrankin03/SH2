@@ -1,5 +1,6 @@
 use sh2_assets::formats::{
-    parse_glb, parse_mdl, GLB_CHUNK_BIN, GLB_CHUNK_JSON, GLB_MAGIC, GLB_VERSION,
+    parse_glb, parse_mdl, GlbNodeLocalTransform, GLB_CHUNK_BIN, GLB_CHUNK_JSON, GLB_MAGIC,
+    GLB_VERSION,
 };
 use sh2_assets::AssetPathResolver;
 use sh2_core::config::{AppConfig, EnhancedPreset};
@@ -277,9 +278,14 @@ fn retail_bug_and_dog_room_mdl_assets_and_glb_parser() {
     assert_eq!(glb.meshes[0].primitives[0].vertices.len(), 3);
     assert_eq!(glb.meshes[0].primitives[0].indices, vec![0, 1, 2]);
     let locals = glb.evaluate_node_locals(1.0, true);
-    assert!((locals[0].0[0] - 5.0).abs() < 1e-4);
-    assert!((locals[0].0[1] - 10.0).abs() < 1e-4);
-    assert!((locals[0].0[2] - 15.0).abs() < 1e-4);
+    match locals[0] {
+        GlbNodeLocalTransform::Trs { translation, .. } => {
+            assert!((translation[0] - 5.0).abs() < 1e-4);
+            assert!((translation[1] - 10.0).abs() < 1e-4);
+            assert!((translation[2] - 15.0).abs() < 1e-4);
+        }
+        GlbNodeLocalTransform::Matrix(_) => panic!("expected TRS local transform"),
+    }
 
     let resolver = AssetPathResolver::resolve();
     let item_dir = resolver.data_dir.join("chr/item");

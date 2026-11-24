@@ -175,4 +175,5 @@ pub(super) fn submit_scene_draw(
             &skeletal_draw,
         );
     }
+    crate::rooms::sh2ee_glb_hooks::render_room_glb_replacements(state, 1.0 / 60.0);
 }

@@ -57,8 +57,9 @@ pub use demo::{
 };
 pub use dxt::{decode_dds_file, decode_dxt, encode_dds_rgba, encode_dxt_rgba};
 pub use glb::{
-    parse_glb, GlbAnimTrack, GlbMesh, GlbModel, GlbNode, GlbPrimitive, GlbSkin, GlbTexture,
-    GlbVertex, GLB_CHUNK_BIN, GLB_CHUNK_JSON, GLB_MAGIC, GLB_VERSION,
+    parse_glb, GlbAnimTrack, GlbInterpolation, GlbMesh, GlbModel, GlbNode, GlbNodeLocalTransform,
+    GlbPrimitive, GlbSkin, GlbTexture, GlbVertex, GLB_CHUNK_BIN, GLB_CHUNK_JSON, GLB_MAGIC,
+    GLB_VERSION,
 };
 pub use kg::{
     parse_kg, parse_kg1, parse_kg2, KgBoundingSphere, KgFile, KgPart, KgStrip, KgStripGeometry,

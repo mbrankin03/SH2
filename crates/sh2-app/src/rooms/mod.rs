@@ -10,6 +10,7 @@ pub(crate) mod inventory_room;
 pub(crate) mod loading_screen_room;
 pub(crate) mod model_viewer;
 pub(crate) mod puzzle_cutaway_room;
+pub(crate) mod sh2ee_glb_hooks;
 pub(crate) mod story_progression_room;
 pub(crate) mod surface_sfx_room;
 

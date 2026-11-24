@@ -65,15 +65,17 @@ fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
             );
         }
         // Kick up `Effect2/hh_class_raise_dust_phenomenon_00.c` (`0x0025b2e0`) airborne dust motes
-        // on running footsteps so they catch James's flashlight cone.
+        // on running footsteps using exact `HH_Effect_Object_Ground_Impact_Post` (`0x0025aa30`
+        // line 221: `y - 50.0`) and `HH_Class_Plural_Phenomenon_01` (`0x00286ea0` line 216,
+        // `0x0037b490`: `[0.0, -2500.0, 0.0]`).
         if is_running {
-            let speed_mm_s = 350.0;
-            let impact_vel = glam::Vec3::new(-fwd.x * speed_mm_s, -450.0, -fwd.z * speed_mm_s);
-            state.dust_system.spawn_raise_dust(
-                p_pos + glam::Vec3::new(0.0, -40.0, 0.0),
-                impact_vel,
-                p_pos.y,
-            );
+            let spawn_pos = p_pos
+                + glam::Vec3::new(0.0, sh2_core::lighting::GROUND_IMPACT_FOOT_Y_OFFSET_MM, 0.0);
+            let impact_vel =
+                glam::Vec3::from_array(sh2_core::lighting::PLURAL_PHENOMENON_RAISE_DUST_VEL);
+            state
+                .dust_system
+                .spawn_raise_dust(spawn_pos, impact_vel, p_pos.y);
         }
     }
 }

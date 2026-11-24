@@ -6,8 +6,17 @@
 use glam::Vec3;
 
 /// Maximum simultaneous airborne dust mote instances (`Object_Group_InstanceTableInfomeation_Set`
-/// @ `0x0026a130` shares a 600-slot pool; capped at 256 for dust motes).
-pub const MAX_DUST_MOTES: usize = 256;
+/// @ `0x0026a130` allocates a 600-slot instance pool at `0x011ebd80`).
+pub const MAX_DUST_MOTES: usize = 600;
+
+/// Vertical foot spawn offset in PS2 Y-down mm from `HH_Effect_Object_Ground_Impact_Post`
+/// (`Effect2/hh_class_object_execute.c` `0x0025aa30` line 221: `fStack_7c = fStack_7c - 50.0`).
+pub const GROUND_IMPACT_FOOT_Y_OFFSET_MM: f32 = -50.0;
+
+/// Initial impact velocity `[x, y, z]` in PS2 mm/s passed to `HH_Class_Raise_Dust_Phenomenon_00`
+/// (`0x10`) by `HH_Class_Plural_Phenomenon_01` (`Effect2/hh_class_plural_phenomenon_01.c`
+/// `0x00286ea0` line 216, static vector at `SLUS_202.28` `0x0037b490`).
+pub const PLURAL_PHENOMENON_RAISE_DUST_VEL: [f32; 3] = [0.0, -2500.0, 0.0];
 
 /// Horizontal XZ velocity scale applied in `Object_Initialize` (`hh_class_dust_00.c` `0x00257840`).
 pub const DUST_VEL_XZ_SCALE: f32 = 0.054_945_05;
@@ -86,8 +95,9 @@ impl Default for DustSpotlightParams {
             enabled: false,
             position_mm: Vec3::ZERO,
             direction: Vec3::NEG_Z,
-            outer_cos: 0.75,
-            range_mm: 7000.0,
+            // Default 45-degree half-angle fallback matching `camera_wiring.rs`, inert while `enabled == false`.
+            outer_cos: std::f32::consts::FRAC_PI_4.cos(),
+            range_mm: super::fixes::PS2_FLASHLIGHT_RANGE_MM,
         }
     }
 }
@@ -284,7 +294,10 @@ impl DustSystem {
             mote.age_sec += dt;
             let offset = mote.parabola_offset();
             mote.world_pos = mote.origin + offset;
-            if mote.world_pos.y > mote.floor_y || mote.age_sec >= DUST_TOTAL_LIFETIME_SEC {
+            // `HH_Class_Dust_00` (`0x00257f30` lines 302-305): despawn strictly on floor contact
+            // (`0.0 < fStack_1c + origin.y`); `Object_Draw` (`0x00257b30`) continues drawing with
+            // `+ 12.0` ambient GS alpha even after `motion_alpha` reaches `0.0`.
+            if mote.world_pos.y > mote.floor_y {
                 self.motes.swap_remove(i);
                 continue;
             }
@@ -351,15 +364,21 @@ mod tests {
     }
 
     #[test]
-    fn raise_dust_spawns_three_motes_and_despawns_on_floor_or_timeout() {
+    fn raise_dust_spawns_three_motes_and_despawns_on_floor_contact() {
         let mut sys = DustSystem::new();
         sys.spawn_raise_dust(
             Vec3::new(0.0, -50.0, 0.0),
-            Vec3::new(0.0, -400.0, 200.0),
+            Vec3::from_array(PLURAL_PHENOMENON_RAISE_DUST_VEL),
             0.0,
         );
         assert_eq!(sys.motes.len(), 3);
-        for _ in 0..140 {
+        // After 2.1s (126 ticks), motes are still airborne and retain `+12.0` ambient GS alpha
+        for _ in 0..126 {
+            sys.tick(DUST_DT_60HZ);
+        }
+        assert_eq!(sys.motes.len(), 3);
+        // Advance until parabolic gravity returns all motes to floor_y = 0.0
+        for _ in 0..120 {
             sys.tick(DUST_DT_60HZ);
         }
         assert!(sys.motes.is_empty());

@@ -418,10 +418,10 @@ impl LoadingScreen {
             LoadingScreenMode::Ps2NowLoadingJitter => {
                 // `SLUS_202.28` `NowLoadingDraw` (`0x00299170`): `_count_51` advances at 30 Hz,
                 // redrawing jittered `Now loading` whenever `_count_51 & 0x3f == 0` and decaying
-                // over `4.0s` (`ScreenEffectFadeStart(4.0f, 1)` at `0x00298fc0`).
-                let prev_accum = self.ps2_frame_accum;
+                // continuously over `4.0s` (`ScreenEffectFadeStart(4.0f, 1)` at `0x00298fc0`).
                 self.ps2_frame_accum += dt * 30.0;
-                let step_decay = (1.0 / 30.0) / FOOTSTEP_DECAY_SECS;
+                let mut did_reset = false;
+                let mut frames_after_reset = 0u32;
                 while self.ps2_frame_accum >= 1.0 {
                     self.ps2_frame_accum -= 1.0;
                     if (self.ps2_frame_counter & PS2_NOW_LOADING_PERIOD_MASK) == 0 {
@@ -429,15 +429,20 @@ impl LoadingScreen {
                         self.ps2_text_x_512 = jx;
                         self.ps2_text_y_480 = jy;
                         self.ps2_text_alpha = 1.0;
+                        did_reset = true;
+                        frames_after_reset = 0;
+                    } else if did_reset {
+                        frames_after_reset += 1;
                     }
                     self.ps2_frame_counter = self.ps2_frame_counter.wrapping_add(1);
-                    self.ps2_text_alpha = (self.ps2_text_alpha - step_decay).max(0.0);
                 }
-                let frac_dt = (self.ps2_frame_accum - prev_accum).max(0.0) / 30.0;
-                if frac_dt > 0.0 {
-                    self.ps2_text_alpha =
-                        (self.ps2_text_alpha - frac_dt / FOOTSTEP_DECAY_SECS).max(0.0);
-                }
+                let decay_dt = if did_reset {
+                    (frames_after_reset as f32 + self.ps2_frame_accum) / 30.0
+                } else {
+                    dt
+                };
+                self.ps2_text_alpha =
+                    (self.ps2_text_alpha - decay_dt / FOOTSTEP_DECAY_SECS).max(0.0);
             }
         }
 
@@ -557,13 +562,29 @@ mod tests {
         assert!((250..=258).contains(&x64));
         assert!((250..=258).contains(&y64));
 
-        // Verify Ps2NowLoadingJitter mode never spawns footsteps and decays over 4.0s
+        // Verify Ps2NowLoadingJitter mode never spawns footsteps and decays at exact 4.0s rate
+        // identically across single-step, 60 Hz, 120 Hz, and 240 Hz frame pacing.
         let mut loading = LoadingScreen::new_with_seed("PS2 Test", 1.0, false, 0)
             .with_mode(LoadingScreenMode::Ps2NowLoadingJitter);
         loading.tick(1.0);
         assert!(loading.footsteps.is_empty());
         assert!(!loading.step_spawned_this_tick);
-        assert!((loading.ps2_text_alpha - 0.75).abs() < 0.05);
+        let expected_after_1s = 1.0 - (29.0 / 30.0) / FOOTSTEP_DECAY_SECS;
+        assert!((loading.ps2_text_alpha - expected_after_1s).abs() < 1e-4);
+
+        for &hz in &[60usize, 120, 240] {
+            let mut paced = LoadingScreen::new_with_seed("PS2 Paced", 1.0, false, 0)
+                .with_mode(LoadingScreenMode::Ps2NowLoadingJitter);
+            let dt = 1.0 / hz as f32;
+            for _ in 0..hz {
+                paced.tick(dt);
+            }
+            assert!(
+                (paced.ps2_text_alpha - expected_after_1s).abs() < 1e-3,
+                "Expected exact 4.0s decay parity at {hz} Hz: got {}, expected {expected_after_1s}",
+                paced.ps2_text_alpha
+            );
+        }
 
         // Render both modes and verify non-empty output
         let font = AtlasFont::load_embedded();

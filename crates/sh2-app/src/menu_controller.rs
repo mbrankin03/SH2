@@ -813,4 +813,65 @@ mod tests {
 
         let _ = std::fs::remove_file(&cfg_path);
     }
+
+    #[test]
+    fn test_loading_screen_require_press_to_continue_confirm_transitions_once() {
+        let temp_dir = std::env::temp_dir();
+        let cfg_path = temp_dir.join("test_sh2_loading_press_confirm_config.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
+        let mut controller = AppMenuController::new(&cfg_path);
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .min_loading_screen_seconds = 1;
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .require_press_to_continue = true;
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .instant_room_transitions = false;
+        controller.title_sm.phase = TitlePhase::TransitionToGame;
+        controller.title_sm.fade_alpha = 1.0;
+        controller.title_sm.start_fade_out();
+
+        let mut loading_screen: Option<LoadingScreen> = None;
+
+        // Tick 90 frames at 60 Hz (1.5s > min_duration 1.0s), preloading on Frame 2
+        for _ in 0..90 {
+            let step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
+            if step.needs_room_preload {
+                if let Some(ref mut ls) = loading_screen {
+                    ls.mark_completed();
+                }
+            }
+            assert!(!step.entered_game);
+        }
+        // Still waiting for user confirm
+        assert!(!controller.in_game_active);
+        assert!(loading_screen.is_some());
+
+        // User presses Confirm -> `handle_confirm()` marks `transition_ready = true`
+        assert!(loading_screen.as_mut().unwrap().handle_confirm());
+
+        // Next tick completes transition cleanly into `in_game_active = true` without looping
+        let final_step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
+        assert!(final_step.entered_game);
+        assert!(controller.in_game_active);
+        assert!(loading_screen.is_none());
+
+        // Subsequent ticks never re-instantiate `LoadingScreen`
+        for _ in 0..30 {
+            let post_step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
+            assert!(!post_step.entered_game);
+            assert!(loading_screen.is_none());
+        }
+
+        let _ = std::fs::remove_file(&cfg_path);
+    }
 }

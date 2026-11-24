@@ -19,9 +19,9 @@ impl OptionsMenu {
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
-                    14
+                    18
                 } else {
-                    13
+                    17
                 }
             }
             OptionsTab::Debug => 6,
@@ -336,7 +336,39 @@ impl OptionsMenu {
                     "OFF (Original PS2)".into()
                 },
             )),
-            13 if self.audio_pack_status.both_detected() => {
+            13 => Some((
+                "Unlimited Save Slots",
+                if self.draft_config.game.enable_unlimited_save_slots {
+                    "ON (Native + Export)".into()
+                } else {
+                    "OFF (PS2 2x15)".into()
+                },
+            )),
+            14 => Some((
+                "Quicksave & Autosave",
+                if self.draft_config.game.enable_quicksave_autosave {
+                    "ON (Native)".into()
+                } else {
+                    "OFF (Manual Only)".into()
+                },
+            )),
+            15 => Some((
+                "Save Thumbnails",
+                if self.draft_config.game.enable_save_thumbnails {
+                    "ON (3D + Tracker)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            16 => Some((
+                "Free 3D Item Orbit",
+                if self.draft_config.game.enable_free_item_orbit {
+                    "ON (Orbit + Zoom)".into()
+                } else {
+                    "OFF (Original PS2)".into()
+                },
+            )),
+            17 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -530,7 +562,23 @@ impl OptionsMenu {
                 self.draft_config.audio.enable_dynamic_room_acoustics =
                     !self.draft_config.audio.enable_dynamic_room_acoustics;
             }
-            13 if self.audio_pack_status.both_detected() => {
+            13 => {
+                self.draft_config.game.enable_unlimited_save_slots =
+                    !self.draft_config.game.enable_unlimited_save_slots;
+            }
+            14 => {
+                self.draft_config.game.enable_quicksave_autosave =
+                    !self.draft_config.game.enable_quicksave_autosave;
+            }
+            15 => {
+                self.draft_config.game.enable_save_thumbnails =
+                    !self.draft_config.game.enable_save_thumbnails;
+            }
+            16 => {
+                self.draft_config.game.enable_free_item_orbit =
+                    !self.draft_config.game.enable_free_item_orbit;
+            }
+            17 if self.audio_pack_status.both_detected() => {
                 let a = &mut self.draft_config.audio;
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()

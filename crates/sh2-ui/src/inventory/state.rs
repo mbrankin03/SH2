@@ -64,6 +64,14 @@ pub struct InventoryScreen {
     pub status_toast: Option<String>,
     /// Remaining duration in seconds for `status_toast`.
     pub status_toast_timer: f32,
+    /// Native-upgrade toggle: allow free 3D item orbit & zoom in `ExamineOverlay` (`false` = 1:1 PS2).
+    pub enable_free_item_orbit: bool,
+    /// Free-orbit yaw in radians when `enable_free_item_orbit` is enabled.
+    pub examine_yaw_rad: f32,
+    /// Free-orbit pitch in radians when `enable_free_item_orbit` is enabled.
+    pub examine_pitch_rad: f32,
+    /// Free-orbit zoom multiplier `[0.5, 2.5]` when `enable_free_item_orbit` is enabled.
+    pub examine_zoom: f32,
 }
 
 impl Default for InventoryScreen {
@@ -97,6 +105,10 @@ impl InventoryScreen {
             health_ecg: HealthEcgState::new(),
             status_toast: None,
             status_toast_timer: 0.0,
+            enable_free_item_orbit: false,
+            examine_yaw_rad: 0.0,
+            examine_pitch_rad: 0.0,
+            examine_zoom: 1.0,
         }
     }
 
@@ -322,6 +334,22 @@ impl InventoryScreen {
                 MenuNavAction::Confirm | MenuNavAction::Cancel => {
                     self.focus = InventoryFocus::Carousel;
                     (MenuSoundCue::Cancel, InventoryAction::None)
+                }
+                MenuNavAction::Left if self.enable_free_item_orbit => {
+                    self.examine_yaw_rad -= 0.25;
+                    (MenuSoundCue::None, InventoryAction::None)
+                }
+                MenuNavAction::Right if self.enable_free_item_orbit => {
+                    self.examine_yaw_rad += 0.25;
+                    (MenuSoundCue::None, InventoryAction::None)
+                }
+                MenuNavAction::Up if self.enable_free_item_orbit => {
+                    self.examine_pitch_rad = (self.examine_pitch_rad - 0.2).clamp(-1.2, 1.2);
+                    (MenuSoundCue::None, InventoryAction::None)
+                }
+                MenuNavAction::Down if self.enable_free_item_orbit => {
+                    self.examine_pitch_rad = (self.examine_pitch_rad + 0.2).clamp(-1.2, 1.2);
+                    (MenuSoundCue::None, InventoryAction::None)
                 }
                 _ => (MenuSoundCue::None, InventoryAction::None),
             },

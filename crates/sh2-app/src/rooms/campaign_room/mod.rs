@@ -312,6 +312,20 @@ impl RoomController for CampaignRoomController {
         let allow_sim = effects.allow_gameplay_sim;
         Self::apply_effects(state, effects);
 
+        match state.campaign_orchestrator.as_ref().map(|o| &o.phase) {
+            Some(CampaignPhase::GameOver) => {
+                state.ingame_menus.gameover.tick(dt_sec);
+            }
+            Some(CampaignPhase::ActiveGameplay) => {
+                state.ingame_menus.red_cross.tick(
+                    dt_sec,
+                    state.sim_core.scenario.health,
+                    state.sim_core.scenario.max_health,
+                );
+            }
+            _ => {}
+        }
+
         let now_in_drama_demo = matches!(
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::DramaDemo { .. })
@@ -361,36 +375,75 @@ impl RoomController for CampaignRoomController {
             return;
         };
         let fade_alpha = orch.fade.black_alpha();
-        let status_line: Option<String> = match &orch.phase {
+        let phase_snapshot = orch.phase.clone();
+        let play_time_secs = orch.play_time_secs;
+
+        let font = sh2_ui::AtlasFont::shared(None);
+        match phase_snapshot {
+            CampaignPhase::GameOver => {
+                state.begin_hud_overlay();
+                sh2_ui::draw_gameover_screen(
+                    &state.ingame_menus.gameover,
+                    None,
+                    font,
+                    &mut state.menu_rasterizer,
+                );
+                state.finish_hud_overlay(encoder, surface_view);
+                return;
+            }
+            CampaignPhase::EndingCredits {
+                showing_results: true,
+                ..
+            } => {
+                let info = sh2_core::endings::PlayingInfo {
+                    time: play_time_secs as f32,
+                    ..Default::default()
+                };
+                let action = state.menu_ctrl.title_sm.action_difficulty;
+                let riddle = state.menu_ctrl.title_sm.riddle_difficulty;
+                let results = sh2_ui::ResultsScreen::from_playing_info(
+                    &info,
+                    action,
+                    riddle,
+                    sh2_core::endings::RankingRuleset::PcDirectorCut,
+                );
+                state.begin_hud_overlay();
+                sh2_ui::draw_results_screen(&results, font, &mut state.menu_rasterizer);
+                state.finish_hud_overlay(encoder, surface_view);
+                return;
+            }
+            _ => {}
+        }
+
+        let status_line: Option<String> = match &phase_snapshot {
             CampaignPhase::OverlayMenu(kind) => {
                 Some(format!("CAMPAIGN OVERLAY: {:?}  [M/I/ESC to Resume]", kind))
             }
-            CampaignPhase::GameOver => {
-                Some("GAME OVER — Press [ENTER] / [E] to return to Title".to_string())
-            }
             CampaignPhase::EndingCredits {
                 ending_stage,
-                showing_results,
-            } => Some(if *showing_results {
-                format!(
-                    "RESULTS (Stage {}) — Press [ENTER] to return to Title",
-                    ending_stage
-                )
-            } else {
-                format!(
-                    "ENDING CREDITS (Stage {}) — Press [ENTER] for Results",
-                    ending_stage
-                )
-            }),
+                showing_results: false,
+            } => Some(format!(
+                "ENDING CREDITS (Stage {}) — Press [ENTER] for Results",
+                ending_stage
+            )),
             _ => None,
         };
 
-        if fade_alpha <= 0.005 && status_line.is_none() {
+        let show_red_cross = matches!(phase_snapshot, CampaignPhase::ActiveGameplay)
+            && state.ingame_menus.red_cross.alpha_u8() > 0;
+
+        if fade_alpha <= 0.005 && status_line.is_none() && !show_red_cross {
             CombatArenaRoomController::render_hud(state, encoder, surface_view);
             return;
         }
 
         state.begin_hud_overlay();
+        if show_red_cross {
+            state
+                .ingame_menus
+                .red_cross
+                .draw(None, &mut state.menu_rasterizer);
+        }
         if fade_alpha > 0.005 {
             let w = state.menu_rasterizer.width;
             let h = state.menu_rasterizer.height;

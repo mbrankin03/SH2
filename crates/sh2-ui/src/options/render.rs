@@ -410,6 +410,18 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Enhanced, "Dynamic Room Acoustics") => {
             "Dynamic .cam room-volume reverb presets (Native) vs dry Original PS2 mix"
         }
+        (OptionsTab::Enhanced, "Unlimited Save Slots") => {
+            "Unlimited save slots & JSON/binary export (Native) vs PS2 2 cards x 15 files (1:1)"
+        }
+        (OptionsTab::Enhanced, "Quicksave & Autosave") => {
+            "Enable Quicksave/Autosave slots (Native) vs manual Red Square / Pause save (1:1)"
+        }
+        (OptionsTab::Enhanced, "Save Thumbnails") => {
+            "Live 3D save thumbnails & Ending Tracker (Native) vs classic PS2 savebg (1:1)"
+        }
+        (OptionsTab::Enhanced, "Free 3D Item Orbit") => {
+            "Free 3D item orbit & zoom during Examine (Native) vs fixed PS2 Examine (1:1)"
+        }
         (OptionsTab::Enhanced, "Audio Pack") => {
             "Select BGM & SFX audio source (Auto, SH2:EE 48 kHz Lossless, or Original PS2/PC)"
         }

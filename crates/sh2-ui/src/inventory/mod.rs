@@ -24,7 +24,7 @@ pub mod state;
 pub mod widgets;
 
 pub use atlas::{item_icon_rect, project_carousel_slot, CarouselSlotProjection, ItemIconRect};
-pub use health_ecg::{HealthEcgState, HealthStatus};
+pub use health_ecg::{HealthEcgState, HealthStatus, RedCrossIconState, RED_CROSS_ICON_PATH};
 pub use render::draw_inventory_screen;
 pub use state::InventoryScreen;
 

@@ -26,7 +26,13 @@ pub use cutscene_handoff::{
 pub use indoor_rooms::resolve_indoor_room_id;
 pub use io::{CampaignEffects, CampaignTickInput};
 pub use orchestrator::CampaignOrchestrator;
-pub use save::CampaignSaveSnapshot;
+pub use save::{
+    validate_save_data, CampaignSaveSnapshot, ClearDataProfile, SaveSlotEntry, SaveSlotKind,
+    SaveSlotRepository, SaveValidationError, AUTOSAVE_FILENAME, BINARY_SAVE_MAGIC,
+    CLEAR_DATA_FILENAME, LEGACY_SAVE_FORMAT_VERSION, MAX_DISPLAY_PLAY_TIME_SECS,
+    MAX_RETAIL_STAGE_ID, PS2_MAX_FILES_PER_CARD, PS2_MEMORY_CARD_COUNT, QUICKSAVE_FILENAME,
+    SAVE_FORMAT_VERSION,
+};
 pub use stage_loader::{
     resolve_outdoor_room_id, resolve_room_id_for_stage_pos, resolve_stage_manifest, room_area_dir,
     CampaignEnemySpawn, CampaignPickupSpawn, RoomLoadManifest,

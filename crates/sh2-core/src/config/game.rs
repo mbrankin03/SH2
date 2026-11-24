@@ -431,6 +431,18 @@ pub struct GameOptions {
     /// (`secondary_physics.rs`). Default `false` for strict 1:1 original PS2 parity (AGENTS.md Rule 3.4).
     #[serde(default)]
     pub enable_secondary_physics: bool,
+    /// Native-upgrade unlimited save slots + JSON/bincode export (`false` = 1:1 PS2 2 cards × 15 slots).
+    #[serde(default)]
+    pub enable_unlimited_save_slots: bool,
+    /// Native-upgrade quicksave / autosave slots (`false` = 1:1 PS2 manual save only).
+    #[serde(default)]
+    pub enable_quicksave_autosave: bool,
+    /// Native-upgrade live 3D save thumbnails & Ending Tracker snapshot (`false` = 1:1 PS2 `savebg`).
+    #[serde(default)]
+    pub enable_save_thumbnails: bool,
+    /// Native-upgrade free 3D item orbit & zoom in inventory Examine (`false` = 1:1 PS2 examine).
+    #[serde(default)]
+    pub enable_free_item_orbit: bool,
 }
 
 /// Debug and development options.
@@ -477,6 +489,10 @@ impl Default for GameOptions {
             walk_run_control: WalkRunControlMode::default(),
             brightness_level: PS2_DEFAULT_BRIGHTNESS_LEVEL,
             enable_secondary_physics: false,
+            enable_unlimited_save_slots: false,
+            enable_quicksave_autosave: false,
+            enable_save_thumbnails: false,
+            enable_free_item_orbit: false,
         }
     }
 }

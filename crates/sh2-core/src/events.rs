@@ -204,7 +204,7 @@ impl Sh2Rng {
 }
 
 /// Clear-data persistence across playthroughs (`prog_clear_get` / `prog_clear_set`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ClearData {
     /// Cleared action/riddle difficulty bitmask:
     /// - Bits `0..=3`: Riddle difficulty clears (`Easy = 0x01`, `Normal = 0x02`, `Hard = 0x04`, `Extra = 0x08`).

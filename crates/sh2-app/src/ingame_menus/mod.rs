@@ -66,6 +66,10 @@ pub(crate) struct InGameMenuState {
     pub(crate) cached_item_atlas: Option<(usize, usize, Vec<u8>)>,
     /// Cached decoded close-up examine `.tex` `(item_id, width, height, rgba)`.
     pub(crate) cached_examine_tex: Option<(u8, usize, usize, Vec<u8>)>,
+    /// Game Over screen state (`GameoverMain` `0x001c4c70`).
+    pub gameover: sh2_ui::GameOverScreen,
+    /// Low-Health Red Cross Icon state (`sh2pc.exe` `0x00476280`).
+    pub red_cross: sh2_ui::RedCrossIconState,
 }
 
 impl InGameMenuState {

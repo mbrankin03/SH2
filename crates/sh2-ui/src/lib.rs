@@ -4,6 +4,7 @@ pub mod atlas_font;
 pub mod button_atlas;
 pub mod credits;
 pub mod font;
+pub mod gameover;
 pub mod inventory;
 pub mod loading;
 pub mod map;
@@ -13,6 +14,8 @@ pub mod mes;
 pub mod options;
 pub mod pause;
 pub mod quickslots;
+pub mod results;
+pub mod save_load;
 
 pub use atlas_font::{draw_subtitle, AtlasFont, Sh2TextColor};
 pub use button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
@@ -22,9 +25,11 @@ pub use credits::{
     IN_WATER_CLOSING_SCROLL_DURATION_SECS, WATER_BIK_DURATION_SECS,
 };
 pub use font::TextRasterizer;
+pub use gameover::{draw_gameover_screen, GameOverPhase, GameOverScreen, GAMEOVER_TEX_PATH};
 pub use inventory::{
     draw_inventory_screen, CornerButton, HealthEcgState, HealthStatus, InventoryAction,
-    InventoryFocus, InventoryPlayerSnapshot, InventoryScreen, ItemCommand,
+    InventoryFocus, InventoryPlayerSnapshot, InventoryScreen, ItemCommand, RedCrossIconState,
+    RED_CROSS_ICON_PATH,
 };
 pub use loading::{
     FootstepPrint, FootstepSprite, LoadingPathPattern, LoadingScreen, LoadingScreenMode,
@@ -57,6 +62,11 @@ pub use options::{
     draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab,
 };
 pub use pause::{draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase};
+pub use results::{draw_results_screen, ResultsRowData, ResultsScreen};
+pub use save_load::{
+    draw_save_load_screen, SaveAddInfoMode, SaveLoadAction, SaveLoadConfig, SaveLoadMode,
+    SaveLoadScreen, SaveLoadStep, YesNoChoice, SAVEBG2_TBN2_PATH, SAVEBG_TBN2_PATH,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActivePanel {

@@ -87,6 +87,38 @@ pub const CUTSCENE_NATIVE_FPS: f32 = 30.0;
 /// Base stream number offset for `data/sound/adx/voice/voice.afs` (`stream_no = 60000 + afs_index` in 0-based AFS indexing).
 pub const VOICE_AFS_STREAM_BASE: i32 = 60000;
 
+/// Empty open right-hand skeletal pose index (`PlayerCheckModelParts` `SLUS_202.28` `0x001098d0`).
+pub const JAMES_EMPTY_RIGHT_HAND_POSE: u8 = 3;
+
+/// Returns `true` when James's equipped right-hand weapon mesh should be hidden during an active
+/// `.dds` cutscene (`CutsceneUnequip`, `Patches/RemoveWeaponFromCutscene.cpp`) (`SH2-83`).
+///
+/// In strict 1:1 Vanilla PS2 mode (`enable_cutscene_unequip == false`), the equipped weapon remains
+/// visible in James's right hand during `.dds` cutscenes.
+#[must_use]
+pub const fn should_unequip_weapon_in_cutscene(
+    enable_cutscene_unequip: bool,
+    is_dds_cutscene_active: bool,
+) -> bool {
+    enable_cutscene_unequip && is_dds_cutscene_active
+}
+
+/// Resolves James's active right-hand skeletal pose index (`3..=13`) accounting for
+/// `CutsceneUnequip` (`Patches/RemoveWeaponFromCutscene.cpp`) and `PlayerCheckModelParts`
+/// (`SLUS_202.28` `0x001098d0`) (`SH2-83`).
+#[must_use]
+pub const fn effective_right_hand_pose(
+    weapon: crate::combat::WeaponGrip,
+    enable_cutscene_unequip: bool,
+    is_dds_cutscene_active: bool,
+) -> u8 {
+    if should_unequip_weapon_in_cutscene(enable_cutscene_unequip, is_dds_cutscene_active) {
+        JAMES_EMPTY_RIGHT_HAND_POSE
+    } else {
+        weapon.right_hand_pose_index()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

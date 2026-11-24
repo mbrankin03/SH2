@@ -113,6 +113,12 @@ pub(super) fn evaluate_player_skinning(
                 .enable_secondary_physics;
             if !is_paused && ticks_processed > 0 {
                 let dt_physics = 1.0 / 60.0;
+                let head_suppressed = state
+                    .drama_demo_session
+                    .as_ref()
+                    .is_some_and(|s| s.player.locks_gameplay_input())
+                    || state.combat_arena.player.mode != sh2_core::CombatMode::Free;
+                let eye_pos = auth_player_pos + glam::Vec3::new(0.0, -844.6, 0.0);
                 for _ in 0..ticks_processed {
                     c.secondary_physics.step_if_enabled(
                         secondary_physics_enabled,
@@ -120,6 +126,8 @@ pub(super) fn evaluate_player_skinning(
                         auth_player_pos,
                         auth_player_yaw,
                     );
+                    c.head_look
+                        .step(eye_pos, auth_player_yaw, None, head_suppressed, dt_physics);
                 }
             }
             c.dynamic_locals.copy_from_slice(&c.bind_locals);
@@ -128,6 +136,16 @@ pub(super) fn evaluate_player_skinning(
                 &mut c.dynamic_locals,
                 alpha,
             );
+            let (neck_bone, head_bone) = if state.active_maria {
+                (8usize, 9usize)
+            } else {
+                (
+                    sh2_core::animation::JAMES_NECK_BONE_INDEX,
+                    sh2_core::animation::JAMES_HEAD_BONE_INDEX,
+                )
+            };
+            c.head_look
+                .apply_to_locals(&mut c.dynamic_locals, neck_bone, head_bone, alpha);
 
             evaluate_pose_into(
                 &c.model.parents,
@@ -203,6 +221,17 @@ pub(super) fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
         || session.player.info.stage_name == "er01";
 
     let has_flashlight = state.sim_core.scenario.has_flashlight();
+    let enable_cutscene_unequip = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .enable_cutscene_unequip;
+    let cutscene_jms_right_hand_pose = sh2_core::effective_right_hand_pose(
+        state.combat_arena.player.weapon,
+        enable_cutscene_unequip,
+        true,
+    );
     let scene_frame = session.player.scene_frame.max(0.0);
     for (idx, (actor, asset_opt)) in session
         .player
@@ -218,9 +247,13 @@ pub(super) fn evaluate_cutscene_actors_skinning(state: &mut AppState) {
             continue;
         }
         // `DemoJamesCheckModelParts` (`SLUS_202.28` `0x00104514`): hide pocket flashlight (`0x15` = 21)
-        // on cutscene James when the player does not possess the flashlight item yet.
+        // on cutscene James when the player does not possess the flashlight item yet, and apply
+        // `CutsceneUnequip` (`RemoveWeaponFromCutscene.cpp`) to right-hand weapon pose.
         if actor.actor_name.to_ascii_lowercase().contains("jms") {
             asset.gpu_mesh.set_pose_visible(0x15, has_flashlight);
+            asset
+                .gpu_mesh
+                .set_right_hand_pose(cutscene_jms_right_hand_pose);
         }
 
         // 1. Evaluate `.cls` facial morph cluster weights & upload morphed vertices if present (`clani.c`)

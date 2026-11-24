@@ -102,6 +102,11 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             struggle_presses = 0;
         }
 
+        state
+            .combat_arena
+            .player
+            .apply_control_options(&state.menu_ctrl.options_menu.draft_config.controls);
+
         if state.campaign_orchestrator.is_some() {
             state.combat_arena.tick_with_collision(
                 ready_held,

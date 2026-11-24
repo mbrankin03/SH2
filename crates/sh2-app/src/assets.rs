@@ -50,6 +50,7 @@ pub(crate) struct CharacterAsset {
     pub hd_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
     pub secondary_physics: SecondaryBonePhysics,
+    pub head_look: sh2_core::HeadLookTracker,
 }
 
 /// Locate and load authentic `.cld` collision file for the given test room, falling back to procedural bounds.
@@ -812,6 +813,7 @@ pub(crate) fn load_character_asset(
         hd_texture_bind_groups,
         texture_bind_groups,
         secondary_physics,
+        head_look: sh2_core::HeadLookTracker::default(),
     })
 }
 

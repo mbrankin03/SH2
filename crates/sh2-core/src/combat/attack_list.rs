@@ -153,6 +153,31 @@ impl WeaponGrip {
             Self::Chainsaw => 4,
         }
     }
+
+    /// Right-hand skeletal pose variation index (`3..=13`) from `PlayerCheckModelParts`
+    /// (`SLUS_202.28` `0x001098d0`, `_DAT_003c83bc` passed to `sh2gfw_Set_JMSequip`).
+    ///
+    /// - `3`: Empty open right hand (`None`)
+    /// - `7`: Handgun / Maria Revolver
+    /// - `8`: Shotgun / Hunting Rifle
+    /// - `9`: Steel Pipe
+    /// - `10`: Wooden Plank / Maria Chinese Cleaver
+    /// - `11`: Hyper Spray
+    /// - `12`: Great Knife
+    /// - `13`: Chainsaw
+    #[must_use]
+    pub const fn right_hand_pose_index(&self) -> u8 {
+        match self {
+            Self::None => 3,
+            Self::Handgun | Self::MariaRevolver => 7,
+            Self::Shotgun | Self::HuntingRifle => 8,
+            Self::SteelPipe => 9,
+            Self::WoodenPlank | Self::MariaChineseCleaver => 10,
+            Self::HyperSpray => 11,
+            Self::GreatKnife => 12,
+            Self::Chainsaw => 13,
+        }
+    }
 }
 
 /// Hyper Spray color/power tier (`DAT_0122b319` in `GameSaveSprayPower` `SLUS_202.28` `0x00290c20`).

@@ -438,4 +438,11 @@ mod tests {
             "procedural fog noise should have visible contrast"
         );
     }
+
+    #[test]
+    fn test_classic_ps2_fog_wgsl_omits_uncited_042_plane_blend() {
+        let src = include_str!("shader.wgsl");
+        assert!(!src.contains("plane_noise * base_curve * 0.42"));
+        assert!(src.contains("let layered = clamp(base_curve + screen_overlay, 0.0, 1.0);"));
+    }
 }

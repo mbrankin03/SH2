@@ -26,7 +26,9 @@ pub use inventory::{
     draw_inventory_screen, CornerButton, HealthEcgState, HealthStatus, InventoryAction,
     InventoryFocus, InventoryPlayerSnapshot, InventoryScreen, ItemCommand,
 };
-pub use loading::{FootstepPrint, FootstepSprite, LoadingScreen};
+pub use loading::{
+    FootstepPrint, FootstepSprite, LoadingPathPattern, LoadingScreen, LoadingScreenMode,
+};
 pub use map::{
     active_markers_for_map, chizu_can_read_map, chizu_connect_check, chizu_connect_neighbor,
     chizu_current_position_check, chizu_marker_layers, chizu_possession_check, chizu_select,

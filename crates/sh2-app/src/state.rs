@@ -10,6 +10,7 @@ use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
 use crate::rooms::horror_triggers_room::HorrorTriggersRoomState;
 use crate::rooms::inventory_room::InventoryDebugRoomState;
+use crate::rooms::loading_screen_room::LoadingScreenTestState;
 use crate::rooms::puzzle_cutaway_room::PuzzleCutawayRoomState;
 use crate::rooms::story_progression_room::StoryProgressionRoomState;
 use crate::rooms::surface_sfx_room::SurfaceSfxRoomState;
@@ -52,6 +53,7 @@ pub(crate) struct AppState {
     pub puzzle_cutaway_room: PuzzleCutawayRoomState,
     pub horror_triggers_room: HorrorTriggersRoomState,
     pub story_progression_room: StoryProgressionRoomState,
+    pub loading_screen_test: LoadingScreenTestState,
     pub sim_core: SimulationCore,
     pub gpu_map: Arc<GpuMap>,
     pub map_hd_assets: MapTierAssets,
@@ -199,6 +201,7 @@ impl AppState {
             TestRoomKind::ModelAndTextureViewer
                 | TestRoomKind::FmvCutsceneViewer
                 | TestRoomKind::GrappleAnimationRoom
+                | TestRoomKind::LoadingScreenTest
                 | TestRoomKind::InventoryAndItemsRoom
                 | TestRoomKind::PuzzleAndCutawayRoom
                 | TestRoomKind::StoryStagesAndEndingsRoom

@@ -7,6 +7,7 @@ pub(crate) mod fmv_room;
 pub(crate) mod grapple_room;
 pub(crate) mod horror_triggers_room;
 pub(crate) mod inventory_room;
+pub(crate) mod loading_screen_room;
 pub(crate) mod model_viewer;
 pub(crate) mod puzzle_cutaway_room;
 pub(crate) mod story_progression_room;
@@ -63,6 +64,11 @@ pub(crate) fn dispatch_key_input(
     match state.active_test_room {
         TestRoomKind::FmvCutsceneViewer => {
             fmv_room::FmvRoomController::handle_key_input(state, key_code, pressed, repeat);
+        }
+        TestRoomKind::LoadingScreenTest => {
+            loading_screen_room::LoadingScreenTestRoomController::handle_key_input(
+                state, key_code, pressed, repeat,
+            );
         }
         TestRoomKind::ModelAndTextureViewer => {
             model_viewer::ModelViewerRoomController::handle_key_input(
@@ -130,6 +136,12 @@ pub(crate) fn dispatch_tick_and_render_3d(
         match state.active_test_room {
             TestRoomKind::FmvCutsceneViewer => {
                 fmv_room::FmvRoomController::tick_and_render_3d(
+                    state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+                );
+                return;
+            }
+            TestRoomKind::LoadingScreenTest => {
+                loading_screen_room::LoadingScreenTestRoomController::tick_and_render_3d(
                     state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
                 );
                 return;
@@ -207,6 +219,13 @@ pub(crate) fn dispatch_render_hud(
         }
         TestRoomKind::FmvCutsceneViewer => {
             fmv_room::FmvRoomController::render_hud(state, encoder, surface_view);
+        }
+        TestRoomKind::LoadingScreenTest => {
+            loading_screen_room::LoadingScreenTestRoomController::render_hud(
+                state,
+                encoder,
+                surface_view,
+            );
         }
         TestRoomKind::GrappleAnimationRoom => {
             grapple_room::GrappleRoomController::render_hud(state, encoder, surface_view);

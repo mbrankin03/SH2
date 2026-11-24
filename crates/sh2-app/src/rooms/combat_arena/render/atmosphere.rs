@@ -134,12 +134,14 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
                 }
             }));
         // Step 1:1 `Fog/fog_blow.c` (`0x00274ca0..0x00275480`) steam-vent particles for rooms 0x8e/0x8f/0x90
+        // strictly on fixed 60 Hz ticks so drag (`0.95`), spring alpha (`0.9`), fadeout (`0.75`),
+        // and spawn timers are framerate-independent at 120/240/unlimited Hz.
         if state.fog_blow_system.active_room_id != ps2_room_id {
             state.fog_blow_system.set_room(ps2_room_id);
         }
-        state
-            .fog_blow_system
-            .tick(fog_dt, blow_frame_steps, player_pos);
+        for _ in 0..blow_frame_steps {
+            state.fog_blow_system.tick(1.0 / 60.0, 1, player_pos);
+        }
         state
             .fog_blow_system
             .write_gpu_instances(fog_rgb, &mut state.fog_particle_scratch);

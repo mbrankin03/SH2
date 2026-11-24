@@ -277,7 +277,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // 2. PS2 `sh2gfw_test_MakeNoise` (`0x00177c50`) + `sh2gfw_SendDraw_Noise` (`0x00177f30`):
-    //    Samples the 128x128 PSMT4 `noise_clut` (`0x002ab5c0`: `0x00` / `0x18`) texture tiled 4x4,
+    //    Samples the 128x128 PSMT4 `noise_clut` (`0x002ab5c0`: `0x00` / `0x18`) texture tiled
+    //    `4.0 x 3.5` on PS2 `512x448` (aspect-scaled for square grain texels at 16:9 / 4K),
     //    modulates by `DAT_002adb55 = 0xe6` (`230 / 128.0`), and blends with `ALPHA_1 = (0x60 << 32) | 0x21`
     //    (`DAT_002adb52 = 0x60 = 96` => `mix(Cd, Cs, 32 / 128.0)` scaled by user `grain_intensity`).
     if (post.grain_intensity > 0.001) {

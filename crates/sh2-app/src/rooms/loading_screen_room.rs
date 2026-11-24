@@ -208,8 +208,11 @@ impl RoomController for LoadingScreenTestRoomController {
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
     ) {
-        // 1. Clear full widescreen swapchain to pitch black (`#000000`)
-        let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        // 1. Clear full widescreen swapchain to pitch black (`#000000`).
+        // Explicit `drop` ends the render pass before `finish_inventory_overlay_in_viewport`
+        // opens `Surface Viewport Blit Pass` on the same `CommandEncoder` (wgpu 23 locks the
+        // encoder until the `RenderPass` is dropped).
+        drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("LoadingScreenTest Clear Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: surface_view,
@@ -222,7 +225,7 @@ impl RoomController for LoadingScreenTestRoomController {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
-        });
+        }));
 
         // 2. Render full-brightness LoadingScreen in centered 4:3 PS2 UI viewport
         let loading_alpha = state.loading_screen_test.loading_screen.fade_alpha;

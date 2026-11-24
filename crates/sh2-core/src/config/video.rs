@@ -398,6 +398,12 @@ pub struct VideoOptions {
     /// Modern ACES filmic tonemapping (`native-upgrade`, `SH2-136`). Disabled in strict 1:1 Vanilla PS2 mode.
     #[serde(default)]
     pub aces_tonemapping: bool,
+    /// Real-time planar water reflections on Toluca Lake (`native-upgrade`, `SH2-80`). Disabled in strict 1:1 Vanilla PS2 mode.
+    #[serde(default)]
+    pub enable_water_reflections: bool,
+    /// Interactive oar water ripple rings on Toluca Lake (`native-upgrade`, `SH2-80`). Disabled in strict 1:1 Vanilla PS2 mode.
+    #[serde(default)]
+    pub enable_oar_ripples: bool,
 }
 
 impl Default for VideoOptions {
@@ -417,6 +423,8 @@ impl Default for VideoOptions {
             lighting_profile: LightingProfile::default(),
             outdoor_streaming_mode: OutdoorStreamingMode::default(),
             aces_tonemapping: true,
+            enable_water_reflections: true,
+            enable_oar_ripples: true,
         }
     }
 }

@@ -180,6 +180,14 @@ impl RenderContext {
                 );
             }
 
+            // 1d-1. Render Toluca Lake water surface (`SH2-80`: strict PS2 specular vs native planar reflections + oar ripples)
+            if self
+                .lake_water_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.water_pipeline.draw(&mut rpass);
+            }
+
             // 1d-2. Render flattened PS2 `.kg1` floor drop shadows (`0x5a7c90`) when active (`SH2-81`)
             let drop_verts = self
                 .drop_shadow_vertex_count

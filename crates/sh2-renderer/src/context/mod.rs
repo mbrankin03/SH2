@@ -9,7 +9,7 @@ mod uniforms;
 
 use std::sync::Arc;
 
-use crate::{effects, fog, pipeline, post, shadow, skeletal, GpuSkeletalMesh};
+use crate::{effects, fog, pipeline, post, shadow, skeletal, water, GpuSkeletalMesh};
 
 pub use textures::{prepare_mipmapped_texture_cpu, PreparedGpuTexture};
 
@@ -75,6 +75,7 @@ pub struct RenderContext {
     pub shadow_blur_pipeline: shadow::ShadowBlurPipeline,
     pub lens_flare_pipeline: effects::LensFlarePipeline,
     pub spray_mist_pipeline: effects::SprayMistPipeline,
+    pub water_pipeline: water::LakeWaterPipeline,
     pub post_pipeline: post::PostProcessPipeline,
 
     pub camera_buffer: wgpu::Buffer,
@@ -128,6 +129,8 @@ pub struct RenderContext {
     pub lens_flare_quad_count: std::sync::atomic::AtomicU32,
     pub spray_mist_particle_count: std::sync::atomic::AtomicU32,
     pub pcss_enabled: std::sync::atomic::AtomicBool,
+    pub lake_water_enabled: std::sync::atomic::AtomicBool,
+    pub water_reflection_pass_enabled: std::sync::atomic::AtomicBool,
     /// True when `ModernVolumetric` + `volumetric_light` + `density > 0.0` require the 512x512 god-ray shadow pass (`SH2-32`).
     pub volumetric_god_rays_enabled: std::sync::atomic::AtomicBool,
     pub soft_shadow_blur_enabled: std::sync::atomic::AtomicBool,

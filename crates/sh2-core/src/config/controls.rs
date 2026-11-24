@@ -277,6 +277,9 @@ pub struct ControlOptions {
     /// PS2 13-action controller preset & remapping table (`Item/otn_option.c` `config_main` `0x00213a50`).
     #[serde(default)]
     pub ps2_bindings: Ps2ControllerBindings,
+    /// Native-upgrade L2/R2 analog trigger rowing on Toluca Lake (`SH2-80`). Disabled in strict 1:1 Vanilla PS2 mode.
+    #[serde(default)]
+    pub enable_analog_trigger_rowing: bool,
 }
 
 impl Default for ControlOptions {
@@ -294,6 +297,7 @@ impl Default for ControlOptions {
             first_person_fov_deg: default_first_person_fov_deg(),
             first_person_head_bob: true,
             ps2_bindings: Ps2ControllerBindings::default(),
+            enable_analog_trigger_rowing: false,
         }
     }
 }

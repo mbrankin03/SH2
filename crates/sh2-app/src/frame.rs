@@ -14,7 +14,6 @@ use crate::state::AppState;
 use sh2_renderer::GpuMap;
 use sh2_ui::menu::{LaunchTarget, TestRoomKind, TitlePhase};
 use sh2_ui::pause::PauseSubPhase;
-use sh2_ui::LoadingScreen;
 
 /// Advances a single frame of simulation, room switching, 3D/FMV rendering, and 2D swapchain presentation.
 pub(crate) fn redraw_frame(state: &mut AppState) {
@@ -45,6 +44,7 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     let is_viewer = is_in_game && state.active_test_room == TestRoomKind::ModelAndTextureViewer;
     let is_grapple_room =
         is_in_game && state.active_test_room == TestRoomKind::GrappleAnimationRoom;
+    let is_loading_test = is_in_game && state.active_test_room == TestRoomKind::LoadingScreenTest;
     let is_paused =
         is_in_game && (state.menu_ctrl.pause_menu.is_open || state.ingame_menus.is_any_open());
 
@@ -66,7 +66,7 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
         .draft_config
         .video
         .grain_intensity;
-    let grain_intensity = if is_viewer || is_grapple_room {
+    let grain_intensity = if is_viewer || is_grapple_room || is_loading_test {
         0.0
     } else {
         (grain_pct as f32) / 100.0
@@ -148,57 +148,55 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     state.window.request_redraw();
 }
 
-fn tick_menu_and_loading_screen(state: &mut AppState, dt_sec: f32) {
-    if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame {
-        let min_dur = state
-            .menu_ctrl
-            .options_menu
-            .draft_config
-            .debug
-            .min_loading_screen_seconds as f32;
-        let require_press = state
-            .menu_ctrl
-            .options_menu
-            .draft_config
-            .debug
-            .require_press_to_continue;
-        let instant = state
-            .menu_ctrl
-            .options_menu
-            .draft_config
-            .debug
-            .instant_room_transitions;
-
-        if instant {
-            state.loading_screen = None;
-            state.menu_ctrl.tick(dt_sec);
+/// Plays a single synchronized footstep SFX for a spawned loading-screen footprint (`SH2-75`).
+pub(crate) fn trigger_loading_footstep_sfx(
+    state: &mut AppState,
+    material: sh2_core::SurfaceMaterial,
+) {
+    if let Some(ref mut engine) = state.audio_engine {
+        if let Some(ref mut bank) = state.audio_bank {
+            let _ = bank.play_footstep(engine, state.active_maria, material, false, 0.85);
         } else {
-            if state.loading_screen.is_none() {
-                let label = match state.menu_ctrl.title_sm.launch_target {
-                    LaunchTarget::Campaign { scenario, .. } => match scenario {
-                        sh2_core::ScenarioKind::LetterFromSilentHeaven => {
-                            "Letter from Silent Heaven"
-                        }
-                        sh2_core::ScenarioKind::BornFromAWish => "Born from a Wish",
-                    },
-                    LaunchTarget::TestRoom(room) => room.label(),
-                };
-                let mut ls = LoadingScreen::new(label, min_dur, require_press);
-                ls.mark_completed();
-                state.loading_screen = Some(ls);
-            }
+            let _ = sh2_audio::play_menu_sound(engine, None, sh2_audio::SoundCueKind::Footstep);
+        }
+    }
+}
 
-            if let Some(ref mut ls) = state.loading_screen {
-                ls.tick(dt_sec);
-                if ls.transition_ready {
-                    state.loading_screen = None;
-                    state.menu_ctrl.tick(dt_sec);
-                }
+fn tick_menu_and_loading_screen(state: &mut AppState, dt_sec: f32) {
+    let step = state
+        .menu_ctrl
+        .tick_with_loading(&mut state.loading_screen, dt_sec);
+
+    // 1:1 Retail Parity (`SLUS_202.28` `now_loading.c` & `sh2pc.exe` `FUN_00406be0` /
+    // `FUN_004c8bc0`): neither PS2 nor PC retail plays footstep SFX during loading screens.
+    let _ = step.footstep_spawned;
+
+    if step.needs_room_preload {
+        preload_launch_target_for_loading_screen(state);
+        if let Some(ref mut ls) = state.loading_screen {
+            ls.mark_completed();
+        }
+    }
+}
+
+/// Preloads target room `.map`, `.cld`, `.cam`, and GPU bind groups while the loading screen is
+/// visible (`SH2-75`), eliminating the post-loading-screen freeze.
+fn preload_launch_target_for_loading_screen(state: &mut AppState) {
+    match state.menu_ctrl.title_sm.launch_target {
+        LaunchTarget::Campaign { is_continue, .. } => {
+            let requested_target = state.menu_ctrl.title_sm.launch_target;
+            if state.active_launch_target != requested_target
+                || state.campaign_orchestrator.is_none()
+            {
+                state.active_launch_target = requested_target;
+                rooms::campaign_room::CampaignRoomController::start_session(state, is_continue);
             }
         }
-    } else {
-        state.loading_screen = None;
-        state.menu_ctrl.tick(dt_sec);
+        LaunchTarget::TestRoom(room) => {
+            if state.active_test_room != room {
+                load_test_room_into_state(state, room);
+            }
+        }
     }
 }
 
@@ -217,110 +215,12 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         state.active_launch_target = requested_target;
     }
 
-    // If user transitioned into game from Test Rooms menu, switch level map if needed
+    // If user transitioned into game from Test Rooms menu (e.g. instant cuts), switch level map if needed
     if state.menu_ctrl.in_game_active
         && state.active_test_room != state.menu_ctrl.title_sm.selected_test_room
     {
         let new_room = state.menu_ctrl.title_sm.selected_test_room;
-        tracing::info!("Switching test environment to: {:?}", new_room);
-        let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
-        state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
-        state.map_hd_texture_bind_groups =
-            build_map_texture_bind_groups(&state.render_ctx, &new_map);
-        state.map_sh2e_texture_bind_groups = find_sh2e_map_file_for_room(new_room)
-            .map(|sh2e_map| build_map_texture_bind_groups(&state.render_ctx, &sh2e_map))
-            .unwrap_or_else(|| state.map_hd_texture_bind_groups.clone());
-        state.map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(new_room)
-            .map(|van_map| build_map_texture_bind_groups(&state.render_ctx, &van_map))
-            .unwrap_or_else(|| state.map_sh2e_texture_bind_groups.clone());
-        let active_tex_quality = state
-            .menu_ctrl
-            .options_menu
-            .draft_config
-            .video
-            .texture_quality;
-        state.apply_texture_quality(active_tex_quality);
-        state.fog_uniforms = new_fog;
-        state.render_ctx.update_fog(&state.fog_uniforms);
-        state.sim_core.collision = find_cld_file_for_room(new_room);
-        if let Some(room_id) = room_cam_id_for_test_room(new_room) {
-            state
-                .sim_core
-                .transition_to_room(room_id, new_pos, new_yaw, true);
-        } else {
-            state.sim_core.camera.set_cam_file(None);
-            state.sim_core.snap_player_transform(new_pos, new_yaw);
-            state.sim_core.reset_cameras_to_player(new_pos, new_yaw);
-        }
-        state.active_test_room = new_room;
-        rooms::combat_arena::story_progression_3d::sync_checkpoint_with_room_entry(state, new_room);
-        state.bgm_stage_override = None;
-        state.bgm_manager.stop_all(state.audio_engine.as_mut());
-        if let Some(ref mut bank) = state.audio_bank {
-            bank.stop_all_spatial_handles();
-            bank.stop_active_cut_audio();
-        }
-        state.drama_demo_session = None;
-        if let Some(ref mut eng) = state.audio_engine {
-            eng.stop_voice(std::time::Duration::from_millis(30));
-        }
-        state.selected_drama_demo_idx = match new_room {
-            TestRoomKind::RestroomStart => 0,   // `first_toilet` (demo_no = 1)
-            TestRoomKind::ObservationDeck => 1, // `tenbou` (demo_no = 2)
-            _ => state.selected_drama_demo_idx,
-        };
-        if new_room == TestRoomKind::RestroomStart
-            && state.story_progression_room.checkpoint_3d_idx == 0
-            && !state.story_progression_room.restroom_mirror_inspected
-        {
-            state.drama_demo_session = open_drama_demo_session(&state.render_ctx, 0, false);
-            state.apply_texture_quality(active_tex_quality);
-        }
-        if new_room == TestRoomKind::CombatArena {
-            state.combat_arena = sh2_core::combat::CombatArena::new();
-            state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
-        }
-        if new_room == TestRoomKind::GrappleAnimationRoom {
-            state.grapple_viewer.reset_for_current_entry();
-        }
-        if new_room == TestRoomKind::AudioDebugRoom {
-            state.audio_debug = rooms::audio_room::AudioDebugState::default();
-        }
-        if new_room == TestRoomKind::SurfaceSfxTestRoom {
-            state.surface_sfx_room = rooms::surface_sfx_room::SurfaceSfxRoomState::default();
-        }
-        if new_room == TestRoomKind::InventoryAndItemsRoom {
-            state.inventory_room = rooms::inventory_room::InventoryDebugRoomState::default();
-        }
-        if new_room == TestRoomKind::PuzzleAndCutawayRoom {
-            state.puzzle_cutaway_room =
-                rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default();
-        }
-        if new_room == TestRoomKind::HorrorTriggersRoom {
-            state.horror_triggers_room =
-                rooms::horror_triggers_room::HorrorTriggersRoomState::default();
-        }
-        if new_room == TestRoomKind::StoryStagesAndEndingsRoom {
-            state.story_progression_room =
-                rooms::story_progression_room::StoryProgressionRoomState::default();
-        }
-        if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
-            let mut asset = load_viewer_entry_asset(
-                &state.render_ctx,
-                state.model_viewer.current_entry(),
-                state.model_viewer.selected_anm_index,
-            );
-            if let Some(ref mut a) = asset {
-                state.model_viewer.set_total_frames(a.anm.frames.len());
-                let presets = sh2_renderer::discover_pose_presets(&a.model);
-                if let Some(preset) = presets.get(state.model_viewer.selected_pose_preset_index) {
-                    a.gpu_mesh.apply_pose_preset(preset);
-                }
-            }
-            state.viewer_asset = asset;
-            state.loaded_viewer_model_idx = state.model_viewer.selected_model_index;
-            state.loaded_viewer_anm_idx = state.model_viewer.selected_anm_index;
-        }
+        load_test_room_into_state(state, new_room);
     }
 
     // Hot-swap model or animation clip in Model & Texture Viewer when selection changes
@@ -370,6 +270,110 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         state.loaded_fmv_movie_idx = state.fmv_viewer.selected_movie_index;
         state.loaded_fmv_source = state.fmv_viewer.video_source;
         state.fmv_viewer.is_paused = false;
+    }
+}
+
+/// Loads a [`TestRoomKind`]'s `.map`, `.cld`, `.cam`, GPU bind groups, and room-specific state.
+fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
+    tracing::info!("Switching test environment to: {:?}", new_room);
+    let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
+    state.gpu_map = GpuMap::from_map(&state.render_ctx.device, &new_map);
+    state.map_hd_texture_bind_groups = build_map_texture_bind_groups(&state.render_ctx, &new_map);
+    state.map_sh2e_texture_bind_groups = find_sh2e_map_file_for_room(new_room)
+        .map(|sh2e_map| build_map_texture_bind_groups(&state.render_ctx, &sh2e_map))
+        .unwrap_or_else(|| state.map_hd_texture_bind_groups.clone());
+    state.map_vanilla_texture_bind_groups = find_vanilla_map_file_for_room(new_room)
+        .map(|van_map| build_map_texture_bind_groups(&state.render_ctx, &van_map))
+        .unwrap_or_else(|| state.map_sh2e_texture_bind_groups.clone());
+    let active_tex_quality = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality;
+    state.apply_texture_quality(active_tex_quality);
+    state.fog_uniforms = new_fog;
+    state.render_ctx.update_fog(&state.fog_uniforms);
+    state.sim_core.collision = find_cld_file_for_room(new_room);
+    if let Some(room_id) = room_cam_id_for_test_room(new_room) {
+        state
+            .sim_core
+            .transition_to_room(room_id, new_pos, new_yaw, true);
+    } else {
+        state.sim_core.camera.set_cam_file(None);
+        state.sim_core.snap_player_transform(new_pos, new_yaw);
+        state.sim_core.reset_cameras_to_player(new_pos, new_yaw);
+    }
+    state.active_test_room = new_room;
+    rooms::combat_arena::story_progression_3d::sync_checkpoint_with_room_entry(state, new_room);
+    state.bgm_stage_override = None;
+    state.bgm_manager.stop_all(state.audio_engine.as_mut());
+    if let Some(ref mut bank) = state.audio_bank {
+        bank.stop_all_spatial_handles();
+        bank.stop_active_cut_audio();
+    }
+    state.drama_demo_session = None;
+    if let Some(ref mut eng) = state.audio_engine {
+        eng.stop_voice(std::time::Duration::from_millis(30));
+    }
+    state.selected_drama_demo_idx = match new_room {
+        TestRoomKind::RestroomStart => 0,   // `first_toilet` (demo_no = 1)
+        TestRoomKind::ObservationDeck => 1, // `tenbou` (demo_no = 2)
+        _ => state.selected_drama_demo_idx,
+    };
+    if new_room == TestRoomKind::RestroomStart
+        && state.story_progression_room.checkpoint_3d_idx == 0
+        && !state.story_progression_room.restroom_mirror_inspected
+    {
+        state.drama_demo_session = open_drama_demo_session(&state.render_ctx, 0, false);
+        state.apply_texture_quality(active_tex_quality);
+    }
+    if new_room == TestRoomKind::CombatArena {
+        state.combat_arena = sh2_core::combat::CombatArena::new();
+        state.combat_arena.player.weapon = sh2_core::combat::WeaponGrip::WoodenPlank;
+    }
+    if new_room == TestRoomKind::GrappleAnimationRoom {
+        state.grapple_viewer.reset_for_current_entry();
+    }
+    if new_room == TestRoomKind::AudioDebugRoom {
+        state.audio_debug = rooms::audio_room::AudioDebugState::default();
+    }
+    if new_room == TestRoomKind::SurfaceSfxTestRoom {
+        state.surface_sfx_room = rooms::surface_sfx_room::SurfaceSfxRoomState::default();
+    }
+    if new_room == TestRoomKind::InventoryAndItemsRoom {
+        state.inventory_room = rooms::inventory_room::InventoryDebugRoomState::default();
+    }
+    if new_room == TestRoomKind::PuzzleAndCutawayRoom {
+        state.puzzle_cutaway_room = rooms::puzzle_cutaway_room::PuzzleCutawayRoomState::default();
+    }
+    if new_room == TestRoomKind::HorrorTriggersRoom {
+        state.horror_triggers_room =
+            rooms::horror_triggers_room::HorrorTriggersRoomState::default();
+    }
+    if new_room == TestRoomKind::StoryStagesAndEndingsRoom {
+        state.story_progression_room =
+            rooms::story_progression_room::StoryProgressionRoomState::default();
+    }
+    if new_room == TestRoomKind::LoadingScreenTest {
+        state.loading_screen_test = rooms::loading_screen_room::LoadingScreenTestState::default();
+    }
+    if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
+        let mut asset = load_viewer_entry_asset(
+            &state.render_ctx,
+            state.model_viewer.current_entry(),
+            state.model_viewer.selected_anm_index,
+        );
+        if let Some(ref mut a) = asset {
+            state.model_viewer.set_total_frames(a.anm.frames.len());
+            let presets = sh2_renderer::discover_pose_presets(&a.model);
+            if let Some(preset) = presets.get(state.model_viewer.selected_pose_preset_index) {
+                a.gpu_mesh.apply_pose_preset(preset);
+            }
+        }
+        state.viewer_asset = asset;
+        state.loaded_viewer_model_idx = state.model_viewer.selected_model_index;
+        state.loaded_viewer_anm_idx = state.model_viewer.selected_anm_index;
     }
 }
 
@@ -496,8 +500,17 @@ fn render_title_menu_overlay(
     let fade_alpha = state.menu_ctrl.title_sm.fade_alpha;
     let phase = state.menu_ctrl.title_sm.phase;
 
-    // Update menu blit tint buffer with current fade alpha
-    let tint = [fade_alpha, fade_alpha, fade_alpha, fade_alpha];
+    // Update menu blit tint buffer: full brightness (`[1.0, 1.0, 1.0, ls.fade_alpha]`) while
+    // rendering `LoadingScreen` so it is never dimmed by `title_sm.fade_alpha` (`SH2-75`).
+    let tint = if phase == TitlePhase::TransitionToGame {
+        if let Some(ref ls) = state.loading_screen {
+            [1.0, 1.0, 1.0, ls.fade_alpha]
+        } else {
+            [fade_alpha, fade_alpha, fade_alpha, fade_alpha]
+        }
+    } else {
+        [fade_alpha, fade_alpha, fade_alpha, fade_alpha]
+    };
     state
         .render_ctx
         .queue
@@ -595,7 +608,15 @@ fn render_title_menu_overlay(
                 );
             }
             TitlePhase::TransitionToGame => {
-                if let Some(ref ls) = state.loading_screen {
+                let use_hd_footmark = state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .video
+                    .texture_quality
+                    != sh2_core::WorldTextureQuality::OriginalPs2;
+                if let Some(ref mut ls) = state.loading_screen {
+                    ls.use_hd_footmark = use_hd_footmark;
                     ls.render(font, &mut state.inventory_rasterizer);
                 } else {
                     let label = state.menu_ctrl.title_sm.selected_test_room.label();

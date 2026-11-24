@@ -9,10 +9,13 @@
 
 mod actions;
 
-pub(crate) use actions::build_player_snapshot;
 use actions::{
     apply_inventory_action, ensure_examine_tex_loaded, ensure_item_atlas_loaded,
     ensure_map_sheet_loaded, ensure_memo_assets_loaded, handle_options_from_inventory_key,
+};
+pub(crate) use actions::{
+    build_player_snapshot, ensure_gameover_tex_loaded, ensure_red_cross_tex_loaded,
+    ensure_savebg_loaded,
 };
 
 use winit::keyboard::KeyCode;
@@ -70,6 +73,14 @@ pub(crate) struct InGameMenuState {
     pub gameover: sh2_ui::GameOverScreen,
     /// Low-Health Red Cross Icon state (`sh2pc.exe` `0x00476280`).
     pub red_cross: sh2_ui::RedCrossIconState,
+    /// Save/Load screen state (`MC/mc_menu.c`).
+    pub save_load: Option<sh2_ui::SaveLoadScreen>,
+    pub(crate) gameover_tex_loaded: bool,
+    pub(crate) cached_gameover_tex: Option<(usize, usize, Vec<u8>)>,
+    pub(crate) red_cross_tex_loaded: bool,
+    pub(crate) cached_red_cross_tex: Option<(usize, usize, Vec<u8>)>,
+    pub(crate) savebg_tex_loaded: Option<sh2_core::scenario::ScenarioKind>,
+    pub(crate) cached_savebg_tex: Option<(usize, usize, Vec<u8>)>,
 }
 
 impl InGameMenuState {

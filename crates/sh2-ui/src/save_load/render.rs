@@ -65,11 +65,11 @@ pub fn draw_save_load_screen(
     let row_px = ((16.0 * c.sy).round() as usize).max(10);
     let small_px = ((14.0 * c.sy).round() as usize).max(9);
 
-    // 3. `mcDrawFrame` (`0x00245770`): Slot 1 / Slot 2 tabs & bordered list frame.
-    let frame_x0 = c.xi(56.0);
-    let frame_y0 = c.yi(92.0);
-    let frame_w = c.x(400.0).round().max(1.0) as usize;
-    let frame_h = c.y(266.0).round().max(1.0) as usize;
+    // 3. `mcDrawFrame` (`0x00245770`): Slot 1 / Slot 2 tabs & bordered list frame (`x=21..491, y=100..370`).
+    let frame_x0 = c.xi(21.0);
+    let frame_y0 = c.yi(100.0);
+    let frame_w = c.x(470.0).round().max(1.0) as usize;
+    let frame_h = c.y(270.0).round().max(1.0) as usize;
     rasterizer.fill_rect(frame_x0, frame_y0, frame_w, frame_h, [12, 16, 22, 196]);
     draw_rect_outline(
         rasterizer,
@@ -155,9 +155,9 @@ pub fn draw_save_load_screen(
             break;
         }
         let y_512 = 150.0 + (vis as f32) * 40.0;
-        let rx0 = c.xi(64.0);
+        let rx0 = c.xi(36.0);
         let ry0 = c.yi(y_512);
-        let rw = c.x(384.0).round().max(1.0) as usize;
+        let rw = c.x(440.0).round().max(1.0) as usize;
         let rh = c.y(36.0).round().max(1.0) as usize;
 
         rasterizer.fill_rect(rx0, ry0, rw, rh, [24, 30, 42, 160]);
@@ -184,7 +184,7 @@ pub fn draw_save_load_screen(
             font.draw_line_styled(
                 rasterizer,
                 &label,
-                (c.xi(74.0), c.yi(y_512 + 8.0)),
+                (c.xi(44.0), c.yi(y_512 + 8.0)),
                 row_px,
                 Sh2TextColor::White,
                 true,
@@ -233,7 +233,7 @@ pub fn draw_save_load_screen(
             font.draw_line_styled(
                 rasterizer,
                 "New Save",
-                (c.xi(74.0), c.yi(y_512 + 8.0)),
+                (c.xi(44.0), c.yi(y_512 + 8.0)),
                 row_px,
                 Sh2TextColor::GoldSelected,
                 true,

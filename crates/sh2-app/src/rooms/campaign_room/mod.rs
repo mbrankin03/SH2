@@ -323,6 +323,11 @@ impl RoomController for CampaignRoomController {
                     state.sim_core.scenario.max_health,
                 );
             }
+            Some(CampaignPhase::OverlayMenu(OverlayMenuKind::Save)) => {
+                if let Some(ref mut sl) = state.ingame_menus.save_load {
+                    sl.tick(dt_sec);
+                }
+            }
             _ => {}
         }
 
@@ -381,32 +386,107 @@ impl RoomController for CampaignRoomController {
         let font = sh2_ui::AtlasFont::shared(None);
         match phase_snapshot {
             CampaignPhase::GameOver => {
+                crate::ingame_menus::ensure_gameover_tex_loaded(state);
                 state.begin_hud_overlay();
+                let tex = state
+                    .ingame_menus
+                    .cached_gameover_tex
+                    .as_ref()
+                    .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
                 sh2_ui::draw_gameover_screen(
                     &state.ingame_menus.gameover,
-                    None,
+                    tex,
                     font,
                     &mut state.menu_rasterizer,
                 );
                 state.finish_hud_overlay(encoder, surface_view);
                 return;
             }
+            CampaignPhase::OverlayMenu(OverlayMenuKind::Save) => {
+                let scenario = state.menu_ctrl.title_sm.selected_scenario;
+                crate::ingame_menus::ensure_savebg_loaded(state, scenario);
+                if state.ingame_menus.save_load.is_none() {
+                    let g = &state.menu_ctrl.options_menu.original_config.game;
+                    let cfg = sh2_ui::SaveLoadConfig {
+                        unlimited_slots: g.enable_unlimited_save_slots,
+                        quicksave_autosave: g.enable_quicksave_autosave,
+                        save_thumbnails: g.enable_save_thumbnails,
+                    };
+                    let mut sl =
+                        sh2_ui::SaveLoadScreen::new(sh2_ui::SaveLoadMode::Save, scenario, cfg);
+                    let save_dir = state
+                        .menu_ctrl
+                        .config_path
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("."));
+                    let repo = sh2_core::campaign::SaveSlotRepository::new(save_dir);
+                    sl.set_slots(repo.scan_slots(cfg.unlimited_slots, cfg.quicksave_autosave));
+                    state.ingame_menus.save_load = Some(sl);
+                }
+                state.begin_hud_overlay();
+                let bg = state
+                    .ingame_menus
+                    .cached_savebg_tex
+                    .as_ref()
+                    .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
+                if let Some(ref sl) = state.ingame_menus.save_load {
+                    sh2_ui::draw_save_load_screen(sl, bg, font, &mut state.menu_rasterizer);
+                }
+                state.finish_hud_overlay(encoder, surface_view);
+                return;
+            }
             CampaignPhase::EndingCredits {
                 showing_results: true,
-                ..
+                ending_stage,
             } => {
-                let info = sh2_core::endings::PlayingInfo {
-                    time: play_time_secs as f32,
-                    ..Default::default()
-                };
+                let save_dir = state
+                    .menu_ctrl
+                    .config_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."));
+                let clear_profile = sh2_core::campaign::ClearDataProfile::load_from_dir(save_dir);
                 let action = state.menu_ctrl.title_sm.action_difficulty;
                 let riddle = state.menu_ctrl.title_sm.riddle_difficulty;
-                let results = sh2_ui::ResultsScreen::from_playing_info(
-                    &info,
-                    action,
-                    riddle,
-                    sh2_core::endings::RankingRuleset::PcDirectorCut,
-                );
+                let preset = state
+                    .menu_ctrl
+                    .options_menu
+                    .original_config
+                    .detect_enhanced_preset();
+                let ruleset = if preset == sh2_core::config::EnhancedPreset::Ps2Authentic {
+                    sh2_core::endings::RankingRuleset::Ps2Original
+                } else {
+                    sh2_core::endings::RankingRuleset::PcDirectorCut
+                };
+                let info = sh2_core::endings::PlayingInfo {
+                    stage: ending_stage as u8,
+                    time: play_time_secs as f32,
+                    savecount: state
+                        .ingame_menus
+                        .save_load
+                        .as_ref()
+                        .and_then(|sl| sl.slots.iter().map(|s| s.snapshot.save_count).max())
+                        .unwrap_or(0) as u16,
+                    clear_end_kind: sh2_core::endings::ClearEndKind::from_clear_data(
+                        clear_profile.clear_data,
+                    ),
+                    clear_end_number: clear_profile.clear_data.clear_count,
+                    battle_level: match action {
+                        sh2_core::config::ActionDifficulty::Beginner => 0,
+                        sh2_core::config::ActionDifficulty::Easy => 1,
+                        sh2_core::config::ActionDifficulty::Normal => 2,
+                        sh2_core::config::ActionDifficulty::Hard => 3,
+                    },
+                    riddle_level: match riddle {
+                        sh2_core::config::RiddleDifficulty::Easy => 0,
+                        sh2_core::config::RiddleDifficulty::Normal => 1,
+                        sh2_core::config::RiddleDifficulty::Hard => 2,
+                        sh2_core::config::RiddleDifficulty::Extra => 3,
+                    },
+                    item_get: state.sim_core.scenario.inventory.len() as u16,
+                    ..Default::default()
+                };
+                let results =
+                    sh2_ui::ResultsScreen::from_playing_info(&info, action, riddle, ruleset);
                 state.begin_hud_overlay();
                 sh2_ui::draw_results_screen(&results, font, &mut state.menu_rasterizer);
                 state.finish_hud_overlay(encoder, surface_view);
@@ -437,12 +517,20 @@ impl RoomController for CampaignRoomController {
             return;
         }
 
+        if show_red_cross {
+            crate::ingame_menus::ensure_red_cross_tex_loaded(state);
+        }
         state.begin_hud_overlay();
         if show_red_cross {
+            let rc_tex = state
+                .ingame_menus
+                .cached_red_cross_tex
+                .as_ref()
+                .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
             state
                 .ingame_menus
                 .red_cross
-                .draw(None, &mut state.menu_rasterizer);
+                .draw(rc_tex, &mut state.menu_rasterizer);
         }
         if fade_alpha > 0.005 {
             let w = state.menu_rasterizer.width;

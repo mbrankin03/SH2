@@ -27,18 +27,25 @@ pub fn draw_gameover_screen(
 
     if let Some((tex_rgba, tex_w, tex_h)) = gameover_tex_rgba {
         // `opd_work_init` (`0x001c4a70`) & `draw_opd_wowk_main` (`0x001c4de0`):
-        // Retail `gameover1.tex` (512x512) packs the "GAME OVER" bands in the left half (`0..256`)
-        // at ~32 px per band.
-        let src_w = (tex_w / 2).max(1);
-        let band_h = (tex_h / 16).max(1);
-        let dst_w = c.x(256.0).round().max(1.0) as usize;
+        // PS2 `gameover1.tex` is 512x512 (`u=0..160`, `v=0..48`, `opd_w` strips at `v=(band+1)*48`);
+        // SH2:EE HD `gameover1.tex` scales 512x512 -> 2048x2048 (`uv_scale = tex_w / 512`).
+        let uv_scale_x = (tex_w as f32 / 512.0).max(1.0);
+        let uv_scale_y = (tex_h as f32 / 512.0).max(1.0);
+        let src_w = ((160.0 * uv_scale_x).round() as usize).min(tex_w).max(1);
+        let src_h = ((48.0 * uv_scale_y).round() as usize).min(tex_h).max(1);
+        let strip_h = ((47.0 * uv_scale_y).round() as usize).min(tex_h).max(1);
+
+        // Screen quad: `-80..+80` x `-24..+23` (`160x48` centered at `(256, 224)` in `512x448`).
+        let dst_x = c.xi(256.0 - 80.0);
+        let dst_w = c.x(160.0).round().max(1.0) as usize;
         let dst_h = c.y(48.0).round().max(1.0) as usize;
-        let dst_x = c.xi(256.0 - 128.0);
+
         // 1. 6 jittering background strips (`opd_w`, `rand() % 30 - 15` vertical jitter).
         if (screen.phase as u8) >= (GameOverPhase::Hold as u8) {
             for (i, &jitter) in screen.strip_jitter.iter().enumerate() {
                 let band = (i % 2) + 1;
-                let src_y0 = (band * band_h).min(tex_h.saturating_sub(band_h));
+                let src_y0 = (((band as f32) * 48.0 * uv_scale_y).round() as usize)
+                    .min(tex_h.saturating_sub(strip_h));
                 let dst_y = c.yi(224.0 - 24.0 + jitter);
                 let strip_alpha = (u16::from(alpha) * 2 / 3) as u8;
                 blit_tex_region_tinted(
@@ -48,7 +55,7 @@ pub fn draw_gameover_screen(
                     0,
                     src_y0,
                     src_w,
-                    band_h,
+                    strip_h,
                     dst_x,
                     dst_y,
                     dst_w,
@@ -58,10 +65,10 @@ pub fn draw_gameover_screen(
             }
         }
 
-        // 2. Main `org_title` banner (`0..src_w, 0..band_h` centered at `(256, 224)` in `512x448`).
+        // 2. Main `org_title` (`u=0..160, v=0..48` scaled by `uv_scale`, centered at `(256, 224)`).
         let dst_y = c.yi(224.0 - 24.0);
         blit_tex_region_tinted(
-            rasterizer, tex_rgba, tex_w, 0, 0, src_w, band_h, dst_x, dst_y, dst_w, dst_h, alpha,
+            rasterizer, tex_rgba, tex_w, 0, 0, src_w, src_h, dst_x, dst_y, dst_w, dst_h, alpha,
         );
     } else {
         let font_px = ((30.0 * c.sy).round() as usize).max(16);

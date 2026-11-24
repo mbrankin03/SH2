@@ -219,6 +219,24 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         &["data/chr/bos/bos.mdl"],
         &["data/chr/bos/bos.anm"],
     );
+    let enemy_xoo_asset = load_character_asset(
+        &render_ctx,
+        "Bubble Head Nurse Variant (xoo)",
+        &["data/chr/xoo/xoo.mdl"],
+        &["data/chr/xoo/xoo.anm"],
+    );
+    let enemy_oni_asset = load_character_asset(
+        &render_ctx,
+        "Pyramid Head Spear (oni)",
+        &["data/chr/oni/oni.mdl"],
+        &["data/chr/oni/oni.anm"],
+    );
+    let enemy_edi_asset = load_character_asset(
+        &render_ctx,
+        "Eddie Boss (lll_edi)",
+        &["data/chr/edi/lll_edi.mdl"],
+        &["data/chr/edi/lll_edi.anm"],
+    );
 
     let mut combat_arena = sh2_core::combat::CombatArena::new();
     // Only pre-equip the Wooden Plank inside the CombatArena test room; Campaign starts unarmed.
@@ -605,6 +623,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         enemy_arm_asset,
         enemy_tyu_asset,
         enemy_bos_asset,
+        enemy_xoo_asset,
+        enemy_oni_asset,
+        enemy_edi_asset,
         key_ready_held: false,
         key_attack_pressed: false,
         key_attack_held: false,

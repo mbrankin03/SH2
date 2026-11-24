@@ -10,6 +10,7 @@ use sh2_ui::menu::TestRoomKind;
 
 pub(super) type EnemySkinSnapshot = (
     u32,
+    sh2_core::ai::creatures::EnemySpecies,
     glam::Vec3,
     f32,
     bool,
@@ -402,6 +403,7 @@ pub(super) fn evaluate_enemy_skinning(
         let (enemy_pos, enemy_yaw) = enemy.interpolated_pose(alpha);
         Some((
             enemy.id(),
+            enemy.species(),
             enemy_pos,
             enemy_yaw,
             enemy.is_grappling_player,
@@ -411,10 +413,16 @@ pub(super) fn evaluate_enemy_skinning(
         None
     };
 
-    if let Some((enemy_id, enemy_pos, enemy_yaw, is_grappling, (prev_cursor, cur_cursor, blend))) =
-        active_enemy_snapshot
+    if let Some((
+        enemy_id,
+        enemy_species,
+        enemy_pos,
+        enemy_yaw,
+        is_grappling,
+        (prev_cursor, cur_cursor, blend),
+    )) = active_enemy_snapshot
     {
-        if let Some(ea) = state.enemy_asset_mut(enemy_id) {
+        if let Some(ea) = state.enemy_asset_for_species_mut(enemy_species, false) {
             let frame_count = ea.anm.frames.len();
             if frame_count > 0 {
                 let f0 = (cur_cursor.0 as usize) % frame_count;

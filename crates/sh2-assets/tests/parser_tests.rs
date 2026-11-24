@@ -4,6 +4,8 @@ pub const ROOT_ASSETS: &str = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-R
 
 #[path = "parser_suite/audio_dialogue_tests.rs"]
 mod audio_dialogue_tests;
+#[path = "parser_suite/enemy_models_test.rs"]
+mod enemy_models_test;
 #[path = "parser_suite/kg_shadow_tests.rs"]
 mod kg_shadow_tests;
 #[path = "parser_suite/map_cld_cam_tests.rs"]

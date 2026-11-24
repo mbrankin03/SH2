@@ -88,7 +88,8 @@ fn eval_depth_curve(dist_mm: f32) -> f32 {
     return clamp(mix(fog_min, fog_max, linear_t), fog_min, fog_max);
 }
 
-// Sample dual-layer UV-scrolling PS2 fog planes (`fog_view_screen_fog` @ 0x0016c1c0, `FogFix.cpp`)
+// ModernVolumetric-only dual-layer UV-scrolling fog planes (`FogFix.cpp` / `Settings.h:183-219`);
+// never evaluated in strict 1:1 `FogQuality::ClassicPs2` mode.
 fn sample_dual_layer_planes(screen_uv: vec2<f32>, world_xz_mm: vec2<f32>, drift_t: f32) -> f32 {
     let l1_scale_a = fog.layer1_uv_scale.xy;
     let l1_scale_b = fog.layer1_uv_scale.zw;
@@ -209,9 +210,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let coupled_fog_rgb = mix(fog.fog_color.rgb, fog.fog_color.rgb * env_tint, clamp(fog.ambient_fog_coupling, 0.0, 1.0));
     let effective_density = clamp(fog.density * fog.fog_color.a, 0.0, 2.0);
 
-    // Dual-layer PS2 UV-scrolling noise plane contribution
-    let plane_noise = select(0.0, sample_dual_layer_planes(uv, world_pos.xz, drift_t), outdoor_enabled);
-
     var fog_factor: f32 = 0.0;
     var inscatter_rgb = vec3<f32>(0.0);
 
@@ -225,9 +223,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r * fog.screen_fog_uv.w,
             fog.screen_fog_uv.w > 0.001,
         );
-        let layered = clamp(base_curve + plane_noise * base_curve * 0.42 + screen_overlay, 0.0, 1.0);
+        let layered = clamp(base_curve + screen_overlay, 0.0, 1.0);
         fog_factor = clamp(layered * effective_density, 0.0, 1.0);
     } else {
+        // ModernVolumetric dual-layer UV-scrolling noise plane contribution (non-Vanilla enhancement)
+        let plane_noise = select(0.0, sample_dual_layer_planes(uv, world_pos.xz, drift_t), outdoor_enabled);
         // Discrete-step 3D Volumetric Raymarching (`step_count` steps)
         let steps = clamp(fog.step_count, 4u, 64u);
         let march_end = min(view_dist, fog.fog_far);

@@ -22,7 +22,8 @@ pub struct FmvUniforms {
     pub uv_y_offset: f32,
     /// Normalized vertical UV scale for cropping `1920x1230` SH2:EE frames (`1080.0 / 1230.0` or `1.0`).
     pub uv_y_scale: f32,
-    /// Procedural film grain intensity (`0.0` = clean, `0.25` = subtle cinema grain).
+    /// Optional `native-upgrade` procedural cinema film grain intensity (`0.0` = 1:1 Vanilla PS2/PC
+    /// `movie/movie_main.c` `0x002877b0` with zero synthetic grain, `> 0.0` = opt-in grain overlay).
     pub grain_intensity: f32,
     /// Elapsed playback time in seconds (animates film grain noise).
     pub time: f32,
@@ -39,7 +40,7 @@ impl Default for FmvUniforms {
             video_aspect: 16.0 / 9.0,
             uv_y_offset: 0.0,
             uv_y_scale: 1.0,
-            grain_intensity: 0.18,
+            grain_intensity: 0.0,
             time: 0.0,
             fade_alpha: 1.0,
             sharpen: 0.0,
@@ -168,7 +169,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         rgb = clamp((c + (n + s + w + e) * k) / (1.0 + 4.0 * k), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
-    // Apply subtle film grain noise over the active video area (below subtitle pass)
+    // Optional `native-upgrade` procedural cinema grain over the active video area (disabled when `grain_intensity == 0.0`,
+    // matching 1:1 Vanilla PS2 `movie/movie_main.c` `0x002877b0` which applies no synthetic FMV grain).
     if (params.grain_intensity > 0.001) {
         let seed = in.position.xy + vec2<f32>(params.time * 137.0, params.time * 293.0);
         let noise = (hash12(seed) - 0.5) * 0.14 * params.grain_intensity;
@@ -493,5 +495,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &surface.bind_group, &[]);
         rpass.draw(0..3, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FmvUniforms;
+
+    #[test]
+    fn fmv_uniforms_default_disables_synthetic_film_grain_for_vanilla_ps2_parity() {
+        let defaults = FmvUniforms::default();
+        assert_eq!(defaults.grain_intensity, 0.0);
     }
 }

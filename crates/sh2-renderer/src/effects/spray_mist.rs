@@ -92,9 +92,14 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: InstanceInput) -> VertexOutput
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex = textureSample(mist_tex, mist_sampler, in.uv);
     let dist = length(in.uv * 2.0 - vec2<f32>(1.0, 1.0));
-    let radial = smoothstep(1.0, 0.15, dist);
+    // Exact 1:1 `enEfctDrawSpray` (`SLUS_202.28` `0x00150000` lines 1094-1158) 16-segment triangle fan:
+    // center vertex carries full alpha `uVar9`, perimeter ring vertices omit alpha (`0x00`), producing
+    // linear GS Gouraud radial falloff `clamp(1.0 - dist, 0.0, 1.0)`.
+    let radial = clamp(1.0 - dist, 0.0, 1.0);
     let alpha = tex.a * radial * in.color.a;
-    if (alpha < 0.01) {
+    // Exact PS2 GS `TEST_1 = 0x5000d` (`shGs_InitDefaultRegsEnv` `0x001909e0` line 657):
+    // `ATE = 1`, `ATST = 6 (GREATER)`, `AREF = 0` -> discard quantized 8-bit `alpha == 0`.
+    if (alpha < (0.5 / 255.0)) {
         discard;
     }
     return vec4<f32>(tex.rgb * in.color.rgb, alpha);
@@ -207,5 +212,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             pipeline,
             bind_group_layout,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SprayMistPipeline;
+
+    #[test]
+    fn spray_mist_shader_matches_slus_00150000_gouraud_falloff_and_test_1_0x5000d() {
+        let src = SprayMistPipeline::WGSL_SHADER;
+        assert!(src.contains("clamp(1.0 - dist, 0.0, 1.0)"));
+        assert!(src.contains("0.5 / 255.0"));
+        assert!(!src.contains("smoothstep(1.0, 0.15"));
+        assert!(!src.contains("alpha < 0.01"));
     }
 }

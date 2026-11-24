@@ -185,7 +185,10 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let n_dot_l = max(dot(norm, -l_dir), 0.0);
     let pcss_vis = evaluate_pcss_spotlight_visibility(in.world_pos, norm, -l_dir);
 
-    let base_ambient = vec3<f32>(0.06, 0.06, 0.068);
+    // Character base ambient floor from `SLUS_202.28` `DrawEnvData::base_ambient` (`+0x1c0` -> `DAT_002ad900` =
+    // `0x3d3851ec` = `0.045f` in `SetupDrawEnvData` `0x00251370`, `sh2gfw_setparal3LGT_blk` `0x0017d7f0` line 457,
+    // `sh2gfw_setsp1para2LGT_blk` `0x0017ddd0` line 639).
+    let base_ambient = vec3<f32>(0.045, 0.045, 0.045);
     var spot_diffuse = spotlight.color_outer.xyz * (n_dot_l * spot_cone * attenuation * pcss_vis);
     for (var pi: u32 = 0u; pi < 3u; pi = pi + 1u) {
         let p_dir_en = spotlight.parallel_dirs[pi];
@@ -213,7 +216,8 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x);
     let dark_trim_scale = 1.0 + spotlight.gun_and_dark_trim.y * spotlight.gun_and_dark_trim.z;
 
-    // 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used in Model Viewer modes (1 and 3)
+    // Non-PS2 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used exclusively in Model Viewer
+    // inspection modes (`shade_mode == 1` clay, `shade_mode == 3` studio); inactive in Vanilla PS2 (`shade_mode == 0`).
     let key_dir = normalize(vec3<f32>(0.45, -0.65, 0.60));
     let fill_dir = normalize(vec3<f32>(-0.65, -0.25, 0.70));
     let rim_dir = normalize(vec3<f32>(0.0, -0.40, -0.90));
@@ -345,5 +349,11 @@ mod tests {
         assert!(WGSL_SKINNING_SHADER.contains("final_rgb = final_rgb + active_spec * gloss_mask;"));
         assert!(!WGSL_SKINNING_SHADER
             .contains("let day_spec_rgb = mix(final_rgb, active_spec, gloss_mask);"));
+    }
+
+    #[test]
+    fn wgsl_skinning_shader_uses_slus_draw_env_base_ambient_002ad900() {
+        assert!(WGSL_SKINNING_SHADER.contains("vec3<f32>(0.045, 0.045, 0.045)"));
+        assert!(!WGSL_SKINNING_SHADER.contains("0.06, 0.06, 0.068"));
     }
 }

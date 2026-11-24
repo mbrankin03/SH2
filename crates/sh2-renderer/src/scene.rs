@@ -225,6 +225,20 @@ impl RenderContext {
                 rpass.draw(0..6, 0..spray_count);
             }
 
+            // 1d-5. Render `Effect2/hh_class_dust_00.c` airborne dust motes (`SH2-98`)
+            let dust_count = self
+                .dust_particle_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if dust_count > 0 {
+                let byte_len = (dust_count as usize
+                    * std::mem::size_of::<crate::effects::GpuDustParticle>())
+                    as wgpu::BufferAddress;
+                rpass.set_pipeline(&self.dust_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.dust_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.dust_buffer.slice(0..byte_len));
+                rpass.draw(0..6, 0..dust_count);
+            }
+
             // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
             if !debug_lines.is_empty() {
                 let line_buf = overflow_debug_line_buffer

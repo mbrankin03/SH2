@@ -83,8 +83,11 @@ pub(super) fn submit_scene_draw(
             }
         }
 
-        if let Some((enemy_id, _, _, _, _)) = active_enemy_snapshot {
-            if let Some(ea) = state.enemy_asset(enemy_id) {
+        if let Some((enemy_id, enemy_species, _, _, _, _)) = active_enemy_snapshot {
+            if let Some(ea) = state
+                .enemy_asset_for_species(enemy_species, false)
+                .or_else(|| state.enemy_asset(enemy_id))
+            {
                 if !ea.skin_scratch.is_empty() {
                     skeletal_draw.push((
                         &ea.gpu_mesh,

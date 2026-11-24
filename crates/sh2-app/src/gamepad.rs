@@ -136,6 +136,10 @@ impl GilrsGamepadPoller {
                 snapshot.raw_left_stick_y = gamepad.value(Axis::LeftStickY);
                 snapshot.raw_right_stick_x = gamepad.value(Axis::RightStickX);
                 snapshot.raw_right_stick_y = gamepad.value(Axis::RightStickY);
+                snapshot.r2_analog_pressure = gamepad
+                    .button_data(Button::RightTrigger2)
+                    .map(|d| d.value().clamp(0.0, 1.0))
+                    .unwrap_or_else(|| gamepad.value(Axis::RightZ).clamp(0.0, 1.0));
             }
         }
 

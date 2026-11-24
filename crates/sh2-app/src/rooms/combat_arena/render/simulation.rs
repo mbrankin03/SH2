@@ -102,24 +102,37 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             struggle_presses = 0;
         }
 
+        state
+            .combat_arena
+            .player
+            .apply_control_options(&state.menu_ctrl.options_menu.draft_config.controls);
+
+        let r2 = state.sim_core.input.state.r2_analog_pressure;
+        let attack_pressure = (r2 > 0.0).then(|| (r2 * 255.0).round().clamp(1.0, 255.0) as u8);
+        let combat_input = sh2_core::combat::CombatInputSnapshot {
+            ready_held,
+            action_pressed: atk_pressed,
+            action_held: atk_held,
+            has_downed_enemy_nearby: false,
+            is_running: state.sim_core.last_locomotion.state.is_running()
+                || state.sim_core.input.state.is_running,
+            attack_pressure,
+            native_light_pressed: state.sim_core.input.state.native_light_attack_pressed,
+            native_heavy_pressed: state.sim_core.input.state.native_heavy_attack_pressed,
+        };
+
         if state.campaign_orchestrator.is_some() {
-            state.combat_arena.tick_with_collision(
-                ready_held,
-                atk_pressed,
-                atk_held,
+            state.combat_arena.tick_with_collision_input(
+                combat_input,
                 Some(&state.sim_core.collision),
                 tick_dt,
             );
             let boss_events = state.combat_arena.ai.consume_boss_events();
             state.sim_core.scenario.apply_boss_events(&boss_events);
         } else {
-            state.combat_arena.tick_isolated(
-                ready_held,
-                atk_pressed,
-                atk_held,
-                tick_dt,
-                state.combat_enemy_idx,
-            );
+            state
+                .combat_arena
+                .tick_isolated_input(combat_input, tick_dt, state.combat_enemy_idx);
         }
         atk_pressed = false;
 

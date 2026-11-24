@@ -251,7 +251,9 @@ fn tick_stage_events(
                 &mut sim.scenario.flags,
                 &mut sim.scenario.inventory_mgr,
             );
-            if effects.stage_transition.is_none()
+            if eval_input.action_pressed
+                && eval_input.player_can_search
+                && effects.stage_transition.is_none()
                 && effects.common_message.is_none()
                 && effects.stage_message.is_none()
                 && effects.active_prog_index.is_none()
@@ -288,7 +290,9 @@ fn tick_stage_events(
             &mut sim.scenario.flags,
             &mut sim.scenario.inventory_mgr,
         );
-        if effects.stage_transition.is_none()
+        if eval_input.action_pressed
+            && eval_input.player_can_search
+            && effects.stage_transition.is_none()
             && effects.common_message.is_none()
             && effects.stage_message.is_none()
             && effects.active_prog_index.is_none()

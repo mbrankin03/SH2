@@ -321,6 +321,113 @@ impl RenderContext {
         }
     }
 
+    /// Uploads `SH2-100` additive and alpha-blended 3D FX batches keyed by [`effects::FxTextureSlot`],
+    /// enabling multiple distinct `.tbn2` effect sheets (fire, smoke, water, splash, spark, glass)
+    /// to render in the same frame.
+    pub fn update_billboard_fx_batches(
+        &self,
+        additive_batches: &[(effects::FxTextureSlot, &[effects::GpuFxQuad])],
+        alpha_batches: &[(effects::FxTextureSlot, &[effects::GpuFxQuad])],
+    ) {
+        let pack = |batches: &[(effects::FxTextureSlot, &[effects::GpuFxQuad])],
+                    buf: &wgpu::Buffer|
+         -> Vec<effects::FxDrawRange> {
+            let mut staged = Vec::new();
+            let mut ranges = Vec::with_capacity(batches.len());
+            for &(slot, quads) in batches {
+                let remaining = effects::MAX_GPU_FX_QUADS.saturating_sub(staged.len());
+                let count = quads.len().min(remaining);
+                if count == 0 {
+                    continue;
+                }
+                let start = staged.len() as u32;
+                staged.extend_from_slice(&quads[..count]);
+                ranges.push(effects::FxDrawRange {
+                    slot,
+                    start,
+                    count: count as u32,
+                });
+            }
+            if !staged.is_empty() {
+                self.queue
+                    .write_buffer(buf, 0, bytemuck::cast_slice(&staged));
+            }
+            ranges
+        };
+
+        let add_ranges = pack(additive_batches, &self.billboard_fx_additive_buffer);
+        let alpha_ranges = pack(alpha_batches, &self.billboard_fx_alpha_buffer);
+        if let Ok(mut guard) = self.billboard_fx_batches.lock() {
+            guard.additive = add_ranges;
+            guard.alpha = alpha_ranges;
+        }
+    }
+
+    /// Uploads a decoded retail `.tbn2` RGBA texture into `slot` for [`effects::BillboardFxPipeline`].
+    pub fn upload_billboard_fx_texture(
+        &mut self,
+        slot: effects::FxTextureSlot,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) {
+        let w = width.max(1);
+        let h = height.max(1);
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("Billboard FX Retail Texture ({slot:?})")),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.billboard_fx_bind_groups[slot as usize] =
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Billboard FX Bind Group ({slot:?})")),
+                layout: &self.billboard_fx_pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                    },
+                ],
+            });
+    }
+
     /// Compiles a ModelFile into a GpuSkeletalMesh.
     pub fn compile_skeletal_mesh(&self, model: &ModelFile) -> GpuSkeletalMesh {
         GpuSkeletalMesh::from_model(

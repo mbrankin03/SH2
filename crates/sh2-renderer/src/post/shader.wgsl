@@ -15,6 +15,7 @@ struct PostUniforms {
 
 const POST_FLAG_ACES_TONEMAP: u32 = 1u;
 const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
+const POST_FLAG_FIRE_HEAT_HAZE: u32 = 4u;
 
 // PS2 `sh2gfw_SendDraw_Noise` (`0x00177f30`) & `Noise_and_FontDraw` (`0x0019ff70`) GS constants:
 // - `noise_clut` (`0x002ab5c0`): 16-entry PSMT4 CLUT with RGB = `0x00` or `0x18` (`24 / 255.0`).
@@ -89,7 +90,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let pixel_coords = vec2<i32>(global_id.xy);
     let max_coord = vec2<i32>(dims) - vec2<i32>(1, 1);
     let res_scale = max(f32(dims.y) / PS2_VIRTUAL_HEIGHT_PX, 1.0);
-    var hdr_color = textureLoad(hdr_in, pixel_coords, 0).rgb * post.exposure;
+    var sample_coords = pixel_coords;
+    if ((post.flags & POST_FLAG_FIRE_HEAT_HAZE) != 0u) {
+        let uv_y = f32(pixel_coords.y) / max(f32(dims.y), 1.0);
+        let uv_x = f32(pixel_coords.x) / max(f32(dims.x), 1.0);
+        let wave_x = sin(uv_y * 42.0 + post.time * 7.5) * (1.8 * res_scale);
+        let wave_y = cos(uv_x * 31.0 + post.time * 5.2) * (1.2 * res_scale);
+        sample_coords = clamp(pixel_coords + vec2<i32>(round(vec2<f32>(wave_x, wave_y))), vec2<i32>(0), max_coord);
+    }
+    var hdr_color = textureLoad(hdr_in, sample_coords, 0).rgb * post.exposure;
 
     // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) 2x2 DoF blur:
     //     `post.dof_tap_offset_px` is already display-scaled by `SpecialFxEvaluation`

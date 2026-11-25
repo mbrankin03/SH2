@@ -29,6 +29,10 @@ pub const POST_FLAG_ACES_TONEMAP: u32 = 1 << 0;
 /// (`sh2gfw_test_MakeNoise` `0x00177c50`, `sh2gfw_SendDraw_Noise` `0x00177f30`).
 pub const POST_FLAG_PS2_LCG_NOISE: u32 = 1 << 1;
 
+/// Bitflag in [`PostUniforms::flags`]: enables subtle screen-space refractive heat-haze
+/// distortion for fire scenes (`native-upgrade`, `SH2-100`). Cleared in strict 1:1 Vanilla PS2 mode.
+pub const POST_FLAG_FIRE_HEAT_HAZE: u32 = 1 << 2;
+
 /// Uniform buffer payload passed to the post-processing compute shader (`SH2-105`, `SH2-136`).
 ///
 /// Layout is 64 bytes (`4 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).

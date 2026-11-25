@@ -17,6 +17,8 @@ pub(super) struct InitialBuffers {
     pub lens_flare_buffer: wgpu::Buffer,
     pub spray_mist_buffer: wgpu::Buffer,
     pub dust_buffer: wgpu::Buffer,
+    pub billboard_fx_additive_buffer: wgpu::Buffer,
+    pub billboard_fx_alpha_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
     pub fog_particle_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
@@ -110,6 +112,22 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         mapped_at_creation: false,
     });
 
+    let billboard_fx_additive_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Billboard FX Additive Instance Buffer"),
+        size: (effects::MAX_GPU_FX_QUADS * std::mem::size_of::<effects::GpuFxQuad>())
+            as wgpu::BufferAddress,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let billboard_fx_alpha_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Billboard FX Alpha Instance Buffer"),
+        size: (effects::MAX_GPU_FX_QUADS * std::mem::size_of::<effects::GpuFxQuad>())
+            as wgpu::BufferAddress,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     let fog_uniforms = fog::FogUniforms {
         shadow_view_proj: initial_shadow_vp,
         ..fog::FogUniforms::default()
@@ -155,6 +173,8 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         lens_flare_buffer,
         spray_mist_buffer,
         dust_buffer,
+        billboard_fx_additive_buffer,
+        billboard_fx_alpha_buffer,
         fog_buffer,
         fog_particle_buffer,
         post_buffer,

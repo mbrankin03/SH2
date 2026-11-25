@@ -114,6 +114,8 @@ impl RenderContext {
         let water_pipeline = crate::water::LakeWaterPipeline::new(&device, Self::HDR_FORMAT);
         let dust_pipeline =
             effects::DustParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let billboard_fx_pipeline =
+            effects::BillboardFxPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let post_pipeline = post::PostProcessPipeline::new(&device, &queue);
 
         let buffers = create_initial_buffers(&device);
@@ -229,6 +231,28 @@ impl RenderContext {
                 },
             ],
         });
+
+        let billboard_fx_bind_groups: [wgpu::BindGroup; effects::FX_TEXTURE_SLOT_COUNT] =
+            std::array::from_fn(|i| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Billboard FX Bind Group Slot {i}")),
+                    layout: &billboard_fx_pipeline.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffers.camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&textures.dust_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&textures.fog_noise_sampler),
+                        },
+                    ],
+                })
+            });
 
         let fog_particle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Fog Particle Bind Group"),
@@ -361,6 +385,7 @@ impl RenderContext {
             spray_mist_pipeline,
             water_pipeline,
             dust_pipeline,
+            billboard_fx_pipeline,
             post_pipeline,
             camera_buffer: buffers.camera_buffer,
             spotlight_buffer: buffers.spotlight_buffer,
@@ -372,6 +397,8 @@ impl RenderContext {
             lens_flare_buffer: buffers.lens_flare_buffer,
             spray_mist_buffer: buffers.spray_mist_buffer,
             dust_buffer: buffers.dust_buffer,
+            billboard_fx_additive_buffer: buffers.billboard_fx_additive_buffer,
+            billboard_fx_alpha_buffer: buffers.billboard_fx_alpha_buffer,
             fog_buffer: buffers.fog_buffer,
             fog_particle_buffer: buffers.fog_particle_buffer,
             post_buffer: buffers.post_buffer,
@@ -404,6 +431,7 @@ impl RenderContext {
             lens_flare_bind_group,
             spray_mist_bind_group,
             dust_bind_group,
+            billboard_fx_bind_groups,
             fog_particle_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -414,6 +442,7 @@ impl RenderContext {
             lens_flare_quad_count: std::sync::atomic::AtomicU32::new(0),
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
             dust_particle_count: std::sync::atomic::AtomicU32::new(0),
+            billboard_fx_batches: std::sync::Mutex::new(effects::FxDrawBatches::default()),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
             lake_water_enabled: std::sync::atomic::AtomicBool::new(false),
             water_reflection_pass_enabled: std::sync::atomic::AtomicBool::new(false),

@@ -141,6 +141,21 @@ impl ModVfs {
         &self.active_mods
     }
 
+    /// Resolves a relative asset path to an on-disk file across directory-backed active `mods/`
+    /// layers only (in descending priority order).
+    #[must_use]
+    pub fn resolve_mod_file(&self, rel_path: impl AsRef<Path>) -> Option<PathBuf> {
+        let rel = normalize_rel_path(rel_path.as_ref());
+        for m in &self.active_mods {
+            if let ModSource::Directory(ref root) = m.source {
+                if let Some(p) = resolve_in_dir_case_insensitive(root, &rel) {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
+
     /// Resolves a relative asset path to an on-disk file across directory-backed mods, `sh2e/`,
     /// and `data/` (useful for streaming media such as `.sfd`, `.mp4`, `.mkv`, or `.bik`).
     #[must_use]
@@ -436,16 +451,33 @@ mod tests {
         fs::write(sh2e_dir.join("pic/sh2e_only.dds"), b"SH2E_ONLY").unwrap();
         fs::write(data_dir.join("pic/vanilla.tex"), b"VANILLA").unwrap();
 
+        let zip_bytes = build_test_stored_zip(&[
+            (
+                "mod.json",
+                br#"{"name":"Zip Mod","author":"ZipTester","version":"2.0","description":"Zip override","priority":30}"#,
+            ),
+            ("pic/title.png", b"ZIP_MOD"),
+            ("pic/zip_only.dds", b"ZIP_ONLY"),
+        ]);
+        fs::write(mods_dir.join("zip_mod.zip"), zip_bytes).unwrap();
+
         let packages = discover_mods(&mods_dir, &[]);
-        assert_eq!(packages.len(), 2);
-        assert_eq!(packages[0].id, "high_prio");
-        assert_eq!(packages[0].metadata.name, "High Mod");
-        assert_eq!(packages[0].overrides, vec!["pic/title.png".to_string()]);
+        assert_eq!(packages.len(), 3);
+        assert_eq!(packages[0].id, "zip_mod");
+        assert!(packages[0].source.is_zip());
+        assert_eq!(packages[0].metadata.name, "Zip Mod");
+        assert_eq!(packages[1].id, "high_prio");
+        assert_eq!(packages[1].metadata.name, "High Mod");
+        assert_eq!(packages[1].overrides, vec!["pic/title.png".to_string()]);
 
         let vfs = ModVfs::from_packages(&packages, Some(sh2e_dir), data_dir);
         assert_eq!(
             vfs.read_bytes("pic/TITLE.PNG").as_deref(),
-            Some(b"HIGH_MOD".as_slice())
+            Some(b"ZIP_MOD".as_slice())
+        );
+        assert_eq!(
+            vfs.read_bytes("pic/zip_only.dds").as_deref(),
+            Some(b"ZIP_ONLY".as_slice())
         );
         assert_eq!(
             vfs.read_bytes("pic/other.dds").as_deref(),
@@ -461,5 +493,60 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    fn build_test_stored_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for &(name, data) in entries {
+            let offset = out.len() as u32;
+            let name_bytes = name.as_bytes();
+            let size = data.len() as u32;
+            out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            out.extend_from_slice(&20u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // ZIP_STORED
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&size.to_le_bytes());
+            out.extend_from_slice(&size.to_le_bytes());
+            out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(data);
+
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes()); // ZIP_STORED
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&size.to_le_bytes());
+            central.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name_bytes);
+        }
+        let cd_offset = out.len() as u32;
+        let cd_size = central.len() as u32;
+        let count = entries.len() as u16;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
     }
 }

@@ -164,7 +164,14 @@ impl TextureLoader {
     pub fn resolve_path(&self, relative_path: impl AsRef<Path>) -> Option<PathBuf> {
         let rel = relative_path.as_ref();
 
-        // 1. Check SH2:EE directory first
+        // 0. Check active directory-backed mods first (`SH2-29`)
+        if let Some(ref vfs) = self.mod_vfs {
+            if let Some(mod_path) = vfs.resolve_mod_file(rel) {
+                return Some(mod_path);
+            }
+        }
+
+        // 1. Check SH2:EE directory next
         if let Some(ref sh2e) = self.sh2e_dir {
             let candidate = sh2e.join(rel);
             if candidate.exists() {
@@ -282,18 +289,39 @@ impl TextureLoader {
         let sh2e_map_path = self.resolve_in_sh2e(clean_rel);
         let data_map_path = self.resolve_in_data(clean_rel);
 
-        let primary_path = sh2e_map_path
-            .as_ref()
-            .or(data_map_path.as_ref())
-            .ok_or_else(|| {
-                AssetError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Map not found: {}", clean_rel.display()),
-                ))
-            })?;
+        let mut mod_map: Option<crate::formats::map::MapFile> = None;
+        if let Some(ref vfs) = self.mod_vfs {
+            if let Some((mod_id, mod_bytes)) = vfs.read_mod_bytes(clean_rel) {
+                match crate::formats::map::parse_map(&mod_bytes, map_name) {
+                    Ok(parsed) => mod_map = Some(parsed),
+                    Err(err) => {
+                        tracing::warn!(
+                            "[ModVfs] Mod '{}' map override '{}' failed to parse ({}); falling back to vanilla",
+                            mod_id,
+                            clean_rel.display(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
 
-        let primary_bytes = fs::read(primary_path)?;
-        let mut map = crate::formats::map::parse_map(&primary_bytes, map_name)?;
+        let mut map = if let Some(parsed) = mod_map {
+            parsed
+        } else {
+            let primary_path = sh2e_map_path
+                .as_ref()
+                .or(data_map_path.as_ref())
+                .ok_or_else(|| {
+                    AssetError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Map not found: {}", clean_rel.display()),
+                    ))
+                })?;
+
+            let primary_bytes = fs::read(primary_path)?;
+            crate::formats::map::parse_map(&primary_bytes, map_name)?
+        };
 
         // If both sh2e and vanilla data maps exist, ensure any missing or higher-res textures are merged
         if let (Some(_), Some(ref van_path)) = (&sh2e_map_path, &data_map_path) {

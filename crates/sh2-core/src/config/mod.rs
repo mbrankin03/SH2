@@ -165,6 +165,7 @@ impl AppConfig {
             && !self.video.aces_tonemapping
             && !self.video.enable_water_reflections
             && !self.video.enable_oar_ripples
+            && self.video.fmv_source == FmvCutsceneSource::VanillaPc
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_dynamic_room_acoustics
@@ -197,6 +198,7 @@ impl AppConfig {
             && !self.video.aces_tonemapping
             && !self.video.enable_water_reflections
             && !self.video.enable_oar_ripples
+            && self.video.fmv_source == FmvCutsceneSource::Enhanced1080p60
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
             && !self.audio.enable_dynamic_room_acoustics
@@ -229,6 +231,7 @@ impl AppConfig {
             && self.video.aces_tonemapping
             && self.video.enable_water_reflections
             && self.video.enable_oar_ripples
+            && self.video.fmv_source == FmvCutsceneSource::Auto
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion
             && self.audio.enable_dynamic_room_acoustics

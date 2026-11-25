@@ -237,6 +237,15 @@ impl OptionsMenu {
                     "OFF (PS2 1:1)".into()
                 },
             )),
+            15 => Some(("Enhanced Options", String::new())),
+            16 => Some((
+                "Title Screen Style",
+                if v.enable_enhanced_title_screen {
+                    "Enhanced Edition".into()
+                } else {
+                    "Original (SILENT HILL 2)".into()
+                },
+            )),
             17 => Some(("Mod Manager", String::new())),
             18 => Some((
                 "Cutaway & Puzzle Quality",

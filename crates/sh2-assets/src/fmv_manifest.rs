@@ -81,6 +81,12 @@ pub fn verify_fmv_pack(dir: &Path) -> Result<FmvPackVerificationReport, AssetErr
     let mut results = Vec::with_capacity(manifest.entries.len());
 
     for entry in &manifest.entries {
+        if !is_safe_manifest_filename(&entry.filename) {
+            return Err(AssetError::InvalidData(format!(
+                "Unsafe manifest entry filename: {}",
+                entry.filename
+            )));
+        }
         let file_path = dir.join(&entry.filename);
         if !file_path.is_file() {
             results.push((entry.filename.clone(), FmvEntryVerifyStatus::Missing));
@@ -118,6 +124,18 @@ pub fn verify_fmv_pack(dir: &Path) -> Result<FmvPackVerificationReport, AssetErr
         verified,
         results,
     })
+}
+
+/// Validates that a manifest filename is a single relative path component without traversal.
+fn is_safe_manifest_filename(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name != "."
+        && name != ".."
+        && Path::new(name)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
 }
 
 /// Computes the lowercase hex SHA-256 digest of a file on disk using streaming 64 KiB reads.
@@ -334,6 +352,46 @@ mod tests {
         assert!(!report.all_verified());
         assert_eq!(report.results[0].1, FmvEntryVerifyStatus::Verified);
         assert_eq!(report.results[1].1, FmvEntryVerifyStatus::Missing);
+
+        // SizeMismatch and HashMismatch checks
+        std::fs::write(tmp.join("open_4k_master.mp4"), b"SHORT").unwrap();
+        let size_report = verify_fmv_pack(&tmp).unwrap();
+        assert_eq!(
+            size_report.results[1].1,
+            FmvEntryVerifyStatus::SizeMismatch {
+                expected: 123,
+                actual: 5
+            }
+        );
+
+        std::fs::write(tmp.join("open_4k_master.mp4"), vec![b'x'; 123]).unwrap();
+        let hash_report = verify_fmv_pack(&tmp).unwrap();
+        assert!(matches!(
+            hash_report.results[1].1,
+            FmvEntryVerifyStatus::HashMismatch { .. }
+        ));
+
+        // Path traversal rejection check
+        let bad_manifest = FmvPackManifest {
+            version: "1.0.0".into(),
+            entries: vec![FmvManifestEntry {
+                id: "bad".into(),
+                filename: "../escape.mp4".into(),
+                sha256: "0".repeat(64),
+                size_bytes: 1,
+                width: 3840,
+                height: 2160,
+                fps: 29.97,
+                frame_count: 1,
+                audio_tracks: vec![],
+            }],
+        };
+        std::fs::write(
+            tmp.join("manifest.json"),
+            serde_json::to_string_pretty(&bad_manifest).unwrap(),
+        )
+        .unwrap();
+        assert!(verify_fmv_pack(&tmp).is_err());
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

@@ -995,8 +995,8 @@ mod tests {
     fn test_sh2_90_video_fmv_source_option_and_ps2_preset() {
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Video;
-        menu.selected_index = 18;
-        let (label, val) = menu.item_display(18).unwrap();
+        menu.selected_index = 20;
+        let (label, val) = menu.item_display(20).unwrap();
         assert_eq!(label, "FMV Cutscene Source");
         assert_eq!(val, "Auto (4K VSR if detected)");
 

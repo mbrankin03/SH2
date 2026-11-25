@@ -29,11 +29,15 @@ fn game_root() -> Option<PathBuf> {
 }
 
 fn mods_4k_dir() -> Option<PathBuf> {
-    let candidates = [
+    let mut candidates: Vec<PathBuf> = std::env::var_os("SH2_4K_TEXTURES_DIR")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
+    candidates.extend([
         PathBuf::from("mods/sh2_4k_textures"),
         PathBuf::from("../../mods/sh2_4k_textures"),
-        PathBuf::from("/home/matthewb/Documents/SH2-Port/mods/sh2_4k_textures"),
-    ];
+        PathBuf::from("../../../../Documents/SH2-Port/mods/sh2_4k_textures"),
+    ]);
     candidates
         .into_iter()
         .find(|p| p.join("sh2_4k_textures.zip").is_file() || p.join("map").is_dir())

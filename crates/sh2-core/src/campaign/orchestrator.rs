@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use crate::config::{ActionDifficulty, OutdoorStreamingMode, RiddleDifficulty};
+use crate::cutscene::{find_drama_demo_by_no, CutsceneSequenceStep};
 use crate::event_camera::{EventCameraSystem, PostSequenceRestorePolicy};
 use crate::events::engine::{EventEngine, StageTransitionCommand};
 use crate::events::is_connected_stage_pair;
@@ -167,6 +168,15 @@ impl CampaignOrchestrator {
 
     /// Explicitly triggers a `.dds` real-time 3D cutscene (`DramaDemoMain` `0x001b0f00`).
     pub fn start_drama_demo(&mut self, trigger: DramaDemoTrigger, effects: &mut CampaignEffects) {
+        self.start_drama_demo_at_cursor(trigger, 0, effects);
+    }
+
+    fn start_drama_demo_at_cursor(
+        &mut self,
+        trigger: DramaDemoTrigger,
+        chain_cursor: usize,
+        effects: &mut CampaignEffects,
+    ) {
         self.triggered_demos.insert(trigger.demo_no);
         self.player_locked = true;
         self.phase = CampaignPhase::DramaDemo {
@@ -174,6 +184,7 @@ impl CampaignOrchestrator {
             post_pos: trigger.post_pos,
             post_yaw: trigger.post_yaw,
             restore_policy: trigger.restore_policy,
+            chain_cursor,
         };
         effects.start_drama_demo = Some(trigger);
     }
@@ -186,6 +197,9 @@ impl CampaignOrchestrator {
             post_stage: trigger.post_stage,
             post_pos: trigger.post_pos,
             post_yaw: trigger.post_yaw,
+            post_demo: trigger.post_demo.clone(),
+            completion_flag: trigger.completion_flag,
+            chain_cursor: trigger.chain_cursor,
         };
         effects.start_fmv = Some(trigger);
     }
@@ -367,8 +381,9 @@ impl CampaignOrchestrator {
                 post_pos,
                 post_yaw,
                 restore_policy,
+                chain_cursor,
             } => {
-                if input.drama_demo_finished || input.cancel_pressed {
+                if input.cancel_pressed {
                     for rule in AUTO_STAGE_DEMO_RULES {
                         if rule.demo_no == demo_no {
                             sim.scenario.flags.set(rule.completion_flag, true);
@@ -384,15 +399,84 @@ impl CampaignOrchestrator {
                     self.player_locked = false;
                     self.phase = CampaignPhase::ActiveGameplay;
                     effects.allow_gameplay_sim = true;
+                } else if input.drama_demo_finished {
+                    let next_step = find_drama_demo_by_no(demo_no as u16)
+                        .and_then(|info| info.sequence_chain.get(chain_cursor + 1).copied());
+                    match next_step {
+                        Some(CutsceneSequenceStep::FmvMovie { movie_id }) => {
+                            let post_demo = find_drama_demo_by_no(demo_no as u16)
+                                .and_then(|info| info.sequence_chain.get(chain_cursor + 2).copied())
+                                .and_then(|step| match step {
+                                    CutsceneSequenceStep::InEngineDemo { demo_no: next_demo } => {
+                                        Some(Box::new(DramaDemoTrigger {
+                                            demo_no: u32::from(next_demo),
+                                            demo_id: find_drama_demo_by_no(next_demo).map(|d| d.id),
+                                            post_pos,
+                                            post_yaw,
+                                            restore_policy,
+                                        }))
+                                    }
+                                    _ => None,
+                                });
+                            self.start_fmv(
+                                FmvTrigger {
+                                    movie_id,
+                                    post_stage: None,
+                                    post_pos,
+                                    post_yaw,
+                                    post_demo,
+                                    completion_flag: None,
+                                    chain_cursor: chain_cursor + 1,
+                                },
+                                &mut effects,
+                            );
+                        }
+                        Some(CutsceneSequenceStep::InEngineDemo { demo_no: next_demo }) => {
+                            self.start_drama_demo_at_cursor(
+                                DramaDemoTrigger {
+                                    demo_no: u32::from(next_demo),
+                                    demo_id: find_drama_demo_by_no(next_demo).map(|d| d.id),
+                                    post_pos,
+                                    post_yaw,
+                                    restore_policy,
+                                },
+                                chain_cursor + 1,
+                                &mut effects,
+                            );
+                        }
+                        _ => {
+                            for rule in AUTO_STAGE_DEMO_RULES {
+                                if rule.demo_no == demo_no {
+                                    sim.scenario.flags.set(rule.completion_flag, true);
+                                }
+                            }
+                            apply_post_cutscene_handoff(
+                                sim,
+                                &mut self.event_camera,
+                                post_pos,
+                                post_yaw,
+                                restore_policy,
+                            );
+                            self.player_locked = false;
+                            self.phase = CampaignPhase::ActiveGameplay;
+                            effects.allow_gameplay_sim = true;
+                        }
+                    }
                 }
             }
             CampaignPhase::FmvPlayback {
                 post_stage,
                 post_pos,
                 post_yaw,
+                post_demo,
+                completion_flag,
+                chain_cursor,
                 ..
             } => {
-                if input.fmv_finished || input.cancel_pressed {
+                if input.cancel_pressed {
+                    if let Some(flag) = completion_flag {
+                        sim.scenario.flags.set(flag, true);
+                    }
                     if let Some(next_stage) = post_stage {
                         let cmd = StageTransitionCommand {
                             dest_stage: next_stage as u8,
@@ -417,6 +501,39 @@ impl CampaignOrchestrator {
                         );
                         self.player_locked = false;
                         self.phase = CampaignPhase::ActiveGameplay;
+                        effects.allow_gameplay_sim = true;
+                    }
+                } else if input.fmv_finished {
+                    if let Some(demo) = post_demo {
+                        self.start_drama_demo_at_cursor(*demo, chain_cursor + 1, &mut effects);
+                    } else if let Some(next_stage) = post_stage {
+                        let cmd = StageTransitionCommand {
+                            dest_stage: next_stage as u8,
+                            stage_change_mode: next_stage as u8,
+                            is_connected_stage: is_connected_stage_pair(
+                                sim.scenario.current_stage as u8,
+                                next_stage as u8,
+                            ),
+                            observation_mode: false,
+                            dest_pos: post_pos
+                                .unwrap_or_else(|| sim.scenario.player_position.to_array()),
+                            dest_rot_y: post_yaw.unwrap_or(sim.scenario.player_yaw),
+                        };
+                        self.request_transition(sim.scenario.current_stage, cmd, None);
+                    } else {
+                        if let Some(flag) = completion_flag {
+                            sim.scenario.flags.set(flag, true);
+                        }
+                        apply_post_cutscene_handoff(
+                            sim,
+                            &mut self.event_camera,
+                            post_pos,
+                            post_yaw,
+                            PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+                        );
+                        self.player_locked = false;
+                        self.phase = CampaignPhase::ActiveGameplay;
+                        effects.allow_gameplay_sim = true;
                     }
                 }
             }
@@ -471,6 +588,9 @@ impl CampaignOrchestrator {
             }
             ConnectStepOutcome::StartDemo(demo) => {
                 self.start_drama_demo(demo, effects);
+            }
+            ConnectStepOutcome::StartFmv(fmv) => {
+                self.start_fmv(fmv, effects);
             }
             ConnectStepOutcome::StartEnding(stage) => {
                 self.trigger_ending(stage);

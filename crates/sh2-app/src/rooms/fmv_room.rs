@@ -340,6 +340,146 @@ pub(crate) fn open_fmv_session(
 
 pub(crate) struct FmvRoomController;
 
+/// Decodes and renders the active `state.fmv_session` frame.
+///
+/// When `loop_on_eof` is `true` (Theater mode), reaching the end of the stream restarts video and
+/// audio seamlessly. When `false` (campaign/attract playback), reaching EOF stops FMV audio, clears
+/// `state.fmv_session = None`, and returns `true`.
+pub(crate) fn tick_and_render_fmv_frame(
+    state: &mut AppState,
+    dt_sec: f32,
+    aspect: f32,
+    grain_pct: u32,
+    loop_on_eof: bool,
+) -> bool {
+    let mut finished_eof = false;
+    if let Some(ref mut session) = state.fmv_session {
+        let fps = (session.header.fps() as f32).max(1.0);
+        let frame_duration = 1.0 / fps;
+        if !state.fmv_viewer.is_paused {
+            session.frame_accumulator_sec += dt_sec.min(0.1);
+            let mut advanced = 0;
+            while session.frame_accumulator_sec >= frame_duration && advanced < 4 {
+                session.frame_accumulator_sec -= frame_duration;
+                advanced += 1;
+                if let Some(frame) = session.stream.next_frame() {
+                    state.fmv_pipeline.upload_frame(
+                        &state.render_ctx.queue,
+                        &session.gpu_surface,
+                        frame,
+                    );
+                } else if loop_on_eof {
+                    // Loop seamlessly on completion in theater mode
+                    session.stream.restart();
+                    if let Some(engine) = state.audio_engine.as_mut() {
+                        if let Some((sr, pcm)) = session.audio.as_ref() {
+                            let _ = engine.play_fmv_pcm(*sr, pcm, 1.0);
+                        }
+                        if let Some((adx, vol, fade)) = session.bgm_stream.as_ref() {
+                            let _ = engine.play_bgm_with_fade(adx, *vol, *fade);
+                        }
+                    }
+                    if let Some(frame) = session.stream.next_frame() {
+                        state.fmv_pipeline.upload_frame(
+                            &state.render_ctx.queue,
+                            &session.gpu_surface,
+                            frame,
+                        );
+                    }
+                    break;
+                } else {
+                    finished_eof = true;
+                    break;
+                }
+            }
+        }
+
+        if !finished_eof {
+            let (uv_y_offset, uv_y_scale, video_aspect) =
+                state.fmv_viewer.compute_uv_crop_and_aspect();
+            let fmv_grain = if state.fmv_viewer.film_grain_enabled {
+                ((grain_pct as f32) / 100.0) * 0.45
+            } else {
+                0.0
+            };
+            let fmv_uniforms = FmvUniforms {
+                viewport_aspect: aspect,
+                video_aspect,
+                uv_y_offset,
+                uv_y_scale,
+                grain_intensity: fmv_grain,
+                time: state.sim_time,
+                fade_alpha: 1.0,
+                sharpen: match state.fmv_viewer.sharpen_level {
+                    0 => 0.0,
+                    1 => 0.35,
+                    2 => 0.7,
+                    _ => 1.0,
+                },
+            };
+            state
+                .fmv_pipeline
+                .update_uniforms(&state.render_ctx.queue, &fmv_uniforms);
+
+            let mut fmv_encoder =
+                state
+                    .render_ctx
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("FMV Render Encoder"),
+                    });
+            state.fmv_pipeline.render(
+                &mut fmv_encoder,
+                &session.gpu_surface,
+                &state.render_ctx.ldr_output_view,
+            );
+            state
+                .render_ctx
+                .queue
+                .submit(std::iter::once(fmv_encoder.finish()));
+        }
+    }
+
+    if finished_eof {
+        state.fmv_session = None;
+        if let Some(ref mut engine) = state.audio_engine {
+            engine.stop_fmv_audio(std::time::Duration::from_millis(50));
+        }
+    }
+
+    finished_eof
+}
+
+/// Draws synchronized FMV subtitles onto `state.menu_rasterizer` when `subtitles_enabled` is true.
+pub(crate) fn render_fmv_subtitles(state: &mut AppState) {
+    if !state.fmv_viewer.subtitles_enabled {
+        return;
+    }
+    let Some(ref session) = state.fmv_session else {
+        return;
+    };
+    let cur_frame = session.stream.current_frame_index.saturating_sub(1);
+    let movie_path = session.stream.path.as_deref();
+    if let Some(sub_line) = sh2_assets::formats::bink::active_subtitle_text(
+        session.entry.id,
+        &session.header,
+        cur_frame,
+        movie_path,
+    ) {
+        let game_root = movie_path.and_then(sh2_assets::formats::bink::game_root_from_movie_path);
+        let w = state.menu_rasterizer.width;
+        sh2_ui::draw_subtitle(
+            &mut state.menu_rasterizer,
+            game_root.as_deref(),
+            &sub_line,
+            w / 2,
+            645,
+            32,
+            [235, 235, 235, 255],
+        );
+    }
+}
+
 impl RoomController for FmvRoomController {
     fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed: bool, _repeat: bool) {
         if !pressed {
@@ -488,87 +628,7 @@ impl RoomController for FmvRoomController {
         _is_paused: bool,
         _is_in_game: bool,
     ) {
-        if let Some(ref mut session) = state.fmv_session {
-            let fps = (session.header.fps() as f32).max(1.0);
-            let frame_duration = 1.0 / fps;
-            if !state.fmv_viewer.is_paused {
-                session.frame_accumulator_sec += dt_sec.min(0.1);
-                let mut advanced = 0;
-                while session.frame_accumulator_sec >= frame_duration && advanced < 4 {
-                    session.frame_accumulator_sec -= frame_duration;
-                    advanced += 1;
-                    if let Some(frame) = session.stream.next_frame() {
-                        state.fmv_pipeline.upload_frame(
-                            &state.render_ctx.queue,
-                            &session.gpu_surface,
-                            frame,
-                        );
-                    } else {
-                        // Loop seamlessly on completion in theater mode
-                        session.stream.restart();
-                        if let Some(engine) = state.audio_engine.as_mut() {
-                            if let Some((sr, pcm)) = session.audio.as_ref() {
-                                let _ = engine.play_fmv_pcm(*sr, pcm, 1.0);
-                            }
-                            if let Some((adx, vol, fade)) = session.bgm_stream.as_ref() {
-                                let _ = engine.play_bgm_with_fade(adx, *vol, *fade);
-                            }
-                        }
-                        if let Some(frame) = session.stream.next_frame() {
-                            state.fmv_pipeline.upload_frame(
-                                &state.render_ctx.queue,
-                                &session.gpu_surface,
-                                frame,
-                            );
-                        }
-                        break;
-                    }
-                }
-            }
-
-            let (uv_y_offset, uv_y_scale, video_aspect) =
-                state.fmv_viewer.compute_uv_crop_and_aspect();
-            let fmv_grain = if state.fmv_viewer.film_grain_enabled {
-                ((grain_pct as f32) / 100.0) * 0.45
-            } else {
-                0.0
-            };
-            let fmv_uniforms = FmvUniforms {
-                viewport_aspect: aspect,
-                video_aspect,
-                uv_y_offset,
-                uv_y_scale,
-                grain_intensity: fmv_grain,
-                time: state.sim_time,
-                fade_alpha: 1.0,
-                sharpen: match state.fmv_viewer.sharpen_level {
-                    0 => 0.0,
-                    1 => 0.35,
-                    2 => 0.7,
-                    _ => 1.0,
-                },
-            };
-            state
-                .fmv_pipeline
-                .update_uniforms(&state.render_ctx.queue, &fmv_uniforms);
-
-            let mut fmv_encoder =
-                state
-                    .render_ctx
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("FMV Render Encoder"),
-                    });
-            state.fmv_pipeline.render(
-                &mut fmv_encoder,
-                &session.gpu_surface,
-                &state.render_ctx.ldr_output_view,
-            );
-            state
-                .render_ctx
-                .queue
-                .submit(std::iter::once(fmv_encoder.finish()));
-        }
+        let _ = tick_and_render_fmv_frame(state, dt_sec, aspect, grain_pct, true);
     }
 
     fn render_hud(
@@ -584,36 +644,15 @@ impl RoomController for FmvRoomController {
         let green = [120, 230, 150, 255];
         let muted = [165, 165, 170, 255];
 
+        // Render synchronized subtitle cue near bottom of frame
+        render_fmv_subtitles(state);
+
         if let Some(ref session) = state.fmv_session {
             let cur_frame = session.stream.current_frame_index.saturating_sub(1);
             let total_frames = session.header.frame_count.max(1);
             let fps = session.header.fps();
             let cur_sec = (cur_frame as f64) / fps.max(1.0);
             let tot_sec = session.header.duration_secs();
-
-            // Render synchronized subtitle cue near bottom of frame
-            if state.fmv_viewer.subtitles_enabled {
-                let movie_path = session.stream.path.as_deref();
-                if let Some(sub_line) = sh2_assets::formats::bink::active_subtitle_text(
-                    session.entry.id,
-                    &session.header,
-                    cur_frame,
-                    movie_path,
-                ) {
-                    let game_root =
-                        movie_path.and_then(sh2_assets::formats::bink::game_root_from_movie_path);
-                    let w = state.menu_rasterizer.width;
-                    sh2_ui::draw_subtitle(
-                        &mut state.menu_rasterizer,
-                        game_root.as_deref(),
-                        &sub_line,
-                        w / 2,
-                        645,
-                        32,
-                        white,
-                    );
-                }
-            }
 
             if state.fmv_viewer.show_hud {
                 let total_movies = FMV_CATALOG.len();

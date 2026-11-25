@@ -10,7 +10,7 @@ use winit::keyboard::KeyCode;
 
 use crate::assets::open_drama_demo_session;
 use crate::rooms::combat_arena::CombatArenaRoomController;
-use crate::rooms::fmv_room::{open_fmv_session, FmvRoomController};
+use crate::rooms::fmv_room::{open_fmv_session, render_fmv_subtitles, tick_and_render_fmv_frame};
 use crate::rooms::RoomController;
 use crate::state::AppState;
 use sh2_core::campaign::{CampaignEffects, CampaignOrchestrator, CampaignPhase, OverlayMenuKind};
@@ -213,6 +213,27 @@ impl CampaignRoomController {
 
 impl RoomController for CampaignRoomController {
     fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed: bool, repeat: bool) {
+        let in_fmv = state
+            .campaign_orchestrator
+            .as_ref()
+            .is_some_and(|o| matches!(o.phase, CampaignPhase::FmvPlayback { .. }));
+        if in_fmv {
+            if pressed
+                && !repeat
+                && matches!(
+                    key_code,
+                    KeyCode::Escape
+                        | KeyCode::Backspace
+                        | KeyCode::Space
+                        | KeyCode::Enter
+                        | KeyCode::NumpadEnter
+                )
+            {
+                state.campaign_pending_input.cancel_pressed = true;
+            }
+            return;
+        }
+
         if pressed && !repeat {
             match key_code {
                 KeyCode::KeyE | KeyCode::Enter | KeyCode::Space => {
@@ -297,11 +318,11 @@ impl RoomController for CampaignRoomController {
                 .drama_demo_session
                 .as_ref()
                 .is_none_or(|s| s.player.step == DramaDemoStep::Finished);
-        tick_input.fmv_finished = state.fmv_session.is_none()
-            && matches!(
-                state.campaign_orchestrator.as_ref().map(|o| &o.phase),
-                Some(CampaignPhase::FmvPlayback { .. })
-            );
+        let was_fmv = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::FmvPlayback { .. })
+        );
+        tick_input.fmv_finished = state.fmv_session.is_none() && was_fmv;
 
         if let Some(ref mut ls) = state.loading_screen {
             ls.tick(dt_sec);
@@ -320,6 +341,17 @@ impl RoomController for CampaignRoomController {
         } else {
             CampaignEffects::default()
         };
+
+        let is_fmv_now = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::FmvPlayback { .. })
+        );
+        if was_fmv && !is_fmv_now {
+            state.fmv_session = None;
+            if let Some(ref mut eng) = state.audio_engine {
+                eng.stop_fmv_audio(Duration::from_millis(50));
+            }
+        }
 
         let allow_sim = effects.allow_gameplay_sim;
         Self::apply_effects(state, effects);
@@ -403,9 +435,7 @@ impl RoomController for CampaignRoomController {
             if keep_bgm_active && is_in_game {
                 crate::rooms::combat_arena::render::step_audio_managers(state, dt, is_paused);
             }
-            FmvRoomController::tick_and_render_3d(
-                state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
-            );
+            let _ = tick_and_render_fmv_frame(state, dt_sec, aspect, grain_pct, false);
         } else {
             // During `DramaDemo`, keep `is_paused` false (unless user opened Pause Menu) so
             // `step_cutscene_player` advances the `.dds` cutscene while `locks_gameplay_input()`
@@ -561,6 +591,18 @@ impl RoomController for CampaignRoomController {
                 state.begin_hud_overlay();
                 if let Some(ref seq) = state.campaign_credits_seq {
                     seq.render(&mut state.menu_rasterizer, font);
+                }
+                state.finish_hud_overlay(encoder, surface_view);
+                return;
+            }
+            CampaignPhase::FmvPlayback { .. } => {
+                state.begin_hud_overlay();
+                render_fmv_subtitles(state);
+                if fade_alpha > 0.005 {
+                    let w = state.menu_rasterizer.width;
+                    let h = state.menu_rasterizer.height;
+                    let a = (fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    state.menu_rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
                 }
                 state.finish_hud_overlay(encoder, surface_view);
                 return;

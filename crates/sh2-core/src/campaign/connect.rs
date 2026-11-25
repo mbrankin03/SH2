@@ -8,7 +8,9 @@ use glam::Vec3;
 use crate::events::engine::{EventEngine, StageTransitionCommand};
 use crate::simulation::SimulationCore;
 
-use super::cutscene_handoff::{evaluate_auto_stage_demo, DramaDemoTrigger};
+use super::cutscene_handoff::{
+    evaluate_auto_stage_demo, evaluate_auto_stage_fmv, DramaDemoTrigger, FmvTrigger,
+};
 use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
 };
@@ -36,6 +38,8 @@ pub(crate) enum ConnectStepOutcome {
     },
     /// `connectMain` step `7` completed; transition into an automatic stage-entry `DramaDemo`.
     StartDemo(DramaDemoTrigger),
+    /// `connectMain` step `7` completed; transition into an automatic stage-entry FMV (e.g. `toilet.bik`).
+    StartFmv(FmvTrigger),
     /// `connectMain` step `7` completed on an ending stage (`48..=52`); start `EndingCredits`.
     StartEnding(u16),
     /// `connectMain` step `7` completed; enter `ActiveGameplay`.
@@ -161,7 +165,11 @@ pub(crate) fn step_connect_pipeline(
             }
             fade.start_fade_in(PS2_DEFAULT_FADE_SPEED, delayed_fade_in_fix);
 
-            if let Some(demo) =
+            if let Some(fmv) =
+                evaluate_auto_stage_fmv(req.target_stage, &sim.scenario.flags, triggered_demos)
+            {
+                ConnectStepOutcome::StartFmv(fmv)
+            } else if let Some(demo) =
                 evaluate_auto_stage_demo(req.target_stage, &sim.scenario.flags, triggered_demos)
             {
                 ConnectStepOutcome::StartDemo(demo)

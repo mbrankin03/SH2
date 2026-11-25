@@ -91,6 +91,18 @@ pub(crate) fn handle_title_menu_key_input(state: &mut AppState, key_code: KeyCod
         return;
     }
 
+    // Any key press cancels Title Screen attract-mode `open.bik` (`MoviePlayOPMovie` `0x00287910`)
+    if state.menu_ctrl.title_sm.attract_movie_requested && state.fmv_session.is_some() {
+        state.fmv_session = None;
+        if let Some(ref mut engine) = state.audio_engine {
+            engine.stop_fmv_audio(std::time::Duration::from_millis(50));
+        }
+        state.menu_ctrl.title_sm.attract_movie_requested = false;
+        state.menu_ctrl.title_sm.phase = TitlePhase::TitleLogo;
+        state.menu_ctrl.title_sm.start_fade_in();
+        return;
+    }
+
     // Intercept Confirm button if loading screen is active
     if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame
         && matches!(
@@ -162,6 +174,18 @@ pub(crate) fn handle_title_menu_key_input(state: &mut AppState, key_code: KeyCod
 /// Handles keyboard input when the in-game Pause Menu is open (`state.menu_ctrl.pause_menu.is_open`).
 pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCode, pressed: bool) {
     if !pressed {
+        return;
+    }
+
+    // Any key press cancels Title Screen attract-mode `open.bik` (`MoviePlayOPMovie` `0x00287910`)
+    if state.menu_ctrl.title_sm.attract_movie_requested && state.fmv_session.is_some() {
+        state.fmv_session = None;
+        if let Some(ref mut engine) = state.audio_engine {
+            engine.stop_fmv_audio(std::time::Duration::from_millis(50));
+        }
+        state.menu_ctrl.title_sm.attract_movie_requested = false;
+        state.menu_ctrl.title_sm.phase = TitlePhase::TitleLogo;
+        state.menu_ctrl.title_sm.start_fade_in();
         return;
     }
 

@@ -62,6 +62,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = false;
                 self.video.enable_water_reflections = false;
                 self.video.enable_oar_ripples = false;
+                self.video.enable_fire_heat_haze = false;
                 self.video.fmv_source = FmvCutsceneSource::VanillaPc;
                 self.video.grain_intensity = 100;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
@@ -95,6 +96,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = false;
                 self.video.enable_water_reflections = false;
                 self.video.enable_oar_ripples = false;
+                self.video.enable_fire_heat_haze = false;
                 self.video.fmv_source = FmvCutsceneSource::Enhanced1080p60;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
@@ -127,6 +129,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = true;
                 self.video.enable_water_reflections = true;
                 self.video.enable_oar_ripples = true;
+                self.video.enable_fire_heat_haze = true;
                 self.video.fmv_source = FmvCutsceneSource::Auto;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
@@ -165,6 +168,7 @@ impl AppConfig {
             && !self.video.aces_tonemapping
             && !self.video.enable_water_reflections
             && !self.video.enable_oar_ripples
+            && !self.video.enable_fire_heat_haze
             && self.video.fmv_source == FmvCutsceneSource::VanillaPc
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
@@ -198,6 +202,7 @@ impl AppConfig {
             && !self.video.aces_tonemapping
             && !self.video.enable_water_reflections
             && !self.video.enable_oar_ripples
+            && !self.video.enable_fire_heat_haze
             && self.video.fmv_source == FmvCutsceneSource::Enhanced1080p60
             && self.audio.spatial_audio_mode == SpatialAudioMode::ClassicPs2Stereo
             && !self.audio.enable_acoustic_occlusion
@@ -231,6 +236,7 @@ impl AppConfig {
             && self.video.aces_tonemapping
             && self.video.enable_water_reflections
             && self.video.enable_oar_ripples
+            && self.video.enable_fire_heat_haze
             && self.video.fmv_source == FmvCutsceneSource::Auto
             && self.audio.spatial_audio_mode == SpatialAudioMode::BinauralHrtf
             && self.audio.enable_acoustic_occlusion

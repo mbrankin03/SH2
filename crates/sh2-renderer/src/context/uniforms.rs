@@ -321,6 +321,95 @@ impl RenderContext {
         }
     }
 
+    /// Uploads `SH2-100` additive and alpha-blended 3D FX quads (fire, smoke, water ripples,
+    /// rain streaks, shell casings, impact sparks, glass shards).
+    pub fn update_billboard_fx_quads(
+        &self,
+        additive_quads: &[effects::GpuFxQuad],
+        alpha_quads: &[effects::GpuFxQuad],
+    ) {
+        let add_count = additive_quads.len().min(effects::MAX_GPU_FX_QUADS);
+        if add_count > 0 {
+            self.queue.write_buffer(
+                &self.billboard_fx_additive_buffer,
+                0,
+                bytemuck::cast_slice(&additive_quads[..add_count]),
+            );
+        }
+        self.billboard_fx_additive_count
+            .store(add_count as u32, std::sync::atomic::Ordering::Relaxed);
+
+        let alpha_count = alpha_quads.len().min(effects::MAX_GPU_FX_QUADS);
+        if alpha_count > 0 {
+            self.queue.write_buffer(
+                &self.billboard_fx_alpha_buffer,
+                0,
+                bytemuck::cast_slice(&alpha_quads[..alpha_count]),
+            );
+        }
+        self.billboard_fx_alpha_count
+            .store(alpha_count as u32, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Uploads a decoded retail `.tbn2` RGBA texture (e.g. `fire00.tbn2`, `water00.tbn2`,
+    /// `spark.tbn2`, `glas03.tbn2`) for [`effects::BillboardFxPipeline`].
+    pub fn upload_billboard_fx_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Billboard FX Retail Texture (SH2-100)"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.billboard_fx_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Billboard FX Bind Group"),
+            layout: &self.billboard_fx_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                },
+            ],
+        });
+    }
+
     /// Compiles a ModelFile into a GpuSkeletalMesh.
     pub fn compile_skeletal_mesh(&self, model: &ModelFile) -> GpuSkeletalMesh {
         GpuSkeletalMesh::from_model(

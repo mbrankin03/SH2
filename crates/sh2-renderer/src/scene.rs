@@ -336,6 +336,32 @@ impl RenderContext {
                 rpass.draw(0..6, 0..dust_count);
             }
 
+            // 1d-6. Render `SH2-100` alpha-blended & additive 3D FX quads (fire, smoke, water, rain, shells, sparks, glass)
+            let fx_alpha_count = self
+                .billboard_fx_alpha_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if fx_alpha_count > 0 {
+                let byte_len = (fx_alpha_count as usize
+                    * std::mem::size_of::<crate::effects::GpuFxQuad>())
+                    as wgpu::BufferAddress;
+                rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_alpha);
+                rpass.set_bind_group(0, &self.billboard_fx_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.billboard_fx_alpha_buffer.slice(0..byte_len));
+                rpass.draw(0..6, 0..fx_alpha_count);
+            }
+            let fx_add_count = self
+                .billboard_fx_additive_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if fx_add_count > 0 {
+                let byte_len = (fx_add_count as usize
+                    * std::mem::size_of::<crate::effects::GpuFxQuad>())
+                    as wgpu::BufferAddress;
+                rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_additive);
+                rpass.set_bind_group(0, &self.billboard_fx_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.billboard_fx_additive_buffer.slice(0..byte_len));
+                rpass.draw(0..6, 0..fx_add_count);
+            }
+
             // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
             if !debug_lines.is_empty() {
                 let line_buf = overflow_debug_line_buffer

@@ -11,6 +11,7 @@ pub mod combat;
 pub mod config;
 pub mod cutaway;
 pub mod cutscene;
+pub mod effects;
 pub mod endings;
 pub mod event_camera;
 pub mod events;

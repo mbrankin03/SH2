@@ -637,9 +637,19 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
 
     let center_panel_x = (x_offset + 256.0 * scale_x).round() as usize;
     let label_right_x = (x_offset + 240.0 * scale_x).round() as usize;
-    // `option_font` (`0x0021a320`): value column `x = 0x10e` (270) unselected, `0x10c` (268) selected
+    // `option_font` (`0x0021a320`): value column `x = 0x10e` (270) unselected, `0x10c` (268) selected.
+    // Right bound is derived from existing `Mods` `[^]` button (`408.0`) or scrollbar `track_x` (`468.0`,
+    // inside `look_board` `0x002171a0` right border `483.0`) minus a `6.0` virtual-px gutter.
     let val_left_x = (x_offset + 270.0 * scale_x).round() as usize;
+    let val_right_v = if menu.active_tab == OptionsTab::Mods && !menu.mods.is_empty() {
+        408.0 - 6.0
+    } else {
+        468.0 - 6.0
+    };
+    let val_right_x = (x_offset + val_right_v * scale_x).round() as usize;
+    let max_val_w = val_right_x.saturating_sub(val_left_x);
     let font_size = (22.5 * scale_y).round().max(14.0) as usize;
+    let min_val_font_size = (14.0 * scale_y).round().max(11.0) as usize;
     let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
     let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
 
@@ -735,11 +745,13 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                         );
                     }
                 } else {
+                    let val_font_size =
+                        fit_value_font_size(font, &val, font_size, min_val_font_size, max_val_w);
                     font.draw_line_styled(
                         rast,
                         &val,
                         (val_left_x, y),
-                        font_size,
+                        val_font_size,
                         unselected_color,
                         false,
                     );
@@ -748,7 +760,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                             rast,
                             &val,
                             (val_left_x.saturating_sub(pop_dx), y.saturating_sub(pop_dy)),
-                            font_size,
+                            val_font_size,
                             Sh2TextColor::White,
                             false,
                         );
@@ -823,4 +835,85 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         },
         true,
     );
+}
+
+/// Reduces `base_size` down to `min_size` as needed so `text` fits within `max_width` pixels.
+fn fit_value_font_size(
+    font: &AtlasFont,
+    text: &str,
+    base_size: usize,
+    min_size: usize,
+    max_width: usize,
+) -> usize {
+    let mut size = base_size;
+    while size > min_size && font.text_width(text, size) > max_width {
+        size -= 1;
+    }
+    size
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sh2_core::config::FmvCutsceneSource;
+
+    #[test]
+    fn fmv_cutscene_source_labels_fit_derived_value_column() {
+        let font = AtlasFont::load_embedded();
+        let all_sources = [
+            FmvCutsceneSource::Auto,
+            FmvCutsceneSource::Upscaled4kMp4,
+            FmvCutsceneSource::Enhanced1080p60,
+            FmvCutsceneSource::OgHqPs2Masters,
+            FmvCutsceneSource::VanillaPc,
+        ];
+        for &(w, h) in &[(1280.0f32, 720.0f32), (3840.0f32, 2160.0f32)] {
+            let scale_y = h / 448.0;
+            let scale_x = scale_y;
+            let x_offset = (w - 512.0 * scale_x) * 0.5;
+            let val_left_x = (x_offset + 270.0 * scale_x).round() as usize;
+            let val_right_x = (x_offset + (468.0 - 6.0) * scale_x).round() as usize;
+            let max_val_w = val_right_x.saturating_sub(val_left_x);
+            let base_size = (22.5 * scale_y).round().max(14.0) as usize;
+            let min_size = (14.0 * scale_y).round().max(11.0) as usize;
+
+            for src in all_sources {
+                let fitted =
+                    fit_value_font_size(&font, src.label(), base_size, min_size, max_val_w);
+                assert!(
+                    font.text_width(src.label(), fitted) <= max_val_w,
+                    "FMV label {:?} overflowed max_val_w={} at {}x{} (fitted={})",
+                    src.label(),
+                    max_val_w,
+                    w,
+                    h,
+                    fitted
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fit_value_font_size_clamps_long_text_and_respects_scaled_floor() {
+        let font = AtlasFont::load_embedded();
+        let scale_y: f32 = 2160.0 / 448.0;
+        let scale_x = scale_y;
+        let mods_max_w = ((408.0 - 6.0 - 270.0) * scale_x).round() as usize;
+        let base_size = (22.5 * scale_y).round().max(14.0) as usize;
+        let min_size = (14.0 * scale_y).round().max(11.0) as usize;
+
+        let fitted =
+            fit_value_font_size(&font, "ENABLED  Load #12", base_size, min_size, mods_max_w);
+        assert!(fitted >= min_size);
+        assert!(font.text_width("ENABLED  Load #12", fitted) <= mods_max_w);
+
+        let extreme = fit_value_font_size(
+            &font,
+            "Extremely Long Value String That Exceeds Even Minimum Font Width",
+            base_size,
+            min_size,
+            mods_max_w,
+        );
+        assert_eq!(extreme, min_size);
+    }
 }

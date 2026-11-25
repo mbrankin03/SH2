@@ -433,10 +433,10 @@ impl FmvCutsceneSource {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Auto => "Auto (4K VSR if detected)",
-            Self::Upscaled4kMp4 => "4K AI VSR Master (3840x2160 30fps AV1+FLAC)",
-            Self::Enhanced1080p60 => "SH2:EE 1080p60 (AI-Upscaled Bink)",
-            Self::OgHqPs2Masters => "OG HQ PS2 Masters (Natural 30fps Bink)",
-            Self::VanillaPc => "Original 2001 PC (640x384 Bink)",
+            Self::Upscaled4kMp4 => "4K AI VSR (3840x2160 AV1)",
+            Self::Enhanced1080p60 => "SH2:EE 1080p60 (Bink)",
+            Self::OgHqPs2Masters => "OG HQ PS2 (30fps Bink)",
+            Self::VanillaPc => "Original 2001 PC (Bink)",
         }
     }
 

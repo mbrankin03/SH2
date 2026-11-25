@@ -112,6 +112,13 @@ impl RenderContext {
         let spray_mist_pipeline =
             effects::SprayMistPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let water_pipeline = crate::water::LakeWaterPipeline::new(&device, Self::HDR_FORMAT);
+        let mirror_pipeline = crate::mirror::PlanarMirrorPipeline::new(
+            &device,
+            &queue,
+            Self::HDR_FORMAT,
+            Self::DEPTH_FORMAT,
+            &geometry_pipeline.bind_group_layout,
+        );
         let dust_pipeline =
             effects::DustParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let billboard_fx_pipeline =
@@ -409,6 +416,7 @@ impl RenderContext {
             lens_flare_pipeline,
             spray_mist_pipeline,
             water_pipeline,
+            mirror_pipeline,
             dust_pipeline,
             billboard_fx_pipeline,
             blood_pipeline,
@@ -491,6 +499,8 @@ impl RenderContext {
             last_shadow_view_proj: std::sync::Mutex::new(buffers.initial_shadow_vp),
             last_pcss_params: std::sync::Mutex::new(buffers.initial_pcss_params),
             last_camera_uniforms: std::sync::Mutex::new(pipeline::CameraUniforms::default()),
+            planar_mirror: std::sync::Mutex::new(None),
+            mirror_glass_overlay_enabled: std::sync::atomic::AtomicBool::new(false),
             water_plane_height_mm: std::sync::atomic::AtomicU32::new(
                 crate::water::DEFAULT_WATER_HEIGHT_MM.to_bits(),
             ),

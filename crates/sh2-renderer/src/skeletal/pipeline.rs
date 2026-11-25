@@ -34,6 +34,10 @@ pub struct SkeletalPipeline {
     transparent_core_pipelines: [wgpu::RenderPipeline; 3],
     /// `[DoubleSided, CullBack, CullFront]` pipelines for [`SkeletalPassStage::TransparentFringe`].
     transparent_fringe_pipelines: [wgpu::RenderPipeline; 3],
+    /// Stenciled planar mirror `[DoubleSided, CullBack]` pipelines (`FrontFace::Cw`, `Depth24PlusStencil8`, `stencil == 1`).
+    mirror_opaque_pipelines: [wgpu::RenderPipeline; 2],
+    mirror_core_pipelines: [wgpu::RenderPipeline; 2],
+    mirror_fringe_pipelines: [wgpu::RenderPipeline; 2],
 }
 
 impl SkeletalPipeline {
@@ -170,12 +174,106 @@ impl SkeletalPipeline {
             false,
         );
 
+        let stencil_equal_keep = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Equal,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Keep,
+        };
+        let build_mirror_pair = |label_prefix: &str,
+                                 fs_entry: &str,
+                                 blend: wgpu::BlendState,
+                                 depth_write_enabled: bool|
+         -> [wgpu::RenderPipeline; 2] {
+            let cull_modes = [("DoubleSided", None), ("CullBack", Some(wgpu::Face::Back))];
+            cull_modes.map(|(cull_name, cull_mode)| {
+                let label = format!("Skeletal Mirror {label_prefix} Pipeline ({cull_name})");
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(&label),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[SkeletalVertex::desc()],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some(fs_entry),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: hdr_format,
+                            blend: Some(blend),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Cw,
+                        cull_mode,
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: crate::shadow::StencilShadowPipeline::STENCIL_FORMAT,
+                        depth_write_enabled,
+                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        stencil: wgpu::StencilState {
+                            front: stencil_equal_keep,
+                            back: stencil_equal_keep,
+                            read_mask: 0xff,
+                            write_mask: 0x00,
+                        },
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
+                    cache: None,
+                })
+            })
+        };
+
+        let mirror_opaque_pipelines =
+            build_mirror_pair("Opaque", "fs_opaque", wgpu::BlendState::REPLACE, true);
+        let mirror_core_pipelines = build_mirror_pair(
+            "Transparent Core",
+            "fs_transparent_core",
+            wgpu::BlendState::ALPHA_BLENDING,
+            true,
+        );
+        let mirror_fringe_pipelines = build_mirror_pair(
+            "Transparent Fringe",
+            "fs_transparent_fringe",
+            wgpu::BlendState::ALPHA_BLENDING,
+            false,
+        );
+
         Self {
             bone_bind_group_layout,
             material_bind_group_layout,
             opaque_pipelines,
             transparent_core_pipelines,
             transparent_fringe_pipelines,
+            mirror_opaque_pipelines,
+            mirror_core_pipelines,
+            mirror_fringe_pipelines,
+        }
+    }
+
+    /// Selects the stenciled planar mirror pipeline (`FrontFace::Cw`, `Depth24PlusStencil8`, `stencil == 1`).
+    #[inline]
+    pub fn select_mirror_pipeline(
+        &self,
+        stage: SkeletalPassStage,
+        backface_culling: bool,
+    ) -> &wgpu::RenderPipeline {
+        let slot = usize::from(backface_culling);
+        match stage {
+            SkeletalPassStage::Opaque => &self.mirror_opaque_pipelines[slot],
+            SkeletalPassStage::TransparentCore => &self.mirror_core_pipelines[slot],
+            SkeletalPassStage::TransparentFringe => &self.mirror_fringe_pipelines[slot],
         }
     }
 

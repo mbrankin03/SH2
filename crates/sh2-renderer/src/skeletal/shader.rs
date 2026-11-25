@@ -9,6 +9,7 @@ struct CameraUniforms {
     inv_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    clip_plane: vec4<f32>,
 };
 
 struct SpotlightUniforms {
@@ -110,6 +111,10 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // Sample diffuse texture unconditionally in uniform control flow before any early returns
     // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
+    if (dot(camera.clip_plane.xyz, camera.clip_plane.xyz) > 0.0
+        && dot(vec4<f32>(in.world_pos, 1.0), camera.clip_plane) < 0.0) {
+        discard;
+    }
 
     let n_len = length(in.normal);
     let raw_norm = select(vec3<f32>(0.0, -1.0, 0.0), in.normal / n_len, n_len > 1e-4);

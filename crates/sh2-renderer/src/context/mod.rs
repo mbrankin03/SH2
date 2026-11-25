@@ -76,6 +76,7 @@ pub struct RenderContext {
     pub lens_flare_pipeline: effects::LensFlarePipeline,
     pub spray_mist_pipeline: effects::SprayMistPipeline,
     pub water_pipeline: water::LakeWaterPipeline,
+    pub mirror_pipeline: crate::mirror::PlanarMirrorPipeline,
     pub dust_pipeline: effects::DustParticlePipeline,
     pub billboard_fx_pipeline: effects::BillboardFxPipeline,
     pub blood_pipeline: effects::BloodEffectPipeline,
@@ -159,6 +160,8 @@ pub struct RenderContext {
     pub(crate) last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
     pub(crate) last_pcss_params: std::sync::Mutex<[f32; 4]>,
     pub(crate) last_camera_uniforms: std::sync::Mutex<pipeline::CameraUniforms>,
+    pub(crate) planar_mirror: std::sync::Mutex<Option<crate::mirror::PlanarMirrorSpec>>,
+    pub mirror_glass_overlay_enabled: std::sync::atomic::AtomicBool,
     pub(crate) water_plane_height_mm: std::sync::atomic::AtomicU32,
 
     pub default_sampler: wgpu::Sampler,

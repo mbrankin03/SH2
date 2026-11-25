@@ -12,28 +12,36 @@ pub(super) fn submit_scene_draw(
     active_enemy_snapshot: Option<EnemySkinSnapshot>,
 ) {
     let mut skeletal_draw = Vec::new();
-    let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart
-        || state
-            .sim_core
-            .scenario
-            .current_room
-            .eq_ignore_ascii_case("er01")
-        || state
-            .drama_demo_session
-            .as_ref()
-            .is_some_and(|s| s.player.locks_gameplay_input() && s.player.info.stage_name == "er01");
+    let active_room_name = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+        .map(|s| s.player.info.stage_name)
+        .unwrap_or(state.sim_core.scenario.current_room.as_str());
+    let mirror_room_id = if state.active_test_room == TestRoomKind::RestroomStart
+        || active_room_name.eq_ignore_ascii_case("er01")
+    {
+        Some(0x01)
+    } else if active_room_name.eq_ignore_ascii_case("ap84")
+        || active_room_name.eq_ignore_ascii_case("ap88")
+    {
+        Some(0x24)
+    } else if active_room_name.eq_ignore_ascii_case("th09") {
+        Some(0xd5)
+    } else {
+        None
+    };
     let cutscene_active = state.drama_demo_session.as_ref().is_some_and(|s| {
         s.player.locks_gameplay_input() && s.actor_assets.iter().any(|a| a.is_some())
     });
 
     if cutscene_active {
         if let Some(ref session) = state.drama_demo_session {
-            for (idx, (actor, asset_opt)) in session
+            for (actor, asset_opt) in session
                 .player
                 .actors
                 .iter()
                 .zip(session.actor_assets.iter())
-                .enumerate()
             {
                 if !actor.visible {
                     continue;
@@ -45,17 +53,6 @@ pub(super) fn submit_scene_draw(
                             asset.skin_scratch.as_slice(),
                             Some(asset.texture_bind_groups.as_slice()),
                         ));
-                        if is_restroom_mirror {
-                            if let Some(mirror_buf) = session.actor_mirror_skin_scratch.get(idx) {
-                                if !mirror_buf.is_empty() {
-                                    skeletal_draw.push((
-                                        &asset.gpu_mesh,
-                                        mirror_buf.as_slice(),
-                                        Some(asset.texture_bind_groups.as_slice()),
-                                    ));
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -73,13 +70,6 @@ pub(super) fn submit_scene_draw(
                     state.skin_matrices_scratch.as_slice(),
                     Some(c.texture_bind_groups.as_slice()),
                 ));
-                if is_restroom_mirror && !state.mirror_skin_matrices_scratch.is_empty() {
-                    skeletal_draw.push((
-                        &c.gpu_mesh,
-                        state.mirror_skin_matrices_scratch.as_slice(),
-                        Some(c.texture_bind_groups.as_slice()),
-                    ));
-                }
             }
         }
 
@@ -113,6 +103,11 @@ pub(super) fn submit_scene_draw(
                 .zip(s.stage_texture_bind_groups.as_ref())
         })
         .unwrap_or((state.gpu_map.as_ref(), &state.map_texture_bind_groups));
+
+    let planar_mirror_spec = mirror_room_id.and_then(|room_id| {
+        sh2_renderer::mirror::PlanarMirrorSpec::for_room_and_gpu_map(room_id, active_gpu_map)
+    });
+    state.render_ctx.set_planar_mirror(planar_mirror_spec);
 
     if state.debug_collision_overlay {
         let floors_iter = state.sim_core.collision.floors.iter().map(|f| f.v);

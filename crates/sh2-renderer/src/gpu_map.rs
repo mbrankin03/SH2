@@ -27,6 +27,10 @@ pub struct GpuMapBatch {
     pub part_group: u8,
     /// 1-based switchable variant index (`geo_id & 0xff`; `0` = always visible base geometry).
     pub variant_index: u8,
+    /// Axis-aligned bounding box minimum `(x, y, z)` in PS2 mm.
+    pub bounds_min: [f32; 3],
+    /// Axis-aligned bounding box maximum `(x, y, z)` in PS2 mm.
+    pub bounds_max: [f32; 3],
 }
 
 /// GPU-resident compiled level geometry for a single `.map` file or outdoor tile.
@@ -84,6 +88,14 @@ impl GpuMap {
                 contents: idx_bytes,
                 usage: wgpu::BufferUsages::INDEX,
             });
+            let mut bounds_min = [f32::INFINITY; 3];
+            let mut bounds_max = [f32::NEG_INFINITY; 3];
+            for p in &batch.positions {
+                for axis in 0..3 {
+                    bounds_min[axis] = bounds_min[axis].min(p[axis]);
+                    bounds_max[axis] = bounds_max[axis].max(p[axis]);
+                }
+            }
             batches.push(GpuMapBatch {
                 vertex_buffer,
                 index_buffer,
@@ -98,6 +110,8 @@ impl GpuMap {
                 geo_id: batch.geo_id,
                 part_group: batch.part_group(),
                 variant_index: batch.variant_index(),
+                bounds_min,
+                bounds_max,
             });
         }
         Self {

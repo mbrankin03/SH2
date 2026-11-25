@@ -51,6 +51,9 @@ fn test_sh2_18_full_menu_and_options_flow() {
     let cue = controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(cue, MenuSoundCue::Confirm);
     assert_eq!(controller.title_sm.phase, TitlePhase::OptionsMenu);
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Root);
+    controller.handle_nav(MenuNavAction::Down); // Advanced Options
+    controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Video);
 
     // Video Options: Modify Resolution (Native -> 1080p)
@@ -160,7 +163,10 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert_eq!(reloaded.controls.glyph_style, ButtonGlyphStyle::Xbox);
     assert_eq!(reloaded.game.language, GameLanguage::Japanese);
 
-    // Return from Options to Main Menu
+    // Return from Game submenu -> Root Options -> Main Menu
+    let cue = controller.handle_nav(MenuNavAction::Cancel);
+    assert_eq!(cue, MenuSoundCue::Cancel);
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Root);
     let cue = controller.handle_nav(MenuNavAction::Cancel);
     assert_eq!(cue, MenuSoundCue::Cancel);
     assert_eq!(controller.title_sm.phase, TitlePhase::MainMenu);
@@ -377,6 +383,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     // 6. Verify launching the FMV Cutscene Viewer directly from Options -> Video tab (SH2-10)
     let mut fmv_opt_controller = AppMenuController::new(&config_path);
     fmv_opt_controller.title_sm.phase = TitlePhase::OptionsMenu;
+    fmv_opt_controller.options_menu.active_tab = OptionsTab::Video;
     // Video tab is index 0; World & Character Textures is row 9 (SH2-92); FMV Cutscene Viewer is row index 10
     fmv_opt_controller.options_menu.selected_index = 10;
     let cue = fmv_opt_controller.handle_nav(MenuNavAction::Confirm);

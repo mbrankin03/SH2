@@ -109,8 +109,22 @@ impl ApplicationHandler for SilentHillApp {
                 }
 
                 if pressed && !state.menu_ctrl.in_game_active {
-                    let sound = state.menu_ctrl.handle_nav(MenuNavAction::Confirm);
+                    let vw = state.surface_config.width.max(1) as f32;
+                    let vh = state.surface_config.height.max(1) as f32;
+                    let sound = if button == winit::event::MouseButton::Right {
+                        state.menu_ctrl.handle_nav(MenuNavAction::Cancel)
+                    } else if let Some((mx, my)) = state.last_cursor_pos {
+                        state
+                            .menu_ctrl
+                            .handle_mouse_click(mx as f32, my as f32, vw, vh)
+                    } else {
+                        state.menu_ctrl.handle_nav(MenuNavAction::Confirm)
+                    };
                     emit_menu_sound(state, sound, "Menu");
+                    if state.menu_ctrl.title_sm.exit_requested {
+                        tracing::info!("Main Menu: Exit confirmed via mouse, closing application.");
+                        event_loop.exit();
+                    }
                 } else if pressed
                     && button == winit::event::MouseButton::Left
                     && state.menu_ctrl.in_game_active
@@ -143,7 +157,23 @@ impl ApplicationHandler for SilentHillApp {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if state.menu_ctrl.in_game_active && state.ingame_menus.is_any_open() {
+                let vw = state.surface_config.width.max(1) as f32;
+                let vh = state.surface_config.height.max(1) as f32;
+                if !state.menu_ctrl.in_game_active
+                    || (state.menu_ctrl.pause_menu.is_open
+                        && state.menu_ctrl.pause_menu.sub_phase
+                            == sh2_ui::pause::PauseSubPhase::InOptionsMenu)
+                {
+                    let cue = state.menu_ctrl.handle_mouse_move(
+                        position.x as f32,
+                        position.y as f32,
+                        vw,
+                        vh,
+                    );
+                    if cue != sh2_ui::menu::MenuSoundCue::None {
+                        emit_menu_sound(state, cue, "MenuHover");
+                    }
+                } else if state.menu_ctrl.in_game_active && state.ingame_menus.is_any_open() {
                     ingame_menus::handle_mouse_move(state, position.x as f32, position.y as f32);
                 }
                 if let Some((last_x, last_y)) = state.last_cursor_pos {
@@ -168,7 +198,43 @@ impl ApplicationHandler for SilentHillApp {
                 state.last_cursor_pos = Some((position.x, position.y));
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                if state.menu_ctrl.in_game_active {
+                let raw_lines = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.y as f32) / 36.0,
+                };
+                if !state.menu_ctrl.in_game_active
+                    || (state.menu_ctrl.pause_menu.is_open
+                        && state.menu_ctrl.pause_menu.sub_phase
+                            == sh2_ui::pause::PauseSubPhase::InOptionsMenu)
+                {
+                    let steps = if raw_lines.abs() >= 0.1 {
+                        let s = (-raw_lines).round() as i32;
+                        if s == 0 {
+                            if raw_lines > 0.0 {
+                                -1
+                            } else {
+                                1
+                            }
+                        } else {
+                            s
+                        }
+                    } else {
+                        0
+                    };
+                    if steps != 0 {
+                        let vw = state.surface_config.width.max(1) as f32;
+                        let vh = state.surface_config.height.max(1) as f32;
+                        let cue = state.menu_ctrl.handle_mouse_wheel(
+                            steps,
+                            state.last_cursor_pos,
+                            vw,
+                            vh,
+                        );
+                        if cue != sh2_ui::menu::MenuSoundCue::None {
+                            emit_menu_sound(state, cue, "MenuScroll");
+                        }
+                    }
+                } else if state.menu_ctrl.in_game_active {
                     let scroll = match delta {
                         winit::event::MouseScrollDelta::LineDelta(_, y) => y * 150.0,
                         winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 1.5,

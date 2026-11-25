@@ -304,6 +304,7 @@ impl TitleStateMachine {
                             }
                             MainMenuOption::Options => {
                                 self.phase = TitlePhase::OptionsMenu;
+                                self.start_fade_in_duration(0.5);
                                 sound = MenuSoundCue::Confirm;
                             }
                             MainMenuOption::Movies => {
@@ -527,10 +528,15 @@ impl TitleStateMachine {
 
     /// Trigger smooth 2.0s fade in (`titleFadeIn` `0x001c1880`).
     pub fn start_fade_in(&mut self) {
+        self.start_fade_in_duration(TITLE_FADE_DURATION_SECS);
+    }
+
+    /// Trigger smooth fade in over `duration_secs` (e.g. `otn_option.c` `fade_in` `0x002170c0`).
+    pub fn start_fade_in_duration(&mut self, duration_secs: f32) {
         self.is_fading_in = true;
         self.is_fading_out = false;
         self.fade_alpha = 0.0;
-        self.fade_speed = 1.0 / TITLE_FADE_DURATION_SECS;
+        self.fade_speed = 1.0 / duration_secs.max(0.05);
     }
 
     /// Transitions immediately to `phase` at full opacity (`fade_alpha = 1.0`), clearing any active fade flags.
@@ -541,6 +547,107 @@ impl TitleStateMachine {
         self.is_fading_out = false;
         self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
         self.attract_movie_requested = false;
+    }
+
+    /// Updates menu hover selection from centered PS2 512×448 coordinates `(cx, cy)` (`[-256..+256] × [-224..+224]`).
+    /// Returns `true` if the selected index changed (so the caller can play `MenuSoundCue::CursorMove`).
+    pub fn handle_mouse_move(&mut self, cx: f32, cy: f32) -> bool {
+        if self.is_fading_out {
+            return false;
+        }
+        self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
+        match self.phase {
+            TitlePhase::MainMenu => {
+                if !(-110.0..=110.0).contains(&cx) {
+                    return false;
+                }
+                let slots = self.visible_main_menu_options();
+                let start_cy = if slots.len() > 4 { 52.0 } else { 74.0 };
+                let step_cy = 22.0;
+                for idx in 0..slots.len() {
+                    let row_top = start_cy + idx as f32 * step_cy - 4.0;
+                    if (row_top..=row_top + 22.0).contains(&cy) {
+                        if self.main_menu_index != idx {
+                            self.main_menu_index = idx;
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+                false
+            }
+            TitlePhase::ScenarioSelect => {
+                if !(-190.0..=190.0).contains(&cx) {
+                    return false;
+                }
+                for idx in 0..2 {
+                    let row_top = 76.0 + idx as f32 * 32.0 - 4.0;
+                    if (row_top..=row_top + 28.0).contains(&cy) {
+                        let target = if idx == 0 {
+                            ScenarioKind::LetterFromSilentHeaven
+                        } else {
+                            ScenarioKind::BornFromAWish
+                        };
+                        if self.scenario_index != idx {
+                            self.scenario_index = idx;
+                            self.selected_scenario = target;
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+                false
+            }
+            TitlePhase::ActionDifficultySelect => {
+                let is_bfaw = self.selected_scenario == ScenarioKind::BornFromAWish;
+                let action_cx = if is_bfaw { 0.0 } else { -100.0 };
+                if (cx - action_cx).abs() > 75.0 {
+                    return false;
+                }
+                const ROW_CYS: [f32; 4] = [80.0, 98.0, 115.0, 134.0];
+                for (idx, &diff) in ACTION_DIFFICULTY_ROWS.iter().enumerate() {
+                    let row_top = ROW_CYS[idx] - 3.0;
+                    if (row_top..=row_top + 18.0).contains(&cy) {
+                        if self.action_difficulty != diff {
+                            self.action_difficulty = diff;
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+                false
+            }
+            TitlePhase::RiddleDifficultySelect => {
+                if (cx - 107.0).abs() > 75.0 {
+                    return false;
+                }
+                const ROW_CYS: [f32; 3] = [80.0, 98.0, 115.0];
+                for (idx, &diff) in RIDDLE_DIFFICULTY_ROWS.iter().enumerate() {
+                    let row_top = ROW_CYS[idx] - 3.0;
+                    if (row_top..=row_top + 18.0).contains(&cy) {
+                        if self.riddle_difficulty != diff {
+                            self.riddle_difficulty = diff;
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+                false
+            }
+            TitlePhase::ExitConfirm => {
+                if (26.0..=58.0).contains(&cy) {
+                    if (-60.0..=-4.0).contains(&cx) && self.exit_confirm_index != 0 {
+                        self.exit_confirm_index = 0;
+                        return true;
+                    } else if (4.0..=60.0).contains(&cx) && self.exit_confirm_index != 1 {
+                        self.exit_confirm_index = 1;
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     fn on_fade_out_complete(&mut self) {

@@ -148,7 +148,8 @@ impl AssetPathResolver {
         self.data_dir.join("pic").is_dir()
     }
 
-    /// Resolves the user-accessible `mods/` directory (`SH2_MODS_DIR`, local `mods/`, or `<game_root>/mods/`).
+    /// Resolves the user-accessible `mods/` directory (`SH2_MODS_DIR`, local `mods/`,
+    /// `<game_root>/mods/`, or shared workspace `SH2-Port/mods/`).
     #[must_use]
     pub fn resolve_mods_dir(&self) -> PathBuf {
         if let Ok(env_dir) = std::env::var("SH2_MODS_DIR") {
@@ -157,15 +158,18 @@ impl AssetPathResolver {
                 return p;
             }
         }
-        let local = PathBuf::from("mods");
-        if local.is_dir() {
-            return local;
+        for cand in [
+            PathBuf::from("mods"),
+            PathBuf::from("../mods"),
+            self.game_root.join("mods"),
+            PathBuf::from("../../Documents/SH2-Port/mods"),
+            PathBuf::from("/home/matthewb/Documents/SH2-Port/mods"),
+        ] {
+            if cand.is_dir() {
+                return cand;
+            }
         }
-        let game_mods = self.game_root.join("mods");
-        if game_mods.is_dir() {
-            return game_mods;
-        }
-        local
+        PathBuf::from("mods")
     }
 
     /// Resolves the active 4K AI Super-Resolution Texture Pack directory or `.zip` archive (`SH2-92`),

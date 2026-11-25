@@ -359,17 +359,43 @@ impl RenderContext {
         );
         let default_view = default_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Default Anisotropic 16x Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
+        let create_anisotropic_sampler =
+            |label: &'static str,
+             address_mode_u: wgpu::AddressMode,
+             address_mode_v: wgpu::AddressMode| {
+                device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some(label),
+                    address_mode_u,
+                    address_mode_v,
+                    address_mode_w: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Linear,
+                    anisotropy_clamp: 16,
+                    ..Default::default()
+                })
+            };
+
+        let default_sampler = create_anisotropic_sampler(
+            "Default Anisotropic 16x Sampler",
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::Repeat,
+        );
+        let clamp_sampler = create_anisotropic_sampler(
+            "Clamp Anisotropic 16x Sampler",
+            wgpu::AddressMode::ClampToEdge,
+            wgpu::AddressMode::ClampToEdge,
+        );
+        let repeat_u_clamp_v_sampler = create_anisotropic_sampler(
+            "Repeat-U Clamp-V Anisotropic 16x Sampler",
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::ClampToEdge,
+        );
+        let clamp_u_repeat_v_sampler = create_anisotropic_sampler(
+            "Clamp-U Repeat-V Anisotropic 16x Sampler",
+            wgpu::AddressMode::ClampToEdge,
+            wgpu::AddressMode::Repeat,
+        );
 
         let default_texture_bind_group =
             Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -505,6 +531,9 @@ impl RenderContext {
                 crate::water::DEFAULT_WATER_HEIGHT_MM.to_bits(),
             ),
             default_sampler,
+            clamp_sampler,
+            repeat_u_clamp_v_sampler,
+            clamp_u_repeat_v_sampler,
             default_view,
             default_texture_bind_group,
         }

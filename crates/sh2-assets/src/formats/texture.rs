@@ -610,14 +610,29 @@ impl TextureLoader {
         });
 
         if let Ok(entries) = decoded_entries.into_inner() {
-            for (tid, map_tex) in entries {
-                let existing_area = target_map
-                    .textures
-                    .get(&tid)
+            for (tid, mut map_tex) in entries {
+                let existing = target_map.textures.get(&tid);
+                let existing_area = existing
                     .map(|t| t.width.saturating_mul(t.height))
                     .unwrap_or(0);
                 let new_area = map_tex.width.saturating_mul(map_tex.height);
                 if new_area >= existing_area {
+                    if let Some(van_tex) = existing {
+                        let up_has_alpha =
+                            map_tex.data.as_chunks::<4>().0.iter().any(|px| px[3] < 255);
+                        if up_has_alpha {
+                            if let Ok(van_rgba) = van_tex.to_rgba() {
+                                Self::sanitize_4k_cutout_alpha_against_vanilla(
+                                    &mut map_tex.data,
+                                    map_tex.width,
+                                    map_tex.height,
+                                    &van_rgba,
+                                    van_tex.width,
+                                    van_tex.height,
+                                );
+                            }
+                        }
+                    }
                     target_map.textures.insert(tid, map_tex);
                     overridden_count += 1;
                 }
@@ -629,6 +644,78 @@ impl TextureLoader {
                 overridden_count,
                 root.display()
             );
+        }
+    }
+
+    /// Masks circular-wrap border bleed and low-alpha AI/DXT5 fringe in an upscaled 4K cutout
+    /// texture against the original retail vanilla texture's clamped alpha footprint.
+    ///
+    /// Only runs when `vanilla_rgba` actually contains transparent cutout texels (`alpha < 4`),
+    /// leaving opaque/non-cutout world textures untouched. For each upscaled texel, if the clamped
+    /// 2x2 neighborhood in `vanilla_rgba` has `max_alpha == 0`, the upscaled alpha is zeroed so
+    /// `MAP_ALPHA_TEST_THRESHOLD` (`0.5 / 255.0`, `SLUS_202.28` `TEST_1 = 0x5000d` / `sh2pc.exe`
+    /// `D3DRS_ALPHAREF = 0`) cleanly discards transparent borders without hairline artifacts.
+    pub fn sanitize_4k_cutout_alpha_against_vanilla(
+        upscaled_rgba_or_bgra: &mut [u8],
+        up_w: usize,
+        up_h: usize,
+        vanilla_rgba: &[u8],
+        van_w: usize,
+        van_h: usize,
+    ) {
+        if up_w == 0
+            || up_h == 0
+            || van_w == 0
+            || van_h == 0
+            || upscaled_rgba_or_bgra.len() < up_w * up_h * 4
+            || vanilla_rgba.len() < van_w * van_h * 4
+        {
+            return;
+        }
+
+        let van_has_cutout = vanilla_rgba.as_chunks::<4>().0.iter().any(|px| px[3] < 4);
+        if !van_has_cutout {
+            return;
+        }
+
+        let scale_x = van_w as f32 / up_w as f32;
+        let scale_y = van_h as f32 / up_h as f32;
+        let max_vx = (van_w - 1) as f32;
+        let max_vy = (van_h - 1) as f32;
+
+        for y in 0..up_h {
+            let vy_f = ((y as f32 + 0.5) * scale_y - 0.5).clamp(0.0, max_vy);
+            let vy0 = vy_f.floor() as usize;
+            let fy = vy_f - vy0 as f32;
+            let vy1 = if fy > 0.0 {
+                (vy0 + 1).min(van_h - 1)
+            } else {
+                vy0
+            };
+            let row0 = vy0 * van_w;
+            let row1 = vy1 * van_w;
+            let dst_row = y * up_w;
+
+            for x in 0..up_w {
+                let vx_f = ((x as f32 + 0.5) * scale_x - 0.5).clamp(0.0, max_vx);
+                let vx0 = vx_f.floor() as usize;
+                let fx = vx_f - vx0 as f32;
+                let vx1 = if fx > 0.0 {
+                    (vx0 + 1).min(van_w - 1)
+                } else {
+                    vx0
+                };
+
+                let a00 = vanilla_rgba[(row0 + vx0) * 4 + 3];
+                let a10 = vanilla_rgba[(row0 + vx1) * 4 + 3];
+                let a01 = vanilla_rgba[(row1 + vx0) * 4 + 3];
+                let a11 = vanilla_rgba[(row1 + vx1) * 4 + 3];
+                let max_van_a = a00.max(a10).max(a01).max(a11);
+
+                if max_van_a == 0 {
+                    upscaled_rgba_or_bgra[(dst_row + x) * 4 + 3] = 0;
+                }
+            }
         }
     }
 
@@ -1160,5 +1247,69 @@ mod tests {
         assert!(has_alpha_in_rect(0, 0, 256, 256));
         assert!(has_alpha_in_rect(0, 384, 128, 512));
         assert!(has_alpha_in_rect(256, 256, 512, 512));
+    }
+
+    #[test]
+    fn test_sanitize_4k_cutout_alpha_removes_circular_wrap_bleed_and_preserves_opaque() {
+        // 2x2 vanilla cutout: left column alpha=0, right column alpha=255.
+        let vanilla = vec![
+            10, 20, 10, 0, 30, 80, 30, 255, // row 0
+            10, 20, 10, 0, 30, 80, 30, 255, // row 1
+        ];
+        // 4x4 upscaled with circular-wrap bleed on left column (alpha=59)
+        let mut upscaled = vec![0u8; 4 * 4 * 4];
+        for y in 0..4 {
+            for x in 0..4 {
+                let ofs = (y * 4 + x) * 4;
+                upscaled[ofs] = 30;
+                upscaled[ofs + 1] = 80;
+                upscaled[ofs + 2] = 30;
+                upscaled[ofs + 3] = if x == 0 { 59 } else { 255 };
+            }
+        }
+        TextureLoader::sanitize_4k_cutout_alpha_against_vanilla(
+            &mut upscaled,
+            4,
+            4,
+            &vanilla,
+            2,
+            2,
+        );
+        for y in 0..4 {
+            // Leftmost column (maps solely to vanilla x=0 where alpha=0) must be zeroed.
+            assert_eq!(upscaled[(y * 4) * 4 + 3], 0);
+            // Rightmost column (maps to vanilla x=1 where alpha=255) must be preserved.
+            assert_eq!(upscaled[(y * 4 + 3) * 4 + 3], 255);
+        }
+
+        // Opaque vanilla texture (no alpha < 4) must leave upscaled alpha untouched.
+        let opaque_van = vec![255u8; 2 * 2 * 4];
+        let mut opaque_up = vec![128u8; 4 * 4 * 4];
+        TextureLoader::sanitize_4k_cutout_alpha_against_vanilla(
+            &mut opaque_up,
+            4,
+            4,
+            &opaque_van,
+            2,
+            2,
+        );
+        assert!(opaque_up.iter().all(|&b| b == 128));
+    }
+
+    #[test]
+    fn test_mipmap_zero_alpha_texels_do_not_darken_cutout_rgb() {
+        // 2x2 texture: 1 opaque green texel + 3 transparent black texels.
+        let rgba = vec![
+            80, 140, 60, 255, // opaque green
+            0, 0, 0, 0, // transparent black
+            0, 0, 0, 0, // transparent black
+            0, 0, 0, 0, // transparent black
+        ];
+        let chain = generate_mipmap_chain_rgba(&rgba, 2, 2);
+        assert_eq!(chain.len(), 2);
+        let (_, _, ref mip1) = chain[1];
+        assert_eq!(mip1[0], 80);
+        assert_eq!(mip1[1], 140);
+        assert_eq!(mip1[2], 60);
     }
 }

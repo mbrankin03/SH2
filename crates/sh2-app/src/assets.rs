@@ -997,8 +997,11 @@ pub(crate) fn build_map_texture_bind_groups(
         std::collections::HashMap::with_capacity(unique_tids.len());
     if let Ok(entries) = prepared_map.into_inner() {
         for (m_idx, tex_id, prepared) in entries {
-            let bg = render_ctx.upload_prepared_texture_bind_group(
+            let (wrap_u, wrap_v) = map_file.texture_uv_wrap_axes(tex_id);
+            let bg = render_ctx.upload_prepared_texture_bind_group_with_wrap(
                 &prepared,
+                wrap_u,
+                wrap_v,
                 Some(&format!("Map Material {m_idx} Texture {tex_id}")),
             );
             tex_bg_cache.insert(tex_id, bg);

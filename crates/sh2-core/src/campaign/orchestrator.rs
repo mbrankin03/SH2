@@ -389,16 +389,20 @@ impl CampaignOrchestrator {
                             sim.scenario.flags.set(rule.completion_flag, true);
                         }
                     }
-                    apply_post_cutscene_handoff(
-                        sim,
-                        &mut self.event_camera,
-                        post_pos,
-                        post_yaw,
-                        restore_policy,
-                    );
-                    self.player_locked = false;
-                    self.phase = CampaignPhase::ActiveGameplay;
-                    effects.allow_gameplay_sim = true;
+                    if demo_no == 88 {
+                        self.trigger_ending(48);
+                    } else {
+                        apply_post_cutscene_handoff(
+                            sim,
+                            &mut self.event_camera,
+                            post_pos,
+                            post_yaw,
+                            restore_policy,
+                        );
+                        self.player_locked = false;
+                        self.phase = CampaignPhase::ActiveGameplay;
+                        effects.allow_gameplay_sim = true;
+                    }
                 } else if input.drama_demo_finished {
                     let next_step = find_drama_demo_by_no(demo_no as u16)
                         .and_then(|info| info.sequence_chain.get(chain_cursor + 1).copied());
@@ -465,13 +469,13 @@ impl CampaignOrchestrator {
                 }
             }
             CampaignPhase::FmvPlayback {
+                movie_id,
                 post_stage,
                 post_pos,
                 post_yaw,
                 post_demo,
                 completion_flag,
                 chain_cursor,
-                ..
             } => {
                 if input.cancel_pressed {
                     if let Some(flag) = completion_flag {
@@ -491,6 +495,10 @@ impl CampaignOrchestrator {
                             dest_rot_y: post_yaw.unwrap_or(sim.scenario.player_yaw),
                         };
                         self.request_transition(sim.scenario.current_stage, cmd, None);
+                    } else if let Some(ending_stage) =
+                        ending_stage_for_fmv(movie_id, sim.scenario.current_stage)
+                    {
+                        self.trigger_ending(ending_stage);
                     } else {
                         apply_post_cutscene_handoff(
                             sim,
@@ -523,6 +531,10 @@ impl CampaignOrchestrator {
                             dest_rot_y: post_yaw.unwrap_or(sim.scenario.player_yaw),
                         };
                         self.request_transition(sim.scenario.current_stage, cmd, None);
+                    } else if let Some(ending_stage) =
+                        ending_stage_for_fmv(movie_id, sim.scenario.current_stage)
+                    {
+                        self.trigger_ending(ending_stage);
                     } else {
                         apply_post_cutscene_handoff(
                             sim,
@@ -601,5 +613,20 @@ impl CampaignOrchestrator {
                 effects.allow_gameplay_sim = true;
             }
         }
+    }
+}
+
+/// Maps an ending FMV (`"end"`, `"water"`, `"end_dog"`, `"end_wish"`) or ending stage (`48..=52`,
+/// `54`) to its `EndingCredits` stage ID.
+fn ending_stage_for_fmv(movie_id: &str, current_stage: u16) -> Option<u16> {
+    if (48..=52).contains(&current_stage) || current_stage == 54 {
+        return Some(current_stage);
+    }
+    match movie_id {
+        "end" => Some(48),
+        "water" => Some(50),
+        "end_dog" => Some(52),
+        "end_wish" => Some(54),
+        _ => None,
     }
 }

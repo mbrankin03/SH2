@@ -248,6 +248,92 @@ fn hybrid_drama_demo_sequence_chain_advances_through_fmv_and_part_b() {
 }
 
 #[test]
+fn seq_leave_ending_demo_and_fmv_transition_to_ending_credits() {
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        48,
+        Some("ru73".to_string()),
+        [0.0, 0.0, 0.0],
+        0.0,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        true,
+    );
+    let _ = drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
+
+    // 1. Natural `SEQ_LEAVE_ENDING` flow: demo 88 -> FmvMovie("end") -> EndingCredits(48).
+    let mut eff = Default::default();
+    orch.start_drama_demo(
+        sh2_core::campaign::DramaDemoTrigger {
+            demo_no: 88,
+            demo_id: Some("mry_yarinaoshi_a"),
+            post_pos: None,
+            post_yaw: None,
+            restore_policy:
+                sh2_core::event_camera::PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+        },
+        &mut eff,
+    );
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            drama_demo_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::FmvPlayback {
+            movie_id: "end",
+            ..
+        }
+    ));
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            fmv_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert_eq!(
+        orch.phase,
+        CampaignPhase::EndingCredits {
+            ending_stage: 48,
+            showing_results: false
+        }
+    );
+
+    // 2. Skipping demo 88 directly also enters EndingCredits(48).
+    orch.start_drama_demo(
+        sh2_core::campaign::DramaDemoTrigger {
+            demo_no: 88,
+            demo_id: Some("mry_yarinaoshi_a"),
+            post_pos: None,
+            post_yaw: None,
+            restore_policy:
+                sh2_core::event_camera::PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+        },
+        &mut eff,
+    );
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            cancel_pressed: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert_eq!(
+        orch.phase,
+        CampaignPhase::EndingCredits {
+            ending_stage: 48,
+            showing_results: false
+        }
+    );
+}
+
+#[test]
 fn door_transition_resolves_connected_stage_pair_and_triggers_outdoor_observation_demo() {
     let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
     let mut orch = CampaignOrchestrator::from_saved_stage(

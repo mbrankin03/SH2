@@ -472,34 +472,43 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     );
 
     // Preload authentic 1:1 button sprite atlas from start01e.tex / start01.tex and Original PS2 title background
-    // from the 4K AI Texture Pack (`mods/sh2_4k_textures/ps2/etc/start00.dds`, falling back to `sh2e/ps2/etc/start00.tex`).
+    // from the 4K AI Texture Pack (`mods/sh2_4k_textures/ps2/etc/start00.dds`, falling back to `sh2e/ps2/etc/start00.tex`)
+    // only when `WorldTextureQuality::Ai4kMaster` is active (strict 1:1 Vanilla PS2 toggleability).
+    let use_4k_title_pack =
+        startup_config.video.texture_quality == sh2_core::WorldTextureQuality::Ai4kMaster;
     let resolver = sh2_assets::AssetPathResolver::resolve();
     let ps2_etc_dir = resolver.game_root.join("sh2e/ps2");
     let ps2_tex_loader = sh2_assets::TextureLoader::new(&ps2_etc_dir, None::<&std::path::Path>);
-    let splash_title_bg_original = tex_loader
-        .load_4k_named_override("ps2", "etc/start00")
-        .or_else(|| ps2_tex_loader.load_texture("etc/start00.tex").ok())
-        .map(|t| {
-            render_ctx.create_blitter_bind_group(
-                &blitter,
-                t.width as u32,
-                t.height as u32,
-                &t.rgba,
-                &title_bg_uniform_buffer,
-                Some("Original PS2 Title Background Texture (4K Pack)"),
-            )
-        });
+    let splash_title_bg_original = if use_4k_title_pack {
+        tex_loader
+            .load_4k_named_override("ps2", "etc/start00")
+            .or_else(|| ps2_tex_loader.load_texture("etc/start00.tex").ok())
+    } else {
+        ps2_tex_loader.load_texture("etc/start00.tex").ok()
+    }
+    .map(|t| {
+        render_ctx.create_blitter_bind_group(
+            &blitter,
+            t.width as u32,
+            t.height as u32,
+            &t.rgba,
+            &title_bg_uniform_buffer,
+            Some("Original PS2 Title Background Texture"),
+        )
+    });
     let mut button_sprites = tex_loader
         .load_texture("pic/etc/start01e.tex")
         .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
         .ok()
         .map(|t| ButtonSpriteSheet::new(t.width, t.height, t.rgba));
-    if let (Some(ref mut sheet), Some(orig_s1)) = (
-        &mut button_sprites,
+    let orig_s1 = if use_4k_title_pack {
         tex_loader
             .load_4k_named_override("ps2", "etc/start01")
-            .or_else(|| ps2_tex_loader.load_texture("etc/start01.tex").ok()),
-    ) {
+            .or_else(|| ps2_tex_loader.load_texture("etc/start01.tex").ok())
+    } else {
+        ps2_tex_loader.load_texture("etc/start01.tex").ok()
+    };
+    if let (Some(ref mut sheet), Some(orig_s1)) = (&mut button_sprites, orig_s1) {
         sheet.set_original_title_logo(orig_s1.width, orig_s1.height, orig_s1.rgba);
     }
 

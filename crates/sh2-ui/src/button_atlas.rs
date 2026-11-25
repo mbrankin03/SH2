@@ -298,14 +298,15 @@ impl ButtonSpriteSheet {
             }
         } else if sprite == AuthenticButtonSprite::TitleLogoOriginal {
             if let Some(ref orig_bytes) = self.orig_logo_rgba {
+                let scaled_h = ((96 * self.orig_logo_height) / 512).clamp(1, self.orig_logo_height);
                 (
                     orig_bytes.as_slice(),
                     self.orig_logo_width,
                     AtlasRect {
                         x: 0,
                         y: 0,
-                        width: self.orig_logo_width.min(512),
-                        height: self.orig_logo_height.min(96),
+                        width: self.orig_logo_width,
+                        height: scaled_h,
                     },
                 )
             } else {

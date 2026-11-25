@@ -30,6 +30,8 @@ pub struct AppMenuController {
     pub options_menu: OptionsMenu,
     pub pause_menu: PauseMenu,
     pub config_path: PathBuf,
+    /// Resolved save directory (`~/Documents/Silent Hill 2/saves`, Android app files dir, or override).
+    pub save_dir: PathBuf,
     /// Has the user completed title sequence and transitioned to in-game world?
     pub in_game_active: bool,
     /// Flag indicating that configuration was committed and needs to be applied by the engine loop.
@@ -106,8 +108,15 @@ impl AppMenuController {
         let (mod_vfs, mod_entries) = Self::build_mod_vfs(&resolver, &loaded_config);
         options_menu.set_mods(mod_entries);
         let mut title_sm = TitleStateMachine::new();
-        let save_path = path.with_file_name("save_slot0.json");
-        if sh2_core::campaign::CampaignSaveSnapshot::exists_at(&save_path) {
+        let save_dir = crate::save_paths::resolve_save_dir(&path, &loaded_config);
+        let repo = sh2_core::campaign::SaveSlotRepository::new(&save_dir);
+        let has_saves = !repo
+            .scan_slots(
+                loaded_config.game.enable_unlimited_save_slots,
+                loaded_config.game.enable_quicksave_autosave,
+            )
+            .is_empty();
+        if has_saves {
             title_sm.set_save_availability(sh2_ui::menu::SaveAvailability::LoadAndContinue);
         }
         let pause_menu = PauseMenu::new();
@@ -117,6 +126,7 @@ impl AppMenuController {
             options_menu,
             pause_menu,
             config_path: path,
+            save_dir,
             in_game_active: false,
             config_applied_pending: None,
             revision: 0,
@@ -125,10 +135,15 @@ impl AppMenuController {
         }
     }
 
-    /// Returns the path of the primary campaign save slot file (`save_slot0.json`) stored beside `config_path`.
+    /// Re-resolves [`Self::save_dir`] from `cfg` and `self.config_path`.
+    pub fn refresh_save_dir(&mut self, cfg: &AppConfig) {
+        self.save_dir = crate::save_paths::resolve_save_dir(&self.config_path, cfg);
+    }
+
+    /// Returns the path of the primary campaign save slot file inside [`Self::save_dir`].
     #[must_use]
     pub fn save_slot_path(&self) -> PathBuf {
-        self.config_path.with_file_name("save_slot0.json")
+        sh2_core::campaign::SaveSlotRepository::new(&self.save_dir).slot_path(0, 0)
     }
 
     /// Updates the detected audio pack status on both the controller and the nested `OptionsMenu`.
@@ -337,6 +352,7 @@ impl AppMenuController {
                 let (saved_cfg, _) = self.options_menu.commit_changes();
                 self.config_applied_pending = Some(saved_cfg.clone());
                 let _ = saved_cfg.save_to_file(&self.config_path);
+                self.refresh_save_dir(&saved_cfg);
                 return match cue {
                     OptionsSoundCue::CursorMove => MenuSoundCue::Confirm,
                     OptionsSoundCue::ValueChange => MenuSoundCue::CursorMove,
@@ -502,6 +518,7 @@ impl AppMenuController {
                     } else {
                         tracing::info!("Saved configuration to {:?}", self.config_path);
                     }
+                    self.refresh_save_dir(&saved_cfg);
                     if cue == OptionsSoundCue::ConfirmSave {
                         MenuSoundCue::Confirm
                     } else {
@@ -617,6 +634,7 @@ impl AppMenuController {
                     } else {
                         tracing::info!("Saved in-game configuration to {:?}", self.config_path);
                     }
+                    self.refresh_save_dir(&saved_cfg);
                     let sound = if cue == OptionsSoundCue::ConfirmSave {
                         MenuSoundCue::Confirm
                     } else {

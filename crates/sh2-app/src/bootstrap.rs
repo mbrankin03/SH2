@@ -546,6 +546,11 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         .unwrap_or(&"config.json");
     let mut menu_ctrl =
         AppMenuController::new_with_audio_packs(chosen_config_path, detected_audio_packs);
+    tracing::info!(
+        "Save directory resolved to {:?} (config: {:?})",
+        menu_ctrl.save_dir,
+        menu_ctrl.config_path
+    );
     menu_ctrl
         .options_menu
         .set_audio_devices(host_devices.clone());

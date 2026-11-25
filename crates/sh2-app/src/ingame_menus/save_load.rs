@@ -20,12 +20,7 @@ pub(crate) fn open_save_load(state: &mut AppState, mode: sh2_ui::SaveLoadMode) {
         save_thumbnails: g.enable_save_thumbnails,
     };
     let mut sl = sh2_ui::SaveLoadScreen::new(mode, scenario, cfg);
-    let save_dir = state
-        .menu_ctrl
-        .config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let repo = sh2_core::campaign::SaveSlotRepository::new(save_dir);
+    let repo = sh2_core::campaign::SaveSlotRepository::new(&state.menu_ctrl.save_dir);
     sl.set_slots(repo.scan_slots(cfg.unlimited_slots, cfg.quicksave_autosave));
     state.ingame_menus.save_load = Some(sl);
     emit_menu_sound(state, MenuSoundCue::Confirm, "SaveLoad");
@@ -146,12 +141,7 @@ pub(super) fn handle_save_load_key(state: &mut AppState, key_code: KeyCode) {
         };
         sl.handle_nav(nav)
     };
-    let save_dir = state
-        .menu_ctrl
-        .config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .to_path_buf();
+    let save_dir = state.menu_ctrl.save_dir.clone();
     let repo = sh2_core::campaign::SaveSlotRepository::new(&save_dir);
     let g = &state.menu_ctrl.options_menu.original_config.game;
     let (unlimited, quick_auto) = (g.enable_unlimited_save_slots, g.enable_quicksave_autosave);

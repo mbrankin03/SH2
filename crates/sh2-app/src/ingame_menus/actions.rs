@@ -81,6 +81,7 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             state.menu_ctrl.config_applied_pending = Some(saved.clone());
             sync_audio_config(state, &saved);
             let _ = saved.save_to_file(&state.menu_ctrl.config_path);
+            state.menu_ctrl.refresh_save_dir(&saved);
             if cue == OptionsSoundCue::ConfirmSave {
                 MenuSoundCue::Confirm
             } else {

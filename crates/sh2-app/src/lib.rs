@@ -4,6 +4,7 @@ pub mod app;
 pub mod cli;
 pub mod gamepad;
 pub mod menu_controller;
+pub mod save_paths;
 pub mod synthetic_geometry;
 
 pub use app::SilentHill2App;
@@ -25,6 +26,10 @@ fn android_main(app: AndroidApp) {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    if let Some(files_dir) = app.internal_data_path() {
+        save_paths::set_android_files_dir(files_dir);
+    }
 
     tracing::info!("Starting Silent Hill 2 Open Port on Android (AYN Thor)...");
     let engine = SilentHill2App::new();

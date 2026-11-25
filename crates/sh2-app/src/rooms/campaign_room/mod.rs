@@ -499,12 +499,8 @@ impl RoomController for CampaignRoomController {
                     };
                     let mut sl =
                         sh2_ui::SaveLoadScreen::new(sh2_ui::SaveLoadMode::Save, scenario, cfg);
-                    let save_dir = state
-                        .menu_ctrl
-                        .config_path
-                        .parent()
-                        .unwrap_or_else(|| std::path::Path::new("."));
-                    let repo = sh2_core::campaign::SaveSlotRepository::new(save_dir);
+                    let repo =
+                        sh2_core::campaign::SaveSlotRepository::new(&state.menu_ctrl.save_dir);
                     sl.set_slots(repo.scan_slots(cfg.unlimited_slots, cfg.quicksave_autosave));
                     state.ingame_menus.save_load = Some(sl);
                 }
@@ -524,12 +520,8 @@ impl RoomController for CampaignRoomController {
                 showing_results: true,
                 ending_stage,
             } => {
-                let save_dir = state
-                    .menu_ctrl
-                    .config_path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."));
-                let clear_profile = sh2_core::campaign::ClearDataProfile::load_from_dir(save_dir);
+                let clear_profile =
+                    sh2_core::campaign::ClearDataProfile::load_from_dir(&state.menu_ctrl.save_dir);
                 let action = state.menu_ctrl.title_sm.action_difficulty;
                 let riddle = state.menu_ctrl.title_sm.riddle_difficulty;
                 let preset = state

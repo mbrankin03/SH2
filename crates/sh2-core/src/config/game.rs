@@ -460,6 +460,10 @@ pub struct GameOptions {
     /// coagulation darkening, vs strict 1:1 PS2 `blood_clear()` on room exit (`false`).
     #[serde(default)]
     pub enable_persistent_blood_decals: bool,
+    /// Optional custom save directory override (`SH2-143`). When `None`, `sh2-app` resolves
+    /// `~/Documents/Silent Hill 2/saves` (or Android app files dir), unless `SH2_SAVE_DIR` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_dir_override: Option<String>,
 }
 
 /// Debug and development options.
@@ -514,6 +518,7 @@ impl Default for GameOptions {
             enable_cutscene_unequip: true,
             enable_foot_ik: false,
             enable_persistent_blood_decals: false,
+            save_dir_override: None,
         }
     }
 }

@@ -271,6 +271,7 @@ pub(crate) fn apply_pending_engine_config(state: &mut AppState) {
 
     // 1. Audio Engine volume updates, audio pack source hot-swap, and device re-binding
     sync_audio_config(state, &cfg);
+    state.menu_ctrl.refresh_save_dir(&cfg);
 
     if cfg.audio.selected_output_device != state.active_audio_device {
         if let Some(ref mut audio) = state.audio_engine {

@@ -13,6 +13,7 @@
 use glam::{Mat4, Vec3, Vec4};
 use sh2_assets::formats::map::{BatchGroup, MapFile};
 
+use crate::gpu_map::GpuMap;
 use crate::pipeline::CameraUniforms;
 
 /// Mirror wall X coordinate in `er01.map` (`room_id == 0x01`, `SLUS_202.28` `0x0024c190`: `0xc69c4000`).
@@ -21,25 +22,39 @@ pub const MIRROR_WALL_ER01_X_MM: f32 = -20_000.0;
 /// Mirror wall Z coordinate in `ap84.map` / Blue Creek Rm 109 (`room_id == 0x24`, `SLUS_202.28` `0x0024c190`: `0xc7c34d80`).
 pub const MIRROR_WALL_AP84_Z_MM: f32 = -99_995.0;
 
-/// Mirror wall Z coordinate in Born From a Wish Mansion (`room_id == 0xd5`, `sh2pc.exe` `0x00546900`: `0x46a21c00`).
+/// Mirror wall Z coordinate in `th09.map` / Heaven's Night Backstage Dressing Room (`room_id == 0xd5`,
+/// `sh2pc.exe` `0x00494d70` & `FUN_00546900` `0x00546900`: `0x46a21c00`).
 pub const MIRROR_WALL_BFW_D5_Z_MM: f32 = 20_750.0;
 
-/// Full restroom mirror quad for `er01.map` (`X = -20000.0`, spanning above the sink between the wall pipes).
-/// Note: `er01.map` `batch[17]` (`Decal`) only covers a small stain patch in front of James's chest,
-/// so the stencil mask uses the full mirror opening quad while `batch[17]` still blends on top.
+/// Full restroom mirror quad for `er01.map` (`X = -20000.0`), derived from retail `er01.map`:
+/// - `Y_min = -1560.3407` (`batch[2]` ceiling/wall top), `Y_max = -661.4489` (`batch[17]` decal bottom above sink)
+/// - `Z_min = 18487.244` (`batch[0]` / `batch[14]` west wall start), `Z_max = 21506.72` (`batch[4]` west wall end).
+///
+/// Note: `er01.map` `batch[17]` (`Decal`) only covers a small stain patch in front of James's chest
+/// (`Y = [-931.4489, -661.4489], Z = [20349.895, 20569.293]`), so the stencil mask uses the full
+/// mirror opening quad while `batch[17]` blends on top.
 pub const ER01_FALLBACK_QUAD: [[f32; 3]; 4] = [
-    [MIRROR_WALL_ER01_X_MM, -1560.0, 18480.0],
-    [MIRROR_WALL_ER01_X_MM, -650.0, 18480.0],
-    [MIRROR_WALL_ER01_X_MM, -650.0, 21510.0],
-    [MIRROR_WALL_ER01_X_MM, -1560.0, 21510.0],
+    [MIRROR_WALL_ER01_X_MM, -1560.3407, 18487.244],
+    [MIRROR_WALL_ER01_X_MM, -661.4489, 18487.244],
+    [MIRROR_WALL_ER01_X_MM, -661.4489, 21506.72],
+    [MIRROR_WALL_ER01_X_MM, -1560.3407, 21506.72],
 ];
 
-/// Default fallback mirror quad for `ap84.map` (Blue Creek Rm 109) extracted from retail `batch[1]` (`Decal`).
+/// Mirror quad for `ap84.map` (Blue Creek Rm 109) extracted from retail `batch[1]` (`Decal`, `geo_id = 0x0302`).
 pub const AP84_FALLBACK_QUAD: [[f32; 3]; 4] = [
     [59154.992, -1057.4408, MIRROR_WALL_AP84_Z_MM],
     [60669.996, -1057.4408, MIRROR_WALL_AP84_Z_MM],
     [60669.996, -57.92508, MIRROR_WALL_AP84_Z_MM],
     [59154.992, -57.92508, MIRROR_WALL_AP84_Z_MM],
+];
+
+/// Mirror quad for `th09.map` (Heaven's Night Backstage Dressing Room, `room_id == 0xd5`) extracted from
+/// retail `th09.map` room bounds (`X = [59353.59, 60612.805]`, `Y = [-2000.0, 0.0]`, `Z = 20750.0`).
+pub const TH09_FALLBACK_QUAD: [[f32; 3]; 4] = [
+    [59353.59, -2000.0, MIRROR_WALL_BFW_D5_Z_MM],
+    [60612.805, -2000.0, MIRROR_WALL_BFW_D5_Z_MM],
+    [60612.805, 0.0, MIRROR_WALL_BFW_D5_Z_MM],
+    [59353.59, 0.0, MIRROR_WALL_BFW_D5_Z_MM],
 ];
 
 /// Reflection axis matching `SLUS_202.28` `_mirror_mode` (`0x0024c190`) and `sh2pc.exe` `DAT_01d7f880` (`0x00546900`).
@@ -97,12 +112,7 @@ impl PlanarMirrorSpec {
                 axis: PlanarMirrorAxis::AxisZ,
                 plane_point: [0.0, 0.0, MIRROR_WALL_BFW_D5_Z_MM],
                 plane_normal: [0.0, 0.0, -1.0],
-                quad_vertices: [
-                    [-1000.0, -2500.0, MIRROR_WALL_BFW_D5_Z_MM],
-                    [1000.0, -2500.0, MIRROR_WALL_BFW_D5_Z_MM],
-                    [1000.0, 0.0, MIRROR_WALL_BFW_D5_Z_MM],
-                    [-1000.0, 0.0, MIRROR_WALL_BFW_D5_Z_MM],
-                ],
+                quad_vertices: TH09_FALLBACK_QUAD,
                 decal_batch_index: None,
                 main_pass_clip_bias_mm: 1.0,
             }),
@@ -111,13 +121,36 @@ impl PlanarMirrorSpec {
     }
 
     /// Resolves a [`PlanarMirrorSpec`] for `room_id` and locates the matching mirror [`BatchGroup::Decal`]
-    /// batch inside `map` (e.g. `er01.map` `batch[17]` at `X = -20000.0`, `ap84.map` `batch[1]` at `Z = -99995.0`).
+    /// batch inside `map` (e.g. `ap84.map` `batch[1]` at `Z = -99995.0`).
     #[must_use]
     pub fn for_room_and_map(room_id: u32, map: &MapFile) -> Option<Self> {
         let mut spec = Self::for_room(room_id)?;
         // `er01.map` `batch[17]` is only a small stain decal; use the full mirror quad for `0x01`.
         if room_id != 0x01 {
             spec.decal_batch_index = find_mirror_decal_batch(map, spec.axis, spec.wall_pos());
+        }
+        Some(spec)
+    }
+
+    /// Resolves a [`PlanarMirrorSpec`] for `room_id` directly from a compiled [`GpuMap`],
+    /// populating `decal_batch_index` and `quad_vertices` from the actual `.map` batch bounds.
+    #[must_use]
+    pub fn for_room_and_gpu_map(room_id: u32, gpu_map: &GpuMap) -> Option<Self> {
+        let mut spec = Self::for_room(room_id)?;
+        if room_id != 0x01 {
+            const EPS_MM: f32 = 1.0;
+            let comp = match spec.axis {
+                PlanarMirrorAxis::AxisX => 0,
+                PlanarMirrorAxis::AxisY => 1,
+                PlanarMirrorAxis::AxisZ => 2,
+            };
+            let wall = spec.wall_pos();
+            spec.decal_batch_index = gpu_map.batches.iter().position(|b| {
+                b.group == BatchGroup::Decal
+                    && b.num_indices > 0
+                    && (b.bounds_min[comp] - wall).abs() <= EPS_MM
+                    && (b.bounds_max[comp] - wall).abs() <= EPS_MM
+            });
         }
         Some(spec)
     }

@@ -91,10 +91,12 @@ fn fs_mask(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0, 0.0, 0.0, 0.0);
 }
 
+// Direct alpha-blended dirty glass sample (`sh2pc.exe` `0x005b1694`: `D3DBLEND_SRCALPHA` /
+// `D3DBLEND_INVSRCALPHA` using the texture's own alpha channel, matching `er01.map` `batch[17]`
+// and `ap84.map` `batch[1]` vertex alpha = `255`).
 @fragment
 fn fs_glass(in: VertexOutput) -> @location(0) vec4<f32> {
-    let c = textureSample(glass_tex, glass_sampler, in.uv);
-    return vec4<f32>(c.rgb, c.a * 0.45);
+    return textureSample(glass_tex, glass_sampler, in.uv);
 }
 "#;
 

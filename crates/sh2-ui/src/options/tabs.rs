@@ -10,7 +10,7 @@ impl OptionsMenu {
     pub fn item_count(&self) -> usize {
         match self.active_tab {
             OptionsTab::Root => 11,
-            OptionsTab::Video => 20,
+            OptionsTab::Video => 21,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     12
@@ -255,6 +255,7 @@ impl OptionsMenu {
                 "Cutaway Aspect Scaling",
                 v.cutaway_aspect_mode.label().to_string(),
             )),
+            20 => Some(("FMV Cutscene Source", v.fmv_source.label().to_string())),
             _ => None,
         }
     }
@@ -733,6 +734,13 @@ impl OptionsMenu {
             }
             19 => {
                 v.cutaway_aspect_mode = v.cutaway_aspect_mode.toggle();
+            }
+            20 => {
+                v.fmv_source = if forward {
+                    v.fmv_source.next()
+                } else {
+                    v.fmv_source.prev()
+                };
             }
             _ => return Some(OptionsSoundCue::None),
         }

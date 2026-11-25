@@ -284,6 +284,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Video, "FMV Cutscene Viewer") => {
             "Launch the interactive 1080p60 cutscene theater"
         }
+        (OptionsTab::Video, "FMV Cutscene Source") => {
+            "Select FMV source (Auto, 4K AI VSR, SH2:EE 1080p60, OG HQ PS2, or 2001 PC)"
+        }
         (OptionsTab::Video, "Brightness Calibration") => {
             "Open PS2 20-bar brightness calibration screen (bright_main 0..7)"
         }

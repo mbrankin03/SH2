@@ -412,6 +412,57 @@ impl OutdoorStreamingMode {
     }
 }
 
+/// FMV cutscene video source preference (`SH2-90`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum FmvCutsceneSource {
+    /// Automatically select `Upscaled4kMp4` when the 4K AI VSR pack is detected on disk, else `Enhanced1080p60`.
+    #[default]
+    Auto,
+    /// 4K AI VSR Master (`3840x2160` 30fps AV1 + multi-track FLAC).
+    Upscaled4kMp4,
+    /// SH2:EE 1080p60 AI-upscaled Bink (`sh2e/movie/*.bik`).
+    Enhanced1080p60,
+    /// OG HQ PS2 Masters (`Natural 30fps Bink`).
+    OgHqPs2Masters,
+    /// Original 2001 PC (`640x384 Bink` in `data/movie/*.bik`).
+    VanillaPc,
+}
+
+impl FmvCutsceneSource {
+    /// User-facing label for the Video Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto (4K VSR if detected)",
+            Self::Upscaled4kMp4 => "4K AI VSR Master (3840x2160 30fps AV1+FLAC)",
+            Self::Enhanced1080p60 => "SH2:EE 1080p60 (AI-Upscaled Bink)",
+            Self::OgHqPs2Masters => "OG HQ PS2 Masters (Natural 30fps Bink)",
+            Self::VanillaPc => "Original 2001 PC (640x384 Bink)",
+        }
+    }
+
+    /// Cycles to the next FMV cutscene source.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::Upscaled4kMp4,
+            Self::Upscaled4kMp4 => Self::Enhanced1080p60,
+            Self::Enhanced1080p60 => Self::OgHqPs2Masters,
+            Self::OgHqPs2Masters => Self::VanillaPc,
+            Self::VanillaPc => Self::Auto,
+        }
+    }
+
+    /// Cycles to the previous FMV cutscene source.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Auto => Self::VanillaPc,
+            Self::Upscaled4kMp4 => Self::Auto,
+            Self::Enhanced1080p60 => Self::Upscaled4kMp4,
+            Self::OgHqPs2Masters => Self::Enhanced1080p60,
+            Self::VanillaPc => Self::OgHqPs2Masters,
+        }
+    }
+}
+
 /// Video and graphics options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoOptions {
@@ -455,6 +506,9 @@ pub struct VideoOptions {
     /// Use SH2:EE title screen (`SILENT HILL 2 / ENHANCED EDITION`) when `true`, or original PS2 (`SILENT HILL 2`) when `false`.
     #[serde(default = "default_true")]
     pub enable_enhanced_title_screen: bool,
+    /// FMV cutscene video source preference (`SH2-90`).
+    #[serde(default)]
+    pub fmv_source: FmvCutsceneSource,
 }
 
 const fn default_true() -> bool {
@@ -483,6 +537,7 @@ impl Default for VideoOptions {
             enable_water_reflections: true,
             enable_oar_ripples: true,
             enable_enhanced_title_screen: true,
+            fmv_source: FmvCutsceneSource::default(),
         }
     }
 }

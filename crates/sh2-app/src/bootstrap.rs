@@ -647,6 +647,14 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         }
     }
     let initial_fps_cap = menu_ctrl.options_menu.original_config.video.framerate_cap;
+    fmv_viewer.video_source = crate::menu_events::resolve_fmv_video_source(
+        menu_ctrl.options_menu.original_config.video.fmv_source,
+        resolver.has_4k_vsr_fmv_pack(),
+    );
+    fmv_viewer.prefer_hd_source = !matches!(
+        fmv_viewer.video_source,
+        sh2_debug::FmvVideoSource::VanillaPc
+    );
     let mut audio_engine = audio_engine;
     let current_fmv_entry = fmv_viewer.current_entry();
     let source_pref = fmv_viewer.video_source;

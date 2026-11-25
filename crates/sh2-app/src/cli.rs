@@ -8,6 +8,7 @@ pub struct CliArgs {
     pub initial_fog_debug: bool,
     pub initial_viewer_model: Option<String>,
     pub initial_fmv_movie: Option<String>,
+    pub verify_fmv_pack: bool,
 }
 
 impl CliArgs {
@@ -22,11 +23,14 @@ impl CliArgs {
         let mut initial_fog_debug = false;
         let mut initial_viewer_model = None;
         let mut initial_fmv_movie = None;
+        let mut verify_fmv_pack = false;
 
         let mut i = 1;
         while i < args.len() {
             let arg = args[i].as_ref();
-            if arg == "--test-fog" {
+            if arg == "--verify-fmv-pack" {
+                verify_fmv_pack = true;
+            } else if arg == "--test-fog" {
                 initial_fog_debug = true;
                 if initial_test_room.is_none() {
                     initial_test_room = Some(TestRoomKind::SyntheticFogRunway);
@@ -107,6 +111,7 @@ impl CliArgs {
             initial_fog_debug,
             initial_viewer_model,
             initial_fmv_movie,
+            verify_fmv_pack,
         }
     }
 

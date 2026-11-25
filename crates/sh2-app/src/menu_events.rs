@@ -28,6 +28,26 @@ pub(crate) fn emit_menu_sound(state: &mut AppState, sound: MenuSoundCue, log_pre
     }
 }
 
+/// Resolves [`sh2_core::FmvCutsceneSource`] to a concrete [`sh2_debug::FmvVideoSource`].
+pub(crate) fn resolve_fmv_video_source(
+    pref: sh2_core::FmvCutsceneSource,
+    has_4k_vsr_pack: bool,
+) -> sh2_debug::FmvVideoSource {
+    match pref {
+        sh2_core::FmvCutsceneSource::Auto => {
+            if has_4k_vsr_pack {
+                sh2_debug::FmvVideoSource::Upscaled4kMp4
+            } else {
+                sh2_debug::FmvVideoSource::Enhanced1080p60
+            }
+        }
+        sh2_core::FmvCutsceneSource::Upscaled4kMp4 => sh2_debug::FmvVideoSource::Upscaled4kMp4,
+        sh2_core::FmvCutsceneSource::Enhanced1080p60 => sh2_debug::FmvVideoSource::Enhanced1080p60,
+        sh2_core::FmvCutsceneSource::OgHqPs2Masters => sh2_debug::FmvVideoSource::OgHqPs2Masters,
+        sh2_core::FmvCutsceneSource::VanillaPc => sh2_debug::FmvVideoSource::VanillaPc,
+    }
+}
+
 /// Applies audio volume levels and audio pack source hot-swapping from a committed `AppConfig`.
 pub(crate) fn sync_audio_config(state: &mut AppState, cfg: &AppConfig) {
     if let Some(ref mut audio) = state.audio_engine {
@@ -40,6 +60,13 @@ pub(crate) fn sync_audio_config(state: &mut AppState, cfg: &AppConfig) {
         audio.set_dynamic_room_acoustics_enabled(cfg.audio.enable_dynamic_room_acoustics);
     }
     state.fmv_viewer.enable_restored_cut_audio = cfg.audio.enable_restored_cut_audio;
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    state.fmv_viewer.video_source =
+        resolve_fmv_video_source(cfg.video.fmv_source, resolver.has_4k_vsr_fmv_pack());
+    state.fmv_viewer.prefer_hd_source = !matches!(
+        state.fmv_viewer.video_source,
+        sh2_debug::FmvVideoSource::VanillaPc
+    );
     state.bgm_manager.event_flags.enable_restored_cut_audio = cfg.audio.enable_restored_cut_audio;
     let resolved_pack = state
         .menu_ctrl

@@ -69,10 +69,10 @@ pub use combat::{
 pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
     AudioPackSource, BulletMultiplier, ButtonGlyphStyle, CombatInputMode, ControlOptions,
-    CutawayQuality, EnhancedPreset, FogQuality, FrameRateCap, GameLanguage, GameOptions,
-    InternalResolution, LightingProfile, ModEntryConfig, ModsConfig, OutdoorStreamingMode,
-    RiddleDifficulty, ShadowQualityMode, SpatialAudioMode, SpeakerConfiguration, VideoOptions,
-    WindowDisplayMode, WorldTextureQuality,
+    CutawayQuality, EnhancedPreset, FmvCutsceneSource, FogQuality, FrameRateCap, GameLanguage,
+    GameOptions, InternalResolution, LightingProfile, ModEntryConfig, ModsConfig,
+    OutdoorStreamingMode, RiddleDifficulty, ShadowQualityMode, SpatialAudioMode,
+    SpeakerConfiguration, VideoOptions, WindowDisplayMode, WorldTextureQuality,
 };
 pub use cutaway::{
     is_cutaway_widescreen_scalable, original_sheet_dimensions, ClippedQuadUv, CutawayAspectMode,

@@ -49,6 +49,26 @@ fn three_stage_death_pool_envelope_matches_slus_motion_info() {
 }
 
 #[test]
+fn floor_stain_envelope_matches_slus_motion_info() {
+    // SLUS_202.28 0x0036db10: [0.0, 0.70, 0.0], [1.0, 0.15, 0.0], [2.0, 0.10, 0.35], [4.0, 0.05, 0.65]
+    let (s0, a0) = evaluate_three_stage_envelope(0.0, &BLOOD_00_MOTION_INFO);
+    assert!((s0 - 0.70).abs() < 1e-5);
+    assert!(a0.abs() < 1e-5);
+
+    let (s1, a1) = evaluate_three_stage_envelope(1.0, &BLOOD_00_MOTION_INFO);
+    assert!((s1 - 0.85).abs() < 1e-5);
+    assert!(a1.abs() < 1e-5);
+
+    let (s2, a2) = evaluate_three_stage_envelope(3.0, &BLOOD_00_MOTION_INFO);
+    assert!((s2 - 0.95).abs() < 1e-5);
+    assert!((a2 - 0.35).abs() < 1e-5);
+
+    let (s3, a3) = evaluate_three_stage_envelope(7.0, &BLOOD_00_MOTION_INFO);
+    assert!((s3 - 1.0).abs() < 1e-5);
+    assert!((a3 - 1.0).abs() < 1e-5);
+}
+
+#[test]
 fn falling_blood_drop_spawns_floor_stain_on_floor_strike() {
     let mut sys = BloodEffectSystem::new();
     let cfg = BloodSystemConfig::default();

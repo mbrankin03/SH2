@@ -272,6 +272,10 @@ impl RenderContext {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&textures.fog_noise_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffers.fog_buffer.as_entire_binding(),
+                },
             ],
         });
 

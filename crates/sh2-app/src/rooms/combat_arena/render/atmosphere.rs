@@ -251,7 +251,8 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             .enable_persistent_blood_decals,
         non_subtractive_fallback: false,
     };
-    let footstep_now = state.sim_core.last_locomotion.footstep_triggered;
+    let footstep_now = state.sim_core.blood_footstep_triggered;
+    state.sim_core.blood_footstep_triggered = false;
     let player_pos = state.sim_core.scenario.player_position;
     let player_yaw = state.sim_core.scenario.player_yaw;
     let collision = &state.sim_core.collision;

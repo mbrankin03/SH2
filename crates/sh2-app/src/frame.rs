@@ -337,6 +337,17 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
         state.sim_core.snap_player_transform(new_pos, new_yaw);
         state.sim_core.reset_cameras_to_player(new_pos, new_yaw);
     }
+    let prev_room_key = format!("{:?}", state.active_test_room);
+    let next_room_key = format!("{new_room:?}");
+    let persistent_blood = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .enable_persistent_blood_decals;
+    state
+        .blood_system
+        .on_room_change(&prev_room_key, &next_room_key, persistent_blood);
     state.active_test_room = new_room;
     rooms::combat_arena::story_progression_3d::sync_checkpoint_with_room_entry(state, new_room);
     state.bgm_stage_override = None;

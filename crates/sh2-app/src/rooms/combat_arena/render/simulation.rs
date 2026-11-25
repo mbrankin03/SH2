@@ -165,6 +165,14 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             native_heavy_pressed: state.sim_core.input.state.native_heavy_attack_pressed,
         };
 
+        let prev_enemy_states: Vec<(f32, bool)> = state
+            .combat_arena
+            .ai
+            .enemies
+            .iter()
+            .map(|e| (e.controller.health(), e.is_dead()))
+            .collect();
+
         if state.campaign_orchestrator.is_some() {
             state.combat_arena.tick_with_collision_input(
                 combat_input,
@@ -177,6 +185,20 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             state
                 .combat_arena
                 .tick_isolated_input(combat_input, tick_dt, state.combat_enemy_idx);
+        }
+
+        // Dispatch `Effect2` hit splashes & dying blood pools (`enDyingExec` -> `enEfctBloodPool`)
+        for (idx, enemy) in state.combat_arena.ai.enemies.iter().enumerate() {
+            if let Some(&(prev_hp, prev_dead)) = prev_enemy_states.get(idx) {
+                if enemy.controller.health() < prev_hp - 0.01 {
+                    let hit_pos = enemy.position() + glam::Vec3::new(0.0, -700.0, 0.0);
+                    let hit_dir = enemy.position() - state.combat_arena.player_position;
+                    state.blood_system.post_hit_splash(hit_pos, hit_dir);
+                }
+                if !prev_dead && enemy.is_dead() {
+                    state.blood_system.post_enemy_death_pool(enemy.position());
+                }
+            }
         }
         atk_pressed = false;
 

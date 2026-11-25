@@ -62,6 +62,8 @@ pub struct SimulationCore {
     pub active_floor_material: SurfaceMaterial,
     /// Whether at least one footstep was triggered during the most recent `update()` call (across any 60 Hz sub-ticks).
     pub footstep_triggered_since_last_poll: bool,
+    /// Separate footstep trigger consumed by `BloodEffectSystem` (`BloodStick00`) so audio SFX never steals it.
+    pub blood_footstep_triggered: bool,
     /// When true, locomotion state changes do not overwrite the active animation clip.
     pub animation_locked: bool,
 }
@@ -125,6 +127,7 @@ impl SimulationCore {
             },
             active_floor_material: SurfaceMaterial::Concrete,
             footstep_triggered_since_last_poll: false,
+            blood_footstep_triggered: false,
             animation_locked: false,
         }
     }
@@ -318,6 +321,7 @@ impl SimulationCore {
         }
         if out.footstep_triggered {
             self.footstep_triggered_since_last_poll = true;
+            self.blood_footstep_triggered = true;
         }
         let delta_mm = (self.scenario.player_position - self.prev_player_position).length();
         let is_running = matches!(

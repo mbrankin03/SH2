@@ -70,9 +70,28 @@ struct CameraUniforms {
     inv_view_proj: mat4x4<f32>,
 };
 
+struct FogUniforms {
+    fog_color: vec4<f32>,
+    fog_near: f32,
+    fog_far: f32,
+    density: f32,
+    time: f32,
+    step_count: u32,
+    curve_type: u32,
+    speed_mult: f32,
+    ambient_fog_coupling: f32,
+    layer1_uv_scale: vec4<f32>,
+    layer2_params: vec4<f32>,
+    layer_transparencies: vec4<f32>,
+    shadow_view_proj: mat4x4<f32>,
+    depth_fog_params: vec4<f32>,
+    screen_fog_uv: vec4<f32>,
+};
+
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var blood_tex: texture_2d<f32>;
 @group(0) @binding(2) var blood_sampler: sampler;
+@group(0) @binding(3) var<uniform> fog: FogUniforms;
 
 struct InstanceInput {
     @location(0) pos_yaw: vec4<f32>,
@@ -132,7 +151,26 @@ fn vs_main(@builtin(vertex_index) vid: u32, inst: InstanceInput) -> VertexOutput
     var out: VertexOutput;
     out.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
     out.uv = vec2<f32>(u, v);
-    out.color_alpha = inst.color_alpha;
+
+    // PS2 `Object_Draw` (`hh_class_blood_00.c` `0x00253eb0`, `02.c` `0x00254ea0`, `footmark_00.c` `0x00255c20`):
+    // scales RGBA by `clamp(FogParameter_A + (1/z) * FogParameter_B, 0, 255) / 255.0`.
+    var fog_vis = 1.0;
+    let z = out.clip_position.w;
+    if (fog.density > 0.0001 && z > 0.001) {
+        let persp_fa = fog.depth_fog_params.x;
+        let persp_fb = fog.depth_fog_params.y;
+        let fog_min = fog.depth_fog_params.z;
+        let fog_max = fog.depth_fog_params.w;
+        var fog_raw = 0.0;
+        if (abs(persp_fa) > 0.0001) {
+            fog_raw = clamp(persp_fa / z + persp_fb, fog_min, fog_max);
+        } else {
+            let span = max(fog.fog_far - fog.fog_near, 1.0);
+            fog_raw = clamp((z - fog.fog_near) / span, 0.0, 1.0);
+        }
+        fog_vis = 1.0 - clamp(fog_raw, 0.0, 1.0) * clamp(fog.density, 0.0, 1.0);
+    }
+    out.color_alpha = inst.color_alpha * fog_vis;
     return out;
 }
 
@@ -188,6 +226,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -197,6 +245,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             push_constant_ranges: &[],
         });
 
+        // Note: `blood_bind_group` binds `camera` (0), `blood_tex` (1), `blood_sampler` (2), `fog` (3).
         let vertex_buffers = [wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<GpuBloodQuad>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Instance,

@@ -150,11 +150,13 @@ pub const BLOOD_00_SCALE_END_MM: [[f32; 2]; 5] = [
 ];
 
 /// Motion envelope keyframes `[dt_sec, dscale_t, drgba_t]` (`_motion_info` @ `0x0036db10`).
+/// Note: `Object_Motion_00` (`0x00253c80`) accumulates `keyframes[0]` (`0.70` initial scale)
+/// before interpolating segments `1..=3` (`1.0s`, `2.0s`, `4.0s`).
 pub const BLOOD_00_MOTION_INFO: [[f32; 3]; 4] = [
-    [0.0, 0.0, 0.0],
-    [1.0, 0.7, 0.0],
-    [2.0, 0.15, 0.35],
-    [4.0, 0.15, 0.65],
+    [0.0, 0.70, 0.0],
+    [1.0, 0.15, 0.0],
+    [2.0, 0.10, 0.35],
+    [4.0, 0.05, 0.65],
 ];
 
 /// UV rect in `bloodtex0.tbn2` for floor drop stains (top-left splatter sheet).

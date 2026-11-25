@@ -137,6 +137,20 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         sh2_core::DOG_ROOM_PRELOAD_EVENT_INDEX,
     );
     state.apply_texture_quality(active_tex_quality);
+    let prev_room_id = state
+        .campaign_loaded_room
+        .as_ref()
+        .map(|(m, _)| m.room_id.as_str())
+        .unwrap_or("");
+    let persistent_blood = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .enable_persistent_blood_decals;
+    state
+        .blood_system
+        .on_room_change(prev_room_id, &manifest.room_id, persistent_blood);
     state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
 }
 

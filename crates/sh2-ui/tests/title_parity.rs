@@ -139,6 +139,10 @@ fn render_title_and_options_headless_snapshots() {
                 .load_4k_named_override("ps2", "etc/start01")
                 .or_else(|| ps2_loader.load_texture("etc/start01.tex").ok()),
         ) {
+            if resolver.has_4k_texture_pack() {
+                assert_eq!((s0.width, s0.height), (2732, 2048));
+                assert_eq!((s1.width, s1.height), (2048, 2048));
+            }
             atlas.set_original_title_logo(s1.width, s1.height, s1.rgba);
             let mut sm_orig = TitleStateMachine::new();
             sm_orig.show_phase_immediately(TitlePhase::MainMenu);

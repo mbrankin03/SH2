@@ -204,6 +204,9 @@ pub struct LoadingScreen {
     /// Whether to use the SH2:EE HD `sh2e/effect/footmark.tbn2` (256×256) sprite when installed.
     /// Set to `false` in strict 1:1 Vanilla PS2 mode (`WorldTextureQuality::OriginalPs2`).
     pub use_hd_footmark: bool,
+    /// Whether to use the 4K AI Master `mods/sh2_4k_textures/effect/footmark.dds` sprite when installed.
+    /// Set to `true` only when `WorldTextureQuality::Ai4kMaster` is active (`SH2-142`).
+    pub use_4k_footmark: bool,
     pub target_room_label: String,
     /// PS2 prototype `_count_51` 30 Hz frame counter (`SLUS_202.28` `NowLoadingDraw` `0x00299170`).
     pub ps2_frame_counter: i32,
@@ -255,6 +258,7 @@ impl LoadingScreen {
             require_press_to_continue: require_press,
             fade_alpha: 1.0,
             use_hd_footmark: true,
+            use_4k_footmark: true,
             target_room_label: target_label.into(),
             ps2_frame_counter: 0,
             ps2_text_x_512: PS2_NOW_LOADING_BASE_XY,

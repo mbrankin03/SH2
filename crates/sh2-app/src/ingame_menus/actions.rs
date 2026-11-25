@@ -232,10 +232,24 @@ fn mod_aware_loader(state: &AppState) -> TextureLoader {
         .with_mod_vfs(std::sync::Arc::clone(&state.menu_ctrl.mod_vfs))
 }
 
+fn quality_flags(state: &AppState) -> (bool, bool) {
+    let q = state
+        .menu_ctrl
+        .options_menu
+        .original_config
+        .video
+        .texture_quality;
+    (
+        q != sh2_core::config::WorldTextureQuality::OriginalPs2,
+        q == sh2_core::config::WorldTextureQuality::Ai4kMaster,
+    )
+}
+
 pub(crate) fn ensure_map_sheet_loaded(state: &mut AppState, map_id: u8) {
     let Some(spec) = map_spec(map_id) else {
         return;
     };
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let loader = mod_aware_loader(state);
 
     if !state
@@ -244,7 +258,8 @@ pub(crate) fn ensure_map_sheet_loaded(state: &mut AppState, map_id: u8) {
         .as_ref()
         .is_some_and(|(id, _, _, _)| *id == map_id)
     {
-        if let Ok(tex) = loader.load_texture(spec.base_tex_path) {
+        if let Ok(tex) = loader.load_texture_for_quality(spec.base_tex_path, prefer_sh2ee, apply_4k)
+        {
             state.ingame_menus.cached_map_sheet = Some((map_id, tex.width, tex.height, tex.rgba));
         }
     }
@@ -254,12 +269,15 @@ pub(crate) fn ensure_map_sheet_loaded(state: &mut AppState, map_id: u8) {
         .as_ref()
         .is_some_and(|(id, _, _, _)| *id == map_id)
     {
-        if let Ok(tex) = loader.load_texture(spec.mark_tex_path) {
+        if let Ok(tex) = loader.load_texture_for_quality(spec.mark_tex_path, prefer_sh2ee, apply_4k)
+        {
             state.ingame_menus.cached_map_marks = Some((map_id, tex.width, tex.height, tex.rgba));
         }
     }
     if state.ingame_menus.cached_map_cursor.is_none() {
-        if let Ok(tex) = loader.load_texture(CHIZU_CURSOR_TEX_PATH) {
+        if let Ok(tex) =
+            loader.load_texture_for_quality(CHIZU_CURSOR_TEX_PATH, prefer_sh2ee, apply_4k)
+        {
             state.ingame_menus.cached_map_cursor = Some((tex.width, tex.height, tex.rgba));
         }
     }
@@ -270,6 +288,7 @@ pub(crate) fn ensure_memo_assets_loaded(
     backdrop_path: &'static str,
     layer_path: Option<&'static str>,
 ) {
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let resolver = AssetPathResolver::resolve();
     if !state.ingame_menus.memo_mes_loaded {
         state.ingame_menus.memo_mes_loaded = true;
@@ -294,8 +313,10 @@ pub(crate) fn ensure_memo_assets_loaded(
         .is_some_and(|(p, _, _, _)| *p == backdrop_path)
     {
         if let Ok(tex) = loader
-            .load_texture(backdrop_path)
-            .or_else(|_| loader.load_texture(DEFAULT_MEMO_BACKDROP_TEX))
+            .load_texture_for_quality(backdrop_path, prefer_sh2ee, apply_4k)
+            .or_else(|_| {
+                loader.load_texture_for_quality(DEFAULT_MEMO_BACKDROP_TEX, prefer_sh2ee, apply_4k)
+            })
         {
             state.ingame_menus.cached_memo_backdrop =
                 Some((backdrop_path, tex.width, tex.height, tex.rgba));
@@ -309,7 +330,7 @@ pub(crate) fn ensure_memo_assets_loaded(
                 .as_ref()
                 .is_some_and(|(p, _, _, _)| *p == lp)
             {
-                if let Ok(tex) = loader.load_texture(lp) {
+                if let Ok(tex) = loader.load_texture_for_quality(lp, prefer_sh2ee, apply_4k) {
                     state.ingame_menus.cached_memo_layer =
                         Some((lp, tex.width, tex.height, tex.rgba));
                 }
@@ -321,15 +342,18 @@ pub(crate) fn ensure_memo_assets_loaded(
     }
 }
 
-/// Lazily loads `pic/etc/itemmenu2.tex` (automatically preferring 4K HD `sh2e/pic/etc/itemmenu2.tex`
-/// over original `data/pic/etc/itemmenu2.tex`) for the 1:1 PS2 `TgsItemPitureDraw` item carousel.
+/// Lazily loads `pic/etc/itemmenu2.tex` (honoring active `WorldTextureQuality`)
+/// for the 1:1 PS2 `TgsItemPitureDraw` item carousel.
 pub(crate) fn ensure_item_atlas_loaded(state: &mut AppState) {
     if state.ingame_menus.item_atlas_loaded {
         return;
     }
     state.ingame_menus.item_atlas_loaded = true;
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let loader = mod_aware_loader(state);
-    if let Ok(tex) = loader.load_texture("pic/etc/itemmenu2.tex") {
+    if let Ok(tex) =
+        loader.load_texture_for_quality("pic/etc/itemmenu2.tex", prefer_sh2ee, apply_4k)
+    {
         tracing::info!(
             "Loaded authentic itemmenu2.tex sprite atlas ({}x{}).",
             tex.width,
@@ -353,8 +377,9 @@ pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
     else {
         return;
     };
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let loader = mod_aware_loader(state);
-    if let Ok(cut) = loader.load_cutaway_texture(tex_path, true) {
+    if let Ok(cut) = loader.load_cutaway_texture_for_quality(tex_path, prefer_sh2ee, apply_4k) {
         state.ingame_menus.cached_examine_tex = Some((
             item_id,
             cut.texture.width,
@@ -370,8 +395,11 @@ pub(crate) fn ensure_gameover_tex_loaded(state: &mut AppState) {
         return;
     }
     state.ingame_menus.gameover_tex_loaded = true;
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let loader = mod_aware_loader(state);
-    if let Ok(tex) = loader.load_texture(sh2_ui::GAMEOVER_TEX_PATH) {
+    if let Ok(tex) =
+        loader.load_texture_for_quality(sh2_ui::GAMEOVER_TEX_PATH, prefer_sh2ee, apply_4k)
+    {
         state.ingame_menus.cached_gameover_tex = Some((tex.width, tex.height, tex.rgba));
     }
 }
@@ -382,8 +410,11 @@ pub(crate) fn ensure_red_cross_tex_loaded(state: &mut AppState) {
         return;
     }
     state.ingame_menus.red_cross_tex_loaded = true;
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let loader = mod_aware_loader(state);
-    if let Ok(tex) = loader.load_texture(sh2_ui::RED_CROSS_ICON_PATH) {
+    if let Ok(tex) =
+        loader.load_texture_for_quality(sh2_ui::RED_CROSS_ICON_PATH, prefer_sh2ee, apply_4k)
+    {
         state.ingame_menus.cached_red_cross_tex = Some((tex.width, tex.height, tex.rgba));
     }
 }
@@ -401,8 +432,9 @@ pub(crate) fn ensure_savebg_loaded(
         sh2_core::scenario::ScenarioKind::LetterFromSilentHeaven => sh2_ui::SAVEBG_TBN2_PATH,
         sh2_core::scenario::ScenarioKind::BornFromAWish => sh2_ui::SAVEBG2_TBN2_PATH,
     };
+    let (prefer_sh2ee, apply_4k) = quality_flags(state);
     let loader = mod_aware_loader(state);
-    if let Ok(tex) = loader.load_texture(path) {
+    if let Ok(tex) = loader.load_texture_for_quality(path, prefer_sh2ee, apply_4k) {
         state.ingame_menus.cached_savebg_tex = Some((tex.width, tex.height, tex.rgba));
     }
 }

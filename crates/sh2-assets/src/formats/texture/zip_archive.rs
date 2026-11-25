@@ -71,6 +71,17 @@ pub(super) fn read_texture_from_stored_zip(
     sub: &str,
     tex_id: u32,
 ) -> Option<DecodedTexture> {
+    read_relative_texture_from_stored_zip(zip_index_cache, zip_path, &format!("{sub}/{tex_id}"))
+}
+
+/// Reads a `<rel_no_ext>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
+/// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive,
+/// caching the parsed Central Directory index in `zip_index_cache`.
+pub(super) fn read_relative_texture_from_stored_zip(
+    zip_index_cache: &ZipIndexCache,
+    zip_path: &Path,
+    rel_no_ext: &str,
+) -> Option<DecodedTexture> {
     let cached_entry = {
         let mut guard = zip_index_cache.lock().ok()?;
         if !guard.contains_key(zip_path) {
@@ -79,8 +90,8 @@ pub(super) fn read_texture_from_stored_zip(
             }
         }
         let index = guard.get(zip_path)?;
-        let dds_key = format!("{sub}/{tex_id}.dds");
-        let png_key = format!("{sub}/{tex_id}.png");
+        let dds_key = format!("{rel_no_ext}.dds");
+        let png_key = format!("{rel_no_ext}.png");
         index
             .get(&dds_key)
             .copied()

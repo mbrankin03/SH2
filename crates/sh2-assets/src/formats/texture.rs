@@ -27,7 +27,9 @@ pub use mipmap::{
     compute_alpha_coverage_rgba, generate_mipmap_chain_rgba, mip_level_count_for_size,
     preserve_alpha_coverage_in_place, ALPHA_CUTOUT_MIP_REF_THRESHOLD,
 };
-use zip_archive::{read_texture_from_stored_zip, ZipIndexCache};
+use zip_archive::{
+    read_relative_texture_from_stored_zip, read_texture_from_stored_zip, ZipIndexCache,
+};
 
 /// Magic identifier for PS2/PC single/multi-sprite `.tex` texture containers (`0x19990901`).
 pub const TEX_MAGIC: u32 = 0x19990901;
@@ -156,6 +158,120 @@ impl TextureLoader {
     /// Resolves and decodes a 4K AI synthesized normal detail map (`normal/<tex_id>.dds` or `.png`), if available.
     pub fn load_4k_normal_map_override(&self, tex_id: u32) -> Option<DecodedTexture> {
         self.load_4k_override_from_sub("normal", tex_id)
+    }
+
+    /// Normalizes a relative game texture path (e.g. `"data/etc/effect/footmark.tbn2"`,
+    /// `"pic/map/outmape.tex"`, `"menu/mc/savebg.tbn2"`) into its 4K pack key without extension
+    /// (e.g. `"effect/footmark"`, `"pic/map/outmape"`, `"menu/mc/savebg"`).
+    pub fn normalize_4k_relative_key(relative_path: impl AsRef<Path>) -> String {
+        let s = relative_path
+            .as_ref()
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        let trimmed = s
+            .trim_start_matches("./")
+            .trim_start_matches("data/")
+            .trim_start_matches("sh2e/");
+        let no_ext = match trimmed.rsplit_once('.') {
+            Some((stem, "tex" | "tbn2" | "dds" | "png")) => stem,
+            _ => trimmed,
+        };
+        if let Some(rest) = no_ext
+            .strip_prefix("etc/effect/")
+            .or_else(|| no_ext.strip_prefix("pic/effect/"))
+            .or_else(|| no_ext.strip_prefix("effect/"))
+        {
+            format!("effect/{rest}")
+        } else {
+            no_ext.to_string()
+        }
+    }
+
+    /// Resolves and decodes a 4K AI upscaled non-`.map`/non-`.mdl` texture override
+    /// (`effect/`, `pic/`, `menu/`, `ps2/`) from `mods/sh2_4k_textures/` or `sh2_4k_textures.zip`.
+    pub fn load_4k_relative_texture_override(
+        &self,
+        relative_path: impl AsRef<Path>,
+    ) -> Option<DecodedTexture> {
+        let root = self.ai_4k_dir.as_ref()?;
+        let rel_key = Self::normalize_4k_relative_key(relative_path);
+        if rel_key.is_empty() {
+            return None;
+        }
+
+        if root.is_dir() {
+            for ext in ["dds", "png"] {
+                let p = root.join(format!("{rel_key}.{ext}"));
+                if p.is_file() {
+                    if let Ok(bytes) = fs::read(&p) {
+                        if let Ok(decoded) = decode_texture_bytes(&bytes, &p) {
+                            return Some(decoded);
+                        }
+                    }
+                }
+            }
+            let nested_zip = root.join("sh2_4k_textures.zip");
+            if nested_zip.is_file() {
+                if let Some(dec) = read_relative_texture_from_stored_zip(
+                    &self.zip_index_cache,
+                    &nested_zip,
+                    &rel_key,
+                ) {
+                    return Some(dec);
+                }
+            }
+        }
+
+        if root.is_file() && root.extension().is_some_and(|e| e == "zip") {
+            if let Some(dec) =
+                read_relative_texture_from_stored_zip(&self.zip_index_cache, root, &rel_key)
+            {
+                return Some(dec);
+            }
+        }
+
+        None
+    }
+
+    /// Loads and decodes a texture according to the active `WorldTextureQuality` tier (`SH2-142`):
+    ///
+    /// - `prefer_sh2ee == false`: Strict 1:1 Vanilla PS2/PC (`data/` only, no `sh2e/` or 4K).
+    /// - `prefer_sh2ee == true && !apply_4k`: SH2:EE HD (`sh2e/` -> `data/`).
+    /// - `prefer_sh2ee == true && apply_4k`: 4K AI Master (`mods/sh2_4k_textures/` -> `sh2e/` -> `data/`).
+    pub fn load_texture_for_quality(
+        &self,
+        relative_path: impl AsRef<Path>,
+        prefer_sh2ee: bool,
+        apply_4k: bool,
+    ) -> Result<DecodedTexture, AssetError> {
+        let rel = relative_path.as_ref();
+        let clean_rel = rel
+            .strip_prefix("data")
+            .or_else(|_| rel.strip_prefix("sh2e"))
+            .unwrap_or(rel);
+
+        if !prefer_sh2ee {
+            let path = self.resolve_in_data(clean_rel).ok_or_else(|| {
+                AssetError::Io(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "Vanilla texture not found in data/: {}",
+                        clean_rel.display()
+                    ),
+                ))
+            })?;
+            let bytes = fs::read(&path)?;
+            return decode_texture_bytes(&bytes, &path);
+        }
+
+        if apply_4k {
+            if let Some(decoded) = self.load_4k_relative_texture_override(clean_rel) {
+                return Ok(decoded);
+            }
+        }
+
+        self.load_texture(clean_rel)
     }
 
     /// Resolves an asset path, prioritizing `sh2e/` before falling back to `data/`.
@@ -840,5 +956,84 @@ mod tests {
 
         assert_eq!(vanilla.materials.len(), 27);
         assert_eq!(sh2ee.materials.len(), 31);
+    }
+
+    #[test]
+    fn normalize_4k_relative_key_maps_effects_pic_and_menu_uniformly() {
+        assert_eq!(
+            TextureLoader::normalize_4k_relative_key("data/etc/effect/footmark.tbn2"),
+            "effect/footmark"
+        );
+        assert_eq!(
+            TextureLoader::normalize_4k_relative_key("sh2e/effect/footmark.tbn2"),
+            "effect/footmark"
+        );
+        assert_eq!(
+            TextureLoader::normalize_4k_relative_key("pic/effect/playable0.tbn2"),
+            "effect/playable0"
+        );
+        assert_eq!(
+            TextureLoader::normalize_4k_relative_key("pic/etc/start00.tex"),
+            "pic/etc/start00"
+        );
+        assert_eq!(
+            TextureLoader::normalize_4k_relative_key("menu/mc/savebg.tbn2"),
+            "menu/mc/savebg"
+        );
+    }
+
+    #[test]
+    fn load_texture_for_quality_isolates_vanilla_sh2ee_and_4k_tiers() {
+        let resolver = crate::AssetPathResolver::resolve();
+        if !resolver.data_dir.join("etc/effect/footmark.tbn2").is_file() {
+            return;
+        }
+        let Some(sh2e_dir) = resolver.sh2e_dir.as_deref() else {
+            return;
+        };
+        let loader = TextureLoader::new(&resolver.data_dir, Some(sh2e_dir));
+
+        // 1. Strict 1:1 Vanilla PS2/PC (`OriginalPs2`): loads data/etc/effect/footmark.tbn2 (64x64)
+        let van = loader
+            .load_texture_for_quality("etc/effect/footmark.tbn2", false, false)
+            .expect("vanilla footmark.tbn2");
+        assert_eq!((van.width, van.height), (64, 64));
+
+        // 2. SH2:EE HD (`Sh2eeHd`): loads sh2e/effect/footmark.tbn2 (256x256)
+        if sh2e_dir.join("effect/footmark.tbn2").is_file() {
+            let hd = loader
+                .load_texture_for_quality("effect/footmark.tbn2", true, false)
+                .expect("sh2e footmark.tbn2");
+            assert_eq!((hd.width, hd.height), (256, 256));
+        }
+
+        // 3. 4K AI Master (`Ai4kMaster`): loads mods/sh2_4k_textures/effect/footmark.dds (1024x1024)
+        if loader
+            .load_4k_relative_texture_override("effect/footmark.tbn2")
+            .is_some()
+        {
+            let ai4k = loader
+                .load_texture_for_quality("etc/effect/footmark.tbn2", true, true)
+                .expect("4K AI footmark.dds");
+            assert_eq!((ai4k.width, ai4k.height), (1024, 1024));
+        }
+
+        // 4. Cutaway `pic/out/p_incar.tex` preserves original 512x512 UV dimensions across all tiers
+        if resolver.data_dir.join("pic/out/p_incar.tex").is_file() {
+            let cut_van = loader
+                .load_cutaway_texture_for_quality("out_p_incar", false, false)
+                .expect("vanilla cutaway");
+            assert_eq!(
+                (cut_van.original_width, cut_van.original_height),
+                (512, 512)
+            );
+            assert_eq!((cut_van.texture.width, cut_van.texture.height), (512, 512));
+
+            let cut_4k = loader
+                .load_cutaway_texture_for_quality("out_p_incar", true, true)
+                .expect("4K cutaway");
+            assert_eq!((cut_4k.original_width, cut_4k.original_height), (512, 512));
+            assert!(cut_4k.texture.width >= 2048);
+        }
     }
 }

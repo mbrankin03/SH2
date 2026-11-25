@@ -366,6 +366,14 @@ impl OptionsMenu {
                 return Some(OptionsSoundCue::ValueChange);
             }
         }
+        if self.active_tab == OptionsTab::Mods && !self.mods.is_empty() {
+            if (400.0..432.0).contains(&ps2_x) {
+                return Some(self.move_selected_mod(-1));
+            }
+            if ps2_x >= 432.0 {
+                return Some(self.move_selected_mod(1));
+            }
+        }
         let dir = if ps2_x < 245.0 { -1 } else { 1 };
         Some(self.adjust_value(dir))
     }

@@ -73,14 +73,9 @@ impl OptionsMenu {
         if self.active_tab == OptionsTab::Mods && !self.mods.is_empty() {
             return self.mods.get(index).map(|m| {
                 let state = if m.enabled { "ENABLED" } else { "DISABLED" };
-                let kind = if m.is_zip { "zip" } else { "dir" };
                 (
                     Cow::Owned(m.name.clone()),
-                    format!(
-                        "{state}  #{} ({} files, {kind})",
-                        index + 1,
-                        m.override_count
-                    ),
+                    format!("{state}  Load #{}", index + 1),
                 )
             });
         }
@@ -94,15 +89,21 @@ impl OptionsMenu {
         let Some(m) = self.mods.get(index) else {
             return "Drop mod folders or .zip archives into mods/ to install.".to_string();
         };
-        let desc = if m.description.is_empty() {
-            "No description provided."
+        if m.description.is_empty() {
+            format!(
+                "v{} by {}  [^/v or PgUp/PgDn: Load Order]",
+                m.version, m.author
+            )
         } else {
-            m.description.as_str()
-        };
-        format!(
-            "v{} by {} | {} overrides | {}  [PgUp/PgDn: Reorder]",
-            m.version, m.author, m.override_count, desc
-        )
+            let max_desc = 28usize;
+            let desc: String = if m.description.chars().count() > max_desc {
+                let clipped: String = m.description.chars().take(max_desc - 3).collect();
+                format!("{clipped}...")
+            } else {
+                m.description.clone()
+            };
+            format!("v{} by {} - {}  [^/v: Order]", m.version, m.author, desc)
+        }
     }
 
     /// 1:1 10-row SH2/SH2:EE root `O P T I O N S` layout (`Item/otn_option.c`).

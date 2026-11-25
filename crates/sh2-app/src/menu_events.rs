@@ -151,6 +151,32 @@ pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCod
         KeyCode::Escape | KeyCode::Backspace => {
             state.menu_ctrl.handle_pause_nav(MenuNavAction::Cancel)
         }
+        KeyCode::PageUp | KeyCode::BracketLeft
+            if state.menu_ctrl.pause_menu.sub_phase == sh2_ui::PauseSubPhase::InOptionsMenu
+                && state.menu_ctrl.options_menu.active_tab == sh2_ui::OptionsTab::Mods =>
+        {
+            let cue = if state.menu_ctrl.options_menu.move_selected_mod(-1)
+                == sh2_ui::OptionsSoundCue::ValueChange
+            {
+                MenuSoundCue::CursorMove
+            } else {
+                MenuSoundCue::None
+            };
+            (cue, PauseAction::None)
+        }
+        KeyCode::PageDown | KeyCode::BracketRight
+            if state.menu_ctrl.pause_menu.sub_phase == sh2_ui::PauseSubPhase::InOptionsMenu
+                && state.menu_ctrl.options_menu.active_tab == sh2_ui::OptionsTab::Mods =>
+        {
+            let cue = if state.menu_ctrl.options_menu.move_selected_mod(1)
+                == sh2_ui::OptionsSoundCue::ValueChange
+            {
+                MenuSoundCue::CursorMove
+            } else {
+                MenuSoundCue::None
+            };
+            (cue, PauseAction::None)
+        }
         _ => (MenuSoundCue::None, PauseAction::None),
     };
 

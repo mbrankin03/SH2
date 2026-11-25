@@ -750,14 +750,53 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                             false,
                         );
                     }
+                    if menu.active_tab == OptionsTab::Mods && !menu.mods.is_empty() {
+                        let up_x = (x_offset + 408.0 * scale_x).round() as usize;
+                        let dn_x = (x_offset + 436.0 * scale_x).round() as usize;
+                        let order_color = if is_selected {
+                            Sh2TextColor::White
+                        } else {
+                            unselected_color
+                        };
+                        let draw_y = if is_selected {
+                            y.saturating_sub(pop_dy)
+                        } else {
+                            y
+                        };
+                        font.draw_line_styled(
+                            rast,
+                            "[^]",
+                            (up_x, draw_y),
+                            font_size,
+                            order_color,
+                            false,
+                        );
+                        font.draw_line_styled(
+                            rast,
+                            "[v]",
+                            (dn_x, draw_y),
+                            font_size,
+                            order_color,
+                            false,
+                        );
+                    }
                 }
             }
         }
     }
 
     // Description text (`option_font` `0x0021a320`: `x = 0x46` (70), `y = 0x1a6` (422) in 512×448)
-    let help_x = (x_offset + 70.0 * scale_x).round() as usize;
+    let help_x = if menu.active_tab == OptionsTab::Mods {
+        (x_offset + 54.0 * scale_x).round() as usize
+    } else {
+        (x_offset + 70.0 * scale_x).round() as usize
+    };
     let help_y = (394.0 * scale_y).round() as usize;
+    let help_font_size = if menu.active_tab == OptionsTab::Mods {
+        (19.0 * scale_y).round().max(12.0) as usize
+    } else {
+        (21.0 * scale_y).round().max(13.0) as usize
+    };
 
     let mod_help_owned;
     let help_text = if menu.active_tab == OptionsTab::Mods {
@@ -774,7 +813,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         rast,
         help_text,
         (help_x, help_y),
-        (21.0 * scale_y).round().max(13.0) as usize,
+        help_font_size,
         Sh2TextColor::Custom {
             top: [0xa8, 0xa8, 0xa8, 0xff],
             bottom: [0x88, 0x88, 0x88, 0xff],

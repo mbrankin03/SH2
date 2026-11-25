@@ -94,6 +94,30 @@ pub(crate) fn handle_title_menu_key_input(state: &mut AppState, key_code: KeyCod
         KeyCode::Escape | KeyCode::Backspace => state.menu_ctrl.handle_nav(MenuNavAction::Cancel),
         KeyCode::KeyQ => state.menu_ctrl.switch_options_tab(false),
         KeyCode::KeyE => state.menu_ctrl.switch_options_tab(true),
+        KeyCode::PageUp | KeyCode::BracketLeft
+            if state.menu_ctrl.title_sm.phase == TitlePhase::OptionsMenu
+                && state.menu_ctrl.options_menu.active_tab == sh2_ui::OptionsTab::Mods =>
+        {
+            if state.menu_ctrl.options_menu.move_selected_mod(-1)
+                == sh2_ui::OptionsSoundCue::ValueChange
+            {
+                MenuSoundCue::CursorMove
+            } else {
+                MenuSoundCue::None
+            }
+        }
+        KeyCode::PageDown | KeyCode::BracketRight
+            if state.menu_ctrl.title_sm.phase == TitlePhase::OptionsMenu
+                && state.menu_ctrl.options_menu.active_tab == sh2_ui::OptionsTab::Mods =>
+        {
+            if state.menu_ctrl.options_menu.move_selected_mod(1)
+                == sh2_ui::OptionsSoundCue::ValueChange
+            {
+                MenuSoundCue::CursorMove
+            } else {
+                MenuSoundCue::None
+            }
+        }
         _ => match state.menu_ctrl.title_sm.phase {
             TitlePhase::SplashIntro | TitlePhase::TitleLogo => {
                 state.menu_ctrl.handle_nav(MenuNavAction::Confirm)

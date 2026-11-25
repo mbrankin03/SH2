@@ -70,8 +70,9 @@ pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
     AudioPackSource, BulletMultiplier, ButtonGlyphStyle, CombatInputMode, ControlOptions,
     EnhancedPreset, FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution,
-    LightingProfile, OutdoorStreamingMode, RiddleDifficulty, ShadowQualityMode, SpatialAudioMode,
-    SpeakerConfiguration, VideoOptions, WindowDisplayMode, WorldTextureQuality,
+    LightingProfile, ModEntryConfig, ModsConfig, OutdoorStreamingMode, RiddleDifficulty,
+    ShadowQualityMode, SpatialAudioMode, SpeakerConfiguration, VideoOptions, WindowDisplayMode,
+    WorldTextureQuality,
 };
 pub use cutaway::{
     original_sheet_dimensions, ClippedQuadUv, CutawayOverlayEngine, CutsceneBorderBars,

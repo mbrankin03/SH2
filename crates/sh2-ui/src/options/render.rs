@@ -538,6 +538,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         OptionsTab::Controls => "<   C O N T R O L   O P T I O N S   >",
         OptionsTab::Game => "<   G A M E   O P T I O N S   >",
         OptionsTab::Enhanced => "<   E N H A N C E D   M O D E   >",
+        OptionsTab::Mods => "<   M O D   M A N A G E R   >",
         OptionsTab::Debug => "<   D E B U G   T O O L S   >",
     };
 
@@ -584,7 +585,8 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     };
 
     for idx in 0..item_count {
-        if let Some((label, val)) = menu.item_display(idx) {
+        if let Some((label, val)) = menu.item_display_cow(idx) {
+            let label: &str = label.as_ref();
             let y_v = base_y_v + idx as f32 * step_y_v;
             let y = (y_v * scale_y).round() as usize;
             let is_selected = idx == menu.selected_index;
@@ -709,11 +711,17 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     let help_x = (x_offset + 52.0 * scale_x).round() as usize;
     let help_y = (398.0 * scale_y).round() as usize;
 
-    let selected_label = menu
-        .item_display(menu.selected_index)
-        .map(|(l, _)| l)
-        .unwrap_or("");
-    let help_text = option_help_text(menu.active_tab, selected_label);
+    let mod_help_owned;
+    let help_text = if menu.active_tab == OptionsTab::Mods {
+        mod_help_owned = menu.mod_help_text(menu.selected_index);
+        mod_help_owned.as_str()
+    } else {
+        let selected_label = menu
+            .item_display(menu.selected_index)
+            .map(|(l, _)| l)
+            .unwrap_or("");
+        option_help_text(menu.active_tab, selected_label)
+    };
     font.draw_line_styled(
         rast,
         help_text,

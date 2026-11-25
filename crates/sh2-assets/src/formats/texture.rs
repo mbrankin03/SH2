@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 mod container;
 mod cutaway;
 mod mipmap;
-mod zip_archive;
+pub(crate) mod zip_archive;
 
 pub use container::{decode_texture_bytes, parse_texture_container, ContainerTexture};
 pub use cutaway::{probe_tex_dimensions, CutawayTextureAsset, CutawayViewportTransform};
@@ -46,12 +46,13 @@ pub struct DecodedTexture {
     pub rgba: Vec<u8>,
 }
 
-/// Asset loader managing file resolution and decoding across vanilla, SH2:EE, and 4K AI Master directories.
+/// Asset loader managing file resolution and decoding across active `mods/`, `sh2e/`, `data/`, and 4K AI Master directories.
 #[derive(Debug, Clone)]
 pub struct TextureLoader {
     data_dir: PathBuf,
     sh2e_dir: Option<PathBuf>,
     ai_4k_dir: Option<PathBuf>,
+    mod_vfs: Option<std::sync::Arc<crate::vfs::ModVfs>>,
     zip_index_cache: ZipIndexCache,
 }
 
@@ -63,6 +64,7 @@ impl TextureLoader {
             data_dir: data_dir.as_ref().to_path_buf(),
             sh2e_dir: sh2e_dir.map(|p| p.as_ref().to_path_buf()),
             ai_4k_dir: resolver.resolve_4k_texture_pack_dir(),
+            mod_vfs: None,
             zip_index_cache: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -79,10 +81,18 @@ impl TextureLoader {
             data_dir: data_dir.as_ref().to_path_buf(),
             sh2e_dir: sh2e_dir.map(|p| p.as_ref().to_path_buf()),
             ai_4k_dir: ai_4k_dir.map(|p| p.as_ref().to_path_buf()),
+            mod_vfs: None,
             zip_index_cache: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
         }
+    }
+
+    /// Attaches a layered [`ModVfs`](crate::vfs::ModVfs) overlay so active mods take highest priority.
+    #[must_use]
+    pub fn with_mod_vfs(mut self, vfs: std::sync::Arc<crate::vfs::ModVfs>) -> Self {
+        self.mod_vfs = Some(vfs);
+        self
     }
 
     /// Returns the resolved 4K AI texture pack root directory or `.zip` archive, if present.
@@ -176,7 +186,9 @@ impl TextureLoader {
         find_case_insensitive(&self.data_dir, rel)
     }
 
-    /// Loads and decodes the texture at `relative_path` (supporting DDS, PNG, and .tex containers).
+    /// Loads and decodes the texture at `relative_path` (supporting DDS, PNG, and .tex containers),
+    /// routing through active [`ModVfs`](crate::vfs::ModVfs) layers first and gracefully falling
+    /// back to `sh2e/` -> `data/` if a modded file fails validation or decode.
     ///
     /// # Errors
     /// Returns [`AssetError::Io`] if not found, or [`AssetError::UnsupportedFormat`] if invalid.
@@ -184,10 +196,27 @@ impl TextureLoader {
         &self,
         relative_path: impl AsRef<Path>,
     ) -> Result<DecodedTexture, AssetError> {
-        let path = self.resolve_path(&relative_path).ok_or_else(|| {
+        let rel = relative_path.as_ref();
+        if let Some(ref vfs) = self.mod_vfs {
+            if let Some((mod_id, bytes)) = vfs.read_mod_bytes(rel) {
+                match decode_texture_bytes(&bytes, rel) {
+                    Ok(tex) => return Ok(tex),
+                    Err(err) => {
+                        tracing::warn!(
+                            "[ModVfs] Mod '{}' override '{}' failed to decode ({}); falling back to vanilla",
+                            mod_id,
+                            rel.display(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+
+        let path = self.resolve_path(rel).ok_or_else(|| {
             AssetError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("Texture not found: {}", relative_path.as_ref().display()),
+                format!("Texture not found: {}", rel.display()),
             ))
         })?;
 

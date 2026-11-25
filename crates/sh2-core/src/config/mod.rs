@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod controls;
 pub mod game;
+pub mod mods;
 pub mod video;
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,7 @@ pub use game::{
     GameOptions, RetreatTurnMode, RiddleDifficulty, ViewControlMode, WalkRunControlMode,
     PS2_BRIGHTNESS_MULTIPLIERS, PS2_DEFAULT_BRIGHTNESS_LEVEL, PS2_MAX_BRIGHTNESS_LEVEL,
 };
+pub use mods::{ModEntryConfig, ModsConfig};
 pub use video::{
     FogQuality, FrameRateCap, InternalResolution, LightingProfile, OutdoorStreamingMode,
     ShadowQualityMode, VideoOptions, WindowDisplayMode, WorldTextureQuality,
@@ -38,6 +40,8 @@ pub struct AppConfig {
     pub game: GameOptions,
     #[serde(default)]
     pub debug: DebugOptions,
+    #[serde(default)]
+    pub mods: ModsConfig,
 }
 
 impl AppConfig {

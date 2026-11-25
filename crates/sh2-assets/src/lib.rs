@@ -4,7 +4,9 @@
 pub mod error;
 pub mod formats;
 pub mod resolver;
+pub mod vfs;
 
 pub use error::AssetError;
 pub use formats::*;
 pub use resolver::AssetPathResolver;
+pub use vfs::{discover_mods, ModMetadata, ModPackage, ModSource, ModVfs};

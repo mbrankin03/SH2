@@ -471,26 +471,22 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         &menu_uniform_buffer,
     );
 
-    // Preload authentic 1:1 button sprite atlas from start01e.tex / start01.tex
+    // Preload authentic 1:1 button sprite atlas from start01e.tex / start01.tex and Original PS2 title background
+    // from the 4K AI Texture Pack (`mods/sh2_4k_textures/ps2/etc/start00.dds`, falling back to `sh2e/ps2/etc/start00.tex`).
     let resolver = sh2_assets::AssetPathResolver::resolve();
     let ps2_etc_dir = resolver.game_root.join("sh2e/ps2");
     let ps2_tex_loader = sh2_assets::TextureLoader::new(&ps2_etc_dir, None::<&std::path::Path>);
-    let splash_title_bg_original = ps2_tex_loader
-        .load_texture("etc/start00.tex")
-        .ok()
+    let splash_title_bg_original = tex_loader
+        .load_4k_named_override("ps2", "etc/start00")
+        .or_else(|| ps2_tex_loader.load_texture("etc/start00.tex").ok())
         .map(|t| {
-            let (up_w, up_h, up_rgba) = ButtonSpriteSheet::upscale_ps2_title_background(
-                &t.rgba,
-                t.width as u32,
-                t.height as u32,
-            );
             render_ctx.create_blitter_bind_group(
                 &blitter,
-                up_w,
-                up_h,
-                &up_rgba,
+                t.width as u32,
+                t.height as u32,
+                &t.rgba,
                 &title_bg_uniform_buffer,
-                Some("Original PS2 Title Background Texture (4x Upscaled)"),
+                Some("Original PS2 Title Background Texture (4K Pack)"),
             )
         });
     let mut button_sprites = tex_loader
@@ -498,9 +494,11 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
         .ok()
         .map(|t| ButtonSpriteSheet::new(t.width, t.height, t.rgba));
-    if let (Some(ref mut sheet), Ok(orig_s1)) = (
+    if let (Some(ref mut sheet), Some(orig_s1)) = (
         &mut button_sprites,
-        ps2_tex_loader.load_texture("etc/start01.tex"),
+        tex_loader
+            .load_4k_named_override("ps2", "etc/start01")
+            .or_else(|| ps2_tex_loader.load_texture("etc/start01.tex").ok()),
     ) {
         sheet.set_original_title_logo(orig_s1.width, orig_s1.height, orig_s1.rgba);
     }

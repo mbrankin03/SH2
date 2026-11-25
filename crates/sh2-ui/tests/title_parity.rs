@@ -131,28 +131,21 @@ fn render_title_and_options_headless_snapshots() {
         save_png(&format!("{dir}/options_advanced_scrolled.png"), &rast_adv);
         let ps2_dir = resolver.game_root.join("sh2e/ps2");
         let ps2_loader = TextureLoader::new(&ps2_dir, None::<&std::path::Path>);
-        if let (Ok(s0), Ok(s1)) = (
-            ps2_loader.load_texture("etc/start00.tex"),
-            ps2_loader.load_texture("etc/start01.tex"),
+        if let (Some(s0), Some(s1)) = (
+            loader
+                .load_4k_named_override("ps2", "etc/start00")
+                .or_else(|| ps2_loader.load_texture("etc/start00.tex").ok()),
+            loader
+                .load_4k_named_override("ps2", "etc/start01")
+                .or_else(|| ps2_loader.load_texture("etc/start01.tex").ok()),
         ) {
             atlas.set_original_title_logo(s1.width, s1.height, s1.rgba);
-            let (up_w, up_h, up_rgba) = ButtonSpriteSheet::upscale_ps2_title_background(
-                &s0.rgba,
-                s0.width as u32,
-                s0.height as u32,
-            );
             let mut sm_orig = TitleStateMachine::new();
             sm_orig.show_phase_immediately(TitlePhase::MainMenu);
             sm_orig.elapsed_timer = 0.0;
             let mut rast_orig = TextRasterizer::new(1280, 720);
-            fill_bg_cropped(
-                &mut rast_orig,
-                &up_rgba,
-                up_w as usize,
-                up_h as usize,
-                uv_rect,
-            );
-            // White pulsing logo overlay is SH2:EE-only; Original PS2 splash draws only the upscaled background + menu buttons.
+            fill_bg_cropped(&mut rast_orig, &s0.rgba, s0.width, s0.height, uv_rect);
+            // White pulsing logo overlay is SH2:EE-only; Original PS2 splash draws only the 4K pack background + menu buttons.
             draw_title_screen(&sm_orig, Some(&atlas), font, &mut rast_orig);
             save_png(&format!("{dir}/title_main_menu_original.png"), &rast_orig);
         }

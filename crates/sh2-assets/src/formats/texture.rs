@@ -236,6 +236,14 @@ impl TextureLoader {
         None
     }
 
+    /// Resolves and decodes a named 4K AI texture override (`<sub>/<rel_stem>.dds` or `.png`, e.g.
+    /// `("ps2", "etc/start00")` or `("pic", "etc/start00")`) by delegating to
+    /// [`Self::load_4k_relative_texture_override`].
+    pub fn load_4k_named_override(&self, sub: &str, rel_stem: &str) -> Option<DecodedTexture> {
+        self.load_4k_relative_texture_override(Path::new(sub).join(rel_stem))
+    }
+
+<<<<<<< HEAD
     /// Loads and decodes a texture according to the active `WorldTextureQuality` tier (`SH2-142`):
     ///
     /// - `prefer_sh2ee == false`: Strict 1:1 Vanilla PS2/PC (`data/` only, no `sh2e/` or 4K).

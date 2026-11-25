@@ -58,6 +58,110 @@ impl Viewport43 {
     }
 }
 
+/// Draws the animated `SILENT HILL 2` title logo overlay (`TitleSpr[0]` in `start01e.tex`)
+/// locked pixel-for-pixel onto `sh2e/pic/etc/start00.tex` (`2732×2048`) at any window aspect.
+///
+/// Uses `SLUS_202.28` `titleDrawTitle` (`0x001c3490`) & `titleChangeColor` (`0x001c4740`, `7.5s` period).
+pub fn draw_pulsing_title_logo_for_bg(
+    sm: &TitleStateMachine,
+    atlas: &ButtonSpriteSheet,
+    rast: &mut TextRasterizer,
+    bg_uv_rect: (f32, f32, f32, f32),
+    bg_vp: (f32, f32, f32, f32),
+    ui_vp: (f32, f32, f32, f32),
+) {
+    draw_pulsing_title_logo_with_style(sm, atlas, rast, bg_uv_rect, bg_vp, ui_vp, true);
+}
+
+/// Draws the animated `SILENT HILL 2` title logo overlay (`TitleSpr[0]` in `start01e.tex` or
+/// `sh2e/ps2/etc/start01.tex`) locked pixel-for-pixel onto either `sh2e/pic/etc/start00.tex`
+/// (`enhanced_style == true`) or `sh2e/ps2/etc/start00.tex` (`enhanced_style == false`).
+pub fn draw_pulsing_title_logo_with_style(
+    sm: &TitleStateMachine,
+    atlas: &ButtonSpriteSheet,
+    rast: &mut TextRasterizer,
+    bg_uv_rect: (f32, f32, f32, f32),
+    bg_vp: (f32, f32, f32, f32),
+    ui_vp: (f32, f32, f32, f32),
+    enhanced_style: bool,
+) {
+    const PERIOD_SECS: f32 = 7.5;
+    let phase = (sm.elapsed_timer % PERIOD_SECS) / PERIOD_SECS;
+    // Smooth cosine cycle: 0 -> 1 -> 0 over 7.5s, dropping to alpha=0.0 at trough so the
+    // pure black letters in `start00.tex` show completely.
+    let s = 0.5 - 0.5 * (phase * std::f32::consts::TAU).cos();
+    let rgb = 1.0 - s * 0.90;
+    let alpha = 1.0 - s;
+
+    let (u0, v0, u1, v1) = bg_uv_rect;
+    let du = (u1 - u0).max(1e-4);
+    let dv = (v1 - v0).max(1e-4);
+
+    let (sprite, norm_x, norm_w, norm_y, norm_h, src_w, src_h) = if enhanced_style {
+        // Measured directly from `sh2e/pic/etc/start00.tex` (`2732×2048`, black logo `x=421..2310, y=606..1062`,
+        // glyph height `456px`) vs `start01e.tex` (`2048×384`, white logo `x=82..1972, y=29..365`, glyph height `336px`).
+        (
+            AuthenticButtonSprite::TitleLogo,
+            ((342.0 / 2732.0) - u0) / du,
+            (2048.0 / 2732.0) / du,
+            ((566.5 / 2048.0) - v0) / dv,
+            (528.0 / 2048.0) / dv,
+            2048.0f32,
+            384.0f32,
+        )
+    } else {
+        // Measured directly from `sh2e/ps2/etc/start00.tex` (`512×512`, dark logo `x=19..491, y=150..220`)
+        // vs `sh2e/ps2/etc/start01.tex` (`512×96`, white logo `x=17..490, y=12..83`).
+        let (ow, oh) = if atlas.orig_logo_rgba.is_some() {
+            (
+                atlas.orig_logo_width.min(512) as f32,
+                atlas.orig_logo_height.min(96) as f32,
+            )
+        } else {
+            (2048.0, 244.0)
+        };
+        (
+            AuthenticButtonSprite::TitleLogoOriginal,
+            ((2.0 / 512.0) - u0) / du,
+            1.0 / du,
+            ((138.0 / 512.0) - v0) / dv,
+            (96.0 / 512.0) / dv,
+            ow,
+            oh,
+        )
+    };
+
+    let (bg_x, bg_y, bg_w, bg_h) = bg_vp;
+    let (ui_x, ui_y, ui_w, ui_h) = ui_vp;
+    let ui_w = ui_w.max(1.0);
+    let ui_h = ui_h.max(1.0);
+
+    // Map exact screen-space logo rect inside `bg_vp` into `ui_vp` (`rast` pixel space).
+    let logo_screen_x = bg_x + norm_x * bg_w;
+    let logo_screen_y = bg_y + norm_y * bg_h;
+    let logo_screen_w = norm_w * bg_w;
+    let logo_screen_h = norm_h * bg_h;
+
+    let rast_w = rast.width as f32;
+    let rast_h = rast.height as f32;
+    let lx = (((logo_screen_x - ui_x) / ui_w) * rast_w).round() as i32;
+    let ly = (((logo_screen_y - ui_y) / ui_h) * rast_h).round() as i32;
+    let scale_x = ((logo_screen_w / ui_w) * rast_w) / src_w;
+    let scale_y = ((logo_screen_h / ui_h) * rast_h) / src_h;
+
+    atlas.blit_sprite_xy(
+        sprite,
+        &mut rast.pixels,
+        rast.width,
+        rast.height,
+        lx,
+        ly,
+        scale_x,
+        scale_y,
+        [rgb, rgb, rgb, alpha],
+    );
+}
+
 /// Draws the authentic title screen text/sprite elements onto `rast` (`titleDrawMainMenu`
 /// `0x001c38c0` / `sh2pc` `0x004971d0`).
 pub fn draw_title_screen(
@@ -121,8 +225,9 @@ pub fn draw_title_screen(
 
             if let Some(atlas) = button_sprites {
                 // `titleDrawMainMenu` (`0x001c38c0`): slot Y starts at +74, step +22 in 512×448 centered space.
+                // `TitleSpr[0xb]` (`0x0033b880`) glow cursor height is `29`, and width is `asStack_42[idx + 0x19] + 8`
+                // (`Load=104`, `Continue=164`, `NewGame=168`, `Options=150`, `Movies=124`, `Exit=128`).
                 let btn_scale = vp.hd_sprite_scale();
-                let glow_scale = btn_scale * 1.32;
                 let start_cy = if slots.len() > 4 { 52.0 } else { 74.0 };
                 let step_cy = 22.0;
 
@@ -131,13 +236,13 @@ pub fn draw_title_screen(
                     let cy = start_cy + idx as f32 * step_cy;
                     let (cx, py) = vp.centered_to_px(0.0, cy);
 
-                    let sprite = match opt {
-                        MainMenuOption::Load => AuthenticButtonSprite::Load,
-                        MainMenuOption::Continue => AuthenticButtonSprite::Continue,
-                        MainMenuOption::NewGame => AuthenticButtonSprite::NewGame,
-                        MainMenuOption::Options => AuthenticButtonSprite::Options,
-                        MainMenuOption::Movies => AuthenticButtonSprite::Movies,
-                        MainMenuOption::Exit => AuthenticButtonSprite::Exit,
+                    let (sprite, glow_virt_w) = match opt {
+                        MainMenuOption::Load => (AuthenticButtonSprite::Load, 104.0_f32),
+                        MainMenuOption::Continue => (AuthenticButtonSprite::Continue, 164.0_f32),
+                        MainMenuOption::NewGame => (AuthenticButtonSprite::NewGame, 168.0_f32),
+                        MainMenuOption::Options => (AuthenticButtonSprite::Options, 150.0_f32),
+                        MainMenuOption::Movies => (AuthenticButtonSprite::Movies, 124.0_f32),
+                        MainMenuOption::Exit => (AuthenticButtonSprite::Exit, 128.0_f32),
                     };
 
                     let rect = sprite.atlas_rect();
@@ -146,9 +251,8 @@ pub fn draw_title_screen(
                     let btn_x = cx - (scaled_w / 2);
 
                     if is_selected {
-                        let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
-                        let glow_w = (glow_rect.width as f32 * glow_scale) as i32;
-                        let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
+                        let glow_w = (glow_virt_w * vp.scale_x).round() as i32;
+                        let glow_h = (29.0 * vp.scale_y).round() as i32;
                         ButtonSpriteSheet::draw_analytic_glow_cursor(
                             &mut rast.pixels,
                             rast.width,
@@ -323,37 +427,23 @@ pub fn draw_scenario_selection(
 
     if let Some(atlas) = button_sprites {
         let scale = vp.hd_sprite_scale();
-        let glow_scale = scale * 1.4;
 
-        let hdr_rect = AuthenticButtonSprite::NewGame.atlas_rect();
-        let hdr_w = (hdr_rect.width as f32 * scale) as i32;
-        let (cx, hdr_y) = vp.centered_to_px(0.0, 52.0);
-        atlas.blit_sprite(
-            AuthenticButtonSprite::NewGame,
-            &mut rast.pixels,
-            rast.width,
-            rast.height,
-            cx - (hdr_w / 2),
-            hdr_y,
-            scale,
-            [0.72, 0.72, 0.75, 0.75],
-        );
-
+        // `sh2pc.exe` `FUN_00497960` (`0x00497960`): draws Main Scenario (`Y = +76` / `0xffffff4c`? centered)
+        // and Sub Scenario (`Y = +108`) with glow widths `0x1fc` (508) / `0x198` (408) and height `22`.
         let scenarios = [
-            (0, AuthenticButtonSprite::MainScenario),
-            (1, AuthenticButtonSprite::SubScenario),
+            (0, AuthenticButtonSprite::MainScenario, 508.0_f32),
+            (1, AuthenticButtonSprite::SubScenario, 408.0_f32),
         ];
-        for (idx, sprite) in &scenarios {
+        for (idx, sprite, glow_virt_w) in &scenarios {
             let is_selected = *idx == sm.scenario_index;
-            let (cx, py) = vp.centered_to_px(0.0, 92.0 + *idx as f32 * 34.0);
+            let (cx, py) = vp.centered_to_px(0.0, 76.0 + *idx as f32 * 32.0);
             let rect = sprite.atlas_rect();
             let w = (rect.width as f32 * scale) as i32;
             let btn_h = (rect.height as f32 * scale) as i32;
 
             if is_selected {
-                let glow_rect = AuthenticButtonSprite::GlowCursor.atlas_rect();
-                let glow_w = (glow_rect.width as f32 * glow_scale * 1.08) as i32;
-                let glow_h = (glow_rect.height as f32 * glow_scale) as i32;
+                let glow_w = (glow_virt_w * vp.scale_x).round() as i32;
+                let glow_h = (22.0 * vp.scale_y).round() as i32;
                 ButtonSpriteSheet::draw_analytic_glow_cursor(
                     &mut rast.pixels,
                     rast.width,
@@ -420,18 +510,18 @@ pub fn draw_scenario_selection(
                 true,
             );
         }
-    }
 
-    let (_, y_foot) = vp.centered_to_px(0.0, 190.0);
-    let foot_sz = (11.0 * vp.scale_y).round().max(9.0) as usize;
-    font.draw_line_centered(
-        rast,
-        "[Up/Down: Select | Enter: Confirm | Esc: Back]",
-        (center_x, y_foot.max(0) as usize),
-        foot_sz,
-        Sh2TextColor::MutedFooter,
-        true,
-    );
+        let (_, y_foot) = vp.centered_to_px(0.0, 190.0);
+        let foot_sz = (11.0 * vp.scale_y).round().max(9.0) as usize;
+        font.draw_line_centered(
+            rast,
+            "[Up/Down: Select | Enter: Confirm | Esc: Back]",
+            (center_x, y_foot.max(0) as usize),
+            foot_sz,
+            Sh2TextColor::MutedFooter,
+            true,
+        );
+    }
 }
 
 /// Draws the authentic side-by-side Action & Riddle difficulty selection screen
@@ -499,14 +589,22 @@ pub fn draw_difficulty_selection(
             .enumerate()
         {
             let is_selected = diff == sm.action_difficulty;
+            // `titleDrawSubMenu` (`0x001c3e10`, `param_1 == 1` lines 1324-1332): once Action Level is
+            // confirmed and Riddle Level is being chosen, hide unselected Action rows so only the
+            // confirmed Action selection remains visible with its locked glow.
+            if !is_action && !is_selected {
+                continue;
+            }
             let (px, py) = vp.centered_to_px(action_cx, ROW_CYS[idx]);
             let rect = sprite.atlas_rect();
             let w = (rect.width as f32 * scale) as i32;
             let h = (rect.height as f32 * scale) as i32;
 
-            if is_selected && is_action {
+            if is_selected {
                 let glow_w = (120.0 * vp.scale_x).round() as i32;
-                let glow_h = (25.0 * vp.scale_y).round() as i32;
+                // `titleDrawSubMenu` (`0x001c3e10` line 1299 / 1337): `TitleSpr._362_2_ -= 7` (`29 - 7 = 22`).
+                let glow_h = (22.0 * vp.scale_y).round() as i32;
+                let glow_alpha = if is_action { pulse_alpha } else { 0.85 };
                 ButtonSpriteSheet::draw_analytic_glow_cursor(
                     &mut rast.pixels,
                     rast.width,
@@ -515,7 +613,7 @@ pub fn draw_difficulty_selection(
                     py + h / 2,
                     glow_w,
                     glow_h,
-                    [1.0, 1.0, 1.0, pulse_alpha],
+                    [1.0, 1.0, 1.0, glow_alpha],
                 );
             }
 
@@ -571,7 +669,7 @@ pub fn draw_difficulty_selection(
 
                 if is_selected && !is_action {
                     let glow_w = (120.0 * vp.scale_x).round() as i32;
-                    let glow_h = (25.0 * vp.scale_y).round() as i32;
+                    let glow_h = (22.0 * vp.scale_y).round() as i32;
                     ButtonSpriteSheet::draw_analytic_glow_cursor(
                         &mut rast.pixels,
                         rast.width,
@@ -684,23 +782,23 @@ pub fn draw_difficulty_selection(
                 );
             }
         }
-    }
 
-    let (_, y_foot) = vp.centered_to_px(0.0, 190.0);
-    let foot_sz = (11.0 * vp.scale_y).round().max(9.0) as usize;
-    let footer_text = if is_action && !is_bfaw {
-        "[Up/Down: Change | Enter: Next | Esc: Back]"
-    } else {
-        "[Up/Down: Change | Enter: Start Game | Esc: Back]"
-    };
-    font.draw_line_centered(
-        rast,
-        footer_text,
-        (vp.center_x.round() as usize, y_foot.max(0) as usize),
-        foot_sz,
-        Sh2TextColor::MutedFooter,
-        true,
-    );
+        let (_, y_foot) = vp.centered_to_px(0.0, 190.0);
+        let foot_sz = (11.0 * vp.scale_y).round().max(9.0) as usize;
+        let footer_text = if is_action && !is_bfaw {
+            "[Up/Down: Change | Enter: Next | Esc: Back]"
+        } else {
+            "[Up/Down: Change | Enter: Start Game | Esc: Back]"
+        };
+        font.draw_line_centered(
+            rast,
+            footer_text,
+            (vp.center_x.round() as usize, y_foot.max(0) as usize),
+            foot_sz,
+            Sh2TextColor::MutedFooter,
+            true,
+        );
+    }
 }
 
 /// Draws the test room selection stage list onto `rast` styled identically to `look_board` (`0x002171a0`).
@@ -815,4 +913,63 @@ pub fn draw_test_rooms_screen(sm: &TitleStateMachine, font: &AtlasFont, rast: &m
         Sh2TextColor::White,
         true,
     );
+}
+
+/// Draws the retail PC (`sh2pc.exe` / SH2:EE) white pointer arrow cursor with a crisp black outline
+/// onto `rast` at normalized coordinates `(norm_x, norm_y)` (`[0.0..1.0]`).
+pub fn draw_pc_mouse_cursor(rast: &mut TextRasterizer, norm_x: f32, norm_y: f32) {
+    if !(0.0..=1.0).contains(&norm_x) || !(0.0..=1.0).contains(&norm_y) {
+        return;
+    }
+    let tip_x = (norm_x * rast.width as f32).round() as i32;
+    let tip_y = (norm_y * rast.height as f32).round() as i32;
+    let scale = ((rast.height as f32 / 448.0).round() as i32).max(1);
+
+    // Classic 18×24 angled pointer arrow template (`1` = black outline, `2` = white fill).
+    const CURSOR_ROWS: [&str; 19] = [
+        "1000000000000",
+        "1100000000000",
+        "1210000000000",
+        "1221000000000",
+        "1222100000000",
+        "1222210000000",
+        "1222221000000",
+        "1222222100000",
+        "1222222210000",
+        "1222222221000",
+        "1222222222100",
+        "1222222111110",
+        "1222122100000",
+        "1221122100000",
+        "1210012210000",
+        "1100012210000",
+        "1000001221000",
+        "0000001221000",
+        "0000000110000",
+    ];
+
+    for (ry, row) in CURSOR_ROWS.iter().enumerate() {
+        for (rx, ch) in row.bytes().enumerate() {
+            let color = match ch {
+                b'1' => [0x00, 0x00, 0x00, 0xff],
+                b'2' => [0xf4, 0xf4, 0xf4, 0xff],
+                _ => continue,
+            };
+            let px0 = tip_x + (rx as i32) * scale;
+            let py0 = tip_y + (ry as i32) * scale;
+            for sy in 0..scale {
+                let py = py0 + sy;
+                if py < 0 || py >= rast.height as i32 {
+                    continue;
+                }
+                for sx in 0..scale {
+                    let px = px0 + sx;
+                    if px >= 0 && px < rast.width as i32 {
+                        let idx = (py as usize * rast.width + px as usize) * 4;
+                        rast.pixels[idx..idx + 4].copy_from_slice(&color);
+                    }
+                }
+            }
+        }
+    }
 }

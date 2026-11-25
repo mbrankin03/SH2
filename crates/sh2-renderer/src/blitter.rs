@@ -38,7 +38,7 @@ impl SurfaceBlitter {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -94,10 +94,10 @@ impl SurfaceBlitter {
             ..Default::default()
         });
 
-        let default_tint = [1.0f32, 1.0, 1.0, 1.0];
+        let default_uniforms = [1.0f32, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
         let default_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Surface Blit Default Uniform Buffer"),
-            contents: bytemuck::cast_slice(&default_tint),
+            contents: bytemuck::cast_slice(&default_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 

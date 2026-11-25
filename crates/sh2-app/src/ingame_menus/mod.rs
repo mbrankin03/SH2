@@ -549,6 +549,11 @@ pub(crate) fn render_overlay(
             state.surface_config.width as f32,
             state.surface_config.height as f32,
         );
+        if let Some((mx, my)) = state.last_cursor_pos {
+            let norm_x = (mx as f32 - vp.0) / vp.2.max(1.0);
+            let norm_y = (my as f32 - vp.1) / vp.3.max(1.0);
+            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
+        }
         state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
         return;
     }

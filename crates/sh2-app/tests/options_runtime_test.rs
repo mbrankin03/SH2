@@ -24,8 +24,10 @@ fn test_options_audio_device_selection_and_enumeration() {
         "Built-in Analog Audio".into(),
     ]);
 
-    // Navigate to Audio Tab (Tab 1)
-    controller.switch_options_tab(true);
+    // Navigate to Audio Options (row 2 on Root O P T I O N S)
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Root);
+    controller.options_menu.selected_index = 2;
+    controller.handle_nav(MenuNavAction::Confirm);
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
 
     // Audio Row Index 4: Output Device
@@ -136,6 +138,9 @@ fn test_sh2_56_high_refresh_framerate_cap_options_and_pacer() {
     use sh2_core::FramePacer;
 
     let mut menu = OptionsMenu::new(AppConfig::default());
+    assert_eq!(menu.active_tab, OptionsTab::Root);
+    menu.navigate_vertical(1); // Advanced Options
+    assert!(menu.enter_submenu());
     assert_eq!(menu.active_tab, OptionsTab::Video);
 
     // Row 3 in Video tab is Frame Rate Cap
@@ -232,7 +237,8 @@ fn test_sh2_59_dual_source_audio_pack_detection_and_options_toggle() {
         .options_menu
         .set_audio_devices(vec!["Default (System)".into(), "Stereo Out".into()]);
     controller.title_sm.phase = TitlePhase::OptionsMenu;
-    controller.switch_options_tab(true); // Audio tab
+    controller.options_menu.selected_index = 2;
+    controller.handle_nav(MenuNavAction::Confirm); // Enter Audio Options submenu
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
     assert_eq!(controller.options_menu.item_count(), 12);
 
@@ -421,7 +427,8 @@ fn test_sh2_84_binaural_hrtf_options_toggle_and_persistence() {
 
     let mut controller = AppMenuController::new(&cfg_path);
     controller.title_sm.phase = TitlePhase::OptionsMenu;
-    controller.switch_options_tab(true); // Video -> Audio
+    controller.options_menu.selected_index = 2;
+    controller.handle_nav(MenuNavAction::Confirm); // Enter Audio Options submenu
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Audio);
 
     // Row 6: 3D Spatial Audio defaults to Classic PS2 Stereo
@@ -541,6 +548,9 @@ fn test_sh2_136_aces_tonemapping_options_toggle_and_persistence() {
 
     let mut controller = AppMenuController::new(&cfg_path);
     controller.title_sm.phase = TitlePhase::OptionsMenu;
+    assert_eq!(controller.options_menu.active_tab, OptionsTab::Root);
+    controller.options_menu.selected_index = 1;
+    controller.handle_nav(MenuNavAction::Confirm); // Enter Advanced Options submenu
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Video);
 
     // Row 12 in Video tab is ACES Tonemapping (default ON for Native Enhanced)

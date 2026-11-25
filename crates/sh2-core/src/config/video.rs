@@ -404,6 +404,13 @@ pub struct VideoOptions {
     /// Interactive oar water ripple rings on Toluca Lake (`native-upgrade`, `SH2-80`). Disabled in strict 1:1 Vanilla PS2 mode.
     #[serde(default)]
     pub enable_oar_ripples: bool,
+    /// Use SH2:EE title screen (`SILENT HILL 2 / ENHANCED EDITION`) when `true`, or original PS2 (`SILENT HILL 2`) when `false`.
+    #[serde(default = "default_true")]
+    pub enable_enhanced_title_screen: bool,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Default for VideoOptions {
@@ -425,6 +432,7 @@ impl Default for VideoOptions {
             aces_tonemapping: true,
             enable_water_reflections: true,
             enable_oar_ripples: true,
+            enable_enhanced_title_screen: true,
         }
     }
 }

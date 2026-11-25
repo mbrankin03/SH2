@@ -223,6 +223,123 @@ impl AppMenuController {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Routes mouse cursor hover `(mouse_x, mouse_y)` in window pixels across Title, Options, and Pause menus.
+    pub fn handle_mouse_move(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> MenuSoundCue {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(win_w, win_h);
+        if cw <= 0.0 || ch <= 0.0 {
+            return MenuSoundCue::None;
+        }
+        let ps2_x = (mouse_x - ox) * 512.0 / cw;
+        let ps2_y = (mouse_y - oy) * 448.0 / ch;
+
+        if self.in_game_active {
+            if self.pause_menu.is_open
+                && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu
+                && self.options_menu.handle_mouse_move(ps2_x, ps2_y)
+            {
+                self.revision = self.revision.wrapping_add(1);
+                return MenuSoundCue::CursorMove;
+            }
+            return MenuSoundCue::None;
+        }
+
+        if self.title_sm.phase == TitlePhase::OptionsMenu {
+            if self.options_menu.handle_mouse_move(ps2_x, ps2_y) {
+                self.revision = self.revision.wrapping_add(1);
+                return MenuSoundCue::CursorMove;
+            }
+            MenuSoundCue::None
+        } else if self
+            .title_sm
+            .handle_mouse_move(ps2_x - 256.0, ps2_y - 224.0)
+        {
+            self.revision = self.revision.wrapping_add(1);
+            MenuSoundCue::CursorMove
+        } else {
+            MenuSoundCue::None
+        }
+    }
+
+    /// Routes left mouse click `(mouse_x, mouse_y)` in window pixels across Title and Options screens.
+    pub fn handle_mouse_click(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> MenuSoundCue {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(win_w, win_h);
+        if cw <= 0.0 || ch <= 0.0 {
+            return MenuSoundCue::None;
+        }
+        let ps2_x = (mouse_x - ox) * 512.0 / cw;
+        let ps2_y = (mouse_y - oy) * 448.0 / ch;
+
+        if self.title_sm.phase == TitlePhase::OptionsMenu {
+            self.revision = self.revision.wrapping_add(1);
+            if self.options_menu.is_fmv_viewer_selected()
+                || self.options_menu.is_loading_test_selected()
+                || self.options_menu.is_test_rooms_selected()
+                || self.options_menu.sub_screen != sh2_ui::options::OptionsSubScreen::None
+            {
+                return self.handle_nav(MenuNavAction::Confirm);
+            }
+            if let Some(cue) = self.options_menu.handle_mouse_click(ps2_x, ps2_y) {
+                let (saved_cfg, _) = self.options_menu.commit_changes();
+                self.config_applied_pending = Some(saved_cfg.clone());
+                let _ = saved_cfg.save_to_file(&self.config_path);
+                return match cue {
+                    OptionsSoundCue::CursorMove => MenuSoundCue::Confirm,
+                    OptionsSoundCue::ValueChange => MenuSoundCue::CursorMove,
+                    _ => MenuSoundCue::Confirm,
+                };
+            }
+            MenuSoundCue::None
+        } else {
+            self.title_sm
+                .handle_mouse_move(ps2_x - 256.0, ps2_y - 224.0);
+            self.handle_nav(MenuNavAction::Confirm)
+        }
+    }
+
+    /// Routes mouse scroll wheel (`steps > 0` = scroll down, `steps < 0` = scroll up) inside the Options menu.
+    pub fn handle_mouse_wheel(
+        &mut self,
+        steps: i32,
+        cursor_pos: Option<(f64, f64)>,
+        win_w: f32,
+        win_h: f32,
+    ) -> MenuSoundCue {
+        let in_options = (!self.in_game_active && self.title_sm.phase == TitlePhase::OptionsMenu)
+            || (self.in_game_active
+                && self.pause_menu.is_open
+                && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu);
+        if !in_options || steps == 0 {
+            return MenuSoundCue::None;
+        }
+        let hover_ps2 = cursor_pos.and_then(|(mx, my)| {
+            let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(win_w, win_h);
+            if cw > 0.0 && ch > 0.0 {
+                Some(((mx as f32 - ox) * 512.0 / cw, (my as f32 - oy) * 448.0 / ch))
+            } else {
+                None
+            }
+        });
+        let cue = self.options_menu.handle_mouse_wheel(steps, hover_ps2);
+        if cue != OptionsSoundCue::None {
+            self.revision = self.revision.wrapping_add(1);
+            MenuSoundCue::CursorMove
+        } else {
+            MenuSoundCue::None
+        }
+    }
+
     /// Handle unified navigation input across Title and Options screens.
     pub fn handle_nav(&mut self, action: MenuNavAction) -> MenuSoundCue {
         self.revision = self.revision.wrapping_add(1);
@@ -306,6 +423,9 @@ impl AppMenuController {
                             MenuSoundCue::Confirm
                         };
                     }
+                    if self.options_menu.enter_submenu() {
+                        return MenuSoundCue::Confirm;
+                    }
                     if self.options_menu.is_fmv_viewer_selected() {
                         self.title_sm.selected_test_room =
                             sh2_ui::menu::TestRoomKind::FmvCutsceneViewer;
@@ -348,10 +468,14 @@ impl AppMenuController {
                     if self.options_menu.close_sub_screen() {
                         return MenuSoundCue::Cancel;
                     }
+                    if self.options_menu.exit_to_root() {
+                        return MenuSoundCue::Cancel;
+                    }
                     // Discard and return to Main Menu, restoring original audio config if live-previewed
                     self.options_menu.discard_changes();
                     self.config_applied_pending = Some(self.options_menu.original_config.clone());
                     self.title_sm.phase = TitlePhase::MainMenu;
+                    self.title_sm.start_fade_in_duration(0.5);
                     MenuSoundCue::Cancel
                 }
             }
@@ -436,6 +560,9 @@ impl AppMenuController {
                         };
                         return (s, PauseAction::None);
                     }
+                    if self.options_menu.enter_submenu() {
+                        return (MenuSoundCue::Confirm, PauseAction::None);
+                    }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
                     self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
@@ -452,6 +579,9 @@ impl AppMenuController {
                 }
                 MenuNavAction::Cancel => {
                     if self.options_menu.close_sub_screen() {
+                        return (MenuSoundCue::Cancel, PauseAction::None);
+                    }
+                    if self.options_menu.exit_to_root() {
                         return (MenuSoundCue::Cancel, PauseAction::None);
                     }
                     self.options_menu.discard_changes();
@@ -627,14 +757,17 @@ mod tests {
         controller.handle_nav(MenuNavAction::Confirm);
         assert_eq!(controller.title_sm.phase, TitlePhase::OptionsMenu);
 
-        // Change resolution and commit
+        // Enter Advanced Options (row 1 on 10-row Root), change resolution, and commit
+        controller.handle_nav(MenuNavAction::Down); // Advanced Options
+        controller.handle_nav(MenuNavAction::Confirm);
         controller.handle_nav(MenuNavAction::Right);
         assert!(controller.options_menu.is_dirty);
         controller.handle_nav(MenuNavAction::Confirm);
         assert!(!controller.options_menu.is_dirty);
         assert!(cfg_path.exists());
 
-        // Return to main menu
+        // Return to Root Options, then to main menu
+        controller.handle_nav(MenuNavAction::Cancel);
         controller.handle_nav(MenuNavAction::Cancel);
         assert_eq!(controller.title_sm.phase, TitlePhase::MainMenu);
 

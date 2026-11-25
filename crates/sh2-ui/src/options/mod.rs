@@ -637,7 +637,35 @@ mod tests {
         menu.navigate_vertical(1); // Advanced Options
         assert!(menu.enter_submenu());
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 18);
+        assert_eq!(menu.item_count(), 20);
+
+        // Verify Cutaway & Puzzle Quality 3-tier selector (index 18) and Aspect Scaling (index 19)
+        menu.selected_index = 18;
+        assert_eq!(
+            menu.item_display(18),
+            Some((
+                "Cutaway & Puzzle Quality",
+                "4K AI Master (4096x4096)".to_string()
+            ))
+        );
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.video.cutaway_quality,
+            sh2_core::CutawayQuality::Sh2eeHd
+        );
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.video.cutaway_quality,
+            sh2_core::CutawayQuality::OriginalPs2
+        );
+        menu.selected_index = 19;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.video.cutaway_aspect_mode,
+            sh2_core::CutawayAspectMode::Fill16x9WidescreenCrop
+        );
+        menu.discard_changes();
+        menu.selected_index = 0;
 
         // Adjust Resolution
         menu.adjust_value(1);

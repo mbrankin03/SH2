@@ -121,19 +121,27 @@ pub(crate) fn draw_progress_bar(
         .draw_rect_outline(x, y, w, h, 1, border_color);
 }
 
-/// Loads a retail cutaway still or sprite sheet `.tex` from `sh2e/pic/` or `data/pic/`.
+/// Loads a retail cutaway still or sprite sheet `.tex` from `mods/4k_cutaways/`, `sh2e/pic/`, or `data/pic/`.
 pub(super) fn load_cutaway_tex(
     pic_or_sheet: &str,
     prefer_sh2ee: bool,
 ) -> Option<CutawayTextureAsset> {
+    let tier = if prefer_sh2ee {
+        sh2_assets::CutawayPackTier::Ai4kMaster
+    } else {
+        sh2_assets::CutawayPackTier::OriginalPs2
+    };
     let resolver = sh2_assets::AssetPathResolver::resolve();
+    let pack_4k = resolver.resolve_4k_cutaway_pack_dir();
     let base_roots = [
         resolver.game_root.clone(),
         PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
     ];
     for base in &base_roots {
         let loader = TextureLoader::new(base.join("data"), Some(base.join("sh2e")));
-        if let Ok(tex) = loader.load_cutaway_texture(pic_or_sheet, prefer_sh2ee) {
+        if let Ok(tex) =
+            loader.load_cutaway_texture_with_tier(pic_or_sheet, tier, pack_4k.as_deref())
+        {
             return Some(tex);
         }
     }
@@ -196,13 +204,22 @@ pub(crate) fn blit_cutaway_viewport(
         );
     }
 
+    let aspect_mode = state
+        .menu_ctrl
+        .options_menu
+        .original_config
+        .video
+        .cutaway_aspect_mode;
+    let fs_layout =
+        sh2_core::FullscreenImageLayout::compute(vp_w as f32, vp_h as f32, base_pic, aspect_mode);
+
     let mut vp_transform = CutawayViewportTransform {
-        offset_x: 0.0,
-        offset_y: 0.0,
-        draw_width: vp_w as f32,
-        draw_height: vp_h as f32,
-        scale_x: 1.0,
-        scale_y: 1.0,
+        offset_x: fs_layout.draw_x,
+        offset_y: fs_layout.draw_y,
+        draw_width: fs_layout.draw_w,
+        draw_height: fs_layout.draw_h,
+        scale_x: fs_layout.draw_w / (vp_w.max(1) as f32),
+        scale_y: fs_layout.draw_h / (vp_h.max(1) as f32),
     };
 
     if let Some(base_tex) = state
@@ -210,19 +227,37 @@ pub(crate) fn blit_cutaway_viewport(
         .cutaway_cache
         .get(&(base_pic.to_string(), prefer_sh2ee))
     {
-        vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
-        let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
-        let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
-        let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
-        let dst_h = (vp_transform.draw_height.round().max(1.0) as usize).min(vp_h);
         let (rgba, tw, th) = (
             base_tex.texture.rgba.clone(),
             base_tex.texture.width,
             base_tex.texture.height,
         );
-        state
-            .menu_rasterizer
-            .blit_rgba_scaled(dst_x, dst_y, dst_w, dst_h, &rgba, tw, th, 1.0);
+        if fs_layout.is_widescreen_cropped {
+            let x0 = (vp_x as f32) + fs_layout.draw_x;
+            let y0 = (vp_y as f32) + fs_layout.draw_y;
+            let x1 = x0 + fs_layout.draw_w;
+            let y1 = y0 + fs_layout.draw_h;
+            let base_tris = [
+                (x0, y0, 0.0, 0.0),
+                (x1, y0, 1.0, 0.0),
+                (x1, y1, 1.0, 1.0),
+                (x0, y0, 0.0, 0.0),
+                (x1, y1, 1.0, 1.0),
+                (x0, y1, 0.0, 1.0),
+            ];
+            state
+                .menu_rasterizer
+                .blit_overlay_triangles(&base_tris, &rgba, tw, th, 1.0);
+        } else {
+            vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
+            let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
+            let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
+            let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
+            let dst_h = (vp_transform.draw_height.round().max(1.0) as usize).min(vp_h);
+            state
+                .menu_rasterizer
+                .blit_rgba_scaled(dst_x, dst_y, dst_w, dst_h, &rgba, tw, th, 1.0);
+        }
     }
 
     let draw_x = (vp_x as f32) + vp_transform.offset_x;

@@ -8,16 +8,28 @@ use crate::error::AssetError;
 
 use super::{decode_texture_bytes, DecodedTexture, TextureLoader, TEX_MAGIC};
 
+/// Quality tier for resolving cutaway, puzzle, and map assets (`SH2-91`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CutawayPackTier {
+    /// 4K AI Super-Resolution Master Pack (`mods/4k_cutaways/`), falling back to `Sh2eeHd` -> `OriginalPs2`.
+    Ai4kMaster,
+    /// SH2:EE HD Pack (`sh2e/pic/`), falling back to `OriginalPs2`.
+    #[default]
+    Sh2eeHd,
+    /// Original PS2 / Retail PC (`data/pic/`), falling back to `Sh2eeHd`.
+    OriginalPs2,
+}
+
 /// Decoded cutaway still or overlay sprite sheet with original PS2/PC texel metadata.
 #[derive(Debug, Clone)]
 pub struct CutawayTextureAsset {
-    /// Decoded RGBA8 texture (either original PS2/PC or SH2:EE 4x upscaled).
+    /// Decoded RGBA8 texture (original PS2/PC, SH2:EE 4x upscaled, or 4K AI Master).
     pub texture: DecodedTexture,
     /// Original PS2/PC width in texels (used to normalize sprite sheet UV coordinates).
     pub original_width: u32,
     /// Original PS2/PC height in texels (used to normalize sprite sheet UV coordinates).
     pub original_height: u32,
-    /// Whether this asset was loaded from the SH2:EE `sh2e/pic/` pack.
+    /// Whether this asset was loaded from the SH2:EE `sh2e/pic/` pack or 4K AI pack.
     pub is_sh2ee_hd: bool,
 }
 
@@ -163,7 +175,92 @@ impl TextureLoader {
         prefer_sh2ee: bool,
         apply_4k: bool,
     ) -> Result<CutawayTextureAsset, AssetError> {
+        let tier = if apply_4k {
+            CutawayPackTier::Ai4kMaster
+        } else if prefer_sh2ee {
+            CutawayPackTier::Sh2eeHd
+        } else {
+            CutawayPackTier::OriginalPs2
+        };
+        self.load_cutaway_texture_with_tier(pic_or_sheet_name, tier, None)
+    }
+
+    /// Resolves and decodes a cutaway still or overlay sprite sheet using the 3-tier
+    /// [`CutawayPackTier`] (`Ai4kMaster`, `Sh2eeHd`, `OriginalPs2`) and optional `mods/sh2_4k_textures`
+    /// or `mods/4k_cutaways` pack root (`SH2-91`), always preserving original PS2/PC texel dimensions
+    /// for `-256..256` UV normalization.
+    pub fn load_cutaway_texture_with_tier(
+        &self,
+        pic_or_sheet_name: &str,
+        tier: CutawayPackTier,
+        pack_4k_dir: Option<&Path>,
+    ) -> Result<CutawayTextureAsset, AssetError> {
         let rel = Self::normalize_cutaway_rel_path(pic_or_sheet_name);
+
+        if tier == CutawayPackTier::Ai4kMaster {
+            if let Some(texture) = self.load_4k_relative_texture_override(&rel) {
+                let (original_width, original_height) = self
+                    .resolve_in_data(&rel)
+                    .and_then(|vp| fs::read(vp).ok())
+                    .and_then(|vb| probe_tex_dimensions(&vb))
+                    .unwrap_or((
+                        (texture.width as u32 / 8).max(1),
+                        (texture.height as u32 / 8).max(1),
+                    ));
+                return Ok(CutawayTextureAsset {
+                    original_width,
+                    original_height,
+                    is_sh2ee_hd: true,
+                    texture,
+                });
+            }
+        }
+
+        if tier == CutawayPackTier::Ai4kMaster {
+            let resolved_4k_root = pack_4k_dir
+                .map(PathBuf::from)
+                .or_else(|| {
+                    self.data_dir
+                        .parent()
+                        .map(|r| r.join("mods/sh2_4k_textures"))
+                        .filter(|p| p.join("pic").is_dir())
+                })
+                .or_else(|| {
+                    self.data_dir
+                        .parent()
+                        .map(|r| r.join("mods/4k_cutaways"))
+                        .filter(|p| p.join("pic").is_dir())
+                })
+                .or_else(|| {
+                    crate::resolver::AssetPathResolver::resolve().resolve_4k_cutaway_pack_dir()
+                });
+
+            if let Some(root_4k) = resolved_4k_root {
+                for ext in ["dds", "png"] {
+                    let cand_img = root_4k.join(rel.with_extension(ext));
+                    if cand_img.is_file() {
+                        let bytes = fs::read(&cand_img)?;
+                        let texture = decode_texture_bytes(&bytes, &cand_img)?;
+                        let (original_width, original_height) = self
+                            .resolve_in_data(&rel)
+                            .and_then(|vp| fs::read(vp).ok())
+                            .and_then(|vb| probe_tex_dimensions(&vb))
+                            .unwrap_or((
+                                (texture.width as u32 / 8).max(1),
+                                (texture.height as u32 / 8).max(1),
+                            ));
+                        return Ok(CutawayTextureAsset {
+                            original_width,
+                            original_height,
+                            is_sh2ee_hd: true,
+                            texture,
+                        });
+                    }
+                }
+            }
+        }
+
+        let prefer_sh2ee = tier != CutawayPackTier::OriginalPs2;
         let (chosen_path, is_sh2ee_hd) = self
             .resolve_path_with_preference(&rel, prefer_sh2ee)
             .ok_or_else(|| {

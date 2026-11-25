@@ -356,14 +356,22 @@ pub(super) fn sync_overlay_to_preset(state: &mut AppState) {
 }
 
 fn load_cutaway_from_roots(pic_or_sheet: &str, prefer_sh2ee: bool) -> Option<CutawayTextureAsset> {
+    let tier = if prefer_sh2ee {
+        sh2_assets::CutawayPackTier::Ai4kMaster
+    } else {
+        sh2_assets::CutawayPackTier::OriginalPs2
+    };
     let resolver = sh2_assets::AssetPathResolver::resolve();
+    let pack_4k = resolver.resolve_4k_cutaway_pack_dir();
     let base_roots = [
         resolver.game_root.clone(),
         PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
     ];
     for base in &base_roots {
         let loader = TextureLoader::new(base.join("data"), Some(base.join("sh2e")));
-        if let Ok(tex) = loader.load_cutaway_texture(pic_or_sheet, prefer_sh2ee) {
+        if let Ok(tex) =
+            loader.load_cutaway_texture_with_tier(pic_or_sheet, tier, pack_4k.as_deref())
+        {
             return Some(tex);
         }
     }

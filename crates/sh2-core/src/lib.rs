@@ -69,16 +69,17 @@ pub use combat::{
 pub use config::{
     ActionDifficulty, AppConfig, AudioOptions, AudioPackDetectionStatus, AudioPackPreference,
     AudioPackSource, BulletMultiplier, ButtonGlyphStyle, CombatInputMode, ControlOptions,
-    EnhancedPreset, FogQuality, FrameRateCap, GameLanguage, GameOptions, InternalResolution,
-    LightingProfile, ModEntryConfig, ModsConfig, OutdoorStreamingMode, RiddleDifficulty,
-    ShadowQualityMode, SpatialAudioMode, SpeakerConfiguration, VideoOptions, WindowDisplayMode,
-    WorldTextureQuality,
+    CutawayQuality, EnhancedPreset, FogQuality, FrameRateCap, GameLanguage, GameOptions,
+    InternalResolution, LightingProfile, ModEntryConfig, ModsConfig, OutdoorStreamingMode,
+    RiddleDifficulty, ShadowQualityMode, SpatialAudioMode, SpeakerConfiguration, VideoOptions,
+    WindowDisplayMode, WorldTextureQuality,
 };
 pub use cutaway::{
-    original_sheet_dimensions, ClippedQuadUv, CutawayOverlayEngine, CutsceneBorderBars,
-    OverlayKind, OverlaySpriteQuad, PillarboxMaskRect, PillarboxViewportLayout, OV_BOX,
-    OV_CLOCK_UV, OV_COIN, OV_DRUM_ABC, OV_DRUM_POS, OV_ELEVATOR, OV_ELEVATOR2, OV_MARKER, OV_TEIEN,
-    OV_VIDEO, OV_WALL, SHEET_ORIGINAL_DIMENSIONS,
+    is_cutaway_widescreen_scalable, original_sheet_dimensions, ClippedQuadUv, CutawayAspectMode,
+    CutawayOverlayEngine, CutsceneBorderBars, FullscreenImageLayout, OverlayKind,
+    OverlaySpriteQuad, PillarboxMaskRect, PillarboxViewportLayout,
+    FULLSCREEN_MAX_WIDESCREEN_ASPECT, OV_BOX, OV_CLOCK_UV, OV_COIN, OV_DRUM_ABC, OV_DRUM_POS,
+    OV_ELEVATOR, OV_ELEVATOR2, OV_MARKER, OV_TEIEN, OV_VIDEO, OV_WALL, SHEET_ORIGINAL_DIMENSIONS,
 };
 pub use cutscene::{
     authored_4x3_fov_radians, camera_basis_vectors, compute_widescreen_scr_z,

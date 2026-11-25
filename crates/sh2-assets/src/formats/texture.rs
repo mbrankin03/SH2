@@ -22,7 +22,9 @@ mod mipmap;
 pub(crate) mod zip_archive;
 
 pub use container::{decode_texture_bytes, parse_texture_container, ContainerTexture};
-pub use cutaway::{probe_tex_dimensions, CutawayTextureAsset, CutawayViewportTransform};
+pub use cutaway::{
+    probe_tex_dimensions, CutawayPackTier, CutawayTextureAsset, CutawayViewportTransform,
+};
 pub use mipmap::{
     compute_alpha_coverage_rgba, generate_mipmap_chain_rgba, mip_level_count_for_size,
     preserve_alpha_coverage_in_place, ALPHA_CUTOUT_MIP_REF_THRESHOLD,

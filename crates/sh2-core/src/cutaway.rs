@@ -7,8 +7,13 @@
 use crate::events::{EventFlags, PuzzleState};
 
 mod draw;
+mod fullscreen;
 mod pillarbox;
 mod tables;
+pub use fullscreen::{
+    is_cutaway_widescreen_scalable, CutawayAspectMode, FullscreenImageLayout,
+    FULLSCREEN_MAX_WIDESCREEN_ASPECT,
+};
 pub use pillarbox::{
     ClippedQuadUv, CutsceneBorderBars, PillarboxMaskRect, PillarboxViewportLayout,
 };

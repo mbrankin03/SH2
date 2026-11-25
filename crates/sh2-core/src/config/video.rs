@@ -235,6 +235,48 @@ impl WorldTextureQuality {
     }
 }
 
+/// 3-tier Cutaway, Puzzle & Map Image quality setting (`SH2-91`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CutawayQuality {
+    /// 4K AI Super-Resolution Master Pack (`mods/4k_cutaways/`, up to `4096x4096`),
+    /// falling back to `Sh2eeHd` -> `OriginalPs2`.
+    #[default]
+    Ai4kMaster,
+    /// Silent Hill 2: Enhanced Edition HD Pack (`sh2e/pic/`, `2048x2048`).
+    Sh2eeHd,
+    /// Original PS2 / Retail PC (`data/pic/`, `512x512`).
+    OriginalPs2,
+}
+
+impl CutawayQuality {
+    /// User-facing label string for the Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ai4kMaster => "4K AI Master (4096x4096)",
+            Self::Sh2eeHd => "SH2:EE HD (2048x2048)",
+            Self::OriginalPs2 => "Original PS2/PC (512x512)",
+        }
+    }
+
+    /// Cycle to next cutaway quality tier.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Ai4kMaster => Self::Sh2eeHd,
+            Self::Sh2eeHd => Self::OriginalPs2,
+            Self::OriginalPs2 => Self::Ai4kMaster,
+        }
+    }
+
+    /// Cycle to previous cutaway quality tier.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::Ai4kMaster => Self::OriginalPs2,
+            Self::Sh2eeHd => Self::Ai4kMaster,
+            Self::OriginalPs2 => Self::Sh2eeHd,
+        }
+    }
+}
+
 /// Shadow rendering backend mode (`SH2-81`).
 ///
 /// Allows purist players to select authentic 1:1 PS2 `.kg1`/`.kg2` stencil & drop shadows,
@@ -386,6 +428,12 @@ pub struct VideoOptions {
     /// 3-tier World (`.map`) & Character (`.mdl`) texture quality (`SH2-92`).
     #[serde(default)]
     pub texture_quality: WorldTextureQuality,
+    /// 3-tier Cutaway, Puzzle & Map image quality (`SH2-91`).
+    #[serde(default)]
+    pub cutaway_quality: CutawayQuality,
+    /// SH2:EE `FullscreenImages.cpp` cutaway scaling (`4:3` pillarboxed vs `16:9` widescreen crop, `SH2-91`).
+    #[serde(default)]
+    pub cutaway_aspect_mode: crate::cutaway::CutawayAspectMode,
     /// Shadow rendering mode: Classic PS2 `.kg1`/`.kg2` stencil, SH2:EE soft stencil, or Native PCSS (`SH2-81`).
     #[serde(default)]
     pub shadow_quality: ShadowQualityMode,
@@ -426,6 +474,8 @@ impl Default for VideoOptions {
             lens_flare: true,
             depth_of_field: true,
             texture_quality: WorldTextureQuality::default(),
+            cutaway_quality: CutawayQuality::default(),
+            cutaway_aspect_mode: crate::cutaway::CutawayAspectMode::default(),
             shadow_quality: ShadowQualityMode::default(),
             lighting_profile: LightingProfile::default(),
             outdoor_streaming_mode: OutdoorStreamingMode::default(),

@@ -54,6 +54,19 @@ impl AssetPathResolver {
         "../../Documents/SH2-Port/tools/texture_pipeline/output",
     ];
 
+    /// Candidate paths for the 4K AI Super-Resolution Cutaway, Puzzle & Map Pack (`SH2-91`),
+    /// prioritizing the unified `mods/sh2_4k_textures/` pack before legacy `mods/4k_cutaways/`.
+    pub const DEFAULT_4K_CUTAWAY_PACK_PATHS: [&'static str; 8] = [
+        "mods/sh2_4k_textures",
+        "../mods/sh2_4k_textures",
+        "../../Documents/SH2-Port/mods/sh2_4k_textures",
+        "mods/4k_cutaways",
+        "../mods/4k_cutaways",
+        "../../Documents/SH2-Port/mods/4k_cutaways",
+        "../../../Documents/SH2-Port/mods/4k_cutaways",
+        "tools/cutaway_pipeline/output",
+    ];
+
     /// Resolves the active asset directories, prioritizing `SH2_DATA_DIR` environment variable,
     /// then checking standard local workspace candidates.
     pub fn resolve() -> Self {
@@ -220,6 +233,39 @@ impl AssetPathResolver {
                 || dir.join("pic").is_dir()
                 || dir.join("sh2_4k_textures.zip").is_file()
         })
+    }
+
+    /// Resolves the active 4K AI Cutaway, Puzzle & Map Pack directory (`mods/sh2_4k_textures/` or `mods/4k_cutaways/`, `SH2-91`).
+    pub fn resolve_4k_cutaway_pack_dir(&self) -> Option<PathBuf> {
+        if let Ok(env_dir) = std::env::var("SH2_4K_CUTAWAY_DIR") {
+            let p = PathBuf::from(env_dir);
+            if p.join("pic").is_dir() {
+                return Some(p);
+            }
+        }
+        let mods_dir = self.resolve_mods_dir();
+        for cand in [
+            mods_dir.join("sh2_4k_textures"),
+            mods_dir.join("4k_cutaways"),
+            self.game_root.join("mods/sh2_4k_textures"),
+            self.game_root.join("mods/4k_cutaways"),
+        ] {
+            if cand.join("pic").is_dir() {
+                return Some(cand);
+            }
+        }
+        for cand in Self::DEFAULT_4K_CUTAWAY_PACK_PATHS {
+            let p = PathBuf::from(cand);
+            if p.join("pic").is_dir() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Returns `true` when the 4K AI Cutaway Pack (`mods/4k_cutaways/pic/`) is present on disk.
+    pub fn has_4k_cutaway_pack(&self) -> bool {
+        self.resolve_4k_cutaway_pack_dir().is_some()
     }
 
     /// Resolves a cutaway still or overlay sprite sheet (e.g. `"out_p_incar"`, `"apt_clock_close"`,

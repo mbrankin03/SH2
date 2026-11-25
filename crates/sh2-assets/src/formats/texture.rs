@@ -236,6 +236,13 @@ impl TextureLoader {
         None
     }
 
+    /// Resolves and decodes a named 4K AI texture override (`<sub>/<rel_stem>.dds` or `.png`, e.g.
+    /// `("ps2", "etc/start00")` or `("pic", "etc/start00")`) by delegating to
+    /// [`Self::load_4k_relative_texture_override`].
+    pub fn load_4k_named_override(&self, sub: &str, rel_stem: &str) -> Option<DecodedTexture> {
+        self.load_4k_relative_texture_override(Path::new(sub).join(rel_stem))
+    }
+
     /// Loads and decodes a texture according to the active `WorldTextureQuality` tier (`SH2-142`):
     ///
     /// - `prefer_sh2ee == false`: Strict 1:1 Vanilla PS2/PC (`data/` only, no `sh2e/` or 4K).
@@ -1037,5 +1044,31 @@ mod tests {
             assert_eq!((cut_4k.original_width, cut_4k.original_height), (512, 512));
             assert!(cut_4k.texture.width >= 2048);
         }
+    }
+
+    #[test]
+    fn test_load_4k_named_override_from_dir() {
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_114_named_override_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("ps2/etc")).unwrap();
+
+        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([10, 20, 30, 255]));
+        let png_path = tmp.join("ps2/etc/start00.png");
+        img.save(&png_path).unwrap();
+
+        let loader = TextureLoader::with_4k_dir(&tmp, None::<&Path>, Some(&tmp));
+        let decoded = loader
+            .load_4k_named_override("ps2", "etc/start00.tex")
+            .expect("Expected load_4k_named_override to resolve ps2/etc/start00.png");
+        assert_eq!((decoded.width, decoded.height), (4, 4));
+        assert!(loader
+            .load_4k_named_override("ps2", "etc/missing")
+            .is_none());
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

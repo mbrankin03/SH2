@@ -49,14 +49,14 @@ impl AssetPathResolver {
     /// Supports both extracted modular directories (`mods/sh2_4k_textures/`)
     /// and direct zero-compression `.zip` archives (`mods/sh2_4k_textures.zip` or `mods/sh2_4k_textures/sh2_4k_textures.zip`).
     pub const DEFAULT_4K_TEXTURE_PACK_PATHS: [&'static str; 10] = [
+        "mods/sh2_4k_textures",
+        "../mods/sh2_4k_textures",
+        "../../Documents/SH2-Port/mods/sh2_4k_textures",
         "mods/sh2_4k_textures.zip",
         "../mods/sh2_4k_textures.zip",
         "mods/sh2_4k_textures/sh2_4k_textures.zip",
         "../mods/sh2_4k_textures/sh2_4k_textures.zip",
-        "mods/sh2_4k_textures",
-        "../mods/sh2_4k_textures",
         "../../Documents/SH2-Port/mods/sh2_4k_textures/sh2_4k_textures.zip",
-        "../../Documents/SH2-Port/mods/sh2_4k_textures",
         "tools/texture_pipeline/output",
         "../../Documents/SH2-Port/tools/texture_pipeline/output",
     ];
@@ -247,16 +247,25 @@ impl AssetPathResolver {
                 return Some(p);
             }
         }
+        let mods_dir = self.resolve_mods_dir();
+        let mods_4k = mods_dir.join("sh2_4k_textures");
+        if mods_4k.is_dir() {
+            return Some(mods_4k);
+        }
         for rel in [
-            "mods/sh2_4k_textures.zip",
-            "mods/sh2_4k_textures/sh2_4k_textures.zip",
             "mods/sh2_4k_textures",
             "sh2e_4k",
+            "mods/sh2_4k_textures.zip",
+            "mods/sh2_4k_textures/sh2_4k_textures.zip",
         ] {
             let cand = self.game_root.join(rel);
             if cand.is_dir() || (cand.is_file() && cand.extension().is_some_and(|e| e == "zip")) {
                 return Some(cand);
             }
+        }
+        let mods_4k_zip = mods_dir.join("sh2_4k_textures.zip");
+        if mods_4k_zip.is_file() {
+            return Some(mods_4k_zip);
         }
         for cand in Self::DEFAULT_4K_TEXTURE_PACK_PATHS {
             let p = PathBuf::from(cand);

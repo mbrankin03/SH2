@@ -340,6 +340,20 @@ pub(crate) fn open_fmv_session(
 
 pub(crate) struct FmvRoomController;
 
+/// Stops any active FMV session and its associated FMV audio (plus any FMV-started BGM stream).
+pub(crate) fn stop_active_fmv_session(state: &mut AppState) {
+    let had_fmv_bgm = state
+        .fmv_session
+        .take()
+        .is_some_and(|session| session.bgm_stream.is_some());
+    if let Some(ref mut engine) = state.audio_engine {
+        engine.stop_fmv_audio(Duration::from_millis(50));
+        if had_fmv_bgm {
+            engine.stop_bgm(Duration::from_millis(150));
+        }
+    }
+}
+
 /// Decodes and renders the active `state.fmv_session` frame.
 ///
 /// When `loop_on_eof` is `true` (Theater mode), reaching the end of the stream restarts video and
@@ -441,10 +455,7 @@ pub(crate) fn tick_and_render_fmv_frame(
     }
 
     if finished_eof {
-        state.fmv_session = None;
-        if let Some(ref mut engine) = state.audio_engine {
-            engine.stop_fmv_audio(std::time::Duration::from_millis(50));
-        }
+        stop_active_fmv_session(state);
     }
 
     finished_eof

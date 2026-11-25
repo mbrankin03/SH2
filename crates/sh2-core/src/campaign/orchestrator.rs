@@ -504,6 +504,9 @@ impl CampaignOrchestrator {
                         effects.allow_gameplay_sim = true;
                     }
                 } else if input.fmv_finished {
+                    if let Some(flag) = completion_flag {
+                        sim.scenario.flags.set(flag, true);
+                    }
                     if let Some(demo) = post_demo {
                         self.start_drama_demo_at_cursor(*demo, chain_cursor + 1, &mut effects);
                     } else if let Some(next_stage) = post_stage {
@@ -521,9 +524,6 @@ impl CampaignOrchestrator {
                         };
                         self.request_transition(sim.scenario.current_stage, cmd, None);
                     } else {
-                        if let Some(flag) = completion_flag {
-                            sim.scenario.flags.set(flag, true);
-                        }
                         apply_post_cutscene_handoff(
                             sim,
                             &mut self.event_camera,

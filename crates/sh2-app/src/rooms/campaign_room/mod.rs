@@ -10,7 +10,9 @@ use winit::keyboard::KeyCode;
 
 use crate::assets::open_drama_demo_session;
 use crate::rooms::combat_arena::CombatArenaRoomController;
-use crate::rooms::fmv_room::{open_fmv_session, render_fmv_subtitles, tick_and_render_fmv_frame};
+use crate::rooms::fmv_room::{
+    open_fmv_session, render_fmv_subtitles, stop_active_fmv_session, tick_and_render_fmv_frame,
+};
 use crate::rooms::RoomController;
 use crate::state::AppState;
 use sh2_core::campaign::{CampaignEffects, CampaignOrchestrator, CampaignPhase, OverlayMenuKind};
@@ -347,10 +349,7 @@ impl RoomController for CampaignRoomController {
             Some(CampaignPhase::FmvPlayback { .. })
         );
         if was_fmv && !is_fmv_now {
-            state.fmv_session = None;
-            if let Some(ref mut eng) = state.audio_engine {
-                eng.stop_fmv_audio(Duration::from_millis(50));
-            }
+            stop_active_fmv_session(state);
         }
 
         let allow_sim = effects.allow_gameplay_sim;

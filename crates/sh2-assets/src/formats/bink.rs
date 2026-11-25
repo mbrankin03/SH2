@@ -26,7 +26,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 
 /// Supported Bink Video 4-byte magic signatures (`BIKf`, `BIKg`, `BIKh`, `BIKi`).
 pub const BINK_MAGICS: [&[u8; 4]; 4] = [b"BIKf", b"BIKg", b"BIKh", b"BIKi"];
@@ -39,34 +41,14 @@ pub fn is_mp4_header(data: &[u8]) -> bool {
     data.len() >= 8 && &data[4..8] == MP4_FTYP_MAGIC
 }
 
-/// Probes an MP4 or Bink file using `ffprobe` to extract dimension, framerate, and duration metadata.
-pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, AssetError> {
-    let path_ref = path.as_ref();
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,width,height,r_frame_rate,nb_frames,sample_rate,channels:format=duration",
-            "-of",
-            "default=noprint_wrappers=1",
-            &path_ref.to_string_lossy(),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
-
-    let output =
-        out.map_err(|e| AssetError::InvalidData(format!("Failed to execute ffprobe: {e}")))?;
-    if !output.status.success() {
-        return Err(AssetError::InvalidData(format!(
-            "ffprobe exited with failure on {}",
-            path_ref.display()
-        )));
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
+/// Parses `ffprobe -show_entries stream=codec_type,width,height,r_frame_rate,nb_frames,sample_rate,channels:format=duration`
+/// output into a [`BinkHeader`].
+///
+/// Only the first video stream's `width`, `height`, `r_frame_rate`, and `nb_frames` are recorded;
+/// audio stream `nb_frames` (e.g. `503` FLAC packets vs `602` video frames in `toilet_4k_master.mp4`)
+/// must not overwrite the video frame count (`sh2pc.exe` `_BinkOpen@8` `0x0056fc46`, `HBINK::Frames`
+/// at `+0x08` vs `FrameNum` at `+0x0c` in `sh2pc_00430000.c`).
+pub fn parse_ffprobe_output(text: &str) -> BinkHeader {
     let mut width = 1920u32;
     let mut height = 1080u32;
     let mut fps_num = 30u32;
@@ -75,6 +57,8 @@ pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, Asset
     let mut duration_secs = 0.0f64;
     let mut audio_tracks = Vec::new();
 
+    let mut in_video = false;
+    let mut video_found = false;
     let mut in_audio = false;
     let mut cur_ar = 48000u32;
     let mut cur_ch = 2u8;
@@ -94,21 +78,31 @@ pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, Asset
                             raw_flags: 0,
                         });
                     }
-                    in_audio = v == "audio";
+                    if v == "video" && !video_found {
+                        in_video = true;
+                        video_found = true;
+                        in_audio = false;
+                    } else if v == "audio" {
+                        in_video = false;
+                        in_audio = true;
+                    } else {
+                        in_video = false;
+                        in_audio = false;
+                    }
                     cur_ar = 48000;
                     cur_ch = 2;
                 }
-                "width" => {
+                "width" if in_video => {
                     if let Ok(w) = v.parse::<u32>() {
                         width = w;
                     }
                 }
-                "height" => {
+                "height" if in_video => {
                     if let Ok(h) = v.parse::<u32>() {
                         height = h;
                     }
                 }
-                "r_frame_rate" => {
+                "r_frame_rate" if in_video => {
                     if let Some((num_s, den_s)) = v.split_once('/') {
                         let num: u32 = num_s.parse().unwrap_or(30);
                         let den: u32 = den_s.parse().unwrap_or(1);
@@ -118,17 +112,17 @@ pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, Asset
                         }
                     }
                 }
-                "nb_frames" => {
+                "nb_frames" if in_video => {
                     if let Ok(n) = v.parse::<u32>() {
                         nb_frames = n;
                     }
                 }
-                "sample_rate" => {
+                "sample_rate" if in_audio => {
                     if let Ok(sr) = v.parse::<u32>() {
                         cur_ar = sr;
                     }
                 }
-                "channels" => {
+                "channels" if in_audio => {
                     if let Ok(c) = v.parse::<u8>() {
                         cur_ch = c;
                     }
@@ -162,7 +156,7 @@ pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, Asset
         nb_frames = 600;
     }
 
-    Ok(BinkHeader {
+    BinkHeader {
         magic: *b"MP4v",
         file_size: (width as u64 * height as u64 * 2) * nb_frames.max(1) as u64,
         frame_count: nb_frames.max(1),
@@ -174,7 +168,38 @@ pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, Asset
         video_flags: 0,
         audio_tracks,
         indexed_frames: nb_frames as usize,
-    })
+    }
+}
+
+/// Probes an MP4 or Bink file using `ffprobe` to extract dimension, framerate, and duration metadata.
+pub fn probe_video_container(path: impl AsRef<Path>) -> Result<BinkHeader, AssetError> {
+    let path_ref = path.as_ref();
+    let out = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,width,height,r_frame_rate,nb_frames,sample_rate,channels:format=duration",
+            "-of",
+            "default=noprint_wrappers=1",
+            &path_ref.to_string_lossy(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output();
+
+    let output =
+        out.map_err(|e| AssetError::InvalidData(format!("Failed to execute ffprobe: {e}")))?;
+    if !output.status.success() {
+        return Err(AssetError::InvalidData(format!(
+            "ffprobe exited with failure on {}",
+            path_ref.display()
+        )));
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_ffprobe_output(&text))
 }
 
 /// Metadata for an audio stream embedded inside a `.bik` container.
@@ -649,6 +674,10 @@ pub struct BinkVideoStream {
     /// Current sequential frame index `(0..header.frame_count)`.
     pub current_frame_index: u32,
     child: Option<Child>,
+    frame_rx: Option<Receiver<Vec<u8>>>,
+    recycle_tx: Option<SyncSender<Vec<u8>>>,
+    reader_thread: Option<JoinHandle<()>>,
+    has_decoder: bool,
     scratch_buf: Vec<u8>,
     current_frame: Option<Yuv420Frame>,
 }
@@ -663,6 +692,10 @@ impl BinkVideoStream {
             header,
             current_frame_index: 0,
             child: None,
+            frame_rx: None,
+            recycle_tx: None,
+            reader_thread: None,
+            has_decoder: false,
             scratch_buf: Vec::new(),
             current_frame: None,
         };
@@ -677,6 +710,10 @@ impl BinkVideoStream {
             header,
             current_frame_index: 0,
             child: None,
+            frame_rx: None,
+            recycle_tx: None,
+            reader_thread: None,
+            has_decoder: false,
             scratch_buf: Vec::new(),
             current_frame: None,
         }
@@ -708,19 +745,57 @@ impl BinkVideoStream {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
 
-        if let Ok(child) = cmd.spawn() {
-            self.child = Some(child);
+        if let Ok(mut child) = cmd.spawn() {
+            if let Some(mut stdout) = child.stdout.take() {
+                let total_len =
+                    Yuv420Frame::expected_byte_len(self.header.width, self.header.height);
+                const PREBUFFER_FRAMES: usize = 4;
+                let (frame_tx, frame_rx) = mpsc::sync_channel::<Vec<u8>>(PREBUFFER_FRAMES);
+                let (recycle_tx, recycle_rx) = mpsc::sync_channel::<Vec<u8>>(PREBUFFER_FRAMES);
+                for _ in 0..PREBUFFER_FRAMES {
+                    let _ = recycle_tx.try_send(vec![0u8; total_len]);
+                }
+                let handle = thread::spawn(move || loop {
+                    let mut buf = recycle_rx
+                        .try_recv()
+                        .unwrap_or_else(|_| vec![0u8; total_len]);
+                    if buf.len() != total_len {
+                        buf.resize(total_len, 0);
+                    }
+                    if stdout.read_exact(&mut buf).is_err() {
+                        break;
+                    }
+                    if frame_tx.send(buf).is_err() {
+                        break;
+                    }
+                });
+                self.child = Some(child);
+                self.frame_rx = Some(frame_rx);
+                self.recycle_tx = Some(recycle_tx);
+                self.reader_thread = Some(handle);
+                self.has_decoder = true;
+            } else {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
     }
 
     fn kill_decoder(&mut self) {
+        // Drop channels first so the reader thread unblocks if waiting to send.
+        self.frame_rx = None;
+        self.recycle_tx = None;
+        self.has_decoder = false;
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+        if let Some(handle) = self.reader_thread.take() {
+            let _ = handle.join();
+        }
     }
 
-    /// Reads the next sequential `Yuv420Frame` borrowing its internal buffers, or `None` if the stream has reached `frame_count`.
+    /// Reads the next sequential `Yuv420Frame` borrowing its internal buffers, or `None` if the stream has reached `frame_count` or EOF.
     pub fn next_frame(&mut self) -> Option<&Yuv420Frame> {
         if self.current_frame_index >= self.header.frame_count {
             self.current_frame = None;
@@ -735,66 +810,78 @@ impl BinkVideoStream {
         let uv_len = cw * ch;
         let total_len = y_len + 2 * uv_len;
 
+        if self.has_decoder {
+            let decoded_buf = self.frame_rx.as_ref().and_then(|rx| rx.recv().ok());
+            if let Some(buf) = decoded_buf {
+                let frame_idx = self.current_frame_index;
+                self.current_frame_index += 1;
+
+                let old_buf = std::mem::replace(&mut self.scratch_buf, buf);
+                if old_buf.len() == total_len {
+                    if let Some(ref tx) = self.recycle_tx {
+                        let _ = tx.try_send(old_buf);
+                    }
+                }
+
+                // Update current_frame in-place or construct it using pre-reserved plane buffers
+                if let Some(ref mut frame) = self.current_frame {
+                    frame.width = w;
+                    frame.height = h;
+                    frame.frame_index = frame_idx;
+
+                    if frame.y_plane.capacity() < y_len {
+                        frame.y_plane.reserve_exact(y_len - frame.y_plane.len());
+                    }
+                    frame.y_plane.clear();
+                    frame.y_plane.extend_from_slice(&self.scratch_buf[0..y_len]);
+
+                    if frame.u_plane.capacity() < uv_len {
+                        frame.u_plane.reserve_exact(uv_len - frame.u_plane.len());
+                    }
+                    frame.u_plane.clear();
+                    frame
+                        .u_plane
+                        .extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
+
+                    if frame.v_plane.capacity() < uv_len {
+                        frame.v_plane.reserve_exact(uv_len - frame.v_plane.len());
+                    }
+                    frame.v_plane.clear();
+                    frame
+                        .v_plane
+                        .extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
+                } else {
+                    let mut y_plane = Vec::with_capacity(y_len);
+                    y_plane.extend_from_slice(&self.scratch_buf[0..y_len]);
+                    let mut u_plane = Vec::with_capacity(uv_len);
+                    u_plane.extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
+                    let mut v_plane = Vec::with_capacity(uv_len);
+                    v_plane.extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
+
+                    self.current_frame = Some(Yuv420Frame {
+                        width: w,
+                        height: h,
+                        frame_index: frame_idx,
+                        y_plane,
+                        u_plane,
+                        v_plane,
+                    });
+                }
+
+                return self.current_frame.as_ref();
+            }
+
+            // Real ffmpeg stream reached EOF: clean up and signal completion without
+            // falling through to CPU-heavy synthetic test-pattern generation.
+            self.kill_decoder();
+            self.current_frame = None;
+            return None;
+        }
+
         let frame_idx = self.current_frame_index;
         self.current_frame_index += 1;
 
-        if let Some(ref mut child) = self.child {
-            if let Some(ref mut stdout) = child.stdout {
-                if self.scratch_buf.len() != total_len {
-                    self.scratch_buf.resize(total_len, 0);
-                }
-                if stdout.read_exact(&mut self.scratch_buf).is_ok() {
-                    // Update current_frame in-place or construct it using pre-reserved plane buffers
-                    if let Some(ref mut frame) = self.current_frame {
-                        frame.width = w;
-                        frame.height = h;
-                        frame.frame_index = frame_idx;
-
-                        if frame.y_plane.capacity() < y_len {
-                            frame.y_plane.reserve_exact(y_len - frame.y_plane.len());
-                        }
-                        frame.y_plane.clear();
-                        frame.y_plane.extend_from_slice(&self.scratch_buf[0..y_len]);
-
-                        if frame.u_plane.capacity() < uv_len {
-                            frame.u_plane.reserve_exact(uv_len - frame.u_plane.len());
-                        }
-                        frame.u_plane.clear();
-                        frame
-                            .u_plane
-                            .extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
-
-                        if frame.v_plane.capacity() < uv_len {
-                            frame.v_plane.reserve_exact(uv_len - frame.v_plane.len());
-                        }
-                        frame.v_plane.clear();
-                        frame
-                            .v_plane
-                            .extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
-                    } else {
-                        let mut y_plane = Vec::with_capacity(y_len);
-                        y_plane.extend_from_slice(&self.scratch_buf[0..y_len]);
-                        let mut u_plane = Vec::with_capacity(uv_len);
-                        u_plane.extend_from_slice(&self.scratch_buf[y_len..y_len + uv_len]);
-                        let mut v_plane = Vec::with_capacity(uv_len);
-                        v_plane.extend_from_slice(&self.scratch_buf[y_len + uv_len..total_len]);
-
-                        self.current_frame = Some(Yuv420Frame {
-                            width: w,
-                            height: h,
-                            frame_index: frame_idx,
-                            y_plane,
-                            u_plane,
-                            v_plane,
-                        });
-                    }
-
-                    return self.current_frame.as_ref();
-                }
-            }
-        }
-
-        // Deterministic synthetic test pattern fallback when ffmpeg stream finishes early or in headless CI
+        // Deterministic synthetic test pattern fallback when ffmpeg is unavailable or in headless CI
         self.current_frame = Some(Yuv420Frame::generate_synthetic_test_frame(w, h, frame_idx));
         self.current_frame.as_ref()
     }
@@ -1711,5 +1798,87 @@ mod tests {
         assert_eq!(cues[0].text, "Mary?");
         assert_eq!(cues[7].text, "My name... is Maria.");
         assert!(load_retail_subtitles(&root, "toilet").is_none());
+    }
+
+    #[test]
+    fn test_parse_ffprobe_output_ignores_audio_nb_frames_regression_sh2_148() {
+        // Exact ffprobe output structure from `toilet_4k_master.mp4` where the audio
+        // stream's `nb_frames=503` (FLAC packets) previously overwrote video `nb_frames=602`.
+        let ffprobe_text = "\
+codec_type=video
+width=3840
+height=2160
+r_frame_rate=2997/100
+nb_frames=602
+codec_type=audio
+sample_rate=48000
+channels=2
+r_frame_rate=0/0
+nb_frames=503
+duration=20.120000
+";
+        let hdr = parse_ffprobe_output(ffprobe_text);
+        assert_eq!(hdr.width, 3840);
+        assert_eq!(hdr.height, 2160);
+        assert_eq!(hdr.fps_num, 2997);
+        assert_eq!(hdr.fps_den, 100);
+        assert_eq!(hdr.frame_count, 602);
+        assert_eq!(hdr.indexed_frames, 602);
+        assert_eq!(hdr.audio_tracks.len(), 1);
+        assert_eq!(hdr.audio_tracks[0].sample_rate, 48000);
+        assert_eq!(hdr.audio_tracks[0].channels, 2);
+    }
+
+    #[test]
+    fn test_toilet_bik_decodes_all_frames_to_true_eof() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2");
+        let vanilla_toilet = root.join("data/movie/toilet.bik");
+        if vanilla_toilet.exists() {
+            let mut stream = BinkVideoStream::open(&vanilla_toilet)
+                .expect("Failed to open data/movie/toilet.bik");
+            assert_eq!(stream.header.frame_count, 601);
+            let mut count = 0u32;
+            while let Some(frame) = stream.next_frame() {
+                assert_eq!(frame.frame_index, count);
+                count += 1;
+            }
+            assert_eq!(
+                count, 601,
+                "data/movie/toilet.bik must decode all 601 frames"
+            );
+            assert!(stream.next_frame().is_none());
+        }
+
+        let sh2ee_toilet = root.join("sh2e/movie/toilet.bik");
+        if sh2ee_toilet.exists() {
+            let mut stream =
+                BinkVideoStream::open(&sh2ee_toilet).expect("Failed to open sh2e/movie/toilet.bik");
+            assert_eq!(stream.header.frame_count, 1203);
+            let mut count = 0u32;
+            while let Some(frame) = stream.next_frame() {
+                assert_eq!(frame.frame_index, count);
+                count += 1;
+            }
+            assert_eq!(
+                count, 1203,
+                "sh2e/movie/toilet.bik must decode all 1203 frames"
+            );
+            assert!(stream.next_frame().is_none());
+        }
+
+        let vsr_toilet = Path::new(
+            "/home/matthewb/Documents/SH2-Port/tools/vsr_pipeline/output/toilet_4k_master.mp4",
+        );
+        if vsr_toilet.exists() {
+            let hdr =
+                parse_bink_file_header(vsr_toilet).expect("Failed to probe toilet_4k_master.mp4");
+            assert_eq!(hdr.width, 3840);
+            assert_eq!(hdr.height, 2160);
+            assert_eq!(
+                hdr.frame_count, 602,
+                "toilet_4k_master.mp4 must report 602 video frames"
+            );
+        }
     }
 }

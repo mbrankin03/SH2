@@ -17,9 +17,10 @@ pub use combat_fx::{
     GLASS_MAX_SHARDS_PER_BURST, GLASS_SPECULAR_COS_MIN, GLASS_UV_STEP,
 };
 pub use fire_smoke::{
-    FireEmber, FirePhenomenon, FlameEmitter, FlameInitParams, FlameParticle, SmokeParticle,
-    SmokeSystem, FLAME_00_PARM_TABLE, FLAME_02_PARM_TABLE, FLAME_GRAVITY_ACCEL_MM_S2,
-    FLAME_UV_QUADRANTS, HOTEL_FIRE_POST_INFO_DEMO_HEAD, HOTEL_FIRE_POST_INFO_NORMAL_HEAD,
+    FireEmber, FirePhenomenon, FlameClassKind, FlameEmitter, FlameInitParams, FlameParticle,
+    HotelFireDemoEntry, HotelFirePostInfo, SmokeParticle, SmokeSystem, FLAME_00_PARM_TABLE,
+    FLAME_02_PARM_TABLE, FLAME_GRAVITY_ACCEL_MM_S2, FLAME_UV_QUADRANTS, HOTEL_FIRE_POST_INFO_DEMO,
+    HOTEL_FIRE_POST_INFO_NORMAL,
 };
 pub use water_rain::{
     RainDrop, RainDropSystem, WaterGrid2D, WaterPoolRipple, WaterPoolSystem, WaterSplashDroplet,

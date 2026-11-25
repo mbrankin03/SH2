@@ -8,9 +8,10 @@ use sh2_assets::formats::texture::decode_texture_bytes;
 use sh2_core::config::{AppConfig, EnhancedPreset};
 use sh2_core::effects::{
     FirePhenomenon, FxRng, GlassBreakSystem, ImpactSparkSystem, RainDropSystem, ShellCasingSystem,
-    ShellWeaponKind, SmokeSystem, WaterPoolSystem, WaterSplashSystem,
+    ShellWeaponKind, SmokeSystem, WaterPoolSystem, WaterSplashSystem, HOTEL_FIRE_POST_INFO_DEMO,
+    HOTEL_FIRE_POST_INFO_NORMAL,
 };
-use sh2_renderer::effects::GpuFxQuad;
+use sh2_renderer::effects::{FxTextureSlot, GpuFxQuad};
 use sh2_renderer::post::{PostUniforms, POST_FLAG_FIRE_HEAT_HAZE, POST_FLAG_PS2_LCG_NOISE};
 use sh2_renderer::{RenderContext, RendererConfig};
 
@@ -114,11 +115,22 @@ fn sh2_100_headless_fx_pipeline_vanilla_ps2_vs_native_heat_haze() {
 
     let dir = retail_effect_dir();
     if dir.exists() {
-        let fire_path = dir.join("fire00.tbn2");
-        let bytes = std::fs::read(&fire_path).expect("read fire00.tbn2");
-        let tex = decode_texture_bytes(&bytes, &fire_path).expect("decode fire00.tbn2");
-        ctx.upload_billboard_fx_texture(&tex.rgba, tex.width as u32, tex.height as u32);
+        for (slot, file) in [
+            (FxTextureSlot::Fire, "fire00.tbn2"),
+            (FxTextureSlot::Water, "water00.tbn2"),
+            (FxTextureSlot::Splash, "sprash.tbn2"),
+            (FxTextureSlot::Spark, "spark.tbn2"),
+            (FxTextureSlot::Glass, "glas03.tbn2"),
+        ] {
+            let path = dir.join(file);
+            let bytes = std::fs::read(&path).expect("read retail .tbn2");
+            let tex = decode_texture_bytes(&bytes, &path).expect("decode retail .tbn2");
+            ctx.upload_billboard_fx_texture(slot, &tex.rgba, tex.width as u32, tex.height as u32);
+        }
     }
+
+    assert_eq!(HOTEL_FIRE_POST_INFO_DEMO.len(), 23);
+    assert_eq!(HOTEL_FIRE_POST_INFO_NORMAL.len(), 16);
 
     let cam_pos = Vec3::new(-100550.0, -1800.0, -72000.0);
     let target = Vec3::new(-100550.0, -1600.0, -75600.0);
@@ -138,7 +150,7 @@ fn sh2_100_headless_fx_pipeline_vanilla_ps2_vs_native_heat_haze() {
     let mut shells = ShellCasingSystem::default();
     shells.spawn_shell(target, ShellWeaponKind::Handgun, &mut rng);
     let mut sparks = ImpactSparkSystem::default();
-    sparks.spawn_impact(target, &mut rng);
+    sparks.spawn_impact(target, true, &mut rng);
     let mut glass = GlassBreakSystem::default();
     glass.trigger_break(target, Vec3::new(0.0, 0.0, 300.0));
 
@@ -154,44 +166,53 @@ fn sh2_100_headless_fx_pipeline_vanilla_ps2_vs_native_heat_haze() {
         glass.step(dt, 0.0, &mut rng);
     }
 
-    let mut add_quads = Vec::new();
+    let mut fire_quads = Vec::new();
     for em in &fire.emitters {
         for p in &em.particles {
-            add_quads.push(GpuFxQuad::from_flame(em.origin, p));
+            fire_quads.push(GpuFxQuad::from_flame(em.origin, p));
         }
     }
     for e in &fire.embers {
-        add_quads.push(GpuFxQuad::from_ember(e));
+        fire_quads.push(GpuFxQuad::from_ember(e));
     }
-    for s in &sparks.sparks {
-        add_quads.push(GpuFxQuad::from_spark(s));
-    }
+    let spark_quads: Vec<GpuFxQuad> = sparks.sparks.iter().map(GpuFxQuad::from_spark).collect();
 
-    let mut alpha_quads = Vec::new();
-    for p in &smoke.particles {
-        if p.active {
-            alpha_quads.push(GpuFxQuad::from_smoke(p));
-        }
-    }
-    for r in &pools.ripples {
-        alpha_quads.push(GpuFxQuad::from_water_ripple(r));
-    }
+    let smoke_quads: Vec<GpuFxQuad> = smoke
+        .particles
+        .iter()
+        .filter(|p| p.active)
+        .map(GpuFxQuad::from_smoke)
+        .collect();
+    let mut water_quads: Vec<GpuFxQuad> = pools
+        .ripples
+        .iter()
+        .map(GpuFxQuad::from_water_ripple)
+        .collect();
     for d in &rain.drops {
-        alpha_quads.push(GpuFxQuad::from_rain_drop(d));
+        water_quads.push(GpuFxQuad::from_rain_drop(d));
     }
-    for s in &shells.shells {
-        alpha_quads.push(GpuFxQuad::from_shell(s));
-    }
+    let mut glass_quads: Vec<GpuFxQuad> = shells.shells.iter().map(GpuFxQuad::from_shell).collect();
     for g in &glass.shards {
-        alpha_quads.push(GpuFxQuad::from_glass_shard(g));
+        glass_quads.push(GpuFxQuad::from_glass_shard(g));
     }
 
-    ctx.update_billboard_fx_quads(&add_quads, &alpha_quads);
+    ctx.update_billboard_fx_batches(
+        &[
+            (FxTextureSlot::Fire, &fire_quads),
+            (FxTextureSlot::Spark, &spark_quads),
+        ],
+        &[
+            (FxTextureSlot::Smoke, &smoke_quads),
+            (FxTextureSlot::Water, &water_quads),
+            (FxTextureSlot::Glass, &glass_quads),
+        ],
+    );
 
     // 1. Strict Vanilla PS2 mode (`POST_FLAG_FIRE_HEAT_HAZE` cleared)
     let mut cfg = AppConfig::default();
     cfg.apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
     assert!(!cfg.video.enable_fire_heat_haze);
+    assert!(!cfg.video.enable_spark_flash_lights);
 
     ctx.update_post(&PostUniforms {
         time: 0.5,

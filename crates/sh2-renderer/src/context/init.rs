@@ -232,24 +232,27 @@ impl RenderContext {
             ],
         });
 
-        let billboard_fx_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Billboard FX Bind Group"),
-            layout: &billboard_fx_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffers.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&textures.dust_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&textures.fog_noise_sampler),
-                },
-            ],
-        });
+        let billboard_fx_bind_groups: [wgpu::BindGroup; effects::FX_TEXTURE_SLOT_COUNT] =
+            std::array::from_fn(|i| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Billboard FX Bind Group Slot {i}")),
+                    layout: &billboard_fx_pipeline.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: buffers.camera_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&textures.dust_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&textures.fog_noise_sampler),
+                        },
+                    ],
+                })
+            });
 
         let fog_particle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Fog Particle Bind Group"),
@@ -428,7 +431,7 @@ impl RenderContext {
             lens_flare_bind_group,
             spray_mist_bind_group,
             dust_bind_group,
-            billboard_fx_bind_group,
+            billboard_fx_bind_groups,
             fog_particle_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -439,8 +442,7 @@ impl RenderContext {
             lens_flare_quad_count: std::sync::atomic::AtomicU32::new(0),
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
             dust_particle_count: std::sync::atomic::AtomicU32::new(0),
-            billboard_fx_additive_count: std::sync::atomic::AtomicU32::new(0),
-            billboard_fx_alpha_count: std::sync::atomic::AtomicU32::new(0),
+            billboard_fx_batches: std::sync::Mutex::new(effects::FxDrawBatches::default()),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
             lake_water_enabled: std::sync::atomic::AtomicBool::new(false),
             water_reflection_pass_enabled: std::sync::atomic::AtomicBool::new(false),

@@ -13,6 +13,36 @@ use sh2_core::effects::{
 /// Maximum simultaneous `SH2-100` FX quads (additive + alpha) in the reusable GPU buffer.
 pub const MAX_GPU_FX_QUADS: usize = 2048;
 
+/// Number of per-sheet texture bind-group slots for [`BillboardFxPipeline`].
+pub const FX_TEXTURE_SLOT_COUNT: usize = 6;
+
+/// Texture sheet slot for [`BillboardFxPipeline`] per-batch bind-group switching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum FxTextureSlot {
+    Fire = 0,
+    Smoke = 1,
+    Water = 2,
+    Splash = 3,
+    Spark = 4,
+    Glass = 5,
+}
+
+/// Recorded draw range `(slot, first_instance, instance_count)` for a single `.tbn2` sheet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FxDrawRange {
+    pub slot: FxTextureSlot,
+    pub start: u32,
+    pub count: u32,
+}
+
+/// Per-frame additive & alpha-blended draw ranges grouped by [`FxTextureSlot`].
+#[derive(Debug, Clone, Default)]
+pub struct FxDrawBatches {
+    pub additive: Vec<FxDrawRange>,
+    pub alpha: Vec<FxDrawRange>,
+}
+
 /// Instanced 3D billboard / oriented-quad record for [`BillboardFxPipeline`] (`80` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]

@@ -138,8 +138,9 @@ pub struct ImpactSparkSystem {
 }
 
 impl ImpactSparkSystem {
-    /// Spawns 2 spark quads + micro-flash at `origin` (`MoveSparks` `0x00232c00`).
-    pub fn spawn_impact(&mut self, origin: Vec3, rng: &mut FxRng) {
+    /// Spawns 2 spark quads at `origin` (`MoveSparks` `0x00232c00`), plus a micro-point-light flash
+    /// only when `native_upgrade` is enabled (strict Vanilla PS2 mode emits zero dynamic spark lights).
+    pub fn spawn_impact(&mut self, origin: Vec3, native_upgrade: bool, rng: &mut FxRng) {
         for _ in 0..2 {
             let kind_pos = rng.next_f32() > 0.5;
             let sign = if kind_pos { 1.0 } else { -1.0 };
@@ -168,7 +169,9 @@ impl ImpactSparkSystem {
                 life: 0.28,
             });
         }
-        self.flashes.push((origin, 0.0, 0.14));
+        if native_upgrade {
+            self.flashes.push((origin, 0.0, 0.14));
+        }
     }
 
     pub fn step(&mut self, dt: f32) {
@@ -194,9 +197,13 @@ impl ImpactSparkSystem {
         self.flashes.retain(|(_, age, max_age)| *age < *max_age);
     }
 
-    /// Returns active micro-point-light flashes for metallic bullet impacts.
+    /// Returns active micro-point-light flashes for metallic bullet impacts when `native_upgrade`
+    /// is enabled; returns empty in strict 1:1 Vanilla PS2 mode.
     #[must_use]
-    pub fn active_flash_lights(&self) -> Vec<SparkFlashLight> {
+    pub fn active_flash_lights(&self, native_upgrade: bool) -> Vec<SparkFlashLight> {
+        if !native_upgrade {
+            return Vec::new();
+        }
         self.flashes
             .iter()
             .map(|(pos, age, max_age)| {
@@ -347,5 +354,19 @@ mod tests {
         }
         assert_eq!(glass.shards.len(), GLASS_MAX_SHARDS_PER_BURST);
         assert!(glass.shards.iter().any(|s| s.pos.y > -1500.0));
+    }
+
+    #[test]
+    fn spark_flash_lights_gate_on_native_upgrade() {
+        let mut rng = FxRng::new(21);
+        let mut vanilla = ImpactSparkSystem::default();
+        vanilla.spawn_impact(Vec3::ZERO, false, &mut rng);
+        assert!(vanilla.active_flash_lights(false).is_empty());
+        assert!(vanilla.active_flash_lights(true).is_empty());
+
+        let mut native = ImpactSparkSystem::default();
+        native.spawn_impact(Vec3::ZERO, true, &mut rng);
+        assert!(native.active_flash_lights(false).is_empty());
+        assert_eq!(native.active_flash_lights(true).len(), 1);
     }
 }

@@ -336,30 +336,44 @@ impl RenderContext {
                 rpass.draw(0..6, 0..dust_count);
             }
 
-            // 1d-6. Render `SH2-100` alpha-blended & additive 3D FX quads (fire, smoke, water, rain, shells, sparks, glass)
-            let fx_alpha_count = self
-                .billboard_fx_alpha_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if fx_alpha_count > 0 {
-                let byte_len = (fx_alpha_count as usize
-                    * std::mem::size_of::<crate::effects::GpuFxQuad>())
-                    as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_alpha);
-                rpass.set_bind_group(0, &self.billboard_fx_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.billboard_fx_alpha_buffer.slice(0..byte_len));
-                rpass.draw(0..6, 0..fx_alpha_count);
-            }
-            let fx_add_count = self
-                .billboard_fx_additive_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if fx_add_count > 0 {
-                let byte_len = (fx_add_count as usize
-                    * std::mem::size_of::<crate::effects::GpuFxQuad>())
-                    as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_additive);
-                rpass.set_bind_group(0, &self.billboard_fx_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.billboard_fx_additive_buffer.slice(0..byte_len));
-                rpass.draw(0..6, 0..fx_add_count);
+            // 1d-6. Render `SH2-100` alpha-blended & additive 3D FX batches with per-sheet `.tbn2` bind groups
+            if let Ok(fx_batches) = self.billboard_fx_batches.lock().map(|g| g.clone()) {
+                let stride = std::mem::size_of::<crate::effects::GpuFxQuad>() as u64;
+                if !fx_batches.alpha.is_empty() {
+                    rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_alpha);
+                    for batch in &fx_batches.alpha {
+                        let byte_start = u64::from(batch.start) * stride;
+                        let byte_end = u64::from(batch.start + batch.count) * stride;
+                        rpass.set_bind_group(
+                            0,
+                            &self.billboard_fx_bind_groups[batch.slot as usize],
+                            &[],
+                        );
+                        rpass.set_vertex_buffer(
+                            0,
+                            self.billboard_fx_alpha_buffer.slice(byte_start..byte_end),
+                        );
+                        rpass.draw(0..6, 0..batch.count);
+                    }
+                }
+                if !fx_batches.additive.is_empty() {
+                    rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_additive);
+                    for batch in &fx_batches.additive {
+                        let byte_start = u64::from(batch.start) * stride;
+                        let byte_end = u64::from(batch.start + batch.count) * stride;
+                        rpass.set_bind_group(
+                            0,
+                            &self.billboard_fx_bind_groups[batch.slot as usize],
+                            &[],
+                        );
+                        rpass.set_vertex_buffer(
+                            0,
+                            self.billboard_fx_additive_buffer
+                                .slice(byte_start..byte_end),
+                        );
+                        rpass.draw(0..6, 0..batch.count);
+                    }
+                }
             }
 
             // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)

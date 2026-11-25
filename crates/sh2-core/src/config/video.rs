@@ -506,6 +506,9 @@ pub struct VideoOptions {
     /// Subtle screen-space heat-haze distortion, embers, and flickering orange point-light bounce for fire (`native-upgrade`, `SH2-100`). Disabled in strict 1:1 Vanilla PS2 mode.
     #[serde(default)]
     pub enable_fire_heat_haze: bool,
+    /// Dynamic micro-point-light flash on metallic bullet impact sparks (`native-upgrade`, `SH2-100`). Disabled in strict 1:1 Vanilla PS2 mode.
+    #[serde(default)]
+    pub enable_spark_flash_lights: bool,
     /// Use SH2:EE title screen (`SILENT HILL 2 / ENHANCED EDITION`) when `true`, or original PS2 (`SILENT HILL 2`) when `false`.
     #[serde(default = "default_true")]
     pub enable_enhanced_title_screen: bool,
@@ -540,6 +543,7 @@ impl Default for VideoOptions {
             enable_water_reflections: true,
             enable_oar_ripples: true,
             enable_fire_heat_haze: true,
+            enable_spark_flash_lights: true,
             enable_enhanced_title_screen: true,
             fmv_source: FmvCutsceneSource::default(),
         }

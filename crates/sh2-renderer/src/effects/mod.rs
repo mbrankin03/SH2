@@ -7,7 +7,10 @@ pub mod dust;
 pub mod lens_flare;
 pub mod spray_mist;
 
-pub use billboard_fx::{BillboardFxPipeline, GpuFxQuad, MAX_GPU_FX_QUADS};
+pub use billboard_fx::{
+    BillboardFxPipeline, FxDrawBatches, FxDrawRange, FxTextureSlot, GpuFxQuad,
+    FX_TEXTURE_SLOT_COUNT, MAX_GPU_FX_QUADS,
+};
 pub use dust::{DustParticlePipeline, GpuDustParticle, MAX_GPU_DUST_PARTICLES};
 
 pub use lens_flare::{

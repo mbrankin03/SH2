@@ -219,55 +219,522 @@ pub const FLAME_02_PARM_TABLE: [FlameInitParams; 4] = [
     },
 ];
 
-/// `(world_pos, offset, cls_kind, start_frame, end_frame)` entry from `_post_info_demo` (`0x00375de0`).
-pub type HotelFireDemoEntry = ([f32; 3], [f32; 3], u32, f32, f32);
+/// Effect2 flame class IDs from `hh_class_fire_phenomenon_00.c` (`SLUS_202.28` `0x00280c80`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FlameClassKind {
+    None = 0x00,
+    Flame00 = 0x2b,
+    Flame01 = 0x2c,
+    Flame02 = 0x2d,
+    Flame03 = 0x2f,
+}
 
-/// Sample placement entries from `_post_info_demo` (`0x00375de0`) & `_post_info_normal` (`0x00376510`)
-/// for the Lakeview Hotel staircase fire (`stg_hotel_fire.c`).
-pub const HOTEL_FIRE_POST_INFO_DEMO_HEAD: [HotelFireDemoEntry; 5] = [
-    (
-        [-100550.0, -3600.0, -74800.0],
-        [0.0, -500.0, 0.0],
-        0,
-        0.0,
-        10000.0,
-    ),
-    (
-        [-100550.0, -3700.0, -75600.0],
-        [0.0, -500.0, 0.0],
-        0,
-        0.0,
-        10000.0,
-    ),
-    (
-        [-100400.0, 0.0, -79400.0],
-        [0.0, -700.0, 0.0],
-        0,
-        0.0,
-        10000.0,
-    ),
-    (
-        [-100500.0, -400.0, -78700.0],
-        [0.0, -500.0, 0.0],
-        0,
-        0.0,
-        1666.0,
-    ),
-    (
-        [-100500.0, -400.0, -78700.0],
-        [0.0, -500.0, 0.0],
-        0,
-        1665.0,
-        2556.0,
-    ),
+impl FlameClassKind {
+    #[must_use]
+    pub const fn from_raw(id: u32) -> Self {
+        match id {
+            0x2b => Self::Flame00,
+            0x2c => Self::Flame01,
+            0x2d => Self::Flame02,
+            0x2f => Self::Flame03,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Placement descriptor from `_post_info_normal` (`0x00376510`) / `_post_info_demo` (`0x00375de0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HotelFirePostInfo {
+    pub pos: [f32; 3],
+    pub offset: [f32; 3],
+    pub cls_0: u32,
+    pub cls_1: u32,
+    pub start_frame: f32,
+    pub end_frame: f32,
+    pub prm_0: f32,
+    pub prm_1: f32,
+    pub parm_idx_0: usize,
+    pub parm_idx_1: usize,
+}
+
+/// `(world_pos, offset, cls_kind, start_frame, end_frame)` entry from `_post_info_demo` (`0x00375de0`).
+pub type HotelFireDemoEntry = HotelFirePostInfo;
+
+/// Full 23-entry `_post_info_demo` table from `SLUS_202.28` (`0x00375de0`).
+pub const HOTEL_FIRE_POST_INFO_DEMO: [HotelFirePostInfo; 23] = [
+    HotelFirePostInfo {
+        pos: [-100550.0, -3600.0, -74800.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 5,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100550.0, -3700.0, -75600.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 1,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100400.0, 0.0, -79400.0],
+        offset: [0.0, -700.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 7,
+        parm_idx_1: 3,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -400.0, -78700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 1666.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -400.0, -78700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2d,
+        cls_1: 0x2f,
+        start_frame: 1665.0,
+        end_frame: 2556.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -400.0, -78700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 2555.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -750.0, -78450.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 1666.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -750.0, -78450.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2d,
+        cls_1: 0x2f,
+        start_frame: 1665.0,
+        end_frame: 2556.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -750.0, -78450.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 2555.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -1200.0, -78100.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 1666.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 4,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -1200.0, -77950.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2d,
+        cls_1: 0x2f,
+        start_frame: 1665.0,
+        end_frame: 2556.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 4,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -1200.0, -78100.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 2555.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 4,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -2500.0, -76800.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100550.0, -2000.0, -76400.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 4,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, -2800.0, -76800.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 1,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, -2200.0, -76100.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 5,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, -4000.0, -74900.0],
+        offset: [0.0, -700.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 7,
+        parm_idx_1: 3,
+    },
+    HotelFirePostInfo {
+        pos: [-99800.0, -2500.0, -75700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 6,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100200.0, -4500.0, -73700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 2,
+        parm_idx_1: 1,
+    },
+    HotelFirePostInfo {
+        pos: [-99750.0, -5600.0, -72600.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 2,
+        parm_idx_1: 1,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, 0.0, -78400.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2c,
+        cls_1: 0x00,
+        start_frame: 0.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 6,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100300.0, -910.0, -77300.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2c,
+        cls_1: 0x00,
+        start_frame: 5000.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 3.5,
+        parm_idx_0: 6,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99850.0, -900.0, -77300.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2c,
+        cls_1: 0x00,
+        start_frame: 5000.0,
+        end_frame: 10000.0,
+        prm_0: 0.0,
+        prm_1: 4.0,
+        parm_idx_0: 2,
+        parm_idx_1: 2,
+    },
 ];
 
-pub const HOTEL_FIRE_POST_INFO_NORMAL_HEAD: [([f32; 3], [f32; 3]); 5] = [
-    ([-100550.0, -3600.0, -74800.0], [0.0, -500.0, 0.0]),
-    ([-100550.0, -3700.0, -75600.0], [0.0, -500.0, 0.0]),
-    ([-100500.0, -400.0, -78700.0], [0.0, -500.0, 0.0]),
-    ([-100500.0, -750.0, -78450.0], [0.0, -500.0, 0.0]),
-    ([-100500.0, -1200.0, -78100.0], [0.0, -500.0, 0.0]),
+/// Full 16-entry `_post_info_normal` table from `SLUS_202.28` (`0x00376510`).
+pub const HOTEL_FIRE_POST_INFO_NORMAL: [HotelFirePostInfo; 16] = [
+    HotelFirePostInfo {
+        pos: [-100550.0, -3600.0, -74800.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 5,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100550.0, -3700.0, -75600.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 1,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -400.0, -78700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -750.0, -78450.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -1200.0, -78100.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 4,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100500.0, -2500.0, -76800.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 0,
+        parm_idx_1: 0,
+    },
+    HotelFirePostInfo {
+        pos: [-100550.0, -2000.0, -76400.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 4,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, -2800.0, -76800.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 1,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, -2200.0, -76100.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 5,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, -4000.0, -74900.0],
+        offset: [0.0, -700.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 7,
+        parm_idx_1: 3,
+    },
+    HotelFirePostInfo {
+        pos: [-99800.0, -2500.0, -75700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 6,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100200.0, -4500.0, -73700.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 2,
+        parm_idx_1: 1,
+    },
+    HotelFirePostInfo {
+        pos: [-99750.0, -5600.0, -72600.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 2,
+        parm_idx_1: 1,
+    },
+    HotelFirePostInfo {
+        pos: [-99500.0, 0.0, -78400.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 6,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-100300.0, -910.0, -77300.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 6,
+        parm_idx_1: 2,
+    },
+    HotelFirePostInfo {
+        pos: [-99850.0, -900.0, -77300.0],
+        offset: [0.0, -500.0, 0.0],
+        cls_0: 0x2b,
+        cls_1: 0x2f,
+        start_frame: 0.0,
+        end_frame: 0.0,
+        prm_0: 0.0,
+        prm_1: 0.0,
+        parm_idx_0: 2,
+        parm_idx_1: 1,
+    },
 ];
 
 /// Single flame particle (`hh_class_flame_00.c` `0x50`-byte record).
@@ -356,6 +823,7 @@ impl FlameParticle {
 /// Multi-layered flame emitter (`hh_class_flame_00..03.c`).
 #[derive(Debug, Clone)]
 pub struct FlameEmitter {
+    pub class_kind: FlameClassKind,
     pub origin: Vec3,
     pub params: FlameInitParams,
     pub particles: Vec<FlameParticle>,
@@ -365,7 +833,12 @@ pub struct FlameEmitter {
 impl FlameEmitter {
     /// Creates a new flame emitter at `origin` with randomized initial particle phases.
     #[must_use]
-    pub fn new(origin: Vec3, params: FlameInitParams, rng: &mut FxRng) -> Self {
+    pub fn new(
+        class_kind: FlameClassKind,
+        origin: Vec3,
+        params: FlameInitParams,
+        rng: &mut FxRng,
+    ) -> Self {
         let mut particles = Vec::with_capacity(params.particle_count as usize);
         for _ in 0..params.particle_count {
             let mut p = FlameParticle::init(&params, rng);
@@ -373,6 +846,7 @@ impl FlameEmitter {
             particles.push(p);
         }
         Self {
+            class_kind,
             origin,
             params,
             particles,
@@ -417,19 +891,41 @@ pub struct FirePhenomenon {
     rng: FxRng,
 }
 
+fn params_for_class(cls: FlameClassKind, idx: usize) -> FlameInitParams {
+    match cls {
+        FlameClassKind::Flame02 => FLAME_02_PARM_TABLE[idx & 3],
+        _ => FLAME_00_PARM_TABLE[idx & 7],
+    }
+}
+
 impl FirePhenomenon {
-    /// Creates the Lakeview Hotel staircase fire from `_post_info_normal` (`0x00376510`).
+    /// Creates the Lakeview Hotel staircase fire from all 16 entries of `_post_info_normal` (`0x00376510`),
+    /// dispatching both `cls_0` at `pos` and `cls_1` at `pos + offset` (`hh_class_fire_phenomenon_00.c`).
     #[must_use]
     pub fn new_hotel_staircase(seed: u32) -> Self {
         let mut rng = FxRng::new(seed);
-        let emitters = HOTEL_FIRE_POST_INFO_NORMAL_HEAD
-            .iter()
-            .enumerate()
-            .map(|(i, (pos, _off))| {
-                let p = FLAME_00_PARM_TABLE[i % FLAME_00_PARM_TABLE.len()];
-                FlameEmitter::new(Vec3::from_array(*pos), p, &mut rng)
-            })
-            .collect();
+        let mut emitters = Vec::with_capacity(HOTEL_FIRE_POST_INFO_NORMAL.len() * 2);
+        for entry in &HOTEL_FIRE_POST_INFO_NORMAL {
+            let base = Vec3::from_array(entry.pos);
+            let c0 = FlameClassKind::from_raw(entry.cls_0);
+            if c0 != FlameClassKind::None {
+                emitters.push(FlameEmitter::new(
+                    c0,
+                    base,
+                    params_for_class(c0, entry.parm_idx_0),
+                    &mut rng,
+                ));
+            }
+            let c1 = FlameClassKind::from_raw(entry.cls_1);
+            if c1 != FlameClassKind::None {
+                emitters.push(FlameEmitter::new(
+                    c1,
+                    base + Vec3::from_array(entry.offset),
+                    params_for_class(c1, entry.parm_idx_1),
+                    &mut rng,
+                ));
+            }
+        }
         Self {
             emitters,
             embers: Vec::new(),

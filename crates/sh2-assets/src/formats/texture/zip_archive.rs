@@ -9,8 +9,58 @@ use std::sync::{Arc, Mutex};
 
 use super::{decode_texture_bytes, DecodedTexture};
 
-pub(super) type ZipEntryIndex = HashMap<String, (u64, u64)>;
-pub(super) type ZipIndexCache = Arc<Mutex<HashMap<PathBuf, ZipEntryIndex>>>;
+pub(crate) type ZipEntryIndex = HashMap<String, (u64, u64)>;
+pub(crate) type ZipIndexCache = Arc<Mutex<HashMap<PathBuf, ZipEntryIndex>>>;
+
+/// Reads raw uncompressed bytes for an exact or case-insensitive `entry_path` from a `ZIP_STORED`
+/// archive, caching the parsed Central Directory index in `zip_index_cache`.
+pub(crate) fn read_entry_bytes_from_stored_zip(
+    zip_index_cache: &ZipIndexCache,
+    zip_path: &Path,
+    entry_path: &str,
+) -> Option<Vec<u8>> {
+    let normalized = entry_path.replace('\\', "/");
+    let cached_entry = {
+        let mut guard = zip_index_cache.lock().ok()?;
+        if !guard.contains_key(zip_path) {
+            if let Some(index) = build_stored_zip_central_directory_index(zip_path) {
+                guard.insert(zip_path.to_path_buf(), index);
+            }
+        }
+        let index = guard.get(zip_path)?;
+        index.get(&normalized).copied().or_else(|| {
+            index
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(&normalized))
+                .map(|(_, v)| *v)
+        })
+    };
+
+    let (local_hdr_ofs, comp_size) = cached_entry?;
+    let mut file = fs::File::open(zip_path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+
+    let mut lhdr = [0u8; 30];
+    file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
+    file.read_exact(&mut lhdr).ok()?;
+    if &lhdr[0..4] != b"PK\x03\x04" {
+        return None;
+    }
+    let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
+    let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
+    let data_start = local_hdr_ofs
+        .checked_add(30)?
+        .checked_add(lname_len)?
+        .checked_add(lextra_len)?;
+    let data_end = data_start.checked_add(comp_size)?;
+    if data_end > file_len || comp_size > 128 * 1024 * 1024 {
+        return None;
+    }
+    file.seek(SeekFrom::Start(data_start)).ok()?;
+    let mut payload = vec![0u8; comp_size as usize];
+    file.read_exact(&mut payload).ok()?;
+    Some(payload)
+}
 
 /// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
 /// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive,
@@ -66,7 +116,7 @@ pub(super) fn read_texture_from_stored_zip(
 
 /// Parses the Central Directory of a `ZIP_STORED` (32-bit or ZIP64) archive once and returns
 /// a lookup map `entry_name -> (local_header_offset, compressed_size)`.
-pub(super) fn build_stored_zip_central_directory_index(zip_path: &Path) -> Option<ZipEntryIndex> {
+pub(crate) fn build_stored_zip_central_directory_index(zip_path: &Path) -> Option<ZipEntryIndex> {
     let mut file = fs::File::open(zip_path).ok()?;
     let file_len = file.metadata().ok()?.len();
     if file_len < 22 {

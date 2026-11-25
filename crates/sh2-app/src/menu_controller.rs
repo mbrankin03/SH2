@@ -62,7 +62,28 @@ impl AppMenuController {
     ) -> Self {
         let path = config_path.as_ref().to_path_buf();
         let loaded_config = AppConfig::load_from_file(&path);
-        let options_menu = OptionsMenu::new_with_audio_packs(loaded_config, audio_pack_status);
+        let mut options_menu =
+            OptionsMenu::new_with_audio_packs(loaded_config.clone(), audio_pack_status);
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let discovered = sh2_assets::discover_mods(
+            &resolver.resolve_mods_dir(),
+            &loaded_config.mods.as_discovery_tuples(),
+        );
+        let mod_entries: Vec<sh2_ui::ModUiEntry> = discovered
+            .into_iter()
+            .map(|m| sh2_ui::ModUiEntry {
+                id: m.id,
+                name: m.metadata.name,
+                author: m.metadata.author,
+                version: m.metadata.version,
+                description: m.metadata.description,
+                override_count: m.overrides.len(),
+                enabled: m.enabled,
+                priority: m.priority,
+                is_zip: m.source.is_zip(),
+            })
+            .collect();
+        options_menu.set_mods(mod_entries);
         let mut title_sm = TitleStateMachine::new();
         let save_path = path.with_file_name("save_slot0.json");
         if sh2_core::campaign::CampaignSaveSnapshot::exists_at(&save_path) {
@@ -675,7 +696,7 @@ impl AppMenuController {
                 ));
                 lines.push("[Q / E or L1 / R1: Switch Category]".into());
                 for i in 0..self.options_menu.item_count() {
-                    if let Some((label, val)) = self.options_menu.item_display(i) {
+                    if let Some((label, val)) = self.options_menu.item_display_cow(i) {
                         let prefix = if i == self.options_menu.selected_index {
                             "> "
                         } else {

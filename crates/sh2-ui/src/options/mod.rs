@@ -19,28 +19,45 @@ use sh2_core::config::{
     AppConfig, AudioPackDetectionStatus, ControllerPreset, PS2_MAX_BRIGHTNESS_LEVEL,
 };
 
+/// Lightweight UI representation of a discovered mod package in `mods/` (`SH2-29`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModUiEntry {
+    pub id: String,
+    pub name: String,
+    pub author: String,
+    pub version: String,
+    pub description: String,
+    pub override_count: usize,
+    pub enabled: bool,
+    pub priority: i32,
+    pub is_zip: bool,
+}
+
 /// High-level Options category tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptionsTab {
     /// Authentic 10-row SH2/SH2:EE root `O P T I O N S` screen (`Game/Advanced/Control Options` + core settings).
     #[default]
-    Root = 6,
+    Root = 7,
     Video = 0,
     Audio = 1,
     Controls = 2,
     Game = 3,
     /// Dedicated collated tab for all enhanced graphics, audio, and camera toggles + 1-click Version Preset.
     Enhanced = 4,
-    Debug = 5,
+    /// Drag-and-drop mod manager (`SH2-29`).
+    Mods = 5,
+    Debug = 6,
 }
 
 impl OptionsTab {
-    pub const ALL: [OptionsTab; 6] = [
+    pub const ALL: [OptionsTab; 7] = [
         OptionsTab::Video,
         OptionsTab::Audio,
         OptionsTab::Controls,
         OptionsTab::Game,
         OptionsTab::Enhanced,
+        OptionsTab::Mods,
         OptionsTab::Debug,
     ];
 
@@ -52,6 +69,7 @@ impl OptionsTab {
             Self::Controls => "CONTROLS & INPUT",
             Self::Game => "GAMEPLAY & PUZZLES",
             Self::Enhanced => "ENHANCED MODE",
+            Self::Mods => "MOD MANAGER",
             Self::Debug => "DEBUG & TESTING",
         }
     }
@@ -63,7 +81,8 @@ impl OptionsTab {
             Self::Audio => Self::Controls,
             Self::Controls => Self::Game,
             Self::Game => Self::Enhanced,
-            Self::Enhanced => Self::Debug,
+            Self::Enhanced => Self::Mods,
+            Self::Mods => Self::Debug,
             Self::Debug => Self::Video,
         }
     }
@@ -76,7 +95,8 @@ impl OptionsTab {
             Self::Controls => Self::Audio,
             Self::Game => Self::Controls,
             Self::Enhanced => Self::Game,
-            Self::Debug => Self::Enhanced,
+            Self::Mods => Self::Enhanced,
+            Self::Debug => Self::Mods,
         }
     }
 }
@@ -122,6 +142,8 @@ pub struct OptionsMenu {
     pub config_preset_col: usize,
     /// Frame counter driving pulsing `allow_u/d/l/r` arrows (`frame % 40`).
     pub anim_frame: u32,
+    /// Discovered mods in `mods/` displayed in the `MOD MANAGER` tab (`SH2-29`).
+    pub mods: Vec<ModUiEntry>,
 }
 
 impl OptionsMenu {
@@ -146,7 +168,57 @@ impl OptionsMenu {
             config_row: 0,
             config_preset_col: 1,
             anim_frame: 0,
+            mods: Vec::new(),
         }
+    }
+
+    /// Populates the discovered mod list for the `MOD MANAGER` tab (`SH2-29`).
+    pub fn set_mods(&mut self, mods: Vec<ModUiEntry>) {
+        self.mods = mods;
+        if self.active_tab == OptionsTab::Mods {
+            let count = self.item_count();
+            if self.selected_index >= count {
+                self.selected_index = count.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Synchronizes current `self.mods` enabled states and load-order priorities into `draft_config.mods`.
+    pub(crate) fn sync_mods_to_draft_config(&mut self) {
+        let len = self.mods.len() as i32;
+        self.draft_config.mods.entries.clear();
+        for (idx, m) in self.mods.iter_mut().enumerate() {
+            // Higher priority = earlier in list (top = highest)
+            m.priority = len - idx as i32;
+            self.draft_config
+                .mods
+                .set_mod_state(m.id.clone(), m.enabled, m.priority);
+        }
+        self.is_dirty = self.draft_config != self.original_config;
+    }
+
+    /// Moves the currently selected mod up (`delta < 0`) or down (`delta > 0`) in load order.
+    pub fn move_selected_mod(&mut self, delta: i32) -> OptionsSoundCue {
+        if self.active_tab != OptionsTab::Mods || self.mods.len() < 2 {
+            return OptionsSoundCue::None;
+        }
+        let idx = self.selected_index;
+        if idx >= self.mods.len() {
+            return OptionsSoundCue::None;
+        }
+        if delta < 0 && idx > 0 {
+            self.mods.swap(idx, idx - 1);
+            self.selected_index = idx - 1;
+            self.sync_mods_to_draft_config();
+            return OptionsSoundCue::ValueChange;
+        }
+        if delta > 0 && idx + 1 < self.mods.len() {
+            self.mods.swap(idx, idx + 1);
+            self.selected_index = idx + 1;
+            self.sync_mods_to_draft_config();
+            return OptionsSoundCue::ValueChange;
+        }
+        OptionsSoundCue::None
     }
 
     /// Advances the options animation frame counter (for pulsing `allow_u/d/l/r` arrows).
@@ -340,7 +412,7 @@ impl OptionsMenu {
         let (parent_tab, parent_idx) = match self.active_tab {
             OptionsTab::Enhanced => (OptionsTab::Video, 15),
             OptionsTab::Game => (OptionsTab::Root, 0),
-            OptionsTab::Video | OptionsTab::Debug => (OptionsTab::Root, 1),
+            OptionsTab::Video | OptionsTab::Debug | OptionsTab::Mods => (OptionsTab::Root, 1),
             OptionsTab::Audio => (OptionsTab::Root, 2),
             OptionsTab::Controls => (OptionsTab::Root, 3),
             OptionsTab::Root => (OptionsTab::Root, 0),
@@ -831,5 +903,53 @@ mod tests {
             menu.draft_config.detect_enhanced_preset(),
             EnhancedPreset::Custom
         );
+    }
+
+    #[test]
+    fn test_sh2_29_mods_tab_toggle_and_priority_reorder() {
+        let mut menu = OptionsMenu::new(AppConfig::default());
+        menu.set_mods(vec![
+            ModUiEntry {
+                id: "mod_a".into(),
+                name: "Mod A".into(),
+                author: "Author A".into(),
+                version: "1.0".into(),
+                description: "First mod".into(),
+                override_count: 5,
+                enabled: true,
+                priority: 2,
+                is_zip: false,
+            },
+            ModUiEntry {
+                id: "mod_b".into(),
+                name: "Mod B".into(),
+                author: "Author B".into(),
+                version: "2.0".into(),
+                description: "Second mod".into(),
+                override_count: 3,
+                enabled: true,
+                priority: 1,
+                is_zip: true,
+            },
+        ]);
+
+        menu.active_tab = OptionsTab::Mods;
+        menu.selected_index = 0;
+        assert_eq!(menu.item_count(), 2);
+        let (label, val) = menu.item_display_cow(0).unwrap();
+        assert_eq!(label, "Mod A");
+        assert!(val.contains("ENABLED") && val.contains("#1"));
+
+        // Toggle Mod A off
+        assert_eq!(menu.adjust_value(1), OptionsSoundCue::ValueChange);
+        assert!(!menu.mods[0].enabled);
+        assert!(!menu.draft_config.mods.entries[0].enabled);
+
+        // Move Mod A down in priority
+        assert_eq!(menu.move_selected_mod(1), OptionsSoundCue::ValueChange);
+        assert_eq!(menu.selected_index, 1);
+        assert_eq!(menu.mods[0].id, "mod_b");
+        assert_eq!(menu.mods[1].id, "mod_a");
+        assert!(menu.mods[0].priority > menu.mods[1].priority);
     }
 }

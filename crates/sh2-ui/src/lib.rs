@@ -59,7 +59,7 @@ pub use mes::{
     YES_NO_YES_CENTER_X,
 };
 pub use options::{
-    draw_options_screen, OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab,
+    draw_options_screen, ModUiEntry, OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab,
 };
 pub use pause::{draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase};
 pub use results::{draw_results_screen, ResultsRowData, ResultsScreen};

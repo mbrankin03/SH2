@@ -1,5 +1,7 @@
 //! Category tab definitions, display formatting, and value adjustment logic for [`super::OptionsMenu`].
 
+use std::borrow::Cow;
+
 use super::{OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab};
 use sh2_core::config::{ps2_level_to_volume_gain, volume_gain_to_ps2_level, PS2_VOLUME_MAX_LEVEL};
 
@@ -25,6 +27,7 @@ impl OptionsMenu {
                     19
                 }
             }
+            OptionsTab::Mods => self.mods.len().max(1),
             OptionsTab::Debug => 6,
         }
     }
@@ -54,8 +57,52 @@ impl OptionsMenu {
             OptionsTab::Controls => self.controls_item_display(index),
             OptionsTab::Game => self.game_item_display(index),
             OptionsTab::Enhanced => self.enhanced_item_display(index),
+            OptionsTab::Mods => {
+                if self.mods.is_empty() && index == 0 {
+                    Some(("Installed Mods", "None (Drop into mods/)".into()))
+                } else {
+                    None
+                }
+            }
             OptionsTab::Debug => self.debug_item_display(index),
         }
+    }
+
+    /// Retrieve the title (supporting dynamic mod names) and string value of an item in the active tab.
+    pub fn item_display_cow(&self, index: usize) -> Option<(Cow<'static, str>, String)> {
+        if self.active_tab == OptionsTab::Mods && !self.mods.is_empty() {
+            return self.mods.get(index).map(|m| {
+                let state = if m.enabled { "ENABLED" } else { "DISABLED" };
+                let kind = if m.is_zip { "zip" } else { "dir" };
+                (
+                    Cow::Owned(m.name.clone()),
+                    format!(
+                        "{state}  #{} ({} files, {kind})",
+                        index + 1,
+                        m.override_count
+                    ),
+                )
+            });
+        }
+        self.item_display(index)
+            .map(|(label, val)| (Cow::Borrowed(label), val))
+    }
+
+    /// Formats the bottom description box text for the `MOD MANAGER` tab (`SH2-29`).
+    #[must_use]
+    pub fn mod_help_text(&self, index: usize) -> String {
+        let Some(m) = self.mods.get(index) else {
+            return "Drop mod folders or .zip archives into mods/ to install.".to_string();
+        };
+        let desc = if m.description.is_empty() {
+            "No description provided."
+        } else {
+            m.description.as_str()
+        };
+        format!(
+            "v{} by {} | {} overrides | {}  [PgUp/PgDn: Reorder]",
+            m.version, m.author, m.override_count, desc
+        )
     }
 
     /// 1:1 10-row SH2/SH2:EE root `O P T I O N S` layout (`Item/otn_option.c`).
@@ -538,6 +585,15 @@ impl OptionsMenu {
             OptionsTab::Controls => self.adjust_controls_value(forward),
             OptionsTab::Game => self.adjust_game_value(forward),
             OptionsTab::Enhanced => self.adjust_enhanced_value(forward),
+            OptionsTab::Mods => {
+                if let Some(m) = self.mods.get_mut(self.selected_index) {
+                    m.enabled = !m.enabled;
+                    self.sync_mods_to_draft_config();
+                    Some(OptionsSoundCue::ValueChange)
+                } else {
+                    Some(OptionsSoundCue::None)
+                }
+            }
             OptionsTab::Debug => self.adjust_debug_value(forward),
         };
 

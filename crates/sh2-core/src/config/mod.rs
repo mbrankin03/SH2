@@ -27,8 +27,9 @@ pub use game::{
 };
 pub use mods::{ModEntryConfig, ModsConfig};
 pub use video::{
-    CutawayQuality, FogQuality, FrameRateCap, InternalResolution, LightingProfile,
-    OutdoorStreamingMode, ShadowQualityMode, VideoOptions, WindowDisplayMode, WorldTextureQuality,
+    CutawayQuality, FmvCutsceneSource, FogQuality, FrameRateCap, InternalResolution,
+    LightingProfile, OutdoorStreamingMode, ShadowQualityMode, VideoOptions, WindowDisplayMode,
+    WorldTextureQuality,
 };
 
 /// Complete game configuration structure.
@@ -61,6 +62,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = false;
                 self.video.enable_water_reflections = false;
                 self.video.enable_oar_ripples = false;
+                self.video.fmv_source = FmvCutsceneSource::VanillaPc;
                 self.video.grain_intensity = 100;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
@@ -93,6 +95,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = false;
                 self.video.enable_water_reflections = false;
                 self.video.enable_oar_ripples = false;
+                self.video.fmv_source = FmvCutsceneSource::Enhanced1080p60;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_dynamic_room_acoustics = false;
@@ -124,6 +127,7 @@ impl AppConfig {
                 self.video.aces_tonemapping = true;
                 self.video.enable_water_reflections = true;
                 self.video.enable_oar_ripples = true;
+                self.video.fmv_source = FmvCutsceneSource::Auto;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
                 self.audio.enable_dynamic_room_acoustics = true;

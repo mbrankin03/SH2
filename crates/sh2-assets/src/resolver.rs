@@ -33,9 +33,16 @@ impl AssetPathResolver {
         "../sh2_enhanced_edition_og_hq_fmvs-50-1-0-1770228966/movie",
     ];
 
-    /// Candidate paths for the AI 4K VSR pipeline output directory.
-    pub const DEFAULT_VSR_OUTPUT_PATHS: [&'static str; 2] =
-        ["tools/vsr_pipeline/output", "../tools/vsr_pipeline/output"];
+    /// Candidate paths for the AI 4K VSR pipeline output directory (`SH2-90`).
+    pub const DEFAULT_VSR_OUTPUT_PATHS: [&'static str; 7] = [
+        "mods/4k_vsr_fmvs/movie",
+        "mods/4k_vsr_fmvs",
+        "../mods/4k_vsr_fmvs/movie",
+        "sh2e/movie_4k",
+        "../sh2e/movie_4k",
+        "tools/vsr_pipeline/output",
+        "../../Documents/SH2-Port/tools/vsr_pipeline/output",
+    ];
 
     /// Candidate paths for the 4K AI Super-Resolution World & Character Texture Pack (`SH2-92`).
     ///
@@ -189,6 +196,43 @@ impl AssetPathResolver {
             }
         }
         PathBuf::from("mods")
+    }
+
+    /// Resolves the active 4K AI VSR FMV directory (`SH2-90`), prioritizing `SH2_VSR_DIR`,
+    /// then `mods/4k_vsr_fmvs/movie/`, `mods/4k_vsr_fmvs/`, `<game_root>/sh2e/movie_4k`, and workspace candidates.
+    #[must_use]
+    pub fn resolve_4k_vsr_fmv_dir(&self) -> Option<PathBuf> {
+        if let Ok(env_dir) = std::env::var("SH2_VSR_DIR") {
+            let p = PathBuf::from(env_dir);
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+        let mods_dir = self.resolve_mods_dir();
+        for cand in [
+            mods_dir.join("4k_vsr_fmvs/movie"),
+            mods_dir.join("4k_vsr_fmvs"),
+            self.game_root.join("sh2e/movie_4k"),
+            self.game_root.join("mods/4k_vsr_fmvs/movie"),
+            self.game_root.join("mods/4k_vsr_fmvs"),
+        ] {
+            if cand.is_dir() && dir_has_4k_vsr_fmv(&cand) {
+                return Some(cand);
+            }
+        }
+        for cand in Self::DEFAULT_VSR_OUTPUT_PATHS {
+            let p = PathBuf::from(cand);
+            if p.is_dir() && dir_has_4k_vsr_fmv(&p) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Returns `true` when at least one `*_4k_master.mp4` or `manifest.json` is detected on disk (`SH2-90`).
+    #[must_use]
+    pub fn has_4k_vsr_fmv_pack(&self) -> bool {
+        self.resolve_4k_vsr_fmv_dir().is_some()
     }
 
     /// Resolves the active 4K AI Super-Resolution Texture Pack directory or `.zip` archive (`SH2-92`),
@@ -437,6 +481,20 @@ impl AssetPathResolver {
     pub fn has_sh2e_model(&self, filename: &str) -> bool {
         self.resolve_sh2e_model(filename).is_some()
     }
+}
+
+fn dir_has_4k_vsr_fmv(dir: &Path) -> bool {
+    if dir.join("manifest.json").is_file() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.file_name()
+            .to_str()
+            .is_some_and(|n| n.ends_with("_4k_master.mp4"))
+    })
 }
 
 #[cfg(test)]

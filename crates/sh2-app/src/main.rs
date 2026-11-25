@@ -346,6 +346,32 @@ fn main() {
     );
 
     let cli_args = CliArgs::parse_from_env();
+    if cli_args.verify_fmv_pack {
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let Some(dir) = resolver.resolve_4k_vsr_fmv_dir() else {
+            eprintln!("4K VSR FMV pack directory not found. Set SH2_VSR_DIR or place files in mods/4k_vsr_fmvs/ or sh2e/movie_4k/.");
+            std::process::exit(1);
+        };
+        match sh2_assets::verify_fmv_pack(&dir) {
+            Ok(report) => {
+                println!(
+                    "SH2 4K VSR FMV Pack v{} ({}): {}/{} verified",
+                    report.version,
+                    dir.display(),
+                    report.verified,
+                    report.total
+                );
+                for (name, status) in &report.results {
+                    println!("  {name:<28} {status:?}");
+                }
+                std::process::exit(if report.all_verified() { 0 } else { 1 });
+            }
+            Err(err) => {
+                eprintln!("Failed to verify FMV pack at {}: {err}", dir.display());
+                std::process::exit(1);
+            }
+        }
+    }
 
     let event_loop = EventLoop::new().expect("Failed to create winit event loop");
     event_loop.set_control_flow(ControlFlow::Poll);

@@ -39,9 +39,17 @@ pub(crate) fn open_fmv_session(
     source_pref: FmvVideoSource,
     audio_pack_source: sh2_core::AudioPackSource,
 ) -> Option<ActiveFmvSession> {
-    let upscaled_mp4_roots = ["tools/vsr_pipeline/output", "movie", "sh2e/movie"];
-
     let resolver = sh2_assets::AssetPathResolver::resolve();
+    let mut upscaled_mp4_roots: Vec<PathBuf> = Vec::new();
+    if let Some(vsr_dir) = resolver.resolve_4k_vsr_fmv_dir() {
+        upscaled_mp4_roots.push(vsr_dir);
+    }
+    for cand in sh2_assets::AssetPathResolver::DEFAULT_VSR_OUTPUT_PATHS {
+        upscaled_mp4_roots.push(PathBuf::from(cand));
+    }
+    upscaled_mp4_roots.push(PathBuf::from("movie"));
+    upscaled_mp4_roots.push(PathBuf::from("sh2e/movie"));
+
     let base_roots = [
         resolver.game_root.to_string_lossy().to_string(),
         "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
@@ -60,7 +68,7 @@ pub(crate) fn open_fmv_session(
         FmvVideoSource::Upscaled4kMp4 => {
             for dir in &upscaled_mp4_roots {
                 for mp4_name in &mp4_cands {
-                    let cand = PathBuf::from(dir).join(mp4_name);
+                    let cand = dir.join(mp4_name);
                     if cand.exists() {
                         chosen_path = Some((cand, true));
                         break;
@@ -104,7 +112,7 @@ pub(crate) fn open_fmv_session(
     if chosen_path.is_none() {
         for dir in &upscaled_mp4_roots {
             for mp4_name in &mp4_cands {
-                let cand = PathBuf::from(dir).join(mp4_name);
+                let cand = dir.join(mp4_name);
                 if cand.exists() {
                     chosen_path = Some((cand, true));
                     break;

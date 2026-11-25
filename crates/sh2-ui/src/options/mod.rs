@@ -637,7 +637,7 @@ mod tests {
         menu.navigate_vertical(1); // Advanced Options
         assert!(menu.enter_submenu());
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 20);
+        assert_eq!(menu.item_count(), 21);
 
         // Verify Cutaway & Puzzle Quality 3-tier selector (index 18) and Aspect Scaling (index 19)
         menu.selected_index = 18;
@@ -989,5 +989,28 @@ mod tests {
         assert_eq!(menu.mods[0].id, "mod_b");
         assert_eq!(menu.mods[1].id, "mod_a");
         assert!(menu.mods[0].priority > menu.mods[1].priority);
+    }
+
+    #[test]
+    fn test_sh2_90_video_fmv_source_option_and_ps2_preset() {
+        let mut menu = OptionsMenu::new(AppConfig::default());
+        menu.active_tab = OptionsTab::Video;
+        menu.selected_index = 18;
+        let (label, val) = menu.item_display(18).unwrap();
+        assert_eq!(label, "FMV Cutscene Source");
+        assert_eq!(val, "Auto (4K VSR if detected)");
+
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.video.fmv_source,
+            sh2_core::config::FmvCutsceneSource::Upscaled4kMp4
+        );
+
+        let mut ps2_cfg = AppConfig::default();
+        ps2_cfg.apply_enhanced_preset(sh2_core::config::EnhancedPreset::Ps2Authentic);
+        assert_eq!(
+            ps2_cfg.video.fmv_source,
+            sh2_core::config::FmvCutsceneSource::VanillaPc
+        );
     }
 }

@@ -681,6 +681,22 @@ impl TextureLoader {
             .or_else(|_| rel.strip_prefix("sh2e"))
             .unwrap_or(rel);
 
+        if let Some(ref vfs) = self.mod_vfs {
+            if let Some((mod_id, bytes)) = vfs.read_mod_bytes(clean_rel) {
+                match crate::formats::mdls::parse_mdl(&bytes) {
+                    Ok(mod_mdl) => return Ok((mod_mdl.clone(), Some(mod_mdl))),
+                    Err(err) => {
+                        tracing::warn!(
+                            "[ModVfs] Mod '{}' model '{}' failed to parse ({}); falling back to vanilla",
+                            mod_id,
+                            clean_rel.display(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+
         let sh2e_mdl_path = self.sh2e_dir.as_ref().and_then(|sh2e| {
             let cand = sh2e.join(clean_rel);
             if cand.exists() {

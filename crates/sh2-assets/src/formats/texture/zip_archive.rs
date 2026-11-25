@@ -46,6 +46,7 @@ pub(crate) fn read_entry_bytes_from_stored_zip(
     if &lhdr[0..4] != b"PK\x03\x04" {
         return None;
     }
+    let compression = u16::from_le_bytes(lhdr[8..10].try_into().ok()?);
     let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
     let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
     let data_start = local_hdr_ofs
@@ -53,13 +54,22 @@ pub(crate) fn read_entry_bytes_from_stored_zip(
         .checked_add(lname_len)?
         .checked_add(lextra_len)?;
     let data_end = data_start.checked_add(comp_size)?;
-    if data_end > file_len || comp_size > 128 * 1024 * 1024 {
+    if data_end > file_len || comp_size > 256 * 1024 * 1024 {
         return None;
     }
     file.seek(SeekFrom::Start(data_start)).ok()?;
     let mut payload = vec![0u8; comp_size as usize];
     file.read_exact(&mut payload).ok()?;
-    Some(payload)
+    match compression {
+        0 => Some(payload),
+        8 => {
+            let mut decoder = flate2::read::DeflateDecoder::new(&payload[..]);
+            let mut out = Vec::new();
+            decoder.read_to_end(&mut out).ok()?;
+            Some(out)
+        }
+        _ => None,
+    }
 }
 
 /// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
@@ -194,7 +204,7 @@ pub(crate) fn build_stored_zip_central_directory_index(zip_path: &Path) -> Optio
             break;
         }
 
-        if compression == 0 {
+        if compression == 0 || compression == 8 {
             if let Ok(entry_name) = std::str::from_utf8(&cd_buf[name_start..extra_start]) {
                 // Parse ZIP64 extra field (`0x0001`) if any 32-bit field is `0xFFFF_FFFF`
                 if uncomp_size == 0xFFFF_FFFF

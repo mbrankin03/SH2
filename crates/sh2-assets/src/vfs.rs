@@ -185,15 +185,21 @@ impl ModVfs {
         for m in &self.active_mods {
             match &m.source {
                 ModSource::Directory(root) => {
-                    if let Some(p) = resolve_in_dir_case_insensitive(root, &rel) {
-                        if let Ok(bytes) = fs::read(&p) {
-                            return Some((m.id.clone(), bytes));
+                    for cand in [
+                        PathBuf::from("sh2e").join(&rel),
+                        PathBuf::from("data").join(&rel),
+                        rel.clone(),
+                    ] {
+                        if let Some(p) = resolve_in_dir_case_insensitive(root, &cand) {
+                            if let Ok(bytes) = fs::read(&p) {
+                                return Some((m.id.clone(), bytes));
+                            }
                         }
                     }
                 }
                 ModSource::StoredZip(zip_path) => {
                     if let Some(bytes) =
-                        read_entry_bytes_from_stored_zip(&self.zip_index_cache, zip_path, &rel_str)
+                        read_mod_zip_entry(&self.zip_index_cache, zip_path, &rel_str)
                     {
                         return Some((m.id.clone(), bytes));
                     }
@@ -233,6 +239,7 @@ pub fn is_supported_mod_asset_ext(ext: &str) -> bool {
         "dds"
             | "png"
             | "tex"
+            | "tbn2"
             | "sfd"
             | "mp4"
             | "mkv"
@@ -242,6 +249,8 @@ pub fn is_supported_mod_asset_ext(ext: &str) -> bool {
             | "ogg"
             | "adx"
             | "aix"
+            | "afs"
+            | "bin"
             | "map"
             | "anm"
             | "mdl"
@@ -338,6 +347,53 @@ pub fn discover_mods(mods_dir: &Path, saved_entries: &[(String, bool, i32)]) -> 
 
     packages.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
     packages
+}
+
+fn read_mod_zip_entry(
+    zip_index_cache: &ZipIndexCache,
+    zip_path: &Path,
+    rel_str: &str,
+) -> Option<Vec<u8>> {
+    let sh2e_cand = format!("sh2e/{rel_str}");
+    let data_cand = format!("data/{rel_str}");
+    for direct in [&sh2e_cand, &data_cand, &rel_str.to_string()] {
+        if let Some(bytes) = read_entry_bytes_from_stored_zip(zip_index_cache, zip_path, direct) {
+            return Some(bytes);
+        }
+    }
+
+    // Support NexusMods-style `.zip` archives with a single top-level wrapper folder, e.g.
+    // `<Mod Name>/sh2e/menu/mc/savebg.tbn2` or `<Mod Name>/data/chr/jms/hhh_jms.mdl`.
+    let matched_key = {
+        let mut guard = zip_index_cache.lock().ok()?;
+        if !guard.contains_key(zip_path) {
+            if let Some(index) = build_stored_zip_central_directory_index(zip_path) {
+                guard.insert(zip_path.to_path_buf(), index);
+            }
+        }
+        let index = guard.get(zip_path)?;
+        let sh2e_suffix = format!("/{sh2e_cand}");
+        let data_suffix = format!("/{data_cand}");
+        let bare_suffix = format!("/{rel_str}");
+        let find_suffix = |suf: &str| -> Option<String> {
+            index
+                .keys()
+                .find(|k| {
+                    let lower = k.to_ascii_lowercase();
+                    let suf_lower = suf.to_ascii_lowercase();
+                    lower.ends_with(&suf_lower)
+                        && lower[..lower.len() - suf_lower.len()]
+                            .chars()
+                            .all(|c| c != '/')
+                })
+                .cloned()
+        };
+        find_suffix(&sh2e_suffix)
+            .or_else(|| find_suffix(&data_suffix))
+            .or_else(|| find_suffix(&bare_suffix))
+    }?;
+
+    read_entry_bytes_from_stored_zip(zip_index_cache, zip_path, &matched_key)
 }
 
 fn read_dir_mod_metadata(mod_root: &Path) -> Option<ModMetadata> {
@@ -548,5 +604,118 @@ mod tests {
         out.extend_from_slice(&cd_offset.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
         out
+    }
+
+    #[test]
+    fn vfs_reads_deflated_nexus_zip_with_wrapper_and_sh2e_priority() {
+        use flate2::{write::DeflateEncoder, Compression};
+        use std::io::Write;
+
+        let deflate = |raw: &[u8]| -> Vec<u8> {
+            let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
+            enc.write_all(raw).unwrap();
+            enc.finish().unwrap()
+        };
+
+        let entries: [(&str, &[u8], Vec<u8>); 3] = [
+            (
+                "Borat Mod/data/chr/jms/hhh_jms.mdl",
+                b"BORAT_MDL",
+                deflate(b"BORAT_MDL"),
+            ),
+            (
+                "Borat Mod/data/menu/mc/savebg.tbn2",
+                b"DATA_SAVEBG",
+                deflate(b"DATA_SAVEBG"),
+            ),
+            (
+                "Borat Mod/sh2e/menu/mc/savebg.tbn2",
+                b"SH2E_SAVEBG",
+                deflate(b"SH2E_SAVEBG"),
+            ),
+        ];
+
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for (name, raw, comp) in &entries {
+            let offset = out.len() as u32;
+            let name_bytes = name.as_bytes();
+            let comp_sz = comp.len() as u32;
+            let uncomp_sz = raw.len() as u32;
+            out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            out.extend_from_slice(&20u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&8u16.to_le_bytes()); // DEFLATE
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&comp_sz.to_le_bytes());
+            out.extend_from_slice(&uncomp_sz.to_le_bytes());
+            out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(comp);
+
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&8u16.to_le_bytes()); // DEFLATE
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&comp_sz.to_le_bytes());
+            central.extend_from_slice(&uncomp_sz.to_le_bytes());
+            central.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name_bytes);
+        }
+        let cd_offset = out.len() as u32;
+        let cd_size = central.len() as u32;
+        let count = entries.len() as u16;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_borat_deflate_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        let mods_dir = tmp.join("mods");
+        fs::create_dir_all(&mods_dir).unwrap();
+        fs::write(mods_dir.join("borat.zip"), &out).unwrap();
+
+        let pkgs = discover_mods(&mods_dir, &[]);
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs[0].overrides.len(), 3);
+
+        let vfs = ModVfs::from_packages(&pkgs, None, tmp.join("data"));
+        assert_eq!(
+            vfs.read_mod_bytes("chr/jms/hhh_jms.mdl")
+                .map(|(_, b)| b)
+                .as_deref(),
+            Some(b"BORAT_MDL".as_slice())
+        );
+        assert_eq!(
+            vfs.read_mod_bytes("menu/mc/savebg.tbn2")
+                .map(|(_, b)| b)
+                .as_deref(),
+            Some(b"SH2E_SAVEBG".as_slice())
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

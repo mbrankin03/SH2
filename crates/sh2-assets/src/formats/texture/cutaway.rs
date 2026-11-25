@@ -293,7 +293,7 @@ impl TextureLoader {
             (base_texture.width as u32, base_texture.height as u32)
         };
 
-        let texture = if prefer_sh2ee && apply_4k {
+        let texture = if tier == CutawayPackTier::Ai4kMaster {
             self.load_4k_relative_texture_override(&rel)
                 .unwrap_or(base_texture)
         } else {

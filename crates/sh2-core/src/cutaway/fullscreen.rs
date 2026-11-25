@@ -113,10 +113,11 @@ pub fn is_cutaway_widescreen_scalable(pic_name: &str) -> bool {
         return false;
     }
 
-    // Edge-critical puzzle stills explicitly marked `IsScaled = 0` in `FullscreenImages.h`:
+    // Edge-critical puzzle & menu stills explicitly marked `IsScaled = 0` in `FullscreenImages.h`:
+    // - `data/pic/add/itemmenux.tex` (line 54: `512, 512, 0, 0, 0`)
     // - `data/pic/hsp/p_panel.tex` (line 139: `512, 512, 1, 0, 0`)
     // - `data/pic/htl/p_hanging2.tex` (line 203: `512, 512, 0, 0, 0`)
-    if key == "hsp/p_panel" || key == "htl/p_hanging2" {
+    if key == "add/itemmenux" || key == "hsp/p_panel" || key == "htl/p_hanging2" {
         return false;
     }
 

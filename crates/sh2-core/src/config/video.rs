@@ -236,7 +236,7 @@ impl WorldTextureQuality {
 }
 
 /// 3-tier Cutaway, Puzzle & Map Image quality setting (`SH2-91`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum CutawayQuality {
     /// 4K AI Super-Resolution Master Pack (`mods/4k_cutaways/`, up to `4096x4096`),
     /// falling back to `Sh2eeHd` -> `OriginalPs2`.

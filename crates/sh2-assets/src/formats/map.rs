@@ -337,10 +337,62 @@ pub struct MapFile {
     pub batches: Vec<MapBatch>,
 }
 
+/// Tolerance around `[0.0, 1.0]` when classifying whether a `.map` texture's UVs wrap/tile.
+///
+/// Retail `.map` geometry (e.g. `ob01.map` car interior `mat[27..=28]`) exhibits ~`0.0004` float
+/// rounding outside `[0.0, 1.0]`, whereas genuinely tiling surfaces (e.g. `er01.map` `mat[4]`
+/// `U=[-0.6156, 1.4953]`, `ap01.map` `mat[9]` `U=[-0.0215, 1.0000]`) exceed `0.005`.
+pub const MAP_UV_CLAMP_EPSILON: f32 = 0.005;
+
 impl MapFile {
     /// Convenience alias to parse a map file without specifying a name.
     pub fn parse(bytes: &[u8]) -> Result<Self, AssetError> {
         parse_map(bytes, "map")
+    }
+
+    /// Returns `(wrap_u, wrap_v)` indicating whether any batch referencing `texture_id` has UVs
+    /// outside `[0.0 - MAP_UV_CLAMP_EPSILON, 1.0 + MAP_UV_CLAMP_EPSILON]`.
+    ///
+    /// ### Parity Ground Truth (`SLUS_202.28` & `sh2pc.exe`)
+    /// - `sh2pc.exe` `FUN_005b4cc0` (`0x005b4cc0`, `sh2pc_005b0000.c:2330-2332`) and `0x005b1694`
+    ///   (`sh2pc_005a0000.c:7579-7581`) set `D3DTSS_ADDRESSU (0xd) = 3 (D3DTADDRESS_CLAMP)` and
+    ///   `D3DTSS_ADDRESSV (0xe) = 3 (D3DTADDRESS_CLAMP)` for `.map` geometry, preventing border
+    ///   wrap-around bleed on `[0, 1]`-mapped alpha-cutout atlases (such as `ob01.map` pine trees
+    ///   `tid=4650` and `tid=4660`).
+    /// - `SLUS_202.28` `shGs_InitDefaultRegsEnv` (`0x001909e0`, `shGs/sh2gfw_GsInit.c:658-659`)
+    ///   sets `CLAMP_1 (0x08) = 0` (`WMS = 0 [REPEAT]`, `WMT = 0 [REPEAT]`), which tiling
+    ///   surfaces with UVs outside `[0, 1]` rely on.
+    #[must_use]
+    pub fn texture_uv_wrap_axes(&self, texture_id: u32) -> (bool, bool) {
+        if texture_id == 0 {
+            return (false, false);
+        }
+        let lo = -MAP_UV_CLAMP_EPSILON;
+        let hi = 1.0 + MAP_UV_CLAMP_EPSILON;
+        let mut wrap_u = false;
+        let mut wrap_v = false;
+
+        for batch in &self.batches {
+            let Some(mat) = self.materials.get(batch.material_index) else {
+                continue;
+            };
+            if u32::from(mat.texture_id) != texture_id {
+                continue;
+            }
+            for &[u, v] in &batch.uvs {
+                if u < lo || u > hi {
+                    wrap_u = true;
+                }
+                if v < lo || v > hi {
+                    wrap_v = true;
+                }
+                if wrap_u && wrap_v {
+                    return (true, true);
+                }
+            }
+        }
+
+        (wrap_u, wrap_v)
     }
 }
 
@@ -1028,5 +1080,58 @@ mod tests {
             assert!((verts[0].color[2] - (100.0 / 255.0) * (0x20 as f32 / 255.0)).abs() < 1e-6);
             assert!((verts[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn test_texture_uv_wrap_axes_clamps_within_bounds_and_wraps_tiling_axes() {
+        let mut map = MapFile::default();
+        for tid in [4650u16, 4660, 3336, 1864] {
+            map.materials.push(MapMaterial {
+                mode: 1,
+                texture_id: tid,
+                color: 0xffff_ffff,
+                overlay: 0,
+                specularity: 0.0,
+            });
+        }
+        // mat[0] (tid=4650): strictly within [0, 1] + tiny float rounding (-0.0004..=1.0004)
+        map.batches.push(MapBatch {
+            group: BatchGroup::Decal,
+            material_index: 0,
+            geo_id: 0,
+            positions: vec![[0.0; 3]; 3],
+            uvs: vec![[-0.0004, 0.0003], [1.0004, 0.0], [0.5, 0.999]],
+            colors: vec![[255; 4]; 3],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            indices: vec![0, 1, 2],
+        });
+        // mat[2] (tid=3336): wraps horizontally (U=[-0.6156, 1.4953]), clamped vertically
+        map.batches.push(MapBatch {
+            group: BatchGroup::Opaque,
+            material_index: 2,
+            geo_id: 0,
+            positions: vec![[0.0; 3]; 3],
+            uvs: vec![[-0.6156, 0.0], [1.4953, 1.0], [0.5, 0.5]],
+            colors: vec![[255; 4]; 3],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            indices: vec![0, 1, 2],
+        });
+        // mat[3] (tid=1864): wraps vertically only
+        map.batches.push(MapBatch {
+            group: BatchGroup::Opaque,
+            material_index: 3,
+            geo_id: 0,
+            positions: vec![[0.0; 3]; 3],
+            uvs: vec![[0.0, 0.0], [1.0, 2.0], [0.5, 0.5]],
+            colors: vec![[255; 4]; 3],
+            normals: vec![[0.0, 1.0, 0.0]; 3],
+            indices: vec![0, 1, 2],
+        });
+
+        assert_eq!(map.texture_uv_wrap_axes(0), (false, false));
+        assert_eq!(map.texture_uv_wrap_axes(4650), (false, false));
+        assert_eq!(map.texture_uv_wrap_axes(4660), (false, false));
+        assert_eq!(map.texture_uv_wrap_axes(3336), (true, false));
+        assert_eq!(map.texture_uv_wrap_axes(1864), (false, true));
     }
 }

@@ -156,7 +156,7 @@ pub fn generate_mipmap_chain_rgba(
                 for &s_ofs in &samples {
                     let a = prev_data[s_ofs + 3];
                     sum_a += a as u32;
-                    let w = (a as f32).max(1.0);
+                    let w = a as f32;
                     sum_r += prev_data[s_ofs] as f32 * w;
                     sum_g += prev_data[s_ofs + 1] as f32 * w;
                     sum_b += prev_data[s_ofs + 2] as f32 * w;
@@ -164,9 +164,23 @@ pub fn generate_mipmap_chain_rgba(
                 }
 
                 let dst_ofs = (y * nw + x) * 4;
-                next_data[dst_ofs] = (sum_r / weight_sum).round().clamp(0.0, 255.0) as u8;
-                next_data[dst_ofs + 1] = (sum_g / weight_sum).round().clamp(0.0, 255.0) as u8;
-                next_data[dst_ofs + 2] = (sum_b / weight_sum).round().clamp(0.0, 255.0) as u8;
+                if weight_sum > 0.0 {
+                    next_data[dst_ofs] = (sum_r / weight_sum).round().clamp(0.0, 255.0) as u8;
+                    next_data[dst_ofs + 1] = (sum_g / weight_sum).round().clamp(0.0, 255.0) as u8;
+                    next_data[dst_ofs + 2] = (sum_b / weight_sum).round().clamp(0.0, 255.0) as u8;
+                } else {
+                    let mut eq_r = 0u32;
+                    let mut eq_g = 0u32;
+                    let mut eq_b = 0u32;
+                    for &s_ofs in &samples {
+                        eq_r += prev_data[s_ofs] as u32;
+                        eq_g += prev_data[s_ofs + 1] as u32;
+                        eq_b += prev_data[s_ofs + 2] as u32;
+                    }
+                    next_data[dst_ofs] = ((eq_r + 2) / 4) as u8;
+                    next_data[dst_ofs + 1] = ((eq_g + 2) / 4) as u8;
+                    next_data[dst_ofs + 2] = ((eq_b + 2) / 4) as u8;
+                }
                 next_data[dst_ofs + 3] = ((sum_a + 2) / 4) as u8;
             }
         }

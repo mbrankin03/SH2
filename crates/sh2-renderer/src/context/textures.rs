@@ -89,10 +89,23 @@ pub fn prepare_mipmapped_texture_cpu(
 
 /// Returns whether the active `wgpu::Device` supports hardware BC1/BC3 texture compression.
 impl RenderContext {
-    /// Creates a GPU diffuse texture bind group with bilinear filtering using a specific texture view.
-    pub fn create_texture_bind_group_from_view(
+    /// Returns the 16x anisotropic sampler matching the requested `(wrap_u, wrap_v)` UV addressing.
+    #[must_use]
+    pub fn sampler_for_wrap(&self, wrap_u: bool, wrap_v: bool) -> &wgpu::Sampler {
+        match (wrap_u, wrap_v) {
+            (true, true) => &self.default_sampler,
+            (false, false) => &self.clamp_sampler,
+            (true, false) => &self.repeat_u_clamp_v_sampler,
+            (false, true) => &self.clamp_u_repeat_v_sampler,
+        }
+    }
+
+    /// Creates a GPU diffuse texture bind group with bilinear filtering using a specific texture view
+    /// and explicit sampler.
+    pub fn create_texture_bind_group_from_view_with_sampler(
         &self,
         view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
         label: Option<&str>,
     ) -> Arc<wgpu::BindGroup> {
         Arc::new(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -105,10 +118,19 @@ impl RenderContext {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.default_sampler),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
             ],
         }))
+    }
+
+    /// Creates a GPU diffuse texture bind group with bilinear filtering using a specific texture view.
+    pub fn create_texture_bind_group_from_view(
+        &self,
+        view: &wgpu::TextureView,
+        label: Option<&str>,
+    ) -> Arc<wgpu::BindGroup> {
+        self.create_texture_bind_group_from_view_with_sampler(view, &self.default_sampler, label)
     }
 
     /// Creates a GPU diffuse texture bind group with full mipmap chain and 16x anisotropic filtering from raw RGBA8 pixels.
@@ -130,11 +152,25 @@ impl RenderContext {
             .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
     }
 
-    /// Uploads a CPU-prepared [`PreparedGpuTexture`] directly to VRAM and returns its bind group.
+    /// Uploads a CPU-prepared [`PreparedGpuTexture`] directly to VRAM and returns its bind group
+    /// using [`Self::default_sampler`] (`AddressMode::Repeat`).
     #[must_use]
     pub fn upload_prepared_texture_bind_group(
         &self,
         prepared: &PreparedGpuTexture,
+        label: Option<&str>,
+    ) -> Arc<wgpu::BindGroup> {
+        self.upload_prepared_texture_bind_group_with_wrap(prepared, true, true, label)
+    }
+
+    /// Uploads a CPU-prepared [`PreparedGpuTexture`] directly to VRAM and returns its bind group
+    /// with per-axis UV addressing (`wrap_u`, `wrap_v`).
+    #[must_use]
+    pub fn upload_prepared_texture_bind_group_with_wrap(
+        &self,
+        prepared: &PreparedGpuTexture,
+        wrap_u: bool,
+        wrap_v: bool,
         label: Option<&str>,
     ) -> Arc<wgpu::BindGroup> {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -180,7 +216,8 @@ impl RenderContext {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.create_texture_bind_group_from_view(&view, label)
+        let sampler = self.sampler_for_wrap(wrap_u, wrap_v);
+        self.create_texture_bind_group_from_view_with_sampler(&view, sampler, label)
     }
 
     /// Creates a GPU diffuse texture bind group generating a full alpha-coverage-preserving mipmap chain

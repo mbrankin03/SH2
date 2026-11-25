@@ -165,6 +165,13 @@ pub struct RenderContext {
     pub(crate) water_plane_height_mm: std::sync::atomic::AtomicU32,
 
     pub default_sampler: wgpu::Sampler,
+    /// 16x anisotropic clamped sampler (`AddressMode::ClampToEdge`) for `[0, 1]`-bounded `.map`
+    /// textures (`sh2pc.exe` `FUN_005b4cc0` `0x005b4cc0`, `D3DTSS_ADDRESSU/V = D3DTADDRESS_CLAMP`).
+    pub clamp_sampler: wgpu::Sampler,
+    /// 16x anisotropic sampler with `Repeat` U and `ClampToEdge` V.
+    pub repeat_u_clamp_v_sampler: wgpu::Sampler,
+    /// 16x anisotropic sampler with `ClampToEdge` U and `Repeat` V.
+    pub clamp_u_repeat_v_sampler: wgpu::Sampler,
     pub default_view: wgpu::TextureView,
     pub default_texture_bind_group: Arc<wgpu::BindGroup>,
 }

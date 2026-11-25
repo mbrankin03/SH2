@@ -2,8 +2,7 @@
 //! octagon panel geometry, volume slider blocks, and contextual help strings.
 
 use super::subscreens::{
-    draw_brightness_subscreen, draw_controller_config_subscreen, draw_option_arrow,
-    viewport_512_448, ArrowDir, OptionsSubScreen,
+    draw_brightness_subscreen, draw_controller_config_subscreen, viewport_512_448, OptionsSubScreen,
 };
 use super::{OptionsMenu, OptionsTab};
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
@@ -85,7 +84,7 @@ pub fn draw_polygon(
                 points[i].1,
                 points[j].0,
                 points[j].1,
-                2,
+                1,
                 outline_color,
             );
         }
@@ -243,6 +242,24 @@ fn draw_look_cur_bar(rast: &mut TextRasterizer, cy_512: f32) {
 /// Contextual description for an option row based on active tab and item name.
 pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
     match (tab, name) {
+        (OptionsTab::Root, "Game Options") => "View extra gameplay options",
+        (OptionsTab::Root, "Advanced Options") => "View graphic and enhanced options",
+        (OptionsTab::Root, "Audio Options") => "View audio and sound options",
+        (OptionsTab::Root, "Control Options") => "View controller and camera options",
+        (OptionsTab::Root, "Control Type") => "Select character movement control type",
+        (OptionsTab::Root, "Vibration") => "Adjust controller vibration level",
+        (OptionsTab::Root, "Language") => "Select game language",
+        (OptionsTab::Root, "Subtitles") => "Display spoken dialogue subtitles on screen",
+        (OptionsTab::Root, "Master Volume") => "Overall master sound and music volume level",
+        (OptionsTab::Root, "BGM Volume") => "Background music volume level",
+        (OptionsTab::Root, "SFX Volume") => "Sound effects and monster audio volume level",
+
+        (OptionsTab::Video, "Enhanced Options") => {
+            "Configure 1:1 PS2, SH2:EE, and Native Enhanced toggles"
+        }
+        (OptionsTab::Video, "Title Screen Style") => {
+            "Switch between SH2:EE title logo and original SILENT HILL 2 splash screen"
+        }
         (OptionsTab::Video, "Resolution") => "Internal rendering resolution for 3D world",
         (OptionsTab::Video, "Display Mode") => {
             "Display window mode (Windowed, Borderless, Fullscreen)"
@@ -369,6 +386,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         }
         (OptionsTab::Game, "Walk/Run Control") => {
             "Default movement speed: Normal (Walk), Reverse (Run), or Analog (PS2/PC Extra Options)"
+        }
+        (OptionsTab::Game, "Audio Options") => {
+            "Configure 3D spatial audio, wall occlusion, and output device"
         }
 
         (OptionsTab::Enhanced, "Version Preset") => {
@@ -520,10 +540,11 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     .map(|&(x, y)| to_centered(x, y))
     .collect();
 
-    // Exact `look_board` (`0x002171a0`) colors (PS2 ABGR -> RGBA, alpha scaled from 0..128):
-    // Fill: `0x20808080` (RGB 0x80, 25% alpha -> 0x40); Border: `0x30d06060` (RGB 0x60,0x60,0xd0, alpha 0x60).
-    let fill_color = [0x80, 0x80, 0x80, 0x40];
-    let border_color = [0x60, 0x60, 0xd0, 0x60];
+    // Exact `look_board` (`0x002171a0`) colors converted from PS2 GS 8-bit gamma-space blend
+    // (`fill: 0x20808080` -> 25% * 0x80 = 0x20; `border: 0x30d06060` -> 37.5% * (0x60,0x60,0xd0) = (0x24,0x24,0x4e))
+    // so linear-space sRGB GPU blending matches PS2/SH2:EE's dark charcoal fill and subtle navy border.
+    let fill_color = [0x20, 0x20, 0x20, 0xd8];
+    let border_color = [0x24, 0x24, 0x4e, 0xff];
 
     draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));
@@ -533,47 +554,86 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     let title_y = (32.0 * scale_y).round() as usize;
 
     let category_header = match menu.active_tab {
-        OptionsTab::Video => "<   V I D E O   O P T I O N S   >",
-        OptionsTab::Audio => "<   A U D I O   O P T I O N S   >",
-        OptionsTab::Controls => "<   C O N T R O L   O P T I O N S   >",
-        OptionsTab::Game => "<   G A M E   O P T I O N S   >",
-        OptionsTab::Enhanced => "<   E N H A N C E D   M O D E   >",
-        OptionsTab::Mods => "<   M O D   M A N A G E R   >",
-        OptionsTab::Debug => "<   D E B U G   T O O L S   >",
+        OptionsTab::Root => "O P T I O N S",
+        OptionsTab::Video => "A D V A N C E D   O P T I O N S",
+        OptionsTab::Audio => "A U D I O   O P T I O N S",
+        OptionsTab::Controls => "C O N T R O L   O P T I O N S",
+        OptionsTab::Game => "G A M E   O P T I O N S",
+        OptionsTab::Enhanced => "E N H A N C E D   O P T I O N S",
+        OptionsTab::Mods => "M O D   M A N A G E R",
+        OptionsTab::Debug => "D E B U G   T O O L S",
     };
 
     font.draw_line_centered(
         rast,
         category_header,
         (title_x, title_y),
-        (19.0 * scale_y).round().max(12.0) as usize,
+        (26.0 * scale_y).round().max(16.0) as usize,
         Sh2TextColor::White,
         true,
     );
 
     // `option_font` (`0x0021a320`): PS2 baseline `y = 100` (`0x64`), pitch `27` (`0x1b`) in 512×448.
-    // Because `AtlasFont` draws from glyph top rather than baseline, shift top up by 12px (`88.0`)
-    // so row 10 sits cleanly above the bottom `look_board` border (`y = 379`).
+    // Cap visible rows to 10 (`scroll_offset..scroll_offset+10`) so rows never overflow past `y = 379`.
     let item_count = menu.item_count();
-    let (base_y_v, step_y_v) = if item_count <= 11 {
-        (88.0f32, 27.0f32)
+    let (max_visible_rows, base_y_v, step_y_v) = if menu.active_tab == OptionsTab::Root {
+        (11usize, 74.0f32, 25.0f32)
     } else {
-        (80.0f32, 22.5f32)
+        (10usize, 81.0f32, 27.0f32)
     };
+    let visible_start = menu.scroll_offset.min(item_count.saturating_sub(1));
+    let visible_end = (visible_start + max_visible_rows).min(item_count);
+    let visible_sel_row = menu.selected_index.saturating_sub(visible_start);
 
     // Draw `look_cur` (`0x002184e0`) dark gradient highlight bar behind active row
-    let sel_cy_512 = (base_y_v + menu.selected_index as f32 * step_y_v) - 224.0 + 7.0;
+    let sel_cy_512 = (base_y_v + visible_sel_row as f32 * step_y_v) - 224.0 + 12.0;
     draw_look_cur_bar(rast, sel_cy_512);
+
+    // Draw right-edge vertical scrollbar track & beveled thumb on scrollable submenus (`item_count > max_visible_rows`)
+    if item_count > max_visible_rows {
+        let track_x = (x_offset + 468.0 * scale_x).round() as usize;
+        let track_y = (80.0 * scale_y).round() as usize;
+        let track_w = (4.0 * scale_x).round().max(3.0) as usize;
+        let track_h = (264.0 * scale_y).round().max(40.0) as usize;
+
+        // Recessed dark track with subtle border matching `look_board` (`0x002171a0`)
+        rast.fill_rect(track_x, track_y, track_w, track_h, [0x12, 0x12, 0x15, 0xe0]);
+        let max_scroll = (item_count - max_visible_rows).max(1);
+        let thumb_h = ((track_h as f32 * max_visible_rows as f32) / item_count as f32)
+            .round()
+            .max(18.0 * scale_y) as usize;
+        let avail_h = track_h.saturating_sub(thumb_h);
+        let scroll_t = (visible_start as f32 / max_scroll as f32).clamp(0.0, 1.0);
+        let thumb_y = track_y + (avail_h as f32 * scroll_t).round() as usize;
+        let thumb_w = (6.0 * scale_x).round().max(4.0) as usize;
+        let thumb_x = track_x.saturating_sub((thumb_w.saturating_sub(track_w)) / 2);
+        let bevel = (1.0 * scale_x).round().max(1.0) as usize;
+
+        // Beveled metallic grey thumb matching `look_bgm` (`0x002159d0`) volume bars
+        rast.fill_rect(thumb_x, thumb_y, thumb_w, thumb_h, [0x45, 0x45, 0x4a, 0xff]);
+        rast.fill_rect(
+            thumb_x,
+            thumb_y,
+            thumb_w.saturating_sub(bevel),
+            thumb_h.saturating_sub(bevel),
+            [0xb8, 0xb8, 0xc0, 0xff],
+        );
+        if thumb_w > 2 * bevel && thumb_h > 2 * bevel {
+            rast.fill_rect(
+                thumb_x + bevel,
+                thumb_y + bevel,
+                thumb_w - 2 * bevel,
+                thumb_h - 2 * bevel,
+                [0x86, 0x86, 0x8e, 0xff],
+            );
+        }
+    }
 
     let center_panel_x = (x_offset + 256.0 * scale_x).round() as usize;
     let label_right_x = (x_offset + 240.0 * scale_x).round() as usize;
     // `option_font` (`0x0021a320`): value column `x = 0x10e` (270) unselected, `0x10c` (268) selected
     let val_left_x = (x_offset + 270.0 * scale_x).round() as usize;
-    let font_size = if item_count <= 11 {
-        (15.0 * scale_y).round().max(10.0) as usize
-    } else {
-        (13.0 * scale_y).round().max(9.0) as usize
-    };
+    let font_size = (22.5 * scale_y).round().max(14.0) as usize;
     let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
     let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
 
@@ -584,20 +644,22 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         bottom: [0x90, 0x90, 0x90, 0x60],
     };
 
-    for idx in 0..item_count {
+    for (vis_row, idx) in (visible_start..visible_end).enumerate() {
         if let Some((label, val)) = menu.item_display_cow(idx) {
             let label: &str = label.as_ref();
-            let y_v = base_y_v + idx as f32 * step_y_v;
+            let y_v = base_y_v + vis_row as f32 * step_y_v;
             let y = (y_v * scale_y).round() as usize;
             let is_selected = idx == menu.selected_index;
 
-            let is_slider = menu.active_tab == OptionsTab::Audio
+            let is_slider = (menu.active_tab == OptionsTab::Audio
+                || menu.active_tab == OptionsTab::Root)
                 && (label == "BGM Volume"
                     || label == "SFX Volume"
                     || label == "Master Volume"
                     || label == "Dialogue Volume");
 
-            if label == "FMV Cutscene Viewer"
+            if val.is_empty()
+                || label == "FMV Cutscene Viewer"
                 || label == "Test Rooms"
                 || label == "Loading Screen Preview"
                 || label == "Test Rooms Launcher"
@@ -637,23 +699,6 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                         (lx.saturating_sub(pop_dx), y.saturating_sub(pop_dy)),
                         font_size,
                         Sh2TextColor::White,
-                        false,
-                    );
-                    // Pulsing lavender `allow_l` (`x = -5`) & `allow_r` (`x = +197`)
-                    draw_option_arrow(
-                        rast,
-                        -5.0,
-                        y_v - 224.0 + 7.0,
-                        ArrowDir::Left,
-                        menu.anim_frame,
-                        false,
-                    );
-                    draw_option_arrow(
-                        rast,
-                        197.0,
-                        y_v - 224.0 + 7.0,
-                        ArrowDir::Right,
-                        menu.anim_frame,
                         false,
                     );
                 }
@@ -708,8 +753,8 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     }
 
     // Description text (`option_font` `0x0021a320`: `x = 0x46` (70), `y = 0x1a6` (422) in 512×448)
-    let help_x = (x_offset + 52.0 * scale_x).round() as usize;
-    let help_y = (398.0 * scale_y).round() as usize;
+    let help_x = (x_offset + 70.0 * scale_x).round() as usize;
+    let help_y = (394.0 * scale_y).round() as usize;
 
     let mod_help_owned;
     let help_text = if menu.active_tab == OptionsTab::Mods {
@@ -726,8 +771,11 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
         rast,
         help_text,
         (help_x, help_y),
-        (13.0 * scale_y).round().max(9.0) as usize,
-        Sh2TextColor::White,
+        (21.0 * scale_y).round().max(13.0) as usize,
+        Sh2TextColor::Custom {
+            top: [0xa8, 0xa8, 0xa8, 0xff],
+            bottom: [0x88, 0x88, 0x88, 0xff],
+        },
         true,
     );
 }

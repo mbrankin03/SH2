@@ -1,6 +1,7 @@
-// Screen blit shader with color tint / alpha modulation uniform
+// Screen blit shader with color tint / alpha modulation and UV crop uniform
 struct BlitUniforms {
     color_tint: vec4<f32>,
+    uv_rect: vec4<f32>,
 };
 
 @group(0) @binding(0) var src_texture: texture_2d<f32>;
@@ -18,7 +19,7 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
     let x = f32((in_vertex_index << 1u) & 2u);
     let y = f32(in_vertex_index & 2u);
     out.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
-    out.uv = vec2<f32>(x, y);
+    out.uv = mix(uniforms.uv_rect.xy, uniforms.uv_rect.zw, vec2<f32>(x, y));
     return out;
 }
 

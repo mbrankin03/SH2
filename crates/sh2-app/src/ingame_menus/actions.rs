@@ -73,15 +73,10 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             state.menu_ctrl.options_menu.adjust_value(1);
             MenuSoundCue::CursorMove
         }
-        KeyCode::KeyQ => {
-            state.menu_ctrl.options_menu.switch_tab(false);
-            MenuSoundCue::CursorMove
-        }
-        KeyCode::KeyE => {
-            state.menu_ctrl.options_menu.switch_tab(true);
-            MenuSoundCue::CursorMove
-        }
         KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
+            if state.menu_ctrl.options_menu.enter_submenu() {
+                return emit_menu_sound(state, MenuSoundCue::Confirm, "Inventory Options");
+            }
             let (saved, cue) = state.menu_ctrl.options_menu.commit_changes();
             state.menu_ctrl.config_applied_pending = Some(saved.clone());
             sync_audio_config(state, &saved);
@@ -93,6 +88,9 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             }
         }
         KeyCode::Escape | KeyCode::Backspace => {
+            if state.menu_ctrl.options_menu.exit_to_root() {
+                return emit_menu_sound(state, MenuSoundCue::Cancel, "Inventory Options");
+            }
             state.menu_ctrl.options_menu.discard_changes();
             state.ingame_menus.options_from_inventory = false;
             state

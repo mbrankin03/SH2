@@ -301,10 +301,15 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         );
     }
 
-    let initial_tint = [1.0f32, 1.0, 1.0, 1.0];
+    let initial_uniforms = [1.0f32, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
     let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Menu Blit Uniform Buffer"),
-        contents: bytemuck::cast_slice(&initial_tint),
+        contents: bytemuck::cast_slice(&initial_uniforms),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let title_bg_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Title Background Uniform Buffer"),
+        contents: bytemuck::cast_slice(&initial_uniforms),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
@@ -364,7 +369,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
                 t.width as u32,
                 t.height as u32,
                 &t.rgba,
-                &menu_uniform_buffer,
+                &title_bg_uniform_buffer,
                 Some("Title Background Texture"),
             )
         });
@@ -384,7 +389,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        // 2D UI rasterizer buffers are sRGB-encoded; upload as Rgba8UnormSrgb to match sRGB swapchain.
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -412,7 +418,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        // 2D UI rasterizer buffers are sRGB-encoded; upload as Rgba8UnormSrgb to match sRGB swapchain.
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -424,13 +431,39 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     );
 
     // Preload authentic 1:1 button sprite atlas from start01e.tex / start01.tex
-    let button_sprites = tex_loader
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let ps2_etc_dir = resolver.game_root.join("sh2e/ps2");
+    let ps2_tex_loader = sh2_assets::TextureLoader::new(&ps2_etc_dir, None::<&std::path::Path>);
+    let splash_title_bg_original = ps2_tex_loader
+        .load_texture("etc/start00.tex")
+        .ok()
+        .map(|t| {
+            let (up_w, up_h, up_rgba) = ButtonSpriteSheet::upscale_ps2_title_background(
+                &t.rgba,
+                t.width as u32,
+                t.height as u32,
+            );
+            render_ctx.create_blitter_bind_group(
+                &blitter,
+                up_w,
+                up_h,
+                &up_rgba,
+                &title_bg_uniform_buffer,
+                Some("Original PS2 Title Background Texture (4x Upscaled)"),
+            )
+        });
+    let mut button_sprites = tex_loader
         .load_texture("pic/etc/start01e.tex")
         .or_else(|_| tex_loader.load_texture("pic/etc/start01.tex"))
         .ok()
         .map(|t| ButtonSpriteSheet::new(t.width, t.height, t.rgba));
+    if let (Some(ref mut sheet), Ok(orig_s1)) = (
+        &mut button_sprites,
+        ps2_tex_loader.load_texture("etc/start01.tex"),
+    ) {
+        sheet.set_original_title_logo(orig_s1.width, orig_s1.height, orig_s1.rgba);
+    }
 
-    let resolver = sh2_assets::AssetPathResolver::resolve();
     let data_dir = resolver.data_dir.clone();
     let ee_dir = resolver.sh2e_dir.clone();
     let detected_audio_packs =
@@ -610,8 +643,10 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         blit_bind_group,
         splash_konami_bg,
         splash_title_bg,
+        splash_title_bg_original,
         boot_logo_bgs,
         menu_uniform_buffer,
+        title_bg_uniform_buffer,
         menu_text_texture,
         menu_text_bind_group,
         inventory_rasterizer,

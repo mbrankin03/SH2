@@ -477,6 +477,11 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             }
 
             let vp = state.ps2_ui_viewport();
+            if let Some((mx, my)) = state.last_cursor_pos {
+                let norm_x = (mx as f32 - vp.0) / vp.2.max(1.0);
+                let norm_y = (my as f32 - vp.1) / vp.3.max(1.0);
+                sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
+            }
             state.finish_inventory_overlay_in_viewport(&mut encoder, &surface_view, vp);
         }
     } else {
@@ -514,6 +519,24 @@ fn render_title_menu_overlay(
         .queue
         .write_buffer(&state.menu_uniform_buffer, 0, bytemuck::cast_slice(&tint));
 
+    let enhanced_title = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .enable_enhanced_title_screen;
+    let active_title_bg = if enhanced_title {
+        state
+            .splash_title_bg
+            .as_ref()
+            .or(state.splash_title_bg_original.as_ref())
+    } else {
+        state
+            .splash_title_bg_original
+            .as_ref()
+            .or(state.splash_title_bg.as_ref())
+    };
+    let has_active_title_bg = active_title_bg.is_some();
     let bg_to_draw = match phase {
         TitlePhase::SplashIntro => state
             .menu_ctrl
@@ -532,21 +555,59 @@ fn render_title_menu_overlay(
         TitlePhase::OptionsMenu | TitlePhase::TestRoomsSelect | TitlePhase::TransitionToGame => {
             None // Authentic PS2 draws over pure black backdrop
         }
-        _ => state
-            .splash_title_bg
-            .as_ref()
-            .or(state.splash_konami_bg.as_ref()),
+        _ => active_title_bg.or(state.splash_konami_bg.as_ref()),
     };
 
     let ui_vp = state.ps2_ui_viewport();
+    let win_w = state.surface_config.width.max(1) as f32;
+    let win_h = state.surface_config.height.max(1) as f32;
+    // Aspect-preserving UV crop for `sh2e/pic/etc/start00.tex` (`2732×2048` = 4:3) so it fills
+    // 4:3, 16:9, and 21:9 natively without horizontal stretching or black bars.
+    const TEX_ASPECT: f32 = 2732.0 / 2048.0;
+    let win_aspect = win_w / win_h;
+    let (u0, v0, u1, v1) = if win_aspect >= TEX_ASPECT {
+        let clamped_aspect = win_aspect.min(2.15);
+        let v_span = (TEX_ASPECT / clamped_aspect).clamp(0.62, 1.0);
+        let pad = (1.0 - v_span) * 0.5;
+        (0.0f32, pad, 1.0f32, 1.0 - pad)
+    } else {
+        let u_span = (win_aspect / TEX_ASPECT).clamp(0.45, 1.0);
+        let pad = (1.0 - u_span) * 0.5;
+        (pad, 0.0f32, 1.0 - pad, 1.0f32)
+    };
+    let bg_uniforms = [fade_alpha, fade_alpha, fade_alpha, 1.0, u0, v0, u1, v1];
+    state.render_ctx.queue.write_buffer(
+        &state.title_bg_uniform_buffer,
+        0,
+        bytemuck::cast_slice(&bg_uniforms),
+    );
+
+    let bg_w = if win_aspect > 2.15 {
+        win_h * 2.15
+    } else {
+        win_w
+    };
+    let bg_x = (win_w - bg_w) * 0.5;
+    let bg_vp = (bg_x, 0.0, bg_w, win_h);
+
     if let Some(bg) = bg_to_draw {
-        // Fill the full widescreen window with the SH2:EE title / splash artwork (zero black bars)
-        state.blitter.render_with_bind_group_and_load_op(
-            encoder,
-            bg,
-            surface_view,
-            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-        );
+        if phase == TitlePhase::SplashIntro {
+            state.blitter.render_with_bind_group_in_viewport(
+                encoder,
+                bg,
+                surface_view,
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                ui_vp,
+            );
+        } else {
+            state.blitter.render_with_bind_group_in_viewport(
+                encoder,
+                bg,
+                surface_view,
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                bg_vp,
+            );
+        }
     } else {
         let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Menu Clear Pass"),
@@ -579,6 +640,22 @@ fn render_title_menu_overlay(
             | TitlePhase::MainMenu
             | TitlePhase::Credits
             | TitlePhase::ExitConfirm => {
+                if has_active_title_bg
+                    && enhanced_title
+                    && matches!(phase, TitlePhase::TitleLogo | TitlePhase::MainMenu)
+                {
+                    if let Some(ref atlas) = state.button_sprites {
+                        sh2_ui::menu::draw_pulsing_title_logo_with_style(
+                            &state.menu_ctrl.title_sm,
+                            atlas,
+                            &mut state.inventory_rasterizer,
+                            (u0, v0, u1, v1),
+                            bg_vp,
+                            ui_vp,
+                            true,
+                        );
+                    }
+                }
                 sh2_ui::draw_title_screen(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),
@@ -587,6 +664,19 @@ fn render_title_menu_overlay(
                 );
             }
             TitlePhase::ScenarioSelect => {
+                if has_active_title_bg && enhanced_title {
+                    if let Some(ref atlas) = state.button_sprites {
+                        sh2_ui::menu::draw_pulsing_title_logo_with_style(
+                            &state.menu_ctrl.title_sm,
+                            atlas,
+                            &mut state.inventory_rasterizer,
+                            (u0, v0, u1, v1),
+                            bg_vp,
+                            ui_vp,
+                            true,
+                        );
+                    }
+                }
                 sh2_ui::draw_scenario_selection(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),
@@ -595,6 +685,19 @@ fn render_title_menu_overlay(
                 );
             }
             TitlePhase::ActionDifficultySelect | TitlePhase::RiddleDifficultySelect => {
+                if has_active_title_bg && enhanced_title {
+                    if let Some(ref atlas) = state.button_sprites {
+                        sh2_ui::menu::draw_pulsing_title_logo_with_style(
+                            &state.menu_ctrl.title_sm,
+                            atlas,
+                            &mut state.inventory_rasterizer,
+                            (u0, v0, u1, v1),
+                            bg_vp,
+                            ui_vp,
+                            true,
+                        );
+                    }
+                }
                 sh2_ui::draw_difficulty_selection(
                     &state.menu_ctrl.title_sm,
                     state.button_sprites.as_ref(),
@@ -644,6 +747,18 @@ fn render_title_menu_overlay(
             }
             _ => {}
         }
+        if let Some((mx, my)) = state.last_cursor_pos {
+            let norm_x = (mx as f32 - ui_vp.0) / ui_vp.2.max(1.0);
+            let norm_y = (my as f32 - ui_vp.1) / ui_vp.3.max(1.0);
+            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
+        }
         state.finish_inventory_overlay_in_viewport(encoder, surface_view, ui_vp);
+        let fade = state.menu_ctrl.title_sm.fade_alpha.clamp(0.0, 1.0);
+        if fade < 0.999 && phase != TitlePhase::TransitionToGame {
+            let scrim_alpha = ((1.0 - fade) * 255.0).round() as u8;
+            if scrim_alpha > 0 {
+                state.draw_fullscreen_dim_scrim(encoder, surface_view, scrim_alpha);
+            }
+        }
     }
 }

@@ -9,7 +9,8 @@ impl OptionsMenu {
     /// Number of items in the currently active tab.
     pub fn item_count(&self) -> usize {
         match self.active_tab {
-            OptionsTab::Video => 15,
+            OptionsTab::Root => 11,
+            OptionsTab::Video => 17,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     12
@@ -50,6 +51,7 @@ impl OptionsMenu {
     /// Retrieve the title and string value of an item in the active tab.
     pub fn item_display(&self, index: usize) -> Option<(&'static str, String)> {
         match self.active_tab {
+            OptionsTab::Root => self.root_item_display(index),
             OptionsTab::Video => self.video_item_display(index),
             OptionsTab::Audio => self.audio_item_display(index),
             OptionsTab::Controls => self.controls_item_display(index),
@@ -101,6 +103,61 @@ impl OptionsMenu {
             "v{} by {} | {} overrides | {}  [PgUp/PgDn: Reorder]",
             m.version, m.author, m.override_count, desc
         )
+    }
+
+    /// 1:1 10-row SH2/SH2:EE root `O P T I O N S` layout (`Item/otn_option.c`).
+    fn root_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+        let g = &self.draft_config.game;
+        let c = &self.draft_config.controls;
+        let a = &self.draft_config.audio;
+        match index {
+            0 => Some(("Game Options", String::new())),
+            1 => Some(("Advanced Options", String::new())),
+            2 => Some(("Audio Options", String::new())),
+            3 => Some(("Control Options", String::new())),
+            4 => Some((
+                "Control Type",
+                if c.tank_controls {
+                    "Rotational (3D)".into()
+                } else {
+                    "Directional (2D)".into()
+                },
+            )),
+            5 => Some((
+                "Vibration",
+                if c.vibration_intensity >= 0.85 {
+                    "Hard".into()
+                } else if c.vibration_intensity >= 0.45 {
+                    "Normal".into()
+                } else if c.vibration_intensity > 0.05 {
+                    "Soft".into()
+                } else {
+                    "Off".into()
+                },
+            )),
+            6 => Some(("Language", g.language.label().to_string())),
+            7 => Some((
+                "Subtitles",
+                if g.subtitles {
+                    "On".into()
+                } else {
+                    "Off".into()
+                },
+            )),
+            8 => Some((
+                "Master Volume",
+                format!("{}%", (a.master_volume * 100.0).round() as i32),
+            )),
+            9 => Some((
+                "BGM Volume",
+                format!("{}%", (a.bgm_volume * 100.0).round() as i32),
+            )),
+            10 => Some((
+                "SFX Volume",
+                format!("{}%", (a.sfx_volume * 100.0).round() as i32),
+            )),
+            _ => None,
+        }
     }
 
     fn video_item_display(&self, index: usize) -> Option<(&'static str, String)> {
@@ -177,6 +234,15 @@ impl OptionsMenu {
                     "ON (Native)".into()
                 } else {
                     "OFF (PS2 1:1)".into()
+                },
+            )),
+            15 => Some(("Enhanced Options", String::new())),
+            16 => Some((
+                "Title Screen Style",
+                if v.enable_enhanced_title_screen {
+                    "Enhanced Edition".into()
+                } else {
+                    "Original (SILENT HILL 2)".into()
                 },
             )),
             _ => None,
@@ -513,6 +579,7 @@ impl OptionsMenu {
         }
 
         let special_cue = match self.active_tab {
+            OptionsTab::Root => self.adjust_root_value(forward),
             OptionsTab::Video => self.adjust_video_value(forward),
             OptionsTab::Audio => self.adjust_audio_value(forward),
             OptionsTab::Controls => self.adjust_controls_value(forward),
@@ -536,6 +603,66 @@ impl OptionsMenu {
 
         self.is_dirty = self.draft_config != self.original_config;
         OptionsSoundCue::ValueChange
+    }
+
+    fn adjust_root_value(&mut self, forward: bool) -> Option<OptionsSoundCue> {
+        match self.selected_index {
+            0..=3 => return Some(OptionsSoundCue::None),
+            4 => {
+                let c = &mut self.draft_config.controls;
+                c.tank_controls = !c.tank_controls;
+            }
+            5 => {
+                let c = &mut self.draft_config.controls;
+                const LEVELS: [f32; 4] = [0.0, 0.33, 0.66, 1.0];
+                let cur_idx = if c.vibration_intensity >= 0.85 {
+                    3
+                } else if c.vibration_intensity >= 0.45 {
+                    2
+                } else if c.vibration_intensity > 0.05 {
+                    1
+                } else {
+                    0
+                };
+                let next_idx = if forward {
+                    (cur_idx + 1) % LEVELS.len()
+                } else {
+                    (cur_idx + LEVELS.len() - 1) % LEVELS.len()
+                };
+                c.vibration_intensity = LEVELS[next_idx];
+            }
+            6 => {
+                let g = &mut self.draft_config.game;
+                g.language = if forward {
+                    g.language.next()
+                } else {
+                    g.language.prev()
+                };
+            }
+            7 => {
+                self.draft_config.game.subtitles = !self.draft_config.game.subtitles;
+            }
+            8 => {
+                let cur = volume_gain_to_ps2_level(self.draft_config.audio.master_volume) as i32;
+                let next = (cur + if forward { 1 } else { -1 })
+                    .clamp(0, PS2_VOLUME_MAX_LEVEL as i32) as u8;
+                self.draft_config.audio.master_volume = ps2_level_to_volume_gain(next);
+            }
+            9 => {
+                let cur = volume_gain_to_ps2_level(self.draft_config.audio.bgm_volume) as i32;
+                let next = (cur + if forward { 1 } else { -1 })
+                    .clamp(0, PS2_VOLUME_MAX_LEVEL as i32) as u8;
+                self.draft_config.audio.bgm_volume = ps2_level_to_volume_gain(next);
+            }
+            10 => {
+                let cur = volume_gain_to_ps2_level(self.draft_config.audio.sfx_volume) as i32;
+                let next = (cur + if forward { 1 } else { -1 })
+                    .clamp(0, PS2_VOLUME_MAX_LEVEL as i32) as u8;
+                self.draft_config.audio.sfx_volume = ps2_level_to_volume_gain(next);
+            }
+            _ => {}
+        }
+        None
     }
 
     fn adjust_video_value(&mut self, forward: bool) -> Option<OptionsSoundCue> {
@@ -586,6 +713,7 @@ impl OptionsMenu {
             12 => v.aces_tonemapping = !v.aces_tonemapping,
             13 => v.enable_water_reflections = !v.enable_water_reflections,
             14 => v.enable_oar_ripples = !v.enable_oar_ripples,
+            16 => v.enable_enhanced_title_screen = !v.enable_enhanced_title_screen,
             _ => return Some(OptionsSoundCue::None),
         }
         None

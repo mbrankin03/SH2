@@ -17,7 +17,9 @@ pub use boot::{
     PC_LOGO_HOLD_SECS, PC_LOGO_SKIP_FADE_SECS, PS2_LOGO_FADE_SECS, PS2_LOGO_HOLD_SECS,
 };
 pub use render::{
-    draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
+    draw_difficulty_selection, draw_pc_mouse_cursor, draw_pulsing_title_logo_for_bg,
+    draw_pulsing_title_logo_with_style, draw_scenario_selection, draw_test_rooms_screen,
+    draw_title_screen,
 };
 pub use state::{
     TitleStateMachine, ACTION_DIFFICULTY_ROWS, RIDDLE_DIFFICULTY_ROWS, TITLE_ATTRACT_TIMEOUT_SECS,

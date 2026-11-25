@@ -151,14 +151,6 @@ pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCod
         KeyCode::Escape | KeyCode::Backspace => {
             state.menu_ctrl.handle_pause_nav(MenuNavAction::Cancel)
         }
-        KeyCode::KeyQ => {
-            let s = state.menu_ctrl.switch_options_tab(false);
-            (s, PauseAction::None)
-        }
-        KeyCode::KeyE => {
-            let s = state.menu_ctrl.switch_options_tab(true);
-            (s, PauseAction::None)
-        }
         _ => (MenuSoundCue::None, PauseAction::None),
     };
 

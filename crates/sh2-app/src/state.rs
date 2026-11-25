@@ -36,9 +36,11 @@ pub(crate) struct AppState {
     pub blit_bind_group: wgpu::BindGroup,
     pub splash_konami_bg: Option<Arc<wgpu::BindGroup>>,
     pub splash_title_bg: Option<Arc<wgpu::BindGroup>>,
+    pub splash_title_bg_original: Option<Arc<wgpu::BindGroup>>,
     /// Boot sequence logo textures `[CesaWarning, SceWarning, KonamiLogo, SplashLogo]`.
     pub boot_logo_bgs: [Option<Arc<wgpu::BindGroup>>; 4],
     pub menu_uniform_buffer: wgpu::Buffer,
+    pub title_bg_uniform_buffer: wgpu::Buffer,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
     pub inventory_rasterizer: TextRasterizer,
@@ -310,6 +312,10 @@ impl AppState {
             && !self.ingame_menus.is_any_open()
             && !self.sim_core.modern_camera.handoff.locks_camera_controls();
 
+        let in_pc_menu = !self.menu_ctrl.in_game_active
+            || self.menu_ctrl.pause_menu.is_open
+            || self.ingame_menus.is_any_open();
+        self.window.set_cursor_visible(!want_grab && !in_pc_menu);
         if want_grab == self.cursor_grabbed_for_camera {
             return;
         }
@@ -330,7 +336,7 @@ impl AppState {
             let _ = self
                 .window
                 .set_cursor_grab(winit::window::CursorGrabMode::None);
-            self.window.set_cursor_visible(true);
+            self.window.set_cursor_visible(!in_pc_menu);
             self.cursor_grabbed_for_camera = false;
         }
     }

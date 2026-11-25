@@ -158,13 +158,19 @@ impl AssetPathResolver {
                 return p;
             }
         }
-        for cand in [
+        let mut candidates = vec![
             PathBuf::from("mods"),
             PathBuf::from("../mods"),
             self.game_root.join("mods"),
             PathBuf::from("../../Documents/SH2-Port/mods"),
-            PathBuf::from("/home/matthewb/Documents/SH2-Port/mods"),
-        ] {
+            PathBuf::from("../../../Documents/SH2-Port/mods"),
+        ];
+        if let Ok(canon) = self.game_root.canonicalize() {
+            if let Some(port_root) = canon.parent().and_then(|p| p.parent()) {
+                candidates.push(port_root.join("mods"));
+            }
+        }
+        for cand in candidates {
             if cand.is_dir() {
                 return cand;
             }

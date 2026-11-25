@@ -36,7 +36,9 @@ pub struct ModUiEntry {
 /// High-level Options category tabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OptionsTab {
+    /// Authentic 10-row SH2/SH2:EE root `O P T I O N S` screen (`Game/Advanced/Control Options` + core settings).
     #[default]
+    Root = 7,
     Video = 0,
     Audio = 1,
     Controls = 2,
@@ -61,6 +63,7 @@ impl OptionsTab {
 
     pub fn label(&self) -> &'static str {
         match self {
+            Self::Root => "OPTIONS",
             Self::Video => "VIDEO & GRAPHICS",
             Self::Audio => "AUDIO & SOUND",
             Self::Controls => "CONTROLS & INPUT",
@@ -73,6 +76,7 @@ impl OptionsTab {
 
     pub fn next(&self) -> Self {
         match self {
+            Self::Root => Self::Root,
             Self::Video => Self::Audio,
             Self::Audio => Self::Controls,
             Self::Controls => Self::Game,
@@ -85,6 +89,7 @@ impl OptionsTab {
 
     pub fn prev(&self) -> Self {
         match self {
+            Self::Root => Self::Root,
             Self::Video => Self::Debug,
             Self::Audio => Self::Video,
             Self::Controls => Self::Audio,
@@ -117,6 +122,8 @@ pub enum OptionsSoundCue {
 pub struct OptionsMenu {
     pub active_tab: OptionsTab,
     pub selected_index: usize,
+    /// First visible row index when a tab has more than `10` items (`option_font` `0x0021a320`).
+    pub scroll_offset: usize,
     /// Working copy of configuration being edited.
     pub draft_config: AppConfig,
     /// Clean copy before current modifications.
@@ -149,8 +156,9 @@ impl OptionsMenu {
         audio_pack_status: AudioPackDetectionStatus,
     ) -> Self {
         Self {
-            active_tab: OptionsTab::Video,
+            active_tab: OptionsTab::Root,
             selected_index: 0,
+            scroll_offset: 0,
             draft_config: config.clone(),
             original_config: config,
             is_dirty: false,
@@ -231,6 +239,137 @@ impl OptionsMenu {
         }
     }
 
+    /// Updates `selected_index` when hovering over visible rows in `512×448` options space (`[0..512] × [0..448]`).
+    /// Returns `true` if `selected_index` changed.
+    pub fn handle_mouse_move(&mut self, ps2_x: f32, ps2_y: f32) -> bool {
+        if self.sub_screen != OptionsSubScreen::None || !(28.0..=484.0).contains(&ps2_x) {
+            return false;
+        }
+        let item_count = self.item_count();
+        let (max_visible_rows, base_y_v, step_y_v) = if self.active_tab == OptionsTab::Root {
+            (11usize, 74.0f32, 25.0f32)
+        } else {
+            (10usize, 81.0f32, 27.0f32)
+        };
+        let visible_start = self.scroll_offset.min(item_count.saturating_sub(1));
+        let visible_end = (visible_start + max_visible_rows).min(item_count);
+        for (vis_row, idx) in (visible_start..visible_end).enumerate() {
+            let row_top = base_y_v + vis_row as f32 * step_y_v - 4.0;
+            if (row_top..=row_top + step_y_v).contains(&ps2_y) {
+                if self.selected_index != idx {
+                    self.selected_index = idx;
+                    return true;
+                }
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Scrolls the active options list vertically via mouse wheel (`steps > 0` = scroll down,
+    /// `steps < 0` = scroll up) without wrapping around the top/bottom ends, and re-evaluates
+    /// `hover_ps2` so the row under the mouse cursor stays highlighted as the list scrolls.
+    pub fn handle_mouse_wheel(
+        &mut self,
+        steps: i32,
+        hover_ps2: Option<(f32, f32)>,
+    ) -> OptionsSoundCue {
+        if steps == 0 || self.sub_screen != OptionsSubScreen::None {
+            return OptionsSoundCue::None;
+        }
+        let item_count = self.item_count();
+        if item_count == 0 {
+            return OptionsSoundCue::None;
+        }
+        let max_vis = if self.active_tab == OptionsTab::Root {
+            11
+        } else {
+            10
+        };
+        let max_scroll = item_count.saturating_sub(max_vis);
+        let prev_scroll = self.scroll_offset;
+        let prev_sel = self.selected_index;
+
+        if max_scroll > 0 {
+            let next_scroll =
+                (self.scroll_offset as i32 + steps).clamp(0, max_scroll as i32) as usize;
+            self.scroll_offset = next_scroll;
+            if let Some((px, py)) = hover_ps2 {
+                self.handle_mouse_move(px, py);
+            }
+            if self.selected_index < self.scroll_offset {
+                self.selected_index = self.scroll_offset;
+            } else if self.selected_index >= self.scroll_offset + max_vis {
+                self.selected_index = (self.scroll_offset + max_vis - 1).min(item_count - 1);
+            }
+        } else {
+            let next_sel =
+                (self.selected_index as i32 + steps).clamp(0, item_count as i32 - 1) as usize;
+            self.selected_index = next_sel;
+        }
+
+        if self.scroll_offset != prev_scroll || self.selected_index != prev_sel {
+            OptionsSoundCue::CursorMove
+        } else {
+            OptionsSoundCue::None
+        }
+    }
+
+    /// Handles a left mouse click at `(ps2_x, ps2_y)` in `512×448` options space:
+    /// - On the right-edge scrollbar track (`x ∈ [454.0..=482.0]`, `y ∈ [76.0..=348.0]`) when `item_count > max_vis`, jumps `scroll_offset` to the clicked track position.
+    /// - On submenu rows (`Game Options`, `Advanced Options`, `Audio Options`, `Control Options`, `Enhanced Options`), enters the submenu.
+    /// - On 15-bar volume rows, sets volume directly to the clicked bar (`0..=15`) when clicking in the bar region (`x >= 265`).
+    /// - On any other setting row, cycles/toggles its value forward (or backward if clicking the left label side `x < 256`).
+    pub fn handle_mouse_click(&mut self, ps2_x: f32, ps2_y: f32) -> Option<OptionsSoundCue> {
+        let item_count = self.item_count();
+        let max_vis = if self.active_tab == OptionsTab::Root {
+            11
+        } else {
+            10
+        };
+        if self.sub_screen == OptionsSubScreen::None
+            && item_count > max_vis
+            && (454.0..=482.0).contains(&ps2_x)
+            && (76.0..=348.0).contains(&ps2_y)
+        {
+            let max_scroll = item_count - max_vis;
+            let t = ((ps2_y - 80.0) / (344.0 - 80.0)).clamp(0.0, 1.0);
+            let next_scroll = (t * max_scroll as f32).round() as usize;
+            self.scroll_offset = next_scroll.min(max_scroll);
+            self.selected_index = self
+                .selected_index
+                .clamp(self.scroll_offset, self.scroll_offset + max_vis - 1);
+            return Some(OptionsSoundCue::CursorMove);
+        }
+        self.handle_mouse_move(ps2_x, ps2_y);
+        if self.enter_submenu() {
+            return Some(OptionsSoundCue::CursorMove);
+        }
+        if let Some((label, _)) = self.item_display(self.selected_index) {
+            let is_slider = (self.active_tab == OptionsTab::Audio
+                || self.active_tab == OptionsTab::Root)
+                && (label == "BGM Volume"
+                    || label == "SFX Volume"
+                    || label == "Master Volume"
+                    || label == "Dialogue Volume");
+            if is_slider && ps2_x >= 265.0 {
+                let bar = (((ps2_x - 271.0) / 11.0).floor() as i32 + 1).clamp(0, 15) as u8;
+                let gain = sh2_core::config::ps2_level_to_volume_gain(bar);
+                match label {
+                    "Master Volume" => self.draft_config.audio.master_volume = gain,
+                    "BGM Volume" => self.draft_config.audio.bgm_volume = gain,
+                    "SFX Volume" => self.draft_config.audio.sfx_volume = gain,
+                    "Dialogue Volume" => self.draft_config.audio.dialogue_volume = gain,
+                    _ => {}
+                }
+                self.is_dirty = self.draft_config != self.original_config;
+                return Some(OptionsSoundCue::ValueChange);
+            }
+        }
+        let dir = if ps2_x < 245.0 { -1 } else { 1 };
+        Some(self.adjust_value(dir))
+    }
+
     /// Closes any active PS2 Options subscreen back to the main tabbed options view.
     pub fn close_sub_screen(&mut self) -> bool {
         if self.sub_screen != OptionsSubScreen::None {
@@ -239,6 +378,54 @@ impl OptionsMenu {
         } else {
             false
         }
+    }
+
+    /// Enters a submenu from `OptionsTab::Root` (`Game Options`, `Advanced Options`, `Control Options`)
+    /// or `Enhanced Options` inside `Advanced Options` (`OptionsTab::Video`).
+    pub fn enter_submenu(&mut self) -> bool {
+        if self.sub_screen != OptionsSubScreen::None {
+            return false;
+        }
+        let target = match (self.active_tab, self.selected_index) {
+            (OptionsTab::Root, 0) => Some(OptionsTab::Game),
+            (OptionsTab::Root, 1) => Some(OptionsTab::Video),
+            (OptionsTab::Root, 2) => Some(OptionsTab::Audio),
+            (OptionsTab::Root, 3) => Some(OptionsTab::Controls),
+            (OptionsTab::Video, 15) => Some(OptionsTab::Enhanced),
+            _ => None,
+        };
+        if let Some(tab) = target {
+            self.active_tab = tab;
+            self.selected_index = 0;
+            self.scroll_offset = 0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Steps back one submenu level (`Enhanced -> Video`, `Game/Video/Audio/Controls -> Root`).
+    pub fn exit_to_root(&mut self) -> bool {
+        if self.active_tab == OptionsTab::Root {
+            return false;
+        }
+        let (parent_tab, parent_idx) = match self.active_tab {
+            OptionsTab::Enhanced => (OptionsTab::Video, 15),
+            OptionsTab::Game => (OptionsTab::Root, 0),
+            OptionsTab::Video | OptionsTab::Debug | OptionsTab::Mods => (OptionsTab::Root, 1),
+            OptionsTab::Audio => (OptionsTab::Root, 2),
+            OptionsTab::Controls => (OptionsTab::Root, 3),
+            OptionsTab::Root => (OptionsTab::Root, 0),
+        };
+        self.active_tab = parent_tab;
+        self.selected_index = parent_idx;
+        let max_vis = if parent_tab == OptionsTab::Root {
+            11
+        } else {
+            10
+        };
+        self.scroll_offset = parent_idx.saturating_sub(max_vis - 1);
+        true
     }
 
     /// Handles Confirm inside an active PS2 subscreen. Returns `Some(cue)` if consumed.
@@ -344,6 +531,16 @@ impl OptionsMenu {
         } else if delta > 0 {
             self.selected_index = (self.selected_index + 1) % count;
         }
+        let max_vis = if self.active_tab == OptionsTab::Root {
+            11
+        } else {
+            10
+        };
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        } else if self.selected_index >= self.scroll_offset + max_vis {
+            self.scroll_offset = self.selected_index + 1 - max_vis;
+        }
         OptionsSoundCue::CursorMove
     }
 
@@ -387,6 +584,7 @@ impl OptionsMenu {
             self.active_tab.prev()
         };
         self.selected_index = 0;
+        self.scroll_offset = 0;
         OptionsSoundCue::CursorMove
     }
 
@@ -424,8 +622,12 @@ mod tests {
         let original = AppConfig::default();
         let mut menu = OptionsMenu::new(original);
 
+        assert_eq!(menu.active_tab, OptionsTab::Root);
+        assert_eq!(menu.item_count(), 11);
+        menu.navigate_vertical(1); // Advanced Options
+        assert!(menu.enter_submenu());
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 15);
+        assert_eq!(menu.item_count(), 17);
 
         // Adjust Resolution
         menu.adjust_value(1);

@@ -15,6 +15,10 @@ pub struct AtlasRect {
 /// Identifiers for authentic sprite buttons in `start01e.tex`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthenticButtonSprite {
+    /// Full-width `SILENT HILL 2 / ENHANCED EDITION` title logo (`TitleSpr[0]` in `start01e.tex`).
+    TitleLogo,
+    /// Original PS2 `SILENT HILL 2` title logo (`TitleSpr[0]` in `sh2e/ps2/etc/start01.tex`, `512×96`).
+    TitleLogoOriginal,
     Load,
     Continue,
     NewGame,
@@ -38,6 +42,18 @@ impl AuthenticButtonSprite {
     /// Exact trimmed pixel rects inside the 2048x2048 `start01e.tex` atlas.
     pub fn atlas_rect(&self) -> AtlasRect {
         match self {
+            Self::TitleLogo => AtlasRect {
+                x: 0,
+                y: 0,
+                width: 2048,
+                height: 384,
+            },
+            Self::TitleLogoOriginal => AtlasRect {
+                x: 0,
+                y: 0,
+                width: 512,
+                height: 96,
+            },
             Self::Load => AtlasRect {
                 x: 257,
                 y: 399,
@@ -157,6 +173,9 @@ pub struct ButtonSpriteSheet {
     pub test_rooms_rgba: Option<Vec<u8>>,
     pub test_rooms_width: usize,
     pub test_rooms_height: usize,
+    pub orig_logo_rgba: Option<Vec<u8>>,
+    pub orig_logo_width: usize,
+    pub orig_logo_height: usize,
 }
 
 impl ButtonSpriteSheet {
@@ -174,7 +193,17 @@ impl ButtonSpriteSheet {
             test_rooms_rgba,
             test_rooms_width: tr_w,
             test_rooms_height: tr_h,
+            orig_logo_rgba: None,
+            orig_logo_width: 0,
+            orig_logo_height: 0,
         }
+    }
+
+    /// Attaches the original PS2 `start01.tex` (`512×512`) so `TitleLogoOriginal` (`512×96`) renders without `"ENHANCED EDITION"`.
+    pub fn set_original_title_logo(&mut self, width: usize, height: usize, rgba: Vec<u8>) {
+        self.orig_logo_width = width;
+        self.orig_logo_height = height;
+        self.orig_logo_rgba = Some(rgba);
     }
 
     fn load_default_start_prompt() -> (Option<Vec<u8>>, usize, usize) {
@@ -200,6 +229,7 @@ impl ButtonSpriteSheet {
     }
 
     /// Blit a button sprite with alpha-blending and tint onto a target RGBA8 buffer.
+    /// Bilinearly scales and alpha-composites a sprite onto an RGBA8 framebuffer (`dst`).
     #[allow(clippy::too_many_arguments)]
     pub fn blit_sprite(
         &self,
@@ -212,6 +242,28 @@ impl ButtonSpriteSheet {
         scale: f32,
         tint: [f32; 4],
     ) {
+        self.blit_sprite_xy(
+            sprite, dst, dst_width, dst_height, dst_x, dst_y, scale, scale, tint,
+        );
+    }
+
+    /// Bilinearly scales with independent `(scale_x, scale_y)` and alpha-composites a sprite onto `dst`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blit_sprite_xy(
+        &self,
+        sprite: AuthenticButtonSprite,
+        dst: &mut [u8],
+        dst_width: usize,
+        dst_height: usize,
+        dst_x: i32,
+        dst_y: i32,
+        scale_x: f32,
+        scale_y: f32,
+        tint: [f32; 4],
+    ) {
+        if scale_x <= 0.0 || scale_y <= 0.0 || dst_width == 0 || dst_height == 0 {
+            return;
+        }
         let is_prompt = sprite == AuthenticButtonSprite::StartPrompt;
         let is_test_rooms = sprite == AuthenticButtonSprite::TestRooms;
         let (src_bytes, src_w, rect) = if is_prompt {
@@ -244,12 +296,36 @@ impl ButtonSpriteSheet {
             } else {
                 return;
             }
+        } else if sprite == AuthenticButtonSprite::TitleLogoOriginal {
+            if let Some(ref orig_bytes) = self.orig_logo_rgba {
+                (
+                    orig_bytes.as_slice(),
+                    self.orig_logo_width,
+                    AtlasRect {
+                        x: 0,
+                        y: 0,
+                        width: self.orig_logo_width.min(512),
+                        height: self.orig_logo_height.min(96),
+                    },
+                )
+            } else {
+                (
+                    self.rgba.as_slice(),
+                    self.width,
+                    AtlasRect {
+                        x: 0,
+                        y: 0,
+                        width: 2048,
+                        height: 244,
+                    },
+                )
+            }
         } else {
             (self.rgba.as_slice(), self.width, sprite.atlas_rect())
         };
 
-        let scaled_w = (rect.width as f32 * scale).round() as usize;
-        let scaled_h = (rect.height as f32 * scale).round() as usize;
+        let scaled_w = (rect.width as f32 * scale_x).round() as usize;
+        let scaled_h = (rect.height as f32 * scale_y).round() as usize;
 
         for dy in 0..scaled_h {
             let out_y = dst_y + dy as i32;
@@ -257,7 +333,7 @@ impl ButtonSpriteSheet {
                 continue;
             }
 
-            let continuous_y = rect.y as f32 + (dy as f32 / scale);
+            let continuous_y = rect.y as f32 + (dy as f32 / scale_y);
             let y0 = (continuous_y.floor() as usize).min(rect.y + rect.height - 1);
             let y1 = (y0 + 1).min(rect.y + rect.height - 1);
             let fy = continuous_y - y0 as f32;
@@ -268,7 +344,7 @@ impl ButtonSpriteSheet {
                     continue;
                 }
 
-                let continuous_x = rect.x as f32 + (dx as f32 / scale);
+                let continuous_x = rect.x as f32 + (dx as f32 / scale_x);
                 let x0 = (continuous_x.floor() as usize).min(rect.x + rect.width - 1);
                 let x1 = (x0 + 1).min(rect.x + rect.width - 1);
                 let fx = continuous_x - x0 as f32;
@@ -469,16 +545,17 @@ impl ButtonSpriteSheet {
                 }
 
                 let r = r_sq.sqrt();
-                let analytic_alpha = if r <= 0.45 {
+                if r >= 1.0 {
+                    continue;
+                }
+                let analytic_alpha = if r <= 0.25 {
                     1.0f32
-                } else if r >= 1.05 {
-                    0.0f32
                 } else {
-                    let t = (r - 0.45) / 0.55;
-                    (-4.2 * t.powf(1.4)).exp()
+                    let t = (r - 0.25) / 0.75;
+                    (-3.5 * t.powf(1.5)).exp() * (1.0 - t * t)
                 };
 
-                if analytic_alpha <= 0.002 {
+                if analytic_alpha <= 0.001 {
                     continue;
                 }
 
@@ -509,5 +586,108 @@ impl ButtonSpriteSheet {
                 }
             }
         }
+    }
+
+    /// Upscales the original PS2 title background (`sh2e/ps2/etc/start00.tex`, `512×512`)
+    /// by 4× (`2048×2048`) with Lanczos3 + unsharp-mask edge sharpening and embeds it centered
+    /// at `x = 342..2390` inside a `2732×2048` widescreen canvas matching `sh2e/pic/etc/start00.tex`.
+    ///
+    /// Both `sh2e/ps2/etc/start00.tex` (`512×512`) and `sh2e/pic/etc/start00.tex` (`2732×2048`)
+    /// share the exact 4× coordinate mapping (`342 + 19*4 = 418`, `472*4 = 1888`, `150*4 = 600`),
+    /// so embedding the 4× upscaled PS2 texture into `2732×2048` preserves the exact 4:3 glyph
+    /// proportions and prevents horizontal stretching or left/right clipping on 16:9 / 21:9 monitors.
+    pub fn upscale_ps2_title_background(
+        src_rgba: &[u8],
+        src_w: u32,
+        src_h: u32,
+    ) -> (u32, u32, Vec<u8>) {
+        const OUT_W: usize = 2732;
+        const OUT_H: usize = 2048;
+        const CORE_W: usize = 2048;
+        const CORE_X0: usize = (OUT_W - CORE_W) / 2; // 342
+        let Some(src_img) = image::RgbaImage::from_raw(src_w, src_h, src_rgba.to_vec()) else {
+            return (src_w, src_h, src_rgba.to_vec());
+        };
+        let upscaled = image::imageops::resize(
+            &src_img,
+            CORE_W as u32,
+            OUT_H as u32,
+            image::imageops::FilterType::Lanczos3,
+        );
+        // Unsharp mask (`radius = 2`, `amount = 1.35`) to restore crisp distress details on the 4x upscale.
+        let blurred = image::imageops::blur(&upscaled, 1.6);
+        let up_raw = upscaled.as_raw();
+        let bl_raw = blurred.as_raw();
+        let mut sharp_core = vec![0u8; CORE_W * OUT_H * 4];
+        for i in 0..(CORE_W * OUT_H) {
+            let idx = i * 4;
+            for c in 0..3 {
+                let u = up_raw[idx + c] as f32;
+                let b = bl_raw[idx + c] as f32;
+                let s = (u + (u - b) * 1.35).clamp(0.0, 255.0) as u8;
+                sharp_core[idx + c] = s;
+            }
+            sharp_core[idx + 3] = 255;
+        }
+
+        // Sample the uniform ambient background color `[10, 13, 13, 255]` from the top-left 32x32
+        // corner of `sh2e/ps2/etc/start00.tex` and cosine-feather the outer 72px left/right edges
+        // (`x = 0..72` and `x = 1972..2048`, outside the `SILENT HILL 2` letters `x = 76..1964`)
+        // into that uniform ambient color so there are zero horizontal streaks or vertical seams.
+        let mut corner_sum = [0.0f32; 3];
+        for y in 0..32 {
+            for x in 0..32 {
+                let idx = (y * CORE_W + x) * 4;
+                corner_sum[0] += sharp_core[idx] as f32;
+                corner_sum[1] += sharp_core[idx + 1] as f32;
+                corner_sum[2] += sharp_core[idx + 2] as f32;
+            }
+        }
+        let bg = [
+            corner_sum[0] / 1024.0,
+            corner_sum[1] / 1024.0,
+            corner_sum[2] / 1024.0,
+        ];
+        let bg_u8 = [
+            bg[0].round().clamp(0.0, 255.0) as u8,
+            bg[1].round().clamp(0.0, 255.0) as u8,
+            bg[2].round().clamp(0.0, 255.0) as u8,
+            255,
+        ];
+
+        let mut out = vec![0u8; OUT_W * OUT_H * 4];
+        const FEATHER_L: usize = 72;
+        const FEATHER_R: usize = 76;
+        for y in 0..OUT_H {
+            for x in 0..OUT_W {
+                let dst_idx = (y * OUT_W + x) * 4;
+                if !(CORE_X0..CORE_X0 + CORE_W).contains(&x) {
+                    out[dst_idx..dst_idx + 4].copy_from_slice(&bg_u8);
+                } else {
+                    let cx = x - CORE_X0;
+                    let src_idx = (y * CORE_W + cx) * 4;
+                    let w = if cx < FEATHER_L {
+                        let t = cx as f32 / FEATHER_L as f32;
+                        0.5 - 0.5 * (t * std::f32::consts::PI).cos()
+                    } else if cx >= CORE_W - FEATHER_R {
+                        let t = (CORE_W - 1 - cx) as f32 / FEATHER_R as f32;
+                        0.5 - 0.5 * (t * std::f32::consts::PI).cos()
+                    } else {
+                        1.0
+                    };
+                    if w >= 0.999 {
+                        out[dst_idx..dst_idx + 4]
+                            .copy_from_slice(&sharp_core[src_idx..src_idx + 4]);
+                    } else {
+                        for c in 0..3 {
+                            let val = sharp_core[src_idx + c] as f32 * w + bg[c] * (1.0 - w);
+                            out[dst_idx + c] = val.round().clamp(0.0, 255.0) as u8;
+                        }
+                        out[dst_idx + 3] = 255;
+                    }
+                }
+            }
+        }
+        (OUT_W as u32, OUT_H as u32, out)
     }
 }

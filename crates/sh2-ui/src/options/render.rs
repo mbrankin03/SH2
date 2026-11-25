@@ -257,6 +257,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Video, "Enhanced Options") => {
             "Configure 1:1 PS2, SH2:EE, and Native Enhanced toggles"
         }
+        (OptionsTab::Video, "Mod Manager") => {
+            "Enable, disable, and reorder installed mods in mods/"
+        }
         (OptionsTab::Video, "Title Screen Style") => {
             "Switch between SH2:EE title logo and original SILENT HILL 2 splash screen"
         }

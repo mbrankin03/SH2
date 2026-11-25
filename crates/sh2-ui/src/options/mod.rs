@@ -392,6 +392,7 @@ impl OptionsMenu {
             (OptionsTab::Root, 2) => Some(OptionsTab::Audio),
             (OptionsTab::Root, 3) => Some(OptionsTab::Controls),
             (OptionsTab::Video, 15) => Some(OptionsTab::Enhanced),
+            (OptionsTab::Video, 17) => Some(OptionsTab::Mods),
             _ => None,
         };
         if let Some(tab) = target {
@@ -411,8 +412,9 @@ impl OptionsMenu {
         }
         let (parent_tab, parent_idx) = match self.active_tab {
             OptionsTab::Enhanced => (OptionsTab::Video, 15),
+            OptionsTab::Mods => (OptionsTab::Video, 17),
             OptionsTab::Game => (OptionsTab::Root, 0),
-            OptionsTab::Video | OptionsTab::Debug | OptionsTab::Mods => (OptionsTab::Root, 1),
+            OptionsTab::Video | OptionsTab::Debug => (OptionsTab::Root, 1),
             OptionsTab::Audio => (OptionsTab::Root, 2),
             OptionsTab::Controls => (OptionsTab::Root, 3),
             OptionsTab::Root => (OptionsTab::Root, 0),
@@ -627,7 +629,7 @@ mod tests {
         menu.navigate_vertical(1); // Advanced Options
         assert!(menu.enter_submenu());
         assert_eq!(menu.active_tab, OptionsTab::Video);
-        assert_eq!(menu.item_count(), 17);
+        assert_eq!(menu.item_count(), 18);
 
         // Adjust Resolution
         menu.adjust_value(1);

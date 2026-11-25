@@ -10,7 +10,7 @@ impl OptionsMenu {
     pub fn item_count(&self) -> usize {
         match self.active_tab {
             OptionsTab::Root => 11,
-            OptionsTab::Video => 17,
+            OptionsTab::Video => 18,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     12
@@ -245,6 +245,7 @@ impl OptionsMenu {
                     "Original (SILENT HILL 2)".into()
                 },
             )),
+            17 => Some(("Mod Manager", String::new())),
             _ => None,
         }
     }

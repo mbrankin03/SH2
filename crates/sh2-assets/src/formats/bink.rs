@@ -1867,12 +1867,20 @@ duration=20.120000
             assert!(stream.next_frame().is_none());
         }
 
-        let vsr_toilet = Path::new(
-            "/home/matthewb/Documents/SH2-Port/tools/vsr_pipeline/output/toilet_4k_master.mp4",
-        );
-        if vsr_toilet.exists() {
+        let vsr_toilet = std::env::var_os("SH2_4K_FMV_DIR")
+            .map(|dir| std::path::PathBuf::from(dir).join("toilet_4k_master.mp4"))
+            .into_iter()
+            .chain([
+                std::path::PathBuf::from("mods/4k_vsr_fmvs/toilet_4k_master.mp4"),
+                std::path::PathBuf::from("../../mods/4k_vsr_fmvs/toilet_4k_master.mp4"),
+                std::path::PathBuf::from(
+                    "../../../../Documents/SH2-Port/tools/vsr_pipeline/output/toilet_4k_master.mp4",
+                ),
+            ])
+            .find(|p| p.is_file());
+        if let Some(vsr_toilet) = vsr_toilet {
             let hdr =
-                parse_bink_file_header(vsr_toilet).expect("Failed to probe toilet_4k_master.mp4");
+                parse_bink_file_header(&vsr_toilet).expect("Failed to probe toilet_4k_master.mp4");
             assert_eq!(hdr.width, 3840);
             assert_eq!(hdr.height, 2160);
             assert_eq!(

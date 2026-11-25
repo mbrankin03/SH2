@@ -12,16 +12,25 @@ pub(super) fn submit_scene_draw(
     active_enemy_snapshot: Option<EnemySkinSnapshot>,
 ) {
     let mut skeletal_draw = Vec::new();
-    let is_restroom_mirror = state.active_test_room == TestRoomKind::RestroomStart
-        || state
-            .sim_core
-            .scenario
-            .current_room
-            .eq_ignore_ascii_case("er01")
-        || state
-            .drama_demo_session
-            .as_ref()
-            .is_some_and(|s| s.player.locks_gameplay_input() && s.player.info.stage_name == "er01");
+    let active_room_name = state
+        .drama_demo_session
+        .as_ref()
+        .filter(|s| s.player.locks_gameplay_input())
+        .map(|s| s.player.info.stage_name)
+        .unwrap_or(state.sim_core.scenario.current_room.as_str());
+    let planar_mirror_spec = if state.active_test_room == TestRoomKind::RestroomStart
+        || active_room_name.eq_ignore_ascii_case("er01")
+    {
+        sh2_renderer::mirror::PlanarMirrorSpec::for_room(0x01)
+    } else if active_room_name.eq_ignore_ascii_case("ap84")
+        || active_room_name.eq_ignore_ascii_case("ap88")
+    {
+        sh2_renderer::mirror::PlanarMirrorSpec::for_room(0x24)
+    } else {
+        None
+    };
+    state.render_ctx.set_planar_mirror(planar_mirror_spec);
+    let is_restroom_mirror = false;
     let cutscene_active = state.drama_demo_session.as_ref().is_some_and(|s| {
         s.player.locks_gameplay_input() && s.actor_assets.iter().any(|a| a.is_some())
     });

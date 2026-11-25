@@ -11,6 +11,9 @@ pub struct CameraUniforms {
     pub cam_pos: [f32; 4],
     /// Inverse view-projection matrix for world-space ray reconstruction in volumetric compute passes (`SH2-32`).
     pub inv_view_proj: [[f32; 4]; 4],
+    /// Optional world-space mirror clip plane `(nx, ny, nz, d)` (`dot(n, p) + d < 0 => discard`).
+    /// All zeros disables clipping.
+    pub clip_plane: [f32; 4],
 }
 
 impl Default for CameraUniforms {
@@ -26,6 +29,7 @@ impl Default for CameraUniforms {
             inv_proj: id,
             cam_pos: [0.0, 0.0, 0.0, 1.0],
             inv_view_proj: id,
+            clip_plane: [0.0; 4],
         }
     }
 }
@@ -89,6 +93,8 @@ pub const fn map_batch_render_state(
 pub struct GeometryPipeline {
     /// Primary opaque + alpha-cutout level geometry pipeline (`depth_write_enabled: true`).
     pub pipeline: wgpu::RenderPipeline,
+    /// Stenciled planar mirror reflected opaque pipeline (`FrontFace::Cw`, `Depth24PlusStencil8`, `stencil == 1`).
+    pub mirror_reflected_pipeline: wgpu::RenderPipeline,
     /// Coplanar decal pipeline (`ALPHA_BLENDING`, `depth_write_enabled: false`, negative depth bias).
     pub decal_pipeline: wgpu::RenderPipeline,
     /// Semi-transparent glass/water/foliage fringe pipeline (`ALPHA_BLENDING`, `depth_write_enabled: false`).
@@ -104,6 +110,7 @@ struct CameraUniforms {
     inv_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
+    clip_plane: vec4<f32>,
 };
 
 struct SpotlightUniforms {
@@ -169,6 +176,10 @@ fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
     let tex_color = textureSample(diffuse_texture, diffuse_sampler, in.uv);
     let out_alpha = in.color.a * tex_color.a;
     if (out_alpha < (0.5 / 255.0)) {
+        discard;
+    }
+    if (dot(camera.clip_plane.xyz, camera.clip_plane.xyz) > 0.0
+        && dot(vec4<f32>(in.world_pos, 1.0), camera.clip_plane) < 0.0) {
         discard;
     }
 
@@ -529,8 +540,55 @@ fn fs_opaque(in: VertexOutput) -> @location(0) vec4<f32> {
             cache: None,
         });
 
+        let stencil_equal_keep = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::Equal,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Keep,
+        };
+        let mut mirror_primitive = primitive_state;
+        mirror_primitive.front_face = wgpu::FrontFace::Cw;
+        let mirror_reflected_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Geometry Stenciled Mirror Reflected Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffer_layout,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_opaque"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: color_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: mirror_primitive,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: crate::shadow::StencilShadowPipeline::STENCIL_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState {
+                        front: stencil_equal_keep,
+                        back: stencil_equal_keep,
+                        read_mask: 0xff,
+                        write_mask: 0x00,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Self {
             pipeline,
+            mirror_reflected_pipeline,
             decal_pipeline,
             transparent_pipeline,
             bind_group_layout,

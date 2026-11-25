@@ -9,6 +9,7 @@ pub mod glb_model;
 pub mod gpu_map;
 pub mod light;
 mod lighting_ops;
+pub mod mirror;
 pub mod pipeline;
 pub mod post;
 pub mod scene;

@@ -67,6 +67,28 @@ impl RenderContext {
             .store(order as u8, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Installs or clears the active stenciled planar mirror specification (`SH2-101`).
+    pub fn set_planar_mirror(&self, spec: Option<crate::mirror::PlanarMirrorSpec>) {
+        if let Some(ref s) = spec {
+            self.mirror_pipeline.update_quad(&self.queue, s);
+        }
+        if let Ok(mut guard) = self.planar_mirror.lock() {
+            *guard = spec;
+        }
+    }
+
+    /// Uploads a decoded `glas03.tbn2` RGBA8 texture to the planar mirror glass overlay pipeline.
+    pub fn upload_mirror_glass_texture(&mut self, width: u32, height: u32, rgba: &[u8]) {
+        self.mirror_pipeline
+            .upload_glass_texture(&self.device, &self.queue, width, height, rgba);
+    }
+
+    /// Enables or disables drawing the `glas03.tbn2` dirty glass overlay over the mirror quad.
+    pub fn set_mirror_glass_overlay_enabled(&self, enabled: bool) {
+        self.mirror_glass_overlay_enabled
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Returns the active PS2 character vs. shadow draw order (`Check_DrawOrder` `0x001a08a0`).
     #[must_use]
     pub fn shadow_draw_order(&self) -> shadow::ShadowDrawOrder {
@@ -155,6 +177,7 @@ impl RenderContext {
             inv_proj: inv_proj.to_cols_array_2d(),
             cam_pos: [cam_pos.x, cam_pos.y, cam_pos.z, shade_mode],
             inv_view_proj: inv_vp.to_cols_array_2d(),
+            clip_plane: [0.0; 4],
         };
         if let Ok(mut guard) = self.last_camera_uniforms.lock() {
             *guard = uniforms;

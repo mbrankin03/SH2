@@ -267,11 +267,27 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     // Atmospheric Silent Hill lighting & fog (calibrated for current room)
     render_ctx.update_fog(&fog_uniforms);
 
-    // Preload authentic 2D UI / Title screen textures
+    // Preload authentic 2D UI / Title screen textures (with active mods/ overlay)
+    let boot_resolver = sh2_assets::AssetPathResolver::resolve();
+    let boot_config_path = ["config.json", "../config.json", "../../config.json"]
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .unwrap_or(&"config.json");
+    let boot_cfg = sh2_core::config::AppConfig::load_from_file(boot_config_path);
+    let boot_mods = sh2_assets::discover_mods(
+        &boot_resolver.resolve_mods_dir(),
+        &boot_cfg.mods.as_discovery_tuples(),
+    );
+    let boot_mod_vfs = std::sync::Arc::new(sh2_assets::ModVfs::from_packages(
+        &boot_mods,
+        boot_resolver.sh2e_dir.clone(),
+        boot_resolver.data_dir.clone(),
+    ));
     let tex_loader = TextureLoader::new(
         "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
         Some("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e"),
-    );
+    )
+    .with_mod_vfs(boot_mod_vfs);
 
     // Upload authentic retail PS2/PC fog noise texture (`data/pic/effect/fog.tex`) if present (`SH2-32`)
     if let Ok(fog_tex) = tex_loader.load_texture("pic/effect/fog.tex") {

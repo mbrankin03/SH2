@@ -38,9 +38,47 @@ pub struct AppMenuController {
     pub revision: u64,
     /// Detected filesystem status for SH2:EE Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) audio packs (`SH2-59`).
     pub audio_pack_status: AudioPackDetectionStatus,
+    /// Layered Virtual File System (`mods/ -> sh2e/ -> data/`) built from `config.mods` (`SH2-29`).
+    pub mod_vfs: std::sync::Arc<sh2_assets::ModVfs>,
 }
 
 impl AppMenuController {
+    fn build_mod_vfs(
+        resolver: &sh2_assets::AssetPathResolver,
+        cfg: &AppConfig,
+    ) -> (std::sync::Arc<sh2_assets::ModVfs>, Vec<sh2_ui::ModUiEntry>) {
+        let discovered = sh2_assets::discover_mods(
+            &resolver.resolve_mods_dir(),
+            &cfg.mods.as_discovery_tuples(),
+        );
+        let mod_entries: Vec<sh2_ui::ModUiEntry> = discovered
+            .iter()
+            .map(|m| sh2_ui::ModUiEntry {
+                id: m.id.clone(),
+                name: m.metadata.name.clone(),
+                author: m.metadata.author.clone(),
+                version: m.metadata.version.clone(),
+                description: m.metadata.description.clone(),
+                override_count: m.overrides.len(),
+                enabled: m.enabled,
+                priority: m.priority,
+                is_zip: m.source.is_zip(),
+            })
+            .collect();
+        let vfs = std::sync::Arc::new(sh2_assets::ModVfs::from_packages(
+            &discovered,
+            resolver.sh2e_dir.clone(),
+            resolver.data_dir.clone(),
+        ));
+        (vfs, mod_entries)
+    }
+
+    /// Rebuilds [`Self::mod_vfs`] from the active `mods/` directory and `cfg.mods` state.
+    pub fn rebuild_mod_vfs(&mut self, cfg: &AppConfig) {
+        let resolver = sh2_assets::AssetPathResolver::resolve();
+        let (vfs, _) = Self::build_mod_vfs(&resolver, cfg);
+        self.mod_vfs = vfs;
+    }
     /// Initialize with a configuration file path (e.g. `config.json`), scanning the active game root for audio packs.
     pub fn new<P: AsRef<Path>>(config_path: P) -> Self {
         let resolver = sh2_assets::AssetPathResolver::resolve();
@@ -65,24 +103,7 @@ impl AppMenuController {
         let mut options_menu =
             OptionsMenu::new_with_audio_packs(loaded_config.clone(), audio_pack_status);
         let resolver = sh2_assets::AssetPathResolver::resolve();
-        let discovered = sh2_assets::discover_mods(
-            &resolver.resolve_mods_dir(),
-            &loaded_config.mods.as_discovery_tuples(),
-        );
-        let mod_entries: Vec<sh2_ui::ModUiEntry> = discovered
-            .into_iter()
-            .map(|m| sh2_ui::ModUiEntry {
-                id: m.id,
-                name: m.metadata.name,
-                author: m.metadata.author,
-                version: m.metadata.version,
-                description: m.metadata.description,
-                override_count: m.overrides.len(),
-                enabled: m.enabled,
-                priority: m.priority,
-                is_zip: m.source.is_zip(),
-            })
-            .collect();
+        let (mod_vfs, mod_entries) = Self::build_mod_vfs(&resolver, &loaded_config);
         options_menu.set_mods(mod_entries);
         let mut title_sm = TitleStateMachine::new();
         let save_path = path.with_file_name("save_slot0.json");
@@ -100,6 +121,7 @@ impl AppMenuController {
             config_applied_pending: None,
             revision: 0,
             audio_pack_status,
+            mod_vfs,
         }
     }
 
@@ -473,6 +495,7 @@ impl AppMenuController {
                         return MenuSoundCue::Confirm;
                     }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    self.rebuild_mod_vfs(&saved_cfg);
                     self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);
@@ -504,12 +527,14 @@ impl AppMenuController {
             let cue = self.title_sm.handle_input(action);
             if self.title_sm.phase == TitlePhase::OptionsMenu {
                 // Refresh live audio output devices upon opening options menu so newly plugged devices appear immediately
+                let existing_mods = self.options_menu.mods.clone();
                 let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
                 self.options_menu = OptionsMenu::new_with_audio_packs(
                     self.options_menu.original_config.clone(),
                     self.audio_pack_status,
                 );
                 self.options_menu.set_audio_devices(fresh_devices);
+                self.options_menu.set_mods(existing_mods);
             }
             cue
         }
@@ -585,6 +610,7 @@ impl AppMenuController {
                         return (MenuSoundCue::Confirm, PauseAction::None);
                     }
                     let (saved_cfg, cue) = self.options_menu.commit_changes();
+                    self.rebuild_mod_vfs(&saved_cfg);
                     self.config_applied_pending = Some(saved_cfg.clone());
                     if let Err(e) = saved_cfg.save_to_file(&self.config_path) {
                         tracing::warn!("Failed to persist config to {:?}: {}", self.config_path, e);

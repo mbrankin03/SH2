@@ -226,12 +226,17 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
     }
 }
 
+fn mod_aware_loader(state: &AppState) -> TextureLoader {
+    let resolver = AssetPathResolver::resolve();
+    TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref())
+        .with_mod_vfs(std::sync::Arc::clone(&state.menu_ctrl.mod_vfs))
+}
+
 pub(crate) fn ensure_map_sheet_loaded(state: &mut AppState, map_id: u8) {
     let Some(spec) = map_spec(map_id) else {
         return;
     };
-    let resolver = AssetPathResolver::resolve();
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
 
     if !state
         .ingame_menus
@@ -281,7 +286,7 @@ pub(crate) fn ensure_memo_assets_loaded(
             }
         }
     }
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
     if !state
         .ingame_menus
         .cached_memo_backdrop
@@ -323,8 +328,7 @@ pub(crate) fn ensure_item_atlas_loaded(state: &mut AppState) {
         return;
     }
     state.ingame_menus.item_atlas_loaded = true;
-    let resolver = AssetPathResolver::resolve();
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
     if let Ok(tex) = loader.load_texture("pic/etc/itemmenu2.tex") {
         tracing::info!(
             "Loaded authentic itemmenu2.tex sprite atlas ({}x{}).",
@@ -349,8 +353,7 @@ pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
     else {
         return;
     };
-    let resolver = AssetPathResolver::resolve();
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
     if let Ok(cut) = loader.load_cutaway_texture(tex_path, true) {
         state.ingame_menus.cached_examine_tex = Some((
             item_id,
@@ -367,8 +370,7 @@ pub(crate) fn ensure_gameover_tex_loaded(state: &mut AppState) {
         return;
     }
     state.ingame_menus.gameover_tex_loaded = true;
-    let resolver = AssetPathResolver::resolve();
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
     if let Ok(tex) = loader.load_texture(sh2_ui::GAMEOVER_TEX_PATH) {
         state.ingame_menus.cached_gameover_tex = Some((tex.width, tex.height, tex.rgba));
     }
@@ -380,8 +382,7 @@ pub(crate) fn ensure_red_cross_tex_loaded(state: &mut AppState) {
         return;
     }
     state.ingame_menus.red_cross_tex_loaded = true;
-    let resolver = AssetPathResolver::resolve();
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
     if let Ok(tex) = loader.load_texture(sh2_ui::RED_CROSS_ICON_PATH) {
         state.ingame_menus.cached_red_cross_tex = Some((tex.width, tex.height, tex.rgba));
     }
@@ -400,8 +401,7 @@ pub(crate) fn ensure_savebg_loaded(
         sh2_core::scenario::ScenarioKind::LetterFromSilentHeaven => sh2_ui::SAVEBG_TBN2_PATH,
         sh2_core::scenario::ScenarioKind::BornFromAWish => sh2_ui::SAVEBG2_TBN2_PATH,
     };
-    let resolver = AssetPathResolver::resolve();
-    let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+    let loader = mod_aware_loader(state);
     if let Ok(tex) = loader.load_texture(path) {
         state.ingame_menus.cached_savebg_tex = Some((tex.width, tex.height, tex.rgba));
     }

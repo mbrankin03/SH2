@@ -70,13 +70,36 @@ fn main_scenario_prologue_loads_stage2_triggers_first_toilet_and_hands_off_witho
     assert_eq!(sim.scenario.current_stage, MAIN_SCENARIO_START_STAGE);
     assert_eq!(sim.scenario.current_room, "er01");
 
-    // Stage 2 (`stg_toilet.c`) automatically triggers `first_toilet` (`demo_no == 1`).
+    // Stage 2 (`stg_toilet.c` / `sh2pc.exe` `0x005a14a0`) automatically triggers `toilet.bik`
+    // FMV first, followed by `first_toilet` (`demo_no == 1`).
+    assert!(
+        matches!(
+            orch.phase,
+            CampaignPhase::FmvPlayback {
+                movie_id: "toilet",
+                ..
+            }
+        ),
+        "Expected automatic toilet.bik FmvPlayback, got {:?}",
+        orch.phase
+    );
+
+    // Natural FMV EOF transitions into `first_toilet` (`demo_no == 1`).
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            fmv_finished: true,
+            prefer_sh2ee: true,
+            ..CampaignTickInput::default()
+        },
+        1.0 / 60.0,
+    );
     assert!(
         matches!(
             orch.phase,
             CampaignPhase::DramaDemo { demo_no, .. } if demo_no == u32::from(CS_INTRO_BATHROOM_DEMO_NO)
         ),
-        "Expected automatic first_toilet DramaDemo, got {:?}",
+        "Expected automatic first_toilet DramaDemo after toilet.bik, got {:?}",
         orch.phase
     );
 
@@ -112,6 +135,202 @@ fn born_from_a_wish_starts_in_heavens_night_as_maria() {
     assert_eq!(sim.scenario.character, PlayableCharacter::Maria);
     assert_eq!(sim.scenario.current_room, "th09");
     assert_eq!(orch.phase, CampaignPhase::ActiveGameplay);
+}
+
+#[test]
+fn skipping_toilet_fmv_skips_first_toilet_demo_and_sets_flag_0x20() {
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::new_game(
+        ScenarioKind::LetterFromSilentHeaven,
+        ActionDifficulty::Normal,
+        RiddleDifficulty::Normal,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        true,
+    );
+
+    let _ = drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::FmvPlayback {
+            movie_id: "toilet",
+            ..
+        }
+    ));
+
+    // Skipping `toilet.bik` (`sh2pc.exe` `0x005a1584` -> `0x005a161f`) skips `first_toilet.dds`,
+    // sets flag `0x0020`, and places James in gameplay at the post-mirror pose.
+    let eff = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            cancel_pressed: true,
+            prefer_sh2ee: true,
+            ..CampaignTickInput::default()
+        },
+        1.0 / 60.0,
+    );
+    assert_eq!(orch.phase, CampaignPhase::ActiveGameplay);
+    assert!(eff.allow_gameplay_sim);
+    assert!(sim.scenario.flags.get(0x0020));
+    assert!((sim.scenario.player_position.x - (-19_606.6)).abs() < 1e-3);
+}
+
+#[test]
+fn hybrid_drama_demo_sequence_chain_advances_through_fmv_and_part_b() {
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        10,
+        Some("wp01".to_string()),
+        [0.0, 0.0, 0.0],
+        0.0,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        true,
+    );
+    let _ = drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
+
+    // Start `SEQ_DEAI`: demo 21 -> FmvMovie("deai") -> demo 22 -> ActiveGameplay.
+    let mut eff = Default::default();
+    orch.start_drama_demo(
+        sh2_core::campaign::DramaDemoTrigger {
+            demo_no: 21,
+            demo_id: Some("mar_deai_c"),
+            post_pos: None,
+            post_yaw: None,
+            restore_policy:
+                sh2_core::event_camera::PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+        },
+        &mut eff,
+    );
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::DramaDemo { demo_no: 21, .. }
+    ));
+
+    let eff = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            drama_demo_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::FmvPlayback {
+            movie_id: "deai",
+            ..
+        }
+    ));
+    assert_eq!(eff.start_fmv.as_ref().map(|f| f.movie_id), Some("deai"));
+
+    let eff = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            fmv_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::DramaDemo { demo_no: 22, .. }
+    ));
+    assert_eq!(eff.start_drama_demo.as_ref().map(|d| d.demo_no), Some(22));
+
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            drama_demo_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert_eq!(orch.phase, CampaignPhase::ActiveGameplay);
+}
+
+#[test]
+fn seq_leave_ending_demo_and_fmv_transition_to_ending_credits() {
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        48,
+        Some("ru73".to_string()),
+        [0.0, 0.0, 0.0],
+        0.0,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        true,
+    );
+    let _ = drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
+
+    // 1. Natural `SEQ_LEAVE_ENDING` flow: demo 88 -> FmvMovie("end") -> EndingCredits(48).
+    let mut eff = Default::default();
+    orch.start_drama_demo(
+        sh2_core::campaign::DramaDemoTrigger {
+            demo_no: 88,
+            demo_id: Some("mry_yarinaoshi_a"),
+            post_pos: None,
+            post_yaw: None,
+            restore_policy:
+                sh2_core::event_camera::PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+        },
+        &mut eff,
+    );
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            drama_demo_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::FmvPlayback {
+            movie_id: "end",
+            ..
+        }
+    ));
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            fmv_finished: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert_eq!(
+        orch.phase,
+        CampaignPhase::EndingCredits {
+            ending_stage: 48,
+            showing_results: false
+        }
+    );
+
+    // 2. Skipping demo 88 directly also enters EndingCredits(48).
+    orch.start_drama_demo(
+        sh2_core::campaign::DramaDemoTrigger {
+            demo_no: 88,
+            demo_id: Some("mry_yarinaoshi_a"),
+            post_pos: None,
+            post_yaw: None,
+            restore_policy:
+                sh2_core::event_camera::PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+        },
+        &mut eff,
+    );
+    let _ = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            cancel_pressed: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert_eq!(
+        orch.phase,
+        CampaignPhase::EndingCredits {
+            ending_stage: 48,
+            showing_results: false
+        }
+    );
 }
 
 #[test]
@@ -246,6 +465,9 @@ fn fmv_overlay_gameover_and_ending_credits_lifecycle() {
             post_stage: None,
             post_pos: None,
             post_yaw: None,
+            post_demo: None,
+            completion_flag: None,
+            chain_cursor: 0,
         },
         &mut dummy_eff,
     );

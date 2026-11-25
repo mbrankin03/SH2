@@ -33,7 +33,7 @@ pub struct DramaDemoTrigger {
 /// `.bik`/`.pss` FMV (`PlayableMain` steps `13..=14` `0x0020bb28..0x0020bc73`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FmvTrigger {
-    /// Canonical retail movie identifier (e.g. `"open_voc"`, `"deai"`, `"murder"`, `"ending"`).
+    /// Canonical retail movie identifier (e.g. `"toilet"`, `"open"`, `"deai"`, `"murder"`, `"end"`).
     pub movie_id: &'static str,
     /// Optional destination stage to transition into once the FMV finishes.
     pub post_stage: Option<u16>,
@@ -41,6 +41,13 @@ pub struct FmvTrigger {
     pub post_pos: Option<[f32; 3]>,
     /// Optional destination player yaw after the FMV finishes.
     pub post_yaw: Option<f32>,
+    /// Optional real-time `.dds` [`DramaDemoTrigger`] to run after natural FMV completion
+    /// (e.g. `toilet.bik` -> `first_toilet` per `sh2pc.exe` `0x005a1594`, `deai.bik` -> `mar_deai_e`).
+    pub post_demo: Option<Box<DramaDemoTrigger>>,
+    /// Optional event flag to set when the FMV completes or is skipped (`0x0020` for `stg_toilet`).
+    pub completion_flag: Option<usize>,
+    /// Next step cursor inside `DramaDemoPlayInfo::sequence_chain` if chained from a `DramaDemo`.
+    pub chain_cursor: usize,
 }
 
 /// Stage-entry / flag-driven automatic cutscene rule matching `Stage_Data.p_demo`
@@ -61,7 +68,8 @@ pub struct AutoDemoRule {
 }
 
 /// Verified stage-entry automatic `DramaDemo` rules from `SLUS_202.28` / `sh2pc.exe`:
-/// - Stage `2` (`stg_toilet.c` `0x008e7ce8` entry 0: flag `0x0020` = 32, `demo_no = 1` `first_toilet`).
+/// - Stage `2` (`stg_toilet.c` `0x008e7ce8` entry 0: flag `0x0020` = 32, `demo_no = 1` `first_toilet`,
+///   preceded by `toilet.bik` via [`evaluate_auto_stage_fmv`]).
 /// - Stage `3` (`stg_ovservation.c` `0x008e7948` entry 0: flag `0x0021` = 33, `demo_no = 2` `tenbou`).
 pub const AUTO_STAGE_DEMO_RULES: &[AutoDemoRule] = &[
     AutoDemoRule {
@@ -80,6 +88,39 @@ pub const AUTO_STAGE_DEMO_RULES: &[AutoDemoRule] = &[
         post_yaw: None,
     },
 ];
+
+/// Evaluates whether the current `stage_id` has an unplayed automatic stage-entry FMV
+/// (`sh2pc.exe` `0x005a14a0` `stg_toilet` `ev_prog[1]`: plays `toilet.bik` before `first_toilet`).
+#[must_use]
+pub fn evaluate_auto_stage_fmv(
+    stage_id: u16,
+    flags: &EventFlags,
+    triggered_demos: &HashSet<u32>,
+) -> Option<FmvTrigger> {
+    if stage_id == 2
+        && !flags.get(0x0020)
+        && !triggered_demos.contains(&(CS_INTRO_BATHROOM_DEMO_NO as u32))
+    {
+        let post_pos = Some([-19_606.6, 0.0, 20_429.55]);
+        let post_yaw = Some(-std::f32::consts::FRAC_PI_2);
+        return Some(FmvTrigger {
+            movie_id: "toilet",
+            post_stage: None,
+            post_pos,
+            post_yaw,
+            post_demo: Some(Box::new(DramaDemoTrigger {
+                demo_no: CS_INTRO_BATHROOM_DEMO_NO as u32,
+                demo_id: find_drama_demo_by_no(CS_INTRO_BATHROOM_DEMO_NO).map(|d| d.id),
+                post_pos,
+                post_yaw,
+                restore_policy: PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+            })),
+            completion_flag: Some(0x0020),
+            chain_cursor: 0,
+        });
+    }
+    None
+}
 
 /// Evaluates whether the current `stage_id` has an unplayed automatic stage-entry `DramaDemo`
 /// (`EventMain` `0x001a7aa4` / `Event_List` `Always` entry).

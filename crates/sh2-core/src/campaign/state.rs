@@ -4,6 +4,7 @@
 //! Pure state definitions with zero `wgpu`, `winit`, `kira`, or UI rendering dependencies
 //! (`AGENTS.md` §1).
 
+use super::cutscene_handoff::DramaDemoTrigger;
 use crate::config::{ActionDifficulty, RiddleDifficulty};
 use crate::event_camera::PostSequenceRestorePolicy;
 use crate::events::StageTransitionCommand;
@@ -172,11 +173,13 @@ pub enum CampaignPhase {
         post_yaw: Option<f32>,
         /// Camera restore policy upon demo exit.
         restore_policy: PostSequenceRestorePolicy,
+        /// Current 0-based cursor inside `DramaDemoPlayInfo::sequence_chain`.
+        chain_cursor: usize,
     },
     /// Pre-rendered `.bik` / `.pss` FMV playback (`PlayableMain` steps `13..=14`
     /// `0x0020bb28..0x0020bc73`: `MovieWaitReady` -> `MoviePlayFromReady` -> `MovieMain`).
     FmvPlayback {
-        /// Canonical movie identifier (e.g. `"open_voc"`, `"murder"`, `"ending"`, `"end_dog"`).
+        /// Canonical movie identifier (e.g. `"toilet"`, `"open"`, `"deai"`, `"murder"`, `"end"`).
         movie_id: &'static str,
         /// Optional destination stage to load immediately after the FMV finishes.
         post_stage: Option<u16>,
@@ -184,6 +187,12 @@ pub enum CampaignPhase {
         post_pos: Option<[f32; 3]>,
         /// Optional destination yaw after the FMV finishes.
         post_yaw: Option<f32>,
+        /// Optional `.dds` `DramaDemo` to start upon natural FMV completion.
+        post_demo: Option<Box<DramaDemoTrigger>>,
+        /// Optional event flag to set on completion or skip.
+        completion_flag: Option<usize>,
+        /// Next step cursor inside `DramaDemoPlayInfo::sequence_chain`.
+        chain_cursor: usize,
     },
     /// `PlayableMain` steps `5..=9` & `15`: In-game overlay screen (Map, Inventory, Options,
     /// Memo, Save, or Pause).

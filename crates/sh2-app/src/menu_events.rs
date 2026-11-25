@@ -91,6 +91,15 @@ pub(crate) fn handle_title_menu_key_input(state: &mut AppState, key_code: KeyCod
         return;
     }
 
+    // Any key press cancels Title Screen attract-mode `open.bik` (`MoviePlayOPMovie` `0x00287910`)
+    if state.menu_ctrl.title_sm.attract_movie_requested && state.fmv_session.is_some() {
+        crate::rooms::fmv_room::stop_active_fmv_session(state);
+        state.menu_ctrl.title_sm.attract_movie_requested = false;
+        state.menu_ctrl.title_sm.phase = TitlePhase::TitleLogo;
+        state.menu_ctrl.title_sm.start_fade_in();
+        return;
+    }
+
     // Intercept Confirm button if loading screen is active
     if state.menu_ctrl.title_sm.phase == TitlePhase::TransitionToGame
         && matches!(

@@ -84,7 +84,44 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     );
 
     // 6. Dispatch 3D scene or video pass to the active room controller (advances 60 Hz sim ticks)
-    rooms::dispatch_tick_and_render_3d(state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game);
+    let is_attract_fmv = !is_in_game
+        && state.menu_ctrl.title_sm.attract_movie_requested
+        && !state.menu_ctrl.title_sm.is_fading_out;
+    if is_attract_fmv {
+        if state.fmv_session.is_none() {
+            if let Some((idx, entry)) = sh2_debug::FMV_CATALOG
+                .iter()
+                .enumerate()
+                .find(|(_, m)| m.id.eq_ignore_ascii_case("open"))
+            {
+                state.fmv_viewer.selected_movie_index = idx;
+                state.loaded_fmv_movie_idx = idx;
+                let source = state.fmv_viewer.video_source;
+                let audio_pack = state.bgm_manager.audio_pack_source;
+                state.fmv_session = open_fmv_session(
+                    &state.render_ctx.device,
+                    &state.render_ctx.queue,
+                    &state.fmv_pipeline,
+                    &mut state.audio_engine,
+                    &mut state.fmv_viewer,
+                    entry,
+                    source,
+                    audio_pack,
+                );
+            }
+        }
+        let eof =
+            rooms::fmv_room::tick_and_render_fmv_frame(state, dt_sec, aspect, grain_pct, false);
+        if eof || state.fmv_session.is_none() {
+            state.menu_ctrl.title_sm.attract_movie_requested = false;
+            state.menu_ctrl.title_sm.phase = TitlePhase::TitleLogo;
+            state.menu_ctrl.title_sm.start_fade_in();
+        }
+    } else {
+        rooms::dispatch_tick_and_render_3d(
+            state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,
+        );
+    }
 
     // 7. Update fog flow velocity time and proximity particles deterministically from 60 Hz sim ticks
     let alpha = state.sim_core.interpolation_alpha();
@@ -484,6 +521,13 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
             }
             state.finish_inventory_overlay_in_viewport(&mut encoder, &surface_view, vp);
         }
+    } else if state.menu_ctrl.title_sm.attract_movie_requested
+        && !state.menu_ctrl.title_sm.is_fading_out
+        && state.fmv_session.is_some()
+    {
+        state
+            .blitter
+            .render_with_bind_group(&mut encoder, &state.blit_bind_group, &surface_view);
     } else {
         render_title_menu_overlay(state, &mut encoder, &surface_view);
     }

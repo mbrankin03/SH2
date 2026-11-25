@@ -22,9 +22,9 @@ impl OptionsMenu {
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
-                    20
+                    21
                 } else {
-                    19
+                    20
                 }
             }
             OptionsTab::Mods => self.mods.len().max(1),
@@ -537,7 +537,15 @@ impl OptionsMenu {
                     "OFF (Original PS2)".into()
                 },
             )),
-            19 if self.audio_pack_status.both_detected() => {
+            19 => Some((
+                "Persistent Blood Decals",
+                if self.draft_config.game.enable_persistent_blood_decals {
+                    "ON (Coagulate)".into()
+                } else {
+                    "OFF (PS2 Clear)".into()
+                },
+            )),
+            20 if self.audio_pack_status.both_detected() => {
                 Some(("Audio Pack", a.audio_pack_source.label().to_string()))
             }
             _ => None,
@@ -844,7 +852,11 @@ impl OptionsMenu {
             18 => {
                 self.draft_config.game.enable_foot_ik = !self.draft_config.game.enable_foot_ik;
             }
-            19 if self.audio_pack_status.both_detected() => {
+            19 => {
+                self.draft_config.game.enable_persistent_blood_decals =
+                    !self.draft_config.game.enable_persistent_blood_decals;
+            }
+            20 if self.audio_pack_status.both_detected() => {
                 let a = &mut self.draft_config.audio;
                 a.audio_pack_source = if forward {
                     a.audio_pack_source.next()

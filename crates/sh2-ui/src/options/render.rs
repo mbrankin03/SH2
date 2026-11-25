@@ -433,6 +433,9 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Enhanced, "Foot IK (Stairs)") => {
             "Analytical 2-bone Foot IK on .cld stairs & slopes (Native) vs Original PS2"
         }
+        (OptionsTab::Enhanced, "Persistent Blood Decals") => {
+            "Preserve & coagulate floor blood pools/footprints across rooms (Native) vs PS2 blood_clear"
+        }
         (OptionsTab::Enhanced, "ACES Tonemapping") => {
             "Modern ACES filmic HDR tonemapping (Native) vs strict PS2 linear clamp (1:1)"
         }

@@ -116,6 +116,85 @@ impl RenderContext {
             .store(count as u32, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Uploads `Effect2/hh_class_blood_*.c` blood quads (pools, stains, footprints, sprays) (`SH2-79`).
+    pub fn update_blood_quads(&self, quads: &[effects::GpuBloodQuad], subtractive: bool) {
+        let count = quads.len().min(effects::MAX_GPU_BLOOD_QUADS);
+        if count > 0 {
+            self.queue
+                .write_buffer(&self.blood_buffer, 0, bytemuck::cast_slice(&quads[..count]));
+        }
+        self.blood_quad_count
+            .store(count as u32, std::sync::atomic::Ordering::Relaxed);
+        self.blood_subtractive_mode
+            .store(subtractive, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Replaces the `Effect2` blood atlas texture with decoded RGBA8 data from retail `bloodtex0.tbn2`.
+    pub fn upload_blood_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        if rgba.len() < (w * h * 4) as usize {
+            return;
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Retail Effect2 Blood Atlas (bloodtex0.tbn2)"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..(w * h * 4) as usize],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.blood_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        self.blood_texture = tex;
+        self.blood_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Effect2 Blood Bind Group"),
+            layout: &self.blood_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.blood_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.fog_noise_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.fog_buffer.as_entire_binding(),
+                },
+            ],
+        });
+    }
+
     /// Replaces the lens flare atlas texture with decoded RGBA8 data from retail `lens_flare.tbn2`.
     pub fn upload_lens_flare_texture(&mut self, rgba: &[u8], width: u32, height: u32) {
         let w = width.max(1);

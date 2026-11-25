@@ -123,6 +123,30 @@ impl ActiveEnemy {
         }
     }
 
+    /// Return the entity's current health (0.0 for dead/retreated).
+    pub fn health(&self) -> f32 {
+        match self {
+            Self::LyingFigure(e) => e.stats.health,
+            Self::Mannequin(e) => e.stats.health,
+            Self::Nurse(e) => e.stats.health,
+            Self::Creeper(e) => e.stats.health,
+            Self::PyramidHead(e) => {
+                if e.battle_end_complete {
+                    0.0
+                } else {
+                    100.0
+                }
+            }
+            Self::AbstractDaddy(e) => e.stats.health,
+            Self::FleshLips(e) => e.stats.health,
+            Self::Mandarin(e) => e.stats.health,
+            Self::Eddie(e) => e.stats.health,
+            Self::TwinPyramidHead(e) => e.stats.health,
+            Self::MaryBoss(e) => e.stats.health,
+            Self::RoomInsect(e) => e.stats.health,
+        }
+    }
+
     /// Return true when the entity is dead (or Pyramid Head 1st encounter retreated).
     pub fn is_dead(&self) -> bool {
         match self {

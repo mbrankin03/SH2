@@ -1,4 +1,7 @@
-//! Core 1:1 PS2 effect simulations (`SH2-100`):
+//! Core 1:1 PS2 effect simulations (`SH2-79` & `SH2-100`):
+//! - [`blood`]: Subtractive Impact Queue blood system (`hh_class_blood_*.c`), hit sprays,
+//!   falling drops, 3-stage expanding death pools, bloody footprints (`hh_class_blood_footmark_00.c`),
+//!   and optional Persistent Room Decals & Coagulation mode (`SH2-79`).
 //! - [`fire_smoke`]: Angela's staircase fire (`stg_hotel_fire.c`, `hh_class_fire_phenomenon_00.c`,
 //!   `hh_class_flame_00..03.c`), rising smoke (`ef_smoke.c`), and toggleable native fire embers/light.
 //! - [`water_rain`]: Flooded corridor ripples (`hh_class_water_pool_00.c`, `hh_class_water_00.c`,
@@ -7,10 +10,17 @@
 //!   and shattering glass shards (`ef_broken_glass.c`, `hh_class_glass_break_phenomenon_00.c`,
 //!   `hh_class_glass_piece_00.c`).
 
+pub mod blood;
 pub mod combat_fx;
 pub mod fire_smoke;
 pub mod water_rain;
 
+pub use blood::{
+    blood_color_non_subtractive_rgba_norm, blood_color_subtractive_rgb_norm, BloodColorMode,
+    BloodEffectSystem, BloodQuadKind, BloodQuadRenderItem, BloodSystemConfig, ImpactDescriptor,
+    ImpactKind, MAX_BLOODY_STEPS, MAX_BLOOD_DROPS, MAX_BLOOD_FOOTMARKS, MAX_BLOOD_POOLS,
+    MAX_BLOOD_STAINS, SH2EE_BLOOD_SIZE_SCALE,
+};
 pub use combat_fx::{
     GlassBreakPhenomenon, GlassBreakSystem, GlassShard, ImpactSpark, ImpactSparkSystem,
     ShellCasing, ShellCasingSystem, ShellWeaponKind, SparkFlashLight, GLASS_GRAVITY_MM_S2,

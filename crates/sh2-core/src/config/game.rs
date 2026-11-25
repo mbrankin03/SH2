@@ -455,6 +455,11 @@ pub struct GameOptions {
     /// Default `false` for strict 1:1 original PS2 parity (AGENTS.md Rule 3.4).
     #[serde(default)]
     pub enable_foot_ik: bool,
+    /// Native-upgrade Persistent Room Decals & Coagulation (`effects::blood`): preserves floor
+    /// blood pools, splatters, and bloody footprints across room transitions with gradual
+    /// coagulation darkening, vs strict 1:1 PS2 `blood_clear()` on room exit (`false`).
+    #[serde(default)]
+    pub enable_persistent_blood_decals: bool,
 }
 
 /// Debug and development options.
@@ -508,6 +513,7 @@ impl Default for GameOptions {
             enable_free_item_orbit: false,
             enable_cutscene_unequip: true,
             enable_foot_ik: false,
+            enable_persistent_blood_decals: false,
         }
     }
 }

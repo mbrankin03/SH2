@@ -283,6 +283,46 @@ impl TextureLoader {
         self.load_texture(clean_rel)
     }
 
+    /// Relative candidate paths for the `Effect2` blood atlas (`data/pic/effect/bloodtex0.tbn2`,
+    /// `data/etc/effect/bloodtex0.tbn2`, and `sh2e/effect/bloodtex0.tbn2` override).
+    ///
+    /// References:
+    /// - `sh2pc.exe` `0x00690f28` (`data/pic/effect/bloodtex0.tbn2`)
+    /// - `sh2pc.exe` `0x0069322c` (`data/etc/effect/bloodtex0.tbn2`)
+    pub const BLOOD_TEXTURE_PATHS: [&'static str; 3] = [
+        "effect/bloodtex0.tbn2",
+        "pic/effect/bloodtex0.tbn2",
+        "etc/effect/bloodtex0.tbn2",
+    ];
+
+    /// Loads and decodes `bloodtex0.tbn2` (`512x512` DXT5 blood pool, splatter, drop, and
+    /// footprint atlas) honoring the active `WorldTextureQuality` tier and `sh2e` overrides.
+    pub fn load_blood_texture(
+        &self,
+        prefer_sh2ee: bool,
+        apply_4k: bool,
+    ) -> Result<DecodedTexture, AssetError> {
+        let candidates: &[&str] = if prefer_sh2ee {
+            &Self::BLOOD_TEXTURE_PATHS
+        } else {
+            &Self::BLOOD_TEXTURE_PATHS[1..]
+        };
+
+        let mut last_err = None;
+        for &rel in candidates {
+            match self.load_texture_for_quality(rel, prefer_sh2ee, apply_4k) {
+                Ok(tex) => return Ok(tex),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            AssetError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "bloodtex0.tbn2 not found",
+            ))
+        }))
+    }
+
     /// Resolves an asset path, prioritizing `sh2e/` before falling back to `data/`.
     ///
     /// Performs case-insensitive matching across path components on case-sensitive filesystems.
@@ -1086,5 +1126,39 @@ mod tests {
             .is_none());
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_blood_texture_decodes_retail_bloodtex0() {
+        let resolver = crate::AssetPathResolver::resolve();
+        if !resolver
+            .data_dir
+            .join("pic/effect/bloodtex0.tbn2")
+            .is_file()
+        {
+            return;
+        }
+        let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+        let decoded = loader
+            .load_blood_texture(false, false)
+            .expect("decode vanilla bloodtex0.tbn2");
+        assert_eq!((decoded.width, decoded.height), (512, 512));
+        assert_eq!(decoded.rgba.len(), 512 * 512 * 4);
+
+        // Verify non-zero alpha exists in:
+        // 1. Top-left splatter/pool quadrant (0..256, 0..256)
+        // 2. Bottom-left footprint quadrant (0..128, 384..512)
+        // 3. Bottom-right spray puff quadrant (256..512, 256..512)
+        let has_alpha_in_rect = |x0: usize, y0: usize, x1: usize, y1: usize| -> bool {
+            (y0..y1).any(|y| {
+                (x0..x1).any(|x| {
+                    let a = decoded.rgba[(y * 512 + x) * 4 + 3];
+                    a > 128
+                })
+            })
+        };
+        assert!(has_alpha_in_rect(0, 0, 256, 256));
+        assert!(has_alpha_in_rect(0, 384, 128, 512));
+        assert!(has_alpha_in_rect(256, 256, 512, 512));
     }
 }

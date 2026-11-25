@@ -2042,6 +2042,7 @@ name = "sh2-assets"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "flate2",
  "image",
  "serde",
  "serde_json",

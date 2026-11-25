@@ -1,5 +1,5 @@
-//! Direct zero-copy reader and Central Directory indexer for `ZIP_STORED` (32-bit and ZIP64)
-//! 4K AI texture pack archives (`sh2_4k_textures.zip`, `sh2_4k_normals.zip`).
+//! Direct reader and Central Directory indexer for `ZIP_STORED` and `DEFLATE` (32-bit and ZIP64)
+//! 4K AI texture pack and community mod `.zip` archives.
 
 use std::collections::HashMap;
 use std::fs;
@@ -12,8 +12,57 @@ use super::{decode_texture_bytes, DecodedTexture};
 pub(crate) type ZipEntryIndex = HashMap<String, (u64, u64)>;
 pub(crate) type ZipIndexCache = Arc<Mutex<HashMap<PathBuf, ZipEntryIndex>>>;
 
+const MAX_ZIP_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ZIP_TEXTURE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Reads and (if `DEFLATE`-compressed) decompresses a single ZIP entry at `local_hdr_ofs`,
+/// enforcing `max_bytes` on both compressed and decompressed payload sizes to prevent zip bombs.
+fn read_zip_entry_payload(
+    zip_path: &Path,
+    local_hdr_ofs: u64,
+    comp_size: u64,
+    max_bytes: u64,
+) -> Option<Vec<u8>> {
+    let mut file = fs::File::open(zip_path).ok()?;
+    let file_len = file.metadata().ok()?.len();
+
+    let mut lhdr = [0u8; 30];
+    file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
+    file.read_exact(&mut lhdr).ok()?;
+    if &lhdr[0..4] != b"PK\x03\x04" {
+        return None;
+    }
+    let compression = u16::from_le_bytes(lhdr[8..10].try_into().ok()?);
+    let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
+    let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
+    let data_start = local_hdr_ofs
+        .checked_add(30)?
+        .checked_add(lname_len)?
+        .checked_add(lextra_len)?;
+    let data_end = data_start.checked_add(comp_size)?;
+    if data_end > file_len || comp_size > max_bytes {
+        return None;
+    }
+    file.seek(SeekFrom::Start(data_start)).ok()?;
+    let mut payload = vec![0u8; comp_size as usize];
+    file.read_exact(&mut payload).ok()?;
+    match compression {
+        0 => Some(payload),
+        8 => {
+            let decoder = flate2::read::DeflateDecoder::new(&payload[..]);
+            let mut out = Vec::new();
+            decoder.take(max_bytes + 1).read_to_end(&mut out).ok()?;
+            if (out.len() as u64) > max_bytes {
+                return None;
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
 /// Reads raw uncompressed bytes for an exact or case-insensitive `entry_path` from a `ZIP_STORED`
-/// archive, caching the parsed Central Directory index in `zip_index_cache`.
+/// or `DEFLATE` archive, caching the parsed Central Directory index in `zip_index_cache`.
 pub(crate) fn read_entry_bytes_from_stored_zip(
     zip_index_cache: &ZipIndexCache,
     zip_path: &Path,
@@ -37,44 +86,11 @@ pub(crate) fn read_entry_bytes_from_stored_zip(
     };
 
     let (local_hdr_ofs, comp_size) = cached_entry?;
-    let mut file = fs::File::open(zip_path).ok()?;
-    let file_len = file.metadata().ok()?.len();
-
-    let mut lhdr = [0u8; 30];
-    file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
-    file.read_exact(&mut lhdr).ok()?;
-    if &lhdr[0..4] != b"PK\x03\x04" {
-        return None;
-    }
-    let compression = u16::from_le_bytes(lhdr[8..10].try_into().ok()?);
-    let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
-    let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
-    let data_start = local_hdr_ofs
-        .checked_add(30)?
-        .checked_add(lname_len)?
-        .checked_add(lextra_len)?;
-    let data_end = data_start.checked_add(comp_size)?;
-    if data_end > file_len || comp_size > 256 * 1024 * 1024 {
-        return None;
-    }
-    file.seek(SeekFrom::Start(data_start)).ok()?;
-    let mut payload = vec![0u8; comp_size as usize];
-    file.read_exact(&mut payload).ok()?;
-    match compression {
-        0 => Some(payload),
-        8 => {
-            let mut decoder = flate2::read::DeflateDecoder::new(&payload[..]);
-            let mut out = Vec::new();
-            decoder.read_to_end(&mut out).ok()?;
-            Some(out)
-        }
-        _ => None,
-    }
+    read_zip_entry_payload(zip_path, local_hdr_ofs, comp_size, MAX_ZIP_ENTRY_BYTES)
 }
 
-/// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
-/// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive,
-/// caching the parsed Central Directory index in `zip_index_cache`.
+/// Reads a `<sub_dir>/<tex_id>.{dds,png}` entry directly from a `.zip` texture pack archive
+/// (`ZIP_STORED` or `DEFLATE`, 32-bit or ZIP64), caching the Central Directory index.
 pub(super) fn read_texture_from_stored_zip(
     zip_index_cache: &ZipIndexCache,
     zip_path: &Path,
@@ -84,9 +100,8 @@ pub(super) fn read_texture_from_stored_zip(
     read_relative_texture_from_stored_zip(zip_index_cache, zip_path, &format!("{sub}/{tex_id}"))
 }
 
-/// Reads a `<rel_no_ext>.{dds,png}` entry directly from a zero-compression (`ZIP_STORED`,
-/// supporting standard 32-bit and ZIP64 local/central headers) `.zip` texture pack archive,
-/// caching the parsed Central Directory index in `zip_index_cache`.
+/// Reads a `<rel_no_ext>.{dds,png}` entry directly from a `.zip` texture pack archive
+/// (`ZIP_STORED` or `DEFLATE`, 32-bit or ZIP64), caching the Central Directory index.
 pub(super) fn read_relative_texture_from_stored_zip(
     zip_index_cache: &ZipIndexCache,
     zip_path: &Path,
@@ -110,28 +125,8 @@ pub(super) fn read_relative_texture_from_stored_zip(
     };
 
     let (entry_name, (local_hdr_ofs, comp_size)) = cached_entry?;
-    let mut file = fs::File::open(zip_path).ok()?;
-    let file_len = file.metadata().ok()?.len();
-
-    let mut lhdr = [0u8; 30];
-    file.seek(SeekFrom::Start(local_hdr_ofs)).ok()?;
-    file.read_exact(&mut lhdr).ok()?;
-    if &lhdr[0..4] != b"PK\x03\x04" {
-        return None;
-    }
-    let lname_len = u16::from_le_bytes(lhdr[26..28].try_into().ok()?) as u64;
-    let lextra_len = u16::from_le_bytes(lhdr[28..30].try_into().ok()?) as u64;
-    let data_start = local_hdr_ofs
-        .checked_add(30)?
-        .checked_add(lname_len)?
-        .checked_add(lextra_len)?;
-    let data_end = data_start.checked_add(comp_size)?;
-    if data_end > file_len || comp_size > 128 * 1024 * 1024 {
-        return None;
-    }
-    file.seek(SeekFrom::Start(data_start)).ok()?;
-    let mut payload = vec![0u8; comp_size as usize];
-    file.read_exact(&mut payload).ok()?;
+    let payload =
+        read_zip_entry_payload(zip_path, local_hdr_ofs, comp_size, MAX_ZIP_TEXTURE_BYTES)?;
     decode_texture_bytes(&payload, Path::new(&entry_name)).ok()
 }
 
@@ -236,11 +231,129 @@ pub(crate) fn build_stored_zip_central_directory_index(zip_path: &Path) -> Optio
                         ep += data_sz;
                     }
                 }
-                index.insert(entry_name.to_string(), (local_hdr_ofs, comp_size));
+                index.insert(entry_name.replace('\\', "/"), (local_hdr_ofs, comp_size));
             }
         }
         pos = next_pos;
     }
 
     Some(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_deflate_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use flate2::{write::DeflateEncoder, Compression};
+        use std::io::Write;
+
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for &(name, raw) in entries {
+            let mut enc = DeflateEncoder::new(Vec::new(), Compression::fast());
+            enc.write_all(raw).unwrap();
+            let comp = enc.finish().unwrap();
+
+            let offset = out.len() as u32;
+            let name_bytes = name.as_bytes();
+            let comp_sz = comp.len() as u32;
+            let uncomp_sz = raw.len() as u32;
+            out.extend_from_slice(&0x0403_4b50u32.to_le_bytes());
+            out.extend_from_slice(&20u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&8u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&comp_sz.to_le_bytes());
+            out.extend_from_slice(&uncomp_sz.to_le_bytes());
+            out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(&comp);
+
+            central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&8u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&comp_sz.to_le_bytes());
+            central.extend_from_slice(&uncomp_sz.to_le_bytes());
+            central.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name_bytes);
+        }
+        let cd_offset = out.len() as u32;
+        let cd_size = central.len() as u32;
+        let count = entries.len() as u16;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn read_relative_texture_supports_deflate_png() {
+        let mut png_bytes = Vec::new();
+        let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 128, 255]));
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+
+        let zip_bytes = build_deflate_zip(&[("pic/title.png", &png_bytes)]);
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_deflate_tex_test_{}_{:?}.zip",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&tmp, &zip_bytes).unwrap();
+
+        let cache: ZipIndexCache = Arc::new(Mutex::new(HashMap::new()));
+        let decoded = read_relative_texture_from_stored_zip(&cache, &tmp, "pic/title");
+        let _ = fs::remove_file(&tmp);
+
+        let tex =
+            decoded.expect("DEFLATE PNG should decode via read_relative_texture_from_stored_zip");
+        assert_eq!((tex.width, tex.height), (2, 2));
+    }
+
+    #[test]
+    fn read_entry_bytes_rejects_oversized_deflate_bomb() {
+        // 257 MiB of zeros compresses down to ~260 KB, well under comp_size cap,
+        // so only the decompressed `.take(MAX_ZIP_ENTRY_BYTES + 1)` guard catches it.
+        let bomb_raw = vec![0u8; 257 * 1024 * 1024];
+        let zip_bytes = build_deflate_zip(&[("bomb.bin", &bomb_raw)]);
+        drop(bomb_raw);
+
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_deflate_bomb_test_{}_{:?}.zip",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&tmp, &zip_bytes).unwrap();
+
+        let cache: ZipIndexCache = Arc::new(Mutex::new(HashMap::new()));
+        let res = read_entry_bytes_from_stored_zip(&cache, &tmp, "bomb.bin");
+        let _ = fs::remove_file(&tmp);
+
+        assert!(res.is_none(), "Oversized DEFLATE payload must be rejected");
+    }
 }

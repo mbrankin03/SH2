@@ -142,13 +142,13 @@ impl ModVfs {
     }
 
     /// Resolves a relative asset path to an on-disk file across directory-backed active `mods/`
-    /// layers only (in descending priority order).
+    /// layers only (in descending priority order), checking `sh2e/` > `data/` > root.
     #[must_use]
     pub fn resolve_mod_file(&self, rel_path: impl AsRef<Path>) -> Option<PathBuf> {
         let rel = normalize_rel_path(rel_path.as_ref());
         for m in &self.active_mods {
             if let ModSource::Directory(ref root) = m.source {
-                if let Some(p) = resolve_in_dir_case_insensitive(root, &rel) {
+                if let Some(p) = resolve_mod_dir_candidates(root, &rel) {
                     return Some(p);
                 }
             }
@@ -156,14 +156,14 @@ impl ModVfs {
         None
     }
 
-    /// Resolves a relative asset path to an on-disk file across directory-backed mods, `sh2e/`,
-    /// and `data/` (useful for streaming media such as `.sfd`, `.mp4`, `.mkv`, or `.bik`).
+    /// Resolves a relative asset path to an on-disk file across directory-backed mods
+    /// (`sh2e/` > `data/` > root), `sh2e/`, and `data/` (useful for streaming media).
     #[must_use]
     pub fn resolve_disk_path(&self, rel_path: impl AsRef<Path>) -> Option<PathBuf> {
         let rel = normalize_rel_path(rel_path.as_ref());
         for m in &self.active_mods {
             if let ModSource::Directory(ref root) = m.source {
-                if let Some(p) = resolve_in_dir_case_insensitive(root, &rel) {
+                if let Some(p) = resolve_mod_dir_candidates(root, &rel) {
                     return Some(p);
                 }
             }
@@ -185,15 +185,9 @@ impl ModVfs {
         for m in &self.active_mods {
             match &m.source {
                 ModSource::Directory(root) => {
-                    for cand in [
-                        PathBuf::from("sh2e").join(&rel),
-                        PathBuf::from("data").join(&rel),
-                        rel.clone(),
-                    ] {
-                        if let Some(p) = resolve_in_dir_case_insensitive(root, &cand) {
-                            if let Ok(bytes) = fs::read(&p) {
-                                return Some((m.id.clone(), bytes));
-                            }
+                    if let Some(p) = resolve_mod_dir_candidates(root, &rel) {
+                        if let Ok(bytes) = fs::read(&p) {
+                            return Some((m.id.clone(), bytes));
                         }
                     }
                 }
@@ -379,7 +373,8 @@ fn read_mod_zip_entry(
             index
                 .keys()
                 .find(|k| {
-                    let lower = k.to_ascii_lowercase();
+                    let norm = k.replace('\\', "/");
+                    let lower = norm.to_ascii_lowercase();
                     let suf_lower = suf.to_ascii_lowercase();
                     lower.ends_with(&suf_lower)
                         && lower[..lower.len() - suf_lower.len()]
@@ -394,6 +389,19 @@ fn read_mod_zip_entry(
     }?;
 
     read_entry_bytes_from_stored_zip(zip_index_cache, zip_path, &matched_key)
+}
+
+fn resolve_mod_dir_candidates(root: &Path, rel: &Path) -> Option<PathBuf> {
+    for cand in [
+        PathBuf::from("sh2e").join(rel),
+        PathBuf::from("data").join(rel),
+        rel.to_path_buf(),
+    ] {
+        if let Some(p) = resolve_in_dir_case_insensitive(root, &cand) {
+            return Some(p);
+        }
+    }
+    None
 }
 
 fn read_dir_mod_metadata(mod_root: &Path) -> Option<ModMetadata> {
@@ -715,6 +723,98 @@ mod tests {
                 .as_deref(),
             Some(b"SH2E_SAVEBG".as_slice())
         );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn vfs_resolves_dir_sh2e_data_root_priority_and_zip_backslashes() {
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_vfs_dir_priority_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        let mods_dir = tmp.join("mods");
+        let dir_mod = mods_dir.join("dir_mod");
+        fs::create_dir_all(dir_mod.join("sh2e/movie")).unwrap();
+        fs::create_dir_all(dir_mod.join("data/movie")).unwrap();
+        fs::create_dir_all(dir_mod.join("movie")).unwrap();
+        fs::write(dir_mod.join("sh2e/movie/intro.mp4"), b"SH2E_MP4").unwrap();
+        fs::write(dir_mod.join("data/movie/intro.mp4"), b"DATA_MP4").unwrap();
+        fs::write(dir_mod.join("movie/intro.mp4"), b"ROOT_MP4").unwrap();
+        fs::write(dir_mod.join("data/movie/ending.mp4"), b"DATA_ONLY_MP4").unwrap();
+
+        let backslash_zip =
+            build_test_stored_zip(&[(r"Borat Mod\sh2e\menu\mc\savebg.tbn2", b"BS_SAVEBG")]);
+        fs::write(mods_dir.join("bs_mod.zip"), backslash_zip).unwrap();
+
+        let pkgs = discover_mods(&mods_dir, &[]);
+        let vfs = ModVfs::from_packages(&pkgs, None, tmp.join("data"));
+
+        let resolved_intro = vfs.resolve_mod_file("movie/intro.mp4").unwrap();
+        assert!(resolved_intro.ends_with("sh2e/movie/intro.mp4"));
+        let disk_ending = vfs.resolve_disk_path("movie/ending.mp4").unwrap();
+        assert!(disk_ending.ends_with("data/movie/ending.mp4"));
+        assert_eq!(
+            vfs.read_mod_bytes("menu/mc/savebg.tbn2")
+                .map(|(_, b)| b)
+                .as_deref(),
+            Some(b"BS_SAVEBG".as_slice())
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    fn build_minimal_valid_mdl(bone_count: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; 0x40 + 0x98 + (bone_count as usize) * 65];
+        buf[0x10..0x14].copy_from_slice(&0x40u32.to_le_bytes()); // mdl_ofs = 0x40
+        buf[0x40..0x44].copy_from_slice(&[0x03, 0x00, 0xFF, 0xFF]); // MDL_MAGIC
+        buf[0x48..0x4C].copy_from_slice(&0x98u32.to_le_bytes()); // init_ofs
+        buf[0x4C..0x50].copy_from_slice(&bone_count.to_le_bytes());
+        buf[0x50..0x54].copy_from_slice(&(0x98 + bone_count * 64).to_le_bytes()); // skel_ofs
+        buf
+    }
+
+    #[test]
+    fn texture_loader_load_model_with_hd_overrides_uses_mod_vfs_and_falls_back_on_corrupt() {
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_mdl_vfs_test_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        let mods_dir = tmp.join("mods");
+        let data_dir = tmp.join("data");
+        fs::create_dir_all(mods_dir.join("valid_mod/chr/jms")).unwrap();
+        fs::create_dir_all(data_dir.join("chr/jms")).unwrap();
+
+        let vanilla_mdl = build_minimal_valid_mdl(0);
+        let mod_mdl = build_minimal_valid_mdl(1);
+        fs::write(data_dir.join("chr/jms/hhh_jms.mdl"), &vanilla_mdl).unwrap();
+        fs::write(mods_dir.join("valid_mod/chr/jms/hhh_jms.mdl"), &mod_mdl).unwrap();
+
+        let pkgs = discover_mods(&mods_dir, &[]);
+        let vfs = Arc::new(ModVfs::from_packages(&pkgs, None, data_dir.clone()));
+        let loader = crate::formats::texture::TextureLoader::new(&data_dir, None::<&Path>)
+            .with_mod_vfs(Arc::clone(&vfs));
+
+        let (van, hd) = loader
+            .load_model_with_hd_overrides("chr/jms/hhh_jms.mdl")
+            .expect("valid mod .mdl should load");
+        assert_eq!(van.bone_count, 1, "mod override should load bone_count = 1");
+        assert!(hd.is_some());
+
+        // Overwrite mod .mdl with corrupt bytes -> must fall back cleanly to vanilla .mdl
+        fs::write(mods_dir.join("valid_mod/chr/jms/hhh_jms.mdl"), b"CORRUPT").unwrap();
+        let (van_fb, hd_fb) = loader
+            .load_model_with_hd_overrides("chr/jms/hhh_jms.mdl")
+            .expect("corrupt mod .mdl must fall back to vanilla");
+        assert_eq!(
+            van_fb.bone_count, 0,
+            "fallback should load vanilla bone_count = 0"
+        );
+        assert!(hd_fb.is_none());
 
         let _ = fs::remove_dir_all(&tmp);
     }

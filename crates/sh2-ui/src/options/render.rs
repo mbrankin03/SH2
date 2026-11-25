@@ -639,6 +639,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     let label_right_x = (x_offset + 240.0 * scale_x).round() as usize;
     // `option_font` (`0x0021a320`): value column `x = 0x10e` (270) unselected, `0x10c` (268) selected
     let val_left_x = (x_offset + 270.0 * scale_x).round() as usize;
+    let max_val_w = (182.0 * scale_x).round().max(64.0) as usize;
     let font_size = (22.5 * scale_y).round().max(14.0) as usize;
     let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
     let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
@@ -735,11 +736,15 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                         );
                     }
                 } else {
+                    let mut val_font_size = font_size;
+                    while val_font_size > 11 && font.text_width(&val, val_font_size) > max_val_w {
+                        val_font_size -= 1;
+                    }
                     font.draw_line_styled(
                         rast,
                         &val,
                         (val_left_x, y),
-                        font_size,
+                        val_font_size,
                         unselected_color,
                         false,
                     );
@@ -748,7 +753,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
                             rast,
                             &val,
                             (val_left_x.saturating_sub(pop_dx), y.saturating_sub(pop_dy)),
-                            font_size,
+                            val_font_size,
                             Sh2TextColor::White,
                             false,
                         );

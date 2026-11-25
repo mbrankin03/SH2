@@ -1,10 +1,13 @@
 //! Scene render pass encoding, map batch submission, skeletal mesh passes, and compute dispatch for [`RenderContext`].
 
+mod mirror_pass;
+mod skeletal_pass;
+mod water_pass;
+
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::gpu_map::GpuMap;
-use crate::skeletal::SkeletalPassStage;
 use crate::{RenderContext, SkeletalDrawItem};
 use sh2_assets::formats::map::{BatchGroup, MapFile};
 
@@ -80,8 +83,7 @@ impl RenderContext {
         }
 
         // 0. Spotlight Shadow Depth Passes:
-        //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`), gated on
-        //        `enable_fog`, `ModernVolumetric`, `volumetric_light`, and `density > 0.0`.
+        //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`)
         if self.config.enable_fog
             && self
                 .volumetric_god_rays_enabled
@@ -105,200 +107,12 @@ impl RenderContext {
             );
         }
 
-        // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`):
-        //     When `lake_water_enabled` && `water_reflection_pass_enabled`, mirror the camera
-        //     across `y = water_plane_height_mm` and render `Opaque` map + skeletal meshes into
-        //     `water_pipeline.reflection_view`, then restore the main camera uniforms.
-        if self
-            .lake_water_enabled
-            .load(std::sync::atomic::Ordering::Relaxed)
-            && self
-                .water_reflection_pass_enabled
-                .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            if let Ok(main_cam) = self.last_camera_uniforms.lock().map(|g| *g) {
-                let plane_y = f32::from_bits(
-                    self.water_plane_height_mm
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                );
-                let main_vp = glam::Mat4::from_cols_array_2d(&main_cam.view_proj);
-                let refl_vp = crate::water::mirrored_reflection_view_proj(main_vp, plane_y);
-                let refl_cam_pos = crate::water::LakeWaterPipeline::mirrored_camera_pos(
-                    glam::Vec3::new(
-                        main_cam.cam_pos[0],
-                        main_cam.cam_pos[1],
-                        main_cam.cam_pos[2],
-                    ),
-                    plane_y,
-                );
-                let refl_uniforms = crate::pipeline::CameraUniforms {
-                    view_proj: refl_vp.to_cols_array_2d(),
-                    inv_proj: main_cam.inv_proj,
-                    cam_pos: [
-                        refl_cam_pos.x,
-                        refl_cam_pos.y,
-                        refl_cam_pos.z,
-                        main_cam.cam_pos[3],
-                    ],
-                    inv_view_proj: if refl_vp.determinant().abs() > 1e-12 {
-                        refl_vp.inverse().to_cols_array_2d()
-                    } else {
-                        main_cam.inv_view_proj
-                    },
-                    clip_plane: [0.0; 4],
-                };
-                self.queue
-                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&refl_uniforms));
-                let mut refl_encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Water Planar Reflection Encoder"),
-                        });
-                {
-                    let mut rpass = refl_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Water Planar Reflection Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &self.water_pipeline.reflection_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(self.room_clear_color()),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.water_pipeline.reflection_depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    if let Some(map) = gpu_map {
-                        self.draw_map_batches_for_group(
-                            &mut rpass,
-                            map,
-                            map_texture_bind_groups,
-                            BatchGroup::Opaque,
-                            &self.geometry_pipeline.pipeline,
-                        );
-                    }
-                    if !skeletal_meshes.is_empty() {
-                        self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
-                    }
-                }
-                self.queue.submit(Some(refl_encoder.finish()));
-                self.queue
-                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_cam));
-            }
-        }
+        // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`)
+        self.encode_water_reflection_pass(gpu_map, map_texture_bind_groups, skeletal_meshes);
 
-        // 0d. Stenciled Planar Mirror Render Pass (`SH2-101`):
-        //     Masks the mirror surface into `stencil_depth_view` (`stencil = 1`), reflects the
-        //     real room + characters + live flashlight across the mirror plane (`FrontFace::Cw`,
-        //     world-space mirror-plane clipping), and restores `main_cam` with main-pass clipping
-        //     to suppress pre-baked PS2 duplicate room geometry behind the mirror plane.
-        let active_mirror = self.planar_mirror.lock().ok().and_then(|g| *g);
-        let saved_main_cam = if let Some(ref mirror_spec) = active_mirror {
-            if let Ok(main_cam) = self.last_camera_uniforms.lock().map(|g| *g) {
-                let refl_cam = crate::mirror::reflected_camera_uniforms(&main_cam, mirror_spec);
-                self.queue
-                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&refl_cam));
-
-                let mut mirror_encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Stenciled Planar Mirror Encoder"),
-                        });
-                {
-                    let mut rpass = mirror_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Stenciled Planar Mirror Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &self.hdr_color_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(self.room_clear_color()),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.stencil_depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-
-                    rpass.set_stencil_reference(1);
-
-                    // Step 1: Write stencil = 1 inside the mirror surface footprint.
-                    let mut drew_decal_mask = false;
-                    if let (Some(map), Some(batch_idx)) = (gpu_map, mirror_spec.decal_batch_index) {
-                        if let Some(batch) = map.batches.get(batch_idx) {
-                            if map.is_batch_visible(batch) {
-                                rpass.set_pipeline(&self.mirror_pipeline.map_stencil_mask_pipeline);
-                                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                                rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                                rpass.set_index_buffer(
-                                    batch.index_buffer.slice(..),
-                                    wgpu::IndexFormat::Uint32,
-                                );
-                                rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
-                                drew_decal_mask = true;
-                            }
-                        }
-                    }
-                    if !drew_decal_mask {
-                        rpass.set_pipeline(&self.mirror_pipeline.stencil_mask_pipeline);
-                        rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                        rpass.set_vertex_buffer(
-                            0,
-                            self.mirror_pipeline.quad_vertex_buffer.slice(..),
-                        );
-                        rpass.set_index_buffer(
-                            self.mirror_pipeline.quad_index_buffer.slice(..),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        rpass.draw_indexed(0..6, 0, 0..1);
-                    }
-
-                    // Step 2: Render reflected opaque map geometry & skeletal meshes where stencil == 1.
-                    if let Some(map) = gpu_map {
-                        self.draw_map_batches_for_group(
-                            &mut rpass,
-                            map,
-                            map_texture_bind_groups,
-                            BatchGroup::Opaque,
-                            &self.geometry_pipeline.mirror_reflected_pipeline,
-                        );
-                    }
-                    if !skeletal_meshes.is_empty() {
-                        self.draw_skeletal_meshes_mirror(&mut rpass, skeletal_meshes);
-                    }
-                }
-                self.queue.submit(Some(mirror_encoder.finish()));
-
-                let mut main_pass_cam = main_cam;
-                main_pass_cam.clip_plane =
-                    mirror_spec.clip_plane(mirror_spec.main_pass_clip_bias_mm);
-                self.queue
-                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_pass_cam));
-                Some(main_cam)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // 0d. Stenciled Planar Mirror Render Pass (`SH2-101`)
+        let saved_main_cam =
+            self.encode_planar_mirror_pass(gpu_map, map_texture_bind_groups, skeletal_meshes);
 
         // Determine PS2 `Check_DrawOrder` (`0x001a08a0`): on maps `0x000a007d` / `0x00090016`
         // during gameplay, stencil shadows are composited onto the static room BEFORE characters.
@@ -368,9 +182,7 @@ impl RenderContext {
                 rpass.draw_indexed(0..6, 0, 0..1);
             }
 
-            // 1c. Render static level Coplanar Decals (including `er01.map` Batch 17 semi-transparent dirty mirror glass
-            // with `depth_compare: LessEqual` and `depth_write_enabled: false`, blending over reflected skeletal meshes
-            // while occluded behind the real foreground character)
+            // 1c. Render static level Coplanar Decals
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
                     &mut rpass,
@@ -398,7 +210,7 @@ impl RenderContext {
                 rpass.draw_indexed(0..6, 0, 0..1);
             }
 
-            // 1d. Render static level semi-transparent batches (glass, water, transparent foliage fringes)
+            // 1d. Render static level semi-transparent batches
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
                     &mut rpass,
@@ -409,7 +221,7 @@ impl RenderContext {
                 );
             }
 
-            // 1d-1. Render Toluca Lake water surface (`SH2-80`: strict PS2 specular vs native planar reflections + oar ripples)
+            // 1d-1. Render Toluca Lake water surface (`SH2-80`)
             if self
                 .lake_water_enabled
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -647,154 +459,6 @@ impl RenderContext {
         if let Some(main_cam) = saved_main_cam {
             self.queue
                 .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_cam));
-        }
-    }
-
-    fn draw_skeletal_meshes_mirror<'a>(
-        &'a self,
-        rpass: &mut wgpu::RenderPass<'a>,
-        skeletal_meshes: &'a [SkeletalDrawItem<'a>],
-    ) {
-        let stages = [
-            SkeletalPassStage::Opaque,
-            SkeletalPassStage::TransparentCore,
-            SkeletalPassStage::TransparentFringe,
-        ];
-        for stage in stages {
-            let want_transparent = stage != SkeletalPassStage::Opaque;
-            let has_any = skeletal_meshes.iter().any(|(mesh, _, _)| {
-                mesh.primitives
-                    .iter()
-                    .any(|p| p.is_transparent == want_transparent && p.index_count > 0)
-            });
-            if !has_any {
-                continue;
-            }
-            let mut active_cull: Option<bool> = None;
-            rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-            for (mesh, _matrices, texture_groups) in skeletal_meshes {
-                rpass.set_bind_group(1, &mesh.bone_bind_group, &[]);
-                rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                let mut current_tex: Option<u16> = None;
-                for prim in &mesh.primitives {
-                    if prim.is_transparent != want_transparent {
-                        continue;
-                    }
-                    // Always draw the full character (including head & hair) inside the mirror reflection.
-                    if let Some(range) = prim.draw_range(mesh.player_visibility, true) {
-                        if active_cull != Some(prim.backface_culling) {
-                            rpass.set_pipeline(
-                                self.skeletal_pipeline
-                                    .select_mirror_pipeline(stage, prim.backface_culling),
-                            );
-                            active_cull = Some(prim.backface_culling);
-                        }
-                        let tex_idx = prim.texture_index;
-                        if current_tex != Some(tex_idx) {
-                            let bg = match texture_groups {
-                                Some(groups) if (tex_idx as usize) < groups.len() => {
-                                    &groups[tex_idx as usize]
-                                }
-                                _ => &self.default_texture_bind_group,
-                            };
-                            rpass.set_bind_group(2, &**bg, &[]);
-                            current_tex = Some(tex_idx);
-                        }
-                        rpass.set_bind_group(
-                            3,
-                            &mesh.material_bind_group,
-                            &[prim.material_dynamic_offset],
-                        );
-                        rpass.draw_indexed(range, 0, 0..1);
-                    }
-                }
-            }
-        }
-    }
-
-    fn draw_skeletal_meshes<'a>(
-        &'a self,
-        rpass: &mut wgpu::RenderPass<'a>,
-        skeletal_meshes: &'a [SkeletalDrawItem<'a>],
-    ) {
-        let stages = [
-            SkeletalPassStage::Opaque,
-            SkeletalPassStage::TransparentCore,
-            SkeletalPassStage::TransparentFringe,
-        ];
-
-        for stage in stages {
-            let want_transparent = stage != SkeletalPassStage::Opaque;
-            let has_any = skeletal_meshes.iter().enumerate().any(|(i, (mesh, _, _))| {
-                let is_mirror_duplicate = skeletal_meshes[..i]
-                    .iter()
-                    .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
-                mesh.primitives.iter().any(|p| {
-                    p.is_transparent == want_transparent
-                        && p.draw_range(mesh.player_visibility, is_mirror_duplicate)
-                            .is_some()
-                })
-            });
-            if !has_any {
-                continue;
-            }
-
-            let mut active_pipeline_key: Option<(bool, bool)> = None;
-            rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-
-            for (i, (mesh, _matrices, texture_groups)) in skeletal_meshes.iter().enumerate() {
-                let is_mirror_duplicate = skeletal_meshes[..i]
-                    .iter()
-                    .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
-                let bone_bg = if is_mirror_duplicate {
-                    &mesh.mirror_bone_bind_group
-                } else {
-                    &mesh.bone_bind_group
-                };
-                rpass.set_bind_group(1, bone_bg, &[]);
-                rpass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                rpass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-
-                let mut current_tex: Option<u16> = None;
-                for prim in &mesh.primitives {
-                    if prim.is_transparent != want_transparent {
-                        continue;
-                    }
-                    if let Some(range) =
-                        prim.draw_range(mesh.player_visibility, is_mirror_duplicate)
-                    {
-                        let pkey = (prim.backface_culling, is_mirror_duplicate);
-                        if active_pipeline_key != Some(pkey) {
-                            rpass.set_pipeline(self.skeletal_pipeline.select_pipeline(
-                                stage,
-                                prim.backface_culling,
-                                is_mirror_duplicate,
-                            ));
-                            active_pipeline_key = Some(pkey);
-                        }
-
-                        let tex_idx = prim.texture_index;
-                        if current_tex != Some(tex_idx) {
-                            let bg = match texture_groups {
-                                Some(groups) if (tex_idx as usize) < groups.len() => {
-                                    &groups[tex_idx as usize]
-                                }
-                                _ => &self.default_texture_bind_group,
-                            };
-                            rpass.set_bind_group(2, &**bg, &[]);
-                            current_tex = Some(tex_idx);
-                        }
-
-                        rpass.set_bind_group(
-                            3,
-                            &mesh.material_bind_group,
-                            &[prim.material_dynamic_offset],
-                        );
-                        rpass.draw_indexed(range, 0, 0..1);
-                    }
-                }
-            }
         }
     }
 

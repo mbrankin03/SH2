@@ -229,15 +229,17 @@ impl RoomController for LoadingScreenTestRoomController {
             occlusion_query_set: None,
         }));
 
-        // Sync SH2:EE HD (256×256) vs strict 1:1 Vanilla (64×64) footmark sprite from Options.
-        let use_hd_footmark = state
+        // Sync 4K AI Master (1024×1024), SH2:EE HD (256×256), or strict 1:1 Vanilla (64×64) footmark sprite from Options.
+        let quality = state
             .menu_ctrl
             .options_menu
             .original_config
             .video
-            .texture_quality
-            != sh2_core::WorldTextureQuality::OriginalPs2;
+            .texture_quality;
+        let use_hd_footmark = quality != sh2_core::WorldTextureQuality::OriginalPs2;
+        let use_4k_footmark = quality == sh2_core::WorldTextureQuality::Ai4kMaster;
         state.loading_screen_test.loading_screen.use_hd_footmark = use_hd_footmark;
+        state.loading_screen_test.loading_screen.use_4k_footmark = use_4k_footmark;
 
         // 2. Render full-brightness LoadingScreen in centered 4:3 PS2 UI viewport
         let loading_alpha = state.loading_screen_test.loading_screen.fade_alpha;
@@ -282,8 +284,10 @@ impl RoomController for LoadingScreenTestRoomController {
         }
         let test = &state.loading_screen_test;
         let ls = &test.loading_screen;
-        let sprite = FootstepSprite::get_for_hd(ls.use_hd_footmark);
-        let sprite_src = if sprite.is_hd_override {
+        let sprite = FootstepSprite::get_for_quality(ls.use_hd_footmark, ls.use_4k_footmark);
+        let sprite_src = if ls.use_4k_footmark && sprite.width >= 1024 {
+            "4K AI Master mods/sh2_4k_textures/effect/footmark.dds"
+        } else if sprite.is_hd_override {
             "SH2:EE HD sh2e/effect/footmark.tbn2"
         } else if sprite.from_retail_asset {
             "retail data/etc/effect/footmark.tbn2"

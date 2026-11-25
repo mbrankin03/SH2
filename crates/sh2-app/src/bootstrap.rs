@@ -267,7 +267,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     // Atmospheric Silent Hill lighting & fog (calibrated for current room)
     render_ctx.update_fog(&fog_uniforms);
 
-    // Preload authentic 2D UI / Title screen textures (with active mods/ overlay)
+    // Preload authentic 2D UI / Title screen textures (with active mods/ overlay) honoring `startup_config.video.texture_quality` (`SH2-142`)
     let boot_resolver = sh2_assets::AssetPathResolver::resolve();
     let boot_config_path = ["config.json", "../config.json", "../../config.json"]
         .iter()
@@ -288,30 +288,42 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         Some("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/sh2e"),
     )
     .with_mod_vfs(boot_mod_vfs);
+    let startup_prefer_sh2ee =
+        startup_config.video.texture_quality != sh2_core::config::WorldTextureQuality::OriginalPs2;
+    let startup_apply_4k =
+        startup_config.video.texture_quality == sh2_core::config::WorldTextureQuality::Ai4kMaster;
 
-    // Upload authentic retail PS2/PC fog noise texture (`data/pic/effect/fog.tex`) if present (`SH2-32`)
-    if let Ok(fog_tex) = tex_loader.load_texture("pic/effect/fog.tex") {
+    // Upload authentic retail PS2/PC fog noise texture (`data/pic/effect/fog.tex` or 4K override) if present (`SH2-32`)
+    if let Ok(fog_tex) = tex_loader.load_texture_for_quality(
+        "pic/effect/fog.tex",
+        startup_prefer_sh2ee,
+        startup_apply_4k,
+    ) {
         render_ctx.upload_fog_noise_texture(
             &fog_tex.rgba,
             fog_tex.width as u32,
             fog_tex.height as u32,
         );
         tracing::info!(
-            "Uploaded retail fog.tex ({}x{}) to volumetric fog & particle pipelines.",
+            "Uploaded fog.tex ({}x{}) to volumetric fog & particle pipelines.",
             fog_tex.width,
             fog_tex.height
         );
     }
 
-    // Upload authentic retail PS2/PC Effect2 dust atlas (`data/pic/effect/playable0.tbn2`) (`SH2-98`)
-    if let Ok(dust_tex) = tex_loader.load_texture("pic/effect/playable0.tbn2") {
+    // Upload authentic retail PS2/PC Effect2 dust atlas (`data/pic/effect/playable0.tbn2` or 4K override) (`SH2-98`)
+    if let Ok(dust_tex) = tex_loader.load_texture_for_quality(
+        "pic/effect/playable0.tbn2",
+        startup_prefer_sh2ee,
+        startup_apply_4k,
+    ) {
         render_ctx.upload_dust_texture(
             &dust_tex.rgba,
             dust_tex.width as u32,
             dust_tex.height as u32,
         );
         tracing::info!(
-            "Uploaded retail playable0.tbn2 ({}x{}) to airborne dust mote pipeline.",
+            "Uploaded playable0.tbn2 ({}x{}) to airborne dust mote pipeline.",
             dust_tex.width,
             dust_tex.height
         );
@@ -330,8 +342,18 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     });
 
     let splash_konami_bg = tex_loader
-        .load_texture("pic/etc/konami2048x2048.tex")
-        .or_else(|_| tex_loader.load_texture("pic/etc/start00.tex"))
+        .load_texture_for_quality(
+            "pic/etc/konami2048x2048.tex",
+            startup_prefer_sh2ee,
+            startup_apply_4k,
+        )
+        .or_else(|_| {
+            tex_loader.load_texture_for_quality(
+                "pic/etc/start00.tex",
+                startup_prefer_sh2ee,
+                startup_apply_4k,
+            )
+        })
         .ok()
         .map(|t| {
             render_ctx.create_blitter_bind_group(
@@ -345,16 +367,19 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         });
 
     let load_boot_logo = |path: &str, label: &str| {
-        tex_loader.load_texture(path).ok().map(|t| {
-            render_ctx.create_blitter_bind_group(
-                &blitter,
-                t.width as u32,
-                t.height as u32,
-                &t.rgba,
-                &menu_uniform_buffer,
-                Some(label),
-            )
-        })
+        tex_loader
+            .load_texture_for_quality(path, startup_prefer_sh2ee, startup_apply_4k)
+            .ok()
+            .map(|t| {
+                render_ctx.create_blitter_bind_group(
+                    &blitter,
+                    t.width as u32,
+                    t.height as u32,
+                    &t.rgba,
+                    &menu_uniform_buffer,
+                    Some(label),
+                )
+            })
     };
     let boot_logo_bgs = [
         load_boot_logo(

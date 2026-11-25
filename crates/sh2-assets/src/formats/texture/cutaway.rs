@@ -151,6 +151,18 @@ impl TextureLoader {
         pic_or_sheet_name: &str,
         prefer_sh2ee: bool,
     ) -> Result<CutawayTextureAsset, AssetError> {
+        self.load_cutaway_texture_for_quality(pic_or_sheet_name, prefer_sh2ee, false)
+    }
+
+    /// Resolves and decodes a pre-rendered cutaway still or puzzle overlay sprite sheet across
+    /// all three `WorldTextureQuality` tiers (`OriginalPs2`, `Sh2eeHd`, `Ai4kMaster`) while
+    /// preserving original PS2/PC texel dimensions for UV normalization (`SH2-142`).
+    pub fn load_cutaway_texture_for_quality(
+        &self,
+        pic_or_sheet_name: &str,
+        prefer_sh2ee: bool,
+        apply_4k: bool,
+    ) -> Result<CutawayTextureAsset, AssetError> {
         let rel = Self::normalize_cutaway_rel_path(pic_or_sheet_name);
         let (chosen_path, is_sh2ee_hd) = self
             .resolve_path_with_preference(&rel, prefer_sh2ee)
@@ -162,26 +174,33 @@ impl TextureLoader {
             })?;
 
         let bytes = fs::read(&chosen_path)?;
-        let texture = decode_texture_bytes(&bytes, &chosen_path)?;
+        let base_texture = decode_texture_bytes(&bytes, &chosen_path)?;
 
         // Determine the original PS2/PC texel dimensions so sprite sheet UVs authored in original
-        // texels (e.g. 256x256 or 512x512) normalize accurately even when an HD 4x sheet is active.
+        // texels (e.g. 256x256 or 512x512) normalize accurately even when an HD 4x or 4K AI sheet is active.
         let (original_width, original_height) = if is_sh2ee_hd {
             if let Some(van_path) = self.resolve_in_data(&rel) {
                 if let Ok(van_bytes) = fs::read(&van_path) {
                     probe_tex_dimensions(&van_bytes)
-                        .unwrap_or((texture.width as u32, texture.height as u32))
+                        .unwrap_or((base_texture.width as u32, base_texture.height as u32))
                 } else {
-                    (texture.width as u32, texture.height as u32)
+                    (base_texture.width as u32, base_texture.height as u32)
                 }
             } else {
                 (
-                    (texture.width as u32 / 4).max(1),
-                    (texture.height as u32 / 4).max(1),
+                    (base_texture.width as u32 / 4).max(1),
+                    (base_texture.height as u32 / 4).max(1),
                 )
             }
         } else {
-            (texture.width as u32, texture.height as u32)
+            (base_texture.width as u32, base_texture.height as u32)
+        };
+
+        let texture = if prefer_sh2ee && apply_4k {
+            self.load_4k_relative_texture_override(&rel)
+                .unwrap_or(base_texture)
+        } else {
+            base_texture
         };
 
         Ok(CutawayTextureAsset {

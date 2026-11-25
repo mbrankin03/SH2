@@ -720,15 +720,17 @@ fn render_title_menu_overlay(
                 );
             }
             TitlePhase::TransitionToGame => {
-                let use_hd_footmark = state
+                let quality = state
                     .menu_ctrl
                     .options_menu
                     .original_config
                     .video
-                    .texture_quality
-                    != sh2_core::WorldTextureQuality::OriginalPs2;
+                    .texture_quality;
+                let use_hd_footmark = quality != sh2_core::WorldTextureQuality::OriginalPs2;
+                let use_4k_footmark = quality == sh2_core::WorldTextureQuality::Ai4kMaster;
                 if let Some(ref mut ls) = state.loading_screen {
                     ls.use_hd_footmark = use_hd_footmark;
+                    ls.use_4k_footmark = use_4k_footmark;
                     ls.render(font, &mut state.inventory_rasterizer);
                 } else {
                     let label = state.menu_ctrl.title_sm.selected_test_room.label();

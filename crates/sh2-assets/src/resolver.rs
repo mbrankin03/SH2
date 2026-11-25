@@ -210,12 +210,14 @@ impl AssetPathResolver {
         None
     }
 
-    /// Returns `true` when the 4K AI Super-Resolution Texture Pack (`map/` or `chr/` folder, or `.zip` archive) is present on disk.
+    /// Returns `true` when the 4K AI Super-Resolution Texture Pack (`map/`, `chr/`, `effect/`, `pic/` folder, or `.zip` archive) is present on disk.
     pub fn has_4k_texture_pack(&self) -> bool {
         self.resolve_4k_texture_pack_dir().is_some_and(|dir| {
             (dir.is_file() && dir.extension().is_some_and(|e| e == "zip"))
                 || dir.join("map").is_dir()
                 || dir.join("chr").is_dir()
+                || dir.join("effect").is_dir()
+                || dir.join("pic").is_dir()
                 || dir.join("sh2_4k_textures.zip").is_file()
         })
     }

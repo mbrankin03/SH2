@@ -1,11 +1,13 @@
 //! Retail `data/etc/effect/footmark.tbn2` texture loader (`sh2pc.exe` `FUN_004c8500`)
 //! and procedural 64×64 sole silhouette fallback for CI environments without retail assets.
 
-use sh2_assets::formats::texture::parse_texture_container;
+use sh2_assets::formats::texture::{parse_texture_container, TextureLoader};
 use sh2_assets::resolver::AssetPathResolver;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+/// Static 4K AI Master footstep sprite (`mods/sh2_4k_textures/effect/footmark.dds` -> SH2:EE 256×256 -> vanilla 64×64 fallback).
+static FOOTSTEP_SPRITE_4K: OnceLock<FootstepSprite> = OnceLock::new();
 /// Static HD-preferred footstep sprite (`sh2e/effect/footmark.tbn2` 256×256 -> vanilla 64×64 fallback).
 static FOOTSTEP_SPRITE_HD: OnceLock<FootstepSprite> = OnceLock::new();
 /// Static strict 1:1 Vanilla PS2/PC footstep sprite (`data/etc/effect/footmark.tbn2` 64×64).
@@ -29,6 +31,53 @@ pub struct FootstepSprite {
 }
 
 impl FootstepSprite {
+    /// Loads the 4K AI Master footstep sprite (`mods/sh2_4k_textures/effect/footmark.dds` 1024×1024 when present,
+    /// falling back to SH2:EE HD `sh2e/effect/footmark.tbn2` 256×256, then vanilla `data/etc/effect/footmark.tbn2` 64×64).
+    pub fn get_4k() -> &'static Self {
+        FOOTSTEP_SPRITE_4K.get_or_init(|| {
+            if let Some(sprite) = Self::load_from_4k_pack() {
+                return sprite;
+            }
+            if let Some(sprite) = Self::load_from_retail_assets_with_hd(true) {
+                return sprite;
+            }
+            Self::generate_procedural_fallback()
+        })
+    }
+
+    /// Selects the footstep sprite for the active `WorldTextureQuality` tier (`SH2-142`):
+    /// - `prefer_sh2ee == false`: Strict 1:1 Vanilla (`data/etc/effect/footmark.tbn2` 64×64).
+    /// - `prefer_sh2ee == true && !apply_4k`: SH2:EE HD (`sh2e/effect/footmark.tbn2` 256×256).
+    /// - `prefer_sh2ee == true && apply_4k`: 4K AI Master (`mods/sh2_4k_textures/effect/footmark.dds`).
+    pub fn get_for_quality(prefer_sh2ee: bool, apply_4k: bool) -> &'static Self {
+        if !prefer_sh2ee {
+            Self::get_vanilla()
+        } else if apply_4k {
+            Self::get_4k()
+        } else {
+            Self::get()
+        }
+    }
+
+    /// Attempts to load `effect/footmark.dds` from the 4K AI Master pack (`mods/sh2_4k_textures/`).
+    pub fn load_from_4k_pack() -> Option<Self> {
+        let resolver = AssetPathResolver::resolve();
+        let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+        let decoded = loader.load_4k_relative_texture_override("effect/footmark.tbn2")?;
+        let width = decoded.width as u32;
+        let height = decoded.height as u32;
+        if width == 0 || height == 0 || decoded.rgba.len() != (width * height * 4) as usize {
+            return None;
+        }
+        Some(Self {
+            width,
+            height,
+            rgba: decoded.rgba,
+            from_retail_asset: true,
+            is_hd_override: true,
+        })
+    }
+
     /// Loads the HD-preferred footstep sprite (`sh2e/effect/footmark.tbn2` 256×256 when present,
     /// falling back to vanilla `data/etc/effect/footmark.tbn2` 64×64, then procedural CI fallback).
     pub fn get() -> &'static Self {

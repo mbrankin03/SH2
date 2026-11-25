@@ -358,10 +358,27 @@ impl RoomController for InventoryRoomController {
                             "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2",
                         ),
                     ];
+                    let quality = state
+                        .menu_ctrl
+                        .options_menu
+                        .original_config
+                        .video
+                        .texture_quality;
+                    let prefer_sh2ee =
+                        quality != sh2_core::config::WorldTextureQuality::OriginalPs2;
+                    let apply_4k = quality == sh2_core::config::WorldTextureQuality::Ai4kMaster;
                     for base in &base_roots {
                         let loader = TextureLoader::new(base.join("data"), Some(base.join("sh2e")));
-                        if let Ok(cut_tex) = loader.load_cutaway_texture(tex_path, true) {
-                            let src_label = if cut_tex.is_sh2ee_hd {
+                        if let Ok(cut_tex) = loader.load_cutaway_texture_for_quality(
+                            tex_path,
+                            prefer_sh2ee,
+                            apply_4k,
+                        ) {
+                            let src_label = if apply_4k
+                                && cut_tex.texture.width > cut_tex.original_width as usize
+                            {
+                                "4K AI Master (mods/sh2_4k_textures)"
+                            } else if cut_tex.is_sh2ee_hd {
                                 "SH2:EE HD (sh2e/pic)"
                             } else {
                                 "Original PS2/PC (data/pic)"

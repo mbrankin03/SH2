@@ -41,7 +41,7 @@ impl LoadingScreen {
         scale_x: f32,
         scale_y: f32,
     ) {
-        let sprite = FootstepSprite::get_for_hd(self.use_hd_footmark);
+        let sprite = FootstepSprite::get_for_quality(self.use_hd_footmark, self.use_4k_footmark);
 
         for step in &self.footsteps {
             let scr_x = (step.x * scale_x).round() as i32;

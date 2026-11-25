@@ -19,6 +19,7 @@ pub(super) struct InitialBuffers {
     pub dust_buffer: wgpu::Buffer,
     pub billboard_fx_additive_buffer: wgpu::Buffer,
     pub billboard_fx_alpha_buffer: wgpu::Buffer,
+    pub blood_buffer: wgpu::Buffer,
     pub fog_buffer: wgpu::Buffer,
     pub fog_particle_buffer: wgpu::Buffer,
     pub post_buffer: wgpu::Buffer,
@@ -128,6 +129,14 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         mapped_at_creation: false,
     });
 
+    let blood_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Effect2 Blood Quad Instance Buffer"),
+        size: (effects::MAX_GPU_BLOOD_QUADS * std::mem::size_of::<effects::GpuBloodQuad>())
+            as wgpu::BufferAddress,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     let fog_uniforms = fog::FogUniforms {
         shadow_view_proj: initial_shadow_vp,
         ..fog::FogUniforms::default()
@@ -175,6 +184,7 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         dust_buffer,
         billboard_fx_additive_buffer,
         billboard_fx_alpha_buffer,
+        blood_buffer,
         fog_buffer,
         fog_particle_buffer,
         post_buffer,

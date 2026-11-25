@@ -116,6 +116,8 @@ impl RenderContext {
             effects::DustParticlePipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let billboard_fx_pipeline =
             effects::BillboardFxPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
+        let blood_pipeline =
+            effects::BloodEffectPipeline::new(&device, Self::HDR_FORMAT, Self::DEPTH_FORMAT);
         let post_pipeline = post::PostProcessPipeline::new(&device, &queue);
 
         let buffers = create_initial_buffers(&device);
@@ -254,6 +256,25 @@ impl RenderContext {
                 })
             });
 
+        let blood_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Effect2 Blood Bind Group"),
+            layout: &blood_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&textures.blood_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&textures.fog_noise_sampler),
+                },
+            ],
+        });
+
         let fog_particle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Fog Particle Bind Group"),
             layout: &fog_particle_pipeline.bind_group_layout,
@@ -386,6 +407,7 @@ impl RenderContext {
             water_pipeline,
             dust_pipeline,
             billboard_fx_pipeline,
+            blood_pipeline,
             post_pipeline,
             camera_buffer: buffers.camera_buffer,
             spotlight_buffer: buffers.spotlight_buffer,
@@ -399,6 +421,7 @@ impl RenderContext {
             dust_buffer: buffers.dust_buffer,
             billboard_fx_additive_buffer: buffers.billboard_fx_additive_buffer,
             billboard_fx_alpha_buffer: buffers.billboard_fx_alpha_buffer,
+            blood_buffer: buffers.blood_buffer,
             fog_buffer: buffers.fog_buffer,
             fog_particle_buffer: buffers.fog_particle_buffer,
             post_buffer: buffers.post_buffer,
@@ -421,6 +444,8 @@ impl RenderContext {
             spray_mist_view: textures.spray_mist_view,
             dust_texture: textures.dust_texture,
             dust_view: textures.dust_view,
+            blood_texture: textures.blood_texture,
+            blood_view: textures.blood_view,
             specular_sphere_texture: textures.specular_sphere_texture,
             specular_sphere_view: textures.specular_sphere_view,
             specular_sphere_sampler: textures.specular_sphere_sampler,
@@ -432,6 +457,7 @@ impl RenderContext {
             spray_mist_bind_group,
             dust_bind_group,
             billboard_fx_bind_groups,
+            blood_bind_group,
             fog_particle_bind_group,
             fog_bind_group,
             post_bind_group_fog,
@@ -443,6 +469,8 @@ impl RenderContext {
             spray_mist_particle_count: std::sync::atomic::AtomicU32::new(0),
             dust_particle_count: std::sync::atomic::AtomicU32::new(0),
             billboard_fx_batches: std::sync::Mutex::new(effects::FxDrawBatches::default()),
+            blood_quad_count: std::sync::atomic::AtomicU32::new(0),
+            blood_subtractive_mode: std::sync::atomic::AtomicBool::new(true),
             pcss_enabled: std::sync::atomic::AtomicBool::new(true),
             lake_water_enabled: std::sync::atomic::AtomicBool::new(false),
             water_reflection_pass_enabled: std::sync::atomic::AtomicBool::new(false),

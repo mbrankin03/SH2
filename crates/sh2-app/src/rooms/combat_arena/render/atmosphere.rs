@@ -236,6 +236,52 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     state
         .render_ctx
         .update_dust_particles(&state.dust_particle_scratch);
+
+    // Step `Effect2/hh_class_blood_*.c` Impact Queue Blood System (`SH2-79`)
+    let blood_steps = curr_sim_tick.saturating_sub(state.last_blood_tick).min(6) as u32;
+    state.last_blood_tick = curr_sim_tick;
+    let blood_cfg = sh2_core::effects::BloodSystemConfig {
+        blood_color: state.menu_ctrl.options_menu.draft_config.game.blood_color,
+        blood_size_scale: sh2_core::effects::SH2EE_BLOOD_SIZE_SCALE,
+        persistent_room_decals: state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .game
+            .enable_persistent_blood_decals,
+        non_subtractive_fallback: false,
+    };
+    let footstep_now = state.sim_core.last_locomotion.footstep_triggered;
+    let player_pos = state.sim_core.scenario.player_position;
+    let player_yaw = state.sim_core.scenario.player_yaw;
+    let collision = &state.sim_core.collision;
+    for step_idx in 0..blood_steps {
+        state.blood_system.step(
+            sh2_core::effects::blood::BLOOD_DT_60HZ,
+            |pos| {
+                collision
+                    .sample_floor_surface(pos.x, pos.z, pos.y - 300.0, 2000.0, 1.0)
+                    .map_or(player_pos.y, |s| s.height_y)
+            },
+            player_pos,
+            player_yaw,
+            footstep_now && step_idx == 0,
+            blood_cfg,
+        );
+    }
+    state
+        .blood_system
+        .build_render_items(blood_cfg, &mut state.blood_item_scratch);
+    state.blood_quad_scratch.clear();
+    for item in &state.blood_item_scratch {
+        state
+            .blood_quad_scratch
+            .push(sh2_renderer::effects::GpuBloodQuad::from_render_item(item));
+    }
+    state.render_ctx.update_blood_quads(
+        &state.blood_quad_scratch,
+        !blood_cfg.non_subtractive_fallback,
+    );
 }
 
 #[cfg(test)]

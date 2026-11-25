@@ -376,6 +376,28 @@ impl RenderContext {
                 }
             }
 
+            // 1d-7. Render `Effect2/hh_class_blood_*.c` subtractive blood pools, footprints, & sprays (`SH2-79`)
+            let blood_count = self
+                .blood_quad_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if blood_count > 0 {
+                let byte_len = (blood_count as usize
+                    * std::mem::size_of::<crate::effects::GpuBloodQuad>())
+                    as wgpu::BufferAddress;
+                let pipe = if self
+                    .blood_subtractive_mode
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    &self.blood_pipeline.subtractive_pipeline
+                } else {
+                    &self.blood_pipeline.alpha_pipeline
+                };
+                rpass.set_pipeline(pipe);
+                rpass.set_bind_group(0, &self.blood_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.blood_buffer.slice(0..byte_len));
+                rpass.draw(0..6, 0..blood_count);
+            }
+
             // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
             if !debug_lines.is_empty() {
                 let line_buf = overflow_debug_line_buffer

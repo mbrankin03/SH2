@@ -329,6 +329,20 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         );
     }
 
+    // Upload authentic retail PS2/PC Effect2 blood atlas (`data/pic/effect/bloodtex0.tbn2` or `sh2e` override) (`SH2-79`)
+    if let Ok(blood_tex) = tex_loader.load_blood_texture(startup_prefer_sh2ee, startup_apply_4k) {
+        render_ctx.upload_blood_texture(
+            &blood_tex.rgba,
+            blood_tex.width as u32,
+            blood_tex.height as u32,
+        );
+        tracing::info!(
+            "Uploaded bloodtex0.tbn2 ({}x{}) to Effect2 blood pipeline.",
+            blood_tex.width,
+            blood_tex.height
+        );
+    }
+
     let initial_uniforms = [1.0f32, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0];
     let menu_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Menu Blit Uniform Buffer"),
@@ -751,11 +765,15 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         dust_system: sh2_core::lighting::DustSystem::new(),
         dust_particle_scratch: Vec::with_capacity(sh2_renderer::effects::MAX_GPU_DUST_PARTICLES),
         dust_spotlight: sh2_core::lighting::DustSpotlightParams::default(),
+        blood_system: sh2_core::effects::BloodEffectSystem::new(),
+        blood_item_scratch: Vec::with_capacity(sh2_renderer::effects::MAX_GPU_BLOOD_QUADS),
+        blood_quad_scratch: Vec::with_capacity(sh2_renderer::effects::MAX_GPU_BLOOD_QUADS),
         jms_spot_man: sh2_renderer::light::JmsSpotManager::new(),
         char_light_pool: sh2_renderer::light::CharacterLightPool::new(),
         last_fog_time: 0.0,
         last_fog_blow_tick: 0,
         last_dust_tick: 0,
+        last_blood_tick: 0,
         menu_ctrl,
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),
         campaign_credits_seq: None,

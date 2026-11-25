@@ -270,12 +270,12 @@ mod tests {
     #[test]
     fn resolves_linux_default_documents_saves() {
         let env = SaveDirEnv {
-            home_dir: Some("/home/james"),
+            home_dir: Some("/users/james"),
             ..Default::default()
         };
         assert_eq!(
             resolve_default_save_dir(SavePlatform::Linux, &env),
-            PathBuf::from("/home/james/Documents/Silent Hill 2/saves")
+            PathBuf::from("/users/james/Documents/Silent Hill 2/saves")
         );
     }
 
@@ -312,7 +312,7 @@ mod tests {
         let env = SaveDirEnv {
             env_save_dir: Some("/mnt/saves/sh2"),
             config_save_dir: Some("/custom/config/saves"),
-            home_dir: Some("/home/james"),
+            home_dir: Some("/users/james"),
             user_profile: Some("C:\\Users\\James"),
             android_files_dir: Some(Path::new("/data/user/0/org.sh2.port/files")),
         };
@@ -335,12 +335,12 @@ mod tests {
         let env = SaveDirEnv {
             env_save_dir: Some("   "),
             config_save_dir: Some("~/custom_sh2_saves"),
-            home_dir: Some("/home/james"),
+            home_dir: Some("/users/james"),
             ..Default::default()
         };
         assert_eq!(
             resolve_default_save_dir(SavePlatform::Linux, &env),
-            PathBuf::from("/home/james/custom_sh2_saves")
+            PathBuf::from("/users/james/custom_sh2_saves")
         );
     }
 

@@ -10,7 +10,7 @@ impl OptionsMenu {
     pub fn item_count(&self) -> usize {
         match self.active_tab {
             OptionsTab::Root => 11,
-            OptionsTab::Video => 18,
+            OptionsTab::Video => 20,
             OptionsTab::Audio => {
                 if self.audio_pack_status.both_detected() {
                     12
@@ -247,6 +247,14 @@ impl OptionsMenu {
                 },
             )),
             17 => Some(("Mod Manager", String::new())),
+            18 => Some((
+                "Cutaway & Puzzle Quality",
+                v.cutaway_quality.label().to_string(),
+            )),
+            19 => Some((
+                "Cutaway Aspect Scaling",
+                v.cutaway_aspect_mode.label().to_string(),
+            )),
             _ => None,
         }
     }
@@ -716,6 +724,16 @@ impl OptionsMenu {
             13 => v.enable_water_reflections = !v.enable_water_reflections,
             14 => v.enable_oar_ripples = !v.enable_oar_ripples,
             16 => v.enable_enhanced_title_screen = !v.enable_enhanced_title_screen,
+            18 => {
+                v.cutaway_quality = if forward {
+                    v.cutaway_quality.next()
+                } else {
+                    v.cutaway_quality.prev()
+                };
+            }
+            19 => {
+                v.cutaway_aspect_mode = v.cutaway_aspect_mode.toggle();
+            }
             _ => return Some(OptionsSoundCue::None),
         }
         None

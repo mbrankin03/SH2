@@ -81,6 +81,7 @@ pub use sound::{
 pub use texture::{
     compute_alpha_coverage_rgba, decode_texture_bytes, generate_mipmap_chain_rgba,
     mip_level_count_for_size, parse_texture_container, preserve_alpha_coverage_in_place,
-    probe_tex_dimensions, ContainerTexture, CutawayTextureAsset, CutawayViewportTransform,
-    DecodedTexture, TextureLoader, ALPHA_CUTOUT_MIP_REF_THRESHOLD, TEX_MAGIC, TEX_MAGIC_BYTES,
+    probe_tex_dimensions, ContainerTexture, CutawayPackTier, CutawayTextureAsset,
+    CutawayViewportTransform, DecodedTexture, TextureLoader, ALPHA_CUTOUT_MIP_REF_THRESHOLD,
+    TEX_MAGIC, TEX_MAGIC_BYTES,
 };

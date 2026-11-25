@@ -27,8 +27,8 @@ pub use game::{
 };
 pub use mods::{ModEntryConfig, ModsConfig};
 pub use video::{
-    FogQuality, FrameRateCap, InternalResolution, LightingProfile, OutdoorStreamingMode,
-    ShadowQualityMode, VideoOptions, WindowDisplayMode, WorldTextureQuality,
+    CutawayQuality, FogQuality, FrameRateCap, InternalResolution, LightingProfile,
+    OutdoorStreamingMode, ShadowQualityMode, VideoOptions, WindowDisplayMode, WorldTextureQuality,
 };
 
 /// Complete game configuration structure.
@@ -51,6 +51,8 @@ impl AppConfig {
         match preset {
             EnhancedPreset::Ps2Authentic => {
                 self.video.texture_quality = WorldTextureQuality::OriginalPs2;
+                self.video.cutaway_quality = CutawayQuality::OriginalPs2;
+                self.video.cutaway_aspect_mode = crate::cutaway::CutawayAspectMode::Fit4x3Pillarbox;
                 self.video.fog_quality = FogQuality::ClassicPs2;
                 self.video.volumetric_light = false;
                 self.video.shadow_quality = ShadowQualityMode::ClassicPs2Stencil;
@@ -80,6 +82,9 @@ impl AppConfig {
             }
             EnhancedPreset::Sh2ee => {
                 self.video.texture_quality = WorldTextureQuality::Sh2eeHd;
+                self.video.cutaway_quality = CutawayQuality::Sh2eeHd;
+                self.video.cutaway_aspect_mode =
+                    crate::cutaway::CutawayAspectMode::Fill16x9WidescreenCrop;
                 self.video.fog_quality = FogQuality::ClassicPs2;
                 self.video.volumetric_light = false;
                 self.video.shadow_quality = ShadowQualityMode::EnhancedEditionSoft;
@@ -108,6 +113,9 @@ impl AppConfig {
             }
             EnhancedPreset::NativeEnhanced => {
                 self.video.texture_quality = WorldTextureQuality::Ai4kMaster;
+                self.video.cutaway_quality = CutawayQuality::Ai4kMaster;
+                self.video.cutaway_aspect_mode =
+                    crate::cutaway::CutawayAspectMode::Fill16x9WidescreenCrop;
                 self.video.fog_quality = FogQuality::ModernVolumetric;
                 self.video.volumetric_light = true;
                 self.video.shadow_quality = ShadowQualityMode::NativePcss;
@@ -143,6 +151,8 @@ impl AppConfig {
     #[must_use]
     pub fn detect_enhanced_preset(&self) -> EnhancedPreset {
         let is_ps2 = self.video.texture_quality == WorldTextureQuality::OriginalPs2
+            && self.video.cutaway_quality == CutawayQuality::OriginalPs2
+            && self.video.cutaway_aspect_mode == crate::cutaway::CutawayAspectMode::Fit4x3Pillarbox
             && self.video.fog_quality == FogQuality::ClassicPs2
             && !self.video.volumetric_light
             && self.video.shadow_quality == ShadowQualityMode::ClassicPs2Stencil
@@ -172,6 +182,9 @@ impl AppConfig {
         }
 
         let is_sh2ee = self.video.texture_quality == WorldTextureQuality::Sh2eeHd
+            && self.video.cutaway_quality == CutawayQuality::Sh2eeHd
+            && self.video.cutaway_aspect_mode
+                == crate::cutaway::CutawayAspectMode::Fill16x9WidescreenCrop
             && self.video.fog_quality == FogQuality::ClassicPs2
             && !self.video.volumetric_light
             && self.video.shadow_quality == ShadowQualityMode::EnhancedEditionSoft
@@ -201,6 +214,9 @@ impl AppConfig {
         }
 
         let is_native = self.video.texture_quality == WorldTextureQuality::Ai4kMaster
+            && self.video.cutaway_quality == CutawayQuality::Ai4kMaster
+            && self.video.cutaway_aspect_mode
+                == crate::cutaway::CutawayAspectMode::Fill16x9WidescreenCrop
             && self.video.fog_quality == FogQuality::ModernVolumetric
             && self.video.volumetric_light
             && self.video.shadow_quality == ShadowQualityMode::NativePcss

@@ -277,9 +277,19 @@ impl RoomController for PuzzleCutawayRoomController {
 
         // Ensure base cutaway `.tex` and any required sprite sheets are loaded in cache
         let pref = state.puzzle_cutaway_room.prefer_sh2ee;
+        let quality = if pref {
+            state
+                .menu_ctrl
+                .options_menu
+                .original_config
+                .video
+                .cutaway_quality
+        } else {
+            sh2_core::CutawayQuality::OriginalPs2
+        };
         if state.puzzle_cutaway_room.loaded_base_key != Some((preset_idx, pref)) {
             state.puzzle_cutaway_room.loaded_base_key = Some((preset_idx, pref));
-            state.puzzle_cutaway_room.base_tex = load_cutaway_from_roots(preset_pic, pref);
+            state.puzzle_cutaway_room.base_tex = load_cutaway_from_roots(preset_pic, quality);
         }
 
         let needed_sheets: Vec<&'static str> = state
@@ -296,7 +306,7 @@ impl RoomController for PuzzleCutawayRoomController {
                 .sheet_cache
                 .entry((sheet, pref))
                 .or_insert_with(|| {
-                    load_cutaway_from_roots(sheet, pref).unwrap_or(CutawayTextureAsset {
+                    load_cutaway_from_roots(sheet, quality).unwrap_or(CutawayTextureAsset {
                         texture: DecodedTexture {
                             width: 1,
                             height: 1,
@@ -355,15 +365,26 @@ pub(super) fn sync_overlay_to_preset(state: &mut AppState) {
         .evaluate_frame(&s.flags, &s.puzzle_state, riddle_idx, extra);
 }
 
-fn load_cutaway_from_roots(pic_or_sheet: &str, prefer_sh2ee: bool) -> Option<CutawayTextureAsset> {
+fn load_cutaway_from_roots(
+    pic_or_sheet: &str,
+    quality: sh2_core::CutawayQuality,
+) -> Option<CutawayTextureAsset> {
+    let tier = match quality {
+        sh2_core::CutawayQuality::Ai4kMaster => sh2_assets::CutawayPackTier::Ai4kMaster,
+        sh2_core::CutawayQuality::Sh2eeHd => sh2_assets::CutawayPackTier::Sh2eeHd,
+        sh2_core::CutawayQuality::OriginalPs2 => sh2_assets::CutawayPackTier::OriginalPs2,
+    };
     let resolver = sh2_assets::AssetPathResolver::resolve();
+    let pack_4k = resolver.resolve_4k_cutaway_pack_dir();
     let base_roots = [
         resolver.game_root.clone(),
         PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
     ];
     for base in &base_roots {
         let loader = TextureLoader::new(base.join("data"), Some(base.join("sh2e")));
-        if let Ok(tex) = loader.load_cutaway_texture(pic_or_sheet, prefer_sh2ee) {
+        if let Ok(tex) =
+            loader.load_cutaway_texture_with_tier(pic_or_sheet, tier, pack_4k.as_deref())
+        {
             return Some(tex);
         }
     }

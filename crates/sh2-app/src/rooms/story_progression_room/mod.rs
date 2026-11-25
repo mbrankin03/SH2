@@ -101,7 +101,7 @@ pub(crate) struct StoryProgressionRoomState {
     pub active_tab: StoryDemoTab,
     pub seed_counter: u32,
     pub rng: Sh2Rng,
-    pub cutaway_cache: HashMap<(String, bool), CutawayTextureAsset>,
+    pub cutaway_cache: HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
     pub prefer_sh2ee_cutaways: bool,
     pub act1_puzzle: Act1VisualPuzzle,
     pub act1_stage_idx: usize,

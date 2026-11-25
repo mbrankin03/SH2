@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use crate::state::AppState;
 use sh2_assets::{CutawayTextureAsset, CutawayViewportTransform, DecodedTexture, TextureLoader};
-use sh2_core::{OverlaySpriteQuad, PillarboxViewportLayout};
+use sh2_core::OverlaySpriteQuad;
 
 pub(crate) const YELLOW: [u8; 4] = [245, 210, 65, 255];
 pub(crate) const CYAN: [u8; 4] = [105, 215, 235, 255];
@@ -121,19 +121,27 @@ pub(crate) fn draw_progress_bar(
         .draw_rect_outline(x, y, w, h, 1, border_color);
 }
 
-/// Loads a retail cutaway still or sprite sheet `.tex` from `sh2e/pic/` or `data/pic/`.
+/// Loads a retail cutaway still or sprite sheet `.tex` from `mods/sh2_4k_textures/`, `mods/4k_cutaways/`, `sh2e/pic/`, or `data/pic/`.
 pub(super) fn load_cutaway_tex(
     pic_or_sheet: &str,
-    prefer_sh2ee: bool,
+    quality: sh2_core::CutawayQuality,
 ) -> Option<CutawayTextureAsset> {
+    let tier = match quality {
+        sh2_core::CutawayQuality::Ai4kMaster => sh2_assets::CutawayPackTier::Ai4kMaster,
+        sh2_core::CutawayQuality::Sh2eeHd => sh2_assets::CutawayPackTier::Sh2eeHd,
+        sh2_core::CutawayQuality::OriginalPs2 => sh2_assets::CutawayPackTier::OriginalPs2,
+    };
     let resolver = sh2_assets::AssetPathResolver::resolve();
+    let pack_4k = resolver.resolve_4k_cutaway_pack_dir();
     let base_roots = [
         resolver.game_root.clone(),
         PathBuf::from("Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2"),
     ];
     for base in &base_roots {
         let loader = TextureLoader::new(base.join("data"), Some(base.join("sh2e")));
-        if let Ok(tex) = loader.load_cutaway_texture(pic_or_sheet, prefer_sh2ee) {
+        if let Ok(tex) =
+            loader.load_cutaway_texture_with_tier(pic_or_sheet, tier, pack_4k.as_deref())
+        {
             return Some(tex);
         }
     }
@@ -142,15 +150,15 @@ pub(super) fn load_cutaway_tex(
 
 /// Ensures `pic_or_sheet` is present in `cache` and returns a reference if available.
 pub(super) fn ensure_cutaway_cached(
-    cache: &mut HashMap<(String, bool), CutawayTextureAsset>,
+    cache: &mut HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
     pic_or_sheet: &str,
-    prefer_sh2ee: bool,
+    quality: sh2_core::CutawayQuality,
 ) {
-    let key = (pic_or_sheet.to_string(), prefer_sh2ee);
+    let key = (pic_or_sheet.to_string(), quality);
     if cache.contains_key(&key) {
         return;
     }
-    let asset = load_cutaway_tex(pic_or_sheet, prefer_sh2ee).unwrap_or(CutawayTextureAsset {
+    let asset = load_cutaway_tex(pic_or_sheet, quality).unwrap_or(CutawayTextureAsset {
         texture: DecodedTexture {
             width: 1,
             height: 1,
@@ -158,9 +166,52 @@ pub(super) fn ensure_cutaway_cached(
         },
         original_width: 512,
         original_height: 512,
-        is_sh2ee_hd: prefer_sh2ee,
+        is_sh2ee_hd: quality != sh2_core::CutawayQuality::OriginalPs2,
     });
     cache.insert(key, asset);
+}
+
+/// Clips an axis-aligned 2-triangle quad `[(x, y, u, v); 6]` against `[vx0..vx1, vy0..vy1]`.
+fn clip_quad_triangles_to_viewport(
+    tris: &[(f32, f32, f32, f32); 6],
+    vx0: f32,
+    vy0: f32,
+    vx1: f32,
+    vy1: f32,
+) -> Option<[(f32, f32, f32, f32); 6]> {
+    let x0 = tris[0].0;
+    let y0 = tris[0].1;
+    let u0 = tris[0].2;
+    let v0 = tris[0].3;
+    let x1 = tris[2].0;
+    let y1 = tris[2].1;
+    let u1 = tris[2].2;
+    let v1 = tris[2].3;
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    if dx.abs() < 1e-4 || dy.abs() < 1e-4 {
+        return None;
+    }
+    let cx0 = x0.max(vx0);
+    let cy0 = y0.max(vy0);
+    let cx1 = x1.min(vx1);
+    let cy1 = y1.min(vy1);
+    if cx1 <= cx0 || cy1 <= cy0 {
+        return None;
+    }
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let cu0 = lerp(u0, u1, (cx0 - x0) / dx);
+    let cu1 = lerp(u0, u1, (cx1 - x0) / dx);
+    let cv0 = lerp(v0, v1, (cy0 - y0) / dy);
+    let cv1 = lerp(v0, v1, (cy1 - y0) / dy);
+    Some([
+        (cx0, cy0, cu0, cv0),
+        (cx1, cy0, cu1, cv0),
+        (cx1, cy1, cu1, cv1),
+        (cx0, cy0, cu0, cv0),
+        (cx1, cy1, cu1, cv1),
+        (cx0, cy1, cu0, cv1),
+    ])
 }
 
 /// Blits a `560x420` cutaway still (`base_pic`) at `(vp_x, vp_y, vp_w, vp_h)` along with
@@ -183,55 +234,100 @@ pub(crate) fn blit_cutaway_viewport(
         .menu_rasterizer
         .draw_rect_outline(vp_x - 2, vp_y - 2, vp_w + 4, vp_h + 4, 2, YELLOW);
 
+    let quality = if prefer_sh2ee {
+        state
+            .menu_ctrl
+            .options_menu
+            .original_config
+            .video
+            .cutaway_quality
+    } else {
+        sh2_core::CutawayQuality::OriginalPs2
+    };
+
     ensure_cutaway_cached(
         &mut state.story_progression_room.cutaway_cache,
         base_pic,
-        prefer_sh2ee,
+        quality,
     );
     for q in quads {
         ensure_cutaway_cached(
             &mut state.story_progression_room.cutaway_cache,
             q.sheet_name,
-            prefer_sh2ee,
+            quality,
         );
     }
 
+    let aspect_mode = state
+        .menu_ctrl
+        .options_menu
+        .original_config
+        .video
+        .cutaway_aspect_mode;
+    let fs_layout =
+        sh2_core::FullscreenImageLayout::compute(vp_w as f32, vp_h as f32, base_pic, aspect_mode);
+
     let mut vp_transform = CutawayViewportTransform {
-        offset_x: 0.0,
-        offset_y: 0.0,
-        draw_width: vp_w as f32,
-        draw_height: vp_h as f32,
-        scale_x: 1.0,
-        scale_y: 1.0,
+        offset_x: fs_layout.draw_x,
+        offset_y: fs_layout.draw_y,
+        draw_width: fs_layout.draw_w,
+        draw_height: fs_layout.draw_h,
+        scale_x: fs_layout.draw_w / (vp_w.max(1) as f32),
+        scale_y: fs_layout.draw_h / (vp_h.max(1) as f32),
     };
+
+    let vx0 = vp_x as f32;
+    let vy0 = vp_y as f32;
+    let vx1 = (vp_x + vp_w) as f32;
+    let vy1 = (vp_y + vp_h) as f32;
 
     if let Some(base_tex) = state
         .story_progression_room
         .cutaway_cache
-        .get(&(base_pic.to_string(), prefer_sh2ee))
+        .get(&(base_pic.to_string(), quality))
     {
-        vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
-        let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
-        let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
-        let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
-        let dst_h = (vp_transform.draw_height.round().max(1.0) as usize).min(vp_h);
         let (rgba, tw, th) = (
             base_tex.texture.rgba.clone(),
             base_tex.texture.width,
             base_tex.texture.height,
         );
-        state
-            .menu_rasterizer
-            .blit_rgba_scaled(dst_x, dst_y, dst_w, dst_h, &rgba, tw, th, 1.0);
+        if fs_layout.is_widescreen_cropped {
+            let x0 = vx0 + fs_layout.draw_x;
+            let y0 = vy0 + fs_layout.draw_y;
+            let x1 = x0 + fs_layout.draw_w;
+            let y1 = y0 + fs_layout.draw_h;
+            let base_tris = [
+                (x0, y0, 0.0, 0.0),
+                (x1, y0, 1.0, 0.0),
+                (x1, y1, 1.0, 1.0),
+                (x0, y0, 0.0, 0.0),
+                (x1, y1, 1.0, 1.0),
+                (x0, y1, 0.0, 1.0),
+            ];
+            if let Some(clipped) = clip_quad_triangles_to_viewport(&base_tris, vx0, vy0, vx1, vy1) {
+                state
+                    .menu_rasterizer
+                    .blit_overlay_triangles(&clipped, &rgba, tw, th, 1.0);
+            }
+        } else {
+            vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
+            let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
+            let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
+            let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
+            let dst_h = (vp_transform.draw_height.round().max(1.0) as usize).min(vp_h);
+            state
+                .menu_rasterizer
+                .blit_rgba_scaled(dst_x, dst_y, dst_w, dst_h, &rgba, tw, th, 1.0);
+        }
     }
 
-    let draw_x = (vp_x as f32) + vp_transform.offset_x;
-    let draw_y = (vp_y as f32) + vp_transform.offset_y;
+    let draw_x = vx0 + vp_transform.offset_x;
+    let draw_y = vy0 + vp_transform.offset_y;
     for quad in quads {
         if let Some(sheet_tex) = state
             .story_progression_room
             .cutaway_cache
-            .get(&(quad.sheet_name.to_string(), prefer_sh2ee))
+            .get(&(quad.sheet_name.to_string(), quality))
         {
             let tris = quad.to_viewport_triangles(
                 draw_x,
@@ -244,15 +340,15 @@ pub(crate) fn blit_cutaway_viewport(
                 sheet_tex.texture.width,
                 sheet_tex.texture.height,
             );
-            state
-                .menu_rasterizer
-                .blit_overlay_triangles(&tris, &rgba, sw, sh, quad.alpha);
+            if let Some(clipped) = clip_quad_triangles_to_viewport(&tris, vx0, vy0, vx1, vy1) {
+                state
+                    .menu_rasterizer
+                    .blit_overlay_triangles(&clipped, &rgba, sw, sh, quad.alpha);
+            }
         }
     }
 
-    let content_aspect = vp_transform.draw_width.max(1.0) / vp_transform.draw_height.max(1.0);
-    let pillar = PillarboxViewportLayout::for_aspect(vp_w as f32, vp_h as f32, content_aspect);
-    for bar in &pillar.black_bars {
+    for bar in &fs_layout.black_bars {
         if bar.is_non_empty() {
             state.menu_rasterizer.fill_rect(
                 vp_x + (bar.x0.floor().max(0.0) as usize),

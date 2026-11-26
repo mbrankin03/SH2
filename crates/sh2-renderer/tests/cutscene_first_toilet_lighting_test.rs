@@ -292,7 +292,9 @@ fn first_toilet_frame_102_james_receives_er01_draw_env_lighting() {
         let mut cnt = 0u64;
         for px in rgba.as_chunks::<4>().0 {
             let l = 0.299 * f64::from(px[0]) + 0.587 * f64::from(px[1]) + 0.114 * f64::from(px[2]);
-            if l > 2.0 {
+            // Exclude pure-black background pixels (including the `~10.8/255` PS2 LCG film-grain
+            // floor `mix(0, 43, 32/128)` in display sRGB space).
+            if l > 12.0 {
                 sum += l;
                 if l > max_l {
                     max_l = l;

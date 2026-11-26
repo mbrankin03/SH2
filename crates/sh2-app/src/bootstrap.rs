@@ -135,7 +135,10 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     let gpu_map = Arc::clone(&map_hd_assets.gpu_map);
     let map_texture_bind_groups = map_hd_assets.texture_bind_groups.clone();
     let blitter = SurfaceBlitter::new(&device, surface_format);
-    let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
+    let blit_bind_group = blitter.create_bind_group(
+        &device,
+        render_ctx.ldr_present_view(surface_format.is_srgb()),
+    );
 
     // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
     let character = load_character_asset(

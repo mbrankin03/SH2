@@ -307,7 +307,9 @@ impl ApplicationHandler for SilentHillApp {
                     state.render_ctx.resize(new_size.width, new_size.height);
                     state.blit_bind_group = state.blitter.create_bind_group(
                         &state.render_ctx.device,
-                        &state.render_ctx.ldr_output_view,
+                        state
+                            .render_ctx
+                            .ldr_present_view(state.surface_config.format.is_srgb()),
                     );
                 }
             }

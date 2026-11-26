@@ -188,7 +188,7 @@ fn sh2_149_clamped_sampler_eliminates_uv_wrap_hairline_on_cutout_quad() {
     // Inspect the top half of the quad (y in 14..50, x in 32..96) where V is near 0.0 (transparent).
     // With ClampToEdge, every pixel must remain neutral grey background with zero green
     // wrap-around hairline from V=1.0 (where opaque texels render green ~[14, 68, 20]).
-    let is_green_bleed = |px: &[u8]| px[1] > px[0].saturating_add(10) || px[2] < 120;
+    let is_green_bleed = |px: &[u8]| px[1] > px[0].saturating_add(10) || px[2] < 140;
     let mut bleed_clamped = 0usize;
     for y in 14..50 {
         for x in 32..96 {

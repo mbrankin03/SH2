@@ -252,11 +252,10 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         return vec4<f32>(in.color.rgb * tex_color.rgb, out_alpha);
     }
 
-    // PS2 GS / D3D8 `MODULATE2X` (`2.0 * clamp(oD0, 0, 1)`, `sh2pc.exe` `0x501ab3` / `0x501bfa`):
-    // When `char_global_ambient.w > 0.5`, use exact `SLUS_202.28` `Model3UpdateGlobalAmbient`
-    // (`0x00128e70`) / `sh2pc.exe` `FUN_0050dd00` (`0x0050dd00`) + `FUN_00501540` (`0x00501540:1029-1030`):
-    // `oD0 = clamp(material.ambient * char_global_ambient + gun_boost + material.diffuse * (spot_diffuse + camera_fill), 0, 1)`,
-    // then `D3DTOP_MODULATE2X` (`2.0 * oD0`).
+    // Exact `sh2pc.exe` `FUN_00501540` (`0x00501540` lines 1194-1199: `D3DTSS_COLOROP = D3DTOP_MODULATE [4]`,
+    // `1.0x`) paired with `SLUS_202.28` `Model3UpdateGlobalAmbient` (`0x00128e70`) / `sh2pc.exe` `FUN_0050dd00`
+    // (`0x0050dd00:8924-8935`, which already embeds the `2.0x` PS2 GS scale in `char_global_ambient`):
+    // `oD0 = clamp(material.ambient * char_global_ambient + gun_boost + material.diffuse * (spot_diffuse + camera_fill), 0, 1)`.
     let mat_diffuse = material.diffuse_mtype.xyz * 2.0;
     let mat_ambient = material.ambient_shininess.xyz * 2.0;
 
@@ -271,7 +270,7 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         vec3<f32>(0.0),
         vec3<f32>(1.0),
     );
-    let model3_game_diffuse_light = model3_od0 * 2.0 * env_tint_rgb;
+    let model3_game_diffuse_light = model3_od0 * env_tint_rgb;
     let game_diffuse_light = select(
         legacy_game_diffuse_light,
         model3_game_diffuse_light,

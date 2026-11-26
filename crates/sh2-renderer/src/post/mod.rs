@@ -342,8 +342,7 @@ mod tests {
         assert!(src.contains("PS2_NOISE_TILES_Y"));
         assert!(src.contains("PS2_VIRTUAL_HEIGHT_PX"));
         assert!(src.contains("PS2_SWAP_SUBPIXEL_BIAS_PX"));
-        assert!(src.contains("linear_to_srgb(ldr)"));
-        assert!(src.contains("srgb_to_linear(noisy_srgb)"));
+        assert!(src.contains("mix(ldr, cs_srgb, grain_weight)"));
         assert!(!src.contains("0.05 * post.grain_intensity"));
         assert!(!src.contains("1.0 / 9.0"));
         assert!(!src.contains("* 0.30"));

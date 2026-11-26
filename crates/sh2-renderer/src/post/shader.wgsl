@@ -196,10 +196,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         let cs_srgb = vec3<f32>(noise_texel * PS2_NOISE_VTX_MODULATE);
         let grain_weight = PS2_NOISE_BLEND_WEIGHT * clamp(post.grain_intensity, 0.0, 1.0);
-        // PS2 GS blends `Cd` and `Cs` (`0x00` or `43/255`) in 8-bit display (sRGB) space.
-        let ldr_srgb = linear_to_srgb(ldr);
-        let noisy_srgb = clamp(mix(ldr_srgb, cs_srgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
-        ldr = srgb_to_linear(noisy_srgb);
+        // PS2 GS blends `Cd` (`ldr`, already in 8-bit display sRGB space) and `Cs` (`0x00` or `43/255`) directly.
+        ldr = clamp(mix(ldr, cs_srgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     // 3. PS2 Black/White/Red screen fade (`sh2gfw_Fade2` 0x00179d60, `sh2gfw_Fade3` 0x0017a2e0)

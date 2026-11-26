@@ -722,56 +722,59 @@ fn draw_examine_overlay(
         }
     }
 
-    if screen.examine_phase != ExaminePhase::FullscreenReading {
-        return;
+    if screen.examine_phase == ExaminePhase::FullscreenReading {
+        // `item_msg_e.mes` byte `0x2298`: `0xFFFA` (`\a` vertical center) + `0xFF01` (`fontSetColor(1)` ->
+        // `FONT_COLOR_PALETTE_PS2[1] = [96, 96, 128]` in PS2 0..128 = `RGB(192, 192, 255)` in 8-bit).
+        let body_px = ((30.0 * c.sy).round() as usize).max(14);
+        let x_scale = c.sx / c.sy;
+        let line_pitch = ((32.0 * c.sy).round() as usize).max(body_px + 2);
+        let letter_color = Sh2TextColor::Custom {
+            top: [192, 192, 255, 255],
+            bottom: [192, 192, 255, 255],
+        };
+
+        if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
+            let raw_text = meta.examine_text.unwrap_or(meta.description);
+            let pages: Vec<&str> = raw_text.split('\x0c').collect();
+            let active_page = pages
+                .get(screen.examine_page.min(pages.len().saturating_sub(1)))
+                .copied()
+                .unwrap_or("");
+            let clean_lines: Vec<String> = active_page
+                .lines()
+                .take(6)
+                .map(|l| l.chars().filter(|&ch| !ch.is_control()).collect())
+                .collect();
+            if !clean_lines.is_empty() {
+                // `MesAlign::BlockCenter` (`\l`): compute max line width, left-align lines at `(w - max_w)/2`,
+                // vertically centered (`\a` `0xFFFA`) directly over the dimmed examine image.
+                let max_w = clean_lines
+                    .iter()
+                    .map(|l| font.text_width_aspect(l, body_px, x_scale))
+                    .max()
+                    .unwrap_or(0);
+                let block_x = w.saturating_sub(max_w) / 2;
+                let total_h = clean_lines.len() * line_pitch;
+                let block_y0 = h.saturating_sub(total_h) / 2;
+                for (i, line) in clean_lines.iter().enumerate() {
+                    font.draw_line_styled_aspect(
+                        rasterizer,
+                        line,
+                        (block_x, block_y0 + i * line_pitch),
+                        body_px,
+                        x_scale,
+                        letter_color,
+                        true,
+                    );
+                }
+            }
+        }
     }
 
-    // `item_msg_e.mes` byte `0x2298`: `0xFFFA` (`\a` vertical center) + `0xFF01` (`fontSetColor(1)` ->
-    // `FONT_COLOR_PALETTE_PS2[1] = [96, 96, 128]` in PS2 0..128 = `RGB(192, 192, 255)` in 8-bit).
-    let body_px = ((30.0 * c.sy).round() as usize).max(14);
-    let x_scale = c.sx / c.sy;
-    let line_pitch = ((32.0 * c.sy).round() as usize).max(body_px + 2);
-    let letter_color = Sh2TextColor::Custom {
-        top: [192, 192, 255, 255],
-        bottom: [192, 192, 255, 255],
-    };
-
-    if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
-        let raw_text = meta.examine_text.unwrap_or(meta.description);
-        let pages: Vec<&str> = raw_text.split('\x0c').collect();
-        let active_page = pages
-            .get(screen.examine_page.min(pages.len().saturating_sub(1)))
-            .copied()
-            .unwrap_or("");
-        let clean_lines: Vec<String> = active_page
-            .lines()
-            .take(6)
-            .map(|l| l.chars().filter(|&ch| !ch.is_control()).collect())
-            .collect();
-        if clean_lines.is_empty() {
-            return;
-        }
-        // `MesAlign::BlockCenter` (`\l`): compute max line width, left-align lines at `(w - max_w)/2`,
-        // vertically centered (`\a` `0xFFFA`) directly over the dimmed examine image.
-        let max_w = clean_lines
-            .iter()
-            .map(|l| font.text_width_aspect(l, body_px, x_scale))
-            .max()
-            .unwrap_or(0);
-        let block_x = w.saturating_sub(max_w) / 2;
-        let total_h = clean_lines.len() * line_pitch;
-        let block_y0 = h.saturating_sub(total_h) / 2;
-        for (i, line) in clean_lines.iter().enumerate() {
-            font.draw_line_styled_aspect(
-                rasterizer,
-                line,
-                (block_x, block_y0 + i * line_pitch),
-                body_px,
-                x_scale,
-                letter_color,
-                true,
-            );
-        }
+    // Apply `0.5` s fade-in / fade-out scrim (`item_examine_fade_out` `0x001db170` & `examine_main` `0x001d3a00:1704`)
+    if screen.screen_fade_alpha > 0.001 {
+        let a = (screen.screen_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
     }
 }
 

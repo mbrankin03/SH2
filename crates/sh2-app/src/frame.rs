@@ -49,7 +49,9 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
 
     if is_in_game && state.ingame_menus.is_any_open() {
         let snapshot = crate::ingame_menus::build_player_snapshot(state);
-        state.ingame_menus.tick(dt.as_secs_f32(), &snapshot);
+        if let Some(deferred_action) = state.ingame_menus.tick(dt.as_secs_f32(), &snapshot) {
+            crate::ingame_menus::apply_inventory_action(state, deferred_action);
+        }
     }
 
     // 5. Advance simulation time and frame counter for animated post-processing

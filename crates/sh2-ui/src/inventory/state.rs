@@ -7,10 +7,10 @@ use crate::inventory::widgets::{
     LOOK_COMMAND_MAX_GLOW, RADIO_VOLUME_BARS,
 };
 use crate::inventory::{
-    CornerButton, ExaminePhase, InventoryAction, InventoryFocus, InventoryPlayerSnapshot,
-    ItemCommand, CAROUSEL_SCALE_STEP, CAROUSEL_SELECTED_SCALE, CAROUSEL_UNSELECTED_SCALE,
-    CMD_WIN_MOUSE_X_MAX, CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MAX, CMD_WIN_MOUSE_Y_MIN,
-    CMD_WIN_ROW_0_MAX_Y, CMD_WIN_ROW_1_MAX_Y, DEFAULT_RADIO_VOLUME,
+    CornerButton, ExaminePhase, InventoryAction, InventoryFadeTransition, InventoryFocus,
+    InventoryPlayerSnapshot, ItemCommand, CAROUSEL_SCALE_STEP, CAROUSEL_SELECTED_SCALE,
+    CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_X_MAX, CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MAX,
+    CMD_WIN_MOUSE_Y_MIN, CMD_WIN_ROW_0_MAX_Y, CMD_WIN_ROW_1_MAX_Y, DEFAULT_RADIO_VOLUME,
 };
 use crate::menu::{MenuNavAction, MenuSoundCue};
 use sh2_core::inventory::{
@@ -85,8 +85,8 @@ pub struct InventoryScreen {
     /// Inventory screen fade-to-black alpha (`1.0` = solid black, `0.0` = fully visible;
     /// `SLUS_202.28` `itemmain` `0x001cdb40:86` & `item_fade_out` `0x001db0e0:3740`: `0.5` s).
     pub screen_fade_alpha: f32,
-    /// True while fading out to close the Inventory screen (`DAT_0116e65c == 1` in `item_fade_out`).
-    pub is_closing: bool,
+    /// Pending fade-to-black screen transition (`DAT_0116e65c` in `otn_itemmain.c`).
+    pub fade_transition: InventoryFadeTransition,
 }
 
 impl Default for InventoryScreen {
@@ -129,7 +129,7 @@ impl InventoryScreen {
             examine_rgb: 128.0,
             examine_popup_t: 0.0,
             screen_fade_alpha: 0.0,
-            is_closing: false,
+            fade_transition: InventoryFadeTransition::None,
         }
     }
 
@@ -148,7 +148,7 @@ impl InventoryScreen {
     /// while preserving ambient room BGM playback.
     pub fn open(&mut self, inventory: &InventoryManager) {
         self.is_open = true;
-        self.is_closing = false;
+        self.fade_transition = InventoryFadeTransition::None;
         self.screen_fade_alpha = 1.0;
         self.examine_popup_t = 0.0;
         self.focus = InventoryFocus::Carousel;
@@ -204,11 +204,14 @@ impl InventoryScreen {
     }
 
     /// Advances ECG animation, 3D carousel rotation, scale lerp, `item_allay` pulse/fade,
-    /// `sprite` tab pulse, `look_command` eased cursor/glow, and `look_combine` fade
-    /// (`SLUS_202.28` `itemmainmain` `0x001cddd0`).
-    pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) {
+    /// `sprite` tab pulse, `look_command` eased cursor/glow, `look_combine` fade, and `0.5` s
+    /// `ScreenEffectFadeStart` transitions (`SLUS_202.28` `itemmainmain` `0x001cddd0`).
+    ///
+    /// Returns a deferred [`InventoryAction`] (e.g. `OpenOptions` / `OpenMemo` / `OpenMap`) once a
+    /// `0.5` s fade-to-black subscreen transition finishes (`otn_itemmain.c:497, 530, 567`).
+    pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) -> Option<InventoryAction> {
         if !self.is_open {
-            return;
+            return None;
         }
         let dt = dt.clamp(0.0, 0.1);
         let ticks_30hz = dt * 30.0;
@@ -262,18 +265,53 @@ impl InventoryScreen {
             self.combine_fade = (self.combine_fade - dt * LOOK_COMBINE_FADE_RATE).max(0.0);
         }
 
-        // Inventory fade-in / fade-out (`SLUS_202.28` `itemmain` `0x001cdb40:86` & `item_fade_out`
-        // `0x001db0e0:3740`: `ScreenEffectFadeStart(0.5)` -> `2.0 / s`).
+        // Inventory & fullscreen Examine fade-in / fade-out (`SLUS_202.28` `itemmain` `0x001cdb40:86`,
+        // `item_fade_out` `0x001db0e0:3740`, `item_examine_fade_out` `0x001db170:3769`: `0.5` s).
         let fade_rate = 1.0 / super::INVENTORY_FADE_DURATION_SEC;
-        if self.is_closing {
-            self.screen_fade_alpha = (self.screen_fade_alpha + dt * fade_rate).min(1.0);
-            if self.screen_fade_alpha >= 1.0 {
-                self.is_closing = false;
-                self.close();
-                return;
+        match self.fade_transition {
+            InventoryFadeTransition::None => {
+                if self.screen_fade_alpha > 0.0 {
+                    self.screen_fade_alpha = (self.screen_fade_alpha - dt * fade_rate).max(0.0);
+                }
             }
-        } else if self.screen_fade_alpha > 0.0 {
-            self.screen_fade_alpha = (self.screen_fade_alpha - dt * fade_rate).max(0.0);
+            InventoryFadeTransition::ClosingToGameplay => {
+                self.screen_fade_alpha = (self.screen_fade_alpha + dt * fade_rate).min(1.0);
+                if self.screen_fade_alpha >= 1.0 {
+                    self.fade_transition = InventoryFadeTransition::None;
+                    self.close();
+                    return None;
+                }
+            }
+            InventoryFadeTransition::OpeningSubscreen(btn) => {
+                self.screen_fade_alpha = (self.screen_fade_alpha + dt * fade_rate).min(1.0);
+                if self.screen_fade_alpha >= 1.0 {
+                    self.fade_transition = InventoryFadeTransition::None;
+                    return Some(match btn {
+                        CornerButton::Option => InventoryAction::OpenOptions,
+                        CornerButton::Memo => InventoryAction::OpenMemo,
+                        CornerButton::Map => InventoryAction::OpenMap,
+                    });
+                }
+            }
+            InventoryFadeTransition::EnteringFullscreenExamine => {
+                self.screen_fade_alpha = (self.screen_fade_alpha + dt * fade_rate).min(1.0);
+                if self.screen_fade_alpha >= 1.0 {
+                    self.fade_transition = InventoryFadeTransition::None;
+                    self.examine_page = 0;
+                    self.examine_rgb = 128.0;
+                    self.examine_phase = ExaminePhase::FullscreenInspect;
+                    self.focus = InventoryFocus::ExamineOverlay;
+                }
+            }
+            InventoryFadeTransition::ExitingFullscreenExamine => {
+                self.screen_fade_alpha = (self.screen_fade_alpha + dt * fade_rate).min(1.0);
+                if self.screen_fade_alpha >= 1.0 {
+                    self.fade_transition = InventoryFadeTransition::None;
+                    self.examine_page = 0;
+                    self.examine_rgb = 128.0;
+                    self.focus = InventoryFocus::Carousel;
+                }
+            }
         }
 
         // `InlinePopup` open/dismiss zoom animation (`sh2pc.exe` `FUN_0046af30` `case 0xc <-> case 1`,
@@ -312,6 +350,7 @@ impl InventoryScreen {
                 self.status_toast = None;
             }
         }
+        None
     }
 
     /// Displays a transient status message in the inventory footer.
@@ -419,7 +458,7 @@ impl InventoryScreen {
         inventory: &InventoryManager,
         snapshot: &InventoryPlayerSnapshot,
     ) -> (MenuSoundCue, InventoryAction) {
-        if !self.is_open || self.is_closing {
+        if !self.is_open || self.fade_transition != InventoryFadeTransition::None {
             return (MenuSoundCue::None, InventoryAction::None);
         }
 
@@ -460,9 +499,9 @@ impl InventoryScreen {
                             self.examine_page += 1;
                             (MenuSoundCue::Confirm, InventoryAction::None)
                         } else {
-                            self.examine_page = 0;
-                            self.examine_rgb = 128.0;
-                            self.focus = InventoryFocus::Carousel;
+                            // `examine_main` (`0x001d3a00:1704`): fade to black, then return to Inventory
+                            self.fade_transition =
+                                InventoryFadeTransition::ExitingFullscreenExamine;
                             (MenuSoundCue::Cancel, InventoryAction::None)
                         }
                     }
@@ -475,9 +514,7 @@ impl InventoryScreen {
                     }
                     ExaminePhase::InlineClosing => (MenuSoundCue::None, InventoryAction::None),
                     ExaminePhase::FullscreenInspect | ExaminePhase::FullscreenReading => {
-                        self.examine_page = 0;
-                        self.examine_rgb = 128.0;
-                        self.focus = InventoryFocus::Carousel;
+                        self.fade_transition = InventoryFadeTransition::ExitingFullscreenExamine;
                         (MenuSoundCue::Cancel, InventoryAction::None)
                     }
                 },
@@ -654,7 +691,7 @@ impl InventoryScreen {
             }
             MenuNavAction::Cancel => {
                 // `item_fade_out` (`0x001db0e0`): smoothly fade Inventory to black over `0.5` s
-                self.is_closing = true;
+                self.fade_transition = InventoryFadeTransition::ClosingToGameplay;
                 (MenuSoundCue::Cancel, InventoryAction::Close)
             }
         }
@@ -692,16 +729,28 @@ impl InventoryScreen {
             }
             MenuNavAction::Confirm => match btn {
                 CornerButton::Memo => {
-                    // Gate on `MemoCommandCheck` (`0x00230570`)
+                    // Gate on `MemoCommandCheck` (`0x00230570`); fade out over `0.5` s (`otn_itemmain.c:530`)
                     if snapshot.has_any_memo {
-                        (MenuSoundCue::Confirm, InventoryAction::OpenMemo)
+                        self.fade_transition =
+                            InventoryFadeTransition::OpeningSubscreen(CornerButton::Memo);
+                        (MenuSoundCue::Confirm, InventoryAction::None)
                     } else {
                         self.show_toast("No memos collected yet.");
                         (MenuSoundCue::Cancel, InventoryAction::None)
                     }
                 }
-                CornerButton::Map => (MenuSoundCue::Confirm, InventoryAction::OpenMap),
-                CornerButton::Option => (MenuSoundCue::Confirm, InventoryAction::OpenOptions),
+                CornerButton::Map => {
+                    // `otn_itemmain.c:567` (`DAT_0116e65c = 1; DAT_0116e65d = 5`): `0.5` s fade out
+                    self.fade_transition =
+                        InventoryFadeTransition::OpeningSubscreen(CornerButton::Map);
+                    (MenuSoundCue::Confirm, InventoryAction::None)
+                }
+                CornerButton::Option => {
+                    // `otn_itemmain.c:497` (`DAT_0116e65c = 1; DAT_0116e65d = 7`): `0.5` s fade out
+                    self.fade_transition =
+                        InventoryFadeTransition::OpeningSubscreen(CornerButton::Option);
+                    (MenuSoundCue::Confirm, InventoryAction::None)
+                }
             },
             MenuNavAction::Cancel => {
                 self.focus = InventoryFocus::Carousel;
@@ -798,19 +847,20 @@ impl InventoryScreen {
                         self.examine_rgb = 128.0;
                         self.examine_popup_t = 0.0;
                         // `sh2pc.exe` `FUN_0046a110` (`0x0046a110`) `case 9`: fullscreen `examine_main`
-                        // (`0x001d3a00`) items (Letter from Mary `0x15`, Laura's Letter `0x16`, Rebirth books
-                        // `0x4a, 0x4b, 0x4f, 0x50, 0x51, 0x54`). All other examinable items (`Photo of Mary`
-                        // `0x14`, etc.) use the inline `200x200` popup (`FUN_0046af30` `case 0xc`).
+                        // (`0x001d3a00`) items fade out over `0.5` s (`command_main` `0x001cf9e0:1053`)
+                        // then fade back in on `FullscreenInspect` (`item_examine_fade_out` `0x001db170:3769`).
+                        // All other examinable items (`Photo of Mary` `0x14`, etc.) use the inline `200x200` popup.
                         let is_fullscreen_examine = matches!(
                             item_id,
                             0x15 | 0x16 | 0x4a | 0x4b | 0x4f | 0x50 | 0x51 | 0x54
                         );
-                        self.examine_phase = if is_fullscreen_examine {
-                            ExaminePhase::FullscreenInspect
+                        if is_fullscreen_examine {
+                            self.fade_transition =
+                                InventoryFadeTransition::EnteringFullscreenExamine;
                         } else {
-                            ExaminePhase::InlinePopup
-                        };
-                        self.focus = InventoryFocus::ExamineOverlay;
+                            self.examine_phase = ExaminePhase::InlinePopup;
+                            self.focus = InventoryFocus::ExamineOverlay;
+                        }
                         (MenuSoundCue::Confirm, InventoryAction::None)
                     }
                     ItemCommand::Combine => {
@@ -1074,13 +1124,22 @@ mod tests {
         assert_eq!(screen.examine_popup_t, 0.0);
 
         // Select Letter from Mary (idx 1), open CommandWindow, choose Examine -> 2-phase `examine_main`:
-        // Phase 0 (`FullscreenInspect`, bright image, no text) -> Confirm -> Phase 1 (`FullscreenReading`,
-        // dims `examine_rgb` 128 -> 69 and paginates 4 `\x0c` pages).
+        // `0.5` s fade-out (`command_main` `0x001cf9e0:1053`) -> Phase 0 (`FullscreenInspect`, bright
+        // image, fades in over `0.5` s) -> Confirm -> Phase 1 (`FullscreenReading`, dims `examine_rgb`
+        // 128 -> 69 and paginates 4 `\x0c` pages) -> `0.5` s fade-out back to Carousel.
         screen.selected_index = 1;
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(screen.focus, InventoryFocus::CommandWindow);
         screen.handle_nav(MenuNavAction::Down, &inv, &snap); // row 1 = Examine
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(
+            screen.fade_transition,
+            InventoryFadeTransition::EnteringFullscreenExamine
+        );
+        for _ in 0..10 {
+            screen.tick(0.06, &snap);
+        }
+        assert_eq!(screen.fade_transition, InventoryFadeTransition::None);
         assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
         assert_eq!(screen.examine_phase, ExaminePhase::FullscreenInspect);
         assert!((screen.examine_rgb - 128.0).abs() < 1e-3);
@@ -1102,11 +1161,38 @@ mod tests {
             assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
             assert_eq!(screen.examine_page, expected_page);
         }
-        // Final Confirm after page 3 closes ExamineOverlay back to Carousel
+        // Final Confirm after page 3 triggers `0.5` s fade-out back to Carousel
         let (cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(cue, MenuSoundCue::Cancel);
+        assert_eq!(
+            screen.fade_transition,
+            InventoryFadeTransition::ExitingFullscreenExamine
+        );
+        for _ in 0..10 {
+            screen.tick(0.06, &snap);
+        }
+        assert_eq!(screen.fade_transition, InventoryFadeTransition::None);
         assert_eq!(screen.focus, InventoryFocus::Carousel);
         assert_eq!(screen.examine_page, 0);
+
+        // Confirming a bottom subscreen (`Options` / `Map` / `Memo`) fades out over `0.5` s before emitting the action
+        screen.focus = InventoryFocus::Corner(CornerButton::Option);
+        let (opt_cue, opt_act) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(opt_cue, MenuSoundCue::Confirm);
+        assert_eq!(opt_act, InventoryAction::None);
+        assert_eq!(
+            screen.fade_transition,
+            InventoryFadeTransition::OpeningSubscreen(CornerButton::Option)
+        );
+        let mut deferred = None;
+        for _ in 0..12 {
+            if let Some(act) = screen.tick(0.05, &snap) {
+                deferred = Some(act);
+                break;
+            }
+        }
+        assert_eq!(deferred, Some(InventoryAction::OpenOptions));
+        assert_eq!(screen.fade_transition, InventoryFadeTransition::None);
 
         // Mouse click during ExamineOverlay advances/closes pages instead of hitting corner buttons
         screen.focus = InventoryFocus::ExamineOverlay;

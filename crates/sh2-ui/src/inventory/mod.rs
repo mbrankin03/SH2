@@ -235,9 +235,29 @@ pub enum InventoryAction {
 /// Default Pocket Radio volume level (`SLUS_202.28` `ItemDataInit` `0x001ad860`: `DAT_01126900 = 0xc`).
 pub const DEFAULT_RADIO_VOLUME: u8 = 0x0c;
 
-/// Inventory screen fade-in / fade-out duration in seconds (`SLUS_202.28` `itemmain` `0x001cdb40:86`
-/// & `item_fade_out` `0x001db0e0:3740`: `ScreenEffectFadeStart(0x3f000000)` = `0.5` s).
+/// Inventory screen fade-in / fade-out duration in seconds (`SLUS_202.28` `itemmain` `0x001cdb40:86`,
+/// `command_main` `0x001cf9e0:1053`, `item_fade_out` `0x001db0e0:3740`, `item_examine_fade_out`
+/// `0x001db170:3769`: `ScreenEffectFadeStart(0x3f000000)` = `0.5` s).
 pub const INVENTORY_FADE_DURATION_SEC: f32 = 0.5;
+
+/// Pending fade-to-black transition inside [`InventoryScreen`] (`DAT_0116e65c` in `otn_itemmain.c`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InventoryFadeTransition {
+    /// No pending fade-out; `screen_fade_alpha` fades smoothly in toward `0.0`.
+    #[default]
+    None,
+    /// `DAT_0116e65c == 1` (`item_fade_out` `0x001db0e0`): fading to black to close Inventory.
+    ClosingToGameplay,
+    /// `DAT_0116e65c == 1` (`otn_itemmain.c:497, 530, 567`: `DAT_0116e65d = 7/8/5`): fading to black
+    /// before opening `Options`, `Memo`, or `Map`.
+    OpeningSubscreen(CornerButton),
+    /// `DAT_0116e65c == 2` (`item_examine_fade_out` `0x001db170`): fading to black before entering
+    /// fullscreen `examine_main` (`Letter from Mary`, etc.), then fading back in over `0.5` s.
+    EnteringFullscreenExamine,
+    /// `examine_main` (`0x001d3a00:1704`): fading to black before returning to Inventory Carousel,
+    /// then fading back in over `0.5` s.
+    ExitingFullscreenExamine,
+}
 
 /// Snapshot of runtime player status passed into [`InventoryScreen`] for rendering & commands.
 #[derive(Debug, Clone, Copy, PartialEq)]

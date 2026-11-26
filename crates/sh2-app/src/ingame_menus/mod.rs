@@ -10,13 +10,13 @@
 mod actions;
 mod save_load;
 
-use actions::{
-    apply_inventory_action, ensure_examine_tex_loaded, ensure_item_atlas_loaded,
-    ensure_map_sheet_loaded, ensure_memo_assets_loaded, handle_options_from_inventory_key,
-};
 pub(crate) use actions::{
-    build_player_snapshot, ensure_gameover_tex_loaded, ensure_red_cross_tex_loaded,
-    ensure_savebg_loaded,
+    apply_inventory_action, build_player_snapshot, ensure_gameover_tex_loaded,
+    ensure_red_cross_tex_loaded, ensure_savebg_loaded,
+};
+use actions::{
+    ensure_examine_tex_loaded, ensure_item_atlas_loaded, ensure_map_sheet_loaded,
+    ensure_memo_assets_loaded, handle_options_from_inventory_key,
 };
 use save_load::handle_save_load_key;
 pub(crate) use save_load::open_save_load;
@@ -26,7 +26,9 @@ use winit::keyboard::KeyCode;
 use crate::menu_events::emit_menu_sound;
 use crate::state::AppState;
 use sh2_assets::formats::mes::MessageTable;
-use sh2_ui::inventory::{draw_inventory_screen, InventoryPlayerSnapshot, InventoryScreen};
+use sh2_ui::inventory::{
+    draw_inventory_screen, InventoryAction, InventoryPlayerSnapshot, InventoryScreen,
+};
 use sh2_ui::map::{
     chizu_can_read_map, chizu_current_position_check, chizu_possession_check, chizu_select,
     draw_paper_map, stage_to_default_room_id, MapReadCheck, PaperMapAction, PaperMapPlayerState,
@@ -107,10 +109,15 @@ impl InGameMenuState {
     }
 
     /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/pan/transcription, memo dim, save/load blink).
-    pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) {
-        if self.inventory.is_open {
-            self.inventory.tick(dt, snapshot);
-        }
+    ///
+    /// Returns any deferred [`InventoryAction`] triggered when an Inventory fade-to-black transition
+    /// finishes (`otn_itemmain.c` `item_fade_out` `0x001db0e0`).
+    pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) -> Option<InventoryAction> {
+        let deferred_action = if self.inventory.is_open {
+            self.inventory.tick(dt, snapshot)
+        } else {
+            None
+        };
         if self.map_viewer.is_open {
             let axis_x = (self.held_map_pan[3] as i32 - self.held_map_pan[2] as i32) as f32;
             let axis_y = (self.held_map_pan[1] as i32 - self.held_map_pan[0] as i32) as f32;
@@ -125,6 +132,7 @@ impl InGameMenuState {
         if let Some(ref mut sl) = self.save_load {
             sl.tick(dt);
         }
+        deferred_action
     }
 }
 

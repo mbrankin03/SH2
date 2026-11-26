@@ -492,14 +492,26 @@ fn test_campaign_stage3_action_only_triggers_car_door_within_retail_event_check_
 
     // 2. Standing at the retail car door trigger `(15650, 0, -4650)` facing the car with
     //    `flag(24) == false` and pressing Action [E] MUST trigger Stage 3 `EvProg` #2 (`0x005a09b0`)
-    //    -> `out_p_incar` cutaway WITH `out/p_incar_map` at `incar_alpha == 1.0`.
+    //    -> `EvSubPictureDisplay` fade-out/fade-in -> `out_p_incar` cutaway WITH `out/p_incar_map`
+    //    at `incar_alpha == 1.0`.
     sim.snap_player_transform(glam::Vec3::new(15650.0, 0.0, -4650.0), 0.0);
     let _ = orch.step(&mut sim, &action_input, 1.0 / 60.0);
-    let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+    for _ in 0..140 {
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if sim.scenario.cutaway_overlay.active_picture() == Some("out_p_incar")
+            && orch.fade.is_fully_clear()
+        {
+            break;
+        }
+    }
     assert_eq!(
         sim.scenario.cutaway_overlay.active_picture(),
         Some("out_p_incar"),
         "Pressing [E] at retail car door (15650, 0, -4650) must open out_p_incar cutaway"
+    );
+    assert!(
+        orch.fade.is_fully_clear(),
+        "Cutaway fade-in must complete before accepting interaction input"
     );
     assert!(
         (sim.scenario.cutaway_overlay.incar_alpha() - 1.0).abs() < 1e-5,
@@ -519,13 +531,17 @@ fn test_campaign_stage3_action_only_triggers_car_door_within_retail_event_check_
     );
     assert_eq!(quads[0].sheet_name, "out/p_incar_map");
 
-    // 3. Complete `ev_prog[2]`: [E] -> message 28 + SE 0x2b17, [E] -> 1.0s fade -> sets `flag(24)`.
+    // 3. Complete `ev_prog[2]`: [E] -> message 28 + SE 0x2b17, [E] -> 1.0s map fade ->
+    //    `EvSubPictureDisplay` exit fade-out/fade-in -> sets `flag(24)`.
     let eff_msg = orch.step(&mut sim, &action_input, 1.0 / 60.0);
     assert_eq!(eff_msg.stage_message, Some(28));
     assert!(eff_msg.sound_effects.contains(&0x2b17));
     let _ = orch.step(&mut sim, &action_input, 1.0 / 60.0);
-    for _ in 0..70 {
+    for _ in 0..200 {
         let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if sim.scenario.cutaway_overlay.active_picture().is_none() && orch.fade.is_fully_clear() {
+            break;
+        }
     }
     assert!(
         sim.scenario.flags.get(24),
@@ -534,9 +550,14 @@ fn test_campaign_stage3_action_only_triggers_car_door_within_retail_event_check_
     assert_eq!(sim.scenario.cutaway_overlay.active_picture(), None);
 
     // 4. Re-examining the car after `flag(24) == true` MUST trigger `ev_prog[3]` (`0x005a0ca0`)
-    //    -> empty `out_p_incar` cutaway (`incar_alpha == 0.0`, 0 overlay quads).
+    //    -> `EvSubPictureDisplay` fade-out/fade-in -> empty `out_p_incar` cutaway (`incar_alpha == 0.0`).
     let _ = orch.step(&mut sim, &action_input, 1.0 / 60.0);
-    let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+    for _ in 0..140 {
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if sim.scenario.cutaway_overlay.active_picture() == Some("out_p_incar") {
+            break;
+        }
+    }
     assert_eq!(
         sim.scenario.cutaway_overlay.active_picture(),
         Some("out_p_incar")

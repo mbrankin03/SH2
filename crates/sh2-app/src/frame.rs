@@ -514,7 +514,7 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
         // If in-game pause menu is active, dim the full widescreen window edge-to-edge, then
         // render the crisp 1920x1440 4:3 Pause/Options UI centered on top with 1:1 square pixels.
         if state.menu_ctrl.pause_menu.is_open {
-            state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 165);
+            state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 96);
             state.inventory_rasterizer.clear();
             let font = sh2_ui::AtlasFont::shared(None);
 

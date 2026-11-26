@@ -32,13 +32,14 @@ impl PauseMenuOption {
         PauseMenuOption::Quit,
     ];
 
+    /// Retail PC `sh2pc.exe` (`FUN_00407300` `0x00407300`, `0x0062f098..0x0062f0c4`) labels.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Continue => "CONTINUE",
-            Self::Save => "SAVE",
-            Self::Load => "LOAD",
-            Self::Options => "OPTIONS",
-            Self::Quit => "QUIT",
+            Self::Continue => "Resume",
+            Self::Save => "Save Game",
+            Self::Load => "Load Game",
+            Self::Options => "Options",
+            Self::Quit => "Quit",
         }
     }
 }
@@ -224,10 +225,10 @@ impl PauseMenu {
     }
 }
 
-/// Retail PC `sh2pc.exe` Pause Menu 512×448 virtual coordinates (`FUN_00407300` `0x00407300`
+/// Retail PC `sh2pc.exe` Pause Menu 512×480 virtual coordinates (`FUN_00407300` `0x00407300`
 /// and `FUN_00407610` `0x00407610`).
 pub const PAUSE_VIRTUAL_W: f32 = 512.0;
-pub const PAUSE_VIRTUAL_H: f32 = 448.0;
+pub const PAUSE_VIRTUAL_H: f32 = 480.0;
 /// `"PAUSED"` header position `(0x100, 0xa4)` in `FUN_00407300` (`0x00407300`).
 pub const PAUSE_HEADER_XY: (f32, f32) = (256.0, 164.0);
 /// First pause item Y (`0xe6` = `230`) and row pitch (`0x1e` = `30`) in `FUN_00407300` (`0x00407300`).
@@ -283,7 +284,7 @@ pub fn draw_pause_screen_with_scrim(
 
     // 1. Optional semi-transparent dark backdrop scrim over paused frame (`sh2gfw_Set_PauseRetain`)
     if draw_scrim {
-        let dim_color = [0u8, 0, 0, 165];
+        let dim_color = [0u8, 0, 0, 96];
         for y in 0..h {
             for x in 0..w {
                 rasterizer.blend_pixel(x, y, dim_color);
@@ -291,47 +292,37 @@ pub fn draw_pause_screen_with_scrim(
         }
     }
 
-    let hdr_size = (22.0 * scale_y).round().max(14.0) as usize;
-    let item_size = (18.0 * scale_y).round().max(12.0) as usize;
-    let sub_size = (13.0 * scale_y).round().max(10.0) as usize;
+    // `FUN_00407300` (`0x00407300`) uses `FontSize[0]` (`20x30` in `512x480`, `x_scale = scale_x / scale_y`).
+    let font_px = (30.0 * scale_y).round().max(14.0) as usize;
+    let sub_size = (20.0 * scale_y).round().max(10.0) as usize;
+    let x_scale = scale_x / scale_y;
     let pop_dx = (2.0 * scale_x).round().max(1.0) as usize;
     let pop_dy = (2.0 * scale_y).round().max(1.0) as usize;
 
     match pause_menu.sub_phase {
         PauseSubPhase::Main => {
-            // `"PAUSED"` at `(0x100, 0xa4)` (`256, 164`) — `FUN_00407300` `0x00407300`
-            font.draw_line_centered(
+            // `"PAUSED"` at `(0x100, 0xa4)` (`256, 164`) — `FUN_00407300` `0x00407300:4750-4752`
+            font.draw_line_centered_aspect(
                 rasterizer,
                 "PAUSED",
                 to_px(PAUSE_HEADER_XY.0, PAUSE_HEADER_XY.1),
-                hdr_size,
+                font_px,
+                x_scale,
                 Sh2TextColor::White,
                 true,
             );
 
-            // Optional location & play time above menu items
-            let s = pause_menu.play_time_secs as u64;
-            let time_str = format!("{:02}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60);
-            if !pause_menu.location_name.is_empty() {
-                font.draw_line_centered(
-                    rasterizer,
-                    &format!("{}  {}", pause_menu.location_name, time_str),
-                    to_px(256.0, 198.0),
-                    sub_size,
-                    Sh2TextColor::SilverUnselected,
-                    true,
-                );
-            }
-
-            // Exact `sh2pc.exe` `FUN_00407300` (`0x00407300`) unselected base colors:
-            // enabled `(0x7f, 0x7f, 0x7f, 0x60)`, disabled Save `(0x55, 0x55, 0x55, 0x60)`.
+            // Exact `sh2pc.exe` `FUN_00407300` (`0x00407300:4753, 4758`) `fontSetColorDirect` PS2 `0..0x80`
+            // colors converted to 8-bit `0..255`:
+            // - enabled: `(0x7f, 0x7f, 0x7f, 0x60)` -> `[254, 254, 254, 192]`
+            // - disabled Save: `(0x55, 0x55, 0x55, 0x60)` -> `[170, 170, 170, 192]`
             let unselected_color = Sh2TextColor::Custom {
-                top: [0x7f, 0x7f, 0x7f, 0x60],
-                bottom: [0x7f, 0x7f, 0x7f, 0x60],
+                top: [254, 254, 254, 192],
+                bottom: [254, 254, 254, 192],
             };
             let disabled_color = Sh2TextColor::Custom {
-                top: [0x55, 0x55, 0x55, 0x60],
-                bottom: [0x55, 0x55, 0x55, 0x60],
+                top: [170, 170, 170, 192],
+                bottom: [170, 170, 170, 192],
             };
 
             // 5 items at `(256, 230 + idx * 30)` (`0xe6, 0x104, 0x122, 0x140, 0x15e`)
@@ -347,16 +338,25 @@ pub fn draw_pause_screen_with_scrim(
                     unselected_color
                 };
 
-                // Unselected base pass (`alpha = 0x60`)
-                font.draw_line_centered(rasterizer, opt.label(), pos, item_size, base_color, false);
+                // Unselected base pass (`alpha = 0x60/0x80 = 192`)
+                font.draw_line_centered_aspect(
+                    rasterizer,
+                    opt.label(),
+                    pos,
+                    font_px,
+                    x_scale,
+                    base_color,
+                    true,
+                );
 
                 // Selected double-draw pop pass at `(-2, -2)` (`0xfe, vy - 2`, `alpha = 0xff`)
                 if is_selected && !is_disabled {
-                    font.draw_line_centered(
+                    font.draw_line_centered_aspect(
                         rasterizer,
                         opt.label(),
                         (pos.0.saturating_sub(pop_dx), pos.1.saturating_sub(pop_dy)),
-                        item_size,
+                        font_px,
+                        x_scale,
                         Sh2TextColor::White,
                         false,
                     );
@@ -364,11 +364,12 @@ pub fn draw_pause_screen_with_scrim(
             }
 
             if let Some(ref msg) = pause_menu.status_message {
-                font.draw_line_centered(
+                font.draw_line_centered_aspect(
                     rasterizer,
                     msg,
                     to_px(256.0, 392.0),
                     sub_size,
+                    x_scale,
                     Sh2TextColor::GoldSelected,
                     true,
                 );
@@ -376,11 +377,12 @@ pub fn draw_pause_screen_with_scrim(
         }
         PauseSubPhase::QuitConfirm => {
             // `"Exit to main menu?"` at `(0x100, 0xe8)` (`256, 232`) — `FUN_00407610` `0x00407610`
-            font.draw_line_centered(
+            font.draw_line_centered_aspect(
                 rasterizer,
                 "Exit to main menu?",
                 to_px(PAUSE_QUIT_PROMPT_XY.0, PAUSE_QUIT_PROMPT_XY.1),
-                hdr_size,
+                font_px,
+                x_scale,
                 Sh2TextColor::White,
                 true,
             );
@@ -388,20 +390,29 @@ pub fn draw_pause_screen_with_scrim(
             let yes_pos = to_px(PAUSE_QUIT_YES_XY.0, PAUSE_QUIT_YES_XY.1);
             let no_pos = to_px(PAUSE_QUIT_NO_XY.0, PAUSE_QUIT_NO_XY.1);
 
-            // Base unselected pass (`FUN_00407610` `0x00407610`: `(0x7f, 0x7f, 0x7f, 0x60)`)
+            // Base unselected pass (`FUN_00407610` `0x00407610`: PS2 `0..0x80` `(0x7f, 0x7f, 0x7f, 0x60)`)
             let unselected_color = Sh2TextColor::Custom {
-                top: [0x7f, 0x7f, 0x7f, 0x60],
-                bottom: [0x7f, 0x7f, 0x7f, 0x60],
+                top: [254, 254, 254, 192],
+                bottom: [254, 254, 254, 192],
             };
-            font.draw_line_centered(
+            font.draw_line_centered_aspect(
                 rasterizer,
                 "Yes",
                 yes_pos,
-                item_size,
+                font_px,
+                x_scale,
                 unselected_color,
-                false,
+                true,
             );
-            font.draw_line_centered(rasterizer, "No", no_pos, item_size, unselected_color, false);
+            font.draw_line_centered_aspect(
+                rasterizer,
+                "No",
+                no_pos,
+                font_px,
+                x_scale,
+                unselected_color,
+                true,
+            );
 
             // Selected pop pass at `(-2, -2)` (`0xe0, 0x108` or `0x11c, 0x108`, `alpha = 0xff`)
             let (sel_label, sel_pos) = if pause_menu.quit_confirm_index == 0 {
@@ -409,14 +420,15 @@ pub fn draw_pause_screen_with_scrim(
             } else {
                 ("No", no_pos)
             };
-            font.draw_line_centered(
+            font.draw_line_centered_aspect(
                 rasterizer,
                 sel_label,
                 (
                     sel_pos.0.saturating_sub(pop_dx),
                     sel_pos.1.saturating_sub(pop_dy),
                 ),
-                item_size,
+                font_px,
+                x_scale,
                 Sh2TextColor::White,
                 false,
             );

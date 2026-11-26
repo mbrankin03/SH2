@@ -757,6 +757,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         campaign_orchestrator: None,
         campaign_loaded_room: None,
         campaign_pending_input: sh2_core::campaign::CampaignTickInput::default(),
+        campaign_messages: Default::default(),
         fog_uniforms,
         fog_particles: sh2_core::fog::FogParticleVolume::new(
             sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_COUNT,

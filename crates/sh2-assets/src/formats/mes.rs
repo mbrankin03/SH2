@@ -1,6 +1,6 @@
 //! Dialogue script table parser for Silent Hill 2 `.mes` files.
 //!
-//! # Format Architecture
+//! # Format Architecture (`SLUS_202.28` `Font/font.c` `fontPrintStrMain` `0x001b4a10`)
 //! Silent Hill 2 message files (`data/etc/message/*.mes`) contain localized strings, dialogue
 //! subtitles, and interactive prompts.
 //!
@@ -8,18 +8,22 @@
 //! - `u16 count`: Total message count.
 //! - `[u16; count] offsets`: Offset of each message in 16-bit words (multiply by 2 for byte offset).
 //!
-//! ### Message Content & Encoding:
-//! - Messages are partitioned into one or more pages separated by `0xFF, 0xFF`.
-//! - Page boundaries align to 16-bit boundaries with style control words (e.g. `0x1000`, `0x8000`, `0x9000`).
-//! - Character encoding:
-//!   - Byte `b < 0xFF`: character is `(b + 0x20) as char` (e.g., `0x00` -> `' '` space, `0x21` -> `'A'`, etc.).
-//!     Bytes `>= 0x60` fall back to `?` unless extended.
-//!   - Byte `0xFF`: Escape sequence marker:
-//!     - `0xFF, 0xFF`: End of page (join pages with `\x0C` form feed).
-//!     - `0xFF, 0xFD`: Newline `\n`.
-//!     - `0xFF, 0xE0..=0xE3`: Variable substitution marker (e.g., dynamic numbers or item names).
-//!     - `0xFF, 0xF6`: Choice prompt follows (e.g. Yes/No question).
-//!     - Other escape codes represent styling or color tags and are skipped.
+//! ### Message Content & Encoding (`0x001b4a10`, lines 745–761):
+//! - Each page begins on a 16-bit word boundary. Word `0x8000` switches the reader into
+//!   byte-packed mode (used by all English retail `.mes` files).
+//! - In byte-packed mode:
+//!   - `0x00..=0x5F`: ASCII character `(b + 0x20) as char` (`0x00` -> `' '`, `0x21` -> `'A'`).
+//!   - `0x60..=0xDF`: Extended single-byte glyph codes (`0x8E` -> `'®'` for `DUALSHOCK®2`).
+//!   - `0xE0, lo, hi`: 3-byte extended 16-bit glyph code (`0x001b4a10:752-755`).
+//!   - `0xE1..=0xFE, arg`: 2-byte layout/kerning control codes (`0xF800..0xF9FF` Y pos,
+//!     `0xFA00..0xFBFF` X pos, `0xFC00..0xFCFF` neg X, `0xFD00..0xFDFF` pos X,
+//!     `0xFE00..0xFEFF` horizontal rule; `0x001b4a10:756-759`).
+//!   - `0xFF, code`: 2-byte control codes:
+//!     - `0xFF, 0xFF`: End of page, followed by 16-bit alignment and a 16-bit `end_ctrl` word
+//!       (`fontNextMessage` `0x001b9cb0`; bit 15 `0x8000` marks the final page).
+//!     - `0xFF, 0xFD`: Newline `'\n'`.
+//!     - `0xFF, 0xFE`: Full-width space `' '`.
+//!     - `0xFF, 0x00..=0x63` / `0xE0..=0xE9` / `0xF5..=0xFC`: Color, variable, and prompt tags.
 
 use crate::error::AssetError;
 
@@ -99,58 +103,116 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
         let mut p = start;
         let mut pages = Vec::new();
         let mut cur_page = String::new();
+        let mut byte_packed = false;
+        let mut at_page_start = true;
 
         while p < end {
-            if cur_page.is_empty() {
-                // Align to 16-bit boundary if needed
+            if at_page_start {
+                // Align to 16-bit word boundary at the start of every page (`fontPrintStrMain` `0x001b4a10`).
                 if p % 2 != 0 {
                     p += 1;
                 }
-                // Skip style control words (low byte 0, high byte & 0x0F == 0)
-                while p + 1 < end && data[p] == 0 && data[p + 1] != 0 && (data[p + 1] & 0x0F) == 0 {
-                    p += 2;
+                if p + 1 >= end {
+                    break;
                 }
+                byte_packed = false;
+                at_page_start = false;
+            }
+
+            if !byte_packed {
+                if p + 1 >= end {
+                    break;
+                }
+                let word = u16::from_le_bytes([data[p], data[p + 1]]);
+                p += 2;
+                if word == 0x8000 {
+                    // Enter byte-packed stream mode (`fontPrintStrMain` `0x001b4a10:740-742`).
+                    byte_packed = true;
+                    continue;
+                }
+                if word == 0xFFFF {
+                    let trimmed = cur_page.trim().to_string();
+                    if !trimmed.is_empty() {
+                        pages.push(trimmed);
+                    }
+                    cur_page.clear();
+                    at_page_start = true;
+                    // Consume trailing 16-bit `end_ctrl` word (`fontNextMessage` `0x001b9cb0`).
+                    if p + 1 < end {
+                        let end_ctrl = u16::from_le_bytes([data[p], data[p + 1]]);
+                        p += 2;
+                        if (end_ctrl & 0x8000) != 0 {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                    continue;
+                }
+                match word {
+                    0xFFFD => cur_page.push('\n'),
+                    0xFFFE => cur_page.push(' '),
+                    0x0000..=0x005F => cur_page.push(((word as u8) + 0x20) as char),
+                    0x008E => cur_page.push('®'),
+                    // Control words (`0xF800..=0xFFFE`) and extended non-ASCII glyphs: omit cleanly.
+                    _ => {}
+                }
+                continue;
+            }
+
+            // Byte-packed stream mode (`fontPrintStrMain` `0x001b4a10:749-761`).
+            let b = data[p];
+            p += 1;
+            if b == 0xE0 {
+                // 3-byte extended 16-bit glyph code (`0xE0, lo, hi`; `0x001b4a10:752-755`).
+                p = (p + 2).min(end);
+                continue;
+            }
+            if b > 0xE0 {
+                // 2-byte control code `((b << 8) | arg)` (`0x001b4a10:756-759`).
                 if p >= end {
                     break;
                 }
-            }
-
-            let b = data[p];
-            if b == 0xFF && p + 1 < end {
-                let code = data[p + 1];
-                p += 2;
-                match code {
-                    0xFF => {
-                        let trimmed = cur_page.trim().to_string();
-                        if !trimmed.is_empty() {
-                            pages.push(trimmed);
+                let arg = data[p];
+                p += 1;
+                if b == 0xFF {
+                    match arg {
+                        0xFF => {
+                            let trimmed = cur_page.trim().to_string();
+                            if !trimmed.is_empty() {
+                                pages.push(trimmed);
+                            }
+                            cur_page.clear();
+                            // Align to 16-bit boundary and consume `end_ctrl` (`0x001b9cb0`).
+                            if p % 2 != 0 {
+                                p += 1;
+                            }
+                            at_page_start = true;
+                            if p + 1 < end {
+                                let end_ctrl = u16::from_le_bytes([data[p], data[p + 1]]);
+                                p += 2;
+                                if (end_ctrl & 0x8000) != 0 {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
                         }
-                        cur_page.clear();
-                    }
-                    0xFD => {
-                        cur_page.push('\n');
-                    }
-                    0xE0..=0xE3 => {
-                        // Variable insertion parameter code
-                        cur_page.push((1 + code - 0xE0) as char);
-                    }
-                    0xF6 => {
-                        // Yes/No choice prompt indicator
-                        cur_page.push('\x05');
-                    }
-                    _ => {
-                        // Miscellaneous style/formatting escape codes: drop
+                        0xFD => cur_page.push('\n'),
+                        0xFE => cur_page.push(' '),
+                        // Color (`0x00..=0x63`), variable slots (`0xE0..=0xE9`), Yes/No & layout tags (`0xF5..=0xFC`).
+                        _ => {}
                     }
                 }
+                // `0xE1..=0xFE` (`0xF8xx` Y pos, `0xFAxx` X pos, `0xFCxx`/`0xFDxx` kern, `0xFExx` rule): drop cleanly.
                 continue;
             }
 
             if b < 0x60 {
                 cur_page.push((b + 0x20) as char);
-            } else if b < 0xFF {
-                cur_page.push('?');
+            } else if b == 0x8E {
+                cur_page.push('®');
             }
-            p += 1;
         }
 
         let trimmed = cur_page.trim().to_string();
@@ -163,4 +225,55 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
     }
 
     Ok(MessageTable { messages })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mes_byte_packed_control_codes_no_question_mark_leaks() {
+        // Synthetic 1-message `.mes`:
+        // header: count=1 (0x0001), offset=2 words (4 bytes)
+        // msg 0: 0x8000 (byte-packed), 0xF8 0x20 (Y pos), 0xFA 0x10 (X pos),
+        //        0xFC 0x04 (neg kern), 0xFD 0x02 (pos kern), 0xFE 0x40 (rule),
+        //        0xE0 0x82 0x01 (3-byte extended glyph),
+        //        0xFF 0x03 (green color), "Hi" (0x28, 0x49), 0xFF 0x00 (white),
+        //        0xFF 0xFD (newline), "DUALSHOCK" + 0x8E + "2",
+        //        0xFF 0xFF (end page 1), pad 0x00, 0x1000 (wait button, non-final),
+        //        0x8000, "Page 2.", 0xFF 0xFF, pad 0x00, 0x9000 (wait button, final)
+        let mut raw = Vec::new();
+        raw.extend_from_slice(&1u16.to_le_bytes());
+        raw.extend_from_slice(&2u16.to_le_bytes());
+        raw.extend_from_slice(&0x8000u16.to_le_bytes());
+        raw.extend_from_slice(&[0xF8, 0x20, 0xFA, 0x10, 0xFC, 0x04, 0xFD, 0x02, 0xFE, 0x40]);
+        raw.extend_from_slice(&[0xE0, 0x82, 0x01]);
+        raw.extend_from_slice(&[0xFF, 0x03, b'H' - 0x20, b'i' - 0x20, 0xFF, 0x00]);
+        raw.extend_from_slice(&[0xFF, 0xFD]);
+        for &c in b"DUALSHOCK" {
+            raw.push(c - 0x20);
+        }
+        raw.push(0x8E);
+        raw.push(b'2' - 0x20);
+        raw.extend_from_slice(&[0xFF, 0xFF]);
+        if raw.len() % 2 != 0 {
+            raw.push(0x00);
+        }
+        raw.extend_from_slice(&0x1000u16.to_le_bytes());
+        raw.extend_from_slice(&0x8000u16.to_le_bytes());
+        for &c in b"Page 2." {
+            raw.push(c - 0x20);
+        }
+        raw.extend_from_slice(&[0xFF, 0xFF]);
+        if raw.len() % 2 != 0 {
+            raw.push(0x00);
+        }
+        raw.extend_from_slice(&0x9000u16.to_le_bytes());
+
+        let tbl = parse_mes(&raw).expect("parse synthetic .mes");
+        assert_eq!(tbl.messages.len(), 1);
+        let msg = &tbl.messages[0];
+        assert_eq!(msg.pages, vec!["Hi\nDUALSHOCK®2", "Page 2."]);
+        assert!(!msg.text.contains('?'));
+    }
 }

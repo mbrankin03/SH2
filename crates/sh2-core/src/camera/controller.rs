@@ -281,8 +281,44 @@ impl Ps2CameraController {
         Mat4::look_at_rh(eye, target, up)
     }
 
+    /// Compute sub-frame interpolated PS2 `VbWvsMatrix` (`+X` right, `+Y` down, `+Z` forward;
+    /// `SLUS_202.28` `view/vb_main.c` `0x010e59d0` / `sh2pc.exe` `0x01f80e00`) for
+    /// `SeCallPosDirection` (`0x00192990` / `0x00515e60`) and `RadioNoise` (`0x001ab300`).
+    pub fn interpolated_ps2_wvs_matrix(&self, alpha: f32) -> Mat4 {
+        let eye = self.prev_snapshot.eye.lerp(self.curr_snapshot.eye, alpha);
+        let target = self
+            .prev_snapshot
+            .target
+            .lerp(self.curr_snapshot.target, alpha);
+        let up = self.prev_snapshot.up;
+
+        ps2_wvs_matrix_from_look_at(eye, target, up)
+    }
+
     /// Interpolated field-of-view in radians.
     pub fn interpolated_fov(&self, alpha: f32) -> f32 {
         self.prev_snapshot.fov_y + (self.curr_snapshot.fov_y - self.prev_snapshot.fov_y) * alpha
     }
+}
+
+/// Builds a PS2 `VbWvsMatrix` (`+X` right, `+Y` down, `+Z` forward; `SLUS_202.28` `view/vb_main.c`
+/// `0x010e59d0` / `sh2pc.exe` `0x01f80e00`) from an SH2 `+Y`-down `(eye, target, up)` camera pose.
+///
+/// Unlike [`Mat4::look_at_rh`] (which places the forward axis on `-Z`), `SeCallPosDirection`
+/// (`0x00192990` / `0x00515e60`) expects `+Z` forward so sounds straight ahead yield `nz = +1.0`
+/// and pan to `0°` rather than `±140°`.
+pub fn ps2_wvs_matrix_from_look_at(eye: Vec3, target: Vec3, up: Vec3) -> Mat4 {
+    let forward = target - eye;
+    if !forward.is_finite() || forward.length_squared() <= 1e-8 {
+        return Mat4::from_translation(-eye);
+    }
+    let f = forward.normalize();
+    let r = f.cross(up).normalize_or(Vec3::X);
+    let d = f.cross(r);
+    Mat4::from_cols(
+        glam::Vec4::new(r.x, d.x, f.x, 0.0),
+        glam::Vec4::new(r.y, d.y, f.y, 0.0),
+        glam::Vec4::new(r.z, d.z, f.z, 0.0),
+        glam::Vec4::new(-r.dot(eye), -d.dot(eye), -f.dot(eye), 1.0),
+    )
 }

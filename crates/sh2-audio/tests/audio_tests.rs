@@ -15,6 +15,8 @@ mod common;
 mod acoustics_and_ringbuffer;
 #[path = "suite/audio_parity_137.rs"]
 mod audio_parity_137;
+#[path = "suite/audio_parity_167.rs"]
+mod audio_parity_167;
 #[path = "suite/beta_cut_audio.rs"]
 mod beta_cut_audio;
 #[path = "suite/bgm_parity.rs"]

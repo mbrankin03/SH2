@@ -35,6 +35,11 @@ mod pools;
 pub mod types;
 
 pub use change_list::{se_3d_bank_for_stage, SE_CHANGE_LIST};
+pub use pools::{
+    SE_2D_0X3CF0_FIXED_Y, SE_2D_0X3CF0_FIXED_Z, SE_2D_0X3CF0_PLAYER_Z_THRESHOLD,
+    SE_2D_0X44C6_ATTEN_STEP, SE_2D_0X44C6_FLAGS, SE_2D_0X44C6_POSITION, SE_2D_DUCK_RAMP_RATE,
+    SE_2D_OVERRIDE_ID_0X3CF0, SE_2D_OVERRIDE_ID_0X44C6, SE_2D_OVERRIDE_ROOM_0XA7,
+};
 pub use types::{
     Se2d3dMapping, Se2dSlot, Se3dChannel, SeBackendAction, SeCallResult, SeListenerContext,
     SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT, SE_3D_CHANNEL_COUNT, SE_3D_ID_THRESHOLD,

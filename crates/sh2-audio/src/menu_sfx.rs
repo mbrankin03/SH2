@@ -401,6 +401,194 @@ impl MenuAudioBank {
         }
     }
 
+    /// Returns the 4 looping Pocket Radio static waveforms from `sddata.bin[360..=363]`
+    /// (`sh2pc.exe` `FUN_00518680` `0x00518680` / `DAT_008a67cc..0x008a67dc`, `SH2-167`).
+    pub fn radio_static_wavs(&self) -> Option<[&WavEntry; 4]> {
+        let [i0, i1, i2, i3] = crate::engine::RADIO_STATIC_SDDATA_INDICES;
+        Some([
+            self.entries.get(i0)?,
+            self.entries.get(i1)?,
+            self.entries.get(i2)?,
+            self.entries.get(i3)?,
+        ])
+    }
+
+    /// Returns `true` if a tracked 2D/panned handle for `se_id` is still playing (`!Stopped`).
+    pub fn is_2d_se_playing(&self, se_id: u32) -> bool {
+        self.active_spatial_handles
+            .get(&se_id)
+            .is_some_and(|h| h.state() != kira::sound::PlaybackState::Stopped)
+    }
+
+    /// Plays a 2D/panned sound effect by `se_id` with explicit linear `volume` (`0.0..=1.0`) and
+    /// `stereo_pan` (`-1.0..=1.0`), storing the handle in `active_spatial_handles` so `Update2d`
+    /// (`SeCallPosChange` `0x001926e0`) can update its pan and volume every frame (`SH2-167`).
+    pub fn play_se_id_panned_tracked(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        volume: f32,
+        stereo_pan: f32,
+    ) -> Result<bool, AudioError> {
+        if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
+            if !self.voice_afs_sfx.contains_key(&afs_idx) {
+                let _ = self.load_voice_afs_entry(afs_idx);
+            }
+        }
+        if let Some(mut prev) = self.active_spatial_handles.remove(&se_id) {
+            prev.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(25),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+        let Some(wav) = self.resolve_se_id(se_id) else {
+            return Ok(false);
+        };
+        let handle = engine.play_sfx_panned(wav, volume, stereo_pan)?;
+        self.active_spatial_handles.insert(se_id, handle);
+        Ok(true)
+    }
+
+    /// Plays a custom/sliced `WavEntry` under `se_id` with explicit `volume` and `stereo_pan`,
+    /// storing the handle in `active_spatial_handles` (used by `ChainsawSoundController`, `SH2-167`).
+    pub fn play_wav_panned_tracked(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        wav: &WavEntry,
+        volume: f32,
+        stereo_pan: f32,
+    ) -> Result<(), AudioError> {
+        if let Some(mut prev) = self.active_spatial_handles.remove(&se_id) {
+            prev.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(25),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+        let handle = engine.play_sfx_panned(wav, volume, stereo_pan)?;
+        self.active_spatial_handles.insert(se_id, handle);
+        Ok(())
+    }
+
+    /// Plays and tracks a 3D positional sound effect by `se_id` using precomputed `SePoolManager`
+    /// `(direction_deg, attenuation_byte)` (`SeCallPosDistanceF` `0x00192bc0` & `SeCallPosDirection`
+    /// `0x00192990`), preserving full dual-distance `(camera_pos, player_pos)` attenuation while
+    /// still evaluating `.cld` occlusion and Binaural HRTF spherical angles (`SH2-167`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_se_id_3d_tracked_with_precomputed_spatial(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        direction_deg: i32,
+        attenuation_byte: u8,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        listener_pitch: f32,
+        is_maria: bool,
+        source_pos: Vec3,
+        collision: Option<&CollisionWorld>,
+    ) -> Result<(), AudioError> {
+        if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
+            if !self.voice_afs_sfx.contains_key(&afs_idx) {
+                let _ = self.load_voice_afs_entry(afs_idx);
+            }
+        }
+        if let Some(mut prev) = self.active_spatial_handles.remove(&se_id) {
+            prev.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(25),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+        if let Some(prev_voice) = self.active_spatial_voices.remove(&se_id) {
+            prev_voice.stop();
+        }
+
+        let base_distance_gain = ((255.0 - f32::from(attenuation_byte)) / 255.0).clamp(0.0, 1.0);
+        if base_distance_gain <= 0.001 {
+            return Ok(());
+        }
+        let stereo_pan =
+            (-(direction_deg as f32) / crate::sfx_bank::SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
+        let raw_occlusion = match collision {
+            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
+            None => OcclusionDspParams::unoccluded(),
+        };
+        let head_pos = listener_head_position(listener_pos, is_maria);
+        let angles =
+            compute_listener_spherical_angles(head_pos, listener_yaw, listener_pitch, source_pos);
+        let init = SpatialVoiceInitParams {
+            base_distance_gain,
+            stereo_pan,
+            angles,
+            occlusion: raw_occlusion,
+        };
+
+        if let Some(wav) = self.resolve_se_id(se_id) {
+            let handle = engine.play_sfx_spatial_3d(wav, init)?;
+            self.active_spatial_voices.insert(se_id, handle);
+        }
+        Ok(())
+    }
+
+    /// Updates a tracked 3D positional sound effect by `se_id` using precomputed `SePoolManager`
+    /// `(direction_deg, attenuation_byte)` without recomputing `d_cam = 0` (`SH2-167`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_se_id_3d_with_precomputed_spatial(
+        &mut self,
+        engine: &AudioEngine,
+        se_id: u32,
+        direction_deg: i32,
+        attenuation_byte: u8,
+        listener_pos: Vec3,
+        listener_yaw: f32,
+        listener_pitch: f32,
+        is_maria: bool,
+        source_pos: Vec3,
+        collision: Option<&CollisionWorld>,
+    ) {
+        let base_distance_gain = ((255.0 - f32::from(attenuation_byte)) / 255.0).clamp(0.0, 1.0);
+        let stereo_pan =
+            (-(direction_deg as f32) / crate::sfx_bank::SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
+        let raw_occlusion = match collision {
+            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
+            None => OcclusionDspParams::unoccluded(),
+        };
+        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
+            raw_occlusion
+        } else {
+            OcclusionDspParams::unoccluded()
+        };
+        self.active_spatial_voices.retain(|_, v| !v.is_finished());
+        if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
+            engine.update_sound_spatial(
+                handle,
+                base_distance_gain * reported_occlusion.dry_gain_scale,
+                stereo_pan,
+            );
+        }
+        if let Some(voice) = self.active_spatial_voices.get(&se_id) {
+            let head_pos = listener_head_position(listener_pos, is_maria);
+            let angles = compute_listener_spherical_angles(
+                head_pos,
+                listener_yaw,
+                listener_pitch,
+                source_pos,
+            );
+            engine.update_spatial_voice(
+                voice,
+                SpatialVoiceInitParams {
+                    base_distance_gain,
+                    stereo_pan,
+                    angles,
+                    occlusion: raw_occlusion,
+                },
+            );
+        }
+    }
+
     /// Plays a 3D positional sound effect by its `se_id` using `SeCallPosDistanceF` (`0x5155E0`) distance attenuation
     /// and the active spatialization mode (`ClassicPs2Stereo` vs `BinauralHrtf`) (`SH2-61` & `SH2-84`).
     pub fn play_se_id_3d(

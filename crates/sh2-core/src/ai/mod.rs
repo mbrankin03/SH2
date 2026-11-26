@@ -48,6 +48,10 @@ pub struct AiSubsystem {
     pub radio_evaluator: RadioNoiseEvaluator,
     /// Latest radio output state.
     pub radio_output: RadioStaticOutput,
+    /// Active camera position (`vcWork.cam_pos` `0x010e5b40`) fed into `RadioNoise` (`0x001ab300`).
+    pub radio_camera_pos: Option<Vec3>,
+    /// Active PS2 `VbWvsMatrix` (`0x010e59d0` / `0x01f80e00`) fed into `RadioNoise` (`0x001ab300`).
+    pub radio_wvs_matrix: Option<glam::Mat4>,
     /// Current room lighting condition (`enGetWorldCondition` `0x00141ca0`).
     pub lighting: RoomLighting,
     /// Game difficulty setting (`enGetMode()` `0..=3`).
@@ -85,6 +89,8 @@ impl Default for AiSubsystem {
             maria: MariaCompanionController::default(),
             radio_evaluator: RadioNoiseEvaluator::default(),
             radio_output: RadioStaticOutput::default(),
+            radio_camera_pos: None,
+            radio_wvs_matrix: None,
             lighting: RoomLighting::Lit,
             difficulty: DifficultyLevel::Normal,
             stage_place: StagePlace::Default,
@@ -406,22 +412,39 @@ impl AiSubsystem {
         self.tribe_bus.tick();
 
         // 3. Update Pocket Radio proximity static (`RadioNoise` `0x001ab300` & `enSetRadioVolume` `0x00143890`)
+        self.step_radio_only(radio_enabled, player_pos, dt);
+    }
+
+    /// Updates the live camera position (`vcWork.cam_pos`) and PS2 `VbWvsMatrix` (`0x010e59d0`)
+    /// consumed by [`Self::radio_evaluator`] (`RadioNoise` `0x001ab300`, `SH2-167`).
+    #[inline]
+    pub fn set_radio_listener(&mut self, camera_pos: Vec3, wvs_matrix: glam::Mat4) {
+        self.radio_camera_pos = Some(camera_pos);
+        self.radio_wvs_matrix = Some(wvs_matrix);
+    }
+
+    /// Evaluates Pocket Radio proximity static (`RadioNoise` `0x001ab300` & `enSetRadioVolume`
+    /// `0x00143890`) without advancing enemy AI, allowing menu/map ducking (`0.5` / `0.25`) to
+    /// ramp smoothly while the game is paused (`SH2-167`).
+    pub fn step_radio_only(&mut self, radio_enabled: bool, player_pos: Vec3, dt: f32) {
         self.scratch_radio_samples.clear();
         for e in &self.enemies {
             self.scratch_radio_samples.push(RadioEnemySample {
                 kind: en_kind_from_species(e.species()),
-                sub_type: 0,
+                sub_type: e.sub_type,
                 position: e.position(),
                 is_spawned_active: !e.is_sleeping,
                 is_alive: !e.is_dead(),
                 is_downed: e.controller.is_downed(),
             });
         }
+        let camera_pos = self.radio_camera_pos.unwrap_or(player_pos);
+        let wvs_matrix = self.radio_wvs_matrix.unwrap_or(glam::Mat4::IDENTITY);
         self.radio_output = self.radio_evaluator.evaluate_enemies(
             radio_enabled,
+            camera_pos,
             player_pos,
-            player_pos,
-            glam::Mat4::IDENTITY,
+            wvs_matrix,
             &self.scratch_radio_samples,
             dt,
         );
@@ -454,5 +477,61 @@ mod tests {
         // Radio static should be active and audible at 1000 units (`cos(1000/12500 * pi/2) ≈ 0.992`)
         assert!(ai.radio_output.volume > 0.8);
         assert!(ai.radio_output.nearest_enemy_dist < 12_500.0);
+    }
+
+    #[test]
+    fn test_sh2_167_ai_radio_subtype_ducking_volume_and_wvs() {
+        use crate::ai::radio::RadioDuckingState;
+        use crate::camera::ps2_wvs_matrix_from_look_at;
+
+        let mut ai = AiSubsystem::default();
+        // Spawn Blue Creek Pyramid Head (`sub_type == 6` -> silent in `enSetRadioVolume` `0x00143890`)
+        ai.spawn_enemy_with_variant(
+            EnemySpecies::PyramidHead,
+            1,
+            Vec3::new(0.0, 0.0, 1000.0),
+            0.0,
+            EnemySpawnVariant {
+                sub_type: 6,
+                is_dark_nurse: false,
+            },
+        );
+        let cam_pos = Vec3::new(0.0, -1600.0, -2000.0);
+        let wvs = ps2_wvs_matrix_from_look_at(cam_pos, Vec3::new(0.0, -1600.0, 0.0), -Vec3::Y);
+        ai.set_radio_listener(cam_pos, wvs);
+        for _ in 0..60 {
+            ai.step_radio_only(true, Vec3::ZERO, 1.0 / 60.0);
+        }
+        assert_eq!(
+            ai.radio_output.volume, 0.0,
+            "Pyramid Head sub_type == 6 must not emit radio static"
+        );
+
+        // Now spawn a Lying Figure straight ahead (+Z) and verify ducking (0.5 / 0.25) & volume_level scaling.
+        ai.enemies.clear();
+        ai.spawn_enemy(
+            EnemySpecies::LyingFigure,
+            2,
+            Vec3::new(750.0, 0.0, 1000.0),
+            0.0,
+        );
+        ai.radio_evaluator.ducking_state = RadioDuckingState::MapOrMemo;
+        ai.radio_evaluator.volume_level = 15;
+        for _ in 0..200 {
+            ai.step_radio_only(true, Vec3::ZERO, 0.05);
+        }
+        assert!(
+            (ai.radio_output.global_duck - 0.25).abs() < 1e-4,
+            "MapOrMemo radio ducking must settle at 0.25, got {}",
+            ai.radio_output.global_duck
+        );
+        let vol_15 = ai.radio_output.driver_volumes[0];
+        assert!(vol_15 > 20);
+        // Forward sound with PS2 WVS matrix must pan to center (driver pan 64).
+        assert_eq!(ai.radio_output.driver_pans[0], 64);
+
+        ai.radio_evaluator.volume_level = 0;
+        ai.step_radio_only(true, Vec3::ZERO, 0.016);
+        assert_eq!(ai.radio_output.driver_volumes[0], 0);
     }
 }

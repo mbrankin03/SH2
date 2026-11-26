@@ -68,7 +68,7 @@ mod tests;
 #[cfg(test)]
 mod tests_parity;
 
-pub use controller::{CameraSnapshot, Ps2CameraController};
+pub use controller::{ps2_wvs_matrix_from_look_at, CameraSnapshot, Ps2CameraController};
 
 /// Fixed 60 Hz simulation timestep in seconds (`1.0 / 60.0`).
 pub(super) const SIM_DT_SECS: f32 = 1.0 / 60.0;

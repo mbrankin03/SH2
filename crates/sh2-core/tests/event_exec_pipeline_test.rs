@@ -4,8 +4,8 @@
 use sh2_core::types::{float_to_char2, EventListEntry, ItemListEntry};
 use sh2_core::{
     event_check, event_progress_check, item_check_look_point, light_spot_on_off_check,
-    ActionDifficulty, EventEngine, EventEvalInput, EventExecMode, EventFlags, EventTriggerState,
-    InventoryManager, EVENT_ITEM_INDEX_BASE,
+    ActionDifficulty, EventEngine, EventEvalInput, EventExecMode, EventFlags, InventoryManager,
+    EVENT_ITEM_INDEX_BASE,
 };
 
 fn push_f32(buf: &mut Vec<u8>, v: f32) {
@@ -145,7 +145,7 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
     ];
 
     let mut flags = EventFlags::new();
-    let mut trigger_state = EventTriggerState::new();
+    let mut inventory = InventoryManager::new();
     let input = EventEvalInput {
         player_pos: [0.0, 0.0, 0.0],
         player_rot_y: 0.0,
@@ -160,18 +160,10 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
         input.player_rot_y
     ));
 
-    let chosen = event_check(
-        &ev_list,
-        &item_list,
-        &ev_pos,
-        &flags,
-        &input,
-        &mut trigger_state,
-    );
+    let chosen = event_check(&ev_list, &item_list, &ev_pos, &flags, &inventory, &input);
     assert_eq!(chosen, Some(EVENT_ITEM_INDEX_BASE));
 
     let mut engine = EventEngine::new();
-    let mut inventory = InventoryManager::new();
 
     let fx0 = engine.tick_standard(
         &ev_list,

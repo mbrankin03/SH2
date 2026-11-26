@@ -319,6 +319,27 @@ impl RoomController for CampaignRoomController {
         let cutaway_or_prog_active =
             cutaway::has_active_cutaway(state) || state.sim_core.scenario.prog_runner.is_running();
 
+        if cutaway_or_prog_active {
+            let dir_bit = match key_code {
+                KeyCode::ArrowUp | KeyCode::KeyW => sh2_core::events::PROG_KEY_UP,
+                KeyCode::ArrowDown | KeyCode::KeyS => sh2_core::events::PROG_KEY_DOWN,
+                KeyCode::ArrowLeft | KeyCode::KeyA => sh2_core::events::PROG_KEY_LEFT,
+                KeyCode::ArrowRight | KeyCode::KeyD => sh2_core::events::PROG_KEY_RIGHT,
+                _ => 0,
+            };
+            if dir_bit != 0 {
+                if pressed {
+                    if !repeat {
+                        state.campaign_pending_input.prog_dir_down |= dir_bit;
+                    }
+                    state.campaign_pending_input.prog_dir_held |= dir_bit;
+                } else {
+                    state.campaign_pending_input.prog_dir_held &= !dir_bit;
+                }
+                return;
+            }
+        }
+
         if pressed && !repeat {
             if matches!(
                 key_code,
@@ -396,7 +417,9 @@ impl RoomController for CampaignRoomController {
             .game
             .enable_delayed_fade_in;
 
+        let held_dir = state.campaign_pending_input.prog_dir_held;
         let mut tick_input = std::mem::take(&mut state.campaign_pending_input);
+        state.campaign_pending_input.prog_dir_held = held_dir;
         tick_input.prefer_sh2ee = state
             .menu_ctrl
             .options_menu

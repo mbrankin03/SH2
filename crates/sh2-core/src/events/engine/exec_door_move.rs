@@ -2,7 +2,8 @@
 //! execution handlers (`SLUS_202.28` `src/Event/event.c`).
 
 use crate::types::{
-    EventListEntry, EventResultKind, EventShapeKind, CONNECT_STAGE_PAIRS, DOOR_SE_TABLE,
+    EventDestShapeKind, EventListEntry, EventResultKind, EventShapeKind, CONNECT_STAGE_PAIRS,
+    DOOR_SE_TABLE,
 };
 
 use super::super::triggers::{
@@ -127,16 +128,15 @@ pub fn event_exec_move(
                 flags.set(result_flag, true);
             }
 
-            if let Some(dest_shape) = entry.dest_shape_kind() {
-                if let Some((pos, rot_y)) = event_result_move_position(
-                    ev_pos,
-                    entry.dest_ev_pos_offset(),
-                    dest_shape,
-                    current_rot_y,
-                ) {
-                    state.result_move_pos = pos;
-                    state.result_move_rot_y = rot_y;
-                }
+            let dest_shape = entry.dest_shape_kind().unwrap_or(EventDestShapeKind::Point);
+            if let Some((pos, rot_y)) = event_result_move_position(
+                ev_pos,
+                entry.dest_ev_pos_offset(),
+                dest_shape,
+                current_rot_y,
+            ) {
+                state.result_move_pos = pos;
+                state.result_move_rot_y = rot_y;
             }
 
             // Trigger-side door open sound
@@ -190,6 +190,8 @@ pub fn event_exec_move(
                 dest_rot_y: state.result_move_rot_y,
             });
 
+            state.pending_move_prog_index = entry.prog_index();
+            state.pending_move_prog_flag = entry.result_flag();
             effects.player_lock_change = Some(true);
             state.set_e_step(3);
             effects.fade_command = Some(1);
@@ -210,7 +212,8 @@ pub fn event_exec_move(
             if state.ev_m_step == EventExecMode::MoveThenProgram {
                 state.ev_m_step = EventExecMode::Program;
                 state.set_e_step(0);
-                effects.active_prog_index = Some(entry.prog_index());
+                effects.active_prog_index = Some(state.pending_move_prog_index);
+                effects.active_prog_completion_flag = state.pending_move_prog_flag;
                 false
             } else {
                 true

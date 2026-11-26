@@ -82,18 +82,19 @@ impl RetailEnemySpawn {
     }
 }
 
-/// Lossless 16-byte retail `Item_List` (`gi_list`) pickup entry (`sh2pc.exe` `0x0048b480` & `0x0048e3b0`).
+/// Lossless 16-byte retail `Item_List` (`gi_list`) pickup entry (`SLUS_202.28` `ItemListElement`
+/// `0x001a9320`, `ItemCheckLookPoint` `0x001a93b0`; `sh2pc.exe` `0x0048b480`, `0x0048b4d0`, `0x0048e3b0`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetailItemSpawn {
-    /// Raw IEEE-754 bits of world X coordinate in PS2 millimeters (`+0x00`).
+    /// Raw IEEE-754 bits of world X coordinate in PS2 millimeters (`+0x00`, `CharToFloat4`).
     pub pos_x_bits: u32,
-    /// Raw IEEE-754 bits of world Z coordinate in PS2 millimeters (`+0x04`).
+    /// Raw IEEE-754 bits of world Z coordinate in PS2 millimeters (`+0x04`, `CharToFloat4`).
     pub pos_z_bits: u32,
-    /// Upper 16 bits of IEEE-754 `f32` world Y coordinate (`+0x08`).
+    /// Team Silent `f16` world Y coordinate (`+0x08`, decoded via `CharToFloat2` `0x001a9280` / `0x0048b400`).
     pub pos_y_hi16: u16,
-    /// Upper 16 bits of IEEE-754 `f32` Y rotation in radians (`+0x0a`).
+    /// Team Silent `f16` Y rotation in radians (`+0x0a`, decoded via `CharToFloat2` `0x001a9280` / `0x0048b400`).
     pub rot_y_hi16: u16,
-    /// Packed pickup metadata (`+0x0c`, decoded by `ItemListElement` `0x0048b480`).
+    /// Packed pickup metadata (`+0x0c`, decoded by `ItemListElement` `0x001a9320` / `0x0048b480`).
     pub flags_packed: u32,
 }
 
@@ -104,10 +105,10 @@ impl RetailItemSpawn {
         f32::from_bits(self.pos_x_bits)
     }
 
-    /// World Y coordinate in PS2 millimeters.
+    /// World Y coordinate in PS2 millimeters (`CharToFloat2` at `SLUS_202.28` `0x001a9280`, `sh2pc.exe` `0x0048b400`).
     #[inline]
     pub const fn pos_y(&self) -> f32 {
-        f32::from_bits((self.pos_y_hi16 as u32) << 16)
+        char_to_float2(self.pos_y_hi16.to_le_bytes())
     }
 
     /// World Z coordinate in PS2 millimeters.
@@ -116,13 +117,14 @@ impl RetailItemSpawn {
         f32::from_bits(self.pos_z_bits)
     }
 
-    /// Pickup model rotation around Y in radians.
+    /// Pickup model rotation around Y in radians (`CharToFloat2` at `SLUS_202.28` `0x001a9280`, `sh2pc.exe` `0x0048b400`).
     #[inline]
     pub const fn rot_y(&self) -> f32 {
-        f32::from_bits((self.rot_y_hi16 as u32) << 16)
+        char_to_float2(self.rot_y_hi16.to_le_bytes())
     }
 
-    /// Selector `0` (`flags_packed >> 29`, `1..=7`): generic supply type (`sh2pc.exe` `0x0048e4a4`).
+    /// Selector `0` (`flags_packed >> 29`, `1..=7`): supply kind index into `ITEM_KIND_TABLE`
+    /// (`ItemListElement` `SLUS_202.28` `0x001a9320`, `sh2pc.exe` `0x0048b480` & `0x0048e4a4`).
     #[inline]
     pub const fn generic_supply_code(&self) -> u8 {
         (self.flags_packed >> 29) as u8
@@ -142,15 +144,24 @@ impl RetailItemSpawn {
         }
     }
 
-    /// Selector `1` (`(flags_packed >> 26) & 0x7`): index into `ITEM_KIND_TABLE` (`0..=7`).
+    /// Selector `0` (`flags_packed >> 29`, `1..=7`): supply kind index into `ITEM_KIND_TABLE`
+    /// (`ItemListElement` `SLUS_202.28` `0x001a9320`, `sh2pc.exe` `0x0048b480`).
     #[inline]
     pub const fn item_kind_index(&self) -> u8 {
+        (self.flags_packed >> 29) as u8
+    }
+
+    /// Selector `1` (`(flags_packed >> 26) & 0x7`): action-difficulty spawn filter
+    /// (`ItemListElement` `SLUS_202.28` `0x001a9320`, `EventItemConditionCheck` `0x001ab1a0` / `0x0048c670`).
+    #[inline]
+    pub const fn difficulty_condition(&self) -> u8 {
         ((self.flags_packed >> 26) & 0x7) as u8
     }
 
-    /// Selector `2` (`(flags_packed >> 20) & 0x1f`): action-difficulty & extra spawn filter (`0x0048c670`).
+    /// Selector `2` (`(flags_packed >> 20) & 0x1f`): extra story flag condition (`1=flag 219`,
+    /// `2=flag 108`, `3=flag 208`; `ItemListElement` `0x001a9320`, `EventItemConditionCheck` `0x001ab1a0`).
     #[inline]
-    pub const fn difficulty_filter(&self) -> u8 {
+    pub const fn extra_condition(&self) -> u8 {
         ((self.flags_packed >> 20) & 0x1f) as u8
     }
 

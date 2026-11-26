@@ -1,5 +1,5 @@
 //! Spatial Event Trigger Volumes, Look/Touch Geometry Evaluators, and `EventCheck` Selection
-//! (`SLUS_202.28` `src/Event/event.c` at `0x001a7dc0..0x001a9be0`).
+//! (`SLUS_202.28` `src/Event/event.c` at `0x001a7ed0..0x001a9be0`, `sh2pc.exe` `0x0048e070`).
 
 pub mod look_raycast;
 pub mod shapes;
@@ -15,19 +15,17 @@ pub use shapes::{
 };
 
 use crate::config::ActionDifficulty;
-use crate::types::{EventListEntry, EventTriggerKind, ItemListEntry};
+use crate::inventory::InventoryManager;
+use crate::types::{EventListEntry, EventShapeKind, EventTriggerKind, ItemListEntry};
 
 use super::EventFlags;
 
-/// Maximum number of `Event_List` entries tracked per stage for rising-edge triggers (`cond = 1` / `7`).
-pub const MAX_STAGE_EVENT_ENTRIES: usize = 256;
-
-/// Index offset in `ev_work_no` (`0x01126380`) distinguishing `Item_List` pickups (`>= 0x400`)
-/// from `Event_List` entries (`0..0x400`).
+/// Index offset in `ev_active` (`SLUS_202.28` `0x001a7ed0` / `sh2pc.exe` `0x0048e525`)
+/// distinguishing `Item_List` pickups (`>= 0x400`) from `Event_List` entries (`0..0x400`).
 pub const EVENT_ITEM_INDEX_BASE: usize = 0x400;
 
-/// Sentinel Y threshold (`45000.0`, `0x472fc800`): any `ev_pos` or `Item_List` with `y >= 45000.0`
-/// ignores the vertical floor height window check.
+/// Sentinel Y threshold (`45000.0`, `0x472fc800`): any `ev_pos` with `y >= 45000.0`
+/// ignores the vertical floor height window check (`EventCheckLook` `0x001a8780`, `EventCheckIn` `0x001a8d70`).
 pub const EVENT_IGNORE_HEIGHT_Y: f32 = 45_000.0;
 
 /// Applies the secondary flag toggle side effects of `EventExecSubFlagSet`
@@ -59,7 +57,8 @@ pub fn check_event_flag_conditions(entry: &EventListEntry, flags: &EventFlags) -
         && (f1 == 0 || flags.get(f1) == entry.flag_1_expected_set())
 }
 
-/// Evaluates `EventItemConditionCheck` (`SLUS_202.28` `0x001ab1a0`) for a stage `Item_List` entry.
+/// Evaluates `EventItemConditionCheck` (`SLUS_202.28` `0x001ab1a0`, `sh2pc.exe` `0x0048c670`)
+/// for a stage `Item_List` entry.
 pub fn event_item_condition_check(
     item: &ItemListEntry,
     action_difficulty: ActionDifficulty,
@@ -83,28 +82,24 @@ pub fn event_item_condition_check(
     }
 }
 
-/// Per-frame input context for `EventCheck` (`SLUS_202.28` `0x001a7dc0`).
+/// Per-frame input context for `EventCheck` (`SLUS_202.28` `0x001a7ed0`, `sh2pc.exe` `0x0048e070`).
 #[derive(Debug, Clone, Copy)]
 pub struct EventEvalInput {
+    /// Player world position `[x, y, z]` in PS2 millimeters (`_sh2jms + 0x20..0x28`).
     pub player_pos: [f32; 3],
+    /// Player yaw rotation in radians (`_sh2jms + 0x34`).
     pub player_rot_y: f32,
-    /// `ev_active` (`0` = idle, `1` = non-blocking background event, `2` = blocking event).
-    pub ev_active: u8,
-    /// `true` if the Action/Search button (`pad->trg & 0x4000`) was pressed this frame.
+    /// `true` if the Action/Search button (`PlayerEventButtonCheck(0)`) was pressed this frame.
     pub action_pressed: bool,
-    /// `true` if the Map button was pressed this frame while map viewing is unavailable.
-    pub map_disabled_pressed: bool,
-    /// `true` on the first frame after entering a new room (`RoomChange != 0`).
-    pub room_changed: bool,
-    /// `true` on the first frame after loading a new stage (`StageChange != 0`).
-    pub stage_changed: bool,
-    /// Currently used inventory item ID (`use_item_id != 0` when using an item from the menu).
+    /// Currently used inventory item ID (`param_2 != 0` when using an item from the menu).
     pub used_item_id: Option<u8>,
-    /// `true` if the game is currently running an automated attract/demo sequence.
-    pub is_demo_mode: bool,
-    /// Current action difficulty (for `Item_List` filtering).
+    /// `true` when in a dark / night area (`sh2gfw_Get_NightOrDay() != 0`, `SLUS_202.28` `0x001a80a8`).
+    pub is_dark_room: bool,
+    /// `true` when James's flashlight is on (`LightSpotOnOffCheck() != 0`, `SLUS_202.28` `0x001aad70`).
+    pub flashlight_on: bool,
+    /// Current action difficulty (for `Item_List` filtering in `EventItemConditionCheck`).
     pub action_difficulty: ActionDifficulty,
-    /// `true` if player controls/stamina allow search interactions.
+    /// `true` if player controls/stamina allow search interactions (`param_1 != 0`).
     pub player_can_search: bool,
 }
 
@@ -113,254 +108,139 @@ impl Default for EventEvalInput {
         Self {
             player_pos: [0.0, 0.0, 0.0],
             player_rot_y: 0.0,
-            ev_active: 0,
             action_pressed: false,
-            map_disabled_pressed: false,
-            room_changed: false,
-            stage_changed: false,
             used_item_id: None,
-            is_demo_mode: false,
+            is_dark_room: false,
+            flashlight_on: true,
             action_difficulty: ActionDifficulty::Normal,
             player_can_search: true,
         }
     }
 }
 
-/// Persistent rising-edge state for `cond = 1` (`TouchEdge`, `0x011264b0`) and
-/// `cond = 7` (`ZoneEnterEdge`, `0x011266b0`).
-#[derive(Debug, Clone)]
-pub struct EventTriggerState {
-    touch_edge_latched: [bool; MAX_STAGE_EVENT_ENTRIES],
-    zone_edge_latched: [bool; MAX_STAGE_EVENT_ENTRIES],
-}
-
-impl Default for EventTriggerState {
-    fn default() -> Self {
-        Self::new()
+impl EventEvalInput {
+    /// Returns `true` when light-gated events (`(cond >> 2) & 1 != 0`) are allowed to trigger
+    /// (`SLUS_202.28` `0x001a80a8..0x001a80ec`, `sh2pc.exe` `0x0048e150..0x0048e1a9`):
+    /// either `sh2gfw_Get_NightOrDay() == 0` (`!is_dark_room`) or `LightSpotOnOffCheck() != 0` (`flashlight_on`).
+    #[inline]
+    pub const fn has_light(&self) -> bool {
+        !self.is_dark_room || self.flashlight_on
     }
 }
 
-impl EventTriggerState {
-    pub const fn new() -> Self {
-        Self {
-            touch_edge_latched: [false; MAX_STAGE_EVENT_ENTRIES],
-            zone_edge_latched: [false; MAX_STAGE_EVENT_ENTRIES],
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.touch_edge_latched = [false; MAX_STAGE_EVENT_ENTRIES];
-        self.zone_edge_latched = [false; MAX_STAGE_EVENT_ENTRIES];
-    }
+#[inline]
+const fn is_area_shape(shape: EventShapeKind) -> bool {
+    matches!(
+        shape,
+        EventShapeKind::Rectangle | EventShapeKind::Triangle | EventShapeKind::Quad
+    )
 }
 
-/// Evaluates a single `EventListEntry` at `index` and returns its trigger weight (`> 0.0` if triggered).
+/// Evaluates a single `EventListEntry` against authentic `EventCheck` (`SLUS_202.28` `0x001a7ed0`,
+/// `sh2pc.exe` `0x0048e070`) rules.
+///
+/// Returns `true` if this entry matches on the current frame.
 pub fn evaluate_event_entry(
-    index: usize,
     entry: &EventListEntry,
     ev_pos: &[u8],
     flags: &EventFlags,
+    inventory: &InventoryManager,
     input: &EventEvalInput,
-    trigger_state: &mut EventTriggerState,
-) -> f32 {
+) -> bool {
     if entry.is_sentinel() {
-        return 0.0;
+        return false;
     }
-    if input.is_demo_mode && entry.disabled_in_demo() {
-        return 0.0;
-    }
-    if !check_event_flag_conditions(entry, flags) {
-        return 0.0;
+    // `SLUS_202.28` `0x001a80ec`, `sh2pc.exe` `0x0048e1a9`: dark-room light gating `(cond >> 2) & 1`.
+    if !input.has_light() && entry.requires_light() {
+        return false;
     }
 
     let Some(trigger_kind) = entry.trigger_kind() else {
-        return 0.0;
+        return false;
     };
-    let offset = entry.ev_pos_offset();
 
+    let action_active = input.action_pressed && input.player_can_search;
+    let req_item = entry.required_item_id();
+
+    // Button / used-item / carried-item pre-filter (`SLUS_202.28` `0x001a8108..0x001a81a8`,
+    // `sh2pc.exe` `0x0048e1af..0x0048e218`).
+    let prefilter_ok = if let Some(used_id) = input.used_item_id {
+        matches!(
+            trigger_kind,
+            EventTriggerKind::UseItemLook
+                | EventTriggerKind::UseItemIn
+                | EventTriggerKind::ActionHasItemOrUseItem
+        ) && used_id == req_item
+    } else {
+        match trigger_kind {
+            EventTriggerKind::Unconditional0
+            | EventTriggerKind::Unconditional1
+            | EventTriggerKind::PassiveLook
+            | EventTriggerKind::PassiveIn => true,
+            EventTriggerKind::Action => action_active,
+            EventTriggerKind::UseItemLook | EventTriggerKind::UseItemIn => false,
+            EventTriggerKind::ActionHasItem | EventTriggerKind::ActionHasItemOrUseItem => {
+                action_active && inventory.has_item(req_item)
+            }
+            EventTriggerKind::PassiveHasItemLook | EventTriggerKind::PassiveHasItemIn => {
+                inventory.has_item(req_item)
+            }
+        }
+    };
+    if !prefilter_ok {
+        return false;
+    }
+
+    // Condition flags (`SLUS_202.28` `0x001a81a8..0x001a82e0`, `sh2pc.exe` `0x0048e220..0x0048e2d0`).
+    if !check_event_flag_conditions(entry, flags) {
+        return false;
+    }
+
+    // Spatial shape check (`SLUS_202.28` `0x001a82e4..0x001a8520`, `sh2pc.exe` `0x0048e2d8..0x0048e356`).
+    let offset = entry.ev_pos_offset();
     match trigger_kind {
-        EventTriggerKind::TouchContinuous => {
-            if input.ev_active == 2 {
-                return 0.0;
-            }
+        EventTriggerKind::Unconditional0 | EventTriggerKind::Unconditional1 => true,
+        EventTriggerKind::Action
+        | EventTriggerKind::ActionHasItem
+        | EventTriggerKind::ActionHasItemOrUseItem => {
             let Some(shape) = entry.shape_kind() else {
-                return 0.0;
+                return false;
             };
-            let hit = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
+            if is_area_shape(shape) {
                 event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            if hit {
-                1.0
             } else {
-                0.0
+                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
             }
         }
-        EventTriggerKind::TouchEdge => {
-            if input.ev_active == 2 {
-                return 0.0;
-            }
+        EventTriggerKind::PassiveLook
+        | EventTriggerKind::UseItemLook
+        | EventTriggerKind::PassiveHasItemLook => {
             let Some(shape) = entry.shape_kind() else {
-                return 0.0;
+                return false;
             };
-            let inside = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
-                event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            let latched = trigger_state
-                .touch_edge_latched
-                .get(index)
-                .copied()
-                .unwrap_or(false);
-            if let Some(slot) = trigger_state.touch_edge_latched.get_mut(index) {
-                *slot = inside;
+            if is_area_shape(shape) {
+                return false;
             }
-            if inside && !latched {
-                1.0
-            } else {
-                0.0
-            }
+            event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
         }
-        EventTriggerKind::ActionLook => {
-            if input.ev_active != 0 || !input.action_pressed || !input.player_can_search {
-                return 0.0;
-            }
+        EventTriggerKind::PassiveIn
+        | EventTriggerKind::UseItemIn
+        | EventTriggerKind::PassiveHasItemIn => {
             let Some(shape) = entry.shape_kind() else {
-                return 0.0;
+                return false;
             };
-            let hit = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
-                event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            if hit {
-                1.0
-            } else {
-                0.0
+            if !is_area_shape(shape) {
+                return false;
             }
-        }
-        EventTriggerKind::ActionTouch => {
-            if input.ev_active != 0 || !input.action_pressed || !input.player_can_search {
-                return 0.0;
-            }
-            let Some(shape) = entry.shape_kind() else {
-                return 0.0;
-            };
-            let hit = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
-                event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            if hit {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::RoomInit => {
-            if input.ev_active != 2 && input.room_changed {
-                100.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::StageInit => {
-            if input.ev_active != 2 && input.stage_changed {
-                100.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::UseItemLook => {
-            if input.ev_active != 0 || !input.player_can_search {
-                return 0.0;
-            }
-            if input.used_item_id != Some(entry.required_item_id()) {
-                return 0.0;
-            }
-            let Some(shape) = entry.shape_kind() else {
-                return 0.0;
-            };
-            let hit = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
-                event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            if hit {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::ZoneEnterEdge => {
-            if input.ev_active != 0 {
-                return 0.0;
-            }
-            let Some(shape) = entry.shape_kind() else {
-                return 0.0;
-            };
-            let inside = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
-                event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            let latched = trigger_state
-                .zone_edge_latched
-                .get(index)
-                .copied()
-                .unwrap_or(false);
-            if let Some(slot) = trigger_state.zone_edge_latched.get_mut(index) {
-                *slot = inside;
-            }
-            if inside && !latched {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::UseItemTouch => {
-            if input.ev_active != 0 || !input.player_can_search {
-                return 0.0;
-            }
-            if input.used_item_id != Some(entry.required_item_id()) {
-                return 0.0;
-            }
-            let Some(shape) = entry.shape_kind() else {
-                return 0.0;
-            };
-            let hit = if (shape as u8) <= 10 {
-                event_check_look(ev_pos, offset, shape, input.player_pos, input.player_rot_y)
-            } else {
-                event_check_in(ev_pos, offset, shape, input.player_pos)
-            };
-            if hit {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::Always => {
-            if input.ev_active == 0 {
-                100.0
-            } else {
-                0.0
-            }
-        }
-        EventTriggerKind::MapDisabled => {
-            if input.ev_active == 0 && input.map_disabled_pressed {
-                100.0
-            } else {
-                0.0
-            }
+            event_check_in(ev_pos, offset, shape, input.player_pos)
         }
     }
 }
 
-/// Evaluates `EventCheck` (`SLUS_202.28` `0x001a7ed0`) across the stage's `Event_List` and `Item_List`.
+/// Evaluates `EventCheck` (`SLUS_202.28` `0x001a7ed0`, `sh2pc.exe` `0x0048e070`) across the stage's
+/// `Event_List` and `Item_List` using authentic first-match-wins semantics.
 ///
-/// Returns `Some(work_no)` for the highest-priority matching candidate:
+/// Returns `Some(work_no)` for the first matching candidate:
 /// - `0..0x400`: index into `ev_list`
 /// - `0x400..`: `0x400 + index` into `item_list`
 pub fn event_check(
@@ -368,28 +248,19 @@ pub fn event_check(
     item_list: &[ItemListEntry],
     ev_pos: &[u8],
     flags: &EventFlags,
+    inventory: &InventoryManager,
     input: &EventEvalInput,
-    trigger_state: &mut EventTriggerState,
 ) -> Option<usize> {
-    let mut best_weight = 0.0f32;
-    let mut best_index = None;
-
     for (idx, entry) in ev_list.iter().enumerate() {
         if entry.is_sentinel() {
             break;
         }
-        let weight = evaluate_event_entry(idx, entry, ev_pos, flags, input, trigger_state);
-        if weight > best_weight {
-            best_weight = weight;
-            best_index = Some(idx);
+        if evaluate_event_entry(entry, ev_pos, flags, inventory, input) {
+            return Some(idx);
         }
     }
 
-    if best_index.is_none()
-        && input.ev_active == 0
-        && input.action_pressed
-        && input.player_can_search
-    {
+    if input.used_item_id.is_none() && input.action_pressed && input.player_can_search {
         for (idx, item) in item_list.iter().enumerate() {
             if item.is_sentinel() {
                 break;
@@ -403,11 +274,13 @@ pub fn event_check(
             if !event_item_condition_check(item, input.action_difficulty, flags) {
                 continue;
             }
-            if item_check_look_point(item, input.player_pos, input.player_rot_y) {
+            if item_check_look_point(item, input.player_pos, input.player_rot_y)
+                && input.has_light()
+            {
                 return Some(EVENT_ITEM_INDEX_BASE + idx);
             }
         }
     }
 
-    best_index
+    None
 }

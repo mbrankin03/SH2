@@ -14,13 +14,10 @@ fn static_stage_tables_25_to_58_and_16_match_retail_counts_and_decode_cleanly() 
     let eval = EventEvalInput {
         player_pos: [0.0; 3],
         player_rot_y: 0.0,
-        ev_active: 0,
         action_pressed: false,
-        map_disabled_pressed: false,
-        room_changed: false,
-        stage_changed: false,
         used_item_id: None,
-        is_demo_mode: false,
+        is_dark_room: false,
+        flashlight_on: true,
         action_difficulty: ActionDifficulty::Normal,
         player_can_search: true,
     };
@@ -398,31 +395,32 @@ fn retail_trg1_always_events_fire_mid_room_and_gravestone_verts_toggle() {
         rslt0: 0x1000_0000,
         rslt1: 0,
     };
-    assert_eq!(
-        normalize_retail_event_entry(raw0).trigger_kind(),
-        Some(EventTriggerKind::Always)
-    );
-    let norm = normalize_retail_event_entry(raw);
-    assert_eq!(norm.trigger_kind(), Some(EventTriggerKind::Always));
+    assert_eq!(raw0.trigger_kind(), Some(EventTriggerKind::Unconditional0));
+    assert_eq!(raw.trigger_kind(), Some(EventTriggerKind::Unconditional1));
     let eval = EventEvalInput {
         player_pos: [0.0; 3],
         player_rot_y: 0.0,
-        ev_active: 0,
         action_pressed: false,
-        map_disabled_pressed: false,
-        room_changed: false,
-        stage_changed: false,
         used_item_id: None,
-        is_demo_mode: false,
+        is_dark_room: false,
+        flashlight_on: true,
         action_difficulty: ActionDifficulty::Normal,
         player_can_search: true,
     };
-    let mut ts = EventTriggerState::new();
-    assert!(evaluate_event_entry(0, &norm, &[], &EventFlags::new(), &eval, &mut ts) > 0.0);
+    let inv = InventoryManager::new();
+    assert!(evaluate_event_entry(
+        &raw,
+        &[],
+        &EventFlags::new(),
+        &inv,
+        &eval
+    ));
     let s53 = stage_table_act2(53).expect("stage 53");
-    let s53_ev0 = normalize_retail_event_entry(s53.event_list[0]);
     if (s53.event_list[0].cond >> 28) & 0xf == 1 {
-        assert_eq!(s53_ev0.trigger_kind(), Some(EventTriggerKind::Always));
+        assert_eq!(
+            s53.event_list[0].trigger_kind(),
+            Some(EventTriggerKind::Unconditional1)
+        );
     }
 
     // Gravestone quad vertices: vanilla `0x008c4670` orderings vs SH2:EE `GravestoneBoardsFix`.

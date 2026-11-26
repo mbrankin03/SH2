@@ -328,7 +328,10 @@ impl StageProgramRunner {
                         overlay.set_picture(None, flags);
                         if is_clock_solved(puzzle) {
                             self.sound_effects.push(0x2b1b);
-                            flags.set(72, true);
+                            // `FLAG_APART_CLOCK_SOLVED` (`81`, `0x51`): aligned with
+                            // `world::pushable_objects::FLAG_APART_CLOCK_SOLVED` and
+                            // `sh2pc.exe` `0x0059c32a` (`test $0x20000, 0x1f7a9e8`).
+                            flags.set(crate::world::FLAG_APART_CLOCK_SOLVED, true);
                         } else {
                             p.flag_set = false;
                         }

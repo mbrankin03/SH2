@@ -164,8 +164,8 @@ impl FogUniforms {
         self.set_depth_fog_bounds(
             eval.fog_near_mm,
             eval.fog_far_mm,
-            PS2_DEFAULT_FOG_MIN,
-            PS2_DEFAULT_FOG_MAX,
+            eval.fog_min,
+            eval.fog_max,
         );
     }
 

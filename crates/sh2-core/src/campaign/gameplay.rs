@@ -281,6 +281,8 @@ pub(crate) fn run_active_gameplay(
             player_rot_y: sim.scenario.player_yaw,
             action_pressed: input.action_pressed,
             used_item_id: (input.item_use_id != 0).then_some(input.item_use_id),
+            is_dark_room: sim.scenario.is_current_stage_dark(),
+            flashlight_on: sim.scenario.is_flashlight_active(),
             action_difficulty: sim.scenario.action_difficulty,
             ..EventEvalInput::default()
         };

@@ -605,3 +605,250 @@ fn room208_clock_flag_aligned_to_81_and_campaign_forwards_prog_dir_keys() {
         "PROG_KEY_LEFT must turn Room 208 clock hands back in CampaignOrchestrator"
     );
 }
+
+#[test]
+fn cross_stage_move_and_move_plus_program_succeed_with_empty_destination_ev_list() {
+    // Regression test for PR #142 Tech Lead finding #2:
+    // After a cross-stage Move/MovePlusProgram transition, `ev_work_no` from the old stage
+    // may be out of bounds in the destination stage (or `&[]`), yet step 3 must still emit
+    // the destination-side close SFX and chain into `EventExecMode::Program` using latched
+    // `pending_move_prog_index` / `pending_move_prog_flag`.
+    let mut ev_pos = Vec::new();
+    push_f32(&mut ev_pos, 100.0);
+    push_f16(&mut ev_pos, 0.0);
+    push_f32(&mut ev_pos, 200.0);
+    push_f32(&mut ev_pos, 500.0);
+    push_f16(&mut ev_pos, 0.0);
+    push_f32(&mut ev_pos, 600.0);
+
+    let old_stage_list = [
+        // Dummy non-matching entry at index 0 so the MovePlusProgram sits at index 1 (> empty len 0)
+        EventListEntry {
+            flag: (1 << 31) | (999 << 16), // requires flag(999) which is clear
+            cond: 0,
+            rslt0: 1 << 28,
+            rslt1: 1,
+        },
+        EventListEntry {
+            flag: 0,
+            cond: (EventShapeKind::Point as u32) << 12,
+            rslt0: (5 << 28) | (10 << 16) | ((EventDestShapeKind::Point as u32) << 12) | (7 << 5),
+            rslt1: (1 << 22) | (4 << 14) | 333, // door_se[1], prog #4, completion_flag 333
+        },
+        EventListEntry::default(),
+    ];
+
+    let mut engine = EventEngine::new();
+    let mut flags = EventFlags::new();
+    let mut inv = InventoryManager::new();
+
+    // Frame 1 (old stage): step 0 emits transition + trigger-side open SFX.
+    let fx0 = engine.tick_standard(
+        &old_stage_list,
+        &[],
+        &ev_pos,
+        6,
+        &EventEvalInput::default(),
+        false,
+        false,
+        false,
+        false,
+        &mut flags,
+        &mut inv,
+    );
+    assert!(fx0.stage_transition.is_some());
+    assert_eq!(engine.step_state.ev_m_step, EventExecMode::MoveThenProgram);
+    assert_eq!(engine.step_state.ev_e_step, 3);
+    assert_eq!(engine.step_state.ev_work_no, Some(1));
+
+    // Frame 2 (new stage with EMPTY ev_list `&[]`): step 3 emits close SFX and enters Program.
+    let fx3 = engine.tick_standard(
+        &[],
+        &[],
+        &[],
+        7,
+        &EventEvalInput::default(),
+        false,
+        false,
+        false,
+        false,
+        &mut flags,
+        &mut inv,
+    );
+    assert_eq!(fx3.positional_sounds.len(), 1);
+    assert_eq!(fx3.positional_sounds[0].se_id, 11001); // door_se[1].close
+    assert!((fx3.positional_sounds[0].pos[0] - 500.0).abs() < 1e-3);
+    assert_eq!(fx3.active_prog_index, Some(4));
+    assert_eq!(fx3.active_prog_completion_flag, 333);
+    assert_eq!(engine.step_state.ev_m_step, EventExecMode::Program);
+    assert_eq!(engine.step_state.ev_work_no, None);
+
+    // Frame 3 (still empty destination ev_list, prog_finished = true): sets completion flag 333!
+    let _ = engine.tick_standard(
+        &[],
+        &[],
+        &[],
+        7,
+        &EventEvalInput::default(),
+        false,
+        false,
+        false,
+        true,
+        &mut flags,
+        &mut inv,
+    );
+    assert!(flags.get(333));
+    assert_eq!(engine.step_state.ev_m_step, EventExecMode::Idle);
+}
+
+#[test]
+fn campaign_door_transition_preserves_event_engine_close_sfx_and_move_plus_program() {
+    // Regression test for PR #142 Tech Lead finding #1:
+    // `ConnectStep::StageInit` must NOT reset `EventEngine` during a `DoorTransition`, so upon
+    // re-entering `ActiveGameplay` step 3 plays the destination-side close SFX and starts the
+    // chained `StageProgramRunner` program.
+    use sh2_core::events::engine::StageTransitionCommand;
+
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    sim.scenario.current_stage = 7;
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        7,
+        Some("ap01".to_string()),
+        [0.0, 0.0, 0.0],
+        0.0,
+        OutdoorStreamingMode::default(),
+        false,
+    );
+    // Simulate EventEngine having just executed step 0 of a MovePlusProgram door transition.
+    orch.event_engine.step_state.ev_m_step = EventExecMode::MoveThenProgram;
+    orch.event_engine.step_state.ev_e_step = 3;
+    orch.event_engine.step_state.ev_close_se = 11001;
+    orch.event_engine.step_state.se_pos = [500.0, -500.0, 600.0];
+    orch.event_engine.step_state.pending_move_prog_index = 4;
+    orch.event_engine.step_state.pending_move_prog_flag = 333;
+
+    let cmd = StageTransitionCommand {
+        dest_stage: 0,
+        stage_change_mode: 0,
+        is_connected_stage: false,
+        observation_mode: false,
+        dest_pos: [500.0, 0.0, 600.0],
+        dest_rot_y: 0.0,
+    };
+    orch.phase = CampaignPhase::DoorTransition {
+        command: cmd,
+        resolved_room: "ap01".to_string(),
+        connect_step: sh2_core::campaign::ConnectStep::StageOverlay,
+        assets_ready: false,
+        fade_out_complete: true,
+        loading_screen_active: false,
+    };
+    orch.fade.set_black_immediate();
+
+    // Advance connectMain through StageOverlay -> StageInit -> ... -> ActiveGameplay
+    let mut saw_close_sfx = false;
+    for _ in 0..20 {
+        let eff = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if eff.load_room.is_some() {
+            orch.notify_room_assets_loaded();
+        }
+        if eff
+            .positional_sounds
+            .iter()
+            .any(|s| s.se_id == 11001 && (s.pos[0] - 500.0).abs() < 1e-3)
+        {
+            saw_close_sfx = true;
+        }
+        if sim.scenario.prog_runner.is_running() {
+            break;
+        }
+    }
+    assert!(
+        saw_close_sfx,
+        "DoorTransition must preserve EventEngine so step 3 emits destination-side close SFX"
+    );
+    assert!(
+        sim.scenario.prog_runner.is_running(),
+        "DoorTransition must chain MovePlusProgram into StageProgramRunner"
+    );
+    let ctx = sim.scenario.prog_runner.context().expect("active prog");
+    assert_eq!(ctx.prog_no, 4);
+    assert_eq!(ctx.completion_flag, 333);
+}
+
+#[test]
+fn campaign_dark_stage_gates_light_required_events_until_flashlight_is_on() {
+    // Regression test for PR #142 Tech Lead finding #3:
+    // In a dark stage (Stage 7 = Wood Side Apartments 2F), `gameplay.rs` must wire
+    // `sim.scenario.is_current_stage_dark()` and `sim.scenario.is_flashlight_active()` into
+    // `EventEvalInput` so light-gated (`(cond >> 2) & 1`) events are blocked without flashlight
+    // and trigger once the flashlight is acquired and turned on.
+    use sh2_core::events::stages_act1::act1_stage_descriptor;
+    use sh2_core::events::triggers::decode_ev_pos_shape;
+
+    let stage7 = act1_stage_descriptor(7).expect("Stage 7 descriptor");
+    // Find a light-gated (`requires_light()`) Action Message (`rslt == 6`, `trg == 2`) entry in Stage 7.
+    let target = stage7
+        .event_list
+        .iter()
+        .find(|e| {
+            !e.is_sentinel()
+                && e.requires_light()
+                && e.trigger_kind() == Some(sh2_core::types::EventTriggerKind::Action)
+                && e.result_kind() == Some(EventResultKind::Message)
+                && e.flag_0() == 0
+                && e.flag_1() == 0
+                && e.shape_kind() == Some(EventShapeKind::Rectangle)
+        })
+        .expect("Stage 7 has a light-gated Rectangle Action Message event");
+    let shape = decode_ev_pos_shape(
+        stage7.ev_pos,
+        target.ev_pos_offset(),
+        EventShapeKind::Rectangle,
+    )
+    .expect("valid rectangle shape");
+    let (cx, cy, cz) = match shape {
+        sh2_core::events::EvPosShape::Rectangle { x, y, z, w, d } => (x + w * 0.5, y, z + d * 0.5),
+        _ => unreachable!(),
+    };
+
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    sim.scenario.current_stage = 7;
+    assert!(sim.scenario.is_current_stage_dark());
+    sim.snap_player_transform(glam::Vec3::new(cx, cy, cz), 0.0);
+
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        7,
+        Some("ap01".to_string()),
+        [cx, cy, cz],
+        0.0,
+        OutdoorStreamingMode::default(),
+        false,
+    );
+    orch.phase = CampaignPhase::ActiveGameplay;
+    orch.fade = ScreenFadeState::default();
+    orch.player_locked = false;
+
+    let action = CampaignTickInput {
+        action_pressed: true,
+        ..CampaignTickInput::default()
+    };
+
+    // 1. Without flashlight in dark Stage 7: light-gated event MUST NOT fire.
+    assert!(!sim.scenario.is_flashlight_active());
+    let eff_dark = orch.step(&mut sim, &action, 1.0 / 60.0);
+    assert!(
+        eff_dark.stage_message.is_none(),
+        "Light-gated event must not fire in dark Stage 7 without flashlight"
+    );
+
+    // 2. Grant James the Flashlight (`item 0x12`, `acquire_flashlight(true)`): event MUST fire.
+    sim.scenario.acquire_flashlight(true);
+    assert!(sim.scenario.is_flashlight_active());
+    let eff_lit = orch.step(&mut sim, &action, 1.0 / 60.0);
+    assert_eq!(
+        eff_lit.stage_message,
+        Some(u16::from(target.message_or_save_id())),
+        "Light-gated event must fire in dark Stage 7 once flashlight is active"
+    );
+}

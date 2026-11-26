@@ -6,7 +6,8 @@ pub mod exec_msg_item_save;
 pub mod progression;
 
 pub use exec_door_move::{
-    event_exec_door, event_exec_flag, event_exec_move, is_connected_stage_pair,
+    event_exec_door, event_exec_flag, event_exec_move, event_exec_move_step3,
+    is_connected_stage_pair,
 };
 pub use exec_msg_item_save::{
     event_exec_common_fail_message, event_exec_item, event_exec_message, event_exec_save,
@@ -238,6 +239,8 @@ impl EventEngine {
             self.step_state.ev_active = 0;
             self.step_state.ev_cancel = false;
             self.step_state.ev_work_no = None;
+            self.step_state.pending_move_prog_index = 0;
+            self.step_state.pending_move_prog_flag = 0;
         }
     }
 
@@ -335,7 +338,14 @@ impl EventEngine {
                     }
                 }
                 EventExecMode::Move | EventExecMode::MoveThenProgram => {
-                    if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
+                    if self.step_state.ev_e_step == 3 {
+                        // Step 3 runs after a same-stage or cross-stage transition and reads only
+                        // latched `ev_close_se` / `se_pos` / `pending_move_prog_*` without indexing
+                        // into the new stage's `ev_list`.
+                        event_exec_move_step3(&mut self.step_state, &mut effects)
+                    } else if let Some(entry) =
+                        self.step_state.ev_work_no.and_then(|i| ev_list.get(i))
+                    {
                         event_exec_move(
                             entry,
                             ev_pos,
@@ -350,16 +360,26 @@ impl EventEngine {
                     }
                 }
                 EventExecMode::Program => {
-                    if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                        if self.step_state.ev_e_step == 0 {
+                    if self.step_state.ev_e_step == 0 {
+                        if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i))
+                        {
                             event_exec_sub_flag_set(entry, flags);
                             self.step_state.ev_prog_flag_set = true;
+                            self.step_state.pending_move_prog_index = entry.prog_index();
+                            self.step_state.pending_move_prog_flag = entry.result_flag();
                             self.step_state.set_e_step(2);
+                        } else {
+                            // No valid entry to start a program from.
+                            self.step_state.pending_move_prog_index = 0;
+                            self.step_state.pending_move_prog_flag = 0;
                         }
-                        effects.active_prog_index = Some(entry.prog_index());
-                        effects.active_prog_completion_flag = entry.result_flag();
+                    }
+                    if self.step_state.ev_e_step == 2 {
+                        effects.active_prog_index = Some(self.step_state.pending_move_prog_index);
+                        effects.active_prog_completion_flag =
+                            self.step_state.pending_move_prog_flag;
                         if prog_finished {
-                            let result_flag = entry.result_flag() as usize;
+                            let result_flag = self.step_state.pending_move_prog_flag as usize;
                             if self.step_state.ev_prog_flag_set && result_flag != 0 {
                                 flags.set(result_flag, true);
                             }
@@ -457,6 +477,8 @@ impl EventEngine {
             self.step_state.ev_active = 0;
             self.step_state.ev_cancel = false;
             self.step_state.ev_work_no = None;
+            self.step_state.pending_move_prog_index = 0;
+            self.step_state.pending_move_prog_flag = 0;
         }
 
         effects

@@ -85,6 +85,13 @@ pub const OB_FOG_Y_SPAN_MM: f32 = 875.0;
 /// (`(0x80 * 48) * 0.0078125 = 48 -> (48 << 24) | 0x808080`, blended via `D3DBLEND_SRCALPHA`
 /// `FUN_00486fc0` `0x00486fc0` `sh2pc_00480000.c:4271-4272`).
 pub const OB_FOG_ALPHA_NORM: f32 = 48.0 / 255.0;
+/// Exact `obGB.fcl +0x10 = 0x12` (`wind_type = 0x12`) steady-state 3D valley fog wind velocity
+/// in PS2 mm/s, derived 1:1 from `SLUS_202.28` `fogChangeWind(0x12)` (`0x00169380`,
+/// `Fog/fog.c:504-525`: direction `normalize([1.0..2.0, 0.0..0.1, 0.1..0.2])` mid `[1.5, 0.05, 0.15]`,
+/// accel `uVar8 = 0x3f333333 = 0.7 mm/frame²`) and `sh2pc.exe` `FUN_00486260`
+/// (`sh2pc_00480000.c:3958-3961`: `vel = (vel + accel) * 0.9` at 60 Hz):
+/// `v_term = (0.9 / (1.0 - 0.9)) * 0.7 * 60.0 = 378.0 mm/s`.
+pub const OB_FOG_WIND_VELOCITY_MM_PER_SEC: [f32; 3] = [375.90, 12.53, 37.59];
 
 /// Evaluates the exact `ob01` (`R_OBSV_DECK`) valley-mist particle world-space Y (PS2 mm) and
 /// effective alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]` local Y and base
@@ -449,7 +456,8 @@ pub fn evaluate_room_fog_with_fixes(
                 fog_max: OB_FOG_MAX_NORM,
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
-                speed_mult: FOG_SPEED_OUTDOOR_SLOW,
+                // `FogAdjustments.cpp:272-306`: `R_OBSV_DECK` is not in the `0.25f` FogSpeedFix list (`1.0`).
+                speed_mult,
                 layers: base_layers,
                 particle_count: count,
                 particle_range_x_mm: range_x,

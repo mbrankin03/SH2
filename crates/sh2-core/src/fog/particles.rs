@@ -113,6 +113,11 @@ impl FogParticleVolume {
         }
     }
 
+    /// Sets the active room's wind velocity in PS2 mm/s (`fogChangeWind` @ `0x00169380`).
+    pub fn set_wind_velocity(&mut self, wind_mm_per_sec: [f32; 3]) {
+        self.wind_velocity = wind_mm_per_sec;
+    }
+
     /// Returns the immutable slice of localized particles.
     #[must_use]
     pub fn particles(&self) -> &[FogParticle] {

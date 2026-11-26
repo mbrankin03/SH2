@@ -196,6 +196,11 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             [player_pos.x, anchor_y, player_pos.z]
         };
         let player_arr = [player_pos.x, player_pos.y, player_pos.z];
+        if ps2_room_id == R_OBSV_DECK_ID {
+            state
+                .fog_particles
+                .set_wind_velocity(sh2_core::fog::OB_FOG_WIND_VELOCITY_MM_PER_SEC);
+        }
         state.fog_particles.step(
             fog_dt,
             effective_fog.speed_mult,

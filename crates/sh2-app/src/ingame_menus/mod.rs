@@ -584,6 +584,11 @@ pub(crate) fn render_overlay(
         if let Some(ref sl) = state.ingame_menus.save_load {
             sh2_ui::draw_save_load_screen(sl, bg, font, &mut state.menu_rasterizer);
         }
+        if let Some((mx, my)) = state.last_cursor_pos {
+            let norm_x = (mx as f32) / state.surface_config.width.max(1) as f32;
+            let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
+            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
+        }
     } else if state.ingame_menus.map_viewer.is_open {
         let cur_id = state.ingame_menus.map_viewer.current_map_id;
         let sheet = state

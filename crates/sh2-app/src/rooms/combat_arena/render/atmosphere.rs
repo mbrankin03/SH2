@@ -330,6 +330,79 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     );
 }
 
+/// Uploads per-frame post-processing uniforms (DoF, film grain, brightness, tonemapping) to GPU.
+pub(crate) fn update_post_process_uniforms(
+    state: &mut AppState,
+    grain_intensity: f32,
+    is_viewer: bool,
+    is_grapple_room: bool,
+) {
+    let det_fog_time = state.fog_uniforms.time;
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
+    let dof_enabled = video.depth_of_field;
+    let (dof_tap_offset_px, dof_strength, dof_focus_params, motion_blur_strength) =
+        if is_viewer || is_grapple_room {
+            ([1.0 / 3.0, 2.0 / 3.0], 0.0, [0.0; 4], 0.0)
+        } else if let Some(session) = state
+            .drama_demo_session
+            .as_ref()
+            .filter(|s| s.player.locks_gameplay_input())
+        {
+            let fx = &session.player.special_fx;
+            if dof_enabled {
+                (
+                    fx.dof_tap_offset_px,
+                    fx.dof_strength,
+                    [
+                        fx.dof_focus_dist_mm,
+                        fx.dof_near_strength,
+                        fx.dof_far_strength,
+                        fx.dof_step_ps2_px,
+                    ],
+                    fx.motion_blur_strength,
+                )
+            } else {
+                (
+                    [1.0 / 3.0, 2.0 / 3.0],
+                    0.0,
+                    [0.0; 4],
+                    fx.motion_blur_strength,
+                )
+            }
+        } else {
+            ([1.0 / 3.0, 2.0 / 3.0], 0.0, [0.0; 4], 0.0)
+        };
+
+    let brightness_level = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .brightness_level;
+    let mut post_flags = sh2_renderer::post::POST_FLAG_PS2_LCG_NOISE;
+    if video.aces_tonemapping {
+        post_flags |= sh2_renderer::post::POST_FLAG_ACES_TONEMAP;
+    }
+    if video.texture_quality != sh2_core::config::WorldTextureQuality::OriginalPs2 {
+        post_flags |= sh2_renderer::post::POST_FLAG_SH2EE_NOISE;
+    }
+
+    state
+        .render_ctx
+        .update_post(&sh2_renderer::post::PostUniforms {
+            time: det_fog_time,
+            grain_intensity,
+            exposure: sh2_renderer::post::ps2_brightness_scale(brightness_level),
+            frame_count: state.frame_counter,
+            dof_tap_offset_px,
+            dof_strength,
+            motion_blur_strength,
+            flags: post_flags,
+            dof_focus_params,
+            ..sh2_renderer::post::PostUniforms::default()
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

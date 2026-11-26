@@ -108,9 +108,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) Depth-of-Field:
     //     - Dual-plane `EffectMode = 8` (`sh2pc.exe` `0x005a1f30` `Toilet_Dof_Filter`): reconstructs
-    //       view-space distance from `depth_tex` + `camera.inv_proj`, splits foreground (`< focus`)
-    //       vs background (`>= focus`) at `dof_focus_params.x`, and applies a smooth 5x5 Gaussian
-    //       kernel over `±(step_ps2_px * res_scale)` matching `grid_n = 3, step = 8` (`0x5a1fbe`).
+    //       view-space Z (`view_z`) from `depth_tex` + `camera.inv_proj`, splits foreground (`< focus`)
+    //       vs background (`>= focus`) at `dof_focus_params.x`, and applies the exact 3x3 tap grid
+    //       (`grid_n = 3, step = 8`, `sh2pc.exe` `0x005a1fbe` / `SLUS_202.28` `0x001785e0`).
     //     - Single-plane `EffectMode = 5` (closet bars / tunnel): 2x2 box at `dof_tap_offset_px`.
     if (post.dof_focus_params.x > 0.001) {
         let depth_val = textureLoad(depth_tex, sample_coords, 0);
@@ -128,22 +128,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             1.0,
         );
         if (local_blur > 0.001) {
-            let radius_px = max(post.dof_focus_params.w, 1.0) * res_scale;
-            let step_px = radius_px * 0.5;
+            let step_px = max(post.dof_focus_params.w, 1.0) * res_scale;
             var tap_sum = vec3<f32>(0.0);
-            var w_sum = 0.0;
-            for (var iy: i32 = -2; iy <= 2; iy = iy + 1) {
-                let wy = select(select(1.0, 4.0, abs(iy) == 1), 6.0, iy == 0);
-                for (var ix: i32 = -2; ix <= 2; ix = ix + 1) {
-                    let wx = select(select(1.0, 4.0, abs(ix) == 1), 6.0, ix == 0);
-                    let w = wx * wy;
+            for (var iy: i32 = -1; iy <= 1; iy = iy + 1) {
+                for (var ix: i32 = -1; ix <= 1; ix = ix + 1) {
                     let delta = vec2<i32>(round(vec2<f32>(f32(ix), f32(iy)) * step_px));
                     let tap = textureLoad(hdr_in, clamp(sample_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-                    tap_sum = tap_sum + tap * w;
-                    w_sum = w_sum + w;
+                    tap_sum = tap_sum + tap;
                 }
             }
-            hdr_color = mix(hdr_color, tap_sum / w_sum, local_blur);
+            // Exact `sh2gfw_Swap_Soft` (`0x001785e0`) / `sh2pc.exe` `0x005a1fbe` 3x3 tap count (`grid_n = 3` -> 9 taps).
+            hdr_color = mix(hdr_color, tap_sum / 9.0, local_blur);
         }
     } else if (post.dof_strength > 0.001) {
         let dof_alpha = clamp(post.dof_strength, 0.0, 1.0);

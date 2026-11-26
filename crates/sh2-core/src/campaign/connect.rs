@@ -89,7 +89,12 @@ pub(crate) fn step_connect_pipeline(
             }
         }
         ConnectStep::StageInit => {
-            event_engine.reset();
+            // Preserve `EventEngine` across live `DoorTransition` (`req.door_command.is_some()`)
+            // so `EventExecMove` step 3 plays the destination-side door close SFX and chains into
+            // `EventExecProgram` for `MovePlusProgram` (`SLUS_202.28` `0x001aa670`).
+            if req.door_command.is_none() {
+                event_engine.reset();
+            }
             ConnectStepOutcome::Continue {
                 next_step: ConnectStep::WaitStageSync,
                 loading_screen_active,

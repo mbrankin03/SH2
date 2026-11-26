@@ -77,7 +77,10 @@ impl Default for PostUniforms {
     fn default() -> Self {
         Self {
             time: 0.0,
-            grain_intensity: 0.65,
+            // Strict 1:1 PS2 grain weight (`sh2gfw_SendDraw_Noise` `0x00177f30`,
+            // `GFW/sh2gfw_2d_filters.c:658-666`, `ALPHA_1 = (param_2 << 32) | 0x21` with
+            // `param_2 = DAT_002adb52 = 0x60` -> `1 - 96/128 = 32/128`): unattenuated `1.0` default.
+            grain_intensity: 1.0,
             exposure: 1.0,
             frame_count: 0,
             dof_tap_offset_px: [1.0 / 3.0, 2.0 / 3.0],
@@ -333,7 +336,7 @@ mod tests {
         let default = PostUniforms::default();
         assert_eq!(default.frame_count, 0);
         assert_eq!(default.exposure, 1.0);
-        assert_eq!(default.grain_intensity, 0.65);
+        assert_eq!(default.grain_intensity, 1.0);
         assert_eq!(default.dof_strength, 0.0);
         assert_eq!(default.motion_blur_strength, 0.0);
         // ACES is OFF by default for strict 1:1 Vanilla PS2 parity

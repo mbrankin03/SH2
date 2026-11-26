@@ -87,10 +87,11 @@ fn ps2_event_struct_sizes_and_bitfields_match_rosetta_stone() {
     assert_eq!(entry.element(21), 5);
     assert_eq!(entry.element(22), 649);
 
-    assert_eq!(entry.trigger_kind(), Some(EventTriggerKind::ActionLook));
+    assert_eq!(entry.trigger_kind(), Some(EventTriggerKind::Action));
     // Cardinal shape `3` = `-Z`, dest shape `4` = `+Z` (`SLUS_202.28` `0x001a8780` & `0x001a9730`).
     assert_eq!(entry.shape_kind(), Some(EventShapeKind::LineNegZ));
-    assert_eq!(entry.result_kind(), Some(EventResultKind::MovePlusProgram));
+    // Result `6` = `Message` (`SLUS_202.28` `0x001a7b50`, `sh2pc.exe` `0x0048e610`).
+    assert_eq!(entry.result_kind(), Some(EventResultKind::Message));
     assert_eq!(
         entry.dest_shape_kind(),
         Some(EventDestShapeKind::DoorLinePosZ)

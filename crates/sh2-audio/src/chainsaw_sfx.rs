@@ -96,6 +96,45 @@ pub const fn compute_chainsaw_wav_slice(
     }
 }
 
+/// Applies [`compute_chainsaw_wav_slice`] to a decoded [`sh2_assets::WavEntry`] so the leading rev
+/// transient is trimmed from `SE_CHAINSAW_IDLE_LOOP` (`0x1642`) or left-side `SE_CHAINSAW_CRANK`
+/// (`0x14E8`) when `enable_chainsaw_sound_fix` is enabled (`SH2-167`).
+pub fn slice_chainsaw_wav(
+    wav: &sh2_assets::WavEntry,
+    sound_id: u32,
+    left_side_collision_start: bool,
+    enable_chainsaw_sound_fix: bool,
+) -> sh2_assets::WavEntry {
+    let slice = compute_chainsaw_wav_slice(
+        sound_id,
+        wav.sample_rate,
+        wav.data.len(),
+        left_side_collision_start,
+        enable_chainsaw_sound_fix,
+    );
+    let raw_trim = slice
+        .pcm_start_byte_offset
+        .saturating_sub(WAV_RIFF_HEADER_BYTES)
+        .min(wav.data.len());
+    let bytes_per_frame =
+        ((wav.bits_per_sample as usize / 8).max(1)) * (wav.channels as usize).max(1);
+    let aligned_trim = (raw_trim / bytes_per_frame) * bytes_per_frame;
+    if aligned_trim == 0 || aligned_trim >= wav.data.len() {
+        return wav.clone();
+    }
+    let trim_frames = (aligned_trim / bytes_per_frame) as u32;
+    sh2_assets::WavEntry {
+        id: wav.id,
+        sample_rate: wav.sample_rate,
+        channels: wav.channels,
+        bits_per_sample: wav.bits_per_sample,
+        loops: wav.loops,
+        loop_start: wav.loop_start.saturating_sub(trim_frames),
+        loop_end: wav.loop_end.saturating_sub(trim_frames),
+        data: wav.data[aligned_trim..].to_vec(),
+    }
+}
+
 /// Explicit state machine for Chainsaw idle audio crossfading (`ChainsawIdleState` `0..=3` in `ChainsawSoundFix.cpp`).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ChainsawIdleState {

@@ -137,9 +137,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         color = mix(color, refl_rgb, blend);
     }
 
-    let fog_start = u_water.fog_and_spec.x;
-    let fog_end = max(u_water.fog_and_spec.y, fog_start + 1.0);
-    let fog_t = clamp((dist - fog_start) / (fog_end - fog_start), 0.0, 1.0);
-    let final_rgb = mix(color, u_water.fog_color.rgb, fog_t);
+    var final_rgb = color;
+    // Single-pass water distance fog (`scene/mod.rs` draws Toluca Lake water post-depth-fog when
+    // `enable_fog` is active, so inline fog never double-fogs with `FogComputePipeline`).
+    // Callers can also disable inline fog explicitly by setting `fog_color.a == 0.0` or `fog_end <= fog_start`.
+    if (u_water.fog_color.a > 0.001 && u_water.fog_and_spec.y > u_water.fog_and_spec.x) {
+        let fog_start = u_water.fog_and_spec.x;
+        let fog_end = u_water.fog_and_spec.y;
+        let fog_t = clamp((dist - fog_start) / (fog_end - fog_start), 0.0, 1.0)
+            * clamp(u_water.fog_color.a, 0.0, 1.0);
+        final_rgb = mix(color, u_water.fog_color.rgb, fog_t);
+    }
     return vec4<f32>(final_rgb, u_water.water_tint.a);
 }

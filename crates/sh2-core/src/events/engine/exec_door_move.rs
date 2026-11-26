@@ -2,7 +2,8 @@
 //! execution handlers (`SLUS_202.28` `src/Event/event.c`).
 
 use crate::types::{
-    EventListEntry, EventResultKind, EventShapeKind, CONNECT_STAGE_PAIRS, DOOR_SE_TABLE,
+    EventDestShapeKind, EventListEntry, EventResultKind, EventShapeKind, CONNECT_STAGE_PAIRS,
+    DOOR_SE_TABLE,
 };
 
 use super::super::triggers::{
@@ -109,6 +110,35 @@ pub fn is_connected_stage_pair(stage_a: u8, stage_b: u8) -> bool {
         .any(|&(x, y)| (x == a && y == b) || (x == b && y == a))
 }
 
+/// Executes step `3` of `EventExecMove` (`SLUS_202.28` `0x001aa670` after fade-out/transition),
+/// playing the destination-side door close sound (`ev_close_se` at `se_pos`) and chaining into
+/// `EventExecMode::Program` for `MovePlusProgram` (`rslt == 5`) using the latched program metadata
+/// without requiring the old stage's `ev_list`.
+pub fn event_exec_move_step3(state: &mut EventStepState, effects: &mut EventEngineEffects) -> bool {
+    if state.ev_close_se != 0 {
+        effects.positional_sounds.push(EventPositionalSound {
+            se_id: state.ev_close_se,
+            volume: 1.0,
+            pos: state.se_pos,
+            channel: 0,
+        });
+    }
+    effects.player_lock_change = Some(false);
+    effects.fade_command = Some(4);
+
+    if state.ev_m_step == EventExecMode::MoveThenProgram {
+        state.ev_m_step = EventExecMode::Program;
+        state.ev_work_no = None;
+        state.ev_prog_flag_set = true;
+        state.set_e_step(2);
+        effects.active_prog_index = Some(state.pending_move_prog_index);
+        effects.active_prog_completion_flag = state.pending_move_prog_flag;
+        false
+    } else {
+        true
+    }
+}
+
 /// Executes one frame of `EventExecMove` (`SLUS_202.28` `0x001aa670`).
 pub fn event_exec_move(
     entry: &EventListEntry,
@@ -127,16 +157,15 @@ pub fn event_exec_move(
                 flags.set(result_flag, true);
             }
 
-            if let Some(dest_shape) = entry.dest_shape_kind() {
-                if let Some((pos, rot_y)) = event_result_move_position(
-                    ev_pos,
-                    entry.dest_ev_pos_offset(),
-                    dest_shape,
-                    current_rot_y,
-                ) {
-                    state.result_move_pos = pos;
-                    state.result_move_rot_y = rot_y;
-                }
+            let dest_shape = entry.dest_shape_kind().unwrap_or(EventDestShapeKind::Point);
+            if let Some((pos, rot_y)) = event_result_move_position(
+                ev_pos,
+                entry.dest_ev_pos_offset(),
+                dest_shape,
+                current_rot_y,
+            ) {
+                state.result_move_pos = pos;
+                state.result_move_rot_y = rot_y;
             }
 
             // Trigger-side door open sound
@@ -190,32 +219,14 @@ pub fn event_exec_move(
                 dest_rot_y: state.result_move_rot_y,
             });
 
+            state.pending_move_prog_index = entry.prog_index();
+            state.pending_move_prog_flag = entry.result_flag();
             effects.player_lock_change = Some(true);
             state.set_e_step(3);
             effects.fade_command = Some(1);
             false
         }
-        3 => {
-            if state.ev_close_se != 0 {
-                effects.positional_sounds.push(EventPositionalSound {
-                    se_id: state.ev_close_se,
-                    volume: 1.0,
-                    pos: state.se_pos,
-                    channel: 0,
-                });
-            }
-            effects.player_lock_change = Some(false);
-            effects.fade_command = Some(4);
-
-            if state.ev_m_step == EventExecMode::MoveThenProgram {
-                state.ev_m_step = EventExecMode::Program;
-                state.set_e_step(0);
-                effects.active_prog_index = Some(entry.prog_index());
-                false
-            } else {
-                true
-            }
-        }
+        3 => event_exec_move_step3(state, effects),
         _ => false,
     }
 }

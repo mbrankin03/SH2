@@ -6,7 +6,8 @@ pub mod exec_msg_item_save;
 pub mod progression;
 
 pub use exec_door_move::{
-    event_exec_door, event_exec_flag, event_exec_move, is_connected_stage_pair,
+    event_exec_door, event_exec_flag, event_exec_move, event_exec_move_step3,
+    is_connected_stage_pair,
 };
 pub use exec_msg_item_save::{
     event_exec_common_fail_message, event_exec_item, event_exec_message, event_exec_save,
@@ -17,9 +18,13 @@ use crate::inventory::InventoryManager;
 use crate::types::{EventListEntry, EventResultKind, EventTriggerKind, ItemListEntry};
 
 use super::triggers::{
-    event_check, event_exec_sub_flag_set, EventEvalInput, EventTriggerState, EVENT_ITEM_INDEX_BASE,
+    event_check, event_exec_sub_flag_set, EventEvalInput, EVENT_ITEM_INDEX_BASE,
 };
 use super::EventFlags;
+
+/// Maximum same-frame chaining iterations in `EventMainStandard`
+/// (`sh2pc.exe` `FUN_0048e610` `0x0048e768`: `iVar2 = iVar2 + 1; if (0xf < iVar2) return;`).
+pub const MAX_EVENT_CHAIN_ITERATIONS: usize = 16;
 
 /// Execution mode (`ev_m_step` at `0x011263d0` in `EventMainStandard`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,6 +86,11 @@ pub struct EventStepState {
     pub result_move_pos: [f32; 3],
     /// Destination yaw angle (`rot_y` in radians) computed by `EventResultMovePosition` (`0x011b672c`).
     pub result_move_rot_y: f32,
+    /// Pending `ev_prog` index latched during `EventExecMove` step 0 for `MovePlusProgram` (`rslt == 5`)
+    /// so step 3 can launch the chained program even after a cross-stage transition.
+    pub pending_move_prog_index: u8,
+    /// Pending `result_flag` latched during `EventExecMove` step 0 for `MovePlusProgram` (`rslt == 5`).
+    pub pending_move_prog_flag: u16,
 }
 
 impl Default for EventStepState {
@@ -105,6 +115,8 @@ impl EventStepState {
             se_pos: [0.0, 0.0, 0.0],
             result_move_pos: [0.0, 0.0, 0.0],
             result_move_rot_y: 0.0,
+            pending_move_prog_index: 0,
+            pending_move_prog_flag: 0,
         }
     }
 
@@ -200,28 +212,42 @@ pub struct EventEngineEffects {
     pub active_prog_completion_flag: u16,
 }
 
-/// High-level `EventMainStandard` (`SLUS_202.28` `0x001a77b0`) coordinator combining
-/// [`EventStepState`] and [`EventTriggerState`].
+/// High-level `EventMainStandard` (`SLUS_202.28` `0x001a7b50`, `sh2pc.exe` `0x0048e610`)
+/// coordinator managing [`EventStepState`].
 #[derive(Debug, Clone, Default)]
 pub struct EventEngine {
     pub step_state: EventStepState,
-    pub trigger_state: EventTriggerState,
 }
 
 impl EventEngine {
     pub const fn new() -> Self {
         Self {
             step_state: EventStepState::new(),
-            trigger_state: EventTriggerState::new(),
         }
     }
 
     pub fn reset(&mut self) {
         self.step_state.reset();
-        self.trigger_state.reset();
     }
 
-    /// Executes one frame of `EventMainStandard` (`SLUS_202.28` `0x001a77b0..0x001a7db0`).
+    /// Marks an externally-driven `EventExecMode::Program` (`StageProgramRunner`) as completed,
+    /// returning the engine to [`EventExecMode::Idle`] (`EventMainStandard` `0x001a7b50`).
+    pub fn finish_active_program(&mut self) {
+        if self.step_state.ev_m_step == EventExecMode::Program {
+            self.step_state.ev_m_step = EventExecMode::Idle;
+            self.step_state.set_e_step(0);
+            self.step_state.ev_active = 0;
+            self.step_state.ev_cancel = false;
+            self.step_state.ev_work_no = None;
+            self.step_state.pending_move_prog_index = 0;
+            self.step_state.pending_move_prog_flag = 0;
+        }
+    }
+
+    /// Executes one frame of `EventMainStandard` (`SLUS_202.28` `0x001a7b50`, `sh2pc.exe`
+    /// `0x0048e610`), including the authentic 16-iteration same-frame chaining loop
+    /// (`0x0048e768`: `if (0xf < iVar2) return;`, clearing `action_pressed` / `used_item_id`
+    /// after the first completed event).
     #[allow(clippy::too_many_arguments)]
     pub fn tick_standard(
         &mut self,
@@ -238,200 +264,221 @@ impl EventEngine {
         inventory: &mut InventoryManager,
     ) -> EventEngineEffects {
         let mut effects = EventEngineEffects::default();
+        let mut iter_input = *eval_input;
 
-        if self.step_state.ev_m_step == EventExecMode::Idle {
-            let mut check_input = *eval_input;
-            check_input.ev_active = self.step_state.ev_active;
-            if let Some(work_no) = event_check(
-                ev_list,
-                item_list,
-                ev_pos,
-                flags,
-                &check_input,
-                &mut self.trigger_state,
-            ) {
-                self.step_state.ev_work_no = Some(work_no);
-                self.step_state.set_e_step(0);
-                self.step_state.ev_cancel = false;
+        for iter in 0..MAX_EVENT_CHAIN_ITERATIONS {
+            if iter > 0 {
+                // `SLUS_202.28` `0x001a7ec0` (`param_1 = 0`), `sh2pc.exe` `0x0048e752` (`in_EAX = 0`):
+                // chained same-frame iterations suppress button & item-use re-triggering.
+                iter_input.action_pressed = false;
+                iter_input.used_item_id = None;
+            }
 
-                if work_no < EVENT_ITEM_INDEX_BASE {
-                    if let Some(entry) = ev_list.get(work_no) {
-                        self.step_state.ev_active = match entry.trigger_kind() {
-                            Some(
-                                EventTriggerKind::TouchContinuous
-                                | EventTriggerKind::TouchEdge
-                                | EventTriggerKind::RoomInit
-                                | EventTriggerKind::StageInit,
-                            ) => 1,
-                            _ => 2,
-                        };
-
-                        if matches!(
-                            entry.trigger_kind(),
-                            Some(EventTriggerKind::UseItemLook | EventTriggerKind::UseItemTouch)
-                        ) && entry.consume_item()
-                        {
-                            inventory.item_lose(entry.required_item_id());
-                        }
-
-                        self.step_state.ev_m_step = match entry.result_kind() {
-                            Some(EventResultKind::FlagSet | EventResultKind::FlagClear) => {
-                                EventExecMode::Flag
-                            }
-                            Some(EventResultKind::Move) => EventExecMode::Move,
-                            Some(EventResultKind::MovePlusProgram) => {
-                                EventExecMode::MoveThenProgram
-                            }
-                            Some(EventResultKind::Program) => EventExecMode::Program,
-                            Some(EventResultKind::Message) => EventExecMode::Message,
-                            Some(
-                                EventResultKind::DoorLocked
-                                | EventResultKind::DoorBroken
-                                | EventResultKind::DoorUnlocked,
-                            ) => EventExecMode::Door,
-                            Some(EventResultKind::SavePoint) => EventExecMode::Save,
-                            None => EventExecMode::Idle,
-                        };
-                    }
-                } else {
-                    self.step_state.ev_active = 2;
-                    self.step_state.ev_m_step = EventExecMode::Item;
-                }
-            } else if eval_input.used_item_id.is_some() {
-                self.step_state.ev_active = 2;
-                self.step_state.set_e_step(0);
-                self.step_state.ev_m_step = EventExecMode::ItemUseFail;
-            }
-        }
-
-        let completed = match self.step_state.ev_m_step {
-            EventExecMode::Idle => false,
-            EventExecMode::Flag => {
-                if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                    event_exec_flag(entry, flags)
-                } else {
-                    true
-                }
-            }
-            EventExecMode::Move | EventExecMode::MoveThenProgram => {
-                if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                    event_exec_move(
-                        entry,
-                        ev_pos,
-                        current_stage,
-                        eval_input.player_rot_y,
-                        &mut self.step_state,
-                        flags,
-                        &mut effects,
-                    )
-                } else {
-                    true
-                }
-            }
-            EventExecMode::Program => {
-                if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                    if self.step_state.ev_e_step == 0 {
-                        event_exec_sub_flag_set(entry, flags);
-                        self.step_state.ev_prog_flag_set = true;
-                        self.step_state.set_e_step(2);
-                    }
-                    effects.active_prog_index = Some(entry.prog_index());
-                    if prog_finished {
-                        let result_flag = entry.result_flag() as usize;
-                        if self.step_state.ev_prog_flag_set && result_flag != 0 {
-                            flags.set(result_flag, true);
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    true
-                }
-            }
-            EventExecMode::Message => {
-                if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                    event_exec_message(
-                        entry,
-                        &mut self.step_state,
-                        flags,
-                        message_dismissed,
-                        &mut effects,
-                    )
-                } else {
-                    true
-                }
-            }
-            EventExecMode::Door => {
-                if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                    event_exec_door(
-                        entry,
-                        ev_pos,
-                        &mut self.step_state,
-                        flags,
-                        message_dismissed,
-                        &mut effects,
-                    )
-                } else {
-                    true
-                }
-            }
-            EventExecMode::Save => {
-                if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
-                    event_exec_save(
-                        entry,
-                        &mut self.step_state,
-                        flags,
-                        message_dismissed,
-                        &mut effects,
-                    )
-                } else {
-                    true
-                }
-            }
-            EventExecMode::Item => {
-                if let Some(item) = self
-                    .step_state
-                    .ev_work_no
-                    .and_then(|i| i.checked_sub(EVENT_ITEM_INDEX_BASE))
-                    .and_then(|idx| item_list.get(idx))
+            if self.step_state.ev_m_step == EventExecMode::Idle {
+                if let Some(work_no) =
+                    event_check(ev_list, item_list, ev_pos, flags, inventory, &iter_input)
                 {
-                    event_exec_item(
-                        item,
-                        eval_input.player_pos[1],
-                        anim_success_frame,
-                        anim_ended,
-                        message_dismissed,
-                        &mut self.step_state,
-                        flags,
-                        inventory,
-                        &mut effects,
-                    )
+                    self.step_state.ev_work_no = Some(work_no);
+                    self.step_state.set_e_step(0);
+                    self.step_state.ev_cancel = false;
+
+                    if work_no < EVENT_ITEM_INDEX_BASE {
+                        if let Some(entry) = ev_list.get(work_no) {
+                            self.step_state.ev_active = 2;
+
+                            // `SLUS_202.28` `0x001a8330`, `sh2pc.exe` `0x0048e2d8`:
+                            // `consume_item` (`(cond >> 3) & 1`) applies to triggers `5..=10`.
+                            if entry
+                                .trigger_kind()
+                                .is_some_and(EventTriggerKind::supports_consume_item)
+                                && entry.consume_item()
+                            {
+                                inventory.item_lose(entry.required_item_id());
+                            }
+
+                            self.step_state.ev_m_step = match entry.result_kind() {
+                                Some(EventResultKind::FlagSet | EventResultKind::FlagClear) => {
+                                    EventExecMode::Flag
+                                }
+                                Some(EventResultKind::Program) => EventExecMode::Program,
+                                Some(EventResultKind::Move) => EventExecMode::Move,
+                                Some(EventResultKind::MovePlusProgram) => {
+                                    EventExecMode::MoveThenProgram
+                                }
+                                Some(EventResultKind::Message) => EventExecMode::Message,
+                                Some(
+                                    EventResultKind::DoorLocked
+                                    | EventResultKind::DoorBroken
+                                    | EventResultKind::DoorUnlocked,
+                                ) => EventExecMode::Door,
+                                Some(EventResultKind::SavePoint) => EventExecMode::Save,
+                                None => EventExecMode::Idle,
+                            };
+                        }
+                    } else {
+                        self.step_state.ev_active = 2;
+                        self.step_state.ev_m_step = EventExecMode::Item;
+                    }
+                } else if iter_input.used_item_id.is_some() {
+                    self.step_state.ev_active = 2;
+                    self.step_state.set_e_step(0);
+                    self.step_state.ev_m_step = EventExecMode::ItemUseFail;
                 } else {
-                    true
+                    break;
                 }
             }
-            EventExecMode::ItemUseFail => event_exec_common_fail_message(
-                1,
-                &mut self.step_state,
-                message_dismissed,
-                &mut effects,
-            ),
-            EventExecMode::MapDisabledFail => event_exec_common_fail_message(
-                2,
-                &mut self.step_state,
-                message_dismissed,
-                &mut effects,
-            ),
-            EventExecMode::Complete => true,
-        };
 
-        if completed {
+            let completed = match self.step_state.ev_m_step {
+                EventExecMode::Idle => false,
+                EventExecMode::Flag => {
+                    if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
+                        event_exec_flag(entry, flags)
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::Move | EventExecMode::MoveThenProgram => {
+                    if self.step_state.ev_e_step == 3 {
+                        // Step 3 runs after a same-stage or cross-stage transition and reads only
+                        // latched `ev_close_se` / `se_pos` / `pending_move_prog_*` without indexing
+                        // into the new stage's `ev_list`.
+                        event_exec_move_step3(&mut self.step_state, &mut effects)
+                    } else if let Some(entry) =
+                        self.step_state.ev_work_no.and_then(|i| ev_list.get(i))
+                    {
+                        event_exec_move(
+                            entry,
+                            ev_pos,
+                            current_stage,
+                            iter_input.player_rot_y,
+                            &mut self.step_state,
+                            flags,
+                            &mut effects,
+                        )
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::Program => {
+                    if self.step_state.ev_e_step == 0 {
+                        if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i))
+                        {
+                            event_exec_sub_flag_set(entry, flags);
+                            self.step_state.ev_prog_flag_set = true;
+                            self.step_state.pending_move_prog_index = entry.prog_index();
+                            self.step_state.pending_move_prog_flag = entry.result_flag();
+                            self.step_state.set_e_step(2);
+                        } else {
+                            // No valid entry to start a program from.
+                            self.step_state.pending_move_prog_index = 0;
+                            self.step_state.pending_move_prog_flag = 0;
+                        }
+                    }
+                    if self.step_state.ev_e_step == 2 {
+                        effects.active_prog_index = Some(self.step_state.pending_move_prog_index);
+                        effects.active_prog_completion_flag =
+                            self.step_state.pending_move_prog_flag;
+                        if prog_finished {
+                            let result_flag = self.step_state.pending_move_prog_flag as usize;
+                            if self.step_state.ev_prog_flag_set && result_flag != 0 {
+                                flags.set(result_flag, true);
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::Message => {
+                    if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
+                        event_exec_message(
+                            entry,
+                            &mut self.step_state,
+                            flags,
+                            message_dismissed,
+                            &mut effects,
+                        )
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::Door => {
+                    if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
+                        event_exec_door(
+                            entry,
+                            ev_pos,
+                            &mut self.step_state,
+                            flags,
+                            message_dismissed,
+                            &mut effects,
+                        )
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::Save => {
+                    if let Some(entry) = self.step_state.ev_work_no.and_then(|i| ev_list.get(i)) {
+                        event_exec_save(
+                            entry,
+                            &mut self.step_state,
+                            flags,
+                            message_dismissed,
+                            &mut effects,
+                        )
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::Item => {
+                    if let Some(item) = self
+                        .step_state
+                        .ev_work_no
+                        .and_then(|i| i.checked_sub(EVENT_ITEM_INDEX_BASE))
+                        .and_then(|idx| item_list.get(idx))
+                    {
+                        event_exec_item(
+                            item,
+                            iter_input.player_pos[1],
+                            anim_success_frame,
+                            anim_ended,
+                            message_dismissed,
+                            &mut self.step_state,
+                            flags,
+                            inventory,
+                            &mut effects,
+                        )
+                    } else {
+                        true
+                    }
+                }
+                EventExecMode::ItemUseFail => event_exec_common_fail_message(
+                    1,
+                    &mut self.step_state,
+                    message_dismissed,
+                    &mut effects,
+                ),
+                EventExecMode::MapDisabledFail => event_exec_common_fail_message(
+                    2,
+                    &mut self.step_state,
+                    message_dismissed,
+                    &mut effects,
+                ),
+                EventExecMode::Complete => true,
+            };
+
+            if !completed {
+                break;
+            }
+
             self.step_state.ev_m_step = EventExecMode::Idle;
             self.step_state.set_e_step(0);
             self.step_state.ev_active = 0;
             self.step_state.ev_cancel = false;
             self.step_state.ev_work_no = None;
+            self.step_state.pending_move_prog_index = 0;
+            self.step_state.pending_move_prog_flag = 0;
         }
 
         effects

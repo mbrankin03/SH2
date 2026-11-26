@@ -359,6 +359,15 @@ impl SimulationCore {
         }
     }
 
+    /// Evaluates the active sub-frame PS2 `VbWvsMatrix` (`+X` right, `+Y` down, `+Z` forward;
+    /// `SLUS_202.28` `0x010e59d0` / `sh2pc.exe` `0x01f80e00`) for `SeCallPosDirection` (`0x00192990` /
+    /// `0x00515e60`) and `RadioNoise` (`0x001ab300`) across all camera modes (`SH2-167`).
+    #[inline]
+    pub fn active_ps2_wvs_matrix(&self, alpha: f32) -> Mat4 {
+        let snap = self.active_camera_snapshot(alpha);
+        crate::camera::ps2_wvs_matrix_from_look_at(snap.eye, snap.target, snap.up)
+    }
+
     /// Evaluates the active sub-frame vertical FOV in radians (`SH2-93`).
     #[inline]
     pub fn active_fov_y(&self, alpha: f32) -> f32 {

@@ -225,22 +225,28 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var screen_fog_alpha: f32 = 0.0;
     var inscatter_rgb = vec3<f32>(0.0);
 
+    let is_classic_ps2 = !volumetric_mode || fog.step_count <= 1u;
+
     // 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2711`) &
     // `sh2pc.exe` `FUN_00487210` (`0x00487210`, `sh2pc_00480000.c:4354-4366`) + `FogFix.cpp:81-88`:
-    // Fullscreen scrolling `fog.tex` quad (`u ± layer1_x1`, `v ± layer1_y1`) modulated by
-    // `fogSetColor(0x80, 0x80, 0x80, 0x80)` (PS2 GS / D3D8 `MODULATE2X` unity RGB -> `tex.rgb`).
+    // - In `ClassicPs2` mode (`is_classic_ps2`), enforce exact PS2 square `±0.125` UV half-span
+    //   (`fog.screen_fog_uv.z`) and pure vertex alpha `As = (fog_color_a * fog_alpha_param) >> 9`.
+    // - In `ModernVolumetric` / Enhanced mode, allow SH2:EE `layer1_uv_scale.xy` (`[0.250, 0.125]`)
+    //   and texture-modulated blend (`screen_fog_alpha * screen_fog_texel`).
     if (fog.screen_fog_uv.w > 0.001) {
-        let half_span = select(
-            vec2<f32>(fog.screen_fog_uv.z, fog.screen_fog_uv.z),
+        let classic_half_span = vec2<f32>(fog.screen_fog_uv.z, fog.screen_fog_uv.z);
+        let enhanced_half_span = select(
+            classic_half_span,
             fog.layer1_uv_scale.xy,
             fog.layer1_uv_scale.x > 0.001 && fog.layer1_uv_scale.y > 0.001,
         );
+        let half_span = select(enhanced_half_span, classic_half_span, is_classic_ps2);
         let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (half_span * 2.0);
         screen_fog_texel = textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r;
         screen_fog_alpha = clamp(fog.screen_fog_uv.w * effective_density, 0.0, 1.0);
     }
 
-    if (!volumetric_mode || fog.step_count <= 1u) {
+    if (is_classic_ps2) {
         // 1:1 Classic PS2/PC analytical depth-fog (`sh2gfw_Set_DepthFog` `FA/z + FB` @ `0x00175df0`,
         // `sh2pc.exe` `VS[1..4]` `0x008ef700..0x008ef940` using view-space `z = clip.w`).
         let base_curve = eval_depth_curve(view_z);
@@ -318,8 +324,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // (`0x00487210`, `sh2pc_00480000.c:4366`): fullscreen scrolling `fog.tex` quad modulated by
         // `0x808080` (`MODULATE2X` -> `fog.tex` RGB, NOT dark `0x46` `FOGCOL`) with `ALPHA_1 = 0x44`
         // (`As = (fog_color_a * fog_alpha_param) >> 9`).
+        // ClassicPs2 uses pure vertex alpha `screen_fog_alpha`; Enhanced modulates by `screen_fog_texel`.
         let screen_fog_rgb = vec3<f32>(screen_fog_texel);
-        let screen_blend = clamp(screen_fog_alpha * screen_fog_texel, 0.0, 1.0);
+        let screen_blend = select(
+            clamp(screen_fog_alpha * screen_fog_texel, 0.0, 1.0),
+            clamp(screen_fog_alpha, 0.0, 1.0),
+            is_classic_ps2,
+        );
         fogged_rgb = mix(fogged_rgb, screen_fog_rgb, screen_blend);
     }
     textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, 1.0));

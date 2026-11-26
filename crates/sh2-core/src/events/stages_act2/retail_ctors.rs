@@ -175,87 +175,20 @@ impl RetailTriggerKind {
     }
 }
 
-/// Maps a retail `sh2pc.exe` [`EventListEntry`] (`0x0048e5b4` & `0x0048e7a4`) onto `SLUS_202.28`
-/// trigger and result discriminants expected by [`crate::events::EventEngine::tick_standard`].
-///
-/// Retail `trg == 0` and `trg == 1` both map to `Always` (`9`): in `EventCheck`
-/// (`0x0048e1db..0x0048e2cb`) both fall through the button/item jump (`ecx = trg - 2 > 8u`) and
-/// the spatial jump (`ja 0x0048e572`), firing every frame whenever `flag_0`/`flag_1` hold.
-/// For carried-item triggers (`7..=10`, including `trg == 10` key doors that fire on either menu
-/// item use or pressing Action while carrying the key), prefer
-/// [`normalize_retail_event_entry_for_input`].
+/// Identity pass-through retained for compatibility now that [`crate::types::EventTriggerKind`]
+/// and [`crate::types::EventResultKind`] match `SLUS_202.28` (`0x001a7ed0` / `0x001a7b50`) and
+/// `sh2pc.exe` (`0x0048e070` / `0x0048e610`) 1:1 with zero nibble remapping.
 pub const fn normalize_retail_event_entry(entry: EventListEntry) -> EventListEntry {
-    if entry.is_sentinel() {
-        return entry;
-    }
-    let trg = match (entry.cond >> 28) & 0xf {
-        0 | 1 => 9,
-        2 | 7 => 2,
-        3 | 4 | 8 | 9 => 0,
-        5 | 10 => 6,
-        6 => 8,
-        other => other,
-    };
-    let rslt = match (entry.rslt0 >> 28) & 0xf {
-        3 => 5,
-        4 => 3,
-        5 => 6,
-        6 => 4,
-        other => other,
-    };
-    EventListEntry {
-        flag: entry.flag,
-        cond: (entry.cond & 0x0fff_ffff) | (trg << 28),
-        rslt0: (entry.rslt0 & 0x0fff_ffff) | (rslt << 28),
-        rslt1: entry.rslt1,
-    }
+    entry
 }
 
-/// Maps a retail `sh2pc.exe` [`EventListEntry`] onto `SLUS_202.28` trigger/result nibbles while
-/// resolving carried-item (`0x01f7a7e0`) vs menu-used-item (`used_item_id`) branches for
-/// `trg == 7..=10` (`sh2pc.exe` `0x0048e1af..0x0048e218`).
-///
-/// In particular, for `trg == 10` (`UseOrActionCarryingItem`, used by all 9 Act 2 key-locked
-/// doors), when no item is being used from the menu (`input.used_item_id.is_none()`) and the
-/// player presses Action while carrying `entry.required_item_id()`, `trg` normalizes to
-/// `ActionLook` (`2`); otherwise it normalizes to `UseItemLook` (`6`).
+/// Identity pass-through retained for compatibility now that `EventCheck` (`0x001a7ed0` /
+/// `0x0048e070`) natively evaluates carried-item (`7..=10`) and menu-used-item (`5, 6, 10`)
+/// triggers directly against [`InventoryManager`].
 pub fn normalize_retail_event_entry_for_input(
     entry: EventListEntry,
-    input: &EventEvalInput,
-    inventory: &InventoryManager,
+    _input: &EventEvalInput,
+    _inventory: &InventoryManager,
 ) -> EventListEntry {
-    if entry.is_sentinel() {
-        return entry;
-    }
-    let base = normalize_retail_event_entry(entry);
-    let req_item = entry.required_item_id();
-    let carried = input.used_item_id.is_none() && inventory.has_item(req_item);
-    let trg = match (entry.cond >> 28) & 0xf {
-        7 => {
-            if carried {
-                2
-            } else {
-                6
-            }
-        }
-        8 | 9 => {
-            if carried {
-                0
-            } else {
-                6
-            }
-        }
-        10 => {
-            if carried && input.action_pressed {
-                2
-            } else {
-                6
-            }
-        }
-        _ => return base,
-    };
-    EventListEntry {
-        cond: (base.cond & 0x0fff_ffff) | (trg << 28),
-        ..base
-    }
+    entry
 }

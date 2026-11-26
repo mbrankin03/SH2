@@ -221,7 +221,7 @@ pub(crate) fn tick_3d_story_progression(state: &mut AppState, dt_sec: f32, is_pa
         sh2_audio::chainsaw_sfx::ChainsawIdleState::Inactive
     ) {
         let rm = &mut state.story_progression_room;
-        rm.last_chainsaw_audio = Some(rm.chainsaw_sfx.tick(ChainsawTickInput {
+        let out = rm.chainsaw_sfx.tick(ChainsawTickInput {
             dt_secs: dt_sec,
             james_pos_mm: state.sim_core.scenario.player_position,
             weapon_volume: 0.85,
@@ -230,7 +230,10 @@ pub(crate) fn tick_3d_story_progression(state: &mut AppState, dt_sec: f32, is_pa
             anim_speed_q11: 2048,
             hit_this_frame: false,
             enable_chainsaw_sound_fix: rm.chainsaw_fix_enabled,
-        }));
+        });
+        rm.last_chainsaw_audio = Some(out);
+        let fix_enabled = rm.chainsaw_fix_enabled;
+        crate::audio_dispatch::dispatch_chainsaw_audio(state, out, fix_enabled);
     }
 
     if state.story_progression_room.modal_3d_open && (cp_idx == 10 || cp_idx == 11) {

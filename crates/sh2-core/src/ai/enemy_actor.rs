@@ -42,6 +42,8 @@ pub struct EnemyActor {
     pub is_grappling_player: bool,
     /// True while culled by `enCheckSleepIn` (`15000.0` mm outdoor, `0x00142950`).
     pub is_sleeping: bool,
+    /// Retail `enLocalWork[5]` / `*(i32*)(chara + 0x100)` enemy subtype (`enSetRadioVolume` `0x00143890`).
+    pub sub_type: u8,
     /// Per-attack hit-check state (`shBattleAttackHitCheckInit` `0x00123130`).
     pub attack_work: EnemyAttackWork,
     /// Animation controller for species that do not store one directly on their inner controller.
@@ -75,9 +77,17 @@ impl EnemyActor {
             prev_yaw: yaw,
             is_grappling_player: false,
             is_sleeping: false,
+            sub_type: 0,
             attack_work: EnemyAttackWork::default(),
             fallback_anim,
         }
+    }
+
+    /// Sets the retail `enLocalWork[5]` / `chara+0x100` `sub_type` (`enSetRadioVolume` `0x00143890`).
+    #[inline]
+    pub fn with_sub_type(mut self, sub_type: u8) -> Self {
+        self.sub_type = sub_type;
+        self
     }
 
     /// Unique enemy instance / bestiary ID.

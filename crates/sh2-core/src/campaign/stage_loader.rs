@@ -5,6 +5,7 @@
 use crate::events::stages_act1::{act1_stage_descriptor, decode_act1_enemy_spawn};
 use crate::events::stages_act2::stage_table_act2;
 use crate::room_loader::{resolve_room_id_for_stage_or_override, stage_room_descriptor};
+use crate::types::char_to_float2;
 use crate::world::outdoor_grid::OutdoorArea;
 
 /// Normalized enemy spawn entry extracted from a stage's retail `Enemy_List` (`en_list`)
@@ -26,18 +27,21 @@ pub struct CampaignEnemySpawn {
 }
 
 /// Normalized 3D room item pickup entry (`0x04xx`) extracted from a stage's retail `Item_List`
-/// (`gi_list`, `SLUS_202.28` `ItemListElement` `0x001a9320`).
+/// (`gi_list`, `SLUS_202.28` `ItemListElement` `0x001a9320`, `ItemCheckLookPoint` `0x001a93b0`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CampaignPickupSpawn {
-    /// World position `[x, y, z]` in PS2 millimeters.
+    /// World position `[x, y, z]` in PS2 millimeters (`y` decoded via `CharToFloat2` `0x001a9280`).
     pub position_mm: [f32; 3],
-    /// Yaw rotation in raw i16 units.
+    /// Raw Team Silent `f16` yaw rotation bits (`+0x0a`, decoded via `CharToFloat2` `0x001a9280`).
     pub rot_y_raw: i16,
-    /// Index into `ITEM_KIND_TABLE` (`(st >> 29) & 7`).
+    /// Index into `ITEM_KIND_TABLE` (`(flag >> 29) & 7`, `ItemListElement` selector `0`).
     pub item_kind_index: u8,
-    /// Action-difficulty filter (`(st >> 26) & 7`).
+    /// Action-difficulty filter (`(flag >> 26) & 7`, `ItemListElement` selector `1`).
     pub difficulty_condition: u8,
-    /// Pickup event flag ID (`st & 0x3fff`).
+    /// Extra story flag condition (`(flag >> 20) & 0x1f`, `ItemListElement` selector `2`,
+    /// evaluated by `EventItemConditionCheck` `0x001ab1a0`).
+    pub extra_condition: u8,
+    /// Pickup event flag ID (`flag & 0x3fff`, `ItemListElement` selector `3`).
     pub flag_id: u16,
 }
 
@@ -181,10 +185,15 @@ fn collect_stage_entities(
                 .item_list
                 .iter()
                 .map(|gi| CampaignPickupSpawn {
-                    position_mm: [gi.pos_x, gi.pos_y as f32, gi.pos_z],
+                    position_mm: [
+                        gi.pos_x,
+                        char_to_float2((gi.pos_y as u16).to_le_bytes()),
+                        gi.pos_z,
+                    ],
                     rot_y_raw: gi.rot_y,
                     item_kind_index: gi.item_kind_index(),
                     difficulty_condition: gi.difficulty_condition(),
+                    extra_condition: gi.extra_condition(),
                     flag_id: gi.flag_id(),
                 })
                 .collect();
@@ -213,7 +222,8 @@ fn collect_stage_entities(
                 position_mm: [gi.pos_x(), gi.pos_y(), gi.pos_z()],
                 rot_y_raw: gi.rot_y_hi16 as i16,
                 item_kind_index: gi.item_kind_index(),
-                difficulty_condition: gi.difficulty_filter(),
+                difficulty_condition: gi.difficulty_condition(),
+                extra_condition: gi.extra_condition(),
                 flag_id: gi.flag_id(),
             })
             .collect();

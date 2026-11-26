@@ -62,7 +62,9 @@ impl Default for PcssShadowUniforms {
     fn default() -> Self {
         Self {
             light_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            params: [1.0, 170.0 / 255.0, 0.024, 0.5],
+            // Strict Vanilla PS2 default (`SH2-168`): PCSS disabled (`0.0`) and PS2 Authentic
+            // character specular scale (`1.0`, not `0.5` SH2:EE `SpecularFix`).
+            params: [0.0, 170.0 / 255.0, 0.024, 1.0],
         }
     }
 }
@@ -440,5 +442,15 @@ mod tests {
     fn pcss_uniforms_alignment() {
         assert_eq!(std::mem::size_of::<PcssShadowUniforms>(), 80);
         assert_eq!(std::mem::align_of::<PcssShadowUniforms>(), 4);
+    }
+
+    #[test]
+    fn pcss_uniforms_default_is_strict_vanilla_ps2() {
+        let def = PcssShadowUniforms::default();
+        assert_eq!(def.params[0], 0.0, "PCSS must default to disabled (0.0)");
+        assert_eq!(
+            def.params[3], 1.0,
+            "Character specular scale must default to 1.0 (PS2 Authentic, not 0.5x SpecularFix)"
+        );
     }
 }

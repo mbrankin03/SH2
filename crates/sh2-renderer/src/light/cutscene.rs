@@ -283,7 +283,7 @@ pub fn build_cutscene_light_uniforms(
         env_alpha_u8,
     );
     if let Some(env) = input.draw_env {
-        u.set_draw_env_constants(env, 0.0, 0.0, input.is_dark_room, 1.0);
+        u.set_draw_env_constants(env, 0.0, 0.0, input.is_dark_room);
     }
     u
 }

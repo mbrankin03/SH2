@@ -10,7 +10,10 @@ use crate::events::engine::{EventEngine, EventEngineEffects, StageTransitionComm
 use crate::events::stages_act1::act1_stage_descriptor;
 use crate::events::stages_act2::stage_table_act2;
 use crate::events::triggers::EventEvalInput;
-use crate::events::{ClearData, Sh2Rng, PROG_KEY_A, PROG_KEY_B};
+use crate::events::{
+    ClearData, Sh2Rng, PROG_KEY_A, PROG_KEY_B, PROG_KEY_DOWN, PROG_KEY_LEFT, PROG_KEY_RIGHT,
+    PROG_KEY_UP,
+};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
 use crate::types::ItemListEntry;
@@ -18,7 +21,7 @@ use crate::world::OutdoorTileStreamer;
 
 use super::cutscene_handoff::{DramaDemoTrigger, AUTO_STAGE_DEMO_RULES};
 use super::io::{CampaignEffects, CampaignTickInput};
-use super::retail_events::{evaluate_retail_item_pickups, evaluate_retail_stage_events};
+use super::retail_events::tick_retail_stage_events;
 use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest};
 use super::state::{
     CampaignPhase, ConnectStep, CutawayFadeState, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
@@ -170,11 +173,15 @@ pub(crate) fn run_active_gameplay(
         // waits for `ScreenEffectFadeCheck() != 0` before checking `shPadTrigger`).
         let fade_blocks_input =
             sim.scenario.cutaway_overlay.active_picture().is_some() && !fade.is_fully_clear();
-        let down = if fade_blocks_input {
-            0
+        let dir_mask = PROG_KEY_UP | PROG_KEY_DOWN | PROG_KEY_LEFT | PROG_KEY_RIGHT;
+        let (down, held) = if fade_blocks_input {
+            (0, 0)
         } else {
-            (if input.action_pressed { PROG_KEY_A } else { 0 })
+            let down = (if input.action_pressed { PROG_KEY_A } else { 0 })
                 | (if input.cancel_pressed { PROG_KEY_B } else { 0 })
+                | (input.prog_dir_down & dir_mask);
+            let held = down | (input.prog_dir_held & dir_mask);
+            (down, held)
         };
         let riddle = sim.scenario.riddle_difficulty;
         let prev_cutaway = sim
@@ -186,7 +193,7 @@ pub(crate) fn run_active_gameplay(
             let scen = &mut sim.scenario;
             let still_running = scen.prog_runner.tick(
                 down,
-                down,
+                held,
                 dt_sec,
                 &mut scen.flags,
                 &mut scen.puzzle_state,
@@ -262,7 +269,9 @@ pub(crate) fn run_active_gameplay(
                 restore_policy: PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
             });
         }
-        let _ = still_running;
+        if !still_running {
+            event_engine.finish_active_program();
+        }
         if let Some(_ending_bit) = ending_bit {
             return GameplayStepOutcome::TriggerEnding(stage_id);
         }
@@ -272,6 +281,8 @@ pub(crate) fn run_active_gameplay(
             player_rot_y: sim.scenario.player_yaw,
             action_pressed: input.action_pressed,
             used_item_id: (input.item_use_id != 0).then_some(input.item_use_id),
+            is_dark_room: sim.scenario.is_current_stage_dark(),
+            flashlight_on: sim.scenario.is_flashlight_active(),
             action_difficulty: sim.scenario.action_difficulty,
             ..EventEvalInput::default()
         };
@@ -349,89 +360,49 @@ pub(crate) fn run_active_gameplay(
 }
 
 fn tick_stage_events(
-    _event_engine: &mut EventEngine,
+    event_engine: &mut EventEngine,
     sim: &mut SimulationCore,
     stage_id: u16,
     eval_input: &EventEvalInput,
-    _input: &CampaignTickInput,
+    input: &CampaignTickInput,
 ) -> EventEngineEffects {
     if stage_id <= 27 {
         if let Some(act1) = act1_stage_descriptor(stage_id as u8) {
-            let mut effects = evaluate_retail_stage_events(
+            let items: Vec<ItemListEntry> = act1
+                .item_list
+                .iter()
+                .map(|e| e.to_item_list_entry())
+                .collect();
+            return tick_retail_stage_events(
+                event_engine,
                 act1.event_list,
+                &items,
                 act1.ev_pos,
                 stage_id as u8,
                 eval_input,
+                input.message_dismissed,
                 &mut sim.scenario.flags,
                 &mut sim.scenario.inventory_mgr,
             );
-            if eval_input.action_pressed
-                && eval_input.player_can_search
-                && effects.stage_transition.is_none()
-                && effects.common_message.is_none()
-                && effects.stage_message.is_none()
-                && effects.active_prog_index.is_none()
-                && !act1.item_list.is_empty()
-            {
-                let items: Vec<ItemListEntry> = act1
-                    .item_list
-                    .iter()
-                    .map(|e| ItemListEntry {
-                        pos_x: e.pos_x,
-                        pos_z: e.pos_z,
-                        pos_y: e.pos_y as u16,
-                        rot_y: e.rot_y as u16,
-                        flag: e.st,
-                    })
-                    .collect();
-                evaluate_retail_item_pickups(
-                    &items,
-                    eval_input,
-                    &mut sim.scenario.flags,
-                    &mut sim.scenario.inventory_mgr,
-                    &mut effects,
-                );
-            }
-            return effects;
         }
     }
     if let Some(act2) = stage_table_act2(stage_id) {
-        let mut effects = evaluate_retail_stage_events(
+        let items: Vec<ItemListEntry> = act2
+            .retail_items
+            .iter()
+            .map(|e| e.to_ps2_clamped())
+            .collect();
+        return tick_retail_stage_events(
+            event_engine,
             act2.event_list,
+            &items,
             act2.pos_list,
             stage_id as u8,
             eval_input,
+            input.message_dismissed,
             &mut sim.scenario.flags,
             &mut sim.scenario.inventory_mgr,
         );
-        if eval_input.action_pressed
-            && eval_input.player_can_search
-            && effects.stage_transition.is_none()
-            && effects.common_message.is_none()
-            && effects.stage_message.is_none()
-            && effects.active_prog_index.is_none()
-            && !act2.retail_items.is_empty()
-        {
-            let items: Vec<ItemListEntry> = act2
-                .retail_items
-                .iter()
-                .map(|e| ItemListEntry {
-                    pos_x: e.pos_x(),
-                    pos_z: e.pos_z(),
-                    pos_y: (f32::from_bits(u32::from(e.pos_y_hi16) << 16) as i16) as u16,
-                    rot_y: e.rot_y_hi16,
-                    flag: e.flags_packed,
-                })
-                .collect();
-            evaluate_retail_item_pickups(
-                &items,
-                eval_input,
-                &mut sim.scenario.flags,
-                &mut sim.scenario.inventory_mgr,
-                &mut effects,
-            );
-        }
-        return effects;
     }
     EventEngineEffects::default()
 }

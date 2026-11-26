@@ -1,5 +1,6 @@
-//! Per-frame `Se2dManager` (`0x001932f0`), `Se3dManager` (`0x00193790`), and `SeStop` (`0x00193a80`)
-//! pool update and control methods on [`super::SePoolManager`].
+//! Per-frame `Se2dManager` (`SLUS_202.28` `0x001932f0` / `sh2pc.exe` `FUN_00516b90` `0x00516b90`),
+//! `Se3dManager` (`0x00193790`), and `SeStop` (`0x00193a80`) pool update and control methods on
+//! [`super::SePoolManager`].
 
 use glam::Vec3;
 
@@ -8,16 +9,44 @@ use crate::sfx_bank::{se_call_pos_direction, se_call_pos_distance};
 
 use super::types::{
     SeBackendAction, SeListenerContext, SE_2D_SLOT_COUNT, SE_3D_CHANNEL_COUNT, SE_3D_ID_THRESHOLD,
-    SE_FLAG_NO_DISTANCE, SE_FLAG_PRIO_1,
+    SE_FLAG_MANAGED_2D, SE_FLAG_NO_DISTANCE, SE_FLAG_PRIO_1,
 };
 use super::SePoolManager;
 
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, lines 5089/5096) 2D managed ducking ramp rate (`±dt * 0.5`).
+pub const SE_2D_DUCK_RAMP_RATE: f32 = 0.5;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, line 5050) room ID override (`0xa7`).
+pub const SE_2D_OVERRIDE_ROOM_0XA7: u16 = 0x00a7;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, line 5050) sound ID override (`0x44c6`) in room `0xa7`.
+pub const SE_2D_OVERRIDE_ID_0X44C6: u32 = 0x44c6;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, `DAT_008a49d8..0x008a49e4`) fixed world position
+/// for `0x44c6` in room `0xa7`.
+pub const SE_2D_0X44C6_POSITION: Vec3 = Vec3::new(-100_000.0, -500.0, -60_500.0);
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, line 5059) flags (`0x0c` = `NO_DISTANCE | MANAGED_2D`).
+pub const SE_2D_0X44C6_FLAGS: u32 = SE_FLAG_NO_DISTANCE | SE_FLAG_MANAGED_2D;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, lines 5061–5063) attenuation byte step (`-8` when `> 8`).
+pub const SE_2D_0X44C6_ATTEN_STEP: u8 = 8;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, line 5066) sound ID override (`0x3cf0`).
+pub const SE_2D_OVERRIDE_ID_0X3CF0: u32 = 0x3cf0;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, line 5067) player Z threshold (`-10000.0` mm) for `0x3cf0`.
+pub const SE_2D_0X3CF0_PLAYER_Z_THRESHOLD: f32 = -10_000.0;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, lines 5070–5077: `0x45160000` = `2400.0`, `0xc61c4000` = `-10000.0`).
+pub const SE_2D_0X3CF0_FIXED_Y: f32 = 2400.0;
+
+/// Retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`, lines 5074–5077: `0xc61c4000` = `-10000.0`).
+pub const SE_2D_0X3CF0_FIXED_Z: f32 = -10_000.0;
+
 impl SePoolManager {
-    /// Steps the 4-slot 2D SFX pool (`Se2dManager` `0x001932f0`):
-    /// - Auto-stops any slot whose `room_id` differs from `listener.room_id` (when `room_id != 0`).
-    /// - Ramps each slot's `duck_fade` toward `ducking_mode.target_volume()` (`0.5`/`0.7`/`1.0`) at `±dt`.
-    /// - Calls `SeCallPosChange` with `base_volume * duck_fade` and `dt * 128.0` slew limit.
-    /// - Advances `timer_secs += dt`.
+    /// Steps the 4-slot 2D SFX pool (`SLUS_202.28` `Se2dManager` `0x001932f0` / retail `sh2pc.exe`
+    /// `FUN_00516b90` `0x00516b90`) assuming no backend voices have finished.
     pub fn tick_2d(
         &mut self,
         listener: &SeListenerContext,
@@ -25,7 +54,35 @@ impl SePoolManager {
         dt_secs: f32,
         actions: &mut Vec<SeBackendAction>,
     ) {
+        self.tick_2d_with_finished(
+            listener,
+            ducking_mode,
+            dt_secs,
+            &[false; SE_2D_SLOT_COUNT],
+            actions,
+        );
+    }
+
+    /// Steps the 4-slot 2D SFX pool with retail `sh2pc.exe` `FUN_00516b90` (`0x00516b90`) parity:
+    /// - Auto-stops any slot whose `room_id` differs from `listener.room_id` (when `room_id != 0`).
+    /// - Applies retail room `0xa7` / SE `0x44c6` override (`DAT_008a49d8..0x008a49e4`, `base_volume = 1.0`,
+    ///   `flags = 0x0c`, `last_attenuation_byte -= 8` if `> 8`).
+    /// - Applies retail SE `0x3cf0` override (`player_pos.z >= -10000.0` -> `Some((player_pos.x, 2400.0, -10000.0))`,
+    ///   otherwise `None`).
+    /// - Ramps each slot's `duck_fade` toward `ducking_mode.target_volume()` at `±dt * 0.5`.
+    /// - Auto-stops any slot whose backend voice finished (`shSdSeChange == -1`, `FUN_00516b90` lines 5114–5116).
+    /// - Calls `SeCallPosChange` with `base_volume * duck_fade` and `dt * 128.0` slew limit.
+    /// - Advances `timer_secs += dt`.
+    pub fn tick_2d_with_finished(
+        &mut self,
+        listener: &SeListenerContext,
+        ducking_mode: BgmDuckingMode,
+        dt_secs: f32,
+        finished_slots: &[bool; SE_2D_SLOT_COUNT],
+        actions: &mut Vec<SeBackendAction>,
+    ) {
         let dt = dt_secs.max(0.0);
+        let duck_step = dt * SE_2D_DUCK_RAMP_RATE;
         let target_duck = ducking_mode.target_volume();
 
         for idx in 0..SE_2D_SLOT_COUNT {
@@ -37,10 +94,35 @@ impl SePoolManager {
                 continue;
             }
 
+            // Retail `sh2pc.exe` `FUN_00516b90` lines 5050–5064: room `0xa7` + SE `0x44c6` override.
+            if listener.room_id == SE_2D_OVERRIDE_ROOM_0XA7
+                && slot.se_id == SE_2D_OVERRIDE_ID_0X44C6
+            {
+                slot.position = Some(SE_2D_0X44C6_POSITION);
+                slot.base_volume = 1.0;
+                slot.flags = SE_2D_0X44C6_FLAGS;
+                if slot.last_attenuation_byte > SE_2D_0X44C6_ATTEN_STEP {
+                    slot.last_attenuation_byte -= SE_2D_0X44C6_ATTEN_STEP;
+                }
+            }
+
+            // Retail `sh2pc.exe` `FUN_00516b90` lines 5066–5082: SE `0x3cf0` player-Z position override.
+            if slot.se_id == SE_2D_OVERRIDE_ID_0X3CF0 {
+                if listener.player_pos.z >= SE_2D_0X3CF0_PLAYER_Z_THRESHOLD {
+                    slot.position = Some(Vec3::new(
+                        listener.player_pos.x,
+                        SE_2D_0X3CF0_FIXED_Y,
+                        SE_2D_0X3CF0_FIXED_Z,
+                    ));
+                } else {
+                    slot.position = None;
+                }
+            }
+
             if target_duck < slot.duck_fade {
-                slot.duck_fade = (slot.duck_fade - dt).max(target_duck);
+                slot.duck_fade = (slot.duck_fade - duck_step).max(target_duck);
             } else if slot.duck_fade < target_duck {
-                slot.duck_fade = (slot.duck_fade + dt).min(target_duck);
+                slot.duck_fade = (slot.duck_fade + duck_step).min(target_duck);
             }
             let effective_vol = slot.base_volume * slot.duck_fade;
             let se_id = slot.se_id;
@@ -48,6 +130,12 @@ impl SePoolManager {
             let flags = slot.flags;
             slot.timer_secs += dt;
             self.slots_2d[idx] = Some(slot);
+
+            if finished_slots[idx] {
+                // `shSdSeChange` returned `-1` (`FUN_00516b90` lines 5114–5116): auto-stop and free slot.
+                self.stop(se_id, actions);
+                continue;
+            }
 
             self.call_pos_change(effective_vol, se_id, pos, flags, listener, dt, actions);
         }

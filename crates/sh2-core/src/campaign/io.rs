@@ -16,6 +16,12 @@ pub struct CampaignTickInput {
     pub action_pressed: bool,
     /// Cancel/skip button newly pressed this frame (skips FMV/DramaDemo or dismisses message).
     pub cancel_pressed: bool,
+    /// Directional keys newly pressed this frame (`PROG_KEY_UP | PROG_KEY_DOWN | PROG_KEY_LEFT | PROG_KEY_RIGHT`)
+    /// forwarded to interactive `StageProgramRunner` puzzles (e.g. Room 208 Grandfather Clock).
+    pub prog_dir_down: u32,
+    /// Directional keys currently held this frame (`PROG_KEY_UP | PROG_KEY_DOWN | PROG_KEY_LEFT | PROG_KEY_RIGHT`)
+    /// forwarded to interactive `StageProgramRunner` puzzles (e.g. `step_clock_needles`).
+    pub prog_dir_held: u32,
     /// Active dialog message dismissed by player.
     pub message_dismissed: bool,
     /// Player requested toggling an in-game overlay menu (`Map`, `Inventory`, `Options`, `Memo`, `Pause`).

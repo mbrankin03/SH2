@@ -216,8 +216,27 @@ pub struct Ps2FogLayerParams {
     pub transparency_layer2: u8,
 }
 
-impl Default for Ps2FogLayerParams {
-    fn default() -> Self {
+impl Ps2FogLayerParams {
+    /// Strict 1:1 PS2 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2698`)
+    /// square `±0.125` UV half-span parameters (without SH2:EE widescreen `0.250` stretch).
+    #[must_use]
+    pub const fn classic_ps2() -> Self {
+        Self {
+            layer1_x1: 0.125,
+            layer1_x2: 0.125,
+            layer1_y1: 0.125,
+            layer1_y2: 0.125,
+            layer2_complexity: 0.055,
+            layer2_density_add: 100.0,
+            layer2_density_mult: 1.4,
+            transparency_layer1: 128,
+            transparency_layer2: 112,
+        }
+    }
+
+    /// SH2:EE `FogFix.cpp` / `Settings.h:183-219` widescreen-adjusted `[0.250, 0.125]` layer parameters.
+    #[must_use]
+    pub const fn sh2ee_enhanced() -> Self {
         Self {
             layer1_x1: 0.250,
             layer1_x2: 0.250,
@@ -229,6 +248,12 @@ impl Default for Ps2FogLayerParams {
             transparency_layer1: 128,
             transparency_layer2: 112,
         }
+    }
+}
+
+impl Default for Ps2FogLayerParams {
+    fn default() -> Self {
+        Self::classic_ps2()
     }
 }
 
@@ -388,7 +413,11 @@ pub fn evaluate_room_fog_with_fixes(
     ctx: &RoomFogContext,
     enable_sh2ee_world_fixes: bool,
 ) -> RoomFogEvaluation {
-    let base_layers = Ps2FogLayerParams::default();
+    let base_layers = if enable_sh2ee_world_fixes {
+        Ps2FogLayerParams::sh2ee_enhanced()
+    } else {
+        Ps2FogLayerParams::classic_ps2()
+    };
 
     let speed_mult = if enable_sh2ee_world_fixes {
         match ctx.room_id {
@@ -785,5 +814,30 @@ mod tests {
             false,
         );
         assert_eq!(bc_vanilla.fog_near_mm, BLUE_CREEK_ORIGINAL_FOG_NEAR_MM);
+    }
+
+    #[test]
+    fn screen_fog_layer_params_distinguish_classic_ps2_and_enhanced() {
+        let classic_params = Ps2FogLayerParams::classic_ps2();
+        assert_eq!(classic_params.layer1_x1, 0.125);
+        assert_eq!(classic_params.layer1_x2, 0.125);
+        assert_eq!(classic_params.layer1_y1, 0.125);
+        assert_eq!(classic_params.layer1_y2, 0.125);
+        assert_eq!(Ps2FogLayerParams::default(), classic_params);
+
+        let enhanced_params = Ps2FogLayerParams::sh2ee_enhanced();
+        assert_eq!(enhanced_params.layer1_x1, 0.250);
+        assert_eq!(enhanced_params.layer1_x2, 0.250);
+        assert_eq!(enhanced_params.layer1_y1, 0.125);
+        assert_eq!(enhanced_params.layer1_y2, 0.125);
+
+        let ctx = RoomFogContext {
+            room_id: R_OBSV_DECK_ID,
+            ..Default::default()
+        };
+        let vanilla = evaluate_room_fog_with_fixes(&ctx, false);
+        let enhanced = evaluate_room_fog_with_fixes(&ctx, true);
+        assert_eq!(vanilla.layers, classic_params);
+        assert_eq!(enhanced.layers, enhanced_params);
     }
 }

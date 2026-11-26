@@ -256,11 +256,11 @@ impl RenderContext {
             *guard = shadow_vp;
         }
         let pcss_vp = shadow::compute_pcss_spotlight_view_proj(uniforms).to_cols_array_2d();
-        let pcss_params =
-            self.last_pcss_params
-                .lock()
-                .map(|g| *g)
-                .unwrap_or([1.0, 170.0 / 255.0, 0.024, 0.5]);
+        let pcss_params = self
+            .last_pcss_params
+            .lock()
+            .map(|g| *g)
+            .unwrap_or(shadow::PcssShadowUniforms::default().params);
         let pcss_u = shadow::PcssShadowUniforms {
             light_view_proj: pcss_vp,
             params: pcss_params,

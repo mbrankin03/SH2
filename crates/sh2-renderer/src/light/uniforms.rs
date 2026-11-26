@@ -327,38 +327,28 @@ impl SpotlightUniforms {
     /// `0x00479da0` & `FUN_0047a090` `0x0047a090`) and `SLUS_202.28` / `sh2pc.exe` character global
     /// ambient (`Model3UpdateGlobalAmbient` `0x00128e70` & `FUN_0050dd00` `0x0050dd00`) from `env`.
     ///
-    /// In dark rooms (`is_dark_room == true`), `dark_ambient_scale` (`0.5 + 0.25 * s_flash_level`,
-    /// `sh2pc.exe` `0x47a090..0x47a18b`) modulates room ambient & baked vertex radiance.
+    /// Per `sh2pc.exe` `FUN_0047a090` (`0x0047a090:7972-8009`) and `FUN_0050dd00`
+    /// (`0x0050dd00:8919-8937`), `map_ambient_c19` already incorporates `(0.5 + 0.25 * dark_trim)`
+    /// via `(env.ambient * 4.0 + gun_light * 2.0 + dark_trim * 2.0 * env.ambient) * 0.125`, while
+    /// `map_vertex_ambient_c22` and `char_global_ambient` are never multiplied by `dark_scale`.
     pub fn set_draw_env_constants(
         &mut self,
         env: &sh2_core::lighting::DrawEnvData,
         gun_light: f32,
         dark_trim: f32,
         is_dark_room: bool,
-        dark_ambient_scale: f32,
     ) {
-        let dark_scale = if is_dark_room {
-            dark_ambient_scale
-        } else {
-            1.0
-        };
         let gun2 = gun_light * 2.0;
         let trim2 = dark_trim * 2.0;
-        // `FUN_0047a090` (`0x0047a090`) + `FUN_00479da0` (`0x00479da0`):
+        // `FUN_0047a090` (`0x0047a090:7978-8008`) + `FUN_00479da0` (`0x00479da0:7925-7940`):
         // - c19 = (ambient * 4.0 + gun2 + trim2 * ambient) * 0.125
         // - c20 = base_color * 0.0625
         // - c21 = (base_ambient + gun2 + trim2 * base_ambient) * 0.0625
         // - c22 = vertex_ambient * 0.25
         self.map_ambient_c19 = [
-            (env.ambient[0] * 4.0 + gun2 + trim2 * env.ambient[0])
-                * PS2_MAP_AMBIENT_C19_SCALE
-                * dark_scale,
-            (env.ambient[1] * 4.0 + gun2 + trim2 * env.ambient[1])
-                * PS2_MAP_AMBIENT_C19_SCALE
-                * dark_scale,
-            (env.ambient[2] * 4.0 + gun2 + trim2 * env.ambient[2])
-                * PS2_MAP_AMBIENT_C19_SCALE
-                * dark_scale,
+            (env.ambient[0] * 4.0 + gun2 + trim2 * env.ambient[0]) * PS2_MAP_AMBIENT_C19_SCALE,
+            (env.ambient[1] * 4.0 + gun2 + trim2 * env.ambient[1]) * PS2_MAP_AMBIENT_C19_SCALE,
+            (env.ambient[2] * 4.0 + gun2 + trim2 * env.ambient[2]) * PS2_MAP_AMBIENT_C19_SCALE,
             1.0,
         ];
         self.map_base_color_c20 = [
@@ -369,20 +359,17 @@ impl SpotlightUniforms {
         ];
         self.map_base_ambient_c21 = [
             (env.base_ambient[0] + gun2 + trim2 * env.base_ambient[0])
-                * PS2_MAP_BASE_AMBIENT_C21_SCALE
-                * dark_scale,
+                * PS2_MAP_BASE_AMBIENT_C21_SCALE,
             (env.base_ambient[1] + gun2 + trim2 * env.base_ambient[1])
-                * PS2_MAP_BASE_AMBIENT_C21_SCALE
-                * dark_scale,
+                * PS2_MAP_BASE_AMBIENT_C21_SCALE,
             (env.base_ambient[2] + gun2 + trim2 * env.base_ambient[2])
-                * PS2_MAP_BASE_AMBIENT_C21_SCALE
-                * dark_scale,
+                * PS2_MAP_BASE_AMBIENT_C21_SCALE,
             0.0,
         ];
         self.map_vertex_ambient_c22 = [
-            env.vertex_ambient[0] * PS2_MAP_VERTEX_AMBIENT_C22_SCALE * dark_scale,
-            env.vertex_ambient[1] * PS2_MAP_VERTEX_AMBIENT_C22_SCALE * dark_scale,
-            env.vertex_ambient[2] * PS2_MAP_VERTEX_AMBIENT_C22_SCALE * dark_scale,
+            env.vertex_ambient[0] * PS2_MAP_VERTEX_AMBIENT_C22_SCALE,
+            env.vertex_ambient[1] * PS2_MAP_VERTEX_AMBIENT_C22_SCALE,
+            env.vertex_ambient[2] * PS2_MAP_VERTEX_AMBIENT_C22_SCALE,
             0.0,
         ];
 
@@ -396,9 +383,9 @@ impl SpotlightUniforms {
         };
         let trim_add = PS2_CHAR_DARK_TRIM_ADD * dark_trim.min(1.0);
         self.char_global_ambient = [
-            (env.ambient[0] * 2.0 * stage_mult) * dark_scale + trim_add,
-            (env.ambient[1] * 2.0 * stage_mult) * dark_scale + trim_add,
-            (env.ambient[2] * 2.0 * stage_mult) * dark_scale + trim_add,
+            env.ambient[0] * 2.0 * stage_mult + trim_add,
+            env.ambient[1] * 2.0 * stage_mult + trim_add,
+            env.ambient[2] * 2.0 * stage_mult + trim_add,
             1.0,
         ];
     }
@@ -446,7 +433,7 @@ mod tests {
     fn test_draw_env_constants_match_sh2pc_00479da0_and_slus_00128e70() {
         let er01 = sh2_core::lighting::lookup_draw_env("ER", 1).expect("ER room 1 DrawEnvData");
         let mut u = SpotlightUniforms::default();
-        u.set_draw_env_constants(er01, 0.0, 0.0, false, 1.0);
+        u.set_draw_env_constants(er01, 0.0, 0.0, false);
 
         // `FUN_00479da0` (`0x00479da0`) + `FUN_0047a090` (`0x0047a090`):
         // - c19 = (0.5 * 4.0) * 0.125 = 0.25
@@ -464,12 +451,22 @@ mod tests {
         assert!((u.char_global_ambient[0] - 1.05).abs() < 1e-5);
         assert_eq!(u.char_global_ambient[3], 1.0);
 
-        // Dark room (`AP` room 18, `ambient = 0.15`) with flashlight OFF (`dark_ambient_scale = 0.5`)
-        // and `dark_trim = 0.5` (`FUN_0050dd00:8933` adds `0.3 * 0.5 = 0.15`):
+        // Dark room (`AP` room 18, `ambient = 0.15`, `base_ambient = 0.045`, `vertex_ambient = 4.0`)
+        // with `dark_trim = 0.5` and `gun_light = 0.0` (`SH2-168`):
+        // - `FUN_0047a090` (`0x0047a090:7978-8008`):
+        //   c19 = (0.15 * 4.0 + 0.5 * 2.0 * 0.15) * 0.125 = 0.15 * (0.5 + 0.25 * 0.5) = 0.09375 (NO double dark_scale)
+        //   c21 = (0.045 + 0.5 * 2.0 * 0.045) * 0.0625 = 0.09 * 0.0625 = 0.005625
+        //   c22 = 4.0 * 0.25 = 1.0 (NEVER multiplied by dark_scale)
+        // - `FUN_0050dd00` (`0x0050dd00:8924-8935`):
+        //   char_global_ambient = (0.15 * 2.0 * 1.05) + 0.3 * 0.5 = 0.315 + 0.15 = 0.465 (NEVER multiplied by dark_scale)
         let ap18 = sh2_core::lighting::lookup_draw_env("AP", 18).expect("AP room 18 DrawEnvData");
-        u.set_draw_env_constants(ap18, 0.0, 0.5, true, 0.5);
-        let expected_char_amb = (0.15 * 2.0 * 1.05) * 0.5 + 0.3 * 0.5;
+        u.set_draw_env_constants(ap18, 0.0, 0.5, true);
+        let expected_c19 = (0.15 * 4.0 + 2.0 * 0.5 * 0.15) * 0.125;
+        let expected_c21 = (0.045 + 2.0 * 0.5 * 0.045) * 0.0625;
+        let expected_char_amb = 0.15 * 2.0 * 1.05 + 0.3 * 0.5;
+        assert!((u.map_ambient_c19[0] - expected_c19).abs() < 1e-6);
+        assert!((u.map_base_ambient_c21[0] - expected_c21).abs() < 1e-6);
+        assert!((u.map_vertex_ambient_c22[0] - 1.0).abs() < 1e-6);
         assert!((u.char_global_ambient[0] - expected_char_amb).abs() < 1e-5);
-        assert!((u.map_vertex_ambient_c22[0] - 0.5).abs() < 1e-5);
     }
 }

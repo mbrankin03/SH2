@@ -60,9 +60,11 @@ pub fn resolve_active_room_pickups(
             continue;
         };
 
-        // Reconstruct a packed `ItemListEntry` to reuse `event_item_condition_check` (`0x001ab1a0`).
+        // Reconstruct a packed `ItemListEntry` to reuse `event_item_condition_check` (`0x001ab1a0`),
+        // preserving `extra_condition` in bits `20..=24` (`ItemListElement` selector `2`).
         let packed_flag = ((u32::from(spawn.item_kind_index) & 0x7) << 29)
             | ((u32::from(spawn.difficulty_condition) & 0x7) << 26)
+            | ((u32::from(spawn.extra_condition) & 0x1f) << 20)
             | (u32::from(spawn.flag_id) & 0x3fff);
         let entry = ItemListEntry {
             pos_x: spawn.position_mm[0],
@@ -108,6 +110,7 @@ mod tests {
             rot_y_raw: rot_raw,
             item_kind_index: kind,
             difficulty_condition: diff_cond,
+            extra_condition: 0,
             flag_id,
         }
     }

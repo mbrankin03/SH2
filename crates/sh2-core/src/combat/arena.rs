@@ -51,6 +51,9 @@ pub struct CombatArena {
     pub grapple_session: Option<GrappleSession>,
     /// Pending enemy attack SFX ID emitted by `shBattleAttackByEnemy*` (`0x00122310..0x00122eb0`).
     pub pending_enemy_sfx: Option<u32>,
+    /// Live Pocket Radio power state (`DAT_011268ff` in `RadioNoise` `0x001ab300`), forwarded
+    /// into [`AiSubsystem::update_filtered_with_collision`] / [`AiSubsystem::update_filtered`] (`SH2-167`).
+    pub radio_enabled: bool,
     /// Reusable scratch buffer for `HumanFog` 5-ray deduplication (zero heap allocation per tick).
     scratch_spray_hit_mask: Vec<bool>,
 }
@@ -129,6 +132,7 @@ impl CombatArena {
             grappling_enemy_idx: None,
             grapple_session: None,
             pending_enemy_sfx: None,
+            radio_enabled: true,
             scratch_spray_hit_mask: Vec::with_capacity(32),
         }
     }
@@ -343,7 +347,7 @@ impl CombatArena {
             self.player_yaw,
             true,
             false,
-            true,
+            self.radio_enabled,
             None,
             collision,
             dt,
@@ -410,7 +414,7 @@ impl CombatArena {
             self.player_yaw,
             true,
             false,
-            true,
+            self.radio_enabled,
             Some(isolated_idx),
             dt,
         );
@@ -763,5 +767,34 @@ impl CombatArena {
             }
         }
         closest.map(|(idx, _)| idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::combat::CombatInputSnapshot;
+
+    #[test]
+    fn test_sh2_167_combat_arena_radio_enabled_gates_radio_evaluation() {
+        let mut arena = CombatArena::new();
+        arena.player_position = Vec3::new(0.0, 0.0, 1000.0);
+        arena.radio_enabled = false;
+
+        for _ in 0..120 {
+            arena.tick_with_collision_input(CombatInputSnapshot::default(), None, 1.0 / 60.0);
+        }
+        assert!(
+            !arena.ai.radio_output.is_active,
+            "radio_enabled = false must suppress RadioNoise evaluation during tick_with_collision_input"
+        );
+        assert_eq!(arena.ai.radio_output.volume, 0.0);
+
+        arena.radio_enabled = true;
+        for _ in 0..120 {
+            arena.tick_with_collision_input(CombatInputSnapshot::default(), None, 1.0 / 60.0);
+        }
+        assert!(arena.ai.radio_output.is_active);
+        assert!(arena.ai.radio_output.volume > 0.0);
     }
 }

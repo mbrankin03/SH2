@@ -50,8 +50,8 @@ pub use bgm_manager::{
     SOUND_AREA_HALF_WIDTH,
 };
 pub use chainsaw_sfx::{
-    compute_chainsaw_wav_slice, ChainsawAudioOutput, ChainsawIdleState, ChainsawSoundController,
-    ChainsawTickInput, ChainsawWavSlice, CHAINSAW_IDLE_FADE_DURATION_SECS,
+    compute_chainsaw_wav_slice, slice_chainsaw_wav, ChainsawAudioOutput, ChainsawIdleState,
+    ChainsawSoundController, ChainsawTickInput, ChainsawWavSlice, CHAINSAW_IDLE_FADE_DURATION_SECS,
     CHAINSAW_IDLE_FADE_START_TIME_SECS, CHAINSAW_MIN_ACTIVE_VOLUME, CRANK_LEFT_SIDE_TRIM_BYTES_48K,
     IDLE_LOOP_TRIM_BYTES_48K, IDLE_LOOP_TRIM_BYTES_ORIGINAL, SAMPLE_RATE_48KHZ, SE_CHAINSAW_ATTACK,
     SE_CHAINSAW_CRANK, SE_CHAINSAW_HIT, SE_CHAINSAW_IDLE_LOOP, SE_CHAINSAW_IDLE_START,
@@ -64,7 +64,9 @@ pub use cutscene_bgm::{
 };
 pub use dialogue::ActiveDialogue;
 pub use dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
-pub use engine::{AudioEngine, AudioError};
+pub use engine::{
+    radio_driver_to_volume_pan, AudioEngine, AudioError, RADIO_STATIC_SDDATA_INDICES,
+};
 pub use hrtf::{
     angles_from_azimuth_elevation, compute_listener_spherical_angles,
     compute_woodworth_itd_seconds, BinauralHrtfProcessor, HrtfSphericalAngles, HEAD_RADIUS_METERS,
@@ -86,7 +88,10 @@ pub use ringbuffer::{
 };
 pub use se_manager::{
     se_3d_bank_for_stage, Se2d3dMapping, Se2dSlot, Se3dChannel, SeBackendAction, SeCallResult,
-    SeListenerContext, SePoolManager, SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT,
+    SeListenerContext, SePoolManager, SE_2D_0X3CF0_FIXED_Y, SE_2D_0X3CF0_FIXED_Z,
+    SE_2D_0X3CF0_PLAYER_Z_THRESHOLD, SE_2D_0X44C6_ATTEN_STEP, SE_2D_0X44C6_FLAGS,
+    SE_2D_0X44C6_POSITION, SE_2D_DUCK_RAMP_RATE, SE_2D_OVERRIDE_ID_0X3CF0,
+    SE_2D_OVERRIDE_ID_0X44C6, SE_2D_OVERRIDE_ROOM_0XA7, SE_2D_SLEW_RATE_PER_SEC, SE_2D_SLOT_COUNT,
     SE_3D_CHANNEL_COUNT, SE_3D_ID_THRESHOLD, SE_3D_PRIORITY1_MAX, SE_CHANGE_LIST,
     SE_FLAG_MANAGED_2D, SE_FLAG_NO_DISTANCE, SE_FLAG_PRIO_1,
 };

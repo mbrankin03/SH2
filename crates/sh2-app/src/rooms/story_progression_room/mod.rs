@@ -282,13 +282,14 @@ impl RoomController for StoryProgressionRoomController {
         }
 
         if state.story_progression_room.active_tab == StoryDemoTab::EndingJudgeAndRanking {
+            let mut chainsaw_dispatch = None;
             if !is_paused {
                 let rm = &mut state.story_progression_room;
                 if !matches!(
                     rm.chainsaw_sfx.idle_state,
                     sh2_audio::chainsaw_sfx::ChainsawIdleState::Inactive
                 ) {
-                    rm.last_chainsaw_audio = Some(rm.chainsaw_sfx.tick(ChainsawTickInput {
+                    let out = rm.chainsaw_sfx.tick(ChainsawTickInput {
                         dt_secs: dt_sec,
                         james_pos_mm: state.sim_core.scenario.player_position,
                         weapon_volume: 0.85,
@@ -297,8 +298,13 @@ impl RoomController for StoryProgressionRoomController {
                         anim_speed_q11: 2048,
                         hit_this_frame: false,
                         enable_chainsaw_sound_fix: rm.chainsaw_fix_enabled,
-                    }));
+                    });
+                    rm.last_chainsaw_audio = Some(out);
+                    chainsaw_dispatch = Some((out, rm.chainsaw_fix_enabled));
                 }
+            }
+            if let Some((out, fix_enabled)) = chainsaw_dispatch {
+                crate::audio_dispatch::dispatch_chainsaw_audio(state, out, fix_enabled);
             }
             CombatArenaRoomController::tick_and_render_3d(
                 state, dt, dt_sec, aspect, grain_pct, is_paused, is_in_game,

@@ -12,8 +12,11 @@
 //!   - [`crate::spatial_voice`]: Lock-free real-time 3D SFX voice synthesis (`SH2-49` zero-allocation callback compliant).
 
 mod bgm_fmv;
+mod radio;
 mod sfx;
 mod voice;
+
+pub use radio::{radio_driver_to_volume_pan, RADIO_STATIC_SDDATA_INDICES};
 
 use glam::Vec3;
 use kira::{
@@ -96,6 +99,7 @@ pub struct AudioEngine {
 
     pub(super) active_bgm_handle: Option<StaticSoundHandle>,
     pub(super) active_bgm_layers: Vec<StaticSoundHandle>,
+    pub(super) active_radio_tracks: [Option<StaticSoundHandle>; 4],
     pub(super) active_fmv_handle: Option<StaticSoundHandle>,
     pub(super) active_voice_handle: Option<StaticSoundHandle>,
     pub(super) active_dialogue: Option<ActiveDialogue>,
@@ -104,7 +108,6 @@ pub struct AudioEngine {
     pub(super) bgm_volume: f32,
     pub(super) sfx_volume: f32,
     pub(super) voice_volume: f32,
-    pub(super) ducking_attenuation: f32,
 }
 
 impl AudioEngine {
@@ -215,6 +218,7 @@ impl AudioEngine {
             output_ringbuffer: Arc::new(AudioRingBuffer::with_capacity(DEFAULT_RINGBUFFER_FRAMES)),
             active_bgm_handle: None,
             active_bgm_layers: Vec::new(),
+            active_radio_tracks: [None, None, None, None],
             active_fmv_handle: None,
             active_voice_handle: None,
             active_dialogue: None,
@@ -222,7 +226,6 @@ impl AudioEngine {
             bgm_volume: DEFAULT_BGM_VOL,
             sfx_volume: DEFAULT_SFX_VOL,
             voice_volume: DEFAULT_VOICE_VOL,
-            ducking_attenuation: 0.35,
         };
 
         if let Some(target) = clean_device_name {

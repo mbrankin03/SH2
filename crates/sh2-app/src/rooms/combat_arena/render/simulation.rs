@@ -32,12 +32,66 @@ pub(super) fn step_simulation_and_audio(
     ticks_processed
 }
 
-/// Steps both `BgmManager` (`SeBgmManager` `0x00194300` / `0x00516430`) and `SePoolManager`
-/// (`Se2dManager` `0x001932f0` / `Se3dManager` `0x00193790`), including global pause/demo ducking.
+/// Steps `BgmManager` (`SeBgmManager` `0x00194300` / `0x00516430`), `SePoolManager`
+/// (`Se2dManager` `0x001932f0` / `Se3dManager` `0x00193790`), and the 4-track Pocket Radio
+/// (`RadioNoise` `0x001ab300` / `shSdRadio` `0x00291420`), including global pause/demo/map ducking.
 pub(crate) fn step_audio_managers(state: &mut AppState, dt: Duration, is_paused: bool) {
     let ducking_mode = resolve_audio_ducking_mode(state, is_paused);
     step_bgm_manager(state, dt, ducking_mode);
     step_se_pool_manager(state, dt, ducking_mode);
+    step_pocket_radio(state, dt, is_paused);
+}
+
+fn resolve_radio_ducking_state(
+    state: &AppState,
+    is_paused: bool,
+) -> sh2_core::ai::radio::RadioDuckingState {
+    if state.ingame_menus.map_viewer.is_open || state.ingame_menus.memo_reader.is_open {
+        sh2_core::ai::radio::RadioDuckingState::MapOrMemo
+    } else if is_paused
+        || state.menu_ctrl.pause_menu.is_open
+        || state.ingame_menus.is_any_open()
+        || matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(sh2_core::campaign::CampaignPhase::OverlayMenu(_))
+        )
+    {
+        sh2_core::ai::radio::RadioDuckingState::PauseOrInventory
+    } else {
+        sh2_core::ai::radio::RadioDuckingState::Normal
+    }
+}
+
+fn sync_pocket_radio_inputs(state: &mut AppState, is_paused: bool) {
+    let camera_pos = state.sim_core.active_camera_eye(1.0);
+    let wvs_matrix = state.sim_core.active_ps2_wvs_matrix(1.0);
+    let ducking_state = resolve_radio_ducking_state(state, is_paused);
+    let radio_volume = state.ingame_menus.inventory.radio_volume;
+    let radio_active_room = state.active_test_room == TestRoomKind::CombatArena
+        || state.campaign_orchestrator.is_some();
+    let radio_enabled = radio_active_room
+        && (state.active_test_room == TestRoomKind::CombatArena
+            || state.sim_core.scenario.radio_on);
+    state.combat_arena.radio_enabled = radio_enabled;
+    state
+        .combat_arena
+        .ai
+        .set_radio_listener(camera_pos, wvs_matrix);
+    state.combat_arena.ai.radio_evaluator.ducking_state = ducking_state;
+    state.combat_arena.ai.radio_evaluator.volume_level = radio_volume;
+}
+
+fn step_pocket_radio(state: &mut AppState, dt: Duration, is_paused: bool) {
+    sync_pocket_radio_inputs(state, is_paused);
+    let radio_enabled = state.combat_arena.radio_enabled;
+    if is_paused || !radio_enabled {
+        let player_pos = state.sim_core.scenario.player_position;
+        state
+            .combat_arena
+            .ai
+            .step_radio_only(radio_enabled, player_pos, dt.as_secs_f32());
+    }
+    crate::audio_dispatch::dispatch_pocket_radio(state);
 }
 
 fn resolve_audio_ducking_mode(state: &AppState, is_paused: bool) -> sh2_audio::BgmDuckingMode {
@@ -119,6 +173,7 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
     let mut struggle_presses = state.struggle_button_press_count;
     state.struggle_button_press_count = 0;
 
+    sync_pocket_radio_inputs(state, false);
     for _ in 0..ticks_processed {
         state.combat_arena.player_position = state.sim_core.scenario.player_position;
         if state.sim_core.active_camera_mode().is_modern() && ready_held {
@@ -349,19 +404,36 @@ fn step_se_pool_manager(
     let listener = sh2_audio::SeListenerContext {
         camera_pos: state.sim_core.active_camera_eye(1.0),
         player_pos: state.sim_core.scenario.player_position,
-        wvs_matrix: state.sim_core.active_view_matrix(1.0),
+        wvs_matrix: state.sim_core.active_ps2_wvs_matrix(1.0),
         room_id: state.bgm_manager.room_id as u16,
     };
     let mut actions = Vec::new();
-    state
-        .se_pool
-        .tick_2d(&listener, ducking_mode, dt.as_secs_f32(), &mut actions);
+    let mut finished_2d = [false; sh2_audio::SE_2D_SLOT_COUNT];
+    if let Some(ref bank) = state.audio_bank {
+        for (idx, slot_opt) in state.se_pool.slots_2d.iter().enumerate() {
+            if let Some(slot) = slot_opt {
+                if !bank.is_2d_se_playing(slot.se_id) {
+                    finished_2d[idx] = true;
+                }
+            }
+        }
+    }
+    state.se_pool.tick_2d_with_finished(
+        &listener,
+        ducking_mode,
+        dt.as_secs_f32(),
+        &finished_2d,
+        &mut actions,
+    );
     let mut finished_channels = [false; sh2_audio::SE_3D_CHANNEL_COUNT];
     if let Some(ref bank) = state.audio_bank {
         for (idx, ch_opt) in state.se_pool.channels_3d.iter().enumerate() {
             if let Some(ch) = ch_opt {
-                let playing = bank.active_spatial_handles.contains_key(&ch.se_id)
-                    || bank.active_spatial_voices.contains_key(&ch.se_id);
+                let playing = bank.is_2d_se_playing(ch.se_id)
+                    || bank
+                        .active_spatial_voices
+                        .get(&ch.se_id)
+                        .is_some_and(|v| !v.is_finished());
                 if !playing {
                     finished_channels[idx] = true;
                 }

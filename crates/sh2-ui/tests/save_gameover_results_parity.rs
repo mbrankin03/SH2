@@ -236,6 +236,65 @@ fn test_results_10_star_and_clear_data_ngplus() {
 }
 
 #[test]
+fn test_sh2_166_results_current_ending_and_extra_endings_count() {
+    use sh2_core::endings::GameEnding;
+
+    // Cumulative profile has all 4 main endings + BOTH extra endings (Dog + UFO),
+    // while the current run finished with `Leave`.
+    let mut info = PlayingInfo {
+        stage: 48, // Leave ending stage
+        clear_end_kind: ClearEndKind(
+            ClearEndKind::LEAVE
+                | ClearEndKind::MARIA
+                | ClearEndKind::IN_WATER
+                | ClearEndKind::REBIRTH
+                | ClearEndKind::DOG
+                | ClearEndKind::UFO,
+        ),
+        ..Default::default()
+    };
+
+    let screen = ResultsScreen::from_playing_info_with_ending(
+        &info,
+        GameEnding::Leave,
+        ActionDifficulty::Normal,
+        RiddleDifficulty::Normal,
+        RankingRuleset::PcDirectorCut,
+    );
+    assert_eq!(screen.rows[2].label, "Ending");
+    assert_eq!(screen.rows[2].value, "Leave");
+    assert!(!screen.rows[2].is_max_rank);
+    assert_eq!(screen.rows[3].label, "Endings Cleared");
+    assert_eq!(screen.rows[3].value, "4/4(+2)");
+
+    // Also verify `from_playing_info` infers `Leave` from `info.stage == 48`
+    let inferred = ResultsScreen::from_playing_info(
+        &info,
+        ActionDifficulty::Normal,
+        RiddleDifficulty::Normal,
+        RankingRuleset::PcDirectorCut,
+    );
+    assert_eq!(inferred.rows[2].value, "Leave");
+    assert_eq!(inferred.rows[3].value, "4/4(+2)");
+
+    // Partial main endings + 2 extra endings: Leave + Dog + UFO -> "1/4(+2)"
+    info.clear_end_kind = ClearEndKind(ClearEndKind::LEAVE | ClearEndKind::DOG | ClearEndKind::UFO);
+    let partial = ResultsScreen::from_playing_info_with_ending(
+        &info,
+        GameEnding::Dog,
+        ActionDifficulty::Normal,
+        RiddleDifficulty::Normal,
+        RankingRuleset::PcDirectorCut,
+    );
+    assert_eq!(partial.rows[2].value, "Dog");
+    assert!(partial.rows[2].is_max_rank);
+    assert_eq!(partial.rows[3].value, "1/4(+2)");
+
+    // Stage 53 is `WishHeavensNight`, NOT UFO (`sh2pc_00440000.c:3455-3458` uses event flag).
+    assert_eq!(sh2_ui::results::state::ending_from_stage(53), None);
+}
+
+#[test]
 fn test_red_cross_and_free_item_orbit_toggle() {
     let mut rc = RedCrossIconState::new();
     rc.tick(1.0 / 30.0, 80.0, 100.0);

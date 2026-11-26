@@ -417,9 +417,18 @@ impl RoomController for CampaignRoomController {
             .game
             .enable_delayed_fade_in;
 
-        let held_dir = state.campaign_pending_input.prog_dir_held;
-        let mut tick_input = std::mem::take(&mut state.campaign_pending_input);
-        state.campaign_pending_input.prog_dir_held = held_dir;
+        // Preserve queued inputs (such as `item_use_id` from Inventory `Use`/`Combine`) while
+        // `is_paused` is true during the 0.5s Inventory fade-out so they are not dropped before
+        // `orch.step` runs on the first unpaused frame. Also keep held `StageProgramRunner`
+        // D-pad directions across frames while unpaused (SH2-165).
+        let mut tick_input = if is_paused {
+            sh2_core::campaign::CampaignTickInput::default()
+        } else {
+            let held_dir = state.campaign_pending_input.prog_dir_held;
+            let input = std::mem::take(&mut state.campaign_pending_input);
+            state.campaign_pending_input.prog_dir_held = held_dir;
+            input
+        };
         tick_input.prefer_sh2ee = state
             .menu_ctrl
             .options_menu
@@ -730,8 +739,15 @@ impl RoomController for CampaignRoomController {
                         .total_items_picked_up(),
                 );
                 info.hidden_item_get = state.sim_core.scenario.inventory_mgr.secret_items_mask();
-                let results =
-                    sh2_ui::ResultsScreen::from_playing_info(&info, action, riddle, ruleset);
+                let current_ending = sh2_ui::results::state::ending_from_stage(ending_stage as u8)
+                    .unwrap_or(sh2_core::endings::GameEnding::Leave);
+                let results = sh2_ui::ResultsScreen::from_playing_info_with_ending(
+                    &info,
+                    current_ending,
+                    action,
+                    riddle,
+                    ruleset,
+                );
                 state.begin_hud_overlay();
                 sh2_ui::draw_results_screen(&results, font, &mut state.menu_rasterizer);
                 state.finish_hud_overlay(encoder, surface_view);

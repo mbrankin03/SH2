@@ -228,6 +228,8 @@ pub enum InventoryAction {
     CombinedItems {
         first_id: u8,
         second_id: u8,
+        /// Optional third item ID for 3-item recipes (`92` Prison Tablets, `96` Wax Doll + Horseshoe + Lighter).
+        third_id: Option<u8>,
         result_id: u8,
     },
 }

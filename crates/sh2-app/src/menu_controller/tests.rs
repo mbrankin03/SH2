@@ -9,11 +9,18 @@ fn test_menu_controller_lifecycle_and_persistence() {
     let _ = std::fs::remove_file(&cfg_path);
 
     let mut controller = AppMenuController::new(&cfg_path);
+    controller
+        .title_sm
+        .set_save_availability(sh2_ui::menu::SaveAvailability::None);
     assert_eq!(controller.title_sm.phase, TitlePhase::SplashIntro);
     assert!(!controller.in_game_active);
 
-    // Skip to title logo
-    controller.handle_nav(MenuNavAction::Confirm);
+    // Skip to title logo via RetailPc boot skip (`sh2pc.exe` `0x00405e80`)
+    controller.title_sm.boot_sequence =
+        sh2_ui::menu::BootSequenceState::new(sh2_ui::menu::BootProfile::RetailPc);
+    for _ in 0..6 {
+        controller.handle_nav(MenuNavAction::Confirm);
+    }
     assert_eq!(controller.title_sm.phase, TitlePhase::TitleLogo);
 
     // Enter main menu

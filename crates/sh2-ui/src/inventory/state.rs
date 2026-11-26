@@ -15,7 +15,7 @@ use crate::inventory::{
 use crate::menu::{MenuNavAction, MenuSoundCue};
 use sh2_core::inventory::{
     ammo_for_firearm, combine_items, firearm_for_ammo, is_equippable_weapon_item, item_metadata,
-    InventoryManager, ItemCategory, CATALOG_ITEM_COUNT, ITEM_ID_RADIO,
+    InventoryManager, ItemCategory, CATALOG_ITEM_COUNT, ITEM_COMBOS, ITEM_ID_RADIO,
 };
 use sh2_core::lighting::darkness::ITEM_ID_FLASHLIGHT;
 
@@ -1064,25 +1064,105 @@ impl InventoryScreen {
                 (MenuSoundCue::Cancel, InventoryAction::None)
             }
             MenuNavAction::Confirm => {
-                let first = self.combine_first_item_id.take();
-                self.combine_slots = [None; 3];
-                let second = self.selected_item_id();
-                self.focus = InventoryFocus::Carousel;
-                if let (Some(a), Some(b)) = (first, second) {
-                    if a != b {
-                        if let Some(result_id) = combine_items(a, b, 0) {
+                let Some(selected) = self.selected_item_id() else {
+                    self.combine_first_item_id = None;
+                    self.combine_slots = [None; 3];
+                    self.focus = InventoryFocus::Carousel;
+                    self.show_toast("These items cannot be combined.");
+                    return (MenuSoundCue::Cancel, InventoryAction::None);
+                };
+
+                // Stage 2 -> 3 (`SLUS_202.28` `combine_item_use` `0x001d38d0`, `otn_itemmain.c:1624-1656`
+                // & `command_main` `0x001cf9e0`, `otn_itemmain.c:722-727`): when two items are already
+                // staged in `_DAT_0116e644`/`_DAT_0116e646`, evaluate the 3-item recipe (`#92` Prison
+                // Tablets or `#96` Toluca Prison Hatch), or confirm the 2-item recipe (`#89..=91`) if
+                // re-selecting an already-staged item.
+                if let (Some(a), Some(b)) = (self.combine_slots[0], self.combine_slots[1]) {
+                    self.combine_first_item_id = None;
+                    self.combine_slots = [None; 3];
+                    self.focus = InventoryFocus::Carousel;
+                    if selected != a && selected != b {
+                        if let Some(result_id) = combine_items(a, b, selected) {
                             self.active_combo_id = Some(result_id);
                             return (
                                 MenuSoundCue::Confirm,
                                 InventoryAction::CombinedItems {
                                     first_id: a,
                                     second_id: b,
+                                    third_id: Some(selected),
+                                    result_id,
+                                },
+                            );
+                        }
+                    } else if let Some(result_id) = combine_items(a, b, 0) {
+                        let is_complete_two_item = ITEM_COMBOS
+                            .iter()
+                            .find(|c| c.result_id == result_id)
+                            .is_some_and(|c| c.consumes_parts_on_use);
+                        if is_complete_two_item {
+                            self.active_combo_id = Some(result_id);
+                            return (
+                                MenuSoundCue::Confirm,
+                                InventoryAction::CombinedItems {
+                                    first_id: a,
+                                    second_id: b,
+                                    third_id: None,
+                                    result_id,
+                                },
+                            );
+                        }
+                    }
+                    self.show_toast("These items cannot be combined.");
+                    return (MenuSoundCue::Cancel, InventoryAction::None);
+                }
+
+                // Stage 1 -> 2 (`SLUS_202.28` `command_main` `0x001cf9e0`, `otn_itemmain.c:734-749`):
+                // stage `b` into `combine_slots[1]` (`_DAT_0116e646`) when `(a, b)` is a partial
+                // 2-item match (`consumes_parts_on_use == false`, Toluca Prison Hatch `#93..=95`) OR
+                // when a 3-item superset exists whose 3rd item is owned (e.g. 3 Prison Tablets `#92`).
+                let first = self.combine_first_item_id.or(self.combine_slots[0]);
+                if let Some(a) = first {
+                    let b = selected;
+                    if a != b {
+                        if let Some(result_id) = combine_items(a, b, 0) {
+                            let is_partial_for_third = ITEM_COMBOS
+                                .iter()
+                                .find(|c| c.result_id == result_id)
+                                .is_some_and(|c| !c.consumes_parts_on_use);
+                            let can_extend_to_owned_third = ITEM_COMBOS.iter().any(|c| {
+                                c.parts[0] != 0
+                                    && c.parts.contains(&a)
+                                    && c.parts.contains(&b)
+                                    && c.parts
+                                        .iter()
+                                        .find(|&&p| p != a && p != b)
+                                        .is_some_and(|third| self.owned_items.contains(third))
+                            });
+                            if is_partial_for_third || can_extend_to_owned_third {
+                                self.combine_first_item_id = Some(a);
+                                self.combine_slots = [Some(a), Some(b), None];
+                                self.show_toast("Select a third item to combine.");
+                                return (MenuSoundCue::Confirm, InventoryAction::None);
+                            }
+                            self.combine_first_item_id = None;
+                            self.combine_slots = [None; 3];
+                            self.focus = InventoryFocus::Carousel;
+                            self.active_combo_id = Some(result_id);
+                            return (
+                                MenuSoundCue::Confirm,
+                                InventoryAction::CombinedItems {
+                                    first_id: a,
+                                    second_id: b,
+                                    third_id: None,
                                     result_id,
                                 },
                             );
                         }
                     }
                 }
+                self.combine_first_item_id = None;
+                self.combine_slots = [None; 3];
+                self.focus = InventoryFocus::Carousel;
                 self.show_toast("These items cannot be combined.");
                 (MenuSoundCue::Cancel, InventoryAction::None)
             }
@@ -1407,5 +1487,158 @@ mod tests {
         }
         assert_eq!(screen.focus, InventoryFocus::Carousel);
         assert_eq!(screen.examine_coin_side, 0);
+    }
+
+    #[test]
+    fn test_sh2_166_three_item_combine_toluca_prison_hatch() {
+        // Toluca Prison Hatch: Horseshoe (62) + Lighter (63) + Wax doll (64) -> combo #96
+        // (`SLUS_202.28` `combine_item_use` `0x001d38d0`, `otn_itemmain.c:1624-1656`).
+        let mut inv = InventoryManager::new();
+        inv.item_get_now(35); // Purple Bull key
+        inv.item_get_now(36); // Lapis Eye key
+        inv.item_get_now(62); // Horseshoe
+        inv.item_get_now(63); // Lighter
+        inv.item_get_now(64); // Wax doll
+
+        let snap = InventoryPlayerSnapshot::default();
+        let mut screen = InventoryScreen::new();
+        screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
+
+        // Select Wax doll (64), open CommandWindow, choose Combine (row 1)
+        let idx_wax = screen.owned_items.iter().position(|&id| id == 64).unwrap();
+        let idx_shoe = screen.owned_items.iter().position(|&id| id == 62).unwrap();
+        let idx_lighter = screen.owned_items.iter().position(|&id| id == 63).unwrap();
+        screen.selected_index = idx_wax;
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(screen.focus, InventoryFocus::CommandWindow);
+        screen.handle_nav(MenuNavAction::Down, &inv, &snap); // Combine
+        let (cue1, act1) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(cue1, MenuSoundCue::Confirm);
+        assert_eq!(act1, InventoryAction::None);
+        assert_eq!(screen.focus, InventoryFocus::CombineTarget);
+        assert_eq!(screen.combine_slots, [Some(64), None, None]);
+
+        // Select 2nd item: Horseshoe (62) -> partial combo #94, must stage into combine_slots[1]
+        // and stay in CombineTarget (NO softlock!).
+        screen.selected_index = idx_shoe;
+        let (cue2, act2) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(cue2, MenuSoundCue::Confirm);
+        assert_eq!(act2, InventoryAction::None);
+        assert_eq!(screen.focus, InventoryFocus::CombineTarget);
+        assert_eq!(screen.combine_slots, [Some(64), Some(62), None]);
+
+        // Tick must preserve staged slot 1 while updating combine_fade
+        screen.tick(1.0 / 30.0, &snap);
+        assert_eq!(screen.combine_slots, [Some(64), Some(62), None]);
+
+        // Select 3rd item: Lighter (63) -> completes 3-item combo #96!
+        screen.selected_index = idx_lighter;
+        let (cue3, act3) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(cue3, MenuSoundCue::Confirm);
+        assert_eq!(
+            act3,
+            InventoryAction::CombinedItems {
+                first_id: 64,
+                second_id: 62,
+                third_id: Some(63),
+                result_id: 96,
+            }
+        );
+        assert_eq!(screen.active_combo_id, Some(96));
+        assert_eq!(screen.focus, InventoryFocus::Carousel);
+        assert_eq!(screen.combine_slots, [None, None, None]);
+
+        // 2-item complete combo (Purple Bull 35 + Lapis Eye 36 -> 86) still completes in 2 steps
+        let idx_bull = screen.owned_items.iter().position(|&id| id == 35).unwrap();
+        let idx_lapis = screen.owned_items.iter().position(|&id| id == 36).unwrap();
+        screen.selected_index = idx_bull;
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        screen.handle_nav(MenuNavAction::Down, &inv, &snap); // Combine
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        screen.selected_index = idx_lapis;
+        let (cue_2, act_2) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(cue_2, MenuSoundCue::Confirm);
+        assert_eq!(
+            act_2,
+            InventoryAction::CombinedItems {
+                first_id: 35,
+                second_id: 36,
+                third_id: None,
+                result_id: 86,
+            }
+        );
+
+        // 3-item Prison Tablets (59 + 60 + 61 -> #92) when all 3 tablets are owned
+        let mut inv_tab = InventoryManager::new();
+        inv_tab.item_get_now(59); // Tablet of "The Oppressor"
+        inv_tab.item_get_now(60); // Tablet of "Gluttonous Pig"
+        inv_tab.item_get_now(61); // Tablet of "The Seductress"
+        let mut tab_screen = InventoryScreen::new();
+        tab_screen.open(&inv_tab);
+        tab_screen.screen_fade_alpha = 0.0;
+        let idx_59 = tab_screen
+            .owned_items
+            .iter()
+            .position(|&id| id == 59)
+            .unwrap();
+        let idx_60 = tab_screen
+            .owned_items
+            .iter()
+            .position(|&id| id == 60)
+            .unwrap();
+        let idx_61 = tab_screen
+            .owned_items
+            .iter()
+            .position(|&id| id == 61)
+            .unwrap();
+        tab_screen.selected_index = idx_59;
+        tab_screen.handle_nav(MenuNavAction::Confirm, &inv_tab, &snap);
+        tab_screen.handle_nav(MenuNavAction::Down, &inv_tab, &snap); // Combine
+        tab_screen.handle_nav(MenuNavAction::Confirm, &inv_tab, &snap);
+        assert_eq!(tab_screen.focus, InventoryFocus::CombineTarget);
+        tab_screen.selected_index = idx_60;
+        let (tc2, ta2) = tab_screen.handle_nav(MenuNavAction::Confirm, &inv_tab, &snap);
+        assert_eq!(tc2, MenuSoundCue::Confirm);
+        assert_eq!(ta2, InventoryAction::None);
+        assert_eq!(tab_screen.focus, InventoryFocus::CombineTarget);
+        assert_eq!(tab_screen.combine_slots, [Some(59), Some(60), None]);
+        tab_screen.selected_index = idx_61;
+        let (tc3, ta3) = tab_screen.handle_nav(MenuNavAction::Confirm, &inv_tab, &snap);
+        assert_eq!(tc3, MenuSoundCue::Confirm);
+        assert_eq!(
+            ta3,
+            InventoryAction::CombinedItems {
+                first_id: 59,
+                second_id: 60,
+                third_id: Some(61),
+                result_id: 92,
+            }
+        );
+        assert_eq!(tab_screen.active_combo_id, Some(92));
+
+        // 2-item Prison Tablets (59 + 60 -> #89) completes in 2 steps when 3rd tablet is NOT owned
+        let mut inv_tab2 = InventoryManager::new();
+        inv_tab2.item_get_now(59);
+        inv_tab2.item_get_now(60);
+        let mut tab2_screen = InventoryScreen::new();
+        tab2_screen.open(&inv_tab2);
+        tab2_screen.screen_fade_alpha = 0.0;
+        tab2_screen.selected_index = 0; // 59
+        tab2_screen.handle_nav(MenuNavAction::Confirm, &inv_tab2, &snap);
+        tab2_screen.handle_nav(MenuNavAction::Down, &inv_tab2, &snap); // Combine
+        tab2_screen.handle_nav(MenuNavAction::Confirm, &inv_tab2, &snap);
+        tab2_screen.selected_index = 1; // 60
+        let (t2c, t2a) = tab2_screen.handle_nav(MenuNavAction::Confirm, &inv_tab2, &snap);
+        assert_eq!(t2c, MenuSoundCue::Confirm);
+        assert_eq!(
+            t2a,
+            InventoryAction::CombinedItems {
+                first_id: 59,
+                second_id: 60,
+                third_id: None,
+                result_id: 89,
+            }
+        );
     }
 }

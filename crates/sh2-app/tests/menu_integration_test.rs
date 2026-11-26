@@ -18,6 +18,9 @@ fn test_sh2_18_full_menu_and_options_flow() {
     let config_path = test_dir.join("test_config.json");
 
     let mut controller = AppMenuController::new(&config_path);
+    controller
+        .title_sm
+        .set_save_availability(sh2_ui::menu::SaveAvailability::None);
 
     // 1. Initial State: Splash Screen Intro (start00.tex)
     assert_eq!(controller.title_sm.phase, TitlePhase::SplashIntro);
@@ -28,8 +31,13 @@ fn test_sh2_18_full_menu_and_options_flow() {
     controller.tick(1.0);
     assert!(controller.title_sm.splash_timer >= 1.0);
 
-    // Skip splash intro via Confirm (Enter / Cross / A)
-    let cue = controller.handle_nav(MenuNavAction::Confirm);
+    // Skip splash intro via RetailPc `BootSequenceState::handle_skip` (`sh2pc.exe` `0x00405e80`)
+    controller.title_sm.boot_sequence =
+        sh2_ui::menu::BootSequenceState::new(sh2_ui::menu::BootProfile::RetailPc);
+    let mut cue = MenuSoundCue::None;
+    for _ in 0..6 {
+        cue = controller.handle_nav(MenuNavAction::Confirm);
+    }
     assert_eq!(cue, MenuSoundCue::Confirm);
     assert_eq!(controller.title_sm.phase, TitlePhase::TitleLogo);
 
@@ -455,6 +463,9 @@ fn test_options_debug_tab_and_loading_screen_selection() {
     let config_path = test_dir.join("config.json");
 
     let mut controller = AppMenuController::new(&config_path);
+    controller
+        .title_sm
+        .set_save_availability(sh2_ui::menu::SaveAvailability::None);
     controller.title_sm.phase = TitlePhase::OptionsMenu;
 
     // Navigate to Debug tab (Tab 4)
@@ -703,7 +714,12 @@ fn test_sh2_65_cli_flags_and_story_stages_and_endings_room_menu_selection() {
     // Verify NEW GAME (`MainMenuOption::NewGame` -> `RiddleDifficultySelect` -> `Confirm`)
     // automatically sets `selected_test_room` to `TestRoomKind::RestroomStart` (`er01.map`, Stage 2 `stg_toilet`)
     let mut ng_ctrl = AppMenuController::new(&config_path);
-    ng_ctrl.handle_nav(MenuNavAction::Confirm); // Splash -> TitleLogo
+    ng_ctrl
+        .title_sm
+        .set_save_availability(sh2_ui::menu::SaveAvailability::None);
+    ng_ctrl
+        .title_sm
+        .show_phase_immediately(TitlePhase::TitleLogo);
     ng_ctrl.handle_nav(MenuNavAction::Confirm); // TitleLogo -> MainMenu
     ng_ctrl.handle_nav(MenuNavAction::Confirm); // NewGame -> ScenarioSelect
     ng_ctrl.handle_nav(MenuNavAction::Confirm); // ScenarioSelect -> ActionDifficultySelect

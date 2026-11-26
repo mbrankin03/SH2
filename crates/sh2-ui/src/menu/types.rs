@@ -23,6 +23,8 @@ pub enum TitlePhase {
     RiddleDifficultySelect,
     /// In-game options configuration menu (`Item/otn_option.c` `0x002108c0`).
     OptionsMenu,
+    /// Multi-slot Memory Card Load screen (`titleExit` `0x001c3300` -> `mcLoadMenu` `0x00243e20`).
+    LoadMenu,
     /// Test room / debug stage selection for volumetric fog and lighting calibration.
     TestRoomsSelect,
     /// Credits display screen.

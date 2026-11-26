@@ -155,3 +155,70 @@ fn render_title_and_options_headless_snapshots() {
         }
     }
 }
+
+#[test]
+fn test_sh2_166_title_load_routes_to_load_menu_and_splash_skip_delegates() {
+    use sh2_ui::menu::{
+        BootLogoStage, BootProfile, BootSequenceState, LaunchTarget, MainMenuOption, MenuNavAction,
+        MenuSoundCue, SaveAvailability,
+    };
+
+    // 1. SplashIntro skip delegates to `BootSequenceState::handle_skip`:
+    //    Strict PS2 (`BootProfile::Ps2Original`, `allow_ps2_boot_skip == false`) ignores skip.
+    let mut sm = TitleStateMachine::new();
+    assert_eq!(sm.phase, TitlePhase::SplashIntro);
+    assert_eq!(sm.boot_sequence.profile, BootProfile::Ps2Original);
+    assert_eq!(sm.handle_input(MenuNavAction::Confirm), MenuSoundCue::None);
+    assert_eq!(sm.phase, TitlePhase::SplashIntro);
+    assert_eq!(sm.boot_sequence.stage, BootLogoStage::FadeIn);
+
+    //    Retail PC (`sh2pc.exe` `0x00405e80`) steps through FadeIn -> Hold -> FadeOut(0.5s) -> next logo.
+    sm.boot_sequence = BootSequenceState::new(BootProfile::RetailPc);
+    assert_eq!(
+        sm.handle_input(MenuNavAction::Confirm),
+        MenuSoundCue::Confirm
+    );
+    assert_eq!(sm.boot_sequence.stage, BootLogoStage::Hold);
+    assert_eq!(sm.phase, TitlePhase::SplashIntro);
+    assert_eq!(
+        sm.handle_input(MenuNavAction::Confirm),
+        MenuSoundCue::Confirm
+    );
+    assert_eq!(sm.boot_sequence.stage, BootLogoStage::FadeOut);
+    assert_eq!(
+        sm.handle_input(MenuNavAction::Confirm),
+        MenuSoundCue::Confirm
+    );
+    assert_eq!(sm.boot_sequence.logo_index, 1);
+    assert_eq!(sm.phase, TitlePhase::SplashIntro);
+    // Finish 2nd logo -> transitions to TitleLogo
+    for _ in 0..3 {
+        sm.handle_input(MenuNavAction::Confirm);
+    }
+    assert_eq!(sm.phase, TitlePhase::TitleLogo);
+
+    // 2. Title `LOAD` routes to `TitlePhase::LoadMenu` (`mcLoadMenu` `0x00243e20`),
+    //    while `CONTINUE` launches `Campaign { is_continue: true }` directly.
+    sm.set_save_availability(SaveAvailability::LoadAndContinue);
+    sm.show_phase_immediately(TitlePhase::MainMenu);
+    sm.main_menu_index = 0; // MainMenuOption::Load
+    assert_eq!(sm.selected_main_menu_option(), MainMenuOption::Load);
+    let cue = sm.handle_input(MenuNavAction::Confirm);
+    assert_eq!(cue, MenuSoundCue::Confirm);
+    assert_eq!(sm.phase, TitlePhase::LoadMenu);
+
+    // `CONTINUE` (index 1) launches Campaign directly
+    sm.show_phase_immediately(TitlePhase::MainMenu);
+    sm.main_menu_index = 1; // MainMenuOption::Continue
+    assert_eq!(sm.selected_main_menu_option(), MainMenuOption::Continue);
+    let cue_cont = sm.handle_input(MenuNavAction::Confirm);
+    assert_eq!(cue_cont, MenuSoundCue::GameStartTransition);
+    assert_eq!(sm.phase, TitlePhase::TransitionToGame);
+    assert!(matches!(
+        sm.launch_target,
+        LaunchTarget::Campaign {
+            is_continue: true,
+            ..
+        }
+    ));
+}

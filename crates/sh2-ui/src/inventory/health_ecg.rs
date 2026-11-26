@@ -278,8 +278,10 @@ impl HealthEcgState {
                     strip_w_512 = STATUS_SNAPSHOT_W_512 - x_off;
                 }
                 if strip_w_512 > 0.0 {
+                    // Retail PC `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7524-7810`): include `+ 16.0`
+                    // overscan Y offset matching line 231 so glitch scanlines stay inside `[y0..y0+h]`.
                     let gx = ((STATUS_SNAPSHOT_X_512 + x_off) * sx).round() as usize;
-                    let gy = ((STATUS_SNAPSHOT_Y_448 + y_off) * sy).round() as usize;
+                    let gy = ((STATUS_SNAPSHOT_Y_448 + 16.0 + y_off) * sy).round() as usize;
                     let gw = (strip_w_512 * sx).round().max(1.0) as usize;
                     rasterizer.fill_rect(gx, gy, gw, strip_h, color);
                 }
@@ -348,6 +350,40 @@ mod tests {
             }
         }
         assert!(drew_glitch, "expected 2px glitch scanlines at 60% HP");
+    }
+
+    #[test]
+    fn test_sh2_166_look_hp_glitch_scanlines_respect_16px_overscan_offset() {
+        // Retail PC `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7524-7810`, `7693-7740`):
+        // on a `512x480` canvas, Status snapshot occupies `x in [26..166)` and
+        // `y in [49 + 16 .. 49 + 16 + 105) = [65..170)`, and 2px glitch strips have
+        // `y_off = rand() % 0x69` (`0..=104`) -> max top `65 + 104 = 169`, max bottom `169 + 2 = 171`
+        // (written pixel rows `65..171`, never leaking above `y = 65` or past `y = 170`).
+        let mut ecg = HealthEcgState::new();
+        ecg.pulse_brightness = 1.0;
+        let mut rast = TextRasterizer::new(512, 480);
+        let mut saw_glitch = false;
+        for frame in 0..64u32 {
+            rast.clear();
+            ecg.static_frame = frame;
+            // 60% HP: neutral tint (`dim_a = 95`) inside `[26..166) x [65..170)` plus 2px glitch strips.
+            ecg.draw_snapshot_tint(60.0, 100.0, &mut rast);
+            for y in 0..480usize {
+                for x in 0..512usize {
+                    let px = &rast.pixels[(y * 512 + x) * 4..][..4];
+                    if px[3] > 0 {
+                        assert!(
+                            (26..166).contains(&x) && (65..171).contains(&y),
+                            "pixel ({x}, {y}) leaked outside Status snapshot/glitch rect [26..166) x [65..171)"
+                        );
+                        if px[0] > 0 {
+                            saw_glitch = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(saw_glitch, "expected glitch scanline pixels at 60% HP");
     }
 }
 

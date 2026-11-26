@@ -521,4 +521,149 @@ mod tests {
             "returning to 3D gameplay should start fading in from black"
         );
     }
+
+    #[test]
+    fn sh2_166_overlay_inventory_item_use_transitions_to_gameplay_and_executes_event() {
+        use crate::campaign::retail_events::evaluate_retail_stage_events;
+        use crate::events::stages_act1::act1_stage_descriptor;
+        use crate::events::stages_act2::{
+            decode_retail_ev_pos_shape, normalize_retail_event_entry_for_input,
+        };
+        use crate::events::triggers::EvPosShape;
+        use crate::types::EventTriggerKind;
+
+        // Locate a real retail `UseItemLook` event in Act 1 (e.g. Wood Side / Blue Creek / Hospital)
+        // whose flag conditions are satisfied at initial state so we test real retail dispatch.
+        let mut found = None;
+        for stage_id in 4u8..=27u8 {
+            let Some(desc) = act1_stage_descriptor(stage_id) else {
+                continue;
+            };
+            let dummy_input = EventEvalInput::default();
+            let dummy_inv = crate::inventory::InventoryManager::new();
+            let dummy_flags = crate::events::EventFlags::new();
+            for &raw in desc.event_list {
+                if raw.is_sentinel() {
+                    break;
+                }
+                let entry = normalize_retail_event_entry_for_input(raw, &dummy_input, &dummy_inv);
+                if entry.trigger_kind() != Some(EventTriggerKind::UseItemLook) {
+                    continue;
+                }
+                if !crate::events::triggers::check_event_flag_conditions(&entry, &dummy_flags) {
+                    continue;
+                }
+                let item_id = entry.required_item_id();
+                if item_id == 0 {
+                    continue;
+                }
+                let Some(shape) = entry.shape_kind().and_then(|sk| {
+                    decode_retail_ev_pos_shape(desc.ev_pos, entry.ev_pos_offset(), sk)
+                }) else {
+                    continue;
+                };
+                let pos = match shape {
+                    EvPosShape::Point { x, y, z } => [x, y, z],
+                    EvPosShape::Polyline { y, vertices } => {
+                        if let Some(&[x, z]) = vertices.first() {
+                            [x, y, z]
+                        } else {
+                            continue;
+                        }
+                    }
+                    EvPosShape::Rectangle { x, y, z, w, d } => [x + w * 0.5, y, z + d * 0.5],
+                    EvPosShape::Triangle { y, vertices } => [
+                        (vertices[0][0] + vertices[1][0] + vertices[2][0]) / 3.0,
+                        y,
+                        (vertices[0][1] + vertices[1][1] + vertices[2][1]) / 3.0,
+                    ],
+                    EvPosShape::Quad { y, vertices } => [
+                        (vertices[0][0] + vertices[1][0] + vertices[2][0] + vertices[3][0]) * 0.25,
+                        y,
+                        (vertices[0][1] + vertices[1][1] + vertices[2][1] + vertices[3][1]) * 0.25,
+                    ],
+                };
+                // Confirm that evaluate_retail_stage_events actually fires for this entry at `pos`.
+                let mut probe_flags = crate::events::EventFlags::new();
+                let mut probe_inv = crate::inventory::InventoryManager::new();
+                probe_inv.item_get_now(item_id);
+                let probe_in = EventEvalInput {
+                    player_pos: pos,
+                    player_rot_y: 0.0,
+                    used_item_id: Some(item_id),
+                    ..EventEvalInput::default()
+                };
+                let probe_eff = evaluate_retail_stage_events(
+                    desc.event_list,
+                    desc.ev_pos,
+                    stage_id,
+                    &probe_in,
+                    &mut probe_flags,
+                    &mut probe_inv,
+                );
+                if probe_eff.common_message.is_some()
+                    || probe_eff.stage_message.is_some()
+                    || probe_eff.active_prog_index.is_some()
+                    || probe_eff.stage_transition.is_some()
+                    || probe_inv.count(item_id) == 0
+                {
+                    found = Some((stage_id, item_id, pos));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+        }
+        let (stage_id, item_id, pos) =
+            found.expect("expected at least one reachable retail UseItemLook event in Act 1");
+
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        sim.scenario.current_stage = u16::from(stage_id);
+        sim.snap_player_transform(Vec3::from_array(pos), 0.0);
+        sim.scenario.inventory_mgr.item_get_now(item_id);
+
+        let mut orch = CampaignOrchestrator::from_saved_stage(
+            u16::from(stage_id),
+            None,
+            pos,
+            0.0,
+            OutdoorStreamingMode::default(),
+            false,
+        );
+        orch.phase = CampaignPhase::OverlayMenu(OverlayMenuKind::Inventory);
+        orch.fade = ScreenFadeState::default();
+        orch.player_locked = false;
+
+        // Dispatch `item_use_id` while `CampaignOrchestrator` is in `OverlayMenu(Inventory)`:
+        // must transition out of `OverlayMenu(Inventory)` and immediately execute the item event.
+        let use_input = CampaignTickInput {
+            item_use_id: item_id,
+            ..CampaignTickInput::default()
+        };
+        let eff = orch.step(&mut sim, &use_input, 1.0 / 60.0);
+        assert!(
+            !matches!(
+                orch.phase,
+                CampaignPhase::OverlayMenu(OverlayMenuKind::Inventory)
+            ),
+            "item use from Inventory must exit OverlayMenu(Inventory), got {:?}",
+            orch.phase
+        );
+        assert!(
+            eff.common_message.is_some()
+                || eff.stage_message.is_some()
+                || sim.scenario.prog_runner.is_running()
+                || sim.scenario.inventory_mgr.count(item_id) == 0
+                || matches!(orch.phase, CampaignPhase::DoorTransition { .. }),
+            "expected retail UseItemLook event for item {item_id} on stage {stage_id} to execute"
+        );
+
+        // Next idle tick must remain out of `OverlayMenu(Inventory)` (no re-open loop).
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        assert!(!matches!(
+            orch.phase,
+            CampaignPhase::OverlayMenu(OverlayMenuKind::Inventory)
+        ));
+    }
 }

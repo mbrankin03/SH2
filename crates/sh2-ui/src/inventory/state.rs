@@ -291,7 +291,7 @@ impl InventoryScreen {
                 if self.screen_fade_alpha >= 1.0 {
                     self.fade_transition = InventoryFadeTransition::None;
                     self.close();
-                    return None;
+                    return Some(InventoryAction::Close);
                 }
             }
             InventoryFadeTransition::OpeningSubscreen(btn) => {
@@ -717,9 +717,11 @@ impl InventoryScreen {
                 }
             }
             MenuNavAction::Cancel => {
-                // `item_fade_out` (`0x001db0e0`): smoothly fade Inventory to black over `0.5` s
+                // `item_fade_out` (`0x001db0e0`): smoothly fade Inventory to black over `0.5` s;
+                // `tick()` emits `Some(InventoryAction::Close)` once opaque black is reached so
+                // gameplay starts its `PlayableMain` `case 3` (`gamemain.c:448`) fade-in from black.
                 self.fade_transition = InventoryFadeTransition::ClosingToGameplay;
-                (MenuSoundCue::Cancel, InventoryAction::Close)
+                (MenuSoundCue::Cancel, InventoryAction::None)
             }
         }
     }
@@ -1221,6 +1223,29 @@ mod tests {
         }
         assert_eq!(deferred, Some(InventoryAction::OpenOptions));
         assert_eq!(screen.fade_transition, InventoryFadeTransition::None);
+
+        // Exiting Inventory (`Cancel` on Carousel) fades to black over `0.5` s then emits `InventoryAction::Close`
+        screen.focus = InventoryFocus::Carousel;
+        screen.screen_fade_alpha = 0.0;
+        let (exit_cue, exit_act) = screen.handle_nav(MenuNavAction::Cancel, &inv, &snap);
+        assert_eq!(exit_cue, MenuSoundCue::Cancel);
+        assert_eq!(exit_act, InventoryAction::None);
+        assert_eq!(
+            screen.fade_transition,
+            InventoryFadeTransition::ClosingToGameplay
+        );
+        let mut close_deferred = None;
+        for _ in 0..12 {
+            if let Some(act) = screen.tick(0.05, &snap) {
+                close_deferred = Some(act);
+                break;
+            }
+        }
+        assert_eq!(close_deferred, Some(InventoryAction::Close));
+        assert!(!screen.is_open);
+        // Re-open for subsequent Carousel <-> Corner checks
+        screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
 
         // Mouse click during ExamineOverlay advances/closes pages instead of hitting corner buttons
         screen.focus = InventoryFocus::ExamineOverlay;

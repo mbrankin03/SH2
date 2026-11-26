@@ -327,6 +327,12 @@ pub(crate) fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed:
                             .ingame_menus
                             .inventory
                             .open(&state.sim_core.scenario.inventory_mgr);
+                    } else if let Some(ref mut orch) = state.campaign_orchestrator {
+                        // `gamemain.c:448` (`ScreenEffectFadeStart(0x3f99999a, 4)`): fade gameplay back in
+                        orch.fade.start_fade_in(
+                            sh2_core::campaign::PS2_DEFAULT_FADE_SPEED,
+                            orch.delayed_fade_in_fix,
+                        );
                     }
                 }
                 PaperMapAction::None => {}

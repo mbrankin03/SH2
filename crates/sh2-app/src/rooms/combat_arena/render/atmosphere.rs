@@ -167,18 +167,17 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             room_eval.particle_range_x_mm,
             room_eval.particle_range_z_mm,
         );
-        // Exact `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2965-2983`) +
-        // `obGB.fcl` floor cutoff (`param_1[5] = 0`, `param_1[6] = 700`, `bVar2 = 0x21` bit 0):
-        // On `ob01`, keep mist below the parking lot deck (`player_pos.y + 700.0 mm` in PS2 Y-down)
-        // so depth testing keeps the concrete & car crisp while billows rise behind the stone wall.
+        // Exact `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2958-2997`) +
+        // `obGB.fcl` (`bVar2 = 0x21`: bit 0 floor cutoff `param_1[5]=0, param_1[6]=700` -> fade
+        // band `Y = -700..0 mm`; bit 5 `0x20` valley Z-lock): on `ob01`, anchor the valley mist
+        // volume out over the cliff/valley (`Z = player_pos.z + 5500 mm`, `Y = player_pos.y + 150 mm`)
+        // so `700 mm` billboards rise behind the stone parapet (`Y = -700..+850 mm`) and seamlessly
+        // veil the dark bottom treeline of `tex4662/4663/4664` (`Z = 6394..11606 mm`) while depth
+        // testing keeps the parking lot & car completely crisp.
         let cam_to_player = player_pos - cam_eye;
         let cam_dist = cam_to_player.length();
         let anchor = if ps2_room_id == R_OBSV_DECK_ID {
-            [
-                player_pos.x,
-                player_pos.y + sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM * 0.75,
-                player_pos.z,
-            ]
+            [player_pos.x, player_pos.y + 150.0, 6_000.0]
         } else if cam_dist > 2_000.0 {
             let projected = cam_eye + (cam_to_player / cam_dist) * 2_000.0;
             [
@@ -212,23 +211,22 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         } else {
             1.0
         };
-        state
-            .fog_particle_scratch
-            .extend(
-                state
-                    .fog_particles
-                    .particles()
-                    .iter()
-                    .map(|p| GpuFogParticle {
-                        world_pos_radius: [
-                            anchor[0] + p.local_pos[0],
-                            anchor[1] + p.local_pos[1],
-                            anchor[2] + p.local_pos[2],
-                            p.radius_mm * radius_scale,
-                        ],
-                        color_alpha: [particle_rgb[0], particle_rgb[1], particle_rgb[2], p.alpha],
-                    }),
-            );
+        state.fog_particle_scratch.extend(
+            state
+                .fog_particles
+                .particles()
+                .iter()
+                .filter(|p| ps2_room_id != R_OBSV_DECK_ID || (anchor[2] + p.local_pos[2]) > 200.0)
+                .map(|p| GpuFogParticle {
+                    world_pos_radius: [
+                        anchor[0] + p.local_pos[0],
+                        anchor[1] + p.local_pos[1],
+                        anchor[2] + p.local_pos[2],
+                        p.radius_mm * radius_scale,
+                    ],
+                    color_alpha: [particle_rgb[0], particle_rgb[1], particle_rgb[2], p.alpha],
+                }),
+        );
     }
 
     // Step 1:1 `Fog/fog_blow.c` (`0x00274ca0..0x00275480`) steam-vent particles for indoor

@@ -39,7 +39,7 @@ use sh2_renderer::fog::{FogUniforms, GpuFogParticle};
 use sh2_renderer::light::{build_cutscene_light_uniforms, CharacterLightPool, CutsceneLightInput};
 use sh2_renderer::shadow::flatten_kg1_drop_shadow;
 use sh2_renderer::{
-    prepare_mipmapped_texture_cpu, GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig,
+    prepare_map_texture_cpu, GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig,
 };
 
 fn game_root() -> Option<PathBuf> {
@@ -151,7 +151,7 @@ fn build_map_bind_groups(ctx: &RenderContext, map: &MapFile) -> Vec<Arc<wgpu::Bi
             if let Some(tex) = map.textures.get(&tid) {
                 if let Ok(rgba) = tex.to_rgba() {
                     let (wrap_u, wrap_v) = map.texture_uv_wrap_axes(tid);
-                    let prepared = prepare_mipmapped_texture_cpu(
+                    let prepared = prepare_map_texture_cpu(
                         tex.width as u32,
                         tex.height as u32,
                         &rgba,
@@ -239,24 +239,14 @@ fn configure_ob01_fog_and_valley_mist(
     fog_u.screen_fog_uv = [0.5, 0.5, 0.125, 32.0 / 128.0];
     ctx.update_fog(&fog_u);
 
-    // Step authentic `obGB.fcl` valley mist particle cloud (`fogSetLocalPosV` `0x0016c6d0`)
+    // Step authentic `obGB.fcl` valley mist particle cloud (`fogSetLocalPosV` `0x0016c6d0`,
+    // `bVar2 = 0x21`: valley Z-lock + floor fade band `Y = -700..0 mm`)
     let mut vol = FogParticleVolume::new(
         eval.particle_count,
         eval.particle_range_x_mm,
         eval.particle_range_z_mm,
     );
-    let cam_to_player = player_pos - cam_eye;
-    let cam_dist = cam_to_player.length();
-    let horiz = if cam_dist > 2_000.0 {
-        cam_eye + (cam_to_player / cam_dist) * 2_000.0
-    } else {
-        player_pos
-    };
-    let anchor = [
-        horiz.x,
-        player_pos.y + sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM,
-        horiz.z,
-    ];
+    let anchor = [player_pos.x, player_pos.y + 150.0, 6_000.0];
     vol.step(
         1.0 / 30.0,
         eval.speed_mult,
@@ -269,6 +259,7 @@ fn configure_ob01_fog_and_valley_mist(
     let gpu_particles: Vec<GpuFogParticle> = vol
         .particles()
         .iter()
+        .filter(|p| (anchor[2] + p.local_pos[2]) > 200.0)
         .map(|p| GpuFogParticle {
             world_pos_radius: [
                 anchor[0] + p.local_pos[0],
@@ -457,6 +448,14 @@ fn ob01_gameplay_and_tenbou_cutscene_visual_lighting_fog_parity() {
             cam_eye: glam::Vec3::new(1500.0, -1650.0, -5200.0),
             cam_target: glam::Vec3::new(1600.0, -400.0, 2000.0),
             james_pos: glam::Vec3::new(2200.0, sample_floor(2200.0, -2200.0), -2200.0),
+            james_yaw: 0.0,
+        },
+        // 5. Classic parking-lot overlook behind the utility pole & power line looking toward Toluca Lake
+        GameplayShot {
+            name: "pole_overlook",
+            cam_eye: glam::Vec3::new(18600.0, -2800.0, -12500.0),
+            cam_target: glam::Vec3::new(19500.0, -1500.0, -2500.0),
+            james_pos: glam::Vec3::new(18900.0, sample_floor(18900.0, -1350.0), -1350.0),
             james_yaw: 0.0,
         },
     ];

@@ -45,6 +45,14 @@ pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_U8: u8 = 0x46;
 /// Normalized `[0.0..=1.0]` channel value of [`PS2_DAYTIME_DEFAULT_FOG_COLOR_U8`] (`70.0 / 255.0`).
 pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_F32: f32 =
     (PS2_DAYTIME_DEFAULT_FOG_COLOR_U8 as f32) / 255.0;
+/// Exact `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70` / `sh2pc.exe` `0x3f5530`, `+0xac = 230.0`)
+/// normalized minimum depth-fog blend factor (`1.0 - 230.0 / 255.0 = 25.0 / 255.0`), verified in
+/// `sh2pc.exe` `FUN_00458c20(_DAT_00942c3c * 0.003921569)` (`sh2pc_00470000.c:7921`).
+pub const OB_FOG_MIN_NORM: f32 = (255.0 - 230.0) / 255.0;
+/// Exact `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70` / `sh2pc.exe` `0x3f5530`, `+0xa8 = 40.0`)
+/// normalized maximum depth-fog blend factor (`1.0 - 40.0 / 255.0 = 215.0 / 255.0`), verified in
+/// `sh2pc.exe` `FUN_00458c30(_DAT_00942c38 * 0.003921569)` (`sh2pc_00470000.c:7922`).
+pub const OB_FOG_MAX_NORM: f32 = (255.0 - 40.0) / 255.0;
 /// Room ID for Forest Trail & Cemetery (`R_FOREST_CEMETERY = 0x03` in `Patches.h`).
 pub const R_FOREST_CEMETERY_ID: u32 = 0x03;
 /// Room ID for Silent Hill Town East (`R_TOWN_EAST = 0x04` in `Patches.h`).
@@ -260,6 +268,12 @@ pub struct RoomFogEvaluation {
     pub fog_near_mm: f32,
     /// Fog far saturation distance in PS2 mm.
     pub fog_far_mm: f32,
+    /// Normalized minimum depth-fog blend factor at `fog_near_mm` (`1.0 - DrawEnvData.fog_min / 255.0`,
+    /// `sh2gfw_Set_DepthFog` `0x00175df0`, `sh2pc.exe` `FUN_00458c20` `sh2pc_00470000.c:7921`).
+    pub fog_min: f32,
+    /// Normalized maximum depth-fog blend factor at `fog_far_mm` (`1.0 - DrawEnvData.fog_max / 255.0`,
+    /// `sh2gfw_Set_DepthFog` `0x00175df0`, `sh2pc.exe` `FUN_00458c30` `sh2pc_00470000.c:7922`).
+    pub fog_max: f32,
     /// Overall fog density multiplier (0.0 disables fog).
     pub density: f32,
     /// Falloff curve type (`dbg_fogparm_ctl`).
@@ -357,7 +371,8 @@ pub fn evaluate_room_fog_with_fixes(
                 )
             };
             // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `sh2pc.exe` `0x3f5530`):
-            // `fog_near = 19000.0` mm, `fog_far = 33000.0` mm, linear depth-fog ramp
+            // `fog_near = 19000.0` mm, `fog_far = 33000.0` mm, `fog_max = 40.0` (`215/255`),
+            // `fog_min = 230.0` (`25/255`), linear/hyperbolic depth-fog ramp
             // (`sh2gfw_Set_DepthFog` `0x00175df0`), and daytime GS `FOGCOL = (0x46, 0x46, 0x46)`
             // (`SetupDrawEnvData` `0x00251804..0x00251838` when `+0x9c == 0.0f`).
             RoomFogEvaluation {
@@ -369,6 +384,8 @@ pub fn evaluate_room_fog_with_fixes(
                 ],
                 fog_near_mm: 19_000.0,
                 fog_far_mm: 33_000.0,
+                fog_min: OB_FOG_MIN_NORM,
+                fog_max: OB_FOG_MAX_NORM,
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult: FOG_SPEED_OUTDOOR_SLOW,
@@ -386,6 +403,8 @@ pub fn evaluate_room_fog_with_fixes(
             fog_color: [0.62, 0.66, 0.70, 1.0],
             fog_near_mm: 1800.0,
             fog_far_mm: 26000.0,
+            fog_min: 0.0,
+            fog_max: 1.0,
             density: 1.0,
             curve: FogFalloffCurve::Exponential,
             speed_mult,
@@ -402,6 +421,8 @@ pub fn evaluate_room_fog_with_fixes(
             fog_color: [0.35, 0.37, 0.40, 1.0],
             fog_near_mm: 1600.0,
             fog_far_mm: 18000.0,
+            fog_min: 0.0,
+            fog_max: 1.0,
             density: 0.9,
             curve: FogFalloffCurve::Exponential,
             speed_mult,
@@ -424,6 +445,8 @@ pub fn evaluate_room_fog_with_fixes(
                 fog_color: [0.09, 0.10, 0.12, 1.0],
                 fog_near_mm,
                 fog_far_mm: 11000.0,
+                fog_min: 0.0,
+                fog_max: 1.0,
                 density: 0.9,
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
@@ -447,6 +470,8 @@ pub fn evaluate_room_fog_with_fixes(
                 },
                 fog_near_mm: 2500.0,
                 fog_far_mm: if upper { 30000.0 } else { 28000.0 },
+                fog_min: 0.0,
+                fog_max: 1.0,
                 density: if upper { 0.85 } else { 0.95 },
                 curve: FogFalloffCurve::Exponential,
                 speed_mult,
@@ -464,6 +489,8 @@ pub fn evaluate_room_fog_with_fixes(
             fog_color: [0.22, 0.21, 0.18, 1.0],
             fog_near_mm: 2000.0,
             fog_far_mm: 14000.0,
+            fog_min: 0.0,
+            fog_max: 1.0,
             density: 0.0,
             curve: FogFalloffCurve::Linear,
             speed_mult: 1.0,
@@ -480,6 +507,8 @@ pub fn evaluate_room_fog_with_fixes(
             fog_color: [0.10, 0.11, 0.13, 1.0],
             fog_near_mm: 1200.0,
             fog_far_mm: 9000.0,
+            fog_min: 0.0,
+            fog_max: 1.0,
             density: 0.85,
             curve: FogFalloffCurve::Linear,
             speed_mult,
@@ -609,6 +638,8 @@ mod tests {
         );
         assert_eq!(eval.particle_count, OBSERVATION_DECK_FOG_PARTICLE_MAX);
         assert_eq!(eval.particle_fixed_y_mm, Some(OB_FOG_ENV_FIXED_Y_MM));
+        assert!((eval.fog_min - OB_FOG_MIN_NORM).abs() < 1e-6);
+        assert!((eval.fog_max - OB_FOG_MAX_NORM).abs() < 1e-6);
         assert_eq!(
             eval.fog_color,
             [

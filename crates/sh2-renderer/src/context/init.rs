@@ -391,8 +391,45 @@ impl RenderContext {
             wgpu::AddressMode::Repeat,
             wgpu::AddressMode::ClampToEdge,
         );
+        let create_bilinear_sampler =
+            |label: &'static str,
+             address_mode_u: wgpu::AddressMode,
+             address_mode_v: wgpu::AddressMode| {
+                device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some(label),
+                    address_mode_u,
+                    address_mode_v,
+                    address_mode_w: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::FilterMode::Nearest,
+                    anisotropy_clamp: 1,
+                    ..Default::default()
+                })
+            };
+
         let clamp_u_repeat_v_sampler = create_anisotropic_sampler(
             "Clamp-U Repeat-V Anisotropic 16x Sampler",
+            wgpu::AddressMode::ClampToEdge,
+            wgpu::AddressMode::Repeat,
+        );
+        let bilinear_repeat_sampler = create_bilinear_sampler(
+            "Bilinear Repeat 1x Sampler",
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::Repeat,
+        );
+        let bilinear_clamp_sampler = create_bilinear_sampler(
+            "Bilinear Clamp 1x Sampler",
+            wgpu::AddressMode::ClampToEdge,
+            wgpu::AddressMode::ClampToEdge,
+        );
+        let bilinear_repeat_u_clamp_v_sampler = create_bilinear_sampler(
+            "Bilinear Repeat-U Clamp-V 1x Sampler",
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::ClampToEdge,
+        );
+        let bilinear_clamp_u_repeat_v_sampler = create_bilinear_sampler(
+            "Bilinear Clamp-U Repeat-V 1x Sampler",
             wgpu::AddressMode::ClampToEdge,
             wgpu::AddressMode::Repeat,
         );
@@ -535,6 +572,10 @@ impl RenderContext {
             clamp_sampler,
             repeat_u_clamp_v_sampler,
             clamp_u_repeat_v_sampler,
+            bilinear_repeat_sampler,
+            bilinear_clamp_sampler,
+            bilinear_repeat_u_clamp_v_sampler,
+            bilinear_clamp_u_repeat_v_sampler,
             default_view,
             default_texture_bind_group,
         }

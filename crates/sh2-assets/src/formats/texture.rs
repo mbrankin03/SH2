@@ -647,14 +647,18 @@ impl TextureLoader {
         }
     }
 
-    /// Masks circular-wrap border bleed and low-alpha AI/DXT5 fringe in an upscaled 4K cutout
-    /// texture against the original retail vanilla texture's clamped alpha footprint.
+    /// Masks circular-wrap border bleed, zero-gutter atlas cross-seam bleed, and low-alpha AI/DXT5
+    /// fringe in an upscaled 4K cutout texture against the original retail vanilla texture's exact
+    /// alpha footprint.
     ///
     /// Only runs when `vanilla_rgba` actually contains transparent cutout texels (`alpha < 4`),
-    /// leaving opaque/non-cutout world textures untouched. For each upscaled texel, if the clamped
-    /// 2x2 neighborhood in `vanilla_rgba` has `max_alpha == 0`, the upscaled alpha is zeroed so
+    /// leaving opaque/non-cutout world textures untouched. Each upscaled texel `(x, y)` maps to
+    /// its containing vanilla texel `(vx, vy) = ((x * van_w) / up_w, (y * van_h) / up_h)`; if
+    /// `vanilla_rgba` has `alpha == 0` at `(vx, vy)`, the upscaled alpha is zeroed so
     /// `MAP_ALPHA_TEST_THRESHOLD` (`0.5 / 255.0`, `SLUS_202.28` `TEST_1 = 0x5000d` / `sh2pc.exe`
-    /// `D3DRS_ALPHAREF = 0`) cleanly discards transparent borders without hairline artifacts.
+    /// `D3DRS_ALPHAREF = 0`) cleanly discards transparent borders and zero-gutter atlas seams
+    /// (such as `ob.map` `tid=4656` row `y=351 [a=0]` adjacent to `y=352 [a=255, #00FF00]` and
+    /// column `x=64 [a=0]` adjacent to `x=63 [a=255]`) without hairline or chroma-key bleed.
     pub fn sanitize_4k_cutout_alpha_against_vanilla(
         upscaled_rgba_or_bgra: &mut [u8],
         up_w: usize,
@@ -678,41 +682,14 @@ impl TextureLoader {
             return;
         }
 
-        let scale_x = van_w as f32 / up_w as f32;
-        let scale_y = van_h as f32 / up_h as f32;
-        let max_vx = (van_w - 1) as f32;
-        let max_vy = (van_h - 1) as f32;
-
         for y in 0..up_h {
-            let vy_f = ((y as f32 + 0.5) * scale_y - 0.5).clamp(0.0, max_vy);
-            let vy0 = vy_f.floor() as usize;
-            let fy = vy_f - vy0 as f32;
-            let vy1 = if fy > 0.0 {
-                (vy0 + 1).min(van_h - 1)
-            } else {
-                vy0
-            };
-            let row0 = vy0 * van_w;
-            let row1 = vy1 * van_w;
+            let vy = ((y * van_h) / up_h).min(van_h - 1);
+            let van_row = vy * van_w;
             let dst_row = y * up_w;
 
             for x in 0..up_w {
-                let vx_f = ((x as f32 + 0.5) * scale_x - 0.5).clamp(0.0, max_vx);
-                let vx0 = vx_f.floor() as usize;
-                let fx = vx_f - vx0 as f32;
-                let vx1 = if fx > 0.0 {
-                    (vx0 + 1).min(van_w - 1)
-                } else {
-                    vx0
-                };
-
-                let a00 = vanilla_rgba[(row0 + vx0) * 4 + 3];
-                let a10 = vanilla_rgba[(row0 + vx1) * 4 + 3];
-                let a01 = vanilla_rgba[(row1 + vx0) * 4 + 3];
-                let a11 = vanilla_rgba[(row1 + vx1) * 4 + 3];
-                let max_van_a = a00.max(a10).max(a01).max(a11);
-
-                if max_van_a == 0 {
+                let vx = ((x * van_w) / up_w).min(van_w - 1);
+                if vanilla_rgba[(van_row + vx) * 4 + 3] == 0 {
                     upscaled_rgba_or_bgra[(dst_row + x) * 4 + 3] = 0;
                 }
             }
@@ -1294,6 +1271,59 @@ mod tests {
             2,
         );
         assert!(opaque_up.iter().all(|&b| b == 128));
+    }
+
+    #[test]
+    fn test_sanitize_4k_cutout_alpha_strips_zero_gutter_atlas_seam_bleed() {
+        // Simulates `ob.map` `tid=4656` zero-gutter atlas seam:
+        // vanilla row y=0 is fully transparent (pine bough margin, alpha=0),
+        // vanilla row y=1 is opaque neon-green (#00FF00, alpha=255).
+        let vanilla = vec![
+            0, 0, 0, 0, 0, 0, 0, 0, // row y=0: transparent
+            0, 255, 0, 255, 0, 255, 0, 255, // row y=1: opaque neon green
+        ];
+        // 4x upscaled (8x8): AI upscaler smeared alpha=26 into y=2 and alpha=92 into y=3
+        // (matching `4656.dds` y=1406..1407 inside vanilla row y=351).
+        let mut upscaled = vec![0u8; 8 * 8 * 4];
+        for y in 0..8 {
+            let a = match y {
+                0 | 1 => 0,
+                2 => 26,
+                3 => 92,
+                4 => 163,
+                5 => 228,
+                _ => 255,
+            };
+            for x in 0..8 {
+                let ofs = (y * 8 + x) * 4;
+                upscaled[ofs] = 0;
+                upscaled[ofs + 1] = 250;
+                upscaled[ofs + 2] = 8;
+                upscaled[ofs + 3] = a;
+            }
+        }
+        TextureLoader::sanitize_4k_cutout_alpha_against_vanilla(
+            &mut upscaled,
+            8,
+            8,
+            &vanilla,
+            2,
+            2,
+        );
+        // Every upscaled row belonging to vanilla y=0 (rows 0..4) must be strictly alpha == 0.
+        for y in 0..4 {
+            for x in 0..8 {
+                assert_eq!(
+                    upscaled[(y * 8 + x) * 4 + 3],
+                    0,
+                    "upscaled row {y} inside transparent vanilla row 0 must have alpha=0"
+                );
+            }
+        }
+        // Upscaled rows belonging to vanilla y=1 (rows 4..8) retain their alpha.
+        for y in 4..8 {
+            assert!(upscaled[(y * 8) * 4 + 3] > 0);
+        }
     }
 
     #[test]

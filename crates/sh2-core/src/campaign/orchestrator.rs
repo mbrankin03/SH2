@@ -28,7 +28,7 @@ use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
 };
 use super::state::{
-    CampaignPhase, ConnectStep, FmvExitState, RoomLoadTarget, ScreenFadeState,
+    CampaignPhase, ConnectStep, CutawayFadeState, FmvExitState, RoomLoadTarget, ScreenFadeState,
     PS2_DEFAULT_FADE_SPEED,
 };
 
@@ -46,6 +46,8 @@ pub struct CampaignOrchestrator {
     pub outdoor_streamer: OutdoorTileStreamer,
     /// Deterministic screen fade ramp (`ScreenEffectManager` `0x0020df30`).
     pub fade: ScreenFadeState,
+    /// Cutaway still fade-out / fade-in transition state (`EvSubPictureDisplay` `0x001aca00`).
+    pub cutaway_fade: CutawayFadeState,
     /// Toggleable SH2:EE `DelayedFadeIn.cpp` (`-0.133334f` black hold) vs 1:1 vanilla PS2 fade-in.
     pub delayed_fade_in_fix: bool,
     /// Cumulative campaign play time in seconds (`GameTimerCountUp` `0x002902d0`).
@@ -79,6 +81,7 @@ impl CampaignOrchestrator {
             event_camera: EventCameraSystem::new(),
             outdoor_streamer: OutdoorTileStreamer::new(streaming_mode),
             fade: ScreenFadeState::new_black(),
+            cutaway_fade: CutawayFadeState::Idle,
             delayed_fade_in_fix,
             play_time_secs: 0.0,
             active_manifest: None,
@@ -115,6 +118,7 @@ impl CampaignOrchestrator {
             event_camera: EventCameraSystem::new(),
             outdoor_streamer: OutdoorTileStreamer::new(streaming_mode),
             fade: ScreenFadeState::new_black(),
+            cutaway_fade: CutawayFadeState::Idle,
             delayed_fade_in_fix,
             play_time_secs: 0.0,
             active_manifest: None,
@@ -298,12 +302,14 @@ impl CampaignOrchestrator {
                     &mut self.event_engine,
                     &mut self.outdoor_streamer,
                     &mut self.fade,
+                    &mut self.cutaway_fade,
                     &mut self.play_time_secs,
                     &mut self.player_locked,
                     input,
                     dt_sec,
                     &mut effects,
                 );
+                effects.fade_alpha = self.fade.black_alpha();
                 match outcome {
                     GameplayStepOutcome::Continue => {}
                     GameplayStepOutcome::EnterGameOver => {

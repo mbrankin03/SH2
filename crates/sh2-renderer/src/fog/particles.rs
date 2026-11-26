@@ -51,13 +51,15 @@ struct InstanceInput {
 
 struct VertexOutput {
     @builtin(position) clip_pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) color_alpha: vec4<f32>,
+    @location(0) local_pos: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) color_alpha: vec4<f32>,
 };
 
 @vertex
 fn vs_main(
     @builtin(vertex_index) vid: u32,
+    @builtin(instance_index) iid: u32,
     inst: InstanceInput,
 ) -> VertexOutput {
     // Two-triangle billboard quad corners in [-1, 1]
@@ -85,22 +87,28 @@ fn vs_main(
     // Fade smoothly as particles approach the camera lens so billboards never clip or pop
     let near_fade = clamp((to_cam_len - 350.0) / 1100.0, 0.0, 1.0);
 
+    // Exact `sh2pc.exe` `FUN_00488a00` (`sh2pc_00480000.c:5775-5782`) billboard UV sub-patch:
+    // each particle owns a wrapped `[0, 1)` center in `fog.tex` and spans `±0.048828125`
+    // (`12.5 / 256.0`), sampling a smooth zoomed-in cloud patch rather than the full 256x256 sheet.
+    let uv_half_span: f32 = 0.048828125;
+    let fi = f32(iid);
+    let uv_center = fract(vec2<f32>(fi * 0.61803399, fi * 0.32471796));
+
     var out: VertexOutput;
     out.clip_pos = camera.view_proj * vec4<f32>(world_vertex, 1.0);
-    out.uv = corner * 0.5 + 0.5;
+    out.local_pos = corner;
+    out.uv = uv_center + corner * uv_half_span;
     out.color_alpha = vec4<f32>(inst.color_alpha.rgb, inst.color_alpha.a * near_fade);
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let centered = in.uv * 2.0 - 1.0;
-    let r2 = dot(centered, centered);
+    let r2 = dot(in.local_pos, in.local_pos);
     if (r2 >= 1.0) {
         discard;
     }
-    let falloff = 1.0 - r2;
-    let radial = falloff * falloff;
+    let radial = 1.0 - r2;
     let texel = textureSample(fog_tex, fog_sampler, in.uv);
     // Exact `sh2pc.exe` `FUN_00486fc0` (`0x00486fc0`, `sh2pc_00480000.c:4285-4290`):
     // `D3DTSS_COLOROP = D3DTOP_MODULATE2X (5)` with `diffuse.rgb = 0x80/255` -> `texel.rgb * in.color_alpha.rgb`

@@ -549,11 +549,12 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     .map(|&(x, y)| to_centered(x, y))
     .collect();
 
-    // Exact `look_board` (`0x002171a0`) colors converted from PS2 GS 8-bit gamma-space blend
-    // (`fill: 0x20808080` -> 25% * 0x80 = 0x20; `border: 0x30d06060` -> 37.5% * (0x60,0x60,0xd0) = (0x24,0x24,0x4e))
-    // so linear-space sRGB GPU blending matches PS2/SH2:EE's dark charcoal fill and subtle navy border.
+    // Exact `look_board` (`0x002171a0`) colors in `sh2pc.exe` D3D8:
+    // - `fill: 0x20808080` -> dark charcoal `[0x20, 0x20, 0x20, 0xd8]`
+    // - `border: 0x30d06060` -> PS2 `0x30` alpha passed unshifted into D3D8 `0..255` (`48/255 = 18.8%`),
+    //   producing SH2:EE's subtle dark blue-gray octagon border `[0x60, 0x60, 0xd0, 0x30]`.
     let fill_color = [0x20, 0x20, 0x20, 0xd8];
-    let border_color = [0x24, 0x24, 0x4e, 0xff];
+    let border_color = [0x60, 0x60, 0xd0, 0x30];
 
     draw_polygon(rast, &panel_pts, Some(fill_color), Some(border_color));
     draw_polygon(rast, &box_pts, Some(fill_color), Some(border_color));

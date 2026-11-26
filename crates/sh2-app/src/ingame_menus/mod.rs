@@ -54,9 +54,11 @@ pub(crate) struct InGameMenuState {
     pub held_map_pan: [bool; 4],
     /// True when Options was opened via the Inventory `OPTION` corner button.
     pub options_from_inventory: bool,
-    /// Options subscreen fade-in scrim alpha (`1.0` = solid black, `0.0` = visible;
-    /// `SLUS_202.28` `otn_option.c:2038` `ScreenEffectFadeStart(0x3f800000, 4)` = `1.0` s).
+    /// Options subscreen fade-in / fade-out scrim alpha (`1.0` = solid black, `0.0` = visible;
+    /// `SLUS_202.28` `otn_option.c:2038, 2056` `ScreenEffectFadeStart(0x3f800000, 4/1)` = `1.0` s).
     pub options_fade_alpha: f32,
+    /// True while Options opened from Inventory is fading to black before returning to Inventory.
+    pub options_closing_to_inventory: bool,
     /// Whether `memo_msg_e.mes` has been attempted to load from disk.
     pub(crate) memo_mes_loaded: bool,
     /// Cached parsed `memo_msg_e.mes` / `memo_x_msg_e.mes` message table.
@@ -108,6 +110,8 @@ impl InGameMenuState {
         self.memo_reader.close();
         self.held_map_pan = [false; 4];
         self.options_from_inventory = false;
+        self.options_closing_to_inventory = false;
+        self.options_fade_alpha = 0.0;
         self.save_load = None;
     }
 
@@ -115,7 +119,11 @@ impl InGameMenuState {
     ///
     /// Returns any deferred [`InventoryAction`] triggered when an Inventory fade-to-black transition
     /// finishes (`otn_itemmain.c` `item_fade_out` `0x001db0e0`).
-    pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) -> Option<InventoryAction> {
+    pub fn tick(
+        &mut self,
+        dt: f32,
+        snapshot: &InventoryPlayerSnapshot,
+    ) -> (Option<InventoryAction>, bool) {
         let deferred_action = if self.inventory.is_open {
             self.inventory.tick(dt, snapshot)
         } else {
@@ -132,13 +140,26 @@ impl InGameMenuState {
         if self.memo_reader.is_open {
             self.memo_reader.tick(dt);
         }
-        if self.options_from_inventory && self.options_fade_alpha > 0.0 {
-            self.options_fade_alpha = (self.options_fade_alpha - dt.clamp(0.0, 0.1)).max(0.0);
+        let mut return_to_inventory = false;
+        if self.options_from_inventory {
+            let dt_clamped = dt.clamp(0.0, 0.1);
+            if self.options_closing_to_inventory {
+                // `otn_option.c:2056` (`fade_out`): `1.0` s fade to black before returning to Inventory
+                self.options_fade_alpha = (self.options_fade_alpha + dt_clamped).min(1.0);
+                if self.options_fade_alpha >= 1.0 {
+                    self.options_closing_to_inventory = false;
+                    self.options_from_inventory = false;
+                    return_to_inventory = true;
+                }
+            } else if self.options_fade_alpha > 0.0 {
+                // `otn_option.c:2038` (`fade_in`): `1.0` s fade in from black
+                self.options_fade_alpha = (self.options_fade_alpha - dt_clamped).max(0.0);
+            }
         }
         if let Some(ref mut sl) = self.save_load {
             sl.tick(dt);
         }
-        deferred_action
+        (deferred_action, return_to_inventory)
     }
 }
 

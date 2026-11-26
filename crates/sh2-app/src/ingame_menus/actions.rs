@@ -56,6 +56,9 @@ pub(crate) fn build_player_snapshot(state: &AppState) -> InventoryPlayerSnapshot
 }
 
 pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: KeyCode) {
+    if state.ingame_menus.options_closing_to_inventory {
+        return;
+    }
     let sound = match key_code {
         KeyCode::KeyW | KeyCode::ArrowUp => {
             state.menu_ctrl.options_menu.navigate_vertical(-1);
@@ -92,12 +95,9 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             if state.menu_ctrl.options_menu.exit_to_root() {
                 return emit_menu_sound(state, MenuSoundCue::Cancel, "Inventory Options");
             }
-            state.menu_ctrl.options_menu.discard_changes();
-            state.ingame_menus.options_from_inventory = false;
-            state
-                .ingame_menus
-                .inventory
-                .open(&state.sim_core.scenario.inventory_mgr);
+            // `otn_option.c:2056` (`fade_out`): fade Options to black over `1.0` s before
+            // discarding unsaved changes and re-opening Inventory.
+            state.ingame_menus.options_closing_to_inventory = true;
             MenuSoundCue::Cancel
         }
         _ => MenuSoundCue::None,
@@ -132,6 +132,7 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
                 .options_menu
                 .set_audio_devices(fresh_devices);
             state.ingame_menus.options_from_inventory = true;
+            state.ingame_menus.options_closing_to_inventory = false;
             state.ingame_menus.options_fade_alpha = 1.0;
         }
         InventoryAction::UseHealing(item_id) => {

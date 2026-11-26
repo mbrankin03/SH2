@@ -49,8 +49,17 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
 
     if is_in_game && state.ingame_menus.is_any_open() {
         let snapshot = crate::ingame_menus::build_player_snapshot(state);
-        if let Some(deferred_action) = state.ingame_menus.tick(dt.as_secs_f32(), &snapshot) {
-            crate::ingame_menus::apply_inventory_action(state, deferred_action);
+        let (deferred_action, return_to_inventory) =
+            state.ingame_menus.tick(dt.as_secs_f32(), &snapshot);
+        if let Some(action) = deferred_action {
+            crate::ingame_menus::apply_inventory_action(state, action);
+        }
+        if return_to_inventory {
+            state.menu_ctrl.options_menu.discard_changes();
+            state
+                .ingame_menus
+                .inventory
+                .open(&state.sim_core.scenario.inventory_mgr);
         }
     }
 

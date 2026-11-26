@@ -52,23 +52,6 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Exact IEC 61966-2-1 sRGB transfer functions so PS2 8-bit display-space GS blends
-// (`sh2gfw_SendDraw_Noise` `ALPHA_1 = (0x60 << 32) | 0x21`) operate in display sRGB space
-// rather than linear light space before `Bgra8UnormSrgb` swapchain presentation.
-fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
-    let clamped = max(c, vec3<f32>(0.0));
-    let lo = clamped * 12.92;
-    let hi = 1.055 * pow(clamped, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, clamped <= vec3<f32>(0.0031308));
-}
-
-fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
-    let clamped = max(c, vec3<f32>(0.0));
-    let lo = clamped / 12.92;
-    let hi = pow((clamped + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, clamped <= vec3<f32>(0.04045));
-}
-
 // Resolution-independent PCG hash fallback when PS2 tiled noise flag is off
 fn hash_u32(x: u32) -> u32 {
     var state = x * 747796405u + 2891336453u;

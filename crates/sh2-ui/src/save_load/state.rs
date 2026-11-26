@@ -603,3 +603,126 @@ pub fn save_point_location_name(id: u16, room_id: &str) -> &'static str {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sh2_core::campaign::{CampaignSaveSnapshot, SAVE_FORMAT_VERSION};
+    use sh2_core::config::{ActionDifficulty, RiddleDifficulty};
+    use sh2_core::events::ClearData;
+
+    fn sl_virtual_to_win(vx: f32, vy: f32, win_w: f32, win_h: f32) -> (f32, f32) {
+        let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(win_w, win_h);
+        (ox + vx * cw / 512.0, oy + (vy + 16.0) * ch / 480.0)
+    }
+
+    fn sample_slot(card_index: usize, file_index: usize) -> SaveSlotEntry {
+        SaveSlotEntry {
+            card_index,
+            file_index,
+            kind: SaveSlotKind::Manual,
+            is_corrupted: false,
+            snapshot: CampaignSaveSnapshot {
+                scenario: ScenarioKind::LetterFromSilentHeaven,
+                stage_id: 2,
+                room_id: "er01".to_string(),
+                player_position: [0.0, 0.0, 0.0],
+                player_yaw: 0.0,
+                action_difficulty: ActionDifficulty::Normal,
+                riddle_difficulty: RiddleDifficulty::Normal,
+                play_time_secs: 120.0,
+                save_count: 1,
+                save_version: SAVE_FORMAT_VERSION,
+                save_point_name_id: 1,
+                secondary_timer_secs: 0.0,
+                player_hp: 100.0,
+                player_max_hp: 100.0,
+                clear_data: ClearData::default(),
+                previous_total_rank: 0,
+                spray_pow: 0,
+                event_flags_words: Vec::new(),
+                inventory_items: Vec::new(),
+                thumbnail_rgba: None,
+            },
+        }
+    }
+
+    #[test]
+    fn test_save_load_mouse_move_click_tabs_yes_no_and_wheel() {
+        let cfg = SaveLoadConfig {
+            unlimited_slots: false,
+            ..SaveLoadConfig::default()
+        };
+        let mut screen = SaveLoadScreen::new(
+            SaveLoadMode::Save,
+            ScenarioKind::LetterFromSilentHeaven,
+            cfg,
+        );
+        screen.set_slots(vec![
+            sample_slot(0, 0),
+            sample_slot(0, 1),
+            sample_slot(0, 2),
+        ]);
+
+        // Widescreen (1920x1080): hover visible row 2 (slot 1, since row 0 is "New Save" in Save mode)
+        let row2_vy = 150.0 + 2.0 * 40.0 + 18.0;
+        let (rx, ry) = sl_virtual_to_win(256.0, row2_vy, 1920.0, 1080.0);
+        assert!(screen.handle_mouse_move(rx, ry, 1920.0, 1080.0));
+        assert_eq!(screen.cursor_row, 2);
+
+        // Mouse wheel scrolls down and up cleanly
+        assert!(screen.handle_mouse_wheel(1));
+        assert_eq!(screen.cursor_row, 3);
+        assert!(screen.handle_mouse_wheel(-2));
+        assert_eq!(screen.cursor_row, 1);
+        assert!(!screen.handle_mouse_wheel(0));
+
+        // Click Memory Card 2 tab (vx=373, vy=70) -> switches active_card to 1
+        let (mc2_x, mc2_y) = sl_virtual_to_win(373.0, 70.0, 1920.0, 1080.0);
+        assert_eq!(
+            screen.handle_mouse_click(mc2_x, mc2_y, 1920.0, 1080.0),
+            (true, SaveLoadAction::None)
+        );
+        assert_eq!(screen.active_card, 1);
+
+        // Click Memory Card 1 tab (vx=139, vy=70) -> switches back to 0
+        let (mc1_x, mc1_y) = sl_virtual_to_win(139.0, 70.0, 1920.0, 1080.0);
+        assert_eq!(
+            screen.handle_mouse_click(mc1_x, mc1_y, 1920.0, 1080.0),
+            (true, SaveLoadAction::None)
+        );
+        assert_eq!(screen.active_card, 0);
+
+        // Portrait (< 4:3) window (600x1000): click occupied slot row 1 -> enters ConfirmOverwrite
+        let row1_vy = 150.0 + 40.0 + 18.0;
+        let (sx, sy) = sl_virtual_to_win(256.0, row1_vy, 600.0, 1000.0);
+        let (changed, action) = screen.handle_mouse_click(sx, sy, 600.0, 1000.0);
+        assert!(changed);
+        assert_eq!(action, SaveLoadAction::None);
+        assert_eq!(screen.step, SaveLoadStep::ConfirmOverwrite);
+        assert_eq!(screen.yes_no, YesNoChoice::No);
+
+        // Hover and click "Yes" in ConfirmOverwrite -> emits WriteSlot for card 0, file 1
+        let (yx, yy) = sl_virtual_to_win(200.0, 450.0, 600.0, 1000.0);
+        assert!(screen.handle_mouse_move(yx, yy, 600.0, 1000.0));
+        assert_eq!(screen.yes_no, YesNoChoice::Yes);
+        let (changed, action) = screen.handle_mouse_click(yx, yy, 600.0, 1000.0);
+        assert!(changed);
+        assert_eq!(
+            action,
+            SaveLoadAction::WriteSlot {
+                card_index: 0,
+                file_index: 1,
+                kind: SaveSlotKind::Manual,
+            }
+        );
+
+        // Wheel ignored outside SelectSlot; click on SaveDone dismisses back to SelectSlot
+        screen.step = SaveLoadStep::SaveDone;
+        assert!(!screen.handle_mouse_wheel(1));
+        let (dismissed, action) = screen.handle_mouse_click(yx, yy, 600.0, 1000.0);
+        assert!(dismissed);
+        assert_eq!(action, SaveLoadAction::None);
+        assert_eq!(screen.step, SaveLoadStep::SelectSlot);
+    }
+}

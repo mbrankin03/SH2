@@ -224,25 +224,21 @@ impl PauseMenu {
         }
     }
 
-    /// Maps window pixel coordinates `(mouse_x, mouse_y)` into the 4:3 pillarboxed `512 × 480`
-    /// virtual coordinate space used by [`draw_pause_screen_with_scrim`].
+    /// Maps window pixel coordinates `(mouse_x, mouse_y)` into the 4:3 pillarboxed/letterboxed
+    /// `512 × 480` virtual coordinate space used by [`draw_pause_screen_with_scrim`], matching
+    /// `crate::inventory::ps2_ui_canvas_rect` (`state.ps2_ui_viewport()`) 1:1 on all aspect ratios.
     fn window_to_pause_virtual(
         mouse_x: f32,
         mouse_y: f32,
         win_w: f32,
         win_h: f32,
     ) -> Option<(f32, f32)> {
-        if win_w <= 0.0 || win_h <= 0.0 {
+        let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(win_w, win_h);
+        if cw <= 0.0 || ch <= 0.0 {
             return None;
         }
-        let target_4_3_w = win_h * (4.0 / 3.0);
-        let (x_offset, base_w) = if target_4_3_w <= win_w {
-            ((win_w - target_4_3_w) * 0.5, target_4_3_w)
-        } else {
-            (0.0, win_w)
-        };
-        let vx = (mouse_x - x_offset) * PAUSE_VIRTUAL_W / base_w;
-        let vy = mouse_y * PAUSE_VIRTUAL_H / win_h;
+        let vx = (mouse_x - ox) * PAUSE_VIRTUAL_W / cw;
+        let vy = (mouse_y - oy) * PAUSE_VIRTUAL_H / ch;
         Some((vx, vy))
     }
 
@@ -689,5 +685,77 @@ mod tests {
         draw_pause_screen(&pause, font, &mut rasterizer);
         let non_zero_quit = rasterizer.pixels.iter().filter(|&&p| p > 0).count();
         assert!(non_zero_quit > 10000);
+    }
+
+    #[test]
+    fn test_pause_menu_mouse_move_click_and_letterbox_parity() {
+        fn pause_virtual_to_win(vx: f32, vy: f32, win_w: f32, win_h: f32) -> (f32, f32) {
+            let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(win_w, win_h);
+            (
+                ox + vx * cw / PAUSE_VIRTUAL_W,
+                oy + vy * ch / PAUSE_VIRTUAL_H,
+            )
+        }
+
+        let mut pause = PauseMenu::new();
+        // Closed menu ignores mouse input
+        assert!(!pause.handle_mouse_move(640.0, 360.0, 1280.0, 720.0));
+        assert_eq!(
+            pause.handle_mouse_click(640.0, 360.0, 1280.0, 720.0),
+            (MenuSoundCue::None, PauseAction::None)
+        );
+
+        // Open with `can_save = false` on a widescreen (1920x1080) window
+        pause.open(false, "Restroom", 15.0);
+        assert!(!pause.handle_mouse_move(100.0, 100.0, 0.0, 1080.0));
+
+        // Row 1 is Save (disabled when `can_save == false`): hover & click must be ignored
+        let save_vy = PAUSE_ITEM_START_Y + 1.0 * PAUSE_ITEM_PITCH_Y + 10.0;
+        let (sx, sy) = pause_virtual_to_win(256.0, save_vy, 1920.0, 1080.0);
+        assert!(!pause.handle_mouse_move(sx, sy, 1920.0, 1080.0));
+        assert_eq!(pause.selected_index, 0);
+        assert_eq!(
+            pause.handle_mouse_click(sx, sy, 1920.0, 1080.0),
+            (MenuSoundCue::None, PauseAction::None)
+        );
+
+        // Row 2 is Load: hover selects index 2, click triggers Load
+        let load_vy = PAUSE_ITEM_START_Y + 2.0 * PAUSE_ITEM_PITCH_Y + 10.0;
+        let (lx, ly) = pause_virtual_to_win(256.0, load_vy, 1920.0, 1080.0);
+        assert!(pause.handle_mouse_move(lx, ly, 1920.0, 1080.0));
+        assert_eq!(pause.selected_index, 2);
+        assert_eq!(
+            pause.handle_mouse_click(lx, ly, 1920.0, 1080.0),
+            (MenuSoundCue::Confirm, PauseAction::Load)
+        );
+
+        // Portrait (< 4:3) window (600x1000) vertical letterboxing parity:
+        // Row 4 is Quit -> opens QuitConfirm, then hover/click "Yes" confirms QuitToTitle.
+        pause.open(true, "Restroom", 15.0);
+        let quit_vy = PAUSE_ITEM_START_Y + 4.0 * PAUSE_ITEM_PITCH_Y + 10.0;
+        let (qx, qy) = pause_virtual_to_win(256.0, quit_vy, 600.0, 1000.0);
+        assert!(pause.handle_mouse_move(qx, qy, 600.0, 1000.0));
+        assert_eq!(pause.selected_index, 4);
+        assert_eq!(
+            pause.handle_mouse_click(qx, qy, 600.0, 1000.0),
+            (MenuSoundCue::Confirm, PauseAction::None)
+        );
+        assert_eq!(pause.sub_phase, PauseSubPhase::QuitConfirm);
+        assert_eq!(pause.quit_confirm_index, 1);
+
+        // Hover and click "Yes" in portrait window
+        let (yx, yy) = pause_virtual_to_win(
+            PAUSE_QUIT_YES_XY.0,
+            PAUSE_QUIT_YES_XY.1 + 8.0,
+            600.0,
+            1000.0,
+        );
+        assert!(pause.handle_mouse_move(yx, yy, 600.0, 1000.0));
+        assert_eq!(pause.quit_confirm_index, 0);
+        assert_eq!(
+            pause.handle_mouse_click(yx, yy, 600.0, 1000.0),
+            (MenuSoundCue::Confirm, PauseAction::QuitToTitle)
+        );
+        assert!(!pause.is_open);
     }
 }

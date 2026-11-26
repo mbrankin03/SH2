@@ -178,17 +178,40 @@ impl Default for SpecialFxEvalInput {
     }
 }
 
+/// `first_toilet` (`CS_INTRO_BATHROOM`, `demo_no = 1`) dual-plane rack-focus DoF constants
+/// disassembled 1:1 from `sh2pc.exe` `0x005a1f30..0x005a1fe4` (`Toilet_Dof_Filter`) & `0x005a1b50`:
+/// - `0x74e368` (`0.15472312` = `95.0 / 614.0`): per-frame near-blur ramp slope (frames `1..=615`).
+/// - `0x6bce30` (`96.0` / `128.0`): maximum near-blur GS `FIX` alpha (`0.75`).
+/// - `0x74e364` (`97.0`), `0x62fe1c` (`0.5`): far-blur inverse ramp `((97.0 - near_128) * 0.5) / 128.0`.
+/// - `0x5a1e6c` (`0x3f49cd3e` = `0.788288` D3D8 Z-plane at PS2 `near = 250.0` mm -> `1180.8` mm).
+/// - `0x5a1fbe` (`0x08` = `8` px): `sh2gfw_Swap_Soft` (`0x001785e0`) `3x3` tap step in PS2 `448p` pixels.
+pub const TOILET_DOF_RAMP_SLOPE: f32 = 0.154_723_12;
+pub const TOILET_DOF_NEAR_MAX_128: f32 = 96.0;
+pub const TOILET_DOF_FAR_COMPLEMENT_128: f32 = 97.0;
+pub const TOILET_DOF_FOCUS_Z_NDC: f32 = f32::from_bits(0x3f49_cd3e);
+pub const TOILET_DOF_FOCUS_DIST_MM: f32 = 250.0 / (1.0 - TOILET_DOF_FOCUS_Z_NDC);
+pub const TOILET_DOF_STEP_PS2_PX: f32 = 8.0;
+
 /// Evaluated PS2 Depth-of-Field (`Kari_hisyakai`) and Motion Blur (`enSetBlur`) state for a frame (`SH2-105`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpecialFxEvaluation {
     /// Resolution scale factor (`viewport_height / 1080.0`).
     pub display_ratio: f32,
-    /// Whether the PS2 `Kari_hisyakai` screen-space DoF / closet bar blur filter (`EffectMode = 5`) is active.
+    /// Whether the PS2 `Kari_hisyakai` screen-space DoF / closet bar blur filter (`EffectMode = 5` or `8`) is active.
     pub dof_active: bool,
     /// Resolution-scaled 2-tap pixel offset `(val1, val2)` from `UpdateDOFValues` (`SpecialFX.cpp:62..97`).
     pub dof_tap_offset_px: [f32; 2],
     /// Normalized DoF / closet bar blur blend weight (`[0.0, 1.0]`) passed to `PostUniforms`.
     pub dof_strength: f32,
+    /// Dual-plane DoF focus split distance in PS2 mm (`> 0.0` enables near/far `EffectMode = 8`
+    /// depth-aware rack focus, e.g. `1180.8` mm in `first_toilet` `0x005a1b50`; `0.0` = single-plane).
+    pub dof_focus_dist_mm: f32,
+    /// Near-plane blur strength (`view_dist < dof_focus_dist_mm`) in `0.0..=1.0` (`0x005a1fbb`).
+    pub dof_near_strength: f32,
+    /// Far-plane blur strength (`view_dist >= dof_focus_dist_mm`) in `0.0..=1.0` (`0x005a1fd7`).
+    pub dof_far_strength: f32,
+    /// Dual-plane `sh2gfw_Swap_Soft` (`0x001785e0`) blur kernel step in PS2 `448p` pixels (`0x005a1fbe`).
+    pub dof_step_ps2_px: f32,
     /// Whether the signed-byte DoF offset write (`0x00942636`) is suppressed at `CameraX == -21376.56445f` (`DepthOfFieldASM`).
     pub closet_dof_byte_write_suppressed: bool,
     /// Raw PS2 motion blur retention factor (`0.0..=400.0`).
@@ -210,6 +233,10 @@ impl Default for SpecialFxEvaluation {
             dof_active: false,
             dof_tap_offset_px: [1.0 / 3.0, 2.0 / 3.0],
             dof_strength: 0.0,
+            dof_focus_dist_mm: 0.0,
+            dof_near_strength: 0.0,
+            dof_far_strength: 0.0,
+            dof_step_ps2_px: 0.0,
             closet_dof_byte_write_suppressed: false,
             raw_motion_blur_factor: 0.0,
             scaled_motion_blur_factor: 0.0,
@@ -230,9 +257,36 @@ impl SpecialFxEvaluation {
         let at_closet_bars_cam = input.demo_no == CS_APT_RPT_CLOSET_DEMO_NO
             && (input.camera_pos_x - CLOSET_BLURRED_BARS_HIDE_CAM_X).abs() < 1.0;
 
-        let (dof_active, base_val1, base_val2, base_strength) = match input.demo_no {
-            CS_INTRO_BATHROOM_DEMO_NO => (true, -3.0, -1.5, 0.45),
-            CS_TUNNEL_RADIO_DEMO_NO => (true, -3.0, -1.0, 0.45),
+        let (
+            dof_active,
+            base_val1,
+            base_val2,
+            base_strength,
+            dof_focus_dist_mm,
+            dof_near_strength,
+            dof_far_strength,
+            dof_step_ps2_px,
+        ) = match input.demo_no {
+            CS_INTRO_BATHROOM_DEMO_NO => {
+                // Exact `sh2pc.exe` `0x005a1f30` (`Toilet_Dof_Filter`, `EffectMode = 8`):
+                // racks focus from foreground urinal (frame 1) onto James in background (frame 615+).
+                let near_128 = ((input.scene_frame - 1.0) * TOILET_DOF_RAMP_SLOPE + 1.0)
+                    .clamp(1.0, TOILET_DOF_NEAR_MAX_128);
+                let far_128 = ((TOILET_DOF_FAR_COMPLEMENT_128 - near_128) * 0.5).max(0.0);
+                let near_s = (near_128 / 128.0).clamp(0.0, 1.0);
+                let far_s = (far_128 / 128.0).clamp(0.0, 1.0);
+                (
+                    true,
+                    -3.0,
+                    -1.5,
+                    near_s.max(far_s),
+                    TOILET_DOF_FOCUS_DIST_MM,
+                    near_s,
+                    far_s,
+                    TOILET_DOF_STEP_PS2_PX,
+                )
+            }
+            CS_TUNNEL_RADIO_DEMO_NO => (true, -3.0, -1.0, 0.45, 0.0, 0.0, 0.0, 0.0),
             CS_APT_RPT_CLOSET_DEMO_NO => {
                 let active = input.scene_frame < CLOSET_BLURRED_BARS_FIXED_DESPAWN_FRAME;
                 let width_scale = (input.viewport_aspect / AUTHORED_4X3_ASPECT).max(1.0);
@@ -242,10 +296,14 @@ impl SpecialFxEvaluation {
                     1.5 * width_scale,
                     -1.5,
                     if active { strength } else { 0.0 },
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
                 )
             }
-            _ if input.room_id == R_HTL_RM_312_ID => (true, -2.0, -4.0, 0.35),
-            _ => (false, 1.0 / 3.0, 2.0 / 3.0, 0.0),
+            _ if input.room_id == R_HTL_RM_312_ID => (true, -2.0, -4.0, 0.35, 0.0, 0.0, 0.0, 0.0),
+            _ => (false, 1.0 / 3.0, 2.0 / 3.0, 0.0, 0.0, 0.0, 0.0, 0.0),
         };
 
         let dof_tap_offset_px = [base_val1 * display_ratio, base_val2 * display_ratio];
@@ -296,6 +354,10 @@ impl SpecialFxEvaluation {
             dof_active,
             dof_tap_offset_px,
             dof_strength: if dof_active { base_strength } else { 0.0 },
+            dof_focus_dist_mm,
+            dof_near_strength,
+            dof_far_strength,
+            dof_step_ps2_px,
             closet_dof_byte_write_suppressed: at_closet_bars_cam,
             raw_motion_blur_factor,
             scaled_motion_blur_factor,

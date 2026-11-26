@@ -139,22 +139,44 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     rooms::combat_arena::render::update_atmosphere_fog_uniforms(state, alpha);
     let det_fog_time = state.fog_uniforms.time;
 
-    let (dof_tap_offset_px, dof_strength, motion_blur_strength) = if is_viewer || is_grapple_room {
-        ([1.0 / 3.0, 2.0 / 3.0], 0.0, 0.0)
-    } else if let Some(session) = state
-        .drama_demo_session
-        .as_ref()
-        .filter(|s| s.player.locks_gameplay_input())
-    {
-        let fx = &session.player.special_fx;
-        (
-            fx.dof_tap_offset_px,
-            fx.dof_strength,
-            fx.motion_blur_strength,
-        )
-    } else {
-        ([1.0 / 3.0, 2.0 / 3.0], 0.0, 0.0)
-    };
+    let dof_enabled = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .depth_of_field;
+    let (dof_tap_offset_px, dof_strength, dof_focus_params, motion_blur_strength) =
+        if is_viewer || is_grapple_room {
+            ([1.0 / 3.0, 2.0 / 3.0], 0.0, [0.0; 4], 0.0)
+        } else if let Some(session) = state
+            .drama_demo_session
+            .as_ref()
+            .filter(|s| s.player.locks_gameplay_input())
+        {
+            let fx = &session.player.special_fx;
+            if dof_enabled {
+                (
+                    fx.dof_tap_offset_px,
+                    fx.dof_strength,
+                    [
+                        fx.dof_focus_dist_mm,
+                        fx.dof_near_strength,
+                        fx.dof_far_strength,
+                        fx.dof_step_ps2_px,
+                    ],
+                    fx.motion_blur_strength,
+                )
+            } else {
+                (
+                    [1.0 / 3.0, 2.0 / 3.0],
+                    0.0,
+                    [0.0; 4],
+                    fx.motion_blur_strength,
+                )
+            }
+        } else {
+            ([1.0 / 3.0, 2.0 / 3.0], 0.0, [0.0; 4], 0.0)
+        };
 
     let aces_enabled = state
         .menu_ctrl
@@ -194,6 +216,7 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
             dof_strength,
             motion_blur_strength,
             flags: post_flags,
+            dof_focus_params,
             ..sh2_renderer::post::PostUniforms::default()
         });
 

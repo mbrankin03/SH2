@@ -166,6 +166,14 @@ impl RenderContext {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(&post_pipeline.ps2_noise_sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: camera_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -192,6 +200,14 @@ impl RenderContext {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(&post_pipeline.ps2_noise_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: camera_buffer.as_entire_binding(),
                 },
             ],
         });

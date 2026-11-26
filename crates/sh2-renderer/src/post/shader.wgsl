@@ -11,6 +11,14 @@ struct PostUniforms {
     glow_strength: f32,
     glow_step_px: f32,
     fade_rgba: vec4<f32>,
+    dof_focus_params: vec4<f32>,
+};
+
+struct CameraUniforms {
+    view_proj: mat4x4<f32>,
+    inv_proj: mat4x4<f32>,
+    cam_pos: vec4<f32>,
+    inv_view_proj: mat4x4<f32>,
 };
 
 const POST_FLAG_ACES_TONEMAP: u32 = 1u;
@@ -54,6 +62,8 @@ const PS2_VIRTUAL_HEIGHT_PX: f32 = 448.0;
 @group(0) @binding(2) var ldr_out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(3) var ps2_noise_tex: texture_2d<f32>;
 @group(0) @binding(4) var ps2_noise_sampler: sampler;
+@group(0) @binding(5) var depth_tex: texture_depth_2d;
+@group(0) @binding(6) var<uniform> camera: CameraUniforms;
 
 // Optional ACES filmic tonemapping approximation (native-upgrade, disabled in strict Vanilla PS2 mode)
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
@@ -96,12 +106,46 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     var hdr_color = textureLoad(hdr_in, sample_coords, 0).rgb * post.exposure;
 
-    // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) 2x2 DoF blur:
-    //     `post.dof_tap_offset_px` is already display-scaled by `SpecialFxEvaluation`
-    //     (`base * (viewport_height / 1080.0)`), so sample the 2x2 box symmetrically at
-    //     `[-0.5, +0.5] * dof_tap_offset_px` without double-scaling by `res_scale`, and
-    //     accumulate all 4 taps into the running buffer (GS `ALPHA_1 = (FIX << 32) | 0x64`).
-    if (post.dof_strength > 0.001) {
+    // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) Depth-of-Field:
+    //     - Dual-plane `EffectMode = 8` (`sh2pc.exe` `0x005a1f30` `Toilet_Dof_Filter`): reconstructs
+    //       view-space distance from `depth_tex` + `camera.inv_proj`, splits foreground (`< focus`)
+    //       vs background (`>= focus`) at `dof_focus_params.x`, and applies a smooth 5x5 Gaussian
+    //       kernel over `±(step_ps2_px * res_scale)` matching `grid_n = 3, step = 8` (`0x5a1fbe`).
+    //     - Single-plane `EffectMode = 5` (closet bars / tunnel): 2x2 box at `dof_tap_offset_px`.
+    if (post.dof_focus_params.x > 0.001) {
+        let depth_val = textureLoad(depth_tex, sample_coords, 0);
+        let uv_px = (vec2<f32>(sample_coords) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
+        let clip_pos = vec4<f32>(uv_px.x * 2.0 - 1.0, (1.0 - uv_px.y) * 2.0 - 1.0, depth_val, 1.0);
+        let view_pos_h = camera.inv_proj * clip_pos;
+        let view_dist = length(view_pos_h.xyz / max(1e-5, abs(view_pos_h.w)));
+
+        let focus_mm = post.dof_focus_params.x;
+        let near_mask = smoothstep(focus_mm + 120.0, focus_mm - 120.0, view_dist);
+        let far_mask = 1.0 - near_mask;
+        let local_blur = clamp(
+            near_mask * post.dof_focus_params.y + far_mask * post.dof_focus_params.z,
+            0.0,
+            1.0,
+        );
+        if (local_blur > 0.001) {
+            let radius_px = max(post.dof_focus_params.w, 1.0) * res_scale;
+            let step_px = radius_px * 0.5;
+            var tap_sum = vec3<f32>(0.0);
+            var w_sum = 0.0;
+            for (var iy: i32 = -2; iy <= 2; iy = iy + 1) {
+                let wy = select(select(1.0, 4.0, abs(iy) == 1), 6.0, iy == 0);
+                for (var ix: i32 = -2; ix <= 2; ix = ix + 1) {
+                    let wx = select(select(1.0, 4.0, abs(ix) == 1), 6.0, ix == 0);
+                    let w = wx * wy;
+                    let delta = vec2<i32>(round(vec2<f32>(f32(ix), f32(iy)) * step_px));
+                    let tap = textureLoad(hdr_in, clamp(sample_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
+                    tap_sum = tap_sum + tap * w;
+                    w_sum = w_sum + w;
+                }
+            }
+            hdr_color = mix(hdr_color, tap_sum / w_sum, local_blur);
+        }
+    } else if (post.dof_strength > 0.001) {
         let dof_alpha = clamp(post.dof_strength, 0.0, 1.0);
         let ox0 = -0.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;
         let ox1 = 0.5 * post.dof_tap_offset_px.x + PS2_SWAP_SUBPIXEL_BIAS_PX;

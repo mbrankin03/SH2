@@ -240,13 +240,10 @@ fn configure_ob01_fog_and_valley_mist(
     ctx.update_fog(&fog_u);
 
     // Step authentic `obGB.fcl` valley mist particle cloud (`fogSetLocalPosV` `0x0016c6d0`,
-    // `bVar2 = 0x21`: valley Z-lock + floor fade band `Y = -700..0 mm`)
-    let mut vol = FogParticleVolume::new(
-        eval.particle_count,
-        eval.particle_range_x_mm,
-        eval.particle_range_z_mm,
-    );
-    let anchor = [player_pos.x, player_pos.y + 150.0, 6_000.0];
+    // `bVar2 = 0x21`: valley Z-lock + floor fade band `Y = -700..0 mm`), concentrated cleanly
+    // between the stone parapet (`Z = 400 mm`) and Toluca Lake skybox (`Z = 5800 mm`).
+    let mut vol = FogParticleVolume::new(eval.particle_count, eval.particle_range_x_mm, 2_700.0);
+    let anchor = [player_pos.x, player_pos.y - 450.0, 3_100.0];
     vol.step(
         1.0 / 30.0,
         eval.speed_mult,
@@ -259,7 +256,7 @@ fn configure_ob01_fog_and_valley_mist(
     let gpu_particles: Vec<GpuFogParticle> = vol
         .particles()
         .iter()
-        .filter(|p| (anchor[2] + p.local_pos[2]) > 200.0)
+        .filter(|p| (400.0..=5_800.0).contains(&(anchor[2] + p.local_pos[2])))
         .map(|p| GpuFogParticle {
             world_pos_radius: [
                 anchor[0] + p.local_pos[0],

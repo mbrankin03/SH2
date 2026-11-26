@@ -162,22 +162,30 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         } else {
             sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_COUNT
         };
+        // On `ob01`, concentrate the full valley mist particle budget cleanly between the stone
+        // parapet (`Z = 400 mm`) and the Toluca Lake skybox (`Z = 5800 mm < 6394 mm`) so zero
+        // billboards spill onto the parking lot or clip into the lake backdrop mesh.
+        let effective_range_z = if ps2_room_id == R_OBSV_DECK_ID {
+            2_700.0
+        } else {
+            room_eval.particle_range_z_mm
+        };
         state.fog_particles.reconfigure(
             target_count,
             room_eval.particle_range_x_mm,
-            room_eval.particle_range_z_mm,
+            effective_range_z,
         );
         // Exact `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2958-2997`) +
         // `obGB.fcl` (`bVar2 = 0x21`: bit 0 floor cutoff `param_1[5]=0, param_1[6]=700` -> fade
         // band `Y = -700..0 mm`; bit 5 `0x20` valley Z-lock): on `ob01`, anchor the valley mist
-        // volume out over the cliff/valley (`Z = player_pos.z + 5500 mm`, `Y = player_pos.y + 150 mm`)
-        // so `700 mm` billboards rise behind the stone parapet (`Y = -700..+850 mm`) and seamlessly
-        // veil the dark bottom treeline of `tex4662/4663/4664` (`Z = 6394..11606 mm`) while depth
-        // testing keeps the parking lot & car completely crisp.
+        // volume out over the cliff/valley (`Z = 6000 mm`, `Y = player_pos.y - 450 mm`, filtered
+        // to `world_z > 400 mm` behind the stone parapet) so `700..1026 mm` billboards span
+        // `Y = -1475..+575 mm`, completely veiling the dark bottom treeline of `tex4662/4663/4664`
+        // (`Z = 6394..11606 mm`) while keeping the parking lot, blue car, and parapet crisp.
         let cam_to_player = player_pos - cam_eye;
         let cam_dist = cam_to_player.length();
         let anchor = if ps2_room_id == R_OBSV_DECK_ID {
-            [player_pos.x, player_pos.y + 150.0, 6_000.0]
+            [player_pos.x, player_pos.y - 450.0, 3_100.0]
         } else if cam_dist > 2_000.0 {
             let projected = cam_eye + (cam_to_player / cam_dist) * 2_000.0;
             [
@@ -216,7 +224,10 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
                 .fog_particles
                 .particles()
                 .iter()
-                .filter(|p| ps2_room_id != R_OBSV_DECK_ID || (anchor[2] + p.local_pos[2]) > 200.0)
+                .filter(|p| {
+                    ps2_room_id != R_OBSV_DECK_ID
+                        || (400.0..=5_800.0).contains(&(anchor[2] + p.local_pos[2]))
+                })
                 .map(|p| GpuFogParticle {
                     world_pos_radius: [
                         anchor[0] + p.local_pos[0],

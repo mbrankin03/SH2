@@ -30,7 +30,7 @@ fn sh2_122_map_batch_render_state_matches_sh2pc_and_slus() {
     let decal = map_batch_render_state(BatchGroup::Decal);
     assert_eq!(decal.front_face, wgpu::FrontFace::Ccw);
     assert_eq!(decal.cull_mode, Some(wgpu::Face::Back));
-    assert!(!decal.depth_write_enabled);
+    assert!(decal.depth_write_enabled);
     assert!(decal.alpha_blending);
     assert!((decal.alpha_test_threshold - MAP_ALPHA_TEST_THRESHOLD).abs() < 1e-7);
 

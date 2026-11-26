@@ -354,10 +354,11 @@ mod tests {
 
     #[test]
     fn test_sh2_166_look_hp_glitch_scanlines_respect_16px_overscan_offset() {
-        // Retail PC `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7524-7810`):
+        // Retail PC `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7524-7810`, `7693-7740`):
         // on a `512x480` canvas, Status snapshot occupies `x in [26..166)` and
-        // `y in [49 + 16 .. 49 + 16 + 105) = [65..170)`. Every glitch scanline pixel must stay
-        // strictly inside `[65..170)` (never leaking above `y = 65`).
+        // `y in [49 + 16 .. 49 + 16 + 105) = [65..170)`, and 2px glitch strips have
+        // `y_off = rand() % 0x69` (`0..=104`) -> max top `65 + 104 = 169`, max bottom `169 + 2 = 171`
+        // (written pixel rows `65..171`, never leaking above `y = 65` or past `y = 170`).
         let mut ecg = HealthEcgState::new();
         ecg.pulse_brightness = 1.0;
         let mut rast = TextRasterizer::new(512, 480);
@@ -372,8 +373,8 @@ mod tests {
                     let px = &rast.pixels[(y * 512 + x) * 4..][..4];
                     if px[3] > 0 {
                         assert!(
-                            (26..166).contains(&x) && (65..172).contains(&y),
-                            "pixel ({x}, {y}) leaked outside Status snapshot rect [26..166) x [65..170)"
+                            (26..166).contains(&x) && (65..171).contains(&y),
+                            "pixel ({x}, {y}) leaked outside Status snapshot/glitch rect [26..166) x [65..171)"
                         );
                         if px[0] > 0 {
                             saw_glitch = true;

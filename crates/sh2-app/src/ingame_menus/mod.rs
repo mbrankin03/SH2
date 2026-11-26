@@ -537,6 +537,11 @@ pub(crate) fn render_overlay(
             font,
             &mut state.menu_rasterizer,
         );
+        if let Some((mx, my)) = state.last_cursor_pos {
+            let norm_x = (mx as f32) / state.surface_config.width.max(1) as f32;
+            let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
+            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
+        }
         if state.ingame_menus.options_fade_alpha > 0.001 {
             let a = (state.ingame_menus.options_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
             let rw = state.menu_rasterizer.width;

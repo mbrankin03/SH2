@@ -181,7 +181,9 @@ impl CutawayOverlayEngine {
         }
         match self.kind {
             OverlayKind::InCar => {
-                if flags.get(28) {
+                // `stg_ovservation.c` `ev_prog[2]` (`0x005a09b0`) & `EvRoomInit` (`0x005a1353`):
+                // Map of Silent Hill pickup flag is `24` (`0x18`, `0x01f7a9e3 & 1`).
+                if flags.get(24) {
                     self.incar_alpha = (self.incar_alpha - dt).max(0.0);
                 } else {
                     self.incar_alpha = 1.0;
@@ -230,7 +232,7 @@ impl CutawayOverlayEngine {
                 (OverlayKind::Manacles, Some("dls/p_manacles_off"))
             }
             "out_p_incar" => {
-                self.incar_alpha = if flags.get(28) { 0.0 } else { 1.0 };
+                self.incar_alpha = if flags.get(24) { 0.0 } else { 1.0 };
                 (OverlayKind::InCar, Some("out/p_incar_map"))
             }
             _ => (OverlayKind::None, None),

@@ -175,7 +175,8 @@ pub fn act1_eval_stage_init(stage: Act1StageId, flags: &mut EventFlags) {
     }
 }
 
-/// Evaluates `EvBgmControl` (`Stage_Data::bgm_control`) returning the active BGM channel bitmask.
+/// Evaluates `EvBgmControl` (`Stage_Data::bgm_control`) returning the active BGM channel bitmask
+/// for normal gameplay (`demo_active = false`, `sys.flag & 0x40 == 0`).
 ///
 /// Ported 1:1 from `stg_toilet` (`0x005a1b30`), `stg_ovservation` (`0x005a1390`), `stg_apart_e2f`
 /// (`0x0059bea0`), `stg_apart_e3fw` (`0x00599a40`), `stg_apart_stair` (`0x00596640`), `stg_town_west`
@@ -183,6 +184,24 @@ pub fn act1_eval_stage_init(stage: Act1StageId, flags: &mut EventFlags) {
 /// `stg_hospital_1fw_b` (`0x0058c2b0`), and `stg_hospital_pass` (`0x00587f50`).
 #[must_use]
 pub fn act1_eval_bgm_control(stage: Act1StageId, flags: &EventFlags, active_bgm_id: u32) -> u32 {
+    act1_eval_bgm_control_with_demo(stage, flags, active_bgm_id, false)
+}
+
+/// Evaluates `EvBgmControl` (`Stage_Data::bgm_control`) with explicit `demo_active` state
+/// (`sh2pc.exe` `DAT_00932194 & 0x40`, set while a `DramaDemo` is running).
+///
+/// For `Act1StageId::Observation` (`sh2pc.exe` `0x005a1390..0x005a13b8`):
+/// - When `demo_active == true` (`0x00932194 & 0x40 != 0`): returns `0x0e` if `flag(517)`
+///   (`0x01f7aa20 & 0x20`) is set, else `0x04`.
+/// - When `demo_active == false` (gameplay): returns `1` if `flag(36)`
+///   (`(0x01f7a9e4 >> 4) & 1`) is set, else `0`.
+#[must_use]
+pub fn act1_eval_bgm_control_with_demo(
+    stage: Act1StageId,
+    flags: &EventFlags,
+    active_bgm_id: u32,
+    demo_active: bool,
+) -> u32 {
     match stage {
         Act1StageId::Toilet => {
             // `0x005a1b30`: `0x1f7a9e4` bit 4 (`flag 36`) -> `1`, else `!bit 1` (`!flag 33`) -> `4`.
@@ -195,9 +214,15 @@ pub fn act1_eval_bgm_control(stage: Act1StageId, flags: &EventFlags, active_bgm_
             }
         }
         Act1StageId::Observation => {
-            // `0x005a1390`: `flag(517)` -> `0x0e`, else `flag(36)` -> `1`.
-            if flags.get(517) {
-                0x0e
+            // `0x005a1390..0x005a13b8`:
+            // - `test byte ptr [0x00932194], 0x40`: demo active -> `flag(517) ? 0x0e : 0x04`
+            // - gameplay -> `flag(36) ? 1 : 0`
+            if demo_active {
+                if flags.get(517) {
+                    0x0e
+                } else {
+                    0x04
+                }
             } else {
                 u32::from(flags.get(36))
             }

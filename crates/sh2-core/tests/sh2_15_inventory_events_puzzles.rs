@@ -446,8 +446,8 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
     assert!(state.inventory_mgr.has_item(20));
     assert!(state.inventory_mgr.has_item(21));
 
-    // Run Stage 3 #1: Observation deck car map pickup (s03_item_in_car, completion flag 28)
-    state.prog_runner.start(3, 1, 28);
+    // Run Stage 3 #2 (`0x005a09b0`): Observation deck car map pickup (completion flag 24 / 0x18)
+    state.prog_runner.start(3, 2, 24);
     assert!(state.prog_runner.is_running());
 
     // Step 0 -> 1: opens out_p_incar with out/p_incar_map at alpha 1.0, locks player
@@ -489,7 +489,7 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
         assert!((incar_quad.vertices[2].1 - ((y0_q4 + 0x1000) as f32 / 16.0)).abs() < 1e-5);
     }
 
-    // Press A -> triggers SE 0x2b17 and begins 1.0s map fade
+    // Press A -> triggers SE 0x2b17 (`0x005a0ae9`) and opens stage message 28 (`0x1c`, `0x005a0b47`)
     assert!(state.prog_runner.tick(
         PROG_KEY_A,
         0,
@@ -501,6 +501,20 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
         state.riddle_difficulty,
     ));
     assert_eq!(state.prog_runner.sound_effects(), &[0x2b17]);
+    assert_eq!(state.prog_runner.active_message_id(), Some(28));
+
+    // Press A to dismiss stage message 28 -> begins 1.0s map fade (`0x005a0b71`)
+    assert!(state.prog_runner.tick(
+        PROG_KEY_A,
+        0,
+        0.016,
+        &mut state.flags,
+        &mut state.puzzle_state,
+        &mut state.inventory_mgr,
+        &mut state.cutaway_overlay,
+        state.riddle_difficulty,
+    ));
+    assert_eq!(state.prog_runner.active_message_id(), None);
 
     // Advance 0.5s -> alpha fades to 0.5
     assert!(state.prog_runner.tick(
@@ -515,8 +529,8 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
     ));
     assert!((state.cutaway_overlay.incar_alpha() - 0.5).abs() < 1e-4);
 
-    // Advance another 0.6s -> fade finishes (alpha 0.0), opens message 49 ("Got the map of Silent Hill.")
-    assert!(state.prog_runner.tick(
+    // Advance another 0.6s -> fade finishes (alpha 0.0), hides picture, unlocks player, sets flag 24 (`0x18`)
+    assert!(!state.prog_runner.tick(
         0,
         0,
         0.6,
@@ -526,22 +540,8 @@ fn test_cutaway_overlay_engine_and_car_map_pickup_program() {
         &mut state.cutaway_overlay,
         state.riddle_difficulty,
     ));
-    assert_eq!(state.prog_runner.active_message_id(), Some(49));
-    assert_eq!(state.cutaway_overlay.frame_sprites().len(), 0);
-
-    // Press A to close message -> hides picture, unlocks player, sets completion flag 28
-    assert!(!state.prog_runner.tick(
-        PROG_KEY_A,
-        0,
-        0.016,
-        &mut state.flags,
-        &mut state.puzzle_state,
-        &mut state.inventory_mgr,
-        &mut state.cutaway_overlay,
-        state.riddle_difficulty,
-    ));
     assert!(!state.prog_runner.is_player_locked_check_helper());
-    assert!(state.has_flag(28));
+    assert!(state.has_flag(24));
     assert_eq!(state.cutaway_overlay.active_picture(), None);
 
     // Verify all interactive puzzle overlays emit valid sprite quads

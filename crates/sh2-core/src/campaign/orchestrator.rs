@@ -12,13 +12,15 @@ use crate::cutscene::{find_drama_demo_by_no, CutsceneSequenceStep};
 use crate::event_camera::{EventCameraSystem, PostSequenceRestorePolicy};
 use crate::events::engine::{EventEngine, StageTransitionCommand};
 use crate::events::is_connected_stage_pair;
+use crate::events::stages_act1::{act1_eval_bgm_control_with_demo, act1_stage_descriptor};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
 use crate::world::OutdoorTileStreamer;
 
 use super::connect::{step_connect_pipeline, ConnectRequest, ConnectStepOutcome};
 use super::cutscene_handoff::{
-    apply_post_cutscene_handoff, DramaDemoTrigger, FmvTrigger, AUTO_STAGE_DEMO_RULES,
+    apply_post_cutscene_handoff, apply_post_demo_stage_flags, tick_demo_stage_hooks,
+    DramaDemoTrigger, FmvTrigger, AUTO_STAGE_DEMO_RULES,
 };
 use super::gameplay::{run_active_gameplay, run_prologue, GameplayStepOutcome};
 use super::io::{CampaignEffects, CampaignTickInput};
@@ -316,6 +318,9 @@ impl CampaignOrchestrator {
                     } => {
                         self.request_transition(current_stage, command, None);
                     }
+                    GameplayStepOutcome::StartDemo(trigger) => {
+                        self.start_drama_demo(trigger, &mut effects);
+                    }
                     GameplayStepOutcome::TriggerEnding(ending_stage) => {
                         self.trigger_ending(ending_stage);
                     }
@@ -384,12 +389,14 @@ impl CampaignOrchestrator {
                 restore_policy,
                 chain_cursor,
             } => {
+                tick_demo_stage_hooks(demo_no, input.drama_demo_frame, &mut sim.scenario.flags);
                 if input.cancel_pressed {
                     for rule in AUTO_STAGE_DEMO_RULES {
                         if rule.demo_no == demo_no {
                             sim.scenario.flags.set(rule.completion_flag, true);
                         }
                     }
+                    apply_post_demo_stage_flags(demo_no, &mut sim.scenario.flags);
                     if demo_no == 88 {
                         self.trigger_ending(48);
                     } else {
@@ -455,6 +462,7 @@ impl CampaignOrchestrator {
                                     sim.scenario.flags.set(rule.completion_flag, true);
                                 }
                             }
+                            apply_post_demo_stage_flags(demo_no, &mut sim.scenario.flags);
                             apply_post_cutscene_handoff(
                                 sim,
                                 &mut self.event_camera,
@@ -566,6 +574,16 @@ impl CampaignOrchestrator {
                     }
                 }
             }
+        }
+
+        if let Some(desc) = act1_stage_descriptor(sim.scenario.current_stage as u8) {
+            let demo_active = matches!(self.phase, CampaignPhase::DramaDemo { .. });
+            effects.bgm_control_mask = Some(act1_eval_bgm_control_with_demo(
+                desc.stage_id,
+                &sim.scenario.flags,
+                0,
+                demo_active,
+            ));
         }
 
         effects.fade_alpha = self.fade.black_alpha();

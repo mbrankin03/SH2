@@ -1,7 +1,11 @@
 //! Active-gameplay (`EventMain` `0x001a7810` / `EventMainStandard` `0x001a7b50`) and
 //! new-game prologue (`PlayableMain` step `0` `0x0020b414`) handlers for [`CampaignOrchestrator`].
 
+use glam::Vec3;
+
 use crate::config::{ActionDifficulty, RiddleDifficulty};
+use crate::cutscene::find_drama_demo_by_no;
+use crate::event_camera::PostSequenceRestorePolicy;
 use crate::events::engine::{EventEngine, EventEngineEffects, StageTransitionCommand};
 use crate::events::stages_act1::act1_stage_descriptor;
 use crate::events::stages_act2::stage_table_act2;
@@ -12,6 +16,7 @@ use crate::simulation::SimulationCore;
 use crate::types::ItemListEntry;
 use crate::world::OutdoorTileStreamer;
 
+use super::cutscene_handoff::{DramaDemoTrigger, AUTO_STAGE_DEMO_RULES};
 use super::io::{CampaignEffects, CampaignTickInput};
 use super::retail_events::{evaluate_retail_item_pickups, evaluate_retail_stage_events};
 use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest};
@@ -33,6 +38,8 @@ pub(crate) enum GameplayStepOutcome {
         current_stage: u16,
         command: StageTransitionCommand,
     },
+    /// `StageProgramRunner` (`ev_prog`) requested launching a real-time `.dds` cutscene (`p_demo`).
+    StartDemo(DramaDemoTrigger),
     /// `p_game_end` triggered an ending sequence (`GameendMain` `0x001c4830`).
     TriggerEnding(u16),
 }
@@ -128,29 +135,52 @@ pub(crate) fn run_active_gameplay(
         let down = (if input.action_pressed { PROG_KEY_A } else { 0 })
             | (if input.cancel_pressed { PROG_KEY_B } else { 0 });
         let riddle = sim.scenario.riddle_difficulty;
-        let scen = &mut sim.scenario;
-        let still_running = scen.prog_runner.tick(
-            down,
-            down,
-            dt_sec,
-            &mut scen.flags,
-            &mut scen.puzzle_state,
-            &mut scen.inventory_mgr,
-            &mut scen.cutaway_overlay,
-            riddle,
-        );
-        *player_locked = still_running && scen.prog_runner.is_player_locked();
-        effects
-            .sound_effects
-            .extend_from_slice(scen.prog_runner.sound_effects());
-        if let Some(msg_id) = scen.prog_runner.active_message_id() {
-            if msg_id >= 0 {
-                effects.stage_message = Some(msg_id as u16);
+        let (still_running, walkback_delta, requested_demo, ending_bit) = {
+            let scen = &mut sim.scenario;
+            let still_running = scen.prog_runner.tick(
+                down,
+                down,
+                dt_sec,
+                &mut scen.flags,
+                &mut scen.puzzle_state,
+                &mut scen.inventory_mgr,
+                &mut scen.cutaway_overlay,
+                riddle,
+            );
+            *player_locked = still_running && scen.prog_runner.is_player_locked();
+            effects
+                .sound_effects
+                .extend_from_slice(scen.prog_runner.sound_effects());
+            if let Some(msg_id) = scen.prog_runner.active_message_id() {
+                if msg_id >= 0 {
+                    effects.stage_message = Some(msg_id as u16);
+                }
+            } else if !still_running {
+                effects.clear_message = true;
             }
-        } else if !still_running {
-            effects.clear_message = true;
+            (
+                still_running,
+                scen.prog_runner.take_walkback_delta(),
+                scen.prog_runner.take_requested_demo(),
+                scen.prog_runner.take_triggered_ending(),
+            )
+        };
+        if let Some(delta) = walkback_delta {
+            let target = sim.scenario.player_position + Vec3::from_array(delta);
+            sim.snap_player_transform(target, sim.scenario.player_yaw);
         }
-        if let Some(_ending_bit) = scen.prog_runner.take_triggered_ending() {
+        if let Some(demo_no) = requested_demo {
+            let rule = AUTO_STAGE_DEMO_RULES.iter().find(|r| r.demo_no == demo_no);
+            return GameplayStepOutcome::StartDemo(DramaDemoTrigger {
+                demo_no,
+                demo_id: find_drama_demo_by_no(demo_no as u16).map(|d| d.id),
+                post_pos: rule.and_then(|r| r.post_pos),
+                post_yaw: rule.and_then(|r| r.post_yaw),
+                restore_policy: PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+            });
+        }
+        let _ = still_running;
+        if let Some(_ending_bit) = ending_bit {
             return GameplayStepOutcome::TriggerEnding(stage_id);
         }
     } else {

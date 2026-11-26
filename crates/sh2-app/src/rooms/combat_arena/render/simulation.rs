@@ -67,6 +67,12 @@ fn sync_pocket_radio_inputs(state: &mut AppState, is_paused: bool) {
     let wvs_matrix = state.sim_core.active_ps2_wvs_matrix(1.0);
     let ducking_state = resolve_radio_ducking_state(state, is_paused);
     let radio_volume = state.ingame_menus.inventory.radio_volume;
+    let radio_active_room = state.active_test_room == TestRoomKind::CombatArena
+        || state.campaign_orchestrator.is_some();
+    let radio_enabled = radio_active_room
+        && (state.active_test_room == TestRoomKind::CombatArena
+            || state.sim_core.scenario.radio_on);
+    state.combat_arena.radio_enabled = radio_enabled;
     state
         .combat_arena
         .ai
@@ -77,11 +83,7 @@ fn sync_pocket_radio_inputs(state: &mut AppState, is_paused: bool) {
 
 fn step_pocket_radio(state: &mut AppState, dt: Duration, is_paused: bool) {
     sync_pocket_radio_inputs(state, is_paused);
-    let radio_active_room = state.active_test_room == TestRoomKind::CombatArena
-        || state.campaign_orchestrator.is_some();
-    let radio_enabled = radio_active_room
-        && (state.active_test_room == TestRoomKind::CombatArena
-            || state.sim_core.scenario.radio_on);
+    let radio_enabled = state.combat_arena.radio_enabled;
     if is_paused || !radio_enabled {
         let player_pos = state.sim_core.scenario.player_position;
         state

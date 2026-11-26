@@ -174,19 +174,52 @@ impl CampaignRoomController {
                 .position(|d| u32::from(d.demo_no) == demo.demo_no)
                 .unwrap_or(0);
             state.selected_drama_demo_idx = catalog_idx;
-            state.drama_demo_session =
-                open_drama_demo_session(&state.render_ctx, catalog_idx, false);
-            let tex_quality = state
-                .menu_ctrl
-                .options_menu
-                .draft_config
-                .video
-                .texture_quality;
-            state.apply_texture_quality(tex_quality);
-            performed_sync_load = true;
+            let already_preloaded = state
+                .drama_demo_session
+                .as_ref()
+                .is_some_and(|s| s.catalog_index == catalog_idx);
+            if !already_preloaded {
+                state.drama_demo_session =
+                    open_drama_demo_session(&state.render_ctx, catalog_idx, false);
+                let tex_quality = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality;
+                state.apply_texture_quality(tex_quality);
+                performed_sync_load = true;
+            }
         }
 
         if let Some(fmv) = effects.start_fmv {
+            // Preload any chained `post_demo` (e.g. `first_toilet.dds` after `toilet.bik`)
+            // BEFORE starting FMV playback while the screen is black, matching PS2 `connectMain`
+            // RAM residency so FMV EOF transitions into frame 0 of the `.dds` cutscene with
+            // zero disk/GPU hitch (`SH2-150`).
+            if let Some(ref post_demo) = fmv.post_demo {
+                let catalog_idx = DRAMA_DEMO_CATALOG
+                    .iter()
+                    .position(|d| u32::from(d.demo_no) == post_demo.demo_no)
+                    .unwrap_or(0);
+                let already_preloaded = state
+                    .drama_demo_session
+                    .as_ref()
+                    .is_some_and(|s| s.catalog_index == catalog_idx);
+                if !already_preloaded {
+                    state.selected_drama_demo_idx = catalog_idx;
+                    state.drama_demo_session =
+                        open_drama_demo_session(&state.render_ctx, catalog_idx, false);
+                    let tex_quality = state
+                        .menu_ctrl
+                        .options_menu
+                        .draft_config
+                        .video
+                        .texture_quality;
+                    state.apply_texture_quality(tex_quality);
+                    performed_sync_load = true;
+                }
+            }
             if let Some((idx, entry)) = FMV_CATALOG
                 .iter()
                 .enumerate()

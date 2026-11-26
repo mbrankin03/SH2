@@ -836,7 +836,8 @@ fn test_sh2_150_fmv_exit_and_skip_fade_envelopes() {
         }
         assert!(orch.fade.black_alpha() < 0.01);
 
-        // Natural EOF hands off to `first_toilet` DramaDemo with `FadeDirection::FadeInFromBlack`
+        // Natural EOF hands off seamlessly to preloaded `first_toilet` DramaDemo without an
+        // extra 0.83s black fade-in (`SLUS_202.28` `gamemain.c:593-610` & SH2:EE).
         let eff_eof = orch.step(
             &mut sim,
             &CampaignTickInput {
@@ -850,8 +851,35 @@ fn test_sh2_150_fmv_exit_and_skip_fade_envelopes() {
             orch.phase,
             CampaignPhase::DramaDemo { demo_no, .. } if demo_no == u32::from(CS_INTRO_BATHROOM_DEMO_NO)
         ));
+        assert_eq!(eff_eof.fade_alpha, 0.0);
+
+        // Standalone FMV (no chained `post_demo`) returning directly to `ActiveGameplay`
+        // starts `FadeDirection::FadeInFromBlack` (respecting `delayed_fade_in_fix`).
+        let mut dummy_eff = sh2_core::campaign::CampaignEffects::default();
+        orch.start_fmv(
+            FmvTrigger {
+                movie_id: "murder",
+                post_stage: None,
+                post_pos: None,
+                post_yaw: None,
+                post_demo: None,
+                completion_flag: None,
+                chain_cursor: 0,
+            },
+            &mut dummy_eff,
+        );
+        let eff_gameplay_eof = orch.step(
+            &mut sim,
+            &CampaignTickInput {
+                fmv_finished: true,
+                prefer_sh2ee: delayed_fade,
+                ..Default::default()
+            },
+            1.0 / 60.0,
+        );
+        assert_eq!(orch.phase, CampaignPhase::ActiveGameplay);
         assert_eq!(orch.fade.direction, FadeDirection::FadeInFromBlack);
-        assert_eq!(eff_eof.fade_alpha, 1.0);
+        assert_eq!(eff_gameplay_eof.fade_alpha, 1.0);
 
         // After 1 tick (1/60s): SH2:EE delayed fade-in still holds black (`-0.133334 + 0.02 < 0`),
         // while strict Vanilla PS2 immediately starts ramping down (`1.0 - 0.02 = 0.98`).

@@ -593,8 +593,10 @@ impl CampaignOrchestrator {
             sim.scenario.flags.set(flag, true);
         }
         if let Some(demo) = post_demo {
-            self.fade
-                .start_fade_in(PS2_DEFAULT_FADE_SPEED, self.delayed_fade_in_fix);
+            // Retail `SLUS_202.28` `PlayableMain` case `0xe` (`gamemain.c:593-610`) & SH2:EE:
+            // natural FMV EOF (which already fades to dark inside the movie, e.g. `toilet.bik`)
+            // transitions directly into the preloaded chained `.dds` cutscene with no extra
+            // 0.83s black fade-in (`SH2-150`).
             self.start_drama_demo_at_cursor(*demo, chain_cursor + 1, effects);
         } else if let Some(next_stage) = post_stage {
             let cmd = StageTransitionCommand {

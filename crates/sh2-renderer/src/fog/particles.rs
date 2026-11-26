@@ -101,15 +101,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let falloff = 1.0 - r2;
     let radial = falloff * falloff;
-    let tex_n = textureSample(fog_tex, fog_sampler, in.uv).r;
-    // Exact PS2 GS `ALPHA_1 = 0x44` (`fogMakePacket` `0x0016bb70`, `fog_part_alp` `0x0016b9a0`):
-    // `fog.tex` cloud density modulated by evaluated particle alpha (`in.color_alpha.a`, e.g.
-    // `obGB.fcl +0x13 = 0x30/128 = 0.375` on `ob01`).
-    let alpha = radial * tex_n * in.color_alpha.a;
+    let texel = textureSample(fog_tex, fog_sampler, in.uv);
+    // Exact `sh2pc.exe` `FUN_00486fc0` (`0x00486fc0`, `sh2pc_00480000.c:4285-4290`):
+    // `D3DTSS_COLOROP = D3DTOP_MODULATE2X (5)` with `diffuse.rgb = 0x80/255` -> `texel.rgb * in.color_alpha.rgb`
+    // (preserving `fog.tex`'s ~0.51 soft-gray mist tone instead of pure white),
+    // and `D3DTSS_ALPHAOP = D3DTOP_MODULATE (4)` with `D3DBLEND_SRCALPHA` (`48/255` on `ob01`).
+    let alpha = radial * texel.r * in.color_alpha.a;
     if (alpha < 0.003) {
         discard;
     }
-    return vec4<f32>(in.color_alpha.rgb, alpha);
+    return vec4<f32>(in.color_alpha.rgb * texel.rgb, alpha);
 }
 "#;
 

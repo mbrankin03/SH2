@@ -80,10 +80,11 @@ pub const OB_FOG_ANCHOR_Z_MM: f32 = 7000.0;
 /// `sh2pc_00480000.c:4194-4205`): `(area * 2.0) / (1 << subdiv) = (7000.0 * 2.0) / 16.0 = 875.0 mm`
 /// (`local_y ∈ [-875.0, 0.0]` -> world `Y ∈ [+125.0, +1000.0] mm`).
 pub const OB_FOG_Y_SPAN_MM: f32 = 875.0;
-/// Exact `obGB.fcl +0x13` (`0x97 = 0x30 = 48`) normalized PS2 GS sprite alpha (`48.0 / 128.0 = 0.375`),
-/// verified in `SLUS_202.28` `fogSetEnvironment` (`Fog/fog.c:305`) and `sh2pc.exe` `FUN_004858a0`
-/// (`sh2pc_00480000.c:3302-3307`).
-pub const OB_FOG_ALPHA_NORM: f32 = 48.0 / 128.0;
+/// Exact `obGB.fcl +0x13` (`0x97 = 0x30 = 48`) normalized D3D8 `SRCALPHA` sprite alpha
+/// (`48.0 / 255.0 ≈ 0.1882`), verified in `sh2pc.exe` `sh2pc_00480000.c:5684,5719-5720`
+/// (`(0x80 * 48) * 0.0078125 = 48 -> (48 << 24) | 0x808080`, blended via `D3DBLEND_SRCALPHA`
+/// `FUN_00486fc0` `0x00486fc0` `sh2pc_00480000.c:4271-4272`).
+pub const OB_FOG_ALPHA_NORM: f32 = 48.0 / 255.0;
 
 /// Evaluates the exact `ob01` (`R_OBSV_DECK`) valley-mist particle world-space Y (PS2 mm) and
 /// effective alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]` local Y and base

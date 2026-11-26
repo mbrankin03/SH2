@@ -69,7 +69,10 @@ impl DramaDemoPlayer {
             roll_radians: self.current_state.camera_roll,
             plane: self.current_state.camera_plane,
             fov_y_radians: fov_y,
-            is_hard_cut: self.evaluator.is_cut,
+            // Preserve frame-0 hard-cut (`DramaDemoInit` `SLUS_202.28` `0x001b1130`) so
+            // `ExternalCameraHandoff::sync_cutscene` snaps immediately into `CutsceneLocked`
+            // instead of blending for ~0.5-1s from the gameplay camera (`SH2-150`).
+            is_hard_cut: self.evaluator.is_cut || self.scene_frame <= 0.0,
         };
 
         // Evaluate scene-specific widescreen/ultrawide fixes (`SH2-77`)

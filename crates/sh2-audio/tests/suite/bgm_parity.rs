@@ -254,6 +254,128 @@ fn test_bgm_manager_fade_state_machine_and_page_crossfade() {
     assert!((mgr.tracks[0].volume - 1.0).abs() < 1e-4);
 }
 
+/// Verifies 1:1 Observation Deck (`tenbou.dds`) BGM continuity and zero overlapping tracks across
+/// the full Campaign opening sequence (`SH2-160`):
+/// `toilet.bik` -> `first_toilet` -> `er01` -> `ob01` (`tenbou` before & after frame `1400.0`) -> `ob01` gameplay.
+///
+/// Ground-truth references:
+/// - `SeBgmChange` (`sh2pc.exe` `0x00515fd0`): Stage 2 (`flag_5e4 & 2 == 0`) -> Page 46 (`bgm_114_a.adx`);
+///   Stage 3 -> Page 47 (`bgm_114_b.aix`).
+/// - `stg_ovservation.c` `ev_prog[1]` (`0x005a0936..0x005a0955`): sets `flag(517)` (`flag_620 |= 0x20`)
+///   once `drama_demo_frame > 1400.0`.
+/// - `stg_ovservation.c` `EvBgmControl` (`0x005a1390..0x005a13b8`): returns `4` before `1400.0` (Track 1 only),
+///   `14` (`0x0e`, Mute) after `1400.0` (all tracks fade out), and `(flag_5e4 >> 4) & 1` in gameplay.
+#[test]
+fn test_campaign_toilet_to_tenbou_zero_overlapping_bgm_tracks() {
+    let mut mgr = BgmManager::new(
+        "/nonexistent_game_root",
+        sh2_core::AudioPackSource::EnhancedLossless,
+    );
+    let mut flag_bytes = [0u8; 2048];
+    let set_flag = |bytes: &mut [u8], flag_idx: usize| {
+        bytes[flag_idx / 8] |= 1u8 << (flag_idx % 8);
+    };
+
+    // 1. `first_toilet` (Stage 2, `event_mode_active = true`, `flag(32)` / `flag(33)` unset):
+    //    `SeBgmChange` selects Page 46 (`forest/bgm_114_a.adx`, single ADX track 0).
+    let er01_pos = Vec3::new(-19_606.6, 0.0, 20_429.55);
+    mgr.event_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, true, false);
+    mgr.tick(2, er01_pos, 1.0, None, 1.0 / 60.0, None).unwrap();
+    assert_eq!(mgr.current_page, 46);
+    assert_eq!(mgr.loaded_rel_path, Some("forest/bgm_114_a.adx"));
+    assert!(mgr.loaded_is_adx);
+    assert_eq!(mgr.tracks[0].status, BgmTrackStatus::On);
+    for tr in &mgr.tracks[1..BGM_MAX_TRACKS] {
+        assert_eq!(tr.status, BgmTrackStatus::Off);
+    }
+
+    // 2. `er01` gameplay after `first_toilet` completes (`flag(32)` = bit 0 of `flag_5e4`,
+    //    `flag(33)` = bit 1 still unset): stays on Page 46 (`forest/bgm_114_a.adx`) with 1 track.
+    set_flag(&mut flag_bytes, 32);
+    mgr.event_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, false, false);
+    mgr.tick(2, er01_pos, 1.0, None, 1.0, None).unwrap();
+    assert_eq!(mgr.current_page, 46);
+    assert_eq!(mgr.loaded_rel_path, Some("forest/bgm_114_a.adx"));
+    assert_eq!(mgr.tracks[0].status, BgmTrackStatus::On);
+
+    // 3. Exit `er01` -> `ob01` (Stage 3) and enter `tenbou.dds` (`event_mode_active = true`,
+    //    before frame `1400.0`, so `flag(517)` is unset):
+    //    `SeBgmChange` requests Page 47 (`forest/bgm_114_b.aix`). `bgm_114_a.adx` MUST fade out
+    //    completely BEFORE `bgm_114_b.aix` loads (never overlapping).
+    let ob01_pos = Vec3::new(19_350.25, 0.0, -507.74);
+    mgr.event_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, true, false);
+    mgr.tick(3, ob01_pos, 1.0, None, 1.5, None).unwrap();
+    assert_eq!(mgr.current_page, 46, "Old ADX must still be fading out");
+    assert_eq!(mgr.target_page, 47);
+    assert_eq!(mgr.tracks[0].status, BgmTrackStatus::FadingOut);
+    for tr in &mgr.tracks[1..BGM_MAX_TRACKS] {
+        assert_eq!(tr.status, BgmTrackStatus::Off);
+    }
+
+    // Finish 3.0s fade-out of `bgm_114_a.adx`, then tick to load `bgm_114_b.aix` under Situation 4.
+    mgr.tick(3, ob01_pos, 1.0, None, 2.0, None).unwrap();
+    assert_eq!(mgr.tracks[0].status, BgmTrackStatus::Off);
+    mgr.tick(3, ob01_pos, 1.0, None, 1.0 / 60.0, None).unwrap();
+    assert_eq!(mgr.current_page, 47);
+    assert_eq!(mgr.loaded_rel_path, Some("forest/bgm_114_b.aix"));
+    assert!(!mgr.loaded_is_adx);
+    assert_eq!(mgr.situation_page, 4);
+
+    // Advance 3.5s so Track 1 reaches full volume; ALL other tracks (`0, 2..6`) MUST remain `Off`.
+    mgr.tick(3, ob01_pos, 1.0, None, 3.5, None).unwrap();
+    assert_eq!(mgr.tracks[1].status, BgmTrackStatus::On);
+    assert!((mgr.tracks[1].volume - 1.0).abs() < 1e-4);
+    for (idx, tr) in mgr.tracks.iter().enumerate() {
+        if idx != 1 {
+            assert_eq!(
+                tr.status,
+                BgmTrackStatus::Off,
+                "Track {idx} must be Off during tenbou before frame 1400.0"
+            );
+            assert_eq!(tr.volume, 0.0);
+        }
+    }
+
+    // 4. `tenbou.dds` passes frame `1400.0` (`0x005a0936..0x005a0955`): `flag(517)` (`flag_620 |= 0x20`)
+    //    is set -> `EvBgmControl` (`0x005a1390`) switches from Situation `4` to `14` (Mute).
+    set_flag(&mut flag_bytes, 517);
+    mgr.event_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, true, false);
+    assert_eq!(mgr.event_flags.flag_620 & 0x20, 0x20);
+    mgr.tick(3, ob01_pos, 1.0, None, 1.0 / 60.0, None).unwrap();
+    assert_eq!(mgr.situation_page, 14);
+    assert_eq!(mgr.tracks[1].status, BgmTrackStatus::FadingOut);
+
+    // Advance 3.5s so Track 1 fades completely to `Off`; ZERO BGM tracks may be audible while
+    // `voice.afs[118]` plays post-1400 narration/music.
+    mgr.tick(3, ob01_pos, 1.0, None, 3.5, None).unwrap();
+    for (idx, tr) in mgr.tracks.iter().enumerate() {
+        assert_eq!(
+            tr.status,
+            BgmTrackStatus::Off,
+            "Track {idx} must be Off during tenbou after frame 1400.0 (Situation 14 Mute)"
+        );
+        assert_eq!(tr.volume, 0.0);
+    }
+
+    // 5. `tenbou.dds` completes -> `ob01` gameplay (`flag(33)` set, `event_mode_active = false`):
+    //    `EvBgmControl` (`0x005a13ab`) returns `0` (`Calm`); Track 1 stays `Off` while `ob01`
+    //    spatial ambient layers (`Tracks 2 & 3` in Record #2 at `(19350.25, 0.0, -507.74)`) fade in.
+    set_flag(&mut flag_bytes, 33);
+    mgr.event_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, false, false);
+    mgr.tick(3, ob01_pos, 1.0, None, 1.0 / 60.0, None).unwrap();
+    assert_eq!(mgr.current_page, 47);
+    assert_eq!(mgr.situation_page, 0);
+    assert_eq!(mgr.tracks[1].status, BgmTrackStatus::Off);
+    assert_eq!(mgr.tracks[2].status, BgmTrackStatus::FadingIn);
+    assert_eq!(mgr.tracks[3].status, BgmTrackStatus::FadingIn);
+
+    // Verify `EvBgmControl` (`0x005a13ab..0x005a13b8`) returns `1` when `flag_5e4 & 0x10` is set
+    // outside event mode.
+    let mut post_forest_flags = mgr.event_flags;
+    post_forest_flags.flag_5e4 |= 0x10;
+    assert_eq!(eval_stage_ev_bgm_control(3, 2, &post_forest_flags), 1);
+}
+
 #[test]
 fn test_dual_source_adx_and_aix_decoding_from_retail_and_sh2e_assets() {
     let resolver = sh2_assets::AssetPathResolver::resolve();

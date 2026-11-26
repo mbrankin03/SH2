@@ -214,6 +214,11 @@ pub fn eval_stage_ev_bgm_control(stage_id: u32, room_id: u32, flags: &BgmEventFl
                 0
             }
         }
+        // Stage 3 (`stg_ovservation.c` `EvBgmControl`, `sh2pc.exe` `0x005a1390..0x005a13b8`):
+        // - When event/demo mode (`0x932194 & 0x40`) is active: returns `14` (`0x0e`, Mute) once
+        //   `flag(517)` (`0x01f7aa20 & 0x20`) is set after `tenbou` frame `1400.0` (`0x005a0936`),
+        //   or `4` (`0x04`, Track 1 only) before frame `1400.0`.
+        // - Outside event/demo mode (`0x005a13ab..0x005a13b8`): returns `(flag_5e4 >> 4) & 1`.
         3 => {
             if flags.event_mode_active {
                 if (flags.flag_620 & 0x20) != 0 {
@@ -222,7 +227,7 @@ pub fn eval_stage_ev_bgm_control(stage_id: u32, room_id: u32, flags: &BgmEventFl
                     4
                 }
             } else {
-                0
+                u32::from((flags.flag_5e4 >> 4) & 1)
             }
         }
         6 => (flags.flag_5e8 >> 21) & 1,

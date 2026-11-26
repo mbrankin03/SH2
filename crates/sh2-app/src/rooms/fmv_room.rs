@@ -340,18 +340,69 @@ pub(crate) fn open_fmv_session(
 
 pub(crate) struct FmvRoomController;
 
-/// Stops any active FMV session and its associated FMV audio (plus any FMV-started BGM stream).
-pub(crate) fn stop_active_fmv_session(state: &mut AppState) {
+/// Clears `state.render_ctx.ldr_output_view` to opaque black (`pssDispClear` `SLUS_202.28`
+/// `0x00289ce0` / `sh2pc.exe` D3D8 clear after `_BinkClose_4`) so EOF never leaves a 1-frame
+/// stale image flash (`SH2-150`).
+pub(crate) fn clear_ldr_output_black(state: &AppState) {
+    let mut encoder =
+        state
+            .render_ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FMV Black Clear Encoder"),
+            });
+    {
+        let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("FMV Clear Black Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &state.render_ctx.ldr_output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+    }
+    state
+        .render_ctx
+        .queue
+        .submit(std::iter::once(encoder.finish()));
+}
+
+/// Smoothly fades out active FMV `.bik`/`.mp4` audio over `duration` during a skip fade-out
+/// (`SH2-150`). Leaves stage BGM managed by `SeBgmManager` (`SLUS_202.28` `movie_main.c:141-143`).
+pub(crate) fn fade_out_fmv_audio(state: &mut AppState, duration: Duration) {
+    if let Some(ref mut engine) = state.audio_engine {
+        engine.stop_fmv_audio(duration);
+    }
+}
+
+/// Stops any active FMV session and its `.bik`/`.mp4` audio, optionally stopping FMV-started BGM.
+///
+/// During campaign playback (`stop_bgm = false`), stage BGM continues seamlessly across FMV ->
+/// `.dds` cutscene -> gameplay under `SeBgmManager` (`SLUS_202.28` `movie_main.c:141-143`) so
+/// tracks like `forest/bgm_114_a.adx` (`toilet.bik` -> `first_toilet.dds`) are never silenced
+/// behind `BgmManager`'s back (`SH2-150`).
+pub(crate) fn stop_active_fmv_session_with_bgm_policy(state: &mut AppState, stop_bgm: bool) {
     let had_fmv_bgm = state
         .fmv_session
         .take()
         .is_some_and(|session| session.bgm_stream.is_some());
     if let Some(ref mut engine) = state.audio_engine {
         engine.stop_fmv_audio(Duration::from_millis(50));
-        if had_fmv_bgm {
+        if stop_bgm && had_fmv_bgm {
             engine.stop_bgm(Duration::from_millis(150));
         }
     }
+}
+
+/// Stops any active FMV session and its associated FMV audio (plus any FMV-started BGM stream).
+pub(crate) fn stop_active_fmv_session(state: &mut AppState) {
+    stop_active_fmv_session_with_bgm_policy(state, true);
 }
 
 /// Decodes and renders the active `state.fmv_session` frame.
@@ -455,7 +506,11 @@ pub(crate) fn tick_and_render_fmv_frame(
     }
 
     if finished_eof {
-        stop_active_fmv_session(state);
+        clear_ldr_output_black(state);
+        // During campaign playback, preserve stage BGM across FMV EOF into chained `.dds`
+        // cutscenes/gameplay (`SeBgmManager` continuity in `SLUS_202.28` `movie_main.c:141-143`).
+        let stop_bgm = state.campaign_orchestrator.is_none();
+        stop_active_fmv_session_with_bgm_policy(state, stop_bgm);
     }
 
     finished_eof

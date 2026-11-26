@@ -11,7 +11,8 @@ use winit::keyboard::KeyCode;
 use crate::assets::open_drama_demo_session;
 use crate::rooms::combat_arena::CombatArenaRoomController;
 use crate::rooms::fmv_room::{
-    open_fmv_session, render_fmv_subtitles, stop_active_fmv_session, tick_and_render_fmv_frame,
+    clear_ldr_output_black, fade_out_fmv_audio, open_fmv_session, render_fmv_subtitles,
+    stop_active_fmv_session_with_bgm_policy, tick_and_render_fmv_frame,
 };
 use crate::rooms::RoomController;
 use crate::state::AppState;
@@ -85,7 +86,8 @@ impl CampaignRoomController {
         );
     }
 
-    fn apply_effects(state: &mut AppState, effects: CampaignEffects) {
+    fn apply_effects(state: &mut AppState, effects: CampaignEffects) -> bool {
+        let mut performed_sync_load = false;
         if let Some(label) = effects.show_loading_screen {
             let min_dur = state
                 .menu_ctrl
@@ -122,6 +124,7 @@ impl CampaignRoomController {
             if let Some(ref mut orch) = state.campaign_orchestrator {
                 orch.notify_room_assets_loaded();
             }
+            performed_sync_load = true;
         }
 
         if effects.hide_loading_screen {
@@ -171,18 +174,52 @@ impl CampaignRoomController {
                 .position(|d| u32::from(d.demo_no) == demo.demo_no)
                 .unwrap_or(0);
             state.selected_drama_demo_idx = catalog_idx;
-            state.drama_demo_session =
-                open_drama_demo_session(&state.render_ctx, catalog_idx, false);
-            let tex_quality = state
-                .menu_ctrl
-                .options_menu
-                .draft_config
-                .video
-                .texture_quality;
-            state.apply_texture_quality(tex_quality);
+            let already_preloaded = state
+                .drama_demo_session
+                .as_ref()
+                .is_some_and(|s| s.catalog_index == catalog_idx);
+            if !already_preloaded {
+                state.drama_demo_session =
+                    open_drama_demo_session(&state.render_ctx, catalog_idx, false);
+                let tex_quality = state
+                    .menu_ctrl
+                    .options_menu
+                    .draft_config
+                    .video
+                    .texture_quality;
+                state.apply_texture_quality(tex_quality);
+                performed_sync_load = true;
+            }
         }
 
         if let Some(fmv) = effects.start_fmv {
+            // Preload any chained `post_demo` (e.g. `first_toilet.dds` after `toilet.bik`)
+            // BEFORE starting FMV playback while the screen is black, matching PS2 `connectMain`
+            // RAM residency so FMV EOF transitions into frame 0 of the `.dds` cutscene with
+            // zero disk/GPU hitch (`SH2-150`).
+            if let Some(ref post_demo) = fmv.post_demo {
+                let catalog_idx = DRAMA_DEMO_CATALOG
+                    .iter()
+                    .position(|d| u32::from(d.demo_no) == post_demo.demo_no)
+                    .unwrap_or(0);
+                let already_preloaded = state
+                    .drama_demo_session
+                    .as_ref()
+                    .is_some_and(|s| s.catalog_index == catalog_idx);
+                if !already_preloaded {
+                    state.selected_drama_demo_idx = catalog_idx;
+                    state.drama_demo_session =
+                        open_drama_demo_session(&state.render_ctx, catalog_idx, false);
+                    let tex_quality = state
+                        .menu_ctrl
+                        .options_menu
+                        .draft_config
+                        .video
+                        .texture_quality;
+                    state.apply_texture_quality(tex_quality);
+                    performed_sync_load = true;
+                }
+            }
             if let Some((idx, entry)) = FMV_CATALOG
                 .iter()
                 .enumerate()
@@ -202,6 +239,7 @@ impl CampaignRoomController {
                     source,
                     audio_pack,
                 );
+                performed_sync_load = true;
             }
         }
 
@@ -210,6 +248,14 @@ impl CampaignRoomController {
             state.campaign_loaded_room = None;
             state.exit_room_to_menu(TitlePhase::MainMenu);
         }
+
+        // Reset wall-clock frame timer after synchronous asset/FMV/cutscene loads (`shSetDFZero`
+        // `SLUS_202.28` `0x00220220`) so a 200-1000 ms disk load stall never leaks into the next
+        // frame's `dt_sec` and devours the `ScreenFadeState` fade-in in a single tick (`SH2-150`).
+        if performed_sync_load {
+            state.last_frame = std::time::Instant::now();
+        }
+        performed_sync_load
     }
 }
 
@@ -324,19 +370,29 @@ impl RoomController for CampaignRoomController {
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::FmvPlayback { .. })
         );
-        tick_input.fmv_finished = state.fmv_session.is_none() && was_fmv;
+        let was_fmv_playing = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::FmvPlayback {
+                exit_state: sh2_core::campaign::FmvExitState::Playing,
+                ..
+            })
+        );
+        tick_input.fmv_finished = state.fmv_session.is_none() && was_fmv_playing;
 
         if let Some(ref mut ls) = state.loading_screen {
             ls.tick(dt_sec);
         }
 
+        // Clamp single-frame campaign delta to PS2 `shSetDF(2)` (`2.0 / 60.0` s, `SLUS_202.28`
+        // `0x00220170`) so any OS/load hiccup cannot consume an entire fade ramp in one tick.
+        let campaign_dt_sec = dt_sec.min(2.0 / 60.0);
         let effects = if let Some(mut orch) = state.campaign_orchestrator.take() {
             orch.outdoor_streamer.set_mode(streaming_mode);
             orch.delayed_fade_in_fix = delayed_fade_in;
             let eff = if is_paused {
                 CampaignEffects::default()
             } else {
-                orch.step(&mut state.sim_core, &tick_input, dt_sec)
+                orch.step(&mut state.sim_core, &tick_input, campaign_dt_sec)
             };
             state.campaign_orchestrator = Some(orch);
             eff
@@ -348,12 +404,24 @@ impl RoomController for CampaignRoomController {
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::FmvPlayback { .. })
         );
+        let now_fmv_fading_skip = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::FmvPlayback {
+                exit_state: sh2_core::campaign::FmvExitState::FadingOutSkip,
+                ..
+            })
+        );
+        if was_fmv_playing && now_fmv_fading_skip {
+            let fade_dur =
+                Duration::from_secs_f32(1.0 / sh2_core::campaign::PS2_DEFAULT_FADE_SPEED);
+            fade_out_fmv_audio(state, fade_dur);
+        }
         if was_fmv && !is_fmv_now {
-            stop_active_fmv_session(state);
+            stop_active_fmv_session_with_bgm_policy(state, false);
         }
 
         let allow_sim = effects.allow_gameplay_sim;
-        Self::apply_effects(state, effects);
+        let performed_sync_load = Self::apply_effects(state, effects);
 
         match state.campaign_orchestrator.as_ref().map(|o| &o.phase) {
             Some(CampaignPhase::GameOver) => {
@@ -412,18 +480,18 @@ impl RoomController for CampaignRoomController {
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::DramaDemo { .. })
         );
-        if in_drama_demo && !now_in_drama_demo {
+        if (in_drama_demo && !now_in_drama_demo) || (was_fmv && !is_fmv_now && !now_in_drama_demo) {
             state.drama_demo_session = None;
             if let Some(ref mut eng) = state.audio_engine {
                 eng.stop_voice(Duration::from_millis(50));
             }
         }
 
-        let is_fmv = matches!(
-            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
-            Some(CampaignPhase::FmvPlayback { .. })
-        );
-        if is_fmv {
+        let fmv_exit_state = match state.campaign_orchestrator.as_ref().map(|o| &o.phase) {
+            Some(CampaignPhase::FmvPlayback { exit_state, .. }) => Some(*exit_state),
+            _ => None,
+        };
+        if let Some(exit_state) = fmv_exit_state {
             let keep_bgm_active = state
                 .fmv_session
                 .as_ref()
@@ -434,7 +502,15 @@ impl RoomController for CampaignRoomController {
             if keep_bgm_active && is_in_game {
                 crate::rooms::combat_arena::render::step_audio_managers(state, dt, is_paused);
             }
-            let _ = tick_and_render_fmv_frame(state, dt_sec, aspect, grain_pct, false);
+            if state.fmv_session.is_none() {
+                clear_ldr_output_black(state);
+            } else {
+                let effective_dt = match exit_state {
+                    sh2_core::campaign::FmvExitState::Playing => dt_sec,
+                    sh2_core::campaign::FmvExitState::FadingOutSkip => 0.0,
+                };
+                let _ = tick_and_render_fmv_frame(state, effective_dt, aspect, grain_pct, false);
+            }
         } else {
             // During `DramaDemo`, keep `is_paused` false (unless user opened Pause Menu) so
             // `step_cutscene_player` advances the `.dds` cutscene while `locks_gameplay_input()`
@@ -444,10 +520,15 @@ impl RoomController for CampaignRoomController {
             } else {
                 is_paused || !allow_sim
             };
+            let (render_dt, render_dt_sec) = if performed_sync_load {
+                (Duration::ZERO, 0.0)
+            } else {
+                (dt, campaign_dt_sec)
+            };
             CombatArenaRoomController::tick_and_render_3d(
                 state,
-                dt,
-                dt_sec,
+                render_dt,
+                render_dt_sec,
                 aspect,
                 grain_pct,
                 render_paused,

@@ -48,7 +48,6 @@ pub(crate) fn run_prologue(
     scenario: ScenarioKind,
     action_difficulty: ActionDifficulty,
     riddle_difficulty: RiddleDifficulty,
-    effects: &mut CampaignEffects,
 ) -> CampaignPhase {
     sim.select_scenario(scenario);
     sim.scenario.action_difficulty = action_difficulty;
@@ -69,11 +68,13 @@ pub(crate) fn run_prologue(
         ScenarioKind::LetterFromSilentHeaven => MAIN_SCENARIO_START_STAGE,
         ScenarioKind::BornFromAWish => WISH_SCENARIO_START_STAGE,
     };
-    let manifest = resolve_stage_manifest(start_stage, None, false, true);
+    // Retail SH2 / SH2:EE transitions New Game straight from black screen into opening FMV
+    // (`toilet.bik`) without displaying the `NOW LOADING...` footstep screen (`SH2-150`).
+    let show_loading_screen = false;
+    let manifest = resolve_stage_manifest(start_stage, None, false, show_loading_screen);
     event_engine.reset();
     outdoor_streamer.reset();
     fade.set_black_immediate();
-    effects.show_loading_screen = Some(manifest.stage_name.to_string());
     CampaignPhase::RoomLoading {
         target: RoomLoadTarget {
             stage_id: start_stage,
@@ -81,7 +82,7 @@ pub(crate) fn run_prologue(
             spawn_pos: sim.scenario.player_position.to_array(),
             spawn_yaw: sim.scenario.player_yaw,
             is_connected_stage: false,
-            show_loading_screen: true,
+            show_loading_screen,
         },
         connect_step: ConnectStep::StageOverlay,
         assets_ready: false,

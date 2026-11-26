@@ -26,7 +26,8 @@ use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
 };
 use super::state::{
-    CampaignPhase, ConnectStep, RoomLoadTarget, ScreenFadeState, PS2_DEFAULT_FADE_SPEED,
+    CampaignPhase, ConnectStep, FmvExitState, RoomLoadTarget, ScreenFadeState,
+    PS2_DEFAULT_FADE_SPEED,
 };
 
 /// Unified start-to-credits Campaign Game Loop orchestrator (`gamemain.c` / `PlayableMain`
@@ -200,6 +201,7 @@ impl CampaignOrchestrator {
             post_demo: trigger.post_demo.clone(),
             completion_flag: trigger.completion_flag,
             chain_cursor: trigger.chain_cursor,
+            exit_state: FmvExitState::Playing,
         };
         effects.start_fmv = Some(trigger);
     }
@@ -241,7 +243,6 @@ impl CampaignOrchestrator {
                     scenario,
                     action_difficulty,
                     riddle_difficulty,
-                    &mut effects,
                 );
             }
             CampaignPhase::RoomLoading {
@@ -476,79 +477,67 @@ impl CampaignOrchestrator {
                 post_demo,
                 completion_flag,
                 chain_cursor,
-            } => {
-                if input.cancel_pressed {
-                    if let Some(flag) = completion_flag {
-                        sim.scenario.flags.set(flag, true);
-                    }
-                    if let Some(next_stage) = post_stage {
-                        let cmd = StageTransitionCommand {
-                            dest_stage: next_stage as u8,
-                            stage_change_mode: next_stage as u8,
-                            is_connected_stage: is_connected_stage_pair(
-                                sim.scenario.current_stage as u8,
-                                next_stage as u8,
-                            ),
-                            observation_mode: false,
-                            dest_pos: post_pos
-                                .unwrap_or_else(|| sim.scenario.player_position.to_array()),
-                            dest_rot_y: post_yaw.unwrap_or(sim.scenario.player_yaw),
-                        };
-                        self.request_transition(sim.scenario.current_stage, cmd, None);
-                    } else if let Some(ending_stage) =
-                        ending_stage_for_fmv(movie_id, sim.scenario.current_stage)
-                    {
-                        self.trigger_ending(ending_stage);
-                    } else {
-                        apply_post_cutscene_handoff(
+                exit_state,
+            } => match exit_state {
+                FmvExitState::FadingOutSkip => {
+                    if self.fade.is_fully_black() {
+                        self.complete_fmv_handoff(
                             sim,
-                            &mut self.event_camera,
+                            movie_id,
+                            post_stage,
                             post_pos,
                             post_yaw,
-                            PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+                            None,
+                            completion_flag,
+                            chain_cursor,
+                            &mut effects,
                         );
-                        self.player_locked = false;
-                        self.phase = CampaignPhase::ActiveGameplay;
-                        effects.allow_gameplay_sim = true;
-                    }
-                } else if input.fmv_finished {
-                    if let Some(flag) = completion_flag {
-                        sim.scenario.flags.set(flag, true);
-                    }
-                    if let Some(demo) = post_demo {
-                        self.start_drama_demo_at_cursor(*demo, chain_cursor + 1, &mut effects);
-                    } else if let Some(next_stage) = post_stage {
-                        let cmd = StageTransitionCommand {
-                            dest_stage: next_stage as u8,
-                            stage_change_mode: next_stage as u8,
-                            is_connected_stage: is_connected_stage_pair(
-                                sim.scenario.current_stage as u8,
-                                next_stage as u8,
-                            ),
-                            observation_mode: false,
-                            dest_pos: post_pos
-                                .unwrap_or_else(|| sim.scenario.player_position.to_array()),
-                            dest_rot_y: post_yaw.unwrap_or(sim.scenario.player_yaw),
-                        };
-                        self.request_transition(sim.scenario.current_stage, cmd, None);
-                    } else if let Some(ending_stage) =
-                        ending_stage_for_fmv(movie_id, sim.scenario.current_stage)
-                    {
-                        self.trigger_ending(ending_stage);
-                    } else {
-                        apply_post_cutscene_handoff(
-                            sim,
-                            &mut self.event_camera,
-                            post_pos,
-                            post_yaw,
-                            PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
-                        );
-                        self.player_locked = false;
-                        self.phase = CampaignPhase::ActiveGameplay;
-                        effects.allow_gameplay_sim = true;
                     }
                 }
-            }
+                FmvExitState::Playing => {
+                    if input.cancel_pressed {
+                        // Retail `ScreenEffectFadeStart(1.2, 1)` (`SLUS_202.28` `0x0020dfc0`):
+                        // fade mid-movie skip smoothly to black before entering gameplay/stage.
+                        if self.fade.is_fully_black() {
+                            self.complete_fmv_handoff(
+                                sim,
+                                movie_id,
+                                post_stage,
+                                post_pos,
+                                post_yaw,
+                                None,
+                                completion_flag,
+                                chain_cursor,
+                                &mut effects,
+                            );
+                        } else {
+                            self.fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);
+                            self.phase = CampaignPhase::FmvPlayback {
+                                movie_id,
+                                post_stage,
+                                post_pos,
+                                post_yaw,
+                                post_demo,
+                                completion_flag,
+                                chain_cursor,
+                                exit_state: FmvExitState::FadingOutSkip,
+                            };
+                        }
+                    } else if input.fmv_finished {
+                        self.complete_fmv_handoff(
+                            sim,
+                            movie_id,
+                            post_stage,
+                            post_pos,
+                            post_yaw,
+                            post_demo,
+                            completion_flag,
+                            chain_cursor,
+                            &mut effects,
+                        );
+                    }
+                }
+            },
             CampaignPhase::OverlayMenu(kind) => {
                 if kind.advances_game_timer() && dt_sec > 0.0 {
                     self.play_time_secs += f64::from(dt_sec);
@@ -581,6 +570,65 @@ impl CampaignOrchestrator {
 
         effects.fade_alpha = self.fade.black_alpha();
         effects
+    }
+
+    /// Commits post-FMV handoff into `DramaDemo`, `DoorTransition`, `EndingCredits`, or
+    /// `ActiveGameplay`, initiating a retail-faithful fade-in from black
+    /// (`ScreenEffectFadeStart(1.2, 4)` `SLUS_202.28` `0x0020dfc0` + SH2:EE `DelayedFadeIn.cpp`
+    /// `-0.133334f` black hold when `delayed_fade_in_fix` is enabled, `SH2-150`).
+    #[allow(clippy::too_many_arguments)]
+    fn complete_fmv_handoff(
+        &mut self,
+        sim: &mut SimulationCore,
+        movie_id: &'static str,
+        post_stage: Option<u16>,
+        post_pos: Option<[f32; 3]>,
+        post_yaw: Option<f32>,
+        post_demo: Option<Box<DramaDemoTrigger>>,
+        completion_flag: Option<usize>,
+        chain_cursor: usize,
+        effects: &mut CampaignEffects,
+    ) {
+        if let Some(flag) = completion_flag {
+            sim.scenario.flags.set(flag, true);
+        }
+        if let Some(demo) = post_demo {
+            // Retail `SLUS_202.28` `PlayableMain` case `0xe` (`gamemain.c:593-610`) & SH2:EE:
+            // natural FMV EOF (which already fades to dark inside the movie, e.g. `toilet.bik`)
+            // transitions directly into the preloaded chained `.dds` cutscene with no extra
+            // 0.83s black fade-in (`SH2-150`).
+            self.start_drama_demo_at_cursor(*demo, chain_cursor + 1, effects);
+        } else if let Some(next_stage) = post_stage {
+            let cmd = StageTransitionCommand {
+                dest_stage: next_stage as u8,
+                stage_change_mode: next_stage as u8,
+                is_connected_stage: is_connected_stage_pair(
+                    sim.scenario.current_stage as u8,
+                    next_stage as u8,
+                ),
+                observation_mode: false,
+                dest_pos: post_pos.unwrap_or_else(|| sim.scenario.player_position.to_array()),
+                dest_rot_y: post_yaw.unwrap_or(sim.scenario.player_yaw),
+            };
+            self.request_transition(sim.scenario.current_stage, cmd, None);
+        } else if let Some(ending_stage) =
+            ending_stage_for_fmv(movie_id, sim.scenario.current_stage)
+        {
+            self.trigger_ending(ending_stage);
+        } else {
+            apply_post_cutscene_handoff(
+                sim,
+                &mut self.event_camera,
+                post_pos,
+                post_yaw,
+                PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
+            );
+            self.fade
+                .start_fade_in(PS2_DEFAULT_FADE_SPEED, self.delayed_fade_in_fix);
+            self.player_locked = false;
+            self.phase = CampaignPhase::ActiveGameplay;
+            effects.allow_gameplay_sim = true;
+        }
     }
 
     fn finish_connect_outcome<F>(

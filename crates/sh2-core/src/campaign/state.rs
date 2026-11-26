@@ -118,6 +118,18 @@ pub struct RoomLoadTarget {
     pub show_loading_screen: bool,
 }
 
+/// Sub-state of [`CampaignPhase::FmvPlayback`] distinguishing active playback from a smooth
+/// skip fade-out (`ScreenEffectFadeStart(1.2, 1)` `SLUS_202.28` `0x0020dfc0`, `SH2-150`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FmvExitState {
+    /// FMV is actively playing (`pssMain` `0x0028ae30` / `sh2pc.exe` `FUN_0043dd10` `0x0043dd10`).
+    #[default]
+    Playing,
+    /// Player requested skip (`pssCheckMovieCancel` `0x0028bbd0`); fading to opaque black at
+    /// [`PS2_DEFAULT_FADE_SPEED`] (`1.2 / sec`) before handing off to gameplay, stage, or ending.
+    FadingOutSkip,
+}
+
 /// Active lifecycle state of the unified start-to-credits campaign game loop (`gamemain.c` /
 /// `PlayableMain` `0x0020b3c0` / `connect.c` `0x0020bf80`).
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +205,8 @@ pub enum CampaignPhase {
         completion_flag: Option<usize>,
         /// Next step cursor inside `DramaDemoPlayInfo::sequence_chain`.
         chain_cursor: usize,
+        /// Active playback vs. smooth skip fade-out sub-state (`SH2-150`).
+        exit_state: FmvExitState,
     },
     /// `PlayableMain` steps `5..=9` & `15`: In-game overlay screen (Map, Inventory, Options,
     /// Memo, Save, or Pause).

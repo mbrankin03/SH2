@@ -64,7 +64,10 @@ fn main_scenario_prologue_loads_stage2_triggers_first_toilet_and_hands_off_witho
     let (saw_loading, saw_load_room, loaded_stage) =
         drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
 
-    assert!(saw_loading, "Prologue must trigger NowLoadingEnable");
+    assert!(
+        !saw_loading,
+        "New Game must go straight from black screen to toilet.bik without NowLoading (SH2-150)"
+    );
     assert!(saw_load_room, "connectMain must emit RoomLoadManifest");
     assert_eq!(loaded_stage, Some(MAIN_SCENARIO_START_STAGE));
     assert_eq!(sim.scenario.current_stage, MAIN_SCENARIO_START_STAGE);
@@ -763,4 +766,201 @@ fn retail_er01_cam_rail_is_not_clamped_onto_player_in_doorway_alcove() {
         "er01.cam Record #1 eye must stay inside authored lim_rd rail, got {eye:?}"
     );
     assert!((eye.y - (-213.0)).abs() < 1.0, "eye.y={}", eye.y);
+}
+
+#[test]
+fn test_sh2_150_fmv_exit_and_skip_fade_envelopes() {
+    use sh2_core::campaign::{FadeDirection, FmvExitState};
+
+    // 1. Real retail `toilet.bik` end-to-end decode to true EOF -> `first_toilet` fade-in
+    //    (SH2:EE `DelayedFadeIn.cpp` `-0.133334f` black hold vs strict Vanilla PS2 `0.0 -> 1.0`).
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let retail_toilet = [
+        resolver.game_root.join("sh2e/movie/toilet.bik"),
+        resolver.game_root.join("data/movie/toilet.bik"),
+    ]
+    .into_iter()
+    .find(|p| p.exists());
+
+    let mut decoded_frames = 0u32;
+    if let Some(ref toilet_path) = retail_toilet {
+        let mut stream = sh2_assets::formats::bink::BinkVideoStream::open(toilet_path)
+            .expect("retail toilet.bik should open cleanly");
+        while stream.next_frame().is_some() {
+            decoded_frames += 1;
+        }
+        assert!(
+            decoded_frames >= 550,
+            "retail toilet.bik must decode full movie to true EOF, got only {decoded_frames} frames"
+        );
+    }
+
+    for delayed_fade in [true, false] {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        let mut orch = CampaignOrchestrator::new_game(
+            ScenarioKind::LetterFromSilentHeaven,
+            ActionDifficulty::Normal,
+            RiddleDifficulty::Normal,
+            OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+            delayed_fade,
+        );
+        // Drive Prologue -> RoomLoading -> automatic `toilet` FmvPlayback
+        for _ in 0..16 {
+            let eff = orch.step(
+                &mut sim,
+                &CampaignTickInput {
+                    prefer_sh2ee: delayed_fade,
+                    ..Default::default()
+                },
+                1.0 / 60.0,
+            );
+            if eff.load_room.is_some() {
+                orch.notify_room_assets_loaded();
+            }
+            if matches!(orch.phase, CampaignPhase::FmvPlayback { .. }) {
+                break;
+            }
+        }
+        assert!(matches!(
+            orch.phase,
+            CampaignPhase::FmvPlayback {
+                movie_id: "toilet",
+                exit_state: FmvExitState::Playing,
+                ..
+            }
+        ));
+
+        // Let the initial fade-in finish so we are clearly visible during FMV playback
+        for _ in 0..90 {
+            let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        }
+        assert!(orch.fade.black_alpha() < 0.01);
+
+        // Natural EOF hands off seamlessly to preloaded `first_toilet` DramaDemo without an
+        // extra 0.83s black fade-in (`SLUS_202.28` `gamemain.c:593-610` & SH2:EE).
+        let eff_eof = orch.step(
+            &mut sim,
+            &CampaignTickInput {
+                fmv_finished: true,
+                prefer_sh2ee: delayed_fade,
+                ..Default::default()
+            },
+            1.0 / 60.0,
+        );
+        assert!(matches!(
+            orch.phase,
+            CampaignPhase::DramaDemo { demo_no, .. } if demo_no == u32::from(CS_INTRO_BATHROOM_DEMO_NO)
+        ));
+        assert_eq!(eff_eof.fade_alpha, 0.0);
+
+        // Standalone FMV (no chained `post_demo`) returning directly to `ActiveGameplay`
+        // starts `FadeDirection::FadeInFromBlack` (respecting `delayed_fade_in_fix`).
+        let mut dummy_eff = sh2_core::campaign::CampaignEffects::default();
+        orch.start_fmv(
+            FmvTrigger {
+                movie_id: "murder",
+                post_stage: None,
+                post_pos: None,
+                post_yaw: None,
+                post_demo: None,
+                completion_flag: None,
+                chain_cursor: 0,
+            },
+            &mut dummy_eff,
+        );
+        let eff_gameplay_eof = orch.step(
+            &mut sim,
+            &CampaignTickInput {
+                fmv_finished: true,
+                prefer_sh2ee: delayed_fade,
+                ..Default::default()
+            },
+            1.0 / 60.0,
+        );
+        assert_eq!(orch.phase, CampaignPhase::ActiveGameplay);
+        assert_eq!(orch.fade.direction, FadeDirection::FadeInFromBlack);
+        assert_eq!(eff_gameplay_eof.fade_alpha, 1.0);
+
+        // After 1 tick (1/60s): SH2:EE delayed fade-in still holds black (`-0.133334 + 0.02 < 0`),
+        // while strict Vanilla PS2 immediately starts ramping down (`1.0 - 0.02 = 0.98`).
+        let eff_t1 = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if delayed_fade {
+            assert_eq!(
+                eff_t1.fade_alpha, 1.0,
+                "SH2:EE DelayedFadeIn must hold black for ~4 frames"
+            );
+        } else {
+            assert!(
+                eff_t1.fade_alpha < 0.99,
+                "Vanilla PS2 fade-in must ramp immediately"
+            );
+        }
+        // After ~1.2s total, fade-in completes cleanly to transparent
+        for _ in 0..75 {
+            let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        }
+        assert_eq!(orch.fade.black_alpha(), 0.0);
+    }
+
+    // 2. Mid-FMV skip (`cancel_pressed`) fades smoothly to black (`FadingOutSkip`) before
+    //    handing off to `ActiveGameplay` with a fresh `FadeInFromBlack` (zero hard pop).
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    let mut orch = CampaignOrchestrator::new_game(
+        ScenarioKind::LetterFromSilentHeaven,
+        ActionDifficulty::Normal,
+        RiddleDifficulty::Normal,
+        OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+        true,
+    );
+    for _ in 0..16 {
+        let eff = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if eff.load_room.is_some() {
+            orch.notify_room_assets_loaded();
+        }
+        if matches!(orch.phase, CampaignPhase::FmvPlayback { .. }) {
+            break;
+        }
+    }
+    for _ in 0..90 {
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+    }
+    assert_eq!(orch.fade.black_alpha(), 0.0);
+
+    // Press Cancel mid-FMV -> must enter FadingOutSkip, NOT hard-pop to ActiveGameplay
+    let eff_skip = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            cancel_pressed: true,
+            ..Default::default()
+        },
+        1.0 / 60.0,
+    );
+    assert!(matches!(
+        orch.phase,
+        CampaignPhase::FmvPlayback {
+            movie_id: "toilet",
+            exit_state: FmvExitState::FadingOutSkip,
+            ..
+        }
+    ));
+    assert_eq!(orch.fade.direction, FadeDirection::FadeOutToBlack);
+    assert!(!eff_skip.allow_gameplay_sim);
+
+    // Advance fade-out at PS2_DEFAULT_FADE_SPEED (1.2/s => ~0.833s = 50 ticks @ 60 Hz)
+    let mut handed_off = false;
+    for _ in 0..60 {
+        let eff = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if orch.phase == CampaignPhase::ActiveGameplay {
+            assert_eq!(orch.fade.direction, FadeDirection::FadeInFromBlack);
+            assert_eq!(eff.fade_alpha, 1.0);
+            assert!(eff.allow_gameplay_sim);
+            assert!(sim.scenario.flags.get(0x0020));
+            handed_off = true;
+            break;
+        }
+    }
+    assert!(
+        handed_off,
+        "FadingOutSkip must hand off to ActiveGameplay once fade reaches black"
+    );
 }

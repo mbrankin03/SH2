@@ -10,7 +10,7 @@ use crate::shadow::StencilShadowPipeline;
 pub struct PlanarMirrorPipeline {
     /// Writes `stencil = 1` on `Depth24PlusStencil8` for the mirror surface (`color_writes: empty`).
     pub stencil_mask_pipeline: wgpu::RenderPipeline,
-    /// Writes `stencil = 1` using a `.map` [`MapVertex`] decal batch (`ap84` `batch[1]`).
+    /// Writes `stencil = 1` using a `.map` [`MapVertex`] decal batch (`er01.map` `mat=10`, `ap84.map` `mat=13`).
     pub map_stencil_mask_pipeline: wgpu::RenderPipeline,
     /// Writes mirror-plane depth into `Depth32Float` in the main pass for fallback mirror quads
     /// (`th09.map`) so pre-baked duplicate room geometry behind the mirror opening is depth-rejected.

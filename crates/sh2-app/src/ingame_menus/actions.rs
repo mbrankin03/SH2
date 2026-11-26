@@ -413,17 +413,29 @@ pub(crate) fn ensure_item_atlas_loaded(state: &mut AppState) {
     }
 }
 
-/// Lazily loads the close-up 2D inspection still (`meta.inspect_texture_path`) when `Look` is opened.
-pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
+/// Lazily loads the close-up 2D inspection still (`meta.inspect_texture_path`, or retail PC
+/// `data/pic/item/x_coin*_ura.tex` back-side texture when `coin_side == 1` per `sh2pc_00460000.c:4874-4876`).
+pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8, coin_side: u8) {
     if state
         .ingame_menus
         .cached_examine_tex
         .as_ref()
-        .is_some_and(|(id, _, _, _)| *id == item_id)
+        .is_some_and(|(id, side, _, _, _)| *id == item_id && *side == coin_side)
     {
         return;
     }
-    let Some(tex_path) = sh2_core::item_metadata(item_id).and_then(|m| m.inspect_texture_path)
+    let back_coin_path = if coin_side == 1 {
+        match item_id {
+            0x32 => Some("pic/item/x_coinsnake_ura.tex"),
+            0x33 => Some("pic/item/x_coinelder_ura.tex"),
+            0x34 => Some("pic/item/x_coinprisoner_ura.tex"),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let Some(tex_path) = back_coin_path
+        .or_else(|| sh2_core::item_metadata(item_id).and_then(|m| m.inspect_texture_path))
     else {
         return;
     };
@@ -432,6 +444,7 @@ pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
     if let Ok(cut) = loader.load_cutaway_texture_for_quality(tex_path, prefer_sh2ee, apply_4k) {
         state.ingame_menus.cached_examine_tex = Some((
             item_id,
+            coin_side,
             cut.texture.width,
             cut.texture.height,
             cut.texture.rgba,

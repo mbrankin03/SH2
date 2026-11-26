@@ -77,8 +77,8 @@ pub(crate) struct InGameMenuState {
     pub(crate) item_atlas_loaded: bool,
     /// Cached decoded `itemmenu2.tex` (`4096x4096` SH2:EE HD or `1024x1024` PS2/PC) `(width, height, rgba)`.
     pub(crate) cached_item_atlas: Option<(usize, usize, Vec<u8>)>,
-    /// Cached decoded close-up examine `.tex` `(item_id, width, height, rgba)`.
-    pub(crate) cached_examine_tex: Option<(u8, usize, usize, Vec<u8>)>,
+    /// Cached decoded close-up examine `.tex` `(item_id, coin_side, width, height, rgba)`.
+    pub(crate) cached_examine_tex: Option<(u8, u8, usize, usize, Vec<u8>)>,
     /// Game Over screen state (`GameoverMain` `0x001c4c70`).
     pub gameover: sh2_ui::GameOverScreen,
     /// Low-Health Red Cross Icon state (`sh2pc.exe` `0x00476280`).
@@ -631,9 +631,10 @@ pub(crate) fn render_overlay(
             &mut state.menu_rasterizer,
         );
     } else if state.ingame_menus.inventory.is_open {
+        let coin_side = state.ingame_menus.inventory.examine_coin_side;
         if state.ingame_menus.inventory.focus == sh2_ui::inventory::InventoryFocus::ExamineOverlay {
             if let Some(id) = state.ingame_menus.inventory.selected_item_id() {
-                ensure_examine_tex_loaded(state, id);
+                ensure_examine_tex_loaded(state, id, coin_side);
             }
         }
         let snapshot = build_player_snapshot(state);
@@ -651,8 +652,8 @@ pub(crate) fn render_overlay(
                     .ingame_menus
                     .cached_examine_tex
                     .as_ref()
-                    .filter(|(id, _, _, _)| *id == sel_id)
-                    .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h))
+                    .filter(|(id, side, _, _, _)| *id == sel_id && *side == coin_side)
+                    .map(|(_, _, w, h, rgba)| (rgba.as_slice(), *w, *h))
             });
         state.inventory_rasterizer.clear();
         draw_inventory_screen(

@@ -192,12 +192,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let original_color = textureLoad(color_in, pixel_coords, 0);
     let depth_val = textureLoad(depth_tex, pixel_coords, 0).r;
 
-    // Reconstruct view-space distance and world-space ray
+    // Reconstruct view-space Z depth (`r1.w = clip.w = |view_pos.z|`, matching `sh2pc.exe`
+    // `VS[1..4]` `0x008ef700..0x008ef940` `oFog.x` & `SLUS_202.28` `sh2gfw_Set_DepthFog` `FA / z + FB`)
+    // and Euclidean view distance for optional ModernVolumetric raymarching.
     let uv = (vec2<f32>(pixel_coords) + 0.5) / vec2<f32>(dims);
     let clip_pos = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth_val, 1.0);
 
     let view_pos_h = camera.inv_proj * clip_pos;
-    let view_dist = length(view_pos_h.xyz / max(1e-5, abs(view_pos_h.w)));
+    let view_pos = view_pos_h.xyz / max(1e-5, abs(view_pos_h.w));
+    let view_z = abs(view_pos.z);
+    let view_dist = length(view_pos);
 
     let world_pos_h = camera.inv_view_proj * clip_pos;
     let world_pos = world_pos_h.xyz / select(1e-5, world_pos_h.w, abs(world_pos_h.w) > 1e-5);
@@ -232,8 +236,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     if (!volumetric_mode || fog.step_count <= 1u) {
-        // 1:1 Classic PS2 analytical depth-fog (`sh2gfw_Set_DepthFog` FA/z + FB @ 0x00175df0)
-        let base_curve = eval_depth_curve(view_dist);
+        // 1:1 Classic PS2/PC analytical depth-fog (`sh2gfw_Set_DepthFog` `FA/z + FB` @ `0x00175df0`,
+        // `sh2pc.exe` `VS[1..4]` `0x008ef700..0x008ef940` using view-space `z = clip.w`).
+        let base_curve = eval_depth_curve(view_z);
         fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
     } else {
         // ModernVolumetric dual-layer UV-scrolling noise plane contribution (non-Vanilla enhancement)

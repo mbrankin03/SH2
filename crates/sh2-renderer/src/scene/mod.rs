@@ -284,21 +284,9 @@ impl RenderContext {
                 rpass.draw(0..drop_verts, 0..1);
             }
 
-            // 1d-3. Render localized 3D proximity fog particle billboards (`fogMakePacket` @ 0x0016bb70)
-            if self.config.enable_fog {
-                let particle_count = self
-                    .fog_particle_count
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                if particle_count > 0 {
-                    let byte_len = (particle_count as usize
-                        * std::mem::size_of::<crate::fog::GpuFogParticle>())
-                        as wgpu::BufferAddress;
-                    rpass.set_pipeline(&self.fog_particle_pipeline.pipeline);
-                    rpass.set_bind_group(0, &self.fog_particle_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, self.fog_particle_buffer.slice(0..byte_len));
-                    rpass.draw(0..6, 0..particle_count);
-                }
-            }
+            // 1d-3. (3D proximity fog particle billboards are rendered post-depth-fog in
+            // `dispatch_compute_passes` matching `sh2pc.exe` `FUN_00486fc0` `0x00486fc0`
+            // `D3DRS_FOGENABLE = 0` so dark depth-fog `FOGCOL` never darkens bright mist sprites.)
 
             // 1d-4. Render Hyper Spray / Lying Figure 3D mist billboards (`enEfctDrawSpray`, `SH2-81`)
             let spray_count = self
@@ -506,13 +494,52 @@ impl RenderContext {
         let workgroups_y = self.config.height.div_ceil(16);
 
         if self.config.enable_fog {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Volumetric Fog Compute Pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.fog_pipeline.pipeline);
-            cpass.set_bind_group(0, &self.fog_bind_group, &[]);
-            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Volumetric Fog Compute Pass"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.fog_pipeline.pipeline);
+                cpass.set_bind_group(0, &self.fog_bind_group, &[]);
+                cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+            }
+
+            // Render localized 3D proximity fog particle billboards (`fogMakePacket` `0x0016bb70`,
+            // `sh2pc.exe` `FUN_00486fc0` `0x00486fc0` `sh2pc_00480000.c:4277,4307`:
+            // `D3DRS_FOGENABLE (0x1c) = 0`) AFTER depth fog so dark `FOGCOL` never darkens them.
+            let particle_count = self
+                .fog_particle_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if particle_count > 0 {
+                let byte_len = (particle_count as usize
+                    * std::mem::size_of::<crate::fog::GpuFogParticle>())
+                    as wgpu::BufferAddress;
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("3D Fog Particle Post-Depth-Fog Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.fog_color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                rpass.set_pipeline(&self.fog_particle_pipeline.pipeline);
+                rpass.set_bind_group(0, &self.fog_particle_bind_group, &[]);
+                rpass.set_vertex_buffer(0, self.fog_particle_buffer.slice(0..byte_len));
+                rpass.draw(0..6, 0..particle_count);
+            }
         }
 
         if self.config.enable_post {

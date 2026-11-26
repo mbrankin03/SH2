@@ -53,7 +53,9 @@ impl RenderContext {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: Self::HDR_FORMAT,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let fog_color_view = fog_color_texture.create_view(&wgpu::TextureViewDescriptor::default());

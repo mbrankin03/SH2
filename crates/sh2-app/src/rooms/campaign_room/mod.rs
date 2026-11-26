@@ -86,7 +86,8 @@ impl CampaignRoomController {
         );
     }
 
-    fn apply_effects(state: &mut AppState, effects: CampaignEffects) {
+    fn apply_effects(state: &mut AppState, effects: CampaignEffects) -> bool {
+        let mut performed_sync_load = false;
         if let Some(label) = effects.show_loading_screen {
             let min_dur = state
                 .menu_ctrl
@@ -123,6 +124,7 @@ impl CampaignRoomController {
             if let Some(ref mut orch) = state.campaign_orchestrator {
                 orch.notify_room_assets_loaded();
             }
+            performed_sync_load = true;
         }
 
         if effects.hide_loading_screen {
@@ -181,6 +183,7 @@ impl CampaignRoomController {
                 .video
                 .texture_quality;
             state.apply_texture_quality(tex_quality);
+            performed_sync_load = true;
         }
 
         if let Some(fmv) = effects.start_fmv {
@@ -203,6 +206,7 @@ impl CampaignRoomController {
                     source,
                     audio_pack,
                 );
+                performed_sync_load = true;
             }
         }
 
@@ -211,6 +215,14 @@ impl CampaignRoomController {
             state.campaign_loaded_room = None;
             state.exit_room_to_menu(TitlePhase::MainMenu);
         }
+
+        // Reset wall-clock frame timer after synchronous asset/FMV/cutscene loads (`shSetDFZero`
+        // `SLUS_202.28` `0x00220220`) so a 200-1000 ms disk load stall never leaks into the next
+        // frame's `dt_sec` and devours the `ScreenFadeState` fade-in in a single tick (`SH2-150`).
+        if performed_sync_load {
+            state.last_frame = std::time::Instant::now();
+        }
+        performed_sync_load
     }
 }
 
@@ -338,13 +350,16 @@ impl RoomController for CampaignRoomController {
             ls.tick(dt_sec);
         }
 
+        // Clamp single-frame campaign delta to PS2 `shSetDF(2)` (`2.0 / 60.0` s, `SLUS_202.28`
+        // `0x00220170`) so any OS/load hiccup cannot consume an entire fade ramp in one tick.
+        let campaign_dt_sec = dt_sec.min(2.0 / 60.0);
         let effects = if let Some(mut orch) = state.campaign_orchestrator.take() {
             orch.outdoor_streamer.set_mode(streaming_mode);
             orch.delayed_fade_in_fix = delayed_fade_in;
             let eff = if is_paused {
                 CampaignEffects::default()
             } else {
-                orch.step(&mut state.sim_core, &tick_input, dt_sec)
+                orch.step(&mut state.sim_core, &tick_input, campaign_dt_sec)
             };
             state.campaign_orchestrator = Some(orch);
             eff
@@ -373,7 +388,7 @@ impl RoomController for CampaignRoomController {
         }
 
         let allow_sim = effects.allow_gameplay_sim;
-        Self::apply_effects(state, effects);
+        let performed_sync_load = Self::apply_effects(state, effects);
 
         match state.campaign_orchestrator.as_ref().map(|o| &o.phase) {
             Some(CampaignPhase::GameOver) => {
@@ -472,10 +487,15 @@ impl RoomController for CampaignRoomController {
             } else {
                 is_paused || !allow_sim
             };
+            let (render_dt, render_dt_sec) = if performed_sync_load {
+                (Duration::ZERO, 0.0)
+            } else {
+                (dt, campaign_dt_sec)
+            };
             CombatArenaRoomController::tick_and_render_3d(
                 state,
-                dt,
-                dt_sec,
+                render_dt,
+                render_dt_sec,
                 aspect,
                 grain_pct,
                 render_paused,

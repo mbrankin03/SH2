@@ -84,6 +84,35 @@ pub const OB_FOG_Y_SPAN_MM: f32 = 875.0;
 /// verified in `SLUS_202.28` `fogSetEnvironment` (`Fog/fog.c:305`) and `sh2pc.exe` `FUN_004858a0`
 /// (`sh2pc_00480000.c:3302-3307`).
 pub const OB_FOG_ALPHA_NORM: f32 = 48.0 / 128.0;
+
+/// Evaluates the exact `ob01` (`R_OBSV_DECK`) valley-mist particle world-space Y (PS2 mm) and
+/// effective alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]` local Y and base
+/// border/sway alpha.
+///
+/// Matches `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`: `anchor_y = +1000.0 mm`) and
+/// `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `sh2pc_00480000.c:4194-4240`): `subdiv = 4`,
+/// `area = 7000.0 mm` -> `local_y ∈ [-875.0, 0.0]` (`world_y ∈ [+125.0, +1000.0] mm`) with a
+/// `300.0 mm` upper fade (`local_y < 300.0 - 875.0`) and `obGB.fcl +0x13 = 48 / 128` alpha.
+#[must_use]
+#[inline]
+pub fn evaluate_ob01_particle_y_and_alpha(
+    anchor_y_mm: f32,
+    local_y_symmetric_mm: f32,
+    base_alpha: f32,
+) -> (f32, f32) {
+    let norm_y =
+        ((local_y_symmetric_mm / PS2_DEFAULT_FOG_HEIGHT_BAND_MM) * 0.5 + 0.5).clamp(0.0, 1.0);
+    let local_y = -norm_y * OB_FOG_Y_SPAN_MM;
+    let top_fade = if local_y < 300.0 - OB_FOG_Y_SPAN_MM {
+        ((OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    (
+        anchor_y_mm + local_y,
+        base_alpha * top_fade * OB_FOG_ALPHA_NORM,
+    )
+}
 /// Room ID for Forest Trail & Cemetery (`R_FOREST_CEMETERY = 0x03` in `Patches.h`).
 pub const R_FOREST_CEMETERY_ID: u32 = 0x03;
 /// Room ID for Silent Hill Town East (`R_TOWN_EAST = 0x04` in `Patches.h`).
@@ -654,6 +683,19 @@ mod tests {
         assert!(upper.final_boss_upper_override);
         assert_eq!(upper.speed_mult, FOG_SPEED_OUTDOOR_SLOW);
         assert!(upper.fog_far_mm > lower.fog_far_mm);
+    }
+
+    #[test]
+    fn observation_deck_particle_y_and_alpha_match_fun_00486d10() {
+        // Bottom of `subdiv = 4` band (`local_y_sym = -100` -> `norm_y = 0.0` -> `world_y = 1000.0`, full `0x30/128` alpha)
+        let (wy_bot, a_bot) = evaluate_ob01_particle_y_and_alpha(OB_FOG_ANCHOR_Y_MM, -100.0, 1.0);
+        assert!((wy_bot - 1000.0).abs() < 1e-4);
+        assert!((a_bot - OB_FOG_ALPHA_NORM).abs() < 1e-6);
+
+        // Top of `subdiv = 4` band (`local_y_sym = +100` -> `norm_y = 1.0` -> `world_y = 125.0`, faded to `0.0`)
+        let (wy_top, a_top) = evaluate_ob01_particle_y_and_alpha(OB_FOG_ANCHOR_Y_MM, 100.0, 1.0);
+        assert!((wy_top - 125.0).abs() < 1e-4);
+        assert!(a_top.abs() < 1e-6);
     }
 
     #[test]

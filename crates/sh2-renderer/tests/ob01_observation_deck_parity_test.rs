@@ -264,28 +264,19 @@ fn configure_ob01_fog_and_valley_mist(
         .particles()
         .iter()
         .map(|p| {
-            let norm_y = ((p.local_pos[1] / sh2_core::fog::PS2_DEFAULT_FOG_HEIGHT_BAND_MM) * 0.5
-                + 0.5)
-                .clamp(0.0, 1.0);
-            let local_y = -norm_y * sh2_core::fog::OB_FOG_Y_SPAN_MM;
-            let top_fade = if local_y < 300.0 - sh2_core::fog::OB_FOG_Y_SPAN_MM {
-                ((sh2_core::fog::OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
+            let (wy, alpha) = sh2_core::fog::evaluate_ob01_particle_y_and_alpha(
+                anchor[1],
+                p.local_pos[1],
+                p.alpha,
+            );
             GpuFogParticle {
                 world_pos_radius: [
                     anchor[0] + p.local_pos[0],
-                    anchor[1] + local_y,
+                    wy,
                     anchor[2] + p.local_pos[2],
                     p.radius_mm * radius_scale,
                 ],
-                color_alpha: [
-                    fog_rgb[0],
-                    fog_rgb[1],
-                    fog_rgb[2],
-                    p.alpha * top_fade * sh2_core::fog::OB_FOG_ALPHA_NORM,
-                ],
+                color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], alpha],
             }
         })
         .collect();

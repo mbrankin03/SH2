@@ -65,9 +65,9 @@ pub fn draw_save_load_screen(
     let row_px = ((20.0 * c.sy).round() as usize).max(12);
     let small_px = ((18.0 * c.sy).round() as usize).max(11);
 
-    // 3. `mcDrawFrame` (`0x00245770` / PC `sh2pc.exe` Save Folder):
-    //    Subtle translucent folder tab + thin outline border with NO opaque black fill so
-    //    `savebg.tbn2` (James's red portrait) shines cleanly through.
+    // 3. `mcDrawFrame` (`SLUS_202.28` `0x00245770`, `MC/mc_menu.c:1275-1301`):
+    //    Translucent folder outline (no opaque black fill so `savebg.tbn2` shines cleanly through).
+    //    Frame bounds match `mcDrawSlot` (`0x00245e30`: `x = 0x24..0x1dc`, `y = 0x60..0x156`).
     let frame_x0 = c.xi(28.0);
     let frame_y0 = c.yi(96.0);
     let frame_w = c.x(456.0).round().max(1.0) as usize;
@@ -75,24 +75,75 @@ pub fn draw_save_load_screen(
     let tab_w = c.x(182.0).round().max(1.0) as usize;
     let tab_y0 = c.yi(56.0);
     let tab_h = frame_y0.saturating_sub(tab_y0);
-    let border_col = [56, 18, 14, 150];
-    // Folder tab outline (top + left + right) and subtle main list outline
-    rasterizer.fill_rect(frame_x0, tab_y0, tab_w, 1, border_col);
-    rasterizer.fill_rect(frame_x0, tab_y0, 1, tab_h, border_col);
-    rasterizer.fill_rect(
-        frame_x0 + tab_w.saturating_sub(1),
-        tab_y0,
-        1,
-        tab_h,
-        border_col,
-    );
-    rasterizer.fill_rect(
-        frame_x0 + tab_w,
-        frame_y0,
-        frame_w.saturating_sub(tab_w),
-        1,
-        border_col,
-    );
+    let border_col = [0x40, 0x20, 0x20, 0x80];
+    if screen.config.unlimited_slots {
+        // PC / SH2:EE single "Save Folder" / "Load Folder" tab
+        rasterizer.fill_rect(frame_x0, tab_y0, tab_w, 1, border_col);
+        rasterizer.fill_rect(frame_x0, tab_y0, 1, tab_h, border_col);
+        rasterizer.fill_rect(
+            frame_x0 + tab_w.saturating_sub(1),
+            tab_y0,
+            1,
+            tab_h,
+            border_col,
+        );
+        rasterizer.fill_rect(
+            frame_x0 + tab_w,
+            frame_y0,
+            frame_w.saturating_sub(tab_w),
+            1,
+            border_col,
+        );
+        let folder_title = match screen.mode {
+            SaveLoadMode::Save => "Save Folder",
+            SaveLoadMode::Load => "Load Folder",
+        };
+        font.draw_line_centered(
+            rasterizer,
+            folder_title,
+            (frame_x0 + tab_w / 2, c.yi(66.0)),
+            row_px,
+            Sh2TextColor::White,
+            true,
+        );
+    } else {
+        // Strict 1:1 Vanilla PS2 `mcDrawFrame` (`MC/mc_menu.c:1286-1299`):
+        // `mcPutMes(0x30, 0x8b /* 139 */, 0x50 /* 80 */)` ("Memory Card 1") and
+        // `mcPutMes(0x31, 0x175 /* 373 */, 0x50 /* 80 */)` ("Memory Card 2").
+        rasterizer.fill_rect(frame_x0, frame_y0, frame_w, 1, border_col);
+        let card1_col = if screen.active_card == 0 {
+            Sh2TextColor::GoldSelected
+        } else {
+            Sh2TextColor::Custom {
+                top: [0x80, 0x80, 0x80, 0x80],
+                bottom: [0x80, 0x80, 0x80, 0x80],
+            }
+        };
+        let card2_col = if screen.active_card == 1 {
+            Sh2TextColor::GoldSelected
+        } else {
+            Sh2TextColor::Custom {
+                top: [0x80, 0x80, 0x80, 0x80],
+                bottom: [0x80, 0x80, 0x80, 0x80],
+            }
+        };
+        font.draw_line_centered(
+            rasterizer,
+            "Memory Card 1",
+            (c.xi(0x8b as f32), c.yi(0x50 as f32)),
+            row_px,
+            card1_col,
+            true,
+        );
+        font.draw_line_centered(
+            rasterizer,
+            "Memory Card 2",
+            (c.xi(0x175 as f32), c.yi(0x50 as f32)),
+            row_px,
+            card2_col,
+            true,
+        );
+    }
     rasterizer.fill_rect(
         frame_x0,
         frame_y0 + frame_h.saturating_sub(1),
@@ -109,30 +160,19 @@ pub fn draw_save_load_screen(
         border_col,
     );
 
-    let folder_title = if screen.config.unlimited_slots {
-        match screen.mode {
-            SaveLoadMode::Save => "Save Folder",
-            SaveLoadMode::Load => "Load Folder",
-        }
-    } else {
-        "Save Folder"
-    };
-    font.draw_line_centered(
-        rasterizer,
-        folder_title,
-        (frame_x0 + tab_w / 2, c.yi(66.0)),
-        row_px,
-        Sh2TextColor::White,
-        true,
-    );
-
-    // 4. `mcDrawSlot` (`0x00245e30` / PC `sh2pc.exe`): "SILENT HILL 2 Save Files" header + rows.
+    // 4. `mcDrawSlot` (`SLUS_202.28` `0x00245e30`, `MC/mc_menu.c:1378-1448`):
+    //    Header at `x = 0x24 (36), y = 0x6e (110)` and rows at `y = 0x96 (150) + vis * 0x28 (40)`.
     let total_rows = screen.total_selectable_rows();
     if total_rows > 0 {
+        let header = if screen.config.unlimited_slots {
+            "SILENT HILL 2 Save Files"
+        } else {
+            "File 1"
+        };
         font.draw_line_styled(
             rasterizer,
-            "SILENT HILL 2 Save Files",
-            (c.xi(36.0), c.yi(108.0)),
+            header,
+            (c.xi(0x24 as f32), c.yi(0x6e as f32)),
             title_px,
             Sh2TextColor::White,
             true,
@@ -148,8 +188,10 @@ pub fn draw_save_load_screen(
         );
     }
 
+    // Exact `mcDrawSlot` (`MC/mc_menu.c:1432-1439`):
+    // `((mcGetBlinkAlpha() + 0x20) << 24) | 0x208080` (PS2 GS ABGR: R=0x80, G=0x80, B=0x20, A=0..128).
     let blink = mc_get_blink_alpha(screen.blink_phase);
-    let sel_alpha = (((blink + 0x20) * 2).clamp(96, 176)) as u8;
+    let sel_alpha = (((blink + 0x20).max(0) * 255) / 128).clamp(0, 255) as u8;
     let scroll_px = screen.scroll_anim * 40.0;
 
     for vis in 0..MC_VISIBLE_ROWS {
@@ -157,29 +199,17 @@ pub fn draw_save_load_screen(
         if row_idx >= total_rows {
             break;
         }
-        let y_512 = 148.0 + (vis as f32) * 38.0;
-        let rx0 = c.xi(36.0);
+        // Exact `mcDrawSlot` (`MC/mc_menu.c:1392, 1441-1446`):
+        // `y = 0x96 (150) + vis * 0x28 (40)`, `x = 0x24 (36)..0x1dc (476)` (width 440),
+        // `h = 0x7bd - 0x796 = 0x27 (39)` px.
+        let y_512 = 150.0 + (vis as f32) * 40.0;
+        let rx0 = c.xi(0x24 as f32);
         let rw = c.x(440.0).round().max(1.0) as usize;
-        let rh = c.y(28.0).round().max(1.0) as usize;
+        let rh = c.y(39.0).round().max(1.0) as usize;
 
         if row_idx == screen.cursor_row {
-            // `mcDrawSlot` (`0x00245e30`): PS2 GS ABGR `0x208080` = R:0x80, G:0x80, B:0x20
-            // (warm translucent amber/gold highlight bar with clean 45° chamfered top corners).
             let bar_y = c.yi(y_512 + scroll_px);
-            let bevel = (c.y(4.0).round() as usize).max(2).min(rh / 2);
-            for dy in 0..rh {
-                let inset = bevel.saturating_sub(dy);
-                let line_w = rw.saturating_sub(inset * 2);
-                if line_w > 0 {
-                    rasterizer.fill_rect(
-                        rx0 + inset,
-                        bar_y + dy,
-                        line_w,
-                        1,
-                        [128, 112, 32, sel_alpha],
-                    );
-                }
-            }
+            rasterizer.fill_rect(rx0, bar_y, rw, rh, [0x80, 0x80, 0x20, sel_alpha]);
         }
 
         if let Some(entry) = card_slots.get(row_idx) {
@@ -424,16 +454,81 @@ fn blit_bg_stretched(
             if si + 3 >= src_rgba.len() {
                 continue;
             }
+            // `mcDrawBG` (`SLUS_202.28` `0x00247310`): `savebg.tbn2` drawn at PS2 GS unity `0x80`.
             dst.blend_pixel(
                 px,
                 py,
-                [
-                    (u16::from(src_rgba[si]) * 3 / 4) as u8,
-                    (u16::from(src_rgba[si + 1]) * 3 / 4) as u8,
-                    (u16::from(src_rgba[si + 2]) * 3 / 4) as u8,
-                    255,
-                ],
+                [src_rgba[si], src_rgba[si + 1], src_rgba[si + 2], 255],
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::save_load::state::{SaveLoadConfig, SaveLoadMode, SaveLoadScreen};
+
+    #[test]
+    fn draw_save_load_screen_vanilla_ps2_and_pc_modes_and_optional_preview() {
+        let font = AtlasFont::load_embedded();
+        let mut raster = TextRasterizer::new(640, 480);
+
+        // Try loading retail `savebg.tbn2` if present for Layer 4 visual inspection.
+        let savebg = [
+            "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
+            "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
+        ]
+        .iter()
+        .find(|p| std::path::Path::new(p).join(SAVEBG_TBN2_PATH).is_file())
+        .and_then(|data_dir| {
+            let loader = sh2_assets::formats::texture::TextureLoader::new(data_dir, None::<&str>);
+            loader
+                .load_texture(SAVEBG_TBN2_PATH)
+                .ok()
+                .map(|tex| (tex.rgba, tex.width, tex.height))
+        });
+        let bg_ref = savebg
+            .as_ref()
+            .map(|(rgba, w, h)| (rgba.as_slice(), *w, *h));
+
+        for (label, unlimited_slots) in [("vanilla_ps2", false), ("pc_sh2ee", true)] {
+            let mut screen = SaveLoadScreen::new(
+                SaveLoadMode::Save,
+                sh2_core::ScenarioKind::default(),
+                SaveLoadConfig {
+                    unlimited_slots,
+                    ..SaveLoadConfig::default()
+                },
+            );
+            screen.blink_phase = 0.0;
+            draw_save_load_screen(&screen, bg_ref, &font, &mut raster);
+
+            // Assert `mcDrawSlot` (`0x00245e30`) ABGR `0x208080` amber highlight bar renders
+            // at row 0 (`y = 0x96 = 150`, `x = 0x24..0x1dc`) with non-zero amber pixels.
+            let non_black = raster
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|px| px[0] > 8 || px[1] > 8 || px[2] > 8)
+                .count();
+            assert!(
+                non_black > 5000,
+                "{label} Save/Load screen must render visible frame, text, and highlight bar"
+            );
+
+            if let Ok(out_dir) = std::env::var("SH2_PREVIEW_OUT") {
+                let path = std::path::PathBuf::from(out_dir).join(format!("save_load_{label}.ppm"));
+                let mut buf = Vec::with_capacity((raster.width * raster.height * 3) + 32);
+                buf.extend_from_slice(
+                    format!("P6\n{} {}\n255\n", raster.width, raster.height).as_bytes(),
+                );
+                for px in raster.pixels.as_chunks::<4>().0 {
+                    buf.extend_from_slice(&px[..3]);
+                }
+                std::fs::write(path, buf).expect("write save_load preview ppm");
+            }
         }
     }
 }

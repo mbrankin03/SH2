@@ -176,19 +176,19 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         // and `obGB.fcl +0x13 = 0x30` (`48/128 = 0.375`) sprite alpha.
         let cam_to_player = player_pos - cam_eye;
         let cam_dist = cam_to_player.length();
+        // Exact `SLUS_202.28` `fogSetLocalPosV` (`0x0016c700`, `Fog/fog.c`):
+        // if `|player - cam| > 2000.0 mm`, clamp the fog volume anchor to `2000.0 mm` along the
+        // camera-to-player ray (`cam + (player - cam) * (2000.0 / dist)`).
         let anchor = if ps2_room_id == R_OBSV_DECK_ID {
             [
                 player_pos.x,
                 sh2_core::fog::OB_FOG_ANCHOR_Y_MM,
                 sh2_core::fog::OB_FOG_ANCHOR_Z_MM,
             ]
-        } else if cam_dist > 2_000.0 {
-            let projected = cam_eye + (cam_to_player / cam_dist) * 2_000.0;
-            [
-                projected.x,
-                projected.y.max(player_pos.y - 400.0),
-                projected.z,
-            ]
+        } else if cam_dist > sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM {
+            let projected = cam_eye
+                + (cam_to_player / cam_dist) * sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM;
+            [projected.x, projected.y, projected.z]
         } else {
             let anchor_y = room_eval
                 .particle_fixed_y_mm
@@ -219,22 +219,10 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             .fog_particle_scratch
             .extend(state.fog_particles.particles().iter().map(|p| {
                 let (wy, alpha) = if ps2_room_id == R_OBSV_DECK_ID {
-                    // Exact `sh2pc.exe` `FUN_00486d10` (`0x00486d10`) `subdiv = 4` Y band:
-                    // map symmetric `[-100, +100]` into `[-875.0, 0.0]` (`world_y ∈ [+125, +1000]`)
-                    // with `300 mm` upper fade (`sh2pc_00480000.c:4235-4240`) and `0x30/128` alpha.
-                    let norm_y = ((p.local_pos[1] / sh2_core::fog::PS2_DEFAULT_FOG_HEIGHT_BAND_MM)
-                        * 0.5
-                        + 0.5)
-                        .clamp(0.0, 1.0);
-                    let local_y = -norm_y * sh2_core::fog::OB_FOG_Y_SPAN_MM;
-                    let top_fade = if local_y < 300.0 - sh2_core::fog::OB_FOG_Y_SPAN_MM {
-                        ((sh2_core::fog::OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
-                    } else {
-                        1.0
-                    };
-                    (
-                        anchor[1] + local_y,
-                        p.alpha * top_fade * sh2_core::fog::OB_FOG_ALPHA_NORM,
+                    sh2_core::fog::evaluate_ob01_particle_y_and_alpha(
+                        anchor[1],
+                        p.local_pos[1],
+                        p.alpha,
                     )
                 } else {
                     (anchor[1] + p.local_pos[1], p.alpha)

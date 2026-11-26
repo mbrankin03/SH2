@@ -117,13 +117,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let uv_px = (vec2<f32>(sample_coords) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
         let clip_pos = vec4<f32>(uv_px.x * 2.0 - 1.0, (1.0 - uv_px.y) * 2.0 - 1.0, depth_val, 1.0);
         let view_pos_h = camera.inv_proj * clip_pos;
-        let view_dist = length(view_pos_h.xyz / max(1e-5, abs(view_pos_h.w)));
+        let view_z = abs(view_pos_h.z / max(1e-5, abs(view_pos_h.w)));
 
         // Exact `sh2pc.exe` `0x005a1b50` Z-plane split (`z_ndc = 0x3f49cd3e` -> `focus_mm = 1180.8 mm`):
-        // foreground (`view_dist < focus_mm`) uses `near_strength`; background uses `far_strength`.
+        // foreground (`view_z < focus_mm`) uses `near_strength`; background uses `far_strength`.
         let focus_mm = post.dof_focus_params.x;
         let local_blur = clamp(
-            select(post.dof_focus_params.z, post.dof_focus_params.y, view_dist < focus_mm),
+            select(post.dof_focus_params.z, post.dof_focus_params.y, view_z < focus_mm),
             0.0,
             1.0,
         );

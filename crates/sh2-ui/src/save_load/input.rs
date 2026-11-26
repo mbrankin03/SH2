@@ -31,8 +31,10 @@ impl SaveLoadScreen {
             if row_idx >= total_rows {
                 break;
             }
-            let y0 = 148.0 + (vis as f32) * 38.0;
-            if vy >= y0 && vy <= y0 + 32.0 {
+            // Exact `mcDrawSlot` (`SLUS_202.28` `0x00245e30`, `MC/mc_menu.c:1392, 1441-1446`):
+            // `y = 0x96 (150) + vis * 0x28 (40)`, height `0x7bd - 0x796 = 39` px.
+            let y0 = 150.0 + (vis as f32) * 40.0;
+            if vy >= y0 && vy <= y0 + 39.0 {
                 return Some(row_idx);
             }
         }

@@ -319,7 +319,34 @@ mod tests {
         assert_eq!(cfg.video.resolution.prev(), InternalResolution::Res4k);
 
         assert_eq!(cfg.video.display_mode.next(), WindowDisplayMode::Windowed);
-        assert_eq!(cfg.video.fog_quality.toggle(), FogQuality::ClassicPs2);
+        assert_eq!(cfg.video.fog_quality, FogQuality::ClassicPs2);
+        assert_eq!(cfg.video.fog_quality.toggle(), FogQuality::ModernVolumetric);
+        assert_eq!(cfg.video.texture_quality, WorldTextureQuality::Sh2eeHd);
+        assert_eq!(
+            cfg.video.texture_quality.next(),
+            WorldTextureQuality::OriginalPs2
+        );
+        assert_eq!(
+            cfg.video.texture_quality.prev(),
+            WorldTextureQuality::Ai4kMaster
+        );
+        assert!(!cfg.video.aces_tonemapping);
+        assert!(!cfg.video.volumetric_light);
+        assert_eq!(cfg.video.cutaway_quality, CutawayQuality::Sh2eeHd);
+        assert_eq!(
+            cfg.video.shadow_quality,
+            ShadowQualityMode::EnhancedEditionSoft
+        );
+        assert_eq!(cfg.video.lighting_profile, LightingProfile::EnhancedEdition);
+        assert_eq!(
+            cfg.video.outdoor_streaming_mode,
+            OutdoorStreamingMode::ClassicPs2LoadBg2x2
+        );
+        assert_eq!(cfg.video.fmv_source, FmvCutsceneSource::Enhanced1080p60);
+        assert!(!cfg.video.enable_water_reflections);
+        assert!(!cfg.video.enable_oar_ripples);
+        assert!(!cfg.video.enable_fire_heat_haze);
+        assert!(!cfg.video.enable_spark_flash_lights);
 
         assert_eq!(
             cfg.audio.speaker_config.next(),

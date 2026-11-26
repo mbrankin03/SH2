@@ -110,8 +110,8 @@ impl Default for FogUniforms {
             layer_transparencies: [
                 f32::from(layers.transparency_layer1) / 255.0,
                 f32::from(layers.transparency_layer2) / 255.0,
-                1.0, // ModernVolumetric default (matches VideoOptions::default())
-                1.0, // volumetric_light enabled default
+                0.0, // ClassicPs2 default (matches VideoOptions::default(), SH2-154)
+                0.0, // volumetric_light disabled default (matches VideoOptions::default(), SH2-154)
             ],
             shadow_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             depth_fog_params: depth_coeffs.to_gpu_vec4(),

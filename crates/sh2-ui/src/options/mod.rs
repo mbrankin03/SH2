@@ -645,18 +645,18 @@ mod tests {
             menu.item_display(18),
             Some((
                 "Cutaway & Puzzle Quality",
-                "4K AI Master (4096x4096)".to_string()
+                "SH2:EE HD (2048x2048)".to_string()
             ))
         );
         menu.adjust_value(1);
         assert_eq!(
             menu.draft_config.video.cutaway_quality,
-            sh2_core::CutawayQuality::Sh2eeHd
+            sh2_core::CutawayQuality::OriginalPs2
         );
         menu.adjust_value(1);
         assert_eq!(
             menu.draft_config.video.cutaway_quality,
-            sh2_core::CutawayQuality::OriginalPs2
+            sh2_core::CutawayQuality::Ai4kMaster
         );
         menu.selected_index = 19;
         menu.adjust_value(1);
@@ -1000,12 +1000,12 @@ mod tests {
         menu.selected_index = 20;
         let (label, val) = menu.item_display(20).unwrap();
         assert_eq!(label, "FMV Cutscene Source");
-        assert_eq!(val, "Auto (4K VSR if detected)");
+        assert_eq!(val, "SH2:EE 1080p60 (Bink)");
 
         menu.adjust_value(1);
         assert_eq!(
             menu.draft_config.video.fmv_source,
-            sh2_core::config::FmvCutsceneSource::Upscaled4kMp4
+            sh2_core::config::FmvCutsceneSource::OgHqPs2Masters
         );
 
         let mut ps2_cfg = AppConfig::default();

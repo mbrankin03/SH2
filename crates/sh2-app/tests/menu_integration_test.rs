@@ -79,13 +79,13 @@ fn test_sh2_18_full_menu_and_options_flow() {
     controller.handle_nav(MenuNavAction::Right);
     assert!(!controller.options_menu.draft_config.video.vsync);
 
-    // Toggle Fog Quality (Modern Volumetric -> Classic PS2)
+    // Toggle Fog Quality (Classic PS2 -> Modern Volumetric)
     controller.handle_nav(MenuNavAction::Down); // Index 3: Framerate
     controller.handle_nav(MenuNavAction::Down); // Index 4: Fog Quality
     controller.handle_nav(MenuNavAction::Right);
     assert_eq!(
         controller.options_menu.draft_config.video.fog_quality,
-        FogQuality::ClassicPs2
+        FogQuality::ModernVolumetric
     );
 
     // Adjust Film Grain Slider (65% -> 75%)
@@ -156,7 +156,7 @@ fn test_sh2_18_full_menu_and_options_flow() {
     assert_eq!(reloaded.video.resolution, InternalResolution::Res1080p);
     assert_eq!(reloaded.video.display_mode, WindowDisplayMode::Windowed);
     assert!(!reloaded.video.vsync);
-    assert_eq!(reloaded.video.fog_quality, FogQuality::ClassicPs2);
+    assert_eq!(reloaded.video.fog_quality, FogQuality::ModernVolumetric);
     assert_eq!(reloaded.video.grain_intensity, 75);
     assert!((reloaded.audio.master_volume - 0.80).abs() < 0.001);
     assert!(!reloaded.controls.tank_controls);

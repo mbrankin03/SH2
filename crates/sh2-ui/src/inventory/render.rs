@@ -506,16 +506,17 @@ fn draw_item_footer(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Exact `SLUS_202.28` `font_print` (`0x001d5b50..0x001d5b90`) in `512x448`:
-    // Item Name at `(0x14 = 20, 0x145 = 325)`, Description at `(0x2d = 45, 0x168 = 360)`
-    // (`FontSize[1]` = `16x24` small/crushed font for item name & description).
-    let title_px = ((24.0 * c.sy).round() as usize).max(12);
-    let body_px = ((22.0 * c.sy).round() as usize).max(10);
-    let x_scale = c.sx / c.sy;
+    // Retail PC `sh2pc.exe` `font_print` (`sh2pc_00470000.c:2272, 2280`) + `FUN_004707b0:525-526`
+    // (`1/512 = 0.001953125`, `1/480 = 0.0020833334`): Item Name at `(0x14 = 20, 0x145 = 325)` and
+    // Description at `(0x2d = 45, 0x168 = 360)` in `512x480` space -> scaled by `448/480` into `512x448`.
+    let y_480_to_448 = PS2_UI_HEIGHT / 480.0;
+    let title_px = ((26.0 * c.sy).round() as usize).max(12);
+    let body_px = ((24.0 * c.sy).round() as usize).max(11);
+    let x_scale = (c.sx / c.sy) * (480.0 / PS2_UI_HEIGHT);
     let name_x = c.xi(20.0);
-    let name_y = c.yi(325.0).saturating_sub(title_px);
+    let name_y = c.yi(325.0 * y_480_to_448).saturating_sub(title_px);
     let desc_x = c.xi(45.0);
-    let desc_y = c.yi(360.0).saturating_sub(body_px);
+    let desc_y = c.yi(360.0 * y_480_to_448).saturating_sub(body_px);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
         font.draw_line_styled_aspect(
@@ -621,7 +622,7 @@ fn draw_inline_examine_popup(
     let y1 = c.yi(ry1);
     let w = x1.saturating_sub(x0).max(1);
     let h = y1.saturating_sub(y0).max(1);
-    let border = (c.sy * 0.85).round().max(1.0) as usize;
+    let border = (c.sy * 0.45).round().max(1.0) as usize;
 
     // Opaque black popup fill (`examine2_main` `0x001d4040`)
     rasterizer.fill_rect(x0, y0, w, h, [0, 0, 0, 255]);
@@ -650,7 +651,30 @@ fn draw_inline_examine_popup(
         rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, 1.0);
     }
 
-    rasterizer.draw_rect_outline(x0, y0, w, h, border, [128, 128, 128, 255]);
+    // `examine2_main` (`SLUS_202.28` `0x001d4040`, `otn_itemmain.c:1857-1970`, `lcolor = 45` at `0x003400c8`):
+    // 4 outward-expanding + 4 inward-shrinking concentric 1 px feathered gray borders with
+    // `v = 45 * (3 - i) + 0x1e` (`165, 120, 75, 30`) and GS alpha `0x20` (`64 / 255`).
+    const LCOLOR: usize = 45;
+    for i in 0..4usize {
+        let v = (LCOLOR * (3 - i) + 0x1e).min(255) as u8;
+        let col = [v, v, v, 64];
+        let step_x = ((i as f32) * c.sx).round() as usize;
+        let step_y = ((i as f32) * c.sy).round() as usize;
+        // Outward layer (`-i` / `+i`)
+        let ox = x0.saturating_sub(step_x);
+        let oy = y0.saturating_sub(step_y);
+        let ow = w.saturating_add(step_x * 2);
+        let oh = h.saturating_add(step_y * 2);
+        rasterizer.draw_rect_outline(ox, oy, ow, oh, border, col);
+        // Inward layer (`+i` / `-i`)
+        if w > step_x * 2 + 1 && h > step_y * 2 + 1 {
+            let ix = x0 + step_x;
+            let iy = y0 + step_y;
+            let iw = w - step_x * 2;
+            let ih = h - step_y * 2;
+            rasterizer.draw_rect_outline(ix, iy, iw, ih, border, col);
+        }
+    }
 }
 
 /// Renders the 2-phase fullscreen `examine_main` (`SLUS_202.28` `0x001d3a00`) screen:

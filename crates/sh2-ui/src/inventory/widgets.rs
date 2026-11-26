@@ -263,8 +263,11 @@ pub fn draw_lookline(
     show_corner_brackets: bool,
 ) {
     let [r, g, b] = SH2_BLUE_LINE_RGB;
-    let color = [r, g, b, alpha];
-    let border = (c.sy * 0.85).round().max(1.0) as usize;
+    // Retail PC `sh2pc.exe` `FUN_004707b0` (`0x004707b0:508`): `iVar7 << 0x18 | 0x3060f0` passes
+    // PS2's `0..0x80` alpha unshifted into D3D8 `0..0xFF` (`0x80` = 50% opacity) as a crisp 1 px hairline.
+    let d3d_alpha = (alpha as u16 / 2) as u8;
+    let color = [r, g, b, d3d_alpha];
+    let border = (c.sy * 0.45).round().max(1.0) as usize;
 
     // 1. Single closed rectangle (`lookline` `0x001d6d2c..0x001d6f8c`)
     rasterizer.draw_rect_outline(rx, ry, ret_w, ret_h, border, color);

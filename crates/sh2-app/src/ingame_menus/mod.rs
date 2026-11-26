@@ -437,23 +437,21 @@ pub(crate) fn render_overlay(
     let font = AtlasFont::shared(None);
 
     if state.ingame_menus.options_from_inventory {
-        state.draw_fullscreen_dim_scrim(encoder, surface_view, 210);
-        state.inventory_rasterizer.clear();
+        // `otn_option.c` (`0x002170c0`): solid black fullscreen backdrop + native widescreen
+        // Options UI (`menu_rasterizer`) with full-viewport `1.0` s fade-in scrim.
+        state.draw_fullscreen_dim_scrim(encoder, surface_view, 255);
         draw_options_screen(
             &state.menu_ctrl.options_menu,
             font,
-            &mut state.inventory_rasterizer,
+            &mut state.menu_rasterizer,
         );
         if state.ingame_menus.options_fade_alpha > 0.001 {
             let a = (state.ingame_menus.options_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
-            let rw = state.inventory_rasterizer.width;
-            let rh = state.inventory_rasterizer.height;
-            state
-                .inventory_rasterizer
-                .fill_rect(0, 0, rw, rh, [0, 0, 0, a]);
+            let rw = state.menu_rasterizer.width;
+            let rh = state.menu_rasterizer.height;
+            state.menu_rasterizer.fill_rect(0, 0, rw, rh, [0, 0, 0, a]);
         }
-        let vp = state.ps2_ui_viewport();
-        state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
+        state.finish_hud_overlay(encoder, surface_view);
         return;
     } else if state.ingame_menus.save_load.is_some() {
         let scenario = state.menu_ctrl.title_sm.selected_scenario;

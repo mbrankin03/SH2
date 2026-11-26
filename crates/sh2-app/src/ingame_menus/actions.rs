@@ -157,6 +157,16 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
             // `SLUS_202.28` `otn_itemmain.c:471-473` (`DAT_0116e65d = 1`) -> `PlayableMain` `case 3`
             // (`gamemain.c:448`: `ScreenEffectFadeStart(0x3f99999a, 4)`): fade gameplay back in from black.
             if let Some(ref mut orch) = state.campaign_orchestrator {
+                if state.campaign_pending_input.item_use_id == 0
+                    && matches!(
+                        orch.phase,
+                        sh2_core::campaign::CampaignPhase::OverlayMenu(
+                            sh2_core::campaign::OverlayMenuKind::Inventory
+                        )
+                    )
+                {
+                    orch.phase = sh2_core::campaign::CampaignPhase::ActiveGameplay;
+                }
                 orch.fade.start_fade_in(
                     sh2_core::campaign::PS2_DEFAULT_FADE_SPEED,
                     orch.delayed_fade_in_fix,

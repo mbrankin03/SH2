@@ -396,7 +396,14 @@ impl RoomController for CampaignRoomController {
             .game
             .enable_delayed_fade_in;
 
-        let mut tick_input = std::mem::take(&mut state.campaign_pending_input);
+        // Preserve queued inputs (such as `item_use_id` from Inventory `Use`/`Combine`) while
+        // `is_paused` is true during the 0.5s Inventory fade-out so they are not dropped before
+        // `orch.step` runs on the first unpaused frame.
+        let mut tick_input = if is_paused {
+            sh2_core::campaign::CampaignTickInput::default()
+        } else {
+            std::mem::take(&mut state.campaign_pending_input)
+        };
         tick_input.prefer_sh2ee = state
             .menu_ctrl
             .options_menu

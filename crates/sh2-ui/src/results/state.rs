@@ -79,7 +79,10 @@ impl ResultsScreen {
     }
 }
 
-/// Maps an ending stage ID (`48..=54`) to the corresponding [`GameEnding`].
+/// Maps an ending stage ID (`48..=52`, `54`, matching `stages_act2/mod.rs` and `campaign_room/mod.rs`)
+/// to the corresponding [`GameEnding`]. Stage `53` is `WishHeavensNight` (not UFO; retail PC
+/// `sh2pc.exe` `ResultMain` `sh2pc_00440000.c:3455-3458` detects UFO via current-run event flag
+/// `DAT_01f7aa38 & 0x800000`, passed explicitly to [`ResultsScreen::from_playing_info_with_ending`]).
 #[must_use]
 pub const fn ending_from_stage(stage: u8) -> Option<GameEnding> {
     match stage {
@@ -88,7 +91,6 @@ pub const fn ending_from_stage(stage: u8) -> Option<GameEnding> {
         50 => Some(GameEnding::InWater),
         51 => Some(GameEnding::Rebirth),
         52 => Some(GameEnding::Dog),
-        53 => Some(GameEnding::Ufo),
         54 => Some(GameEnding::BornFromAWish),
         _ => None,
     }

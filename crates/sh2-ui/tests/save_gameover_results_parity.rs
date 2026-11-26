@@ -289,6 +289,9 @@ fn test_sh2_166_results_current_ending_and_extra_endings_count() {
     assert_eq!(partial.rows[2].value, "Dog");
     assert!(partial.rows[2].is_max_rank);
     assert_eq!(partial.rows[3].value, "1/4(+2)");
+
+    // Stage 53 is `WishHeavensNight`, NOT UFO (`sh2pc_00440000.c:3455-3458` uses event flag).
+    assert_eq!(sh2_ui::results::state::ending_from_stage(53), None);
 }
 
 #[test]

@@ -288,49 +288,7 @@ impl CampaignOrchestrator {
                 });
             }
             CampaignPhase::ActiveGameplay => {
-                if let Some(ref manifest) = self.active_manifest {
-                    effects.active_room_pickups = crate::world::resolve_active_room_pickups(
-                        &manifest.room_pickups,
-                        &sim.scenario.flags,
-                        sim.scenario.action_difficulty,
-                        manifest.is_outdoor,
-                        sim.scenario.player_position.to_array(),
-                    );
-                }
-                let outcome = run_active_gameplay(
-                    sim,
-                    &mut self.event_engine,
-                    &mut self.outdoor_streamer,
-                    &mut self.fade,
-                    &mut self.cutaway_fade,
-                    &mut self.play_time_secs,
-                    &mut self.player_locked,
-                    input,
-                    dt_sec,
-                    &mut effects,
-                );
-                effects.fade_alpha = self.fade.black_alpha();
-                match outcome {
-                    GameplayStepOutcome::Continue => {}
-                    GameplayStepOutcome::EnterGameOver => {
-                        self.phase = CampaignPhase::GameOver;
-                    }
-                    GameplayStepOutcome::OpenOverlay(kind) => {
-                        self.phase = CampaignPhase::OverlayMenu(kind);
-                    }
-                    GameplayStepOutcome::RequestTransition {
-                        current_stage,
-                        command,
-                    } => {
-                        self.request_transition(current_stage, command, None);
-                    }
-                    GameplayStepOutcome::StartDemo(trigger) => {
-                        self.start_drama_demo(trigger, &mut effects);
-                    }
-                    GameplayStepOutcome::TriggerEnding(ending_stage) => {
-                        self.trigger_ending(ending_stage);
-                    }
-                }
+                self.step_active_gameplay(sim, input, dt_sec, &mut effects);
             }
             CampaignPhase::DoorTransition {
                 command,
@@ -556,7 +514,13 @@ impl CampaignOrchestrator {
                 if kind.advances_game_timer() && dt_sec > 0.0 {
                     self.play_time_secs += f64::from(dt_sec);
                 }
-                if input.overlay_toggle == Some(kind) || input.cancel_pressed {
+                if kind == super::state::OverlayMenuKind::Inventory && input.item_use_id != 0 {
+                    // `SLUS_202.28` `event_item_use` (`0x001d3840`) / `combine_item_use` (`0x001d38d0`):
+                    // using an item from Inventory returns to `ActiveGameplay` and evaluates the
+                    // queued `item_use_id` against the current stage's `Event_List`.
+                    self.phase = CampaignPhase::ActiveGameplay;
+                    self.step_active_gameplay(sim, input, dt_sec, &mut effects);
+                } else if input.overlay_toggle == Some(kind) || input.cancel_pressed {
                     self.phase = CampaignPhase::ActiveGameplay;
                 }
             }
@@ -594,6 +558,58 @@ impl CampaignOrchestrator {
 
         effects.fade_alpha = self.fade.black_alpha();
         effects
+    }
+
+    fn step_active_gameplay(
+        &mut self,
+        sim: &mut SimulationCore,
+        input: &CampaignTickInput,
+        dt_sec: f32,
+        effects: &mut CampaignEffects,
+    ) {
+        if let Some(ref manifest) = self.active_manifest {
+            effects.active_room_pickups = crate::world::resolve_active_room_pickups(
+                &manifest.room_pickups,
+                &sim.scenario.flags,
+                sim.scenario.action_difficulty,
+                manifest.is_outdoor,
+                sim.scenario.player_position.to_array(),
+            );
+        }
+        let outcome = run_active_gameplay(
+            sim,
+            &mut self.event_engine,
+            &mut self.outdoor_streamer,
+            &mut self.fade,
+            &mut self.cutaway_fade,
+            &mut self.play_time_secs,
+            &mut self.player_locked,
+            input,
+            dt_sec,
+            effects,
+        );
+        effects.fade_alpha = self.fade.black_alpha();
+        match outcome {
+            GameplayStepOutcome::Continue => {}
+            GameplayStepOutcome::EnterGameOver => {
+                self.phase = CampaignPhase::GameOver;
+            }
+            GameplayStepOutcome::OpenOverlay(kind) => {
+                self.phase = CampaignPhase::OverlayMenu(kind);
+            }
+            GameplayStepOutcome::RequestTransition {
+                current_stage,
+                command,
+            } => {
+                self.request_transition(current_stage, command, None);
+            }
+            GameplayStepOutcome::StartDemo(trigger) => {
+                self.start_drama_demo(trigger, effects);
+            }
+            GameplayStepOutcome::TriggerEnding(ending_stage) => {
+                self.trigger_ending(ending_stage);
+            }
+        }
     }
 
     /// Commits post-FMV handoff into `DramaDemo`, `DoorTransition`, `EndingCredits`, or

@@ -335,6 +335,7 @@ fn fs_darken() -> @location(0) vec4<f32> {
         camera_bind_group: &wgpu::BindGroup,
         darken_bind_group: &wgpu::BindGroup,
         gpu_map: Option<&GpuMap>,
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
         volume_buffer: &wgpu::Buffer,
         volume_vertex_count: u32,
     ) {
@@ -367,7 +368,9 @@ fn fs_darken() -> @location(0) vec4<f32> {
                 rpass.set_bind_group(0, camera_bind_group, &[]);
                 rpass.set_bind_group(1, darken_bind_group, &[]);
                 for batch in &map.batches {
-                    if batch.group != BatchGroup::Opaque || !map.is_batch_visible(batch) {
+                    if batch.group != BatchGroup::Opaque
+                        || !map.is_batch_visible_with(batch, vis_filter)
+                    {
                         continue;
                     }
                     rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
@@ -436,6 +439,7 @@ fn fs_darken() -> @location(0) vec4<f32> {
         camera_bind_group: &wgpu::BindGroup,
         darken_bind_group: &wgpu::BindGroup,
         gpu_map: Option<&GpuMap>,
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
         volume_buffer: &wgpu::Buffer,
         volume_vertex_count: u32,
     ) {
@@ -468,7 +472,9 @@ fn fs_darken() -> @location(0) vec4<f32> {
                 rpass.set_bind_group(0, camera_bind_group, &[]);
                 rpass.set_bind_group(1, darken_bind_group, &[]);
                 for batch in &map.batches {
-                    if batch.group != BatchGroup::Opaque || !map.is_batch_visible(batch) {
+                    if batch.group != BatchGroup::Opaque
+                        || !map.is_batch_visible_with(batch, vis_filter)
+                    {
                         continue;
                     }
                     rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));

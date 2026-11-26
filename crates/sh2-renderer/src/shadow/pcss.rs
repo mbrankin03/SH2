@@ -380,6 +380,7 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
         shadow_bind_group: &wgpu::BindGroup,
         gpu_map: Option<&GpuMap>,
         skeletal_meshes: &[SkeletalDrawItem],
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
     ) {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("PCSS Spotlight Shadow Depth Pass"),
@@ -400,7 +401,9 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
             rpass.set_pipeline(&self.static_pipeline);
             rpass.set_bind_group(0, shadow_bind_group, &[]);
             for batch in &map.batches {
-                if batch.group != BatchGroup::Opaque || !map.is_batch_visible(batch) {
+                if batch.group != BatchGroup::Opaque
+                    || !map.is_batch_visible_with(batch, vis_filter)
+                {
                     continue;
                 }
                 rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));

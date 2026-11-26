@@ -161,6 +161,10 @@ pub struct RenderContext {
     pub(crate) last_pcss_params: std::sync::Mutex<[f32; 4]>,
     pub(crate) last_camera_uniforms: std::sync::Mutex<pipeline::CameraUniforms>,
     pub(crate) planar_mirror: std::sync::Mutex<Option<crate::mirror::PlanarMirrorSpec>>,
+    /// Active `.map` `geo_id` part-group/variant visibility filter (`EvDispControlModelEntry`
+    /// `SLUS_202.28` `0x001ad560` / `sh2pc.exe` `0x004a2f10`, `SetDispOnOffMask` `0x005b4760`).
+    pub(crate) map_visibility_filter:
+        std::sync::Mutex<Option<sh2_core::events::stageparts::MapPartVisibilityFilter>>,
     pub mirror_glass_overlay_enabled: std::sync::atomic::AtomicBool,
     pub(crate) water_plane_height_mm: std::sync::atomic::AtomicU32,
 

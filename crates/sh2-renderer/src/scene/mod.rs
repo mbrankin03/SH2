@@ -10,6 +10,7 @@ use wgpu::util::DeviceExt;
 use crate::gpu_map::GpuMap;
 use crate::{RenderContext, SkeletalDrawItem};
 use sh2_assets::formats::map::{BatchGroup, MapFile};
+use sh2_core::events::stageparts::MapPartVisibilityFilter;
 
 impl RenderContext {
     /// Render a pre-compiled `GpuMap` room into the framebuffers and run the compute passes.
@@ -82,6 +83,9 @@ impl RenderContext {
             }
         }
 
+        // Snapshot the active `.map` `geo_id` visibility filter once per frame (`EvDispControlModelExec`).
+        let vis_filter = self.map_visibility_filter();
+
         // 0. Spotlight Shadow Depth Passes:
         //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`)
         if self.config.enable_fog
@@ -94,6 +98,7 @@ impl RenderContext {
                 &self.shadow_depth_view,
                 &self.spotlight_shadow_bind_group,
                 gpu_map,
+                vis_filter.as_ref(),
             );
         }
         //    0b. 2048x2048 Native PCSS spotlight shadow map (static map + animated skeletal self-shadowing, `SH2-81`)
@@ -104,15 +109,25 @@ impl RenderContext {
                 &self.pcss_shadow_bind_group,
                 gpu_map,
                 skeletal_meshes,
+                vis_filter.as_ref(),
             );
         }
 
         // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`)
-        self.encode_water_reflection_pass(gpu_map, map_texture_bind_groups, skeletal_meshes);
+        self.encode_water_reflection_pass(
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            vis_filter.as_ref(),
+        );
 
         // 0d. Stenciled Planar Mirror Render Pass (`SH2-101` / `SH2-151`)
-        let active_mirror =
-            self.encode_planar_mirror_pass(gpu_map, map_texture_bind_groups, skeletal_meshes);
+        let active_mirror = self.encode_planar_mirror_pass(
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            vis_filter.as_ref(),
+        );
 
         // Determine PS2 `Check_DrawOrder` (`0x001a08a0`): on maps `0x000a007d` / `0x00090016`
         // during gameplay, stencil shadows are composited onto the static room BEFORE characters.
@@ -162,7 +177,7 @@ impl RenderContext {
                 let mut wrote_decal_depth = false;
                 if let (Some(map), Some(batch_idx)) = (gpu_map, mirror_spec.decal_batch_index) {
                     if let Some(batch) = map.batches.get(batch_idx) {
-                        if map.is_batch_visible(batch) {
+                        if map.is_batch_visible_with(batch, vis_filter.as_ref()) {
                             rpass.set_pipeline(&self.mirror_pipeline.map_depth_write_pipeline);
                             rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
                             rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
@@ -195,6 +210,7 @@ impl RenderContext {
                     map_texture_bind_groups,
                     BatchGroup::Opaque,
                     &self.geometry_pipeline.pipeline,
+                    vis_filter.as_ref(),
                 );
             }
 
@@ -212,6 +228,7 @@ impl RenderContext {
                     map_texture_bind_groups,
                     BatchGroup::Decal,
                     &self.geometry_pipeline.decal_pipeline,
+                    vis_filter.as_ref(),
                 );
             }
 
@@ -240,6 +257,7 @@ impl RenderContext {
                     map_texture_bind_groups,
                     BatchGroup::Transparent,
                     &self.geometry_pipeline.transparent_pipeline,
+                    vis_filter.as_ref(),
                 );
             }
 
@@ -402,6 +420,7 @@ impl RenderContext {
                     &self.geometry_bind_group,
                     &self.shadow_darken_bind_group,
                     gpu_map,
+                    vis_filter.as_ref(),
                     &self.shadow_volume_buffer,
                     stencil_verts,
                 );
@@ -413,6 +432,7 @@ impl RenderContext {
                     &self.geometry_bind_group,
                     &self.shadow_darken_bind_group,
                     gpu_map,
+                    vis_filter.as_ref(),
                     &self.shadow_volume_buffer,
                     stencil_verts,
                 );
@@ -513,13 +533,14 @@ impl RenderContext {
 
     /// Helper to draw all `GpuMapBatch` items belonging to a specific [`BatchGroup`]
     /// using the designated pipeline (`pipeline`, `decal_pipeline`, or `transparent_pipeline`).
-    fn draw_map_batches_for_group<'a>(
+    pub(super) fn draw_map_batches_for_group<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
         map: &'a GpuMap,
         map_texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
         target_group: BatchGroup,
         pipeline: &'a wgpu::RenderPipeline,
+        vis_filter: Option<&MapPartVisibilityFilter>,
     ) {
         if !map.batches.iter().any(|b| b.group == target_group) {
             return;
@@ -530,7 +551,7 @@ impl RenderContext {
         let mut current_bg: Option<usize> = None;
 
         for batch in &map.batches {
-            if batch.group != target_group || !map.is_batch_visible(batch) {
+            if batch.group != target_group || !map.is_batch_visible_with(batch, vis_filter) {
                 continue;
             }
             let bg_idx = batch.material_index;

@@ -340,6 +340,54 @@ pub(crate) fn open_fmv_session(
 
 pub(crate) struct FmvRoomController;
 
+/// Clears `state.render_ctx.ldr_output_view` to opaque black (`pssDispClear` `SLUS_202.28`
+/// `0x00289ce0` / `sh2pc.exe` D3D8 clear after `_BinkClose_4`) so EOF never leaves a 1-frame
+/// stale image flash (`SH2-150`).
+pub(crate) fn clear_ldr_output_black(state: &AppState) {
+    let mut encoder =
+        state
+            .render_ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("FMV Black Clear Encoder"),
+            });
+    {
+        let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("FMV Clear Black Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &state.render_ctx.ldr_output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+    }
+    state
+        .render_ctx
+        .queue
+        .submit(std::iter::once(encoder.finish()));
+}
+
+/// Smoothly fades out active FMV audio (and any FMV-started BGM stream) over `duration`
+/// during a skip fade-out (`SH2-150`).
+pub(crate) fn fade_out_fmv_audio(state: &mut AppState, duration: Duration) {
+    let had_fmv_bgm = state
+        .fmv_session
+        .as_ref()
+        .is_some_and(|session| session.bgm_stream.is_some());
+    if let Some(ref mut engine) = state.audio_engine {
+        engine.stop_fmv_audio(duration);
+        if had_fmv_bgm {
+            engine.stop_bgm(duration);
+        }
+    }
+}
+
 /// Stops any active FMV session and its associated FMV audio (plus any FMV-started BGM stream).
 pub(crate) fn stop_active_fmv_session(state: &mut AppState) {
     let had_fmv_bgm = state
@@ -455,6 +503,7 @@ pub(crate) fn tick_and_render_fmv_frame(
     }
 
     if finished_eof {
+        clear_ldr_output_black(state);
         stop_active_fmv_session(state);
     }
 

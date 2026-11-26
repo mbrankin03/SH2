@@ -38,7 +38,7 @@ pub use stage_loader::{
     CampaignEnemySpawn, CampaignPickupSpawn, RoomLoadManifest,
 };
 pub use state::{
-    CampaignPhase, ConnectStep, FadeDirection, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
-    MAIN_SCENARIO_START_STAGE, PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER, SH2EE_DELAYED_FADE_IN_START,
-    WISH_SCENARIO_START_STAGE,
+    CampaignPhase, ConnectStep, FadeDirection, FmvExitState, OverlayMenuKind, RoomLoadTarget,
+    ScreenFadeState, MAIN_SCENARIO_START_STAGE, PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER,
+    SH2EE_DELAYED_FADE_IN_START, WISH_SCENARIO_START_STAGE,
 };

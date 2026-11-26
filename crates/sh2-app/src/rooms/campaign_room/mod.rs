@@ -11,7 +11,8 @@ use winit::keyboard::KeyCode;
 use crate::assets::open_drama_demo_session;
 use crate::rooms::combat_arena::CombatArenaRoomController;
 use crate::rooms::fmv_room::{
-    open_fmv_session, render_fmv_subtitles, stop_active_fmv_session, tick_and_render_fmv_frame,
+    clear_ldr_output_black, fade_out_fmv_audio, open_fmv_session, render_fmv_subtitles,
+    stop_active_fmv_session, tick_and_render_fmv_frame,
 };
 use crate::rooms::RoomController;
 use crate::state::AppState;
@@ -324,7 +325,14 @@ impl RoomController for CampaignRoomController {
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::FmvPlayback { .. })
         );
-        tick_input.fmv_finished = state.fmv_session.is_none() && was_fmv;
+        let was_fmv_playing = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::FmvPlayback {
+                exit_state: sh2_core::campaign::FmvExitState::Playing,
+                ..
+            })
+        );
+        tick_input.fmv_finished = state.fmv_session.is_none() && was_fmv_playing;
 
         if let Some(ref mut ls) = state.loading_screen {
             ls.tick(dt_sec);
@@ -348,6 +356,18 @@ impl RoomController for CampaignRoomController {
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::FmvPlayback { .. })
         );
+        let now_fmv_fading_skip = matches!(
+            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
+            Some(CampaignPhase::FmvPlayback {
+                exit_state: sh2_core::campaign::FmvExitState::FadingOutSkip,
+                ..
+            })
+        );
+        if was_fmv_playing && now_fmv_fading_skip {
+            let fade_dur =
+                Duration::from_secs_f32(1.0 / sh2_core::campaign::PS2_DEFAULT_FADE_SPEED);
+            fade_out_fmv_audio(state, fade_dur);
+        }
         if was_fmv && !is_fmv_now {
             stop_active_fmv_session(state);
         }
@@ -419,11 +439,11 @@ impl RoomController for CampaignRoomController {
             }
         }
 
-        let is_fmv = matches!(
-            state.campaign_orchestrator.as_ref().map(|o| &o.phase),
-            Some(CampaignPhase::FmvPlayback { .. })
-        );
-        if is_fmv {
+        let fmv_exit_state = match state.campaign_orchestrator.as_ref().map(|o| &o.phase) {
+            Some(CampaignPhase::FmvPlayback { exit_state, .. }) => Some(*exit_state),
+            _ => None,
+        };
+        if let Some(exit_state) = fmv_exit_state {
             let keep_bgm_active = state
                 .fmv_session
                 .as_ref()
@@ -434,7 +454,15 @@ impl RoomController for CampaignRoomController {
             if keep_bgm_active && is_in_game {
                 crate::rooms::combat_arena::render::step_audio_managers(state, dt, is_paused);
             }
-            let _ = tick_and_render_fmv_frame(state, dt_sec, aspect, grain_pct, false);
+            if state.fmv_session.is_none() {
+                clear_ldr_output_black(state);
+            } else {
+                let effective_dt = match exit_state {
+                    sh2_core::campaign::FmvExitState::Playing => dt_sec,
+                    sh2_core::campaign::FmvExitState::FadingOutSkip => 0.0,
+                };
+                let _ = tick_and_render_fmv_frame(state, effective_dt, aspect, grain_pct, false);
+            }
         } else {
             // During `DramaDemo`, keep `is_paused` false (unless user opened Pause Menu) so
             // `step_cutscene_player` advances the `.dds` cutscene while `locks_gameplay_input()`

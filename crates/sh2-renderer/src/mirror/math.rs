@@ -26,18 +26,21 @@ pub const MIRROR_WALL_AP84_Z_MM: f32 = -99_995.0;
 /// `sh2pc.exe` `0x00494d70` & `FUN_00546900` `0x00546900`: `0x46a21c00`).
 pub const MIRROR_WALL_BFW_D5_Z_MM: f32 = 20_750.0;
 
-/// Full restroom mirror quad for `er01.map` (`X = -20000.0`), derived from retail `er01.map`:
-/// - `Y_min = -1560.3407` (`batch[2]` ceiling/wall top), `Y_max = -661.4489` (`batch[17]` decal bottom above sink)
-/// - `Z_min = 18487.244` (`batch[0]` / `batch[14]` west wall start), `Z_max = 21506.72` (`batch[4]` west wall end).
+/// Authentic framed restroom mirror quad for `er01.map` (`X = -20000.0`), extracted 1:1 from
+/// retail `data/bg/er/er01.map` & `sh2e/bg/er/er01.map` `mat=10` (`BatchGroup::Decal`, 4 verts, 6 indices):
+/// - `Y = [-931.4489, -661.4489]` (directly above the sink tile ledge)
+/// - `Z = [20349.895, 20569.293]` (framed mirror opening in the solid concrete upper wall).
 ///
-/// Note: `er01.map` `batch[17]` (`Decal`) only covers a small stain patch in front of James's chest
-/// (`Y = [-931.4489, -661.4489], Z = [20349.895, 20569.293]`), so the stencil mask uses the full
-/// mirror opening quad while `batch[17]` blends on top.
+/// The surrounding solid concrete upper wall (`mat=1`, `mat=2`) sits recessed at `X = -20064.1`
+/// behind the `X = -20000.0` mirror plane, so the main pass must NOT clip at `X = -20000.0`;
+/// instead, Pass 1 writes mirror-plane depth only inside this exact mirror opening before drawing
+/// opaque map geometry so the concrete wall remains intact while the pre-baked reflected room
+/// behind the mirror opening is depth-rejected.
 pub const ER01_FALLBACK_QUAD: [[f32; 3]; 4] = [
-    [MIRROR_WALL_ER01_X_MM, -1560.3407, 18487.244],
-    [MIRROR_WALL_ER01_X_MM, -661.4489, 18487.244],
-    [MIRROR_WALL_ER01_X_MM, -661.4489, 21506.72],
-    [MIRROR_WALL_ER01_X_MM, -1560.3407, 21506.72],
+    [MIRROR_WALL_ER01_X_MM, -931.4489, 20349.895],
+    [MIRROR_WALL_ER01_X_MM, -661.4489, 20349.895],
+    [MIRROR_WALL_ER01_X_MM, -661.4489, 20569.293],
+    [MIRROR_WALL_ER01_X_MM, -931.4489, 20569.293],
 ];
 
 /// Mirror quad for `ap84.map` (Blue Creek Rm 109) extracted from retail `batch[1]` (`Decal`, `geo_id = 0x0302`).
@@ -81,9 +84,6 @@ pub struct PlanarMirrorSpec {
     pub quad_vertices: [[f32; 3]; 4],
     /// Optional index into `GpuMap::batches` for the authentic `.map` mirror decal stencil mask.
     pub decal_batch_index: Option<usize>,
-    /// Tolerance in mm behind the mirror plane allowed in the main pass before clipping pre-baked PS2
-    /// duplicate room geometry (`dot(n, p - p0) < -main_pass_clip_bias_mm` is discarded).
-    pub main_pass_clip_bias_mm: f32,
 }
 
 impl PlanarMirrorSpec {
@@ -98,7 +98,6 @@ impl PlanarMirrorSpec {
                 plane_normal: [1.0, 0.0, 0.0],
                 quad_vertices: ER01_FALLBACK_QUAD,
                 decal_batch_index: None,
-                main_pass_clip_bias_mm: 1.0,
             }),
             0x24 => Some(Self {
                 axis: PlanarMirrorAxis::AxisZ,
@@ -106,7 +105,6 @@ impl PlanarMirrorSpec {
                 plane_normal: [0.0, 0.0, 1.0],
                 quad_vertices: AP84_FALLBACK_QUAD,
                 decal_batch_index: None,
-                main_pass_clip_bias_mm: 1.0,
             }),
             0xd5 => Some(Self {
                 axis: PlanarMirrorAxis::AxisZ,
@@ -114,44 +112,38 @@ impl PlanarMirrorSpec {
                 plane_normal: [0.0, 0.0, -1.0],
                 quad_vertices: TH09_FALLBACK_QUAD,
                 decal_batch_index: None,
-                main_pass_clip_bias_mm: 1.0,
             }),
             _ => None,
         }
     }
 
     /// Resolves a [`PlanarMirrorSpec`] for `room_id` and locates the matching mirror [`BatchGroup::Decal`]
-    /// batch inside `map` (e.g. `ap84.map` `batch[1]` at `Z = -99995.0`).
+    /// batch inside `map` (e.g. `er01.map` `mat=10` at `X = -20000.0`, `ap84.map` `mat=13` at `Z = -99995.0`).
     #[must_use]
     pub fn for_room_and_map(room_id: u32, map: &MapFile) -> Option<Self> {
         let mut spec = Self::for_room(room_id)?;
-        // `er01.map` `batch[17]` is only a small stain decal; use the full mirror quad for `0x01`.
-        if room_id != 0x01 {
-            spec.decal_batch_index = find_mirror_decal_batch(map, spec.axis, spec.wall_pos());
-        }
+        spec.decal_batch_index = find_mirror_decal_batch(map, spec.axis, spec.wall_pos());
         Some(spec)
     }
 
     /// Resolves a [`PlanarMirrorSpec`] for `room_id` directly from a compiled [`GpuMap`],
-    /// populating `decal_batch_index` and `quad_vertices` from the actual `.map` batch bounds.
+    /// locating the authentic `.map` mirror [`BatchGroup::Decal`] batch on the mirror plane.
     #[must_use]
     pub fn for_room_and_gpu_map(room_id: u32, gpu_map: &GpuMap) -> Option<Self> {
         let mut spec = Self::for_room(room_id)?;
-        if room_id != 0x01 {
-            const EPS_MM: f32 = 1.0;
-            let comp = match spec.axis {
-                PlanarMirrorAxis::AxisX => 0,
-                PlanarMirrorAxis::AxisY => 1,
-                PlanarMirrorAxis::AxisZ => 2,
-            };
-            let wall = spec.wall_pos();
-            spec.decal_batch_index = gpu_map.batches.iter().position(|b| {
-                b.group == BatchGroup::Decal
-                    && b.num_indices > 0
-                    && (b.bounds_min[comp] - wall).abs() <= EPS_MM
-                    && (b.bounds_max[comp] - wall).abs() <= EPS_MM
-            });
-        }
+        const EPS_MM: f32 = 1.0;
+        let comp = match spec.axis {
+            PlanarMirrorAxis::AxisX => 0,
+            PlanarMirrorAxis::AxisY => 1,
+            PlanarMirrorAxis::AxisZ => 2,
+        };
+        let wall = spec.wall_pos();
+        spec.decal_batch_index = gpu_map.batches.iter().position(|b| {
+            b.group == BatchGroup::Decal
+                && b.num_indices > 0
+                && (b.bounds_min[comp] - wall).abs() <= EPS_MM
+                && (b.bounds_max[comp] - wall).abs() <= EPS_MM
+        });
         Some(spec)
     }
 

@@ -10,10 +10,14 @@ use crate::shadow::StencilShadowPipeline;
 pub struct PlanarMirrorPipeline {
     /// Writes `stencil = 1` on `Depth24PlusStencil8` for the mirror surface (`color_writes: empty`).
     pub stencil_mask_pipeline: wgpu::RenderPipeline,
-    /// Writes `stencil = 1` using a `.map` [`MapVertex`] decal batch (`ap84` `batch[1]`).
+    /// Writes `stencil = 1` using a `.map` [`MapVertex`] decal batch (`er01.map` `mat=10`, `ap84.map` `mat=13`).
     pub map_stencil_mask_pipeline: wgpu::RenderPipeline,
-    /// Writes mirror-plane depth into `Depth32Float` in the main pass so volumetric fog sees the wall.
+    /// Writes mirror-plane depth into `Depth32Float` in the main pass for fallback mirror quads
+    /// (`th09.map`) so pre-baked duplicate room geometry behind the mirror opening is depth-rejected.
     pub depth_write_pipeline: wgpu::RenderPipeline,
+    /// Writes mirror-plane depth into `Depth32Float` using a `.map` [`MapVertex`] decal batch
+    /// (`er01.map` `mat=10`, `ap84.map` `mat=13`) before opaque room geometry draws.
+    pub map_depth_write_pipeline: wgpu::RenderPipeline,
     /// Optional dirty mirror glass overlay (`glas03.tbn2`) drawn with alpha blending over the mirror quad.
     pub glass_overlay_pipeline: wgpu::RenderPipeline,
     /// Dynamic 4-vertex quad buffer for the active [`super::PlanarMirrorSpec`].
@@ -179,7 +183,7 @@ impl PlanarMirrorPipeline {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_map"),
-                    buffers: &[map_layout],
+                    buffers: std::slice::from_ref(&map_layout),
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -249,6 +253,43 @@ impl PlanarMirrorPipeline {
             multiview: None,
             cache: None,
         });
+
+        let map_depth_write_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Mirror Plane Map Decal Depth-Only Pipeline"),
+                layout: Some(&mask_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_map"),
+                    buffers: std::slice::from_ref(&map_layout),
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_mask"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: hdr_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         let glass_overlay_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -348,6 +389,7 @@ impl PlanarMirrorPipeline {
             stencil_mask_pipeline,
             map_stencil_mask_pipeline,
             depth_write_pipeline,
+            map_depth_write_pipeline,
             glass_overlay_pipeline,
             quad_vertex_buffer,
             quad_index_buffer,

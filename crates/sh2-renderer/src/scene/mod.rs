@@ -110,8 +110,8 @@ impl RenderContext {
         // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`)
         self.encode_water_reflection_pass(gpu_map, map_texture_bind_groups, skeletal_meshes);
 
-        // 0d. Stenciled Planar Mirror Render Pass (`SH2-101`)
-        let saved_main_cam =
+        // 0d. Stenciled Planar Mirror Render Pass (`SH2-101` / `SH2-151`)
+        let active_mirror =
             self.encode_planar_mirror_pass(gpu_map, map_texture_bind_groups, skeletal_meshes);
 
         // Determine PS2 `Check_DrawOrder` (`0x001a08a0`): on maps `0x000a007d` / `0x00090016`
@@ -132,7 +132,7 @@ impl RenderContext {
                     view: &self.hdr_color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: if saved_main_cam.is_some() {
+                        load: if active_mirror.is_some() {
                             wgpu::LoadOp::Load
                         } else {
                             wgpu::LoadOp::Clear(self.room_clear_color())
@@ -152,6 +152,41 @@ impl RenderContext {
                 occlusion_query_set: None,
             });
 
+            // 1a-0. Prime mirror-plane depth into `depth_view` ONLY inside the authentic mirror
+            //       opening before drawing opaque room geometry (`SH2-151`). This hardware depth-
+            //       rejects pre-baked duplicate reflected room geometry behind the opening while
+            //       leaving the surrounding concrete upper wall (at `X = -20064.1` in `er01.map`)
+            //       and all foreground geometry (`X > -20000.0`) completely intact, and also gives
+            //       volumetric fog the mirror-wall depth rather than the far plane.
+            if let Some(mirror_spec) = active_mirror {
+                let mut wrote_decal_depth = false;
+                if let (Some(map), Some(batch_idx)) = (gpu_map, mirror_spec.decal_batch_index) {
+                    if let Some(batch) = map.batches.get(batch_idx) {
+                        if map.is_batch_visible(batch) {
+                            rpass.set_pipeline(&self.mirror_pipeline.map_depth_write_pipeline);
+                            rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
+                            rpass.set_index_buffer(
+                                batch.index_buffer.slice(..),
+                                wgpu::IndexFormat::Uint32,
+                            );
+                            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
+                            wrote_decal_depth = true;
+                        }
+                    }
+                }
+                if !wrote_decal_depth {
+                    rpass.set_pipeline(&self.mirror_pipeline.depth_write_pipeline);
+                    rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, self.mirror_pipeline.quad_vertex_buffer.slice(..));
+                    rpass.set_index_buffer(
+                        self.mirror_pipeline.quad_index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    rpass.draw_indexed(0..6, 0, 0..1);
+                }
+            }
+
             // 1a. Render static level Opaque + Alpha-Cutout batches first
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
@@ -169,19 +204,6 @@ impl RenderContext {
                 self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
             }
 
-            // 1b-2. Write mirror-plane depth into `depth_view` so volumetric fog sees the wall
-            //       rather than the far plane, while allowing foreground characters to occlude it.
-            if saved_main_cam.is_some() {
-                rpass.set_pipeline(&self.mirror_pipeline.depth_write_pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.mirror_pipeline.quad_vertex_buffer.slice(..));
-                rpass.set_index_buffer(
-                    self.mirror_pipeline.quad_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                rpass.draw_indexed(0..6, 0, 0..1);
-            }
-
             // 1c. Render static level Coplanar Decals
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
@@ -194,7 +216,7 @@ impl RenderContext {
             }
 
             // 1c-2. Optional `glas03.tbn2` dirty mirror glass overlay when explicitly enabled.
-            if saved_main_cam.is_some()
+            if active_mirror.is_some()
                 && self
                     .mirror_glass_overlay_enabled
                     .load(std::sync::atomic::Ordering::Relaxed)
@@ -456,10 +478,6 @@ impl RenderContext {
         self.dispatch_compute_passes(&mut encoder);
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        if let Some(main_cam) = saved_main_cam {
-            self.queue
-                .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_cam));
-        }
     }
 
     /// Dispatches the Volumetric Fog and ACES Post-Processing compute passes.

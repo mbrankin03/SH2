@@ -5,22 +5,22 @@ use std::sync::Arc;
 use sh2_assets::formats::map::BatchGroup;
 
 use crate::gpu_map::GpuMap;
-use crate::pipeline::CameraUniforms;
+use crate::mirror::PlanarMirrorSpec;
 use crate::skeletal::SkeletalPassStage;
 use crate::{RenderContext, SkeletalDrawItem};
 
 impl RenderContext {
     /// Runs Pass 0d (Stenciled Planar Mirror Render Pass) if an active [`PlanarMirrorSpec`] is set.
     ///
-    /// Returns `Some(main_cam)` when the mirror pass ran and `self.camera_buffer` was updated with
-    /// the main-pass mirror-plane clip uniform (so the caller should use `LoadOp::Load` on
-    /// `hdr_color_view` and restore `main_cam` after submitting the main encoder).
+    /// Returns `Some(mirror_spec)` when the mirror pass ran and restored the unclipped main camera
+    /// into `self.camera_buffer` (so the caller should use `LoadOp::Load` on `hdr_color_view` and
+    /// prime `depth_view` with the mirror opening depth before drawing opaque room geometry).
     pub(super) fn encode_planar_mirror_pass(
         &self,
         gpu_map: Option<&GpuMap>,
         map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
         skeletal_meshes: &[SkeletalDrawItem],
-    ) -> Option<CameraUniforms> {
+    ) -> Option<PlanarMirrorSpec> {
         let mirror_spec = self.planar_mirror.lock().ok().and_then(|g| *g)?;
         let main_cam = self.last_camera_uniforms.lock().map(|g| *g).ok()?;
 
@@ -105,11 +105,14 @@ impl RenderContext {
         }
         self.queue.submit(Some(mirror_encoder.finish()));
 
-        let mut main_pass_cam = main_cam;
-        main_pass_cam.clip_plane = mirror_spec.clip_plane(mirror_spec.main_pass_clip_bias_mm);
+        // Restore the unclipped main camera for Pass 1 (`er01.map`'s recessed solid concrete upper
+        // wall sits at `X = -20064.1` behind the `X = -20000.0` mirror plane, so clipping the main
+        // pass would erase the wall and expose the clear color). Instead, Pass 1 writes mirror-plane
+        // depth into the exact mirror opening before `BatchGroup::Opaque` so pre-baked reflected
+        // geometry behind the opening is hardware depth-rejected while the real wall stays intact.
         self.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_pass_cam));
-        Some(main_cam)
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_cam));
+        Some(mirror_spec)
     }
 
     pub(super) fn draw_skeletal_meshes_mirror<'a>(

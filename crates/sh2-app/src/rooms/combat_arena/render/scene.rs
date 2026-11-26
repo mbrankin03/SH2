@@ -3,7 +3,56 @@
 
 use super::skinning::EnemySkinSnapshot;
 use crate::state::AppState;
+use sh2_core::events::stages_act1::{
+    act1_eval_alltime_and_room, Act1StageId, Act1VanillaFixesConfig,
+};
 use sh2_ui::menu::TestRoomKind;
+
+/// Syncs Act 1 `EvRoomInit` / `EvAllTimeFunc` `.map` `geo_id` display-control overrides
+/// (`Act1LifecycleSnapshot::door_overrides`, e.g. `stg_ovservation.c` `0x005a1350` hiding
+/// group `0x03` in `ob01.map` once `flag(24)` is set) to [`sh2_renderer::RenderContext`].
+fn sync_map_geo_visibility_overrides(
+    state: &AppState,
+    active_room_name: &str,
+    cutscene_active: bool,
+    player_pos: glam::Vec3,
+) {
+    if cutscene_active {
+        state.render_ctx.set_map_visibility_filter(None);
+        return;
+    }
+
+    let act1_stage = if state.active_test_room == TestRoomKind::ObservationDeck
+        || active_room_name.eq_ignore_ascii_case("ob01")
+    {
+        Some(Act1StageId::Observation)
+    } else {
+        Act1StageId::from_raw(state.sim_core.scenario.current_stage as u8)
+    };
+
+    let Some(stage) = act1_stage else {
+        state.render_ctx.set_map_visibility_filter(None);
+        return;
+    };
+
+    let room_id = sh2_renderer::GpuMap::parse_base_room_id_from_map_name(active_room_name) as u8;
+    // Clone flags so render-phase lifecycle evaluation never mutates gameplay progression state.
+    let mut flags_snapshot = state.sim_core.scenario.flags.clone();
+    let snap = act1_eval_alltime_and_room(
+        stage,
+        room_id,
+        [player_pos.x, player_pos.y, player_pos.z],
+        0,
+        state.sim_core.scenario.flashlight_on,
+        state.sim_core.scenario.flashlight_on,
+        Act1VanillaFixesConfig::default(),
+        &mut flags_snapshot,
+        &state.sim_core.scenario.puzzle_state,
+    );
+    state
+        .render_ctx
+        .set_map_geo_overrides(stage as u16, &snap.door_overrides);
+}
 
 pub(super) fn submit_scene_draw(
     state: &mut AppState,
@@ -108,6 +157,7 @@ pub(super) fn submit_scene_draw(
         sh2_renderer::mirror::PlanarMirrorSpec::for_room_and_gpu_map(room_id, active_gpu_map)
     });
     state.render_ctx.set_planar_mirror(planar_mirror_spec);
+    sync_map_geo_visibility_overrides(state, active_room_name, cutscene_active, player_pos);
 
     if state.debug_collision_overlay {
         let floors_iter = state.sim_core.collision.floors.iter().map(|f| f.v);

@@ -52,9 +52,35 @@ pub struct GpuMap {
 }
 
 impl GpuMap {
-    /// Compiles a parsed [`MapFile`] into GPU-resident vertex and index buffers (`base_room_id = 0`).
+    /// Extracts the numeric base room / outdoor tile ID from a `.map` stem or path
+    /// (e.g. `"ob01"` -> `1`, `"bg/cb/cb29.map"` -> `29`, `"ap104"` -> `104`, or `0` when no
+    /// trailing digits exist).
+    ///
+    /// Matches `sh2pc.exe` `FUN_0047d120` (`0x0047d120`), where each loaded map slot stores its
+    /// base room ID so `geo_id` part-group offsets (`geo_id >> 8`) resolve to
+    /// `base_room_id + part_group` (e.g. `ob01.map` `base_room_id = 1` + `part_group = 2` ->
+    /// `EvRoomInit` `0x005a1350` room `0x03`).
+    #[must_use]
+    pub fn parse_base_room_id_from_map_name(name: &str) -> u16 {
+        let file_name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        let stem = file_name
+            .strip_suffix(".map")
+            .or_else(|| file_name.strip_suffix(".MAP"))
+            .unwrap_or(file_name);
+        let digits_start = stem
+            .rfind(|c: char| !c.is_ascii_digit())
+            .map_or(0, |idx| idx + 1);
+        stem[digits_start..].parse::<u16>().unwrap_or(0)
+    }
+
+    /// Compiles a parsed [`MapFile`] into GPU-resident vertex and index buffers, deriving
+    /// `base_room_id` from [`MapFile::name`] via [`Self::parse_base_room_id_from_map_name`].
     pub fn from_map(device: &wgpu::Device, map: &MapFile) -> Self {
-        Self::from_map_with_room_id(device, map, 0)
+        Self::from_map_with_room_id(
+            device,
+            map,
+            Self::parse_base_room_id_from_map_name(&map.name),
+        )
     }
 
     /// Compiles a parsed [`MapFile`] into GPU-resident vertex and index buffers tagged with its
@@ -137,6 +163,28 @@ impl GpuMap {
         self.visibility_filter = filter;
     }
 
+    /// Evaluates whether `batch` should be drawn under `self.visibility_filter` or, if none is set
+    /// on this map, the active per-context `context_filter` (`RenderContext::set_map_visibility_filter`).
+    ///
+    /// Exact 1:1 parity with `sh2pc.exe` `0x0047d120` + `0x005b4760` (`SetDispOnOffMask` `0x005b47a0`):
+    /// - When neither filter is set, every batch is visible.
+    /// - When a filter is active, `variant_index == 0` is always visible and `variant_index > 0`
+    ///   is visible iff bit `variant_index - 1` is set in the mask for `base_room_id + part_group`.
+    #[inline]
+    #[must_use]
+    pub fn is_batch_visible_with(
+        &self,
+        batch: &GpuMapBatch,
+        context_filter: Option<&MapPartVisibilityFilter>,
+    ) -> bool {
+        match self.visibility_filter.as_ref().or(context_filter) {
+            Some(filter) => {
+                filter.is_batch_visible(self.base_room_id, batch.part_group, batch.variant_index)
+            }
+            None => true,
+        }
+    }
+
     /// Evaluates whether `batch` should be drawn under the currently active `visibility_filter`.
     ///
     /// Exact 1:1 parity with `sh2pc.exe` `0x005b4760` (`SetDispOnOffMask`):
@@ -146,20 +194,25 @@ impl GpuMap {
     #[inline]
     #[must_use]
     pub fn is_batch_visible(&self, batch: &GpuMapBatch) -> bool {
-        match &self.visibility_filter {
-            Some(filter) => {
-                filter.is_batch_visible(self.base_room_id, batch.part_group, batch.variant_index)
-            }
-            None => true,
-        }
+        self.is_batch_visible_with(batch, None)
+    }
+
+    /// Returns the number of batches currently visible under [`Self::visibility_filter`] or
+    /// `context_filter`.
+    #[must_use]
+    pub fn visible_batch_count_with(
+        &self,
+        context_filter: Option<&MapPartVisibilityFilter>,
+    ) -> usize {
+        self.batches
+            .iter()
+            .filter(|b| self.is_batch_visible_with(b, context_filter))
+            .count()
     }
 
     /// Returns the number of batches currently visible under [`Self::visibility_filter`].
     #[must_use]
     pub fn visible_batch_count(&self) -> usize {
-        self.batches
-            .iter()
-            .filter(|b| self.is_batch_visible(b))
-            .count()
+        self.visible_batch_count_with(None)
     }
 }

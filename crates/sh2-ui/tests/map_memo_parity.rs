@@ -438,3 +438,25 @@ fn chizu_possession_check_hotel_employee_fallthrough() {
     assert!(chizu_possession_check(24, &flags));
     assert!(chizu_possession_check(27, &flags));
 }
+
+#[test]
+fn sh2_159_ob01_chizu_select_map1_gated_on_flag_24() {
+    use sh2_ui::map::chizu_possession_check;
+
+    let mut flags = EventFlags::new();
+    // Observation Deck (`ob01`, RoomName `0x02`) selects Map 1 (Town Overall / South Vale)
+    // via `ChizuSelect` (`SLUS_202.28` `0x001c7040` / `sh2pc.exe` `0x0049ac70`).
+    assert_eq!(chizu_select(0x02, [15_600.0, 0.0, -4_140.0], &flags), 1);
+    // `ChizuPossessionCheck` (`0x001c7890` / `0x0049b240`) gates Map 1..=3 on `flag(24)`.
+    assert!(
+        !chizu_possession_check(1, &flags),
+        "Map 1 must be locked before James picks up the car-seat map (flag 24)"
+    );
+
+    flags.set(24, true);
+    assert_eq!(chizu_select(0x02, [15_600.0, 0.0, -4_140.0], &flags), 1);
+    assert!(
+        chizu_possession_check(1, &flags),
+        "Map 1 must unlock once flag(24) is set"
+    );
+}

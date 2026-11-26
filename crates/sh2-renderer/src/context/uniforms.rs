@@ -77,6 +77,46 @@ impl RenderContext {
         }
     }
 
+    /// Installs or clears the active `.map` `geo_id` visibility filter (`EvDispControlModelExec`
+    /// `SLUS_202.28` `0x001ad5e0` / `sh2pc.exe` `0x004a2f60`, `SetDispOnOffMask` `0x005b4760`).
+    pub fn set_map_visibility_filter(
+        &self,
+        filter: Option<sh2_core::events::stageparts::MapPartVisibilityFilter>,
+    ) {
+        if let Ok(mut guard) = self.map_visibility_filter.lock() {
+            *guard = filter;
+        }
+    }
+
+    /// Converts `(group_id, variant_state)` display-control overrides (such as
+    /// [`sh2_core::events::stages_act1::Act1LifecycleSnapshot::door_overrides`] from `EvRoomInit`
+    /// `sh2pc.exe` `0x005a1350`) into a [`sh2_core::events::stageparts::MapPartVisibilityFilter`]
+    /// via `EvDispControlModelEntry` (`0x004a2f10`) and `EvDispControlModelExec` (`0x004a2f60`).
+    ///
+    /// When `overrides` is empty, clears the context visibility filter (`None`) so all batches render.
+    pub fn set_map_geo_overrides(&self, stage_id: u16, overrides: &[(u8, i8)]) {
+        if overrides.is_empty() {
+            self.set_map_visibility_filter(None);
+            return;
+        }
+        let mut list = sh2_core::events::stageparts::DisplayControlList::new();
+        for &(group_id, variant_state) in overrides {
+            list.entry(stage_id, u16::from(group_id), i32::from(variant_state));
+        }
+        self.set_map_visibility_filter(Some(list.exec()));
+    }
+
+    /// Returns a snapshot of the active `.map` `geo_id` visibility filter, if any.
+    #[must_use]
+    pub fn map_visibility_filter(
+        &self,
+    ) -> Option<sh2_core::events::stageparts::MapPartVisibilityFilter> {
+        self.map_visibility_filter
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+    }
+
     /// Uploads a decoded `glas03.tbn2` RGBA8 texture to the planar mirror glass overlay pipeline.
     pub fn upload_mirror_glass_texture(&mut self, width: u32, height: u32, rgba: &[u8]) {
         self.mirror_pipeline

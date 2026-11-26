@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use sh2_assets::formats::map::BatchGroup;
+use sh2_core::events::stageparts::MapPartVisibilityFilter;
 
 use crate::gpu_map::GpuMap;
 use crate::mirror::PlanarMirrorSpec;
@@ -20,6 +21,7 @@ impl RenderContext {
         gpu_map: Option<&GpuMap>,
         map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
         skeletal_meshes: &[SkeletalDrawItem],
+        vis_filter: Option<&MapPartVisibilityFilter>,
     ) -> Option<PlanarMirrorSpec> {
         let mirror_spec = self.planar_mirror.lock().ok().and_then(|g| *g)?;
         let main_cam = self.last_camera_uniforms.lock().map(|g| *g).ok()?;
@@ -65,7 +67,7 @@ impl RenderContext {
             let mut drew_decal_mask = false;
             if let (Some(map), Some(batch_idx)) = (gpu_map, mirror_spec.decal_batch_index) {
                 if let Some(batch) = map.batches.get(batch_idx) {
-                    if map.is_batch_visible(batch) {
+                    if map.is_batch_visible_with(batch, vis_filter) {
                         rpass.set_pipeline(&self.mirror_pipeline.map_stencil_mask_pipeline);
                         rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
                         rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
@@ -97,6 +99,7 @@ impl RenderContext {
                     map_texture_bind_groups,
                     BatchGroup::Opaque,
                     &self.geometry_pipeline.mirror_reflected_pipeline,
+                    vis_filter,
                 );
             }
             if !skeletal_meshes.is_empty() {

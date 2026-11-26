@@ -526,6 +526,7 @@ impl RenderContext {
             last_pcss_params: std::sync::Mutex::new(buffers.initial_pcss_params),
             last_camera_uniforms: std::sync::Mutex::new(pipeline::CameraUniforms::default()),
             planar_mirror: std::sync::Mutex::new(None),
+            map_visibility_filter: std::sync::Mutex::new(None),
             mirror_glass_overlay_enabled: std::sync::atomic::AtomicBool::new(false),
             water_plane_height_mm: std::sync::atomic::AtomicU32::new(
                 crate::water::DEFAULT_WATER_HEIGHT_MM.to_bits(),

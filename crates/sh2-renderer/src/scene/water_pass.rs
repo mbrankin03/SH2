@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use sh2_assets::formats::map::BatchGroup;
+use sh2_core::events::stageparts::MapPartVisibilityFilter;
 
 use crate::gpu_map::GpuMap;
 use crate::{RenderContext, SkeletalDrawItem};
@@ -15,6 +16,7 @@ impl RenderContext {
         gpu_map: Option<&GpuMap>,
         map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
         skeletal_meshes: &[SkeletalDrawItem],
+        vis_filter: Option<&MapPartVisibilityFilter>,
     ) {
         if !self
             .lake_water_enabled
@@ -94,6 +96,7 @@ impl RenderContext {
                     map_texture_bind_groups,
                     BatchGroup::Opaque,
                     &self.geometry_pipeline.pipeline,
+                    vis_filter,
                 );
             }
             if !skeletal_meshes.is_empty() {

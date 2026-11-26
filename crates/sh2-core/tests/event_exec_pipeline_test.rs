@@ -30,13 +30,15 @@ fn event_engine_state_machine_executes_flag_message_door_move_item_and_save() {
 
     let ev_list = [
         EventListEntry {
-            flag: (1 << 31) | (100 << 16),
+            // `bit 31 == 0` requires `!flag(100)` (`SLUS_202.28` `EventCheck` `0x001a7ed0`).
+            flag: 100 << 16,
             cond: (1 << 28),
             rslt0: 1 << 28,
             rslt1: 100,
         },
         EventListEntry {
-            flag: (1 << 31) | (648 << 16),
+            // `bit 31 == 0` requires `!flag(648)` (`SLUS_202.28` `EventCheck` `0x001a7ed0`).
+            flag: 648 << 16,
             cond: (2 << 28),
             rslt0: 7 << 28,
             rslt1: (1 << 22) | (0xff << 14) | 648,
@@ -277,4 +279,47 @@ fn item_pickup_crouch_and_stand_and_progress_check() {
     assert_eq!(event_progress_check(0, 0x17, [0.0, 0.0, 0.0], &flags), 4);
     flags.set(70, true);
     assert_eq!(event_progress_check(0, 0x18, [0.0, 0.0, 0.0], &flags), 5);
+}
+
+/// Golden-vector parity test for `EventCheck` (`SLUS_202.28` `0x001a7ed0`, `sh2pc.exe`
+/// `0x0048e070`) and `EventExecSubFlagSet` (`SLUS_202.28` `0x001a9a90`) flag condition polarity.
+#[test]
+fn event_check_flag_condition_polarity_matches_ps2_and_pc_binaries() {
+    use sh2_core::events::stages_act1::act1_stage_descriptor;
+    use sh2_core::{check_event_flag_conditions, event_exec_sub_flag_set};
+
+    // Retail `stg_ovservation.c` (`sh2pc.exe` `0x008e7948`):
+    //   Entry [1] (`0x00180000` -> `ev_prog[2]` `0x005a09b0`): requires `!flag(24)` (map pickup).
+    //   Entry [2] (`0x80180000` -> `ev_prog[3]` `0x005a0ca0`): requires `flag(24)` (empty car).
+    let obs = act1_stage_descriptor(3).expect("Stage 3 Observation Deck descriptor");
+    let car_map_pickup = obs.event_list[1];
+    let car_empty = obs.event_list[2];
+    assert_eq!(car_map_pickup.flag_0(), 24);
+    assert!(!car_map_pickup.flag_0_expected_set());
+    assert_eq!(car_empty.flag_0(), 24);
+    assert!(car_empty.flag_0_expected_set());
+
+    let mut flags = EventFlags::new();
+    assert!(check_event_flag_conditions(&car_map_pickup, &flags));
+    assert!(!check_event_flag_conditions(&car_empty, &flags));
+
+    flags.set(24, true);
+    assert!(!check_event_flag_conditions(&car_map_pickup, &flags));
+    assert!(check_event_flag_conditions(&car_empty, &flags));
+
+    // `EventExecSubFlagSet` (`0x001a9a90`): toggle_on_exec flips `flag_0` to `!expected_set`.
+    let set_on_exec = EventListEntry {
+        flag: (1 << 30) | (42 << 16), // bit31=0 (require clear), bit30=1 (toggle -> set)
+        ..Default::default()
+    };
+    let clear_on_exec = EventListEntry {
+        flag: (1 << 31) | (1 << 30) | (42 << 16), // bit31=1 (require set), bit30=1 (toggle -> clear)
+        ..Default::default()
+    };
+    assert!(check_event_flag_conditions(&set_on_exec, &flags));
+    event_exec_sub_flag_set(&set_on_exec, &mut flags);
+    assert!(flags.get(42));
+    assert!(check_event_flag_conditions(&clear_on_exec, &flags));
+    event_exec_sub_flag_set(&clear_on_exec, &mut flags);
+    assert!(!flags.get(42));
 }

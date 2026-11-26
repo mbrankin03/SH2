@@ -82,7 +82,18 @@ pub const fn map_batch_render_state(
             alpha_blending: false,
             alpha_test_threshold: MAP_ALPHA_TEST_THRESHOLD,
         },
-        BatchGroup::Decal | BatchGroup::Transparent => MapBatchRenderState {
+        BatchGroup::Decal => MapBatchRenderState {
+            cull_mode: Some(wgpu::Face::Back),
+            front_face: wgpu::FrontFace::Ccw,
+            // 1:1 `sh2pc.exe` `0x005b1694` (`sh2pc_005a0000.c:7536,7549,7558,7570`):
+            // `D3DRS_ZWRITEENABLE (0x0e) = 1` with `D3DCMP_LESSEQUAL (0x17 = 4)` so foreground
+            // decals (e.g. `ob01` power lines at `Z = -4884 mm`) write their true depth and never
+            // inherit far-vista fog (`Z = 10,500 mm`) from the skybox behind them.
+            depth_write_enabled: true,
+            alpha_blending: true,
+            alpha_test_threshold: MAP_ALPHA_TEST_THRESHOLD,
+        },
+        BatchGroup::Transparent => MapBatchRenderState {
             cull_mode: Some(wgpu::Face::Back),
             front_face: wgpu::FrontFace::Ccw,
             depth_write_enabled: false,
@@ -320,7 +331,7 @@ impl GeometryPipeline {
             primitive: primitive_state,
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                depth_write_enabled: false,
+                depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState {

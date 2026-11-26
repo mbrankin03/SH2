@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::state::AppState;
 
-pub(crate) use atmosphere::update_atmosphere_fog_uniforms;
+pub(crate) use atmosphere::{update_atmosphere_fog_uniforms, update_post_process_uniforms};
 pub(crate) use simulation::step_audio_managers;
 
 pub(super) fn tick_and_render_combat_arena_3d(

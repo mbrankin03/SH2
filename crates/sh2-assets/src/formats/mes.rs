@@ -32,8 +32,11 @@ use crate::error::AssetError;
 pub struct DialogueMessage {
     /// Zero-based message index in the `.mes` table.
     pub id: usize,
-    /// Pages of text contained in this message.
+    /// Pages of plain text contained in this message.
     pub pages: Vec<String>,
+    /// Pages with inline `fontSetColor` (`0x001b73a0`) palette indices `(color_idx, text)` preserved
+    /// (e.g., `0` = white, `3` = green item-of-interest highlight from `0xFF 0x03`).
+    pub colored_pages: Vec<Vec<(u8, String)>>,
     /// Full text with pages joined by form-feed (`\x0C`).
     pub text: String,
 }
@@ -95,6 +98,7 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
             messages.push(DialogueMessage {
                 id: i,
                 pages: Vec::new(),
+                colored_pages: Vec::new(),
                 text: String::new(),
             });
             continue;
@@ -102,9 +106,42 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
 
         let mut p = start;
         let mut pages = Vec::new();
+        let mut colored_pages: Vec<Vec<(u8, String)>> = Vec::new();
         let mut cur_page = String::new();
+        let mut cur_spans: Vec<(u8, String)> = Vec::new();
+        let mut cur_color: u8 = 0;
         let mut byte_packed = false;
         let mut at_page_start = true;
+
+        let push_ch =
+            |cur_page: &mut String, cur_spans: &mut Vec<(u8, String)>, color: u8, ch: char| {
+                cur_page.push(ch);
+                if let Some((last_col, last_str)) = cur_spans.last_mut() {
+                    if *last_col == color {
+                        last_str.push(ch);
+                        return;
+                    }
+                }
+                let mut s = String::new();
+                s.push(ch);
+                cur_spans.push((color, s));
+            };
+
+        let flush_page = |pages: &mut Vec<String>,
+                          colored_pages: &mut Vec<Vec<(u8, String)>>,
+                          cur_page: &mut String,
+                          cur_spans: &mut Vec<(u8, String)>,
+                          cur_color: &mut u8| {
+            let trimmed = cur_page.trim().to_string();
+            if !trimmed.is_empty() {
+                pages.push(trimmed);
+                colored_pages.push(std::mem::take(cur_spans));
+            } else {
+                cur_spans.clear();
+            }
+            cur_page.clear();
+            *cur_color = 0;
+        };
 
         while p < end {
             if at_page_start {
@@ -131,11 +168,13 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
                     continue;
                 }
                 if word == 0xFFFF {
-                    let trimmed = cur_page.trim().to_string();
-                    if !trimmed.is_empty() {
-                        pages.push(trimmed);
-                    }
-                    cur_page.clear();
+                    flush_page(
+                        &mut pages,
+                        &mut colored_pages,
+                        &mut cur_page,
+                        &mut cur_spans,
+                        &mut cur_color,
+                    );
                     at_page_start = true;
                     // Consume trailing 16-bit `end_ctrl` word (`fontNextMessage` `0x001b9cb0`).
                     if p + 1 < end {
@@ -150,11 +189,19 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
                     continue;
                 }
                 match word {
-                    0xFFFD => cur_page.push('\n'),
-                    0xFFFE => cur_page.push(' '),
-                    0x0000..=0x005F => cur_page.push(((word as u8) + 0x20) as char),
-                    0x008E => cur_page.push('®'),
-                    // Control words (`0xF800..=0xFFFE`) and extended non-ASCII glyphs: omit cleanly.
+                    0xFFFD => push_ch(&mut cur_page, &mut cur_spans, cur_color, '\n'),
+                    0xFFFE => push_ch(&mut cur_page, &mut cur_spans, cur_color, ' '),
+                    0xFF00..=0xFF10 => cur_color = (word & 0xFF) as u8,
+                    0x0000..=0x005F => {
+                        push_ch(
+                            &mut cur_page,
+                            &mut cur_spans,
+                            cur_color,
+                            ((word as u8) + 0x20) as char,
+                        );
+                    }
+                    0x008E => push_ch(&mut cur_page, &mut cur_spans, cur_color, '®'),
+                    // Other control words (`0xF800..=0xFFFC`) and extended non-ASCII glyphs: omit cleanly.
                     _ => {}
                 }
                 continue;
@@ -178,11 +225,13 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
                 if b == 0xFF {
                     match arg {
                         0xFF => {
-                            let trimmed = cur_page.trim().to_string();
-                            if !trimmed.is_empty() {
-                                pages.push(trimmed);
-                            }
-                            cur_page.clear();
+                            flush_page(
+                                &mut pages,
+                                &mut colored_pages,
+                                &mut cur_page,
+                                &mut cur_spans,
+                                &mut cur_color,
+                            );
                             // Align to 16-bit boundary and consume `end_ctrl` (`0x001b9cb0`).
                             if p % 2 != 0 {
                                 p += 1;
@@ -198,9 +247,10 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
                                 break;
                             }
                         }
-                        0xFD => cur_page.push('\n'),
-                        0xFE => cur_page.push(' '),
-                        // Color (`0x00..=0x63`), variable slots (`0xE0..=0xE9`), Yes/No & layout tags (`0xF5..=0xFC`).
+                        0xFD => push_ch(&mut cur_page, &mut cur_spans, cur_color, '\n'),
+                        0xFE => push_ch(&mut cur_page, &mut cur_spans, cur_color, ' '),
+                        0x00..=0x10 => cur_color = arg,
+                        // Variable slots (`0xE0..=0xE9`), Yes/No & layout tags (`0xF5..=0xFC`).
                         _ => {}
                     }
                 }
@@ -209,19 +259,27 @@ pub fn parse_mes(data: &[u8]) -> Result<MessageTable, AssetError> {
             }
 
             if b < 0x60 {
-                cur_page.push((b + 0x20) as char);
+                push_ch(&mut cur_page, &mut cur_spans, cur_color, (b + 0x20) as char);
             } else if b == 0x8E {
-                cur_page.push('®');
+                push_ch(&mut cur_page, &mut cur_spans, cur_color, '®');
             }
         }
 
-        let trimmed = cur_page.trim().to_string();
-        if !trimmed.is_empty() {
-            pages.push(trimmed);
-        }
+        flush_page(
+            &mut pages,
+            &mut colored_pages,
+            &mut cur_page,
+            &mut cur_spans,
+            &mut cur_color,
+        );
 
         let text = pages.join("\x0C");
-        messages.push(DialogueMessage { id: i, pages, text });
+        messages.push(DialogueMessage {
+            id: i,
+            pages,
+            colored_pages,
+            text,
+        });
     }
 
     Ok(MessageTable { messages })
@@ -274,6 +332,10 @@ mod tests {
         assert_eq!(tbl.messages.len(), 1);
         let msg = &tbl.messages[0];
         assert_eq!(msg.pages, vec!["Hi\nDUALSHOCK®2", "Page 2."]);
+        assert_eq!(
+            msg.colored_pages[0],
+            vec![(3, "Hi".to_string()), (0, "\nDUALSHOCK®2".to_string())]
+        );
         assert!(!msg.text.contains('?'));
     }
 }

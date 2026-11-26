@@ -39,7 +39,7 @@ use sh2_renderer::fog::{FogUniforms, GpuFogParticle};
 use sh2_renderer::light::{build_cutscene_light_uniforms, CharacterLightPool, CutsceneLightInput};
 use sh2_renderer::shadow::flatten_kg1_drop_shadow;
 use sh2_renderer::{
-    prepare_mipmapped_texture_cpu, GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig,
+    prepare_map_texture_cpu, GpuMap, GpuSkeletalMesh, RenderContext, RendererConfig,
 };
 
 fn game_root() -> Option<PathBuf> {
@@ -151,7 +151,7 @@ fn build_map_bind_groups(ctx: &RenderContext, map: &MapFile) -> Vec<Arc<wgpu::Bi
             if let Some(tex) = map.textures.get(&tid) {
                 if let Ok(rgba) = tex.to_rgba() {
                     let (wrap_u, wrap_v) = map.texture_uv_wrap_axes(tid);
-                    let prepared = prepare_mipmapped_texture_cpu(
+                    let prepared = prepare_map_texture_cpu(
                         tex.width as u32,
                         tex.height as u32,
                         &rgba,
@@ -235,9 +235,12 @@ fn configure_ob01_fog_and_valley_mist(
     assert!((fog_u.depth_fog_params[2] - OB_FOG_MIN_NORM).abs() < 1e-6);
     assert!((fog_u.depth_fog_params[3] - OB_FOG_MAX_NORM).abs() < 1e-6);
     fog_u.time = 1.5;
+    // Active `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`) drifting mist overlay over lake/hills
+    fog_u.screen_fog_uv = [0.5, 0.5, 0.125, 32.0 / 128.0];
     ctx.update_fog(&fog_u);
 
-    // Step authentic `obGB.fcl` `+10,000 mm` valley mist particle cloud
+    // Exact 1:1 `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`, `DAT_00581534 == 0x05`)
+    // and `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `subdiv = 4`, `area = 7000 mm`).
     let mut vol = FogParticleVolume::new(
         eval.particle_count,
         eval.particle_range_x_mm,
@@ -245,8 +248,8 @@ fn configure_ob01_fog_and_valley_mist(
     );
     let anchor = [
         player_pos.x,
-        eval.particle_fixed_y_mm.unwrap_or(OB_FOG_ENV_FIXED_Y_MM),
-        player_pos.z,
+        sh2_core::fog::OB_FOG_ANCHOR_Y_MM,
+        sh2_core::fog::OB_FOG_ANCHOR_Z_MM,
     ];
     vol.step(
         1.0 / 30.0,
@@ -255,18 +258,26 @@ fn configure_ob01_fog_and_valley_mist(
         player_pos.to_array(),
         eval.james_fog_influence_mm,
     );
-    let fog_rgb = [fog_u.fog_color[0], fog_u.fog_color[1], fog_u.fog_color[2]];
+    let fog_rgb = sh2_core::fog::PS2_FOG_PARTICLE_MIST_RGB;
+    let radius_scale = sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM / 300.0;
     let gpu_particles: Vec<GpuFogParticle> = vol
         .particles()
         .iter()
-        .map(|p| GpuFogParticle {
-            world_pos_radius: [
-                anchor[0] + p.local_pos[0],
-                anchor[1] + p.local_pos[1],
-                anchor[2] + p.local_pos[2],
-                p.radius_mm,
-            ],
-            color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
+        .map(|p| {
+            let (wy, alpha) = sh2_core::fog::evaluate_ob01_particle_y_and_alpha(
+                anchor[1],
+                p.local_pos[1],
+                p.alpha,
+            );
+            GpuFogParticle {
+                world_pos_radius: [
+                    anchor[0] + p.local_pos[0],
+                    wy,
+                    anchor[2] + p.local_pos[2],
+                    p.radius_mm * radius_scale,
+                ],
+                color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], alpha],
+            }
         })
         .collect();
     ctx.update_fog_particles(&gpu_particles);
@@ -447,6 +458,14 @@ fn ob01_gameplay_and_tenbou_cutscene_visual_lighting_fog_parity() {
             cam_eye: glam::Vec3::new(1500.0, -1650.0, -5200.0),
             cam_target: glam::Vec3::new(1600.0, -400.0, 2000.0),
             james_pos: glam::Vec3::new(2200.0, sample_floor(2200.0, -2200.0), -2200.0),
+            james_yaw: 0.0,
+        },
+        // 5. Classic parking-lot overlook behind the utility pole & power line looking toward Toluca Lake
+        GameplayShot {
+            name: "pole_overlook",
+            cam_eye: glam::Vec3::new(18600.0, -2800.0, -12500.0),
+            cam_target: glam::Vec3::new(19500.0, -1500.0, -2500.0),
+            james_pos: glam::Vec3::new(18900.0, sample_floor(18900.0, -1350.0), -1350.0),
             james_yaw: 0.0,
         },
     ];

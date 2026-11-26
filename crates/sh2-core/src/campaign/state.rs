@@ -350,3 +350,29 @@ impl ScreenFadeState {
         self.visibility >= 1.0 && self.direction == FadeDirection::Idle
     }
 }
+
+/// Typed fade-out / fade-in transition wrapping cutaway still entry and exit
+/// (`SLUS_202.28` `EvSubPictureDisplay` `0x001aca00`, `EvSubPictureDisplayAndFadeIn`
+/// `0x001ac8b0`, `EvSubPictureDisplayAndFadeOut` `0x001ac9a0`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum CutawayFadeState {
+    /// No cutaway fade transition is currently active.
+    #[default]
+    Idle,
+    /// Fading 3D gameplay out to black (`ScreenEffectFadeStart(0, 1)`) before revealing
+    /// the cutaway still (`EvSubPictureDisplay` step `0 -> 4`).
+    FadingOutToCutaway {
+        /// Cutaway picture identifier to display once the screen reaches full black.
+        picture: String,
+        /// Preserved `out_p_incar` map overlay alpha (`0.0..=1.0`) restored on reveal.
+        incar_alpha: f32,
+    },
+    /// Fading the cutaway still out to black (`ScreenEffectFadeStart(0, 2)`) before
+    /// returning to 3D gameplay (`EvSubPictureDisplay` step `6 -> 0xb`).
+    FadingOutToGameplay {
+        /// Cutaway picture identifier held on screen while fading out to black.
+        picture: String,
+        /// Preserved `out_p_incar` map overlay alpha (`0.0..=1.0`) held during fade-out.
+        incar_alpha: f32,
+    },
+}

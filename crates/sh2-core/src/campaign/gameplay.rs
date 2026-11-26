@@ -21,7 +21,7 @@ use super::io::{CampaignEffects, CampaignTickInput};
 use super::retail_events::{evaluate_retail_item_pickups, evaluate_retail_stage_events};
 use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest};
 use super::state::{
-    CampaignPhase, ConnectStep, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
+    CampaignPhase, ConnectStep, CutawayFadeState, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
     MAIN_SCENARIO_START_STAGE, PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER, WISH_SCENARIO_START_STAGE,
 };
 
@@ -104,6 +104,7 @@ pub(crate) fn run_active_gameplay(
     event_engine: &mut EventEngine,
     outdoor_streamer: &mut OutdoorTileStreamer,
     fade: &mut ScreenFadeState,
+    cutaway_fade: &mut CutawayFadeState,
     play_time_secs: &mut f64,
     player_locked: &mut bool,
     input: &CampaignTickInput,
@@ -128,13 +129,59 @@ pub(crate) fn run_active_gameplay(
         return GameplayStepOutcome::OpenOverlay(menu_kind);
     }
 
-    // 3. Advance active `StageProgramRunner` (`ev_prog` / `EventExecProgram` `0x001a9e00`),
+    // 3. Advance cutaway black fade-out/fade-in wrapper (`SLUS_202.28` `EvSubPictureDisplay`
+    //    `0x001aca00` steps `0 -> 4 -> 7` on entry and `6 -> 0xb` on exit).
+    match cutaway_fade.clone() {
+        CutawayFadeState::Idle => {}
+        CutawayFadeState::FadingOutToCutaway {
+            picture,
+            incar_alpha,
+        } => {
+            *player_locked = true;
+            if fade.is_fully_black() {
+                sim.scenario
+                    .cutaway_overlay
+                    .set_picture(Some(&picture), &sim.scenario.flags);
+                sim.scenario.cutaway_overlay.set_incar_alpha(incar_alpha);
+                fade.start_fade_in(PS2_DEFAULT_FADE_SPEED, false);
+                *cutaway_fade = CutawayFadeState::Idle;
+            }
+            return GameplayStepOutcome::Continue;
+        }
+        CutawayFadeState::FadingOutToGameplay { .. } => {
+            *player_locked = true;
+            if fade.is_fully_black() {
+                sim.scenario
+                    .cutaway_overlay
+                    .set_picture(None, &sim.scenario.flags);
+                *player_locked = false;
+                fade.start_fade_in(PS2_DEFAULT_FADE_SPEED, false);
+                *cutaway_fade = CutawayFadeState::Idle;
+            }
+            return GameplayStepOutcome::Continue;
+        }
+    }
+
+    // 4. Advance active `StageProgramRunner` (`ev_prog` / `EventExecProgram` `0x001a9e00`),
     //    or evaluate `EventMainStandard` (`0x001a7b50`) against the active stage's `Event_List` + `Item_List`.
     let stage_id = sim.scenario.current_stage;
     if sim.scenario.prog_runner.is_running() {
-        let down = (if input.action_pressed { PROG_KEY_A } else { 0 })
-            | (if input.cancel_pressed { PROG_KEY_B } else { 0 });
+        // Gate pad input while fading in a cutaway (`EvSubPictureDisplay` `0x001aca00` step `7`
+        // waits for `ScreenEffectFadeCheck() != 0` before checking `shPadTrigger`).
+        let fade_blocks_input =
+            sim.scenario.cutaway_overlay.active_picture().is_some() && !fade.is_fully_clear();
+        let down = if fade_blocks_input {
+            0
+        } else {
+            (if input.action_pressed { PROG_KEY_A } else { 0 })
+                | (if input.cancel_pressed { PROG_KEY_B } else { 0 })
+        };
         let riddle = sim.scenario.riddle_difficulty;
+        let prev_cutaway = sim
+            .scenario
+            .cutaway_overlay
+            .active_picture()
+            .map(str::to_owned);
         let (still_running, walkback_delta, requested_demo, ending_bit) = {
             let scen = &mut sim.scenario;
             let still_running = scen.prog_runner.tick(
@@ -165,6 +212,42 @@ pub(crate) fn run_active_gameplay(
                 scen.prog_runner.take_triggered_ending(),
             )
         };
+        let next_cutaway = sim
+            .scenario
+            .cutaway_overlay
+            .active_picture()
+            .map(str::to_owned);
+        let incar_alpha = sim.scenario.cutaway_overlay.incar_alpha();
+        if prev_cutaway.is_none() {
+            if let Some(picture) = next_cutaway {
+                // `EvSubPictureDisplay` step `0 -> 4`: fade 3D gameplay out to black before
+                // revealing the cutaway still and fading it in.
+                sim.scenario
+                    .cutaway_overlay
+                    .set_picture(None, &sim.scenario.flags);
+                *player_locked = true;
+                fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);
+                *cutaway_fade = CutawayFadeState::FadingOutToCutaway {
+                    picture,
+                    incar_alpha,
+                };
+            }
+        } else if let Some(picture) = prev_cutaway {
+            if next_cutaway.is_none() {
+                // `EvSubPictureDisplay` step `6 -> 0xb`: hold cutaway still while fading out
+                // to black, then hide it and fade 3D gameplay back in.
+                sim.scenario
+                    .cutaway_overlay
+                    .set_picture(Some(&picture), &sim.scenario.flags);
+                sim.scenario.cutaway_overlay.set_incar_alpha(incar_alpha);
+                *player_locked = true;
+                fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);
+                *cutaway_fade = CutawayFadeState::FadingOutToGameplay {
+                    picture,
+                    incar_alpha,
+                };
+            }
+        }
         if let Some(delta) = walkback_delta {
             let target = sim.scenario.player_position + Vec3::from_array(delta);
             sim.snap_player_transform(target, sim.scenario.player_yaw);
@@ -351,4 +434,120 @@ fn tick_stage_events(
         return effects;
     }
     EventEngineEffects::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::campaign::{CampaignOrchestrator, CampaignPhase};
+    use crate::config::OutdoorStreamingMode;
+
+    #[test]
+    fn cutaway_entry_and_exit_fade_out_and_fade_in_like_slus_001aca00() {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        sim.scenario.current_stage = 3;
+        let mut orch = CampaignOrchestrator::from_saved_stage(
+            3,
+            Some("ob01".to_string()),
+            [15856.0, 0.0, -4050.0],
+            0.0,
+            OutdoorStreamingMode::default(),
+            false,
+        );
+        orch.phase = CampaignPhase::ActiveGameplay;
+        orch.fade = ScreenFadeState::default();
+        orch.player_locked = false;
+
+        // Start stage 3 prog #2 (`out_p_incar` car map pickup) directly.
+        sim.scenario.prog_runner.start(3, 2, 24);
+        let idle_input = CampaignTickInput::default();
+
+        // Tick 1: prog_runner step 0 requests `out_p_incar`; gameplay wrapper intercepts it,
+        // keeps overlay hidden during fade-out, locks player, and starts fading to black.
+        let eff = orch.step(&mut sim, &idle_input, 1.0 / 60.0);
+        assert!(sim.scenario.cutaway_overlay.active_picture().is_none());
+        assert!(matches!(
+            orch.cutaway_fade,
+            CutawayFadeState::FadingOutToCutaway { .. }
+        ));
+        assert!(orch.player_locked);
+        assert!(eff.fade_alpha <= 0.05);
+
+        // Advance ~0.9s (> 1.0 / 1.2s): fade reaches black, reveals `out_p_incar`, starts fade-in.
+        let mut saw_mid_fade_out = false;
+        for _ in 0..60 {
+            let e = orch.step(&mut sim, &idle_input, 1.0 / 60.0);
+            if e.fade_alpha > 0.2 && e.fade_alpha < 0.8 {
+                saw_mid_fade_out = true;
+            }
+            if sim.scenario.cutaway_overlay.active_picture() == Some("out_p_incar") {
+                break;
+            }
+        }
+        assert!(saw_mid_fade_out, "should smoothly fade out before cutaway");
+        assert_eq!(
+            sim.scenario.cutaway_overlay.active_picture(),
+            Some("out_p_incar")
+        );
+        assert_eq!(orch.cutaway_fade, CutawayFadeState::Idle);
+        assert!(
+            orch.fade.black_alpha() >= 0.99,
+            "newly revealed cutaway should start fading in from black"
+        );
+
+        // Input during fade-in must be gated (`EvSubPictureDisplay` step 7).
+        let press_a = CampaignTickInput {
+            action_pressed: true,
+            ..CampaignTickInput::default()
+        };
+        let _ = orch.step(&mut sim, &press_a, 1.0 / 60.0);
+        assert_eq!(sim.scenario.prog_runner.active_message_id(), None);
+
+        // Finish fade-in (~0.9s) -> screen clear, cutaway interactive.
+        for _ in 0..60 {
+            let _ = orch.step(&mut sim, &idle_input, 1.0 / 60.0);
+        }
+        assert!(orch.fade.is_fully_clear());
+
+        // Press A to get map message, press A again to dismiss, then run 1.0s map fade.
+        let eff_msg = orch.step(&mut sim, &press_a, 1.0 / 60.0);
+        assert_eq!(eff_msg.stage_message, Some(28));
+        let _ = orch.step(&mut sim, &press_a, 1.0 / 60.0);
+        for _ in 0..65 {
+            let _ = orch.step(&mut sim, &idle_input, 1.0 / 60.0);
+            if matches!(
+                orch.cutaway_fade,
+                CutawayFadeState::FadingOutToGameplay { .. }
+            ) {
+                break;
+            }
+        }
+        assert!(
+            matches!(
+                orch.cutaway_fade,
+                CutawayFadeState::FadingOutToGameplay { .. }
+            ),
+            "closing cutaway should fade out to black before returning to 3D gameplay"
+        );
+        assert_eq!(
+            sim.scenario.cutaway_overlay.active_picture(),
+            Some("out_p_incar"),
+            "cutaway should remain visible while fading out to black"
+        );
+
+        // Advance ~0.9s -> reaches black, hides cutaway, unlocks player, starts gameplay fade-in.
+        for _ in 0..60 {
+            let _ = orch.step(&mut sim, &idle_input, 1.0 / 60.0);
+            if sim.scenario.cutaway_overlay.active_picture().is_none() {
+                break;
+            }
+        }
+        assert!(sim.scenario.cutaway_overlay.active_picture().is_none());
+        assert!(!orch.player_locked);
+        assert_eq!(orch.cutaway_fade, CutawayFadeState::Idle);
+        assert!(
+            orch.fade.black_alpha() >= 0.99,
+            "returning to 3D gameplay should start fading in from black"
+        );
+    }
 }

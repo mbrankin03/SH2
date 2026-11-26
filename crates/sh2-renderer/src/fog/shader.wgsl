@@ -192,12 +192,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let original_color = textureLoad(color_in, pixel_coords, 0);
     let depth_val = textureLoad(depth_tex, pixel_coords, 0).r;
 
-    // Reconstruct view-space distance and world-space ray
+    // Reconstruct view-space Z depth (`r1.w = clip.w = |view_pos.z|`, matching `sh2pc.exe`
+    // `VS[1..4]` `0x008ef700..0x008ef940` `oFog.x` & `SLUS_202.28` `sh2gfw_Set_DepthFog` `FA / z + FB`)
+    // and Euclidean view distance for optional ModernVolumetric raymarching.
     let uv = (vec2<f32>(pixel_coords) + 0.5) / vec2<f32>(dims);
     let clip_pos = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, depth_val, 1.0);
 
     let view_pos_h = camera.inv_proj * clip_pos;
-    let view_dist = length(view_pos_h.xyz / max(1e-5, abs(view_pos_h.w)));
+    let view_pos = view_pos_h.xyz / max(1e-5, abs(view_pos_h.w));
+    let view_z = abs(view_pos.z);
+    let view_dist = length(view_pos);
 
     let world_pos_h = camera.inv_view_proj * clip_pos;
     let world_pos = world_pos_h.xyz / select(1e-5, world_pos_h.w, abs(world_pos_h.w) > 1e-5);
@@ -217,20 +221,30 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let effective_density = clamp(fog.density * fog.fog_color.a, 0.0, 2.0);
 
     var fog_factor: f32 = 0.0;
+    var screen_fog_texel: f32 = 0.0;
+    var screen_fog_alpha: f32 = 0.0;
     var inscatter_rgb = vec3<f32>(0.0);
 
-    if (!volumetric_mode || fog.step_count <= 1u) {
-        // 1:1 Classic PS2 analytical depth-fog (`sh2gfw_Set_DepthFog` FA/z + FB @ 0x00175df0)
-        // + `fog_view_screen_fog` (0x0016c1c0) UV-scrolling screen overlay
-        let base_curve = eval_depth_curve(view_dist);
-        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (fog.screen_fog_uv.z * 2.0);
-        let screen_overlay = select(
-            0.0,
-            textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r * fog.screen_fog_uv.w,
-            fog.screen_fog_uv.w > 0.001,
+    // 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2711`) &
+    // `sh2pc.exe` `FUN_00487210` (`0x00487210`, `sh2pc_00480000.c:4354-4366`) + `FogFix.cpp:81-88`:
+    // Fullscreen scrolling `fog.tex` quad (`u ± layer1_x1`, `v ± layer1_y1`) modulated by
+    // `fogSetColor(0x80, 0x80, 0x80, 0x80)` (PS2 GS / D3D8 `MODULATE2X` unity RGB -> `tex.rgb`).
+    if (fog.screen_fog_uv.w > 0.001) {
+        let half_span = select(
+            vec2<f32>(fog.screen_fog_uv.z, fog.screen_fog_uv.z),
+            fog.layer1_uv_scale.xy,
+            fog.layer1_uv_scale.x > 0.001 && fog.layer1_uv_scale.y > 0.001,
         );
-        let layered = clamp(base_curve + screen_overlay, 0.0, 1.0);
-        fog_factor = clamp(layered * effective_density, 0.0, 1.0);
+        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (half_span * 2.0);
+        screen_fog_texel = textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r;
+        screen_fog_alpha = clamp(fog.screen_fog_uv.w * effective_density, 0.0, 1.0);
+    }
+
+    if (!volumetric_mode || fog.step_count <= 1u) {
+        // 1:1 Classic PS2/PC analytical depth-fog (`sh2gfw_Set_DepthFog` `FA/z + FB` @ `0x00175df0`,
+        // `sh2pc.exe` `VS[1..4]` `0x008ef700..0x008ef940` using view-space `z = clip.w`).
+        let base_curve = eval_depth_curve(view_z);
+        fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
     } else {
         // ModernVolumetric dual-layer UV-scrolling noise plane contribution (non-Vanilla enhancement)
         let plane_noise = select(0.0, sample_dual_layer_planes(uv, world_pos.xz, drift_t), outdoor_enabled);
@@ -291,15 +305,22 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into mist color.
-    // Pre-lit opaque vista/skybox geometry (`stride == 0x14`, e.g. Toluca Lake & hills in `ob01.map`)
-    // encodes PS2 GS `PRIM.FGE = 0` (`original_color.a < 0.5` with `depth_val < 0.99999`) so it
-    // bypasses depth-fog whiteout exactly like PS2 hardware.
-    if (depth_val < 0.99999 && original_color.a < 0.5) {
-        fog_factor = 0.0;
-    } else if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
+    // All `.map` batches (`stride == 0x14..0x24`, including `ob01.map` Toluca Lake & hills)
+    // receive depth fog per `sh2pc.exe` `VS[1..4]` (`0x008ef700..0x008ef940` `oFog.x`)
+    // and `FUN_005b4cc0` (`0x005b4cc0`, `D3DRS_FOGENABLE = 1`).
+    if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
         fog_factor = 1.0;
     }
 
-    let fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
+    var fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
+    if (screen_fog_alpha > 0.001) {
+        // Exact 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`) / `sh2pc.exe` `FUN_00487210`
+        // (`0x00487210`, `sh2pc_00480000.c:4366`): fullscreen scrolling `fog.tex` quad modulated by
+        // `0x808080` (`MODULATE2X` -> `fog.tex` RGB, NOT dark `0x46` `FOGCOL`) with `ALPHA_1 = 0x44`
+        // (`As = (fog_color_a * fog_alpha_param) >> 9`).
+        let screen_fog_rgb = vec3<f32>(screen_fog_texel);
+        let screen_blend = clamp(screen_fog_alpha * screen_fog_texel, 0.0, 1.0);
+        fogged_rgb = mix(fogged_rgb, screen_fog_rgb, screen_blend);
+    }
     textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, 1.0));
 }

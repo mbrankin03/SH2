@@ -283,9 +283,9 @@ fn make_event_entry(
     msg_or_prog: u8,
     result_flag: u16,
 ) -> EventListEntry {
-    let flag = ((flag_0_inv as u32) << 31)
+    let flag = ((u32::from(!flag_0_inv && flag_0 != 0)) << 31)
         | (((flag_0 as u32) & 0x3fff) << 16)
-        | ((flag_1_inv as u32) << 15)
+        | ((u32::from(!flag_1_inv && flag_1 != 0)) << 15)
         | ((flag_1 as u32) & 0x3fff);
     let cond = ((trigger as u32) << 28)
         | (((ev_pos_offset as u32) & 0xfff) << 16)

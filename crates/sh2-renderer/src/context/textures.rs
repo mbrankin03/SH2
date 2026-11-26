@@ -20,22 +20,33 @@ pub struct PreparedGpuTexture {
     pub block_bytes: u32,
     /// Whether `mip_levels` holds BC-compressed blocks (`true`) or raw RGBA8 pixels (`false`).
     pub is_bc: bool,
+    /// When `true`, sample with 1x bilinear/trilinear filtering (`anisotropy_clamp = 1`) instead of
+    /// 16x anisotropic filtering so zero-gutter cutout `.map` atlases never bleed across sub-rects.
+    pub use_bilinear_1x: bool,
     /// Pre-encoded `(mip_width, mip_height, bytes)` tuples from level `0` down to the smallest valid mip.
     pub mip_levels: Vec<(u32, u32, Vec<u8>)>,
 }
 
+/// Native PS2/PC `.map` cutout atlas resolution ceiling (`512x512`).
+///
+/// 4K AI Master cutout atlases (`2048x2048`, e.g. `4660.dds` power lines and `4656.dds` pine
+/// boughs) are exact 4x upscales of native `512x512` atlases: downsampling down to `512x512`
+/// (`2048 -> 1024 -> 512`) never crosses a native zero-gutter sub-rect boundary while preventing
+/// 4x minification aliasing from dropping thin 4-texel features such as `ob01` power lines.
+const MAP_CUTOUT_NATIVE_MIP_FLOOR: u32 = 512;
+
 /// Runs pure CPU preparation for a `.map` world texture with 1:1 PS2/PC mipmap parity (`SH2-161`):
 ///
-/// - **Cutout `.map` textures** (containing transparent texels `alpha < 4`, such as packed
-///   zero-gutter foliage/sign atlases like `ob.map` `tid=4656`, `ob01.map` `tid=4650`/`4660`):
-///   uploaded with **1 mip level (level 0 only)**, matching `SLUS_202.28` `shGs_InitDefaultRegsEnv`
-///   (`0x001909e0`, `TEX1_1 (0x14) = 0x60` -> `MXL = 0`) and `sh2pc.exe` `FUN_00457200`
-///   (`0x00457200`) / `FUN_004590c0` (`0x004590c0`) / `FUN_0045aaa0` (`0x0045aaa0`) where `.map`
-///   texture header byte `+0x15` (`mip_flag == 0`) passes `Levels = 1` to `CreateTexture`.
-///   Combined with 1x bilinear sampling in [`RenderContext::upload_prepared_texture_bind_group_with_wrap`],
-///   this prevents mipmap downsampling and 16x anisotropic kernels from bleeding across zero-gutter
-///   atlas sub-rect boundaries (e.g. `tid=4656` pine boughs at `v=351.5` next to `#00FF00` / dark
-///   wood at `y=352` and `u=64.5` next to dark bark at `x=63`).
+/// - **Native cutout `.map` textures** (`<= 512x512` containing transparent texels `alpha < 4`,
+///   such as packed zero-gutter foliage/sign atlases like `ob.map` `tid=4656`, `ob01.map`
+///   `tid=4650`/`4660`): uploaded with **1 mip level (level 0 only)**, matching `SLUS_202.28`
+///   `shGs_InitDefaultRegsEnv` (`0x001909e0`, `TEX1_1 (0x14) = 0x60` -> `MXL = 0`) and `sh2pc.exe`
+///   `FUN_00457200` (`0x00457200`) / `FUN_004590c0` (`0x004590c0`) / `FUN_0045aaa0` (`0x0045aaa0`)
+///   where `.map` texture header byte `+0x15` (`mip_flag == 0`) passes `Levels = 1` to `CreateTexture`.
+/// - **4K AI Master cutout `.map` textures** (`> 512x512`): capped mipmap chain down to
+///   [`MAP_CUTOUT_NATIVE_MIP_FLOOR`] (`512x512`, e.g. `2048 -> 1024 -> 512`) with 1x bilinear
+///   sampling (`use_bilinear_1x = true`), preserving zero-gutter sub-rect isolation while preventing
+///   thin features like `ob01.map` `tid=4660` power lines from aliasing out between texel rows.
 /// - **Opaque `.map` textures** (no cutout alpha): full mipmap pyramid + 16x anisotropic filtering.
 #[must_use]
 pub fn prepare_map_texture_cpu(
@@ -58,19 +69,44 @@ pub fn prepare_map_texture_cpu(
         return prepare_mipmapped_texture_cpu(width, height, rgba, supports_bc);
     }
 
-    let mip0 = rgba[..expected0].to_vec();
+    let raw_mips: Vec<(u32, u32, Vec<u8>)> =
+        if w0 > MAP_CUTOUT_NATIVE_MIP_FLOOR || h0 > MAP_CUTOUT_NATIVE_MIP_FLOOR {
+            generate_mipmap_chain_rgba(&rgba[..expected0], w0, h0)
+                .into_iter()
+                .take_while(|&(mw, mh, _)| {
+                    mw >= MAP_CUTOUT_NATIVE_MIP_FLOOR || mh >= MAP_CUTOUT_NATIVE_MIP_FLOOR
+                })
+                .collect()
+        } else {
+            vec![(w0, h0, rgba[..expected0].to_vec())]
+        };
+
     let can_use_bc =
         supports_bc && w0 >= 16 && h0 >= 16 && w0.is_multiple_of(4) && h0.is_multiple_of(4);
     if can_use_bc {
-        let bc_bytes =
-            sh2_assets::formats::dxt::encode_dxt_rgba(&mip0, w0 as usize, h0 as usize, 5u8);
+        let mip_levels = raw_mips
+            .into_iter()
+            .take_while(|&(mw, mh, _)| {
+                mw >= 4 && mh >= 4 && mw.is_multiple_of(4) && mh.is_multiple_of(4)
+            })
+            .map(|(mw, mh, mip_rgba)| {
+                let bc_bytes = sh2_assets::formats::dxt::encode_dxt_rgba(
+                    &mip_rgba,
+                    mw as usize,
+                    mh as usize,
+                    5u8,
+                );
+                (mw, mh, bc_bytes)
+            })
+            .collect();
         return PreparedGpuTexture {
             width: w0,
             height: h0,
             format: wgpu::TextureFormat::Bc3RgbaUnorm,
             block_bytes: 16,
             is_bc: true,
-            mip_levels: vec![(w0, h0, bc_bytes)],
+            use_bilinear_1x: true,
+            mip_levels,
         };
     }
 
@@ -80,7 +116,8 @@ pub fn prepare_map_texture_cpu(
         format: wgpu::TextureFormat::Rgba8Unorm,
         block_bytes: 4,
         is_bc: false,
-        mip_levels: vec![(w0, h0, mip0)],
+        use_bilinear_1x: true,
+        mip_levels: raw_mips,
     }
 }
 
@@ -132,6 +169,7 @@ pub fn prepare_mipmapped_texture_cpu(
                 format,
                 block_bytes,
                 is_bc: true,
+                use_bilinear_1x: false,
                 mip_levels,
             };
         }
@@ -143,6 +181,7 @@ pub fn prepare_mipmapped_texture_cpu(
         format: wgpu::TextureFormat::Rgba8Unorm,
         block_bytes: 4,
         is_bc: false,
+        use_bilinear_1x: false,
         mip_levels: mips,
     }
 }
@@ -288,7 +327,7 @@ impl RenderContext {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = if prepared.mip_levels.len() <= 1 {
+        let sampler = if prepared.use_bilinear_1x || prepared.mip_levels.len() <= 1 {
             self.bilinear_sampler_for_wrap(wrap_u, wrap_v)
         } else {
             self.sampler_for_wrap(wrap_u, wrap_v)
@@ -359,5 +398,54 @@ impl RenderContext {
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Arc::new(blitter.create_bind_group_with_uniform_buffer(&self.device, &view, uniform_buffer))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepare_map_texture_cpu_keeps_native_cutout_at_1_mip_and_caps_4k_at_512() {
+        // Native 512x512 cutout atlas: strict 1-mip PS2/PC parity (`MXL = 0`, `Levels = 1`).
+        let mut native = vec![255u8; 512 * 512 * 4];
+        native[3] = 0; // transparent cutout texel
+        let prep_native = prepare_map_texture_cpu(512, 512, &native, false);
+        assert!(prep_native.use_bilinear_1x);
+        assert_eq!(prep_native.mip_levels.len(), 1);
+        assert_eq!(
+            (prep_native.mip_levels[0].0, prep_native.mip_levels[0].1),
+            (512, 512)
+        );
+
+        // 4K 2048x2048 cutout atlas (e.g. `4660.dds` power lines / `4656.dds` pine boughs):
+        // capped at `512x512` (2048 -> 1024 -> 512 = 3 levels) with 1x bilinear filtering so
+        // thin wires never alias out while zero-gutter 512x512 sub-rect boundaries stay isolated.
+        let mut atlas_4k = vec![0u8; 2048 * 2048 * 4];
+        for y in 2040..2044 {
+            for x in 0..2048 {
+                atlas_4k[(y * 2048 + x) * 4 + 3] = 255;
+            }
+        }
+        let prep_4k = prepare_map_texture_cpu(2048, 2048, &atlas_4k, false);
+        assert!(prep_4k.use_bilinear_1x);
+        assert_eq!(prep_4k.mip_levels.len(), 3);
+        assert_eq!(
+            (prep_4k.mip_levels[0].0, prep_4k.mip_levels[0].1),
+            (2048, 2048)
+        );
+        assert_eq!(
+            (prep_4k.mip_levels[1].0, prep_4k.mip_levels[1].1),
+            (1024, 1024)
+        );
+        assert_eq!(
+            (prep_4k.mip_levels[2].0, prep_4k.mip_levels[2].1),
+            (512, 512)
+        );
+        let mip512 = &prep_4k.mip_levels[2].2;
+        assert!(
+            mip512[(510 * 512 + 256) * 4 + 3] > 200,
+            "4-texel wire must survive into 512x512 mip level"
+        );
     }
 }

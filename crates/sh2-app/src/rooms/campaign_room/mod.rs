@@ -647,6 +647,11 @@ impl RoomController for CampaignRoomController {
                 if let Some(ref sl) = state.ingame_menus.save_load {
                     sh2_ui::draw_save_load_screen(sl, bg, font, &mut state.menu_rasterizer);
                 }
+                if let Some((mx, my)) = state.last_cursor_pos {
+                    let norm_x = (mx as f32) / state.surface_config.width.max(1) as f32;
+                    let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
+                    sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
+                }
                 state.finish_hud_overlay(encoder, surface_view);
                 return;
             }
@@ -746,6 +751,10 @@ impl RoomController for CampaignRoomController {
             .campaign_messages
             .active_page_text()
             .map(str::to_string);
+        let active_spans = state
+            .campaign_messages
+            .active_page_spans()
+            .map(<[(u8, String)]>::to_vec);
 
         if fade_alpha <= 0.005 && !show_red_cross && !has_cutaway && active_msg.is_none() {
             CombatArenaRoomController::render_hud(state, encoder, surface_view);
@@ -775,7 +784,25 @@ impl RoomController for CampaignRoomController {
                     .draw(rc_tex, &mut state.menu_rasterizer);
             }
             if let Some(ref text) = active_msg {
-                messages::draw_campaign_message(&mut state.menu_rasterizer, text);
+                // Exact 1:1 `EvSubPictureFilter` (`0x001acdf0`) + `EvSubPictureEnd` (`0x001ace70`,
+                // `Event/event_sub.c:590-604`) & `sh2pc.exe` `0x005a0b3d`: 50% black dim overlay
+                // (`FIX = 64/128 -> alpha = 128`) over cutaway stills during item/inspect messages.
+                if has_cutaway {
+                    let w = state.menu_rasterizer.width;
+                    let h = state.menu_rasterizer.height;
+                    state.menu_rasterizer.fill_rect(
+                        0,
+                        0,
+                        w,
+                        h,
+                        [0, 0, 0, cutaway::EV_SUB_PICTURE_FILTER_ALPHA_U8],
+                    );
+                }
+                if let Some(ref spans) = active_spans {
+                    messages::draw_campaign_message_spans(&mut state.menu_rasterizer, spans);
+                } else {
+                    messages::draw_campaign_message(&mut state.menu_rasterizer, text);
+                }
             }
             if fade_alpha > 0.005 {
                 let w = state.menu_rasterizer.width;

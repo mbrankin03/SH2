@@ -118,9 +118,16 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     let cam_delta = cam_eye - state.last_screen_fog_cam;
     state.last_screen_fog_cam = cam_eye;
     if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.0 {
-        let fog_alpha_param = (effective_fog.layer_transparencies[0] * 128.0)
-            .round()
-            .clamp(0.0, 128.0) as u8;
+        // `obGB.fcl +0x13` (`0x97`) sets `fog_alpha_param = 0x30` (`48`, `Fog/fog.c:305`) on `ob01`
+        // so foreground shadows (restroom doorway, puddles) stay deep & unlifted (`(128*48)>>9 = 12/128`);
+        // other outdoor rooms use `layer_transparencies[0] * 255.0` (`128`, `FogFix.cpp`).
+        let fog_alpha_param = if ps2_room_id == R_OBSV_DECK_ID {
+            0x30u8
+        } else {
+            (effective_fog.layer_transparencies[0] * 255.0)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
         let fog_color_a = (effective_fog.fog_color[3] * f32::from(PS2_FOG_DEFAULT_COLOR_ALPHA_U8))
             .round()
             .clamp(0.0, 255.0) as u8;
@@ -160,14 +167,40 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             room_eval.particle_range_x_mm,
             room_eval.particle_range_z_mm,
         );
-        // PS2 Y-down coordinate system: when `.fcl` specifies a fixed Y altitude (`fogSetLocalPosV`
-        // `SLUS_202.28` `0x0016c7c8..0x0016c7e4`, e.g. `obGB.fcl` `+10,000 mm` below the cliff),
-        // anchor particles at that exact altitude; otherwise center mist puffs 520 mm above floor.
-        let anchor_y = room_eval
-            .particle_fixed_y_mm
-            .unwrap_or(player_pos.y - 520.0);
-        let anchor = [player_pos.x, anchor_y, player_pos.z];
+        // Exact 1:1 `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`, `DAT_00581534 == 0x05`)
+        // and `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `sh2pc_00480000.c:4194-4240`):
+        // On `ob01` (`R_OBSV_DECK`), Team Silent pins `anchor_y = +1000.0 mm` (`0x447a0000`) and
+        // `anchor_z = +7000.0 mm` (`0x45dac000`), with `obGB.fcl` `subdiv = 4` (`area = 7000 mm`)
+        // mapping particle `local_y` into `[-(7000*2)/16, 0] = [-875.0, 0.0]` -> world Y
+        // `[+125.0, +1000.0] mm` (with a `300 mm` fade at the upper Y border `local_y < -575`)
+        // and `obGB.fcl +0x13 = 0x30` (`48/128 = 0.375`) sprite alpha.
+        let cam_to_player = player_pos - cam_eye;
+        let cam_dist = cam_to_player.length();
+        // Exact `SLUS_202.28` `fogSetLocalPosV` (`0x0016c700`, `Fog/fog.c`):
+        // if `|player - cam| > 2000.0 mm`, clamp the fog volume anchor to `2000.0 mm` along the
+        // camera-to-player ray (`cam + (player - cam) * (2000.0 / dist)`).
+        let anchor = if ps2_room_id == R_OBSV_DECK_ID {
+            [
+                player_pos.x,
+                sh2_core::fog::OB_FOG_ANCHOR_Y_MM,
+                sh2_core::fog::OB_FOG_ANCHOR_Z_MM,
+            ]
+        } else if cam_dist > sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM {
+            let projected = cam_eye
+                + (cam_to_player / cam_dist) * sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM;
+            [projected.x, projected.y, projected.z]
+        } else {
+            let anchor_y = room_eval
+                .particle_fixed_y_mm
+                .unwrap_or(player_pos.y - 520.0);
+            [player_pos.x, anchor_y, player_pos.z]
+        };
         let player_arr = [player_pos.x, player_pos.y, player_pos.z];
+        if ps2_room_id == R_OBSV_DECK_ID {
+            state
+                .fog_particles
+                .set_wind_velocity(sh2_core::fog::OB_FOG_WIND_VELOCITY_MM_PER_SEC);
+        }
         state.fog_particles.step(
             fog_dt,
             effective_fog.speed_mult,
@@ -175,23 +208,40 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             player_arr,
             room_eval.james_fog_influence_mm,
         );
+        // `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) uses `fogSetColor(0x80, 0x80, 0x80, 0x80)`
+        // (unity modulation of `fog.tex` bright mist) rather than dark `0x46` `FOGCOL`.
+        let particle_rgb = if ps2_room_id == R_OBSV_DECK_ID {
+            sh2_core::fog::PS2_FOG_PARTICLE_MIST_RGB
+        } else {
+            fog_rgb
+        };
+        let radius_scale = if ps2_room_id == R_OBSV_DECK_ID {
+            sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM / 300.0
+        } else {
+            1.0
+        };
         state
             .fog_particle_scratch
-            .extend(
-                state
-                    .fog_particles
-                    .particles()
-                    .iter()
-                    .map(|p| GpuFogParticle {
-                        world_pos_radius: [
-                            anchor[0] + p.local_pos[0],
-                            anchor[1] + p.local_pos[1],
-                            anchor[2] + p.local_pos[2],
-                            p.radius_mm,
-                        ],
-                        color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
-                    }),
-            );
+            .extend(state.fog_particles.particles().iter().map(|p| {
+                let (wy, alpha) = if ps2_room_id == R_OBSV_DECK_ID {
+                    sh2_core::fog::evaluate_ob01_particle_y_and_alpha(
+                        anchor[1],
+                        p.local_pos[1],
+                        p.alpha,
+                    )
+                } else {
+                    (anchor[1] + p.local_pos[1], p.alpha)
+                };
+                GpuFogParticle {
+                    world_pos_radius: [
+                        anchor[0] + p.local_pos[0],
+                        wy,
+                        anchor[2] + p.local_pos[2],
+                        p.radius_mm * radius_scale,
+                    ],
+                    color_alpha: [particle_rgb[0], particle_rgb[1], particle_rgb[2], alpha],
+                }
+            }));
     }
 
     // Step 1:1 `Fog/fog_blow.c` (`0x00274ca0..0x00275480`) steam-vent particles for indoor
@@ -283,6 +333,79 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         &state.blood_quad_scratch,
         !blood_cfg.non_subtractive_fallback,
     );
+}
+
+/// Uploads per-frame post-processing uniforms (DoF, film grain, brightness, tonemapping) to GPU.
+pub(crate) fn update_post_process_uniforms(
+    state: &mut AppState,
+    grain_intensity: f32,
+    is_viewer: bool,
+    is_grapple_room: bool,
+) {
+    let det_fog_time = state.fog_uniforms.time;
+    let video = &state.menu_ctrl.options_menu.draft_config.video;
+    let dof_enabled = video.depth_of_field;
+    let (dof_tap_offset_px, dof_strength, dof_focus_params, motion_blur_strength) =
+        if is_viewer || is_grapple_room {
+            ([1.0 / 3.0, 2.0 / 3.0], 0.0, [0.0; 4], 0.0)
+        } else if let Some(session) = state
+            .drama_demo_session
+            .as_ref()
+            .filter(|s| s.player.locks_gameplay_input())
+        {
+            let fx = &session.player.special_fx;
+            if dof_enabled {
+                (
+                    fx.dof_tap_offset_px,
+                    fx.dof_strength,
+                    [
+                        fx.dof_focus_dist_mm,
+                        fx.dof_near_strength,
+                        fx.dof_far_strength,
+                        fx.dof_step_ps2_px,
+                    ],
+                    fx.motion_blur_strength,
+                )
+            } else {
+                (
+                    [1.0 / 3.0, 2.0 / 3.0],
+                    0.0,
+                    [0.0; 4],
+                    fx.motion_blur_strength,
+                )
+            }
+        } else {
+            ([1.0 / 3.0, 2.0 / 3.0], 0.0, [0.0; 4], 0.0)
+        };
+
+    let brightness_level = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .game
+        .brightness_level;
+    let mut post_flags = sh2_renderer::post::POST_FLAG_PS2_LCG_NOISE;
+    if video.aces_tonemapping {
+        post_flags |= sh2_renderer::post::POST_FLAG_ACES_TONEMAP;
+    }
+    if video.texture_quality != sh2_core::config::WorldTextureQuality::OriginalPs2 {
+        post_flags |= sh2_renderer::post::POST_FLAG_SH2EE_NOISE;
+    }
+
+    state
+        .render_ctx
+        .update_post(&sh2_renderer::post::PostUniforms {
+            time: det_fog_time,
+            grain_intensity,
+            exposure: sh2_renderer::post::ps2_brightness_scale(brightness_level),
+            frame_count: state.frame_counter,
+            dof_tap_offset_px,
+            dof_strength,
+            motion_blur_strength,
+            flags: post_flags,
+            dof_focus_params,
+            ..sh2_renderer::post::PostUniforms::default()
+        });
 }
 
 #[cfg(test)]

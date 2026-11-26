@@ -31,10 +31,10 @@ pub const FULLSCREEN_MAX_WIDESCREEN_ASPECT: f32 = 16.0 / 9.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CutawayAspectMode {
     /// Authentic `4:3` pillarboxed framing with zero top/bottom cropping (`FIT_MEDIA`).
-    #[default]
     Fit4x3Pillarbox,
     /// SH2:EE `16:9` widescreen zoom/crop (`FILL_MEDIA`) for `IsScaled == true` cutaways;
     /// automatically preserves `4:3` on edge-critical puzzles/maps/items (`IsScaled == false`).
+    #[default]
     Fill16x9WidescreenCrop,
 }
 

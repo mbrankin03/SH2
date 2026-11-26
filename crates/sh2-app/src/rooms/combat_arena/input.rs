@@ -180,8 +180,8 @@ pub(super) fn handle_combat_arena_key_input(
         KeyCode::Tab if pressed && !is_campaign && !state.combat_arena.ai.enemies.is_empty() => {
             cycle_and_teleport_active_enemy(state);
         }
-        // Toggle between 4K AI Master (2048x2048) and Original PS2 (512x512) world & character textures (`SH2-92`; debug rooms only)
-        KeyCode::KeyT if pressed && !repeat && !is_campaign => {
+        // Toggle between 4K AI Master, SH2:EE HD, and Original PS2 world & character textures (`SH2-92`)
+        KeyCode::KeyT if pressed && !repeat => {
             cycle_world_texture_quality(state);
         }
         // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) BGM & SFX packs (`SH2-60` / `SH2-61`; debug rooms only)
@@ -231,7 +231,7 @@ fn handle_cutscene_locked_input(
             KeyCode::Period | KeyCode::Comma if !repeat && !is_campaign => {
                 step_selected_drama_demo(state, key_code == KeyCode::Period, true);
             }
-            KeyCode::KeyT if !repeat && !is_campaign => {
+            KeyCode::KeyT if !repeat => {
                 cycle_world_texture_quality(state);
             }
             KeyCode::KeyV if !repeat && !is_campaign => {

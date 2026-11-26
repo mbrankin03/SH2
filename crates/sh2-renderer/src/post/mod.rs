@@ -33,6 +33,11 @@ pub const POST_FLAG_PS2_LCG_NOISE: u32 = 1 << 1;
 /// distortion for fire scenes (`native-upgrade`, `SH2-100`). Cleared in strict 1:1 Vanilla PS2 mode.
 pub const POST_FLAG_FIRE_HEAT_HAZE: u32 = 1 << 2;
 
+/// Bitflag in [`PostUniforms::flags`]: enables `sh2pc.exe` (`0x00477d30` / `0x0047c680` /
+/// `0x00478070`) + SH2:EE `PS2NoiseFilter.cpp` (`BrightnessControl = 7.4`, `FilterByteEDX = 0x1d7`)
+/// finer `128px`-tiled noise filter instead of strict `SLUS_202.28` `448p` `3.5`-tile GS grain.
+pub const POST_FLAG_SH2EE_NOISE: u32 = 1 << 3;
+
 /// Uniform buffer payload passed to the post-processing compute shader (`SH2-105`, `SH2-136`).
 ///
 /// Layout is 64 bytes (`4 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).
@@ -63,6 +68,9 @@ pub struct PostUniforms {
     pub glow_step_px: f32,
     /// PS2 Black/White/Red fade overlay (`[r, g, b, alpha]` from [`Ps2FadeKind::evaluate_rgba`]).
     pub fade_rgba: [f32; 4],
+    /// Dual-plane DoF (`EffectMode = 8`, `sh2pc.exe` `0x005a1f30` / `SLUS_202.28` `0x001785e0`)
+    /// parameters: `[focus_dist_mm, near_strength, far_strength, step_ps2_px]`.
+    pub dof_focus_params: [f32; 4],
 }
 
 impl Default for PostUniforms {
@@ -80,6 +88,7 @@ impl Default for PostUniforms {
             glow_strength: 0.0,
             glow_step_px: 0.0,
             fade_rgba: [0.0, 0.0, 0.0, 0.0],
+            dof_focus_params: [0.0, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -167,6 +176,26 @@ impl PostProcessPipeline {
                     binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -300,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_post_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<PostUniforms>(), 64);
+        assert_eq!(std::mem::size_of::<PostUniforms>(), 80);
         let default = PostUniforms::default();
         assert_eq!(default.frame_count, 0);
         assert_eq!(default.exposure, 1.0);
@@ -327,6 +356,7 @@ mod tests {
             glow_strength: 0.35,
             glow_step_px: 2.0,
             fade_rgba: [1.0, 0.0, 0.0, 0.5],
+            dof_focus_params: [1180.8, 0.75, 0.004, 8.0],
         };
 
         let bytes = bytemuck::bytes_of(&uniforms);

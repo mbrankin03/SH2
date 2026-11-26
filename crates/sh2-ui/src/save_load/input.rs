@@ -4,20 +4,20 @@ use super::state::{SaveLoadAction, SaveLoadScreen, SaveLoadStep, YesNoChoice, MC
 use crate::menu::MenuNavAction;
 
 impl SaveLoadScreen {
-    /// Maps window pixel coordinates `(mouse_x, mouse_y)` into the `512 × 448` top-left coordinate
-    /// space used by [`super::render::draw_save_load_screen`] (`Ps2Canvas`).
+    /// Maps full-viewport window pixel coordinates `(mouse_x, mouse_y)` into the `512 × 448`
+    /// top-left coordinate space used by [`super::render::draw_save_load_screen`]
+    /// (`Ps2Canvas::from_viewport`).
     fn window_to_save_load_virtual(
         mouse_x: f32,
         mouse_y: f32,
         win_w: f32,
         win_h: f32,
     ) -> Option<(f32, f32)> {
-        let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(win_w, win_h);
-        if cw <= 0.0 || ch <= 0.0 {
+        if win_w <= 0.0 || win_h <= 0.0 {
             return None;
         }
-        let vx = (mouse_x - ox) * 512.0 / cw;
-        let vy = (mouse_y - oy) * 480.0 / ch - 16.0;
+        let vx = mouse_x * 512.0 / win_w;
+        let vy = mouse_y * 480.0 / win_h - 16.0;
         Some((vx, vy))
     }
 
@@ -31,8 +31,10 @@ impl SaveLoadScreen {
             if row_idx >= total_rows {
                 break;
             }
+            // Exact `mcDrawSlot` (`SLUS_202.28` `0x00245e30`, `MC/mc_menu.c:1392, 1441-1446`):
+            // `y = 0x96 (150) + vis * 0x28 (40)`, height `0x7bd - 0x796 = 39` px.
             let y0 = 150.0 + (vis as f32) * 40.0;
-            if vy >= y0 && vy <= y0 + 36.0 {
+            if vy >= y0 && vy <= y0 + 39.0 {
                 return Some(row_idx);
             }
         }
@@ -162,8 +164,7 @@ mod tests {
     use sh2_core::scenario::ScenarioKind;
 
     fn sl_virtual_to_win(vx: f32, vy: f32, win_w: f32, win_h: f32) -> (f32, f32) {
-        let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(win_w, win_h);
-        (ox + vx * cw / 512.0, oy + (vy + 16.0) * ch / 480.0)
+        (vx * win_w / 512.0, (vy + 16.0) * win_h / 480.0)
     }
 
     fn sample_slot(card_index: usize, file_index: usize) -> SaveSlotEntry {
@@ -215,7 +216,7 @@ mod tests {
         ]);
 
         // Widescreen (1920x1080): hover visible row 2 (slot 1, since row 0 is "New Save" in Save mode)
-        let row2_vy = 150.0 + 2.0 * 40.0 + 18.0;
+        let row2_vy = 148.0 + 2.0 * 38.0 + 14.0;
         let (rx, ry) = sl_virtual_to_win(256.0, row2_vy, 1920.0, 1080.0);
         assert!(screen.handle_mouse_move(rx, ry, 1920.0, 1080.0));
         assert_eq!(screen.cursor_row, 2);
@@ -244,7 +245,7 @@ mod tests {
         assert_eq!(screen.active_card, 0);
 
         // Portrait (< 4:3) window (600x1000): click occupied slot row 1 -> enters ConfirmOverwrite
-        let row1_vy = 150.0 + 40.0 + 18.0;
+        let row1_vy = 148.0 + 38.0 + 14.0;
         let (sx, sy) = sl_virtual_to_win(256.0, row1_vy, 600.0, 1000.0);
         let (changed, action) = screen.handle_mouse_click(sx, sy, 600.0, 1000.0);
         assert!(changed);

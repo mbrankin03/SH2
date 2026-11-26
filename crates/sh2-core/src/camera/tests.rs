@@ -47,7 +47,15 @@ fn test_camera_er01_ps2_parity_framing() {
     // (-Y is up, so target.y must be below the eye: target.y > eye.y (-1003.0))
     assert!(controller.curr_snapshot.target.y > controller.curr_snapshot.eye.y);
     assert!(controller.curr_snapshot.target.x < controller.curr_snapshot.eye.x);
-    assert!(controller.curr_snapshot.fov_y < 0.6);
+    // `er01.cam` record 2 uses telephoto `scr_z = 800.0` (`2 * atan2(256.0, 800.0) ≈ 0.619 rad`
+    // per `sh2pc.exe` `FUN_0045b2a0` `0x0045b2a0`, narrower than default `448.0` -> `1.038 rad`).
+    assert!(
+        controller.curr_snapshot.fov_y
+            < kinematics::fov_y_from_ps2_projection_unclamped(
+                kinematics::PS2_DEFAULT_PROJECTION_SCR_Z
+            )
+    );
+    assert!(controller.curr_snapshot.fov_y < 0.7);
 }
 
 #[test]

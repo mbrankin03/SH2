@@ -124,11 +124,13 @@ fn test_program_driven_message_and_clear_lifecycle() {
             DialogueMessage {
                 id: 0,
                 pages: vec!["Stage msg 0".to_string()],
+                colored_pages: Vec::new(),
                 text: "Stage msg 0".to_string(),
             },
             DialogueMessage {
                 id: 1,
                 pages: vec!["Page A".to_string(), "Page B".to_string()],
+                colored_pages: Vec::new(),
                 text: "Page A\x0CPage B".to_string(),
             },
         ],
@@ -137,6 +139,7 @@ fn test_program_driven_message_and_clear_lifecycle() {
         messages: vec![DialogueMessage {
             id: 0,
             pages: vec!["It's locked.".to_string()],
+            colored_pages: Vec::new(),
             text: "It's locked.".to_string(),
         }],
     };
@@ -487,14 +490,80 @@ fn test_campaign_stage3_action_only_triggers_car_door_within_retail_event_check_
     );
     assert!(!sim.scenario.flags.get(24) && !sim.scenario.flags.get(28));
 
-    // 2. Standing at the retail car door trigger `(15650, 0, -4650)` facing the car and pressing
-    //    Action [E] MUST trigger Stage 3 `EvProg` #2 (`0x005a09b0`) -> `out_p_incar` cutaway.
+    // 2. Standing at the retail car door trigger `(15650, 0, -4650)` facing the car with
+    //    `flag(24) == false` and pressing Action [E] MUST trigger Stage 3 `EvProg` #2 (`0x005a09b0`)
+    //    -> `EvSubPictureDisplay` fade-out/fade-in -> `out_p_incar` cutaway WITH `out/p_incar_map`
+    //    at `incar_alpha == 1.0`.
     sim.snap_player_transform(glam::Vec3::new(15650.0, 0.0, -4650.0), 0.0);
     let _ = orch.step(&mut sim, &action_input, 1.0 / 60.0);
-    let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+    for _ in 0..140 {
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if sim.scenario.cutaway_overlay.active_picture() == Some("out_p_incar")
+            && orch.fade.is_fully_clear()
+        {
+            break;
+        }
+    }
     assert_eq!(
         sim.scenario.cutaway_overlay.active_picture(),
         Some("out_p_incar"),
         "Pressing [E] at retail car door (15650, 0, -4650) must open out_p_incar cutaway"
+    );
+    assert!(
+        orch.fade.is_fully_clear(),
+        "Cutaway fade-in must complete before accepting interaction input"
+    );
+    assert!(
+        (sim.scenario.cutaway_overlay.incar_alpha() - 1.0).abs() < 1e-5,
+        "First [E] press at car before pickup must run ev_prog[2] (0x005a09b0) with incar_alpha == 1.0, got {}",
+        sim.scenario.cutaway_overlay.incar_alpha()
+    );
+    let quads = sim.scenario.cutaway_overlay.evaluate_frame(
+        &sim.scenario.flags,
+        &sim.scenario.puzzle_state,
+        1,
+        0,
+    );
+    assert_eq!(
+        quads.len(),
+        1,
+        "First [E] press must emit the out/p_incar_map overlay sprite quad"
+    );
+    assert_eq!(quads[0].sheet_name, "out/p_incar_map");
+
+    // 3. Complete `ev_prog[2]`: [E] -> message 28 + SE 0x2b17, [E] -> 1.0s map fade ->
+    //    `EvSubPictureDisplay` exit fade-out/fade-in -> sets `flag(24)`.
+    let eff_msg = orch.step(&mut sim, &action_input, 1.0 / 60.0);
+    assert_eq!(eff_msg.stage_message, Some(28));
+    assert!(eff_msg.sound_effects.contains(&0x2b17));
+    let _ = orch.step(&mut sim, &action_input, 1.0 / 60.0);
+    for _ in 0..200 {
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if sim.scenario.cutaway_overlay.active_picture().is_none() && orch.fade.is_fully_clear() {
+            break;
+        }
+    }
+    assert!(
+        sim.scenario.flags.get(24),
+        "Completing ev_prog[2] must set flag(24) (Map of Silent Hill obtained)"
+    );
+    assert_eq!(sim.scenario.cutaway_overlay.active_picture(), None);
+
+    // 4. Re-examining the car after `flag(24) == true` MUST trigger `ev_prog[3]` (`0x005a0ca0`)
+    //    -> `EvSubPictureDisplay` fade-out/fade-in -> empty `out_p_incar` cutaway (`incar_alpha == 0.0`).
+    let _ = orch.step(&mut sim, &action_input, 1.0 / 60.0);
+    for _ in 0..140 {
+        let _ = orch.step(&mut sim, &CampaignTickInput::default(), 1.0 / 60.0);
+        if sim.scenario.cutaway_overlay.active_picture() == Some("out_p_incar") {
+            break;
+        }
+    }
+    assert_eq!(
+        sim.scenario.cutaway_overlay.active_picture(),
+        Some("out_p_incar")
+    );
+    assert!(
+        sim.scenario.cutaway_overlay.incar_alpha().abs() < 1e-5,
+        "Second [E] press after map pickup must run ev_prog[3] (0x005a0ca0) with incar_alpha == 0.0"
     );
 }

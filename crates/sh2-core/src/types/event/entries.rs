@@ -52,9 +52,12 @@ impl EventListEntry {
         }
     }
 
-    /// Selector `1`: `true` if condition `flag_0` is inverted (`!flag(flag_0)` required).
+    /// Selector `1`: required boolean state of condition `flag_0` (`SLUS_202.28` `EventCheck`
+    /// `0x001a7ed0`, `sh2pc.exe` `EventCheck` `0x0048e070`):
+    /// - `false` (`bit 31 == 0`): requires `!flag(flag_0)` (flag must be CLEAR).
+    /// - `true` (`bit 31 == 1`): requires `flag(flag_0)` (flag must be SET).
     #[inline]
-    pub const fn flag_0_inverted(&self) -> bool {
+    pub const fn flag_0_expected_set(&self) -> bool {
         ((self.flag >> 31) & 1) != 0
     }
 
@@ -70,9 +73,12 @@ impl EventListEntry {
         ((self.flag >> 16) & 0x3fff) as u16
     }
 
-    /// Selector `4`: `true` if condition `flag_1` is inverted (`!flag(flag_1)` required).
+    /// Selector `4`: required boolean state of condition `flag_1` (`SLUS_202.28` `EventCheck`
+    /// `0x001a7ed0`, `sh2pc.exe` `EventCheck` `0x0048e070`):
+    /// - `false` (`bit 15 == 0`): requires `!flag(flag_1)` (flag must be CLEAR).
+    /// - `true` (`bit 15 == 1`): requires `flag(flag_1)` (flag must be SET).
     #[inline]
-    pub const fn flag_1_inverted(&self) -> bool {
+    pub const fn flag_1_expected_set(&self) -> bool {
         ((self.flag >> 15) & 1) != 0
     }
 

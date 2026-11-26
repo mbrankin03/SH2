@@ -33,6 +33,23 @@ use crate::cutscene::{
 
 /// Room ID for Toluca Lake Observation Deck (`R_OBSV_DECK = 0x02` in `Patches.h`).
 pub const R_OBSV_DECK_ID: u32 = 0x02;
+/// Exact PS2 `obGB.fcl` (`FogEnv` at file offset `0x84..0x9b`, parsed by `fogSetData` `SLUS_202.28`
+/// `0x00168f40` / `Fog/fog.c:238-325`):
+/// - `+0x00` (`0x84`): `particle_count = 700` (`0x02bc`)
+/// - `+0x02` (`0x86`): `area_half_extent = 7000.0` mm (`0x1b58`)
+/// - `+0x04` (`0x88`): `particle_size = 700.0` mm (`0x02bc`)
+/// - `+0x08` (`0x8c`): `y_fixed = +10000.0` mm (`0x2710`)
+/// - `+0x13` (`0x97`): `fog_alpha_param = 48` (`0x30`, `48 / 128.0 = 0.375`)
+pub const OB_FOG_ENV_PARTICLE_COUNT: usize = 700;
+/// Exact `obGB.fcl` `+0x02` (`0x1b58 = 7000.0` mm) horizontal area half-extent.
+pub const OB_FOG_ENV_AREA_SIZE_MM: f32 = 7_000.0;
+/// Exact `obGB.fcl` `+0x04` (`0x02bc = 700.0` mm) billboard radius/half-size.
+pub const OB_FOG_ENV_PARTICLE_SIZE_MM: f32 = 700.0;
+/// Exact `obGB.fcl` `+0x13` (`0x30 = 48` / `128.0`) PS2 GS particle alpha scale.
+pub const OB_FOG_ENV_ALPHA_SCALE: f32 = 48.0 / 128.0;
+/// Exact PS2 `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) `fogSetColor(0x80, 0x80, 0x80, 0x80)`:
+/// on PS2 GS `0x80` (`128`) is exact unity (`1.0`) RGB modulation of `data/pic/effect/fog.tex`.
+pub const PS2_FOG_PARTICLE_MIST_RGB: [f32; 3] = [1.0, 1.0, 1.0];
 /// Exact PS2 fixed Y altitude (`+10,000.0` mm, PS2 Y-down = 10 m below the parking lot cliff)
 /// for Observation Deck (`ob01`) 3D fog particles from retail `data/bg/ob/obGB.fcl`
 /// (`FogEnv +0x08` at file offset `0x8c`, `subdiv (+0x12) = 4 != 0`), applied to
@@ -53,6 +70,57 @@ pub const OB_FOG_MIN_NORM: f32 = (255.0 - 230.0) / 255.0;
 /// normalized maximum depth-fog blend factor (`1.0 - 40.0 / 255.0 = 215.0 / 255.0`), verified in
 /// `sh2pc.exe` `FUN_00458c30(_DAT_00942c38 * 0.003921569)` (`sh2pc_00470000.c:7922`).
 pub const OB_FOG_MAX_NORM: f32 = (255.0 - 40.0) / 255.0;
+/// Exact `ob01` (`DAT_00581534 == 0x05`) fixed valley fog anchor Y in PS2 mm (`0x447a0000 = 1000.0f`),
+/// verified 1:1 in `SLUS_202.28` `Fog/fogdata.c:169` (`0x0016cb40`).
+pub const OB_FOG_ANCHOR_Y_MM: f32 = 1000.0;
+/// Exact `ob01` (`DAT_00581534 == 0x05`) fixed valley fog anchor Z in PS2 mm (`0x45dac000 = 7000.0f`),
+/// verified 1:1 in `SLUS_202.28` `Fog/fogdata.c:170` (`0x0016cb40`).
+pub const OB_FOG_ANCHOR_Z_MM: f32 = 7000.0;
+/// Exact `ob01` vertical particle span in PS2 mm from `sh2pc.exe` `FUN_00486d10` (`0x00486d10`,
+/// `sh2pc_00480000.c:4194-4205`): `(area * 2.0) / (1 << subdiv) = (7000.0 * 2.0) / 16.0 = 875.0 mm`
+/// (`local_y ∈ [-875.0, 0.0]` -> world `Y ∈ [+125.0, +1000.0] mm`).
+pub const OB_FOG_Y_SPAN_MM: f32 = 875.0;
+/// Exact `obGB.fcl +0x13` (`0x97 = 0x30 = 48`) normalized D3D8 `SRCALPHA` sprite alpha
+/// (`48.0 / 255.0 ≈ 0.1882`), verified in `sh2pc.exe` `sh2pc_00480000.c:5684,5719-5720`
+/// (`(0x80 * 48) * 0.0078125 = 48 -> (48 << 24) | 0x808080`, blended via `D3DBLEND_SRCALPHA`
+/// `FUN_00486fc0` `0x00486fc0` `sh2pc_00480000.c:4271-4272`).
+pub const OB_FOG_ALPHA_NORM: f32 = 48.0 / 255.0;
+/// Exact `obGB.fcl +0x10 = 0x12` (`wind_type = 0x12`) steady-state 3D valley fog wind velocity
+/// in PS2 mm/s, derived 1:1 from `SLUS_202.28` `fogChangeWind(0x12)` (`0x00169380`,
+/// `Fog/fog.c:504-525`: direction `normalize([1.0..2.0, 0.0..0.1, 0.1..0.2])` mid `[1.5, 0.05, 0.15]`,
+/// accel `uVar8 = 0x3f333333 = 0.7 mm/frame²`) and `sh2pc.exe` `FUN_00486260`
+/// (`sh2pc_00480000.c:3958-3961`: `vel = (vel + accel) * 0.9` at 60 Hz):
+/// `v_term = (0.9 / (1.0 - 0.9)) * 0.7 * 60.0 = 378.0 mm/s`.
+pub const OB_FOG_WIND_VELOCITY_MM_PER_SEC: [f32; 3] = [375.90, 12.53, 37.59];
+
+/// Evaluates the exact `ob01` (`R_OBSV_DECK`) valley-mist particle world-space Y (PS2 mm) and
+/// effective alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]` local Y and base
+/// border/sway alpha.
+///
+/// Matches `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`: `anchor_y = +1000.0 mm`) and
+/// `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `sh2pc_00480000.c:4194-4240`): `subdiv = 4`,
+/// `area = 7000.0 mm` -> `local_y ∈ [-875.0, 0.0]` (`world_y ∈ [+125.0, +1000.0] mm`) with a
+/// `300.0 mm` upper fade (`local_y < 300.0 - 875.0`) and `obGB.fcl +0x13 = 48 / 128` alpha.
+#[must_use]
+#[inline]
+pub fn evaluate_ob01_particle_y_and_alpha(
+    anchor_y_mm: f32,
+    local_y_symmetric_mm: f32,
+    base_alpha: f32,
+) -> (f32, f32) {
+    let norm_y =
+        ((local_y_symmetric_mm / PS2_DEFAULT_FOG_HEIGHT_BAND_MM) * 0.5 + 0.5).clamp(0.0, 1.0);
+    let local_y = -norm_y * OB_FOG_Y_SPAN_MM;
+    let top_fade = if local_y < 300.0 - OB_FOG_Y_SPAN_MM {
+        ((OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    (
+        anchor_y_mm + local_y,
+        base_alpha * top_fade * OB_FOG_ALPHA_NORM,
+    )
+}
 /// Room ID for Forest Trail & Cemetery (`R_FOREST_CEMETERY = 0x03` in `Patches.h`).
 pub const R_FOREST_CEMETERY_ID: u32 = 0x03;
 /// Room ID for Silent Hill Town East (`R_TOWN_EAST = 0x04` in `Patches.h`).
@@ -360,14 +428,14 @@ pub fn evaluate_room_fog_with_fixes(
             let (range_x, range_z, count) = if ctx.extended_observation_deck_range {
                 (
                     OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X,
-                    12000.0,
+                    OB_FOG_ENV_AREA_SIZE_MM,
                     OBSERVATION_DECK_FOG_PARTICLE_MAX,
                 )
             } else {
                 (
-                    PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                    PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                    PS2_DEFAULT_FOG_PARTICLE_COUNT,
+                    OB_FOG_ENV_AREA_SIZE_MM,
+                    OB_FOG_ENV_AREA_SIZE_MM,
+                    OB_FOG_ENV_PARTICLE_COUNT,
                 )
             };
             // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `sh2pc.exe` `0x3f5530`):
@@ -388,7 +456,8 @@ pub fn evaluate_room_fog_with_fixes(
                 fog_max: OB_FOG_MAX_NORM,
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
-                speed_mult: FOG_SPEED_OUTDOOR_SLOW,
+                // `FogAdjustments.cpp:272-306`: `R_OBSV_DECK` is not in the `0.25f` FogSpeedFix list (`1.0`).
+                speed_mult,
                 layers: base_layers,
                 particle_count: count,
                 particle_range_x_mm: range_x,
@@ -623,6 +692,19 @@ mod tests {
         assert!(upper.final_boss_upper_override);
         assert_eq!(upper.speed_mult, FOG_SPEED_OUTDOOR_SLOW);
         assert!(upper.fog_far_mm > lower.fog_far_mm);
+    }
+
+    #[test]
+    fn observation_deck_particle_y_and_alpha_match_fun_00486d10() {
+        // Bottom of `subdiv = 4` band (`local_y_sym = -100` -> `norm_y = 0.0` -> `world_y = 1000.0`, full `0x30/128` alpha)
+        let (wy_bot, a_bot) = evaluate_ob01_particle_y_and_alpha(OB_FOG_ANCHOR_Y_MM, -100.0, 1.0);
+        assert!((wy_bot - 1000.0).abs() < 1e-4);
+        assert!((a_bot - OB_FOG_ALPHA_NORM).abs() < 1e-6);
+
+        // Top of `subdiv = 4` band (`local_y_sym = +100` -> `norm_y = 1.0` -> `world_y = 125.0`, faded to `0.0`)
+        let (wy_top, a_top) = evaluate_ob01_particle_y_and_alpha(OB_FOG_ANCHOR_Y_MM, 100.0, 1.0);
+        assert!((wy_top - 125.0).abs() < 1e-4);
+        assert!(a_top.abs() < 1e-6);
     }
 
     #[test]

@@ -17,6 +17,14 @@ use sh2_assets::{CutawayTextureAsset, CutawayViewportTransform};
 use sh2_core::{riddle_level_index, CutawayAspectMode, CutawayQuality, OverlaySpriteQuad};
 use sh2_ui::TextRasterizer;
 
+/// Exact fullscreen black dim overlay alpha (`64 / 128 = 0.50 -> 128 / 255`) drawn over cutaway
+/// stills while an item/inspection message is active.
+///
+/// Verified 1:1 against `SLUS_202.28` `EvSubPictureFilter` (`0x001acdf0`) + `EvSubPictureEnd`
+/// (`0x001ace70`, `Event/event_sub.c:590-604`: `R=0, G=0, B=0, FIX = (int)(_ev_filter * 64.0)`)
+/// and retail `sh2pc.exe` `0x005a0b3d` (Stage 3 `out_p_incar` map pickup step 2).
+pub(crate) const EV_SUB_PICTURE_FILTER_ALPHA_U8: u8 = 128;
+
 /// Maximum native cutaway surface width (4K UHD).
 const MAX_NATIVE_CUTAWAY_WIDTH: u32 = 3840;
 /// Maximum native cutaway surface height (4K UHD).
@@ -294,12 +302,15 @@ pub(crate) fn render_campaign_cutaway_native(
         .to_vec();
 
     let video = &state.menu_ctrl.options_menu.draft_config.video;
-    let quality = if video.texture_quality == sh2_core::config::WorldTextureQuality::OriginalPs2 {
-        CutawayQuality::OriginalPs2
-    } else {
-        video.cutaway_quality
-    };
-    let aspect_mode = video.cutaway_aspect_mode;
+    let (quality, aspect_mode) =
+        if video.texture_quality == sh2_core::config::WorldTextureQuality::OriginalPs2 {
+            (
+                CutawayQuality::OriginalPs2,
+                CutawayAspectMode::Fit4x3Pillarbox,
+            )
+        } else {
+            (video.cutaway_quality, video.cutaway_aspect_mode)
+        };
 
     let target_w = state
         .surface_config

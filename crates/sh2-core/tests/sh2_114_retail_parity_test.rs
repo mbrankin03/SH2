@@ -211,10 +211,10 @@ fn retail_trg10_key_doors_fire_on_action_while_carrying_key_or_menu_item_use() {
 
         let mut flags = EventFlags::new();
         if raw.flag_0() != 0 {
-            flags.set(raw.flag_0() as usize, !raw.flag_0_inverted());
+            flags.set(raw.flag_0() as usize, raw.flag_0_expected_set());
         }
         if raw.flag_1() != 0 {
-            flags.set(raw.flag_1() as usize, !raw.flag_1_inverted());
+            flags.set(raw.flag_1() as usize, raw.flag_1_expected_set());
         }
 
         // 1. Without carrying the key, pressing Action must NOT fire.

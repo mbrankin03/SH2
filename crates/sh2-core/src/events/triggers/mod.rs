@@ -32,45 +32,31 @@ pub const EVENT_IGNORE_HEIGHT_Y: f32 = 45_000.0;
 
 /// Applies the secondary flag toggle side effects of `EventExecSubFlagSet`
 /// (`SLUS_202.28` `0x001a9a90`).
+///
+/// When `toggle_on_exec` (selector `2` / `5`) is set, `EventExecSubFlagSet` sets the flag if its
+/// required condition was CLEAR (`selector 1 / 4 == 0`), or clears it if its required condition
+/// was SET (`selector 1 / 4 == 1`).
 pub fn event_exec_sub_flag_set(entry: &EventListEntry, flags: &mut EventFlags) {
     let f0 = entry.flag_0() as usize;
     if f0 != 0 && entry.flag_0_toggle_on_exec() {
-        flags.set(f0, !entry.flag_0_inverted());
+        flags.set(f0, !entry.flag_0_expected_set());
     }
     let f1 = entry.flag_1() as usize;
     if f1 != 0 && entry.flag_1_toggle_on_exec() {
-        flags.set(f1, !entry.flag_1_inverted());
+        flags.set(f1, !entry.flag_1_expected_set());
     }
 }
 
 /// Evaluates whether the two flag conditions (`flag_0` and `flag_1`) on `entry` are satisfied
-/// (`EventCheck` at `SLUS_202.28` `0x001a7e60..0x001a7fb0`).
+/// (`EventCheck` at `SLUS_202.28` `0x001a7ed0` / `sh2pc.exe` `0x0048e070`).
+///
+/// Bit 31 (`flag_0_expected_set`) and Bit 15 (`flag_1_expected_set`) encode the required boolean
+/// state: `false` (`0`) requires the flag to be CLEAR (`!flag`), `true` (`1`) requires it SET.
 pub fn check_event_flag_conditions(entry: &EventListEntry, flags: &EventFlags) -> bool {
     let f0 = entry.flag_0() as usize;
-    if f0 != 0 {
-        let is_set = flags.get(f0);
-        if entry.flag_0_inverted() {
-            if is_set {
-                return false;
-            }
-        } else if !is_set {
-            return false;
-        }
-    }
-
     let f1 = entry.flag_1() as usize;
-    if f1 != 0 {
-        let is_set = flags.get(f1);
-        if entry.flag_1_inverted() {
-            if is_set {
-                return false;
-            }
-        } else if !is_set {
-            return false;
-        }
-    }
-
-    true
+    (f0 == 0 || flags.get(f0) == entry.flag_0_expected_set())
+        && (f1 == 0 || flags.get(f1) == entry.flag_1_expected_set())
 }
 
 /// Evaluates `EventItemConditionCheck` (`SLUS_202.28` `0x001ab1a0`) for a stage `Item_List` entry.

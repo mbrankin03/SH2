@@ -393,10 +393,10 @@ fn test_act2_trg10_door(
     raw.cond &= !0x0fff_f000;
     let mut flags = s.flags.clone();
     if raw.flag_0() != 0 {
-        flags.set(raw.flag_0() as usize, !raw.flag_0_inverted());
+        flags.set(raw.flag_0() as usize, raw.flag_0_expected_set());
     }
     if raw.flag_1() != 0 {
-        flags.set(raw.flag_1() as usize, !raw.flag_1_inverted());
+        flags.set(raw.flag_1() as usize, raw.flag_1_expected_set());
     }
     let mut inv = InventoryManager::new();
     if rm.act2_carrying_key {

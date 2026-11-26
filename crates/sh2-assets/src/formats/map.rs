@@ -213,7 +213,7 @@ pub struct MapBatch {
     pub indices: Vec<u32>,
 }
 
-/// Interleaved vertex format matching modern GPU vertex layout (`MapVertex`).
+/// Interleaved vertex format matching modern GPU vertex layout (`MapVertex`, 52 bytes).
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct MapVertex {
@@ -221,6 +221,13 @@ pub struct MapVertex {
     pub normal: [f32; 3],
     pub uv: [f32; 2],
     pub color: [f32; 4],
+    /// Low byte of [`MapMaterial::mode`] (`mode & 0xff`, `sh2pc.exe` `FUN_005b2d40` `0x005b2d40` /
+    /// `DAT_008f0338`) selecting the exact `VS[1..8]` (`0x008ef230..0x008efb68`) lighting equation:
+    /// - `0`: unlit fullbright (`VS[1]`/`VS[3]`: `oD0 = 1.0`)
+    /// - `3`: unlit vertex color (`VS[2]`/`VS[4]`: `oD0 = v5`)
+    /// - `1, 2, 6`: lit diffuse + `c19` room ambient (`VS[5]`/`VS[7]`)
+    /// - `4, 5, 7`: lit diffuse + `c21`/`c20` + additive baked vertex radiance `v5 * c22` (`VS[6]`/`VS[8]`)
+    pub shader_mode: u32,
 }
 
 impl MapBatch {
@@ -300,6 +307,7 @@ impl MapBatch {
             })
             .unwrap_or([1.0, 1.0, 1.0]);
 
+        let shader_mode = material.map_or(1u32, |m| u32::from(m.mode & 0xff));
         let count = self.positions.len();
         let mut out = Vec::with_capacity(count);
         for i in 0..count {
@@ -318,6 +326,7 @@ impl MapBatch {
                 normal: norm,
                 uv,
                 color: col,
+                shader_mode,
             });
         }
         out

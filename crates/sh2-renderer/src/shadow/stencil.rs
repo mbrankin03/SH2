@@ -129,7 +129,7 @@ fn fs_darken() -> @location(0) vec4<f32> {
         });
 
         let map_pos_vb = [wgpu::VertexBufferLayout {
-            array_stride: 48, // MapVertex stride
+            array_stride: std::mem::size_of::<sh2_assets::formats::map::MapVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[wgpu::VertexAttribute {
                 offset: 0,

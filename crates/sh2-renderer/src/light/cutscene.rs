@@ -25,9 +25,10 @@ use super::uniforms::{
 };
 use crate::skeletal::ENVIRON_PACKET_RGB_U8;
 
-/// Linear RGB scale converting `DrawEnvData` / `CharacterLightPool` intensities into shader linear
-/// diffuse units, matching gameplay `camera_wiring.rs` (`0.07 * 2.2 = 0.154`).
-pub const CHARACTER_POOL_LINEAR_SCALE: f32 = 0.07 * 2.2;
+/// Exact `SLUS_202.28` `sh2gfw_set_CommonCharacterLight` (`0x00130d20`, `sceVu0ScaleVector(0x3f800000, ...)`)
+/// `1.0` scale for `DrawEnvData` / `CharacterLightPool` directional and point light colors.
+/// (Background `.map` `VS[1..8]` applies `4.0 * 0.0625 = 0.25` in `pipeline.rs` per `sh2pc.exe` `FUN_0047a420:8121-8125`.)
+pub const CHARACTER_POOL_LINEAR_SCALE: f32 = 1.0;
 
 /// Maximum number of `.dds` demo point lights (`sh2gfw_Set_DemoPointLight` `0x0017d600`, 3 slots).
 const MAX_DEMO_POINT_LIGHTS: usize = 3;
@@ -281,6 +282,9 @@ pub fn build_cutscene_light_uniforms(
         pool.reflection_color().to_array(),
         env_alpha_u8,
     );
+    if let Some(env) = input.draw_env {
+        u.set_draw_env_constants(env, 0.0, 0.0, input.is_dark_room, 1.0);
+    }
     u
 }
 

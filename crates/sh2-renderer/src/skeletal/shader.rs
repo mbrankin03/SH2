@@ -26,6 +26,11 @@ struct SpotlightUniforms {
     gun_and_dark_trim: vec4<f32>,
     reflection_dir: vec4<f32>,
     reflection_color: vec4<f32>,
+    map_ambient_c19: vec4<f32>,
+    map_base_color_c20: vec4<f32>,
+    map_base_ambient_c21: vec4<f32>,
+    map_vertex_ambient_c22: vec4<f32>,
+    char_global_ambient: vec4<f32>,
 };
 
 struct SkeletonBones {
@@ -247,14 +252,31 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         return vec4<f32>(in.color.rgb * tex_color.rgb, out_alpha);
     }
 
-    // PS2 GS / D3D8 `MODULATE2X` (`2.0 * material.{ambient, diffuse}`, `sh2pc.exe` `0x501ab3` / `0x501bfa`)
+    // PS2 GS / D3D8 `MODULATE2X` (`2.0 * clamp(oD0, 0, 1)`, `sh2pc.exe` `0x501ab3` / `0x501bfa`):
+    // When `char_global_ambient.w > 0.5`, use exact `SLUS_202.28` `Model3UpdateGlobalAmbient`
+    // (`0x00128e70`) / `sh2pc.exe` `FUN_0050dd00` (`0x0050dd00`) + `FUN_00501540` (`0x00501540:1029-1030`):
+    // `oD0 = clamp(material.ambient * char_global_ambient + gun_boost + material.diffuse * (spot_diffuse + camera_fill), 0, 1)`,
+    // then `D3DTOP_MODULATE2X` (`2.0 * oD0`).
     let mat_diffuse = material.diffuse_mtype.xyz * 2.0;
     let mat_ambient = material.ambient_shininess.xyz * 2.0;
 
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
     let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
 
-    let game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale * dark_trim_scale + gun_boost + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
+    let legacy_game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale * dark_trim_scale + gun_boost + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
+    let model3_od0 = clamp(
+        material.ambient_shininess.xyz * spotlight.char_global_ambient.xyz
+            + gun_boost
+            + material.diffuse_mtype.xyz * (spot_diffuse + camera_fill),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+    let model3_game_diffuse_light = model3_od0 * 2.0 * env_tint_rgb;
+    let game_diffuse_light = select(
+        legacy_game_diffuse_light,
+        model3_game_diffuse_light,
+        spotlight.char_global_ambient.w > 0.5,
+    );
     let studio_diffuse_light = (mat_ambient * studio_amb + mat_diffuse * studio_direct) * env_tint_rgb;
     let total_diffuse_light = select(game_diffuse_light, studio_diffuse_light, shade_mode == 3);
 

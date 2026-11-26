@@ -28,7 +28,7 @@ use sh2_renderer::{RenderContext, RendererConfig};
 #[test]
 fn golden_ps2_falloff_and_multi_light_uniforms() {
     let mut u = SpotlightUniforms::default();
-    assert_eq!(std::mem::size_of::<SpotlightUniforms>(), 336);
+    assert_eq!(std::mem::size_of::<SpotlightUniforms>(), 416);
     assert_eq!(u.position[1], PS2_DEFAULT_FLASHLIGHT_POS_Y_MM);
     assert_eq!(u.fill_and_range[1], PS2_DEFAULT_FLASHLIGHT_FAR_MM);
 

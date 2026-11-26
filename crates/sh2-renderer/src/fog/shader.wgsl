@@ -51,6 +51,11 @@ struct SpotlightUniforms {
     gun_and_dark_trim: vec4<f32>,
     reflection_dir: vec4<f32>,
     reflection_color: vec4<f32>,
+    map_ambient_c19: vec4<f32>,
+    map_base_color_c20: vec4<f32>,
+    map_base_ambient_c21: vec4<f32>,
+    map_vertex_ambient_c22: vec4<f32>,
+    char_global_ambient: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> fog: FogUniforms;

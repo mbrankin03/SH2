@@ -354,8 +354,10 @@ pub(super) fn ps2_unswizzle8(buf: &[u8], w: usize, h: usize) -> Vec<u8> {
 }
 
 /// Decodes a PS2-format `.tex` container (`bytes[0x0c..0x10] == b"\xa7\xa7\xa7\xa7"`),
-/// supporting both 32-bit (`bpp == 0x18`) and GS-swizzled 8-bit (`PSMT8` + CSM1 CLUT) textures
-/// with PS2 `0..=0x80` -> `0..=255` brightness/alpha scaling.
+/// supporting both 32-bit (`bpp == 0x18`) and GS-swizzled 8-bit (`PSMT8` + CSM1 CLUT) textures.
+///
+/// On PS2 Graphics Synthesizer (GS), RGB channels are already full-range `0..=255` while Alpha
+/// uses `0x00..=0x80` (`0x80` = 1.0 opaque), so only the Alpha channel is doubled (`(a * 2).min(255)`).
 pub(super) fn decode_ps2_tex(bytes: &[u8]) -> Result<DecodedTexture, AssetError> {
     if bytes.len() < 0xc0 {
         return Err(AssetError::BufferUnderflow {
@@ -372,7 +374,7 @@ pub(super) fn decode_ps2_tex(bytes: &[u8]) -> Result<DecodedTexture, AssetError>
         ));
     }
 
-    let scale_ps2 = |v: u8| -> u8 { ((v as u16) * 2).min(255) as u8 };
+    let scale_ps2_alpha = |a: u8| -> u8 { ((a as u16) * 2).min(255) as u8 };
 
     if bpp == 0x18 {
         let required = 0xc0 + w * h * 4;
@@ -384,8 +386,13 @@ pub(super) fn decode_ps2_tex(bytes: &[u8]) -> Result<DecodedTexture, AssetError>
         }
         let mut rgba = vec![0u8; w * h * 4];
         let src = &bytes[0xc0..required];
-        for i in 0..(w * h * 4) {
-            rgba[i] = scale_ps2(src[i]);
+        let (src_chunks, _) = src.as_chunks::<4>();
+        let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+        for (src_px, dst_px) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
+            dst_px[0] = src_px[0];
+            dst_px[1] = src_px[1];
+            dst_px[2] = src_px[2];
+            dst_px[3] = scale_ps2_alpha(src_px[3]);
         }
         Ok(DecodedTexture {
             width: w,
@@ -410,10 +417,10 @@ pub(super) fn decode_ps2_tex(bytes: &[u8]) -> Result<DecodedTexture, AssetError>
                 let s_ofs = (r * 64 + c) * 4;
                 let idx = r * 16 + c;
                 pal[idx] = [
-                    scale_ps2(raw_clut[s_ofs]),
-                    scale_ps2(raw_clut[s_ofs + 1]),
-                    scale_ps2(raw_clut[s_ofs + 2]),
-                    scale_ps2(raw_clut[s_ofs + 3]),
+                    raw_clut[s_ofs],
+                    raw_clut[s_ofs + 1],
+                    raw_clut[s_ofs + 2],
+                    scale_ps2_alpha(raw_clut[s_ofs + 3]),
                 ];
             }
         }

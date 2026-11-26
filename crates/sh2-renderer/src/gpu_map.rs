@@ -86,9 +86,9 @@ impl GpuMap {
     /// Compiles a parsed [`MapFile`] into GPU-resident vertex and index buffers tagged with its
     /// numeric `base_room_id` for `stageparts` display-control filtering (`SH2-78`).
     ///
-    /// Untextured batches (`MapMaterial::texture_id == 0`) have their vertex RGB modulated by
-    /// [`sh2_assets::formats::map::MapMaterial::diffuse_rgba_f32`] (`sh2pc.exe` `FUN_005b2190`
-    /// `0x005b2190`, `SH2-121`).
+    /// Both textured and untextured `mode 1/2/6` batches have their vertex RGB modulated by
+    /// [`sh2_assets::formats::map::MapMaterial::diffuse_rgba_f32`] (`sh2pc.exe` `FUN_005b4940`
+    /// `0x005b4940` + `FUN_005b2190` `0x005b2190`, paired with `VS[5]`/`VS[7]` 2x PS2 GS overbright).
     pub fn from_map_with_room_id(device: &wgpu::Device, map: &MapFile, base_room_id: u16) -> Self {
         let mut batches = Vec::with_capacity(map.batches.len());
         let mut total_gpu_bytes = 0usize;

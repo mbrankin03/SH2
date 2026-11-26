@@ -3,9 +3,10 @@
 //! # Ground Truth & Format Architecture
 //! Verified against:
 //! - **Primary Ground Truth**: PS2 Debug Prototype ELF (`SLUS_202.28`, DWARF compile unit `Event/demoview.c`:
-//!   `DdsReadShort` `0x1b0d80`, `DdsReadFloat2` `0x1b0dc0`, `DdsReadFloat4` `0x1b0e40`, `DdsPlayKey` `0x1b1140`,
-//!   `DdsPlayCharacter` `0x1b1220`, `DdsObjectRotation` `0x1b1340`, `DdsPlayCamera` `0x1b1720`,
-//!   `DdsPlayLight` `0x1b1900`, `DramaDemoSkipLast` `0x1b1be0`, `DramaDemoInit` `0x1b2080`, `DdsPlay` `0x1b2520`).
+//!   `DdsReadShort` `0x001b0d80`, `DdsReadFloat2` `0x001b0dd0`, `DdsReadFloat4` `0x001b0e70`,
+//!   `DramaDemoInit` `0x001b1130`, `DdsPlay` `0x001b1980`, `DdsPlayKey` `0x001b2680`,
+//!   `DdsPlayCamera` `0x001b2760`, `DdsPlayLight` `0x001b29d0`, `DdsPlayCharacter` `0x001b2d90`,
+//!   `DramaDemoSkipLast` `0x001b2f10`, `RotationToInterest` `0x001b3280`).
 //! - **Secondary Ground Truth**: Retail PC binary (`sh2pc.exe` NA v1.0: `0x49fbb0..0x4a2670`) and all
 //!   130 retail `.dds` cutscene scripts across `data/demo/` and `data/demo2/`.
 //!
@@ -54,7 +55,7 @@ pub const DEMO_SCREEN_SY: f32 = 448.0;
 pub const DEMO_SCR_Z_SCALE: f32 = 1.147_02;
 
 /// Unpacks a custom 16-bit half-float (`u16` little-endian) into an IEEE-754 `f32`,
-/// matching `DdsReadFloat2` (`0x1b0dc0` in `SLUS_202.28`, `0x49fbe0` in `sh2pc.exe`).
+/// matching `DdsReadFloat2` (`0x001b0dd0` in `SLUS_202.28`, `0x49fbe0` in `sh2pc.exe`).
 ///
 /// Note: Unlike IEEE-754 binary16, `DdsReadFloat2` unconditionally adds `0x70` (`112`) to the
 /// 5-bit exponent without a zero check, so `0x0000` evaluates to `2^-14 = 0.00006103515625`.
@@ -68,7 +69,7 @@ pub fn dds_f16_to_f32(h: u16) -> f32 {
 }
 
 /// Converts Euler angles `(rx, ry, rz)` and `position` into a look-at `interest` target,
-/// matching `DdsObjectRotation` (`0x1b1340` in `SLUS_202.28`, `0x4a01c0` in `sh2pc.exe`).
+/// matching `RotationToInterest` (`0x001b3280` in `SLUS_202.28`, `0x4a01c0` in `sh2pc.exe`).
 #[inline]
 pub fn dds_rotation_to_interest(pos: [f32; 3], rot: [f32; 3]) -> [f32; 3] {
     let (sx, cx) = rot[0].sin_cos();
@@ -587,5 +588,16 @@ mod tests {
         assert!((st.camera_pos[0] - 100.5).abs() < 1e-3);
         assert!(st.char_visible[0]);
         assert!((st.char_positions[0][0] - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_demo_keyframe_state_default_is_zero_initialized() {
+        let state = DemoKeyframeState::default();
+        assert_eq!(state.camera_pos, [0.0; 3]);
+        assert_eq!(state.camera_interest, [0.0; 3]);
+        assert_eq!(state.camera_roll, 0.0);
+        assert_eq!(state.camera_plane, 0.0);
+        assert_eq!(state.char_positions, [[0.0; 3]; DEMO_MAX_CHARS]);
+        assert_eq!(state.char_visible, [false; DEMO_MAX_CHARS]);
     }
 }

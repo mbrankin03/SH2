@@ -9,8 +9,8 @@
 //! - **File Header (16 bytes, `0x00..0x10`)**:
 //!   - `+0x00` (`u16`): Header ID / flags
 //!   - `+0x02` (`u16`): Reserved / type
-//!   - `+0x04` (`u32`): Number of shadow parts (`part_count`)
-//!   - `+0x08..0x10`: Padding
+//!   - `+0x04` (`u16`): Number of shadow parts (`part_count`, `sStack_2c` in `sh2shd_init_outdoor_man2` `0x001a0920`)
+//!   - `+0x06..0x10`: Padding
 //! - **Part Header (96 bytes = `0x60`, repeated `part_count` times)**:
 //!   - `+0x04` (`u16`): Bone index (`.kg1`) or room object ID (`.kg2`)
 //!   - `+0x06` (`u16`): Number of strips (`strip_count`)
@@ -32,7 +32,7 @@
 //!     (read by `sh2pc.exe` `0x00444bc9..0x00444c14` for spotlight cone culling).
 
 use crate::error::AssetError;
-use crate::formats::binary::{read_f32, read_i16, read_u16, read_u32};
+use crate::formats::binary::{read_f32, read_i16, read_u16};
 
 /// Scale factor converting PS2 Q15 signed-16-bit shadow face normals (`±32768`) to unit floats.
 pub const KG_NORMAL_Q15_SCALE: f32 = 1.0 / 32768.0;
@@ -230,7 +230,8 @@ pub fn parse_kg(data: &[u8]) -> Result<KgFile, AssetError> {
 
     let header_flags = read_u16(data, 0)?;
     let header_type = read_u16(data, 2)?;
-    let part_count = read_u32(data, 4)? as usize;
+    // `sh2shd_init_outdoor_man2` (`0x001a0920`, `sh2shd_outdoor.c:42,67`) reads `part_count` as 16-bit at `+0x04`.
+    let part_count = read_u16(data, 4)? as usize;
 
     // Guard against corrupted headers declaring absurd part counts before allocating
     let max_possible_parts = (data.len() - 16) / 0x60;
@@ -491,5 +492,11 @@ mod tests {
         let tris = kg.parts[0].strips[0].to_triangles();
         assert_eq!(tris.len(), 1);
         assert!((tris[0].normal[1] - 1.0).abs() < 1e-3);
+
+        // Verify `part_count` is read strictly as `u16` at `+0x04` (ignoring non-zero bytes at `+0x06..+0x08`)
+        buf[6..8].copy_from_slice(&0xBEEFu16.to_le_bytes());
+        let kg_u16 =
+            parse_kg1(&buf).expect("non-zero +0x06..+0x08 must not corrupt u16 part_count");
+        assert_eq!(kg_u16.parts.len(), 1);
     }
 }

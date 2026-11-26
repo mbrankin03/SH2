@@ -108,12 +108,14 @@ pub struct DemoKeyframeState {
 }
 
 impl Default for DemoKeyframeState {
+    /// Zero-initializes all keyframe fields, matching `shQzero(0x11331e0, 0x360)` and
+    /// `shQzero(0x1133540, 0x360)` in `SLUS_202.28` `DramaDemoInit` (`0x001b1130`, `Event/demoview.c:173-174`).
     fn default() -> Self {
         Self {
-            camera_pos: [0.0, -1500.0, -2000.0],
-            camera_interest: [0.0, -1000.0, 0.0],
+            camera_pos: [0.0; 3],
+            camera_interest: [0.0; 3],
             camera_roll: 0.0,
-            camera_plane: 300.0,
+            camera_plane: 0.0,
             char_positions: [[0.0; 3]; DEMO_MAX_CHARS],
             char_visible: [false; DEMO_MAX_CHARS],
             lights: [DemoLightState::default(); DEMO_MAX_LIGHTS],
@@ -291,7 +293,7 @@ impl DemoDdsEvaluator {
     }
 
     /// Fast-forwards through all remaining records in the `.dds` script to `0xFFFF` and copies `next`
-    /// to `last`, matching `DramaDemoSkipLast` (`0x1b1be0` PS2 / `0x4a09f0` PC).
+    /// to `last`, matching `DramaDemoSkipLast` (`0x001b2f10` PS2 / `0x4a09f0` PC).
     pub fn skip_to_last(&mut self) {
         while self.next_record_idx < self.script.records.len() {
             self.apply_record(self.next_record_idx);

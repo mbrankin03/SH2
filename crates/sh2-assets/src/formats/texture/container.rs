@@ -141,15 +141,10 @@ pub fn parse_texture_container(
         }
 
         let tex_id = tag;
-        let w = u16::from_le_bytes([bytes[p + 4], bytes[p + 5]]) as usize;
-        let h = u16::from_le_bytes([bytes[p + 6], bytes[p + 7]]) as usize;
+        let block_w = u16::from_le_bytes([bytes[p + 4], bytes[p + 5]]) as usize;
+        let block_h = u16::from_le_bytes([bytes[p + 6], bytes[p + 7]]) as usize;
         let nspr = u16::from_le_bytes([bytes[p + 12], bytes[p + 13]]) as usize;
         p += 32;
-
-        if w == 0 || h == 0 {
-            // Guard against zero-dimension malformed entries to prevent GPU validation panics
-            continue;
-        }
 
         for _ in 0..nspr {
             if end.saturating_sub(p) < 32 {
@@ -157,6 +152,8 @@ pub fn parse_texture_container(
             }
 
             let sid = u32::from_le_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]);
+            let sw = u16::from_le_bytes([bytes[p + 8], bytes[p + 9]]) as usize;
+            let sh = u16::from_le_bytes([bytes[p + 10], bytes[p + 11]]) as usize;
             let fmt = bytes[p + 12];
             let comp = bytes[p + 13];
             let ds =
@@ -170,16 +167,28 @@ pub fn parse_texture_container(
                 return Ok(textures);
             }
 
+            let w = if sw > 0 { sw } else { block_w };
+            let h = if sh > 0 { sh } else { block_h };
+
             if ds > 0 {
                 let exp = if comp != 0 {
                     w.div_ceil(4).max(1) * h.div_ceil(4).max(1) * if fmt == 0 { 8 } else { 16 }
                 } else if fmt == 8 {
-                    w * h + 32 + 1024
+                    // Retail 8-bit paletted `.tex` sprites (`comp == 0 && fmt == 8`, e.g. `itemmenu.tex`,
+                    // `p_quiz_btn.tex`) declare `ds = w * h` followed immediately by a 32-byte palette
+                    // sub-header + 1024-byte RGBA CLUT.
+                    w.saturating_mul(h).saturating_add(32 + 1024)
                 } else {
-                    w * h * 4
+                    w.saturating_mul(h).saturating_mul(4)
                 };
+                // Advance by `ds.max(exp)`:
+                // - Padded / mipmapped containers (`ds > exp`) advance by declared `ds` without desync.
+                // - Retail 8-bit paletted `.tex` (`ds = w * h`) and SH2:EE HD overrides that leave
+                //   vanilla `ds` smaller than upscaled `exp` (e.g. `sh2e/effect/footmark.tbn2`:
+                //   256x256 DXT5 `exp = 65536` with stale 64x64 `ds = 4096`) read the full `exp` payload.
+                let step = ds.max(exp);
 
-                if p + exp <= end {
+                if w > 0 && h > 0 && p.saturating_add(step) <= end {
                     textures.push(ContainerTexture {
                         id: tex_id,
                         sprite_id: sid,
@@ -187,10 +196,10 @@ pub fn parse_texture_container(
                         height: h,
                         format: fmt,
                         is_compressed: comp != 0,
-                        data: bytes[p..p + exp].to_vec(),
+                        data: bytes[p..p + step].to_vec(),
                     });
                 }
-                p += exp;
+                p = p.saturating_add(step);
             }
         }
     }

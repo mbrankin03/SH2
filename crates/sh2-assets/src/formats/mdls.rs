@@ -95,16 +95,68 @@ pub struct ModelTexture {
     pub width: usize,
     /// Height in pixels.
     pub height: usize,
-    /// Compression kind: 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
+    /// Pixel format / compression kind:
+    /// `0` = Uncompressed 32-bit BGRA8 (`fmt == 0x20`),
+    /// `1` = DXT1 (BC1), `3` = DXT3 (BC2), `5` = DXT5 (BC3),
+    /// `8` = Uncompressed 8-bit paletted (`fmt == 8`).
     pub kind: u8,
-    /// Compressed texture payload data.
+    /// Raw or compressed texture payload data.
     pub data: Vec<u8>,
 }
 
 impl ModelTexture {
-    /// Decodes the compressed texture payload into an uncompressed RGBA8 byte buffer.
+    /// Decodes the embedded texture payload into an uncompressed RGBA8 byte buffer.
     pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
-        decode_dxt(&self.data, self.width, self.height, self.kind)
+        if self.width == 0 || self.height == 0 {
+            return Err(AssetError::InvalidData(
+                "Model texture dimensions must be non-zero".to_string(),
+            ));
+        }
+        match self.kind {
+            0 => {
+                // Uncompressed 32-bit BGRA8 (`fmt == 0x20`) -> RGBA8
+                let expected_len = self.width * self.height * 4;
+                if self.data.len() < expected_len {
+                    return Err(AssetError::BufferUnderflow {
+                        required: expected_len,
+                        available: self.data.len(),
+                    });
+                }
+                let mut rgba = vec![0u8; expected_len];
+                let (src_chunks, _) = self.data[..expected_len].as_chunks::<4>();
+                let (dst_chunks, _) = rgba.as_chunks_mut::<4>();
+                for (src, dst) in src_chunks.iter().zip(dst_chunks.iter_mut()) {
+                    dst[0] = src[2]; // R
+                    dst[1] = src[1]; // G
+                    dst[2] = src[0]; // B
+                    dst[3] = src[3]; // A
+                }
+                Ok(rgba)
+            }
+            8 => {
+                // Uncompressed 8-bit paletted (`fmt == 8`): indices + 32-byte palette header + 1024-byte RGBA CLUT
+                let pixel_count = self.width * self.height;
+                let required = pixel_count + 32 + 1024;
+                if self.data.len() < required {
+                    return Err(AssetError::BufferUnderflow {
+                        required,
+                        available: self.data.len(),
+                    });
+                }
+                let pal = &self.data[pixel_count + 32..pixel_count + 32 + 1024];
+                let mut rgba = vec![0u8; pixel_count * 4];
+                for (i, &idx) in self.data[..pixel_count].iter().enumerate() {
+                    let p_ofs = (idx as usize) * 4;
+                    let d_ofs = i * 4;
+                    rgba[d_ofs] = pal[p_ofs];
+                    rgba[d_ofs + 1] = pal[p_ofs + 1];
+                    rgba[d_ofs + 2] = pal[p_ofs + 2];
+                    rgba[d_ofs + 3] = pal[p_ofs + 3];
+                }
+                Ok(rgba)
+            }
+            _ => decode_dxt(&self.data, self.width, self.height, self.kind),
+        }
     }
 }
 
@@ -952,22 +1004,27 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         if let Ok(container_texs) = crate::formats::texture::parse_texture_container(data, tex_ofs)
         {
             for ctex in container_texs {
-                let kind = match ctex.format {
-                    0 => 1,
-                    1 | 2 => 3,
-                    3 | 4 => 5,
-                    _ => 3,
+                let kind = if !ctex.is_compressed {
+                    if ctex.format == 8 {
+                        8 // Uncompressed 8-bit paletted
+                    } else {
+                        0 // Uncompressed 32-bit BGRA8 (`fmt == 0x20`)
+                    }
+                } else {
+                    match ctex.format {
+                        0 => 1,
+                        1 | 2 => 3,
+                        3 | 4 => 5,
+                        _ => 3,
+                    }
                 };
-                textures.insert(
-                    ctex.id,
-                    ModelTexture {
-                        id: ctex.id,
-                        width: ctex.width,
-                        height: ctex.height,
-                        kind,
-                        data: ctex.data,
-                    },
-                );
+                textures.entry(ctex.id).or_insert(ModelTexture {
+                    id: ctex.id,
+                    width: ctex.width,
+                    height: ctex.height,
+                    kind,
+                    data: ctex.data,
+                });
             }
         }
     }
@@ -989,4 +1046,69 @@ pub fn parse_mdl(data: &[u8]) -> Result<ModelFile, AssetError> {
         textures,
         clusters,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_texture_uncompressed_bgra8_decodes_cleanly() {
+        let tex = ModelTexture {
+            id: 42,
+            width: 2,
+            height: 1,
+            kind: 0,
+            data: vec![
+                10, 20, 30, 255, // BGRA -> RGBA [30, 20, 10, 255]
+                40, 50, 60, 128, // BGRA -> RGBA [60, 50, 40, 128]
+            ],
+        };
+        let rgba = tex.to_rgba().expect("BGRA8 ModelTexture must decode");
+        assert_eq!(rgba, vec![30, 20, 10, 255, 60, 50, 40, 128]);
+    }
+
+    #[test]
+    fn test_parse_mdl_embedded_uncompressed_bgra8_texture() {
+        // Minimal synthetic .mdl: 64B file header + 164B model header + 0x19990901 BGRA8 texture container
+        let mdl_ofs = 64usize;
+        let tex_ofs = mdl_ofs + 164;
+        let mut buf = vec![0u8; tex_ofs];
+        buf[0] = 0; // no_tex = 0
+        buf[8..12].copy_from_slice(&(tex_ofs as u32).to_le_bytes());
+        buf[12..16].copy_from_slice(&(tex_ofs as u32).to_le_bytes());
+        buf[16..20].copy_from_slice(&(mdl_ofs as u32).to_le_bytes());
+        buf[mdl_ofs..mdl_ofs + 4].copy_from_slice(&MDL_MAGIC);
+
+        // Append 0x19990901 texture container with 1 uncompressed 2x1 BGRA8 sprite (fmt=0x20, comp=0)
+        buf.extend_from_slice(&crate::formats::texture::TEX_MAGIC_BYTES);
+        buf.extend_from_slice(&[0u8; 12]);
+        let mut blk = [0u8; 32];
+        blk[0..4].copy_from_slice(&7u32.to_le_bytes()); // tex_id = 7
+        blk[4..6].copy_from_slice(&2u16.to_le_bytes());
+        blk[6..8].copy_from_slice(&1u16.to_le_bytes());
+        blk[12..14].copy_from_slice(&1u16.to_le_bytes()); // nspr = 1
+        buf.extend_from_slice(&blk);
+
+        let mut spr = [0u8; 32];
+        spr[8..10].copy_from_slice(&2u16.to_le_bytes());
+        spr[10..12].copy_from_slice(&1u16.to_le_bytes());
+        spr[12] = 0x20; // BGRA8
+        spr[13] = 0; // uncompressed
+        spr[16..20].copy_from_slice(&8u32.to_le_bytes()); // ds = 8
+        spr[30..32].copy_from_slice(&0x9900u16.to_le_bytes());
+        buf.extend_from_slice(&spr);
+        buf.extend_from_slice(&[10, 20, 30, 255, 40, 50, 60, 128]);
+
+        let mdl = parse_mdl(&buf).expect("synthetic mdl must parse");
+        let tex = mdl
+            .textures
+            .get(&7)
+            .expect("embedded BGRA8 texture 7 must exist");
+        assert_eq!(tex.kind, 0);
+        assert_eq!(
+            tex.to_rgba().unwrap(),
+            vec![30, 20, 10, 255, 60, 50, 40, 128]
+        );
+    }
 }

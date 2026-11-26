@@ -74,46 +74,29 @@ fn test_adx_audio_decoding() {
 }
 
 #[test]
-fn test_sdm_sdb_parsing() {
-    // Construct synthetic SDM header and SDB payload
-    let mut sdm = Vec::new();
-    sdm.extend_from_slice(b"SDM1");
-    sdm.extend_from_slice(&2u32.to_le_bytes()); // 2 entries
+fn test_spu2_adpcm_shift_gt_12_maps_to_9() {
+    // PS2 SPU2 hardware maps raw ADPCM shift values > 12 (13, 14, 15) to shift = 9.
+    let make_block = |shift: u8| -> [u8; 16] {
+        let mut blk = [0u8; 16];
+        blk[0] = shift & 0x0F; // filter 0, raw shift
+        blk[1] = 0x01; // end of sample
+        for b in &mut blk[2..16] {
+            *b = 0x73; // non-zero signed nibbles
+        }
+        blk
+    };
 
-    // Entry 0: 22050 Hz, offset 0, len 64, mono 16-bit, no loop
-    sdm.extend_from_slice(&22050u32.to_le_bytes());
-    sdm.extend_from_slice(&0u32.to_le_bytes());
-    sdm.extend_from_slice(&64u32.to_le_bytes());
-    sdm.extend_from_slice(&1u16.to_le_bytes());
-    sdm.extend_from_slice(&16u16.to_le_bytes());
-    sdm.extend_from_slice(&0u16.to_le_bytes()); // loop
-    sdm.extend_from_slice(&0u16.to_le_bytes()); // pad
-    sdm.extend_from_slice(&0u32.to_le_bytes()); // loop_start
-    sdm.extend_from_slice(&0u32.to_le_bytes()); // loop_end
+    let ref_shift9 = decode_spu2_vag_to_wav(&make_block(9), 0, 22050).unwrap();
+    let ref_shift12 = decode_spu2_vag_to_wav(&make_block(12), 0, 22050).unwrap();
+    assert_ne!(ref_shift9.data, ref_shift12.data);
 
-    // Entry 1: 44100 Hz, offset 64, len 128, stereo 16-bit, loop
-    sdm.extend_from_slice(&44100u32.to_le_bytes());
-    sdm.extend_from_slice(&64u32.to_le_bytes());
-    sdm.extend_from_slice(&128u32.to_le_bytes());
-    sdm.extend_from_slice(&2u16.to_le_bytes());
-    sdm.extend_from_slice(&16u16.to_le_bytes());
-    sdm.extend_from_slice(&1u16.to_le_bytes()); // loop
-    sdm.extend_from_slice(&0u16.to_le_bytes()); // pad
-    sdm.extend_from_slice(&100u32.to_le_bytes()); // loop_start
-    sdm.extend_from_slice(&2000u32.to_le_bytes()); // loop_end
-
-    let sdb = vec![0x42u8; 256];
-
-    let bank = parse_sdm_sdb(&sdm, &sdb).expect("Failed to parse SDM/SDB");
-    assert_eq!(bank.entries.len(), 2);
-    assert_eq!(bank.entries[0].sample_rate, 22050);
-    assert_eq!(bank.entries[0].data.len(), 64);
-    assert!(!bank.entries[0].loops);
-
-    assert_eq!(bank.entries[1].sample_rate, 44100);
-    assert_eq!(bank.entries[1].data.len(), 128);
-    assert!(bank.entries[1].loops);
-    assert_eq!(bank.entries[1].loop_start, 100);
+    for raw_shift in [13u8, 14, 15] {
+        let decoded = decode_spu2_vag_to_wav(&make_block(raw_shift), 0, 22050).unwrap();
+        assert_eq!(
+            decoded.data, ref_shift9.data,
+            "SPU2 ADPCM shift {raw_shift} must map to shift 9"
+        );
+    }
 }
 
 #[test]

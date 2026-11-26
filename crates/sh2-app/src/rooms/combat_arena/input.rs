@@ -26,9 +26,14 @@ pub(super) fn handle_combat_arena_key_input(
         return;
     }
 
+    let is_campaign = state.campaign_orchestrator.is_some();
+
     // Route 3D Story Progression Checkpoints (`[PgUp/PgDn]`), interactive cutaway modal (`[E/Enter]`),
     // and NG+ Secret Weapon / UFO / Ending Judge shortcuts (`[7/8/U/L]`) (`SH2-65`).
-    if super::story_input::handle_3d_story_key_input(state, key_code, pressed, repeat) {
+    // Never execute debug Story Checkpoint shortcuts during unified Campaign mode (`SH2-162`).
+    if !is_campaign
+        && super::story_input::handle_3d_story_key_input(state, key_code, pressed, repeat)
+    {
         update_accumulated_directional_input(state);
         return;
     }
@@ -101,7 +106,7 @@ pub(super) fn handle_combat_arena_key_input(
                 }
             }
         }
-        KeyCode::KeyC if pressed && !repeat => {
+        KeyCode::KeyC if pressed && !repeat && !is_campaign => {
             state.active_maria = !state.active_maria;
             state.sim_core.scenario.character = if state.active_maria {
                 sh2_core::scenario::PlayableCharacter::Maria
@@ -119,8 +124,8 @@ pub(super) fn handle_combat_arena_key_input(
                 if state.active_maria { "Maria" } else { "James" }
             );
         }
-        // Volumetric Fog calibration shortcuts (matching PS2 dbg_fogparm_ctl / dbg_ambifog_ctl)
-        KeyCode::BracketLeft | KeyCode::BracketRight if pressed => {
+        // Volumetric Fog calibration shortcuts (matching PS2 dbg_fogparm_ctl / dbg_ambifog_ctl; debug rooms only)
+        KeyCode::BracketLeft | KeyCode::BracketRight if pressed && !is_campaign => {
             let delta = if key_code == KeyCode::BracketRight {
                 0.05
             } else {
@@ -130,7 +135,7 @@ pub(super) fn handle_combat_arena_key_input(
             state.render_ctx.update_fog(&state.fog_uniforms);
             tracing::info!("[Fog Tweak] Density: {:.2}", state.fog_uniforms.density);
         }
-        KeyCode::Minus | KeyCode::Equal if pressed => {
+        KeyCode::Minus | KeyCode::Equal if pressed && !is_campaign => {
             let delta = if key_code == KeyCode::Equal {
                 1000.0
             } else {
@@ -141,17 +146,17 @@ pub(super) fn handle_combat_arena_key_input(
             state.render_ctx.update_fog(&state.fog_uniforms);
             tracing::info!("[Fog Tweak] fog_far: {:.0}", state.fog_uniforms.fog_far);
         }
-        KeyCode::KeyM if pressed => {
+        KeyCode::KeyM if pressed && !is_campaign => {
             state.fog_uniforms.curve_type = (state.fog_uniforms.curve_type + 1) % 3;
             state.render_ctx.update_fog(&state.fog_uniforms);
         }
-        KeyCode::F2 if pressed && !repeat => {
+        KeyCode::F2 if pressed && !repeat && !is_campaign => {
             state.debug_collision_overlay = !state.debug_collision_overlay;
         }
-        KeyCode::F1 | KeyCode::F3 if pressed => {
+        KeyCode::F1 | KeyCode::F3 if pressed && !is_campaign => {
             state.debug_camera_hud = !state.debug_camera_hud;
         }
-        // Authentic Combat controls (Space to Attack, R to Ready, 1..6 to switch weapons)
+        // Authentic Combat controls (Space to Attack, R to Ready; 1..6 debug weapon shortcuts in Test Rooms only)
         KeyCode::KeyR => {
             state.key_ready_held = pressed;
         }
@@ -167,31 +172,31 @@ pub(super) fn handle_combat_arena_key_input(
         | KeyCode::Digit4
         | KeyCode::Digit5
         | KeyCode::Digit6
-            if pressed =>
+            if pressed && !is_campaign =>
         {
             equip_weapon_shortcut(state, key_code);
         }
-        // Teleport / cycle selected enemy right in front of James for testing combat & grab interactions
-        KeyCode::Tab if pressed && !state.combat_arena.ai.enemies.is_empty() => {
+        // Teleport / cycle selected enemy right in front of James for testing combat & grab interactions (debug rooms only)
+        KeyCode::Tab if pressed && !is_campaign && !state.combat_arena.ai.enemies.is_empty() => {
             cycle_and_teleport_active_enemy(state);
         }
-        // Toggle between 4K AI Master (2048x2048) and Original PS2 (512x512) world & character textures (`SH2-92`)
-        KeyCode::KeyT if pressed && !repeat => {
+        // Toggle between 4K AI Master (2048x2048) and Original PS2 (512x512) world & character textures (`SH2-92`; debug rooms only)
+        KeyCode::KeyT if pressed && !repeat && !is_campaign => {
             cycle_world_texture_quality(state);
         }
-        // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) BGM & SFX packs (`SH2-60` / `SH2-61`)
-        KeyCode::KeyB if pressed && !repeat => {
+        // Toggle between SH2:EE 48kHz Lossless (`sh2e/sound/`) and Original PS2/PC (`data/sound/`) BGM & SFX packs (`SH2-60` / `SH2-61`; debug rooms only)
+        KeyCode::KeyB if pressed && !repeat && !is_campaign => {
             toggle_audio_pack_source(state);
         }
-        // Cycle BGM stage presets (`SeBgmChange` / `SeBgmManager` multi-channel AIX & ADX verification)
-        KeyCode::KeyN if pressed && !repeat => {
+        // Cycle BGM stage presets (`SeBgmChange` / `SeBgmManager` multi-channel AIX & ADX verification; debug rooms only)
+        KeyCode::KeyN if pressed && !repeat && !is_campaign => {
             cycle_bgm_stage_preset(state);
         }
-        // Launch or cycle in-engine real-time 3D cutscene (`DramaDemoPlayer`, `SH2-63`)
-        KeyCode::KeyG if pressed && !repeat => {
+        // Launch or cycle in-engine real-time 3D cutscene (`DramaDemoPlayer`, `SH2-63`; debug rooms only)
+        KeyCode::KeyG if pressed && !repeat && !is_campaign => {
             open_current_drama_demo(state);
         }
-        KeyCode::Period | KeyCode::Comma if pressed && !repeat => {
+        KeyCode::Period | KeyCode::Comma if pressed && !repeat && !is_campaign => {
             step_selected_drama_demo(state, key_code == KeyCode::Period, false);
         }
         _ => {}
@@ -213,37 +218,23 @@ fn handle_cutscene_locked_input(
     repeat: bool,
 ) {
     state.clear_held_gameplay_keys();
+    let is_campaign = state.campaign_orchestrator.is_some();
 
     if pressed {
         match key_code {
-            KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter | KeyCode::KeyG if !repeat => {
-                if let Some(mut session) = state.drama_demo_session.take() {
-                    session.player.skip();
-                    if let Some((final_pos, final_yaw)) = session.player.player_handoff_transform()
-                    {
-                        state
-                            .sim_core
-                            .handoff_player_after_cutscene(final_pos, final_yaw);
-                    } else {
-                        state.sim_core.sync_cutscene_handoff(None);
-                    }
-                    if let Some(ref mut eng) = state.audio_engine {
-                        eng.stop_voice(Duration::from_millis(40));
-                    }
-                    tracing::info!(
-                        "[Cutscene Player] Skipped DramaDemo #{}: '{}' -> returned control to gameplay.",
-                        session.player.info.demo_no,
-                        session.player.info.title
-                    );
-                }
+            KeyCode::Escape | KeyCode::Backspace | KeyCode::Enter if !repeat => {
+                skip_active_drama_demo(state);
             }
-            KeyCode::Period | KeyCode::Comma if !repeat => {
+            KeyCode::KeyG if !repeat && !is_campaign => {
+                skip_active_drama_demo(state);
+            }
+            KeyCode::Period | KeyCode::Comma if !repeat && !is_campaign => {
                 step_selected_drama_demo(state, key_code == KeyCode::Period, true);
             }
-            KeyCode::KeyT if !repeat => {
+            KeyCode::KeyT if !repeat && !is_campaign => {
                 cycle_world_texture_quality(state);
             }
-            KeyCode::KeyV if !repeat => {
+            KeyCode::KeyV if !repeat && !is_campaign => {
                 if let Some(ref mut session) = state.drama_demo_session {
                     let next_mode = session.player.widescreen_mode.next();
                     let aspect = session.player.viewport_aspect;
@@ -255,7 +246,7 @@ fn handle_cutscene_locked_input(
                     );
                 }
             }
-            KeyCode::ArrowRight | KeyCode::BracketRight => {
+            KeyCode::ArrowRight | KeyCode::BracketRight if !is_campaign => {
                 let subs = state.menu_ctrl.options_menu.draft_config.game.subtitles;
                 if let Some(ref mut session) = state.drama_demo_session {
                     let target = (session.player.scene_frame + 150.0)
@@ -263,7 +254,7 @@ fn handle_cutscene_locked_input(
                     session.player.seek_to_frame(target, subs);
                 }
             }
-            KeyCode::ArrowLeft | KeyCode::BracketLeft => {
+            KeyCode::ArrowLeft | KeyCode::BracketLeft if !is_campaign => {
                 let subs = state.menu_ctrl.options_menu.draft_config.game.subtitles;
                 if let Some(ref mut session) = state.drama_demo_session {
                     let target = (session.player.scene_frame - 150.0).max(0.0);
@@ -272,6 +263,27 @@ fn handle_cutscene_locked_input(
             }
             _ => {}
         }
+    }
+}
+
+fn skip_active_drama_demo(state: &mut AppState) {
+    if let Some(mut session) = state.drama_demo_session.take() {
+        session.player.skip();
+        if let Some((final_pos, final_yaw)) = session.player.player_handoff_transform() {
+            state
+                .sim_core
+                .handoff_player_after_cutscene(final_pos, final_yaw);
+        } else {
+            state.sim_core.sync_cutscene_handoff(None);
+        }
+        if let Some(ref mut eng) = state.audio_engine {
+            eng.stop_voice(Duration::from_millis(40));
+        }
+        tracing::info!(
+            "[Cutscene Player] Skipped DramaDemo #{}: '{}' -> returned control to gameplay.",
+            session.player.info.demo_no,
+            session.player.info.title
+        );
     }
 }
 

@@ -249,8 +249,10 @@ pub(crate) fn blit_cutaway_into_rasterizer(
 
     let vx0 = vp_x as f32;
     let vy0 = vp_y as f32;
-    let vx1 = (vp_x + vp_w) as f32;
-    let vy1 = (vp_y + vp_h) as f32;
+    let cx0 = vx0 + fs_layout.canvas.canvas_left;
+    let cy0 = vy0 + fs_layout.canvas.canvas_top;
+    let cx1 = vx0 + fs_layout.canvas.canvas_right;
+    let cy1 = vy0 + fs_layout.canvas.canvas_bottom;
 
     if let Some(base_tex) = cache.get(&(base_pic.to_string(), quality)) {
         let (rgba, tw, th) = (
@@ -258,11 +260,18 @@ pub(crate) fn blit_cutaway_into_rasterizer(
             base_tex.texture.width,
             base_tex.texture.height,
         );
-        if fs_layout.is_widescreen_cropped {
-            let x0 = vx0 + fs_layout.draw_x;
-            let y0 = vy0 + fs_layout.draw_y;
-            let x1 = x0 + fs_layout.draw_w;
-            let y1 = y0 + fs_layout.draw_h;
+        vp_transform = crate::rooms::campaign_room::cutaway::compute_cutaway_draw_rect(
+            vp_w as f32,
+            vp_h as f32,
+            &fs_layout,
+            base_tex,
+        );
+        let x0 = vx0 + vp_transform.offset_x;
+        let y0 = vy0 + vp_transform.offset_y;
+        let x1 = x0 + vp_transform.draw_width;
+        let y1 = y0 + vp_transform.draw_height;
+        let needs_clip = x0 < cx0 || y0 < cy0 || x1 > cx1 || y1 > cy1;
+        if needs_clip {
             let base_tris = [
                 (x0, y0, 0.0, 0.0),
                 (x1, y0, 1.0, 0.0),
@@ -271,11 +280,10 @@ pub(crate) fn blit_cutaway_into_rasterizer(
                 (x1, y1, 1.0, 1.0),
                 (x0, y1, 0.0, 1.0),
             ];
-            if let Some(clipped) = clip_quad_triangles_to_viewport(&base_tris, vx0, vy0, vx1, vy1) {
+            if let Some(clipped) = clip_quad_triangles_to_viewport(&base_tris, cx0, cy0, cx1, cy1) {
                 rast.blit_overlay_triangles(&clipped, rgba, tw, th, 1.0);
             }
         } else {
-            vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
             let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
             let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
             let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
@@ -294,7 +302,7 @@ pub(crate) fn blit_cutaway_into_rasterizer(
                 vp_transform.draw_width,
                 vp_transform.draw_height,
             );
-            if let Some(clipped) = clip_quad_triangles_to_viewport(&tris, vx0, vy0, vx1, vy1) {
+            if let Some(clipped) = clip_quad_triangles_to_viewport(&tris, cx0, cy0, cx1, cy1) {
                 rast.blit_overlay_triangles(
                     &clipped,
                     &sheet_tex.texture.rgba,

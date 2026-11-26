@@ -3,7 +3,11 @@
 //! All lifecycle state transitions, `connectMain` staging, `EventMainStandard` evaluation,
 //! cutscene handoffs, and outdoor `LoadBg` planning live in `sh2_core::campaign::CampaignOrchestrator`.
 
+pub(crate) mod cutaway;
 pub(crate) mod loader;
+pub(crate) mod messages;
+#[cfg(test)]
+mod tests;
 
 use std::time::Duration;
 use winit::keyboard::KeyCode;
@@ -79,6 +83,12 @@ impl CampaignRoomController {
         state.campaign_orchestrator = Some(orchestrator);
         state.campaign_loaded_room = None;
         state.campaign_pending_input = Default::default();
+        state.campaign_messages.reset();
+        state
+            .sim_core
+            .scenario
+            .cutaway_overlay
+            .set_picture(None, &state.sim_core.scenario.flags);
         tracing::info!(
             "[Campaign] Started unified campaign session (scenario={:?}, continue={})",
             scenario,
@@ -112,11 +122,23 @@ impl CampaignRoomController {
             }
         }
 
+        let prefer_sh2ee = state
+            .menu_ctrl
+            .options_menu
+            .draft_config
+            .video
+            .texture_quality
+            != sh2_core::config::WorldTextureQuality::OriginalPs2;
+
         if let Some(manifest) = effects.load_room {
             if u32::from(manifest.stage_id) != state.bgm_manager.stage_id {
                 state.se_pool.reset();
             }
             loader::load_manifest_into_app_state(state, &manifest);
+            state.campaign_messages.clear_active();
+            state
+                .campaign_messages
+                .ensure_tables_loaded(manifest.stage_id, prefer_sh2ee);
             crate::audio_dispatch::sync_se_pool_3d_bank(state);
             if let Some(ref mut ls) = state.loading_screen {
                 ls.mark_completed();
@@ -130,6 +152,17 @@ impl CampaignRoomController {
         if effects.hide_loading_screen {
             state.loading_screen = None;
         }
+
+        let stage_id = state.sim_core.scenario.current_stage;
+        let prog_running = state.sim_core.scenario.prog_runner.is_running();
+        state.campaign_messages.apply_effects(
+            stage_id,
+            prefer_sh2ee,
+            effects.stage_message,
+            effects.common_message,
+            effects.clear_message,
+            prog_running,
+        );
 
         let _ = effects.bgm_stage_id;
 
@@ -246,6 +279,7 @@ impl CampaignRoomController {
         if effects.return_to_title {
             state.campaign_orchestrator = None;
             state.campaign_loaded_room = None;
+            state.campaign_messages.reset();
             state.exit_room_to_menu(TitlePhase::MainMenu);
         }
 
@@ -283,6 +317,14 @@ impl RoomController for CampaignRoomController {
         }
 
         if pressed && !repeat {
+            if matches!(
+                key_code,
+                KeyCode::KeyE | KeyCode::Enter | KeyCode::Space | KeyCode::Backspace
+            ) && state.campaign_messages.handle_dismiss_input()
+            {
+                state.campaign_pending_input.message_dismissed = true;
+                return;
+            }
             match key_code {
                 KeyCode::KeyE | KeyCode::Enter | KeyCode::Space => {
                     state.campaign_pending_input.action_pressed = true;
@@ -688,17 +730,25 @@ impl RoomController for CampaignRoomController {
 
         let show_red_cross = matches!(phase_snapshot, CampaignPhase::ActiveGameplay)
             && state.ingame_menus.red_cross.alpha_u8() > 0;
+        let has_cutaway = cutaway::has_active_cutaway(state);
+        let active_msg = state
+            .campaign_messages
+            .active_page_text()
+            .map(str::to_string);
 
-        if fade_alpha <= 0.005 && !show_red_cross {
+        if fade_alpha <= 0.005 && !show_red_cross && !has_cutaway && active_msg.is_none() {
             CombatArenaRoomController::render_hud(state, encoder, surface_view);
             return;
         }
 
-        if show_red_cross {
+        if show_red_cross && !has_cutaway {
             crate::ingame_menus::ensure_red_cross_tex_loaded(state);
         }
         state.begin_hud_overlay();
-        if show_red_cross {
+        if has_cutaway {
+            cutaway::render_campaign_cutaway(state);
+        }
+        if show_red_cross && !has_cutaway {
             let rc_tex = state
                 .ingame_menus
                 .cached_red_cross_tex
@@ -708,6 +758,9 @@ impl RoomController for CampaignRoomController {
                 .ingame_menus
                 .red_cross
                 .draw(rc_tex, &mut state.menu_rasterizer);
+        }
+        if let Some(ref text) = active_msg {
+            messages::draw_campaign_message(&mut state.menu_rasterizer, text);
         }
         if fade_alpha > 0.005 {
             let w = state.menu_rasterizer.width;

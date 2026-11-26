@@ -83,6 +83,8 @@ pub(crate) struct AppState {
     )>,
     /// Per-frame campaign input latch consumed by `CampaignRoomController`.
     pub campaign_pending_input: CampaignTickInput,
+    /// Cached retail `.mes` tables and active event message HUD state for Campaign mode (`SH2-157`).
+    pub campaign_messages: crate::rooms::campaign_room::messages::CampaignMessageState,
     pub fog_uniforms: sh2_renderer::fog::FogUniforms,
     pub fog_particles: sh2_core::fog::FogParticleVolume,
     pub fog_particle_scratch: Vec<sh2_renderer::fog::GpuFogParticle>,
@@ -353,6 +355,7 @@ impl AppState {
         self.campaign_orchestrator = None;
         self.campaign_loaded_room = None;
         self.campaign_pending_input = CampaignTickInput::default();
+        self.campaign_messages.reset();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
         if let Some(ref mut bank) = self.audio_bank {
             bank.stop_all_spatial_handles();

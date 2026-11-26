@@ -122,7 +122,7 @@ pub(crate) fn draw_progress_bar(
 }
 
 /// Loads a retail cutaway still or sprite sheet `.tex` from `mods/sh2_4k_textures/`, `mods/4k_cutaways/`, `sh2e/pic/`, or `data/pic/`.
-pub(super) fn load_cutaway_tex(
+pub(crate) fn load_cutaway_tex(
     pic_or_sheet: &str,
     quality: sh2_core::CutawayQuality,
 ) -> Option<CutawayTextureAsset> {
@@ -149,7 +149,7 @@ pub(super) fn load_cutaway_tex(
 }
 
 /// Ensures `pic_or_sheet` is present in `cache` and returns a reference if available.
-pub(super) fn ensure_cutaway_cached(
+pub(crate) fn ensure_cutaway_cached(
     cache: &mut HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
     pic_or_sheet: &str,
     quality: sh2_core::CutawayQuality,
@@ -172,7 +172,7 @@ pub(super) fn ensure_cutaway_cached(
 }
 
 /// Clips an axis-aligned 2-triangle quad `[(x, y, u, v); 6]` against `[vx0..vx1, vy0..vy1]`.
-fn clip_quad_triangles_to_viewport(
+pub(crate) fn clip_quad_triangles_to_viewport(
     tris: &[(f32, f32, f32, f32); 6],
     vx0: f32,
     vy0: f32,
@@ -214,6 +214,113 @@ fn clip_quad_triangles_to_viewport(
     ])
 }
 
+/// Blits a cutaway still (`base_pic`) and active `OverlaySpriteQuad` overlays into `rast`
+/// inside `(vp_x, vp_y, vp_w, vp_h)` with authentic `FullscreenImageLayout` aspect-ratio framing
+/// and SH2:EE black pillarbox bars (no debug border).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn blit_cutaway_into_rasterizer(
+    rast: &mut sh2_ui::TextRasterizer,
+    cache: &mut HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
+    vp_x: usize,
+    vp_y: usize,
+    vp_w: usize,
+    vp_h: usize,
+    base_pic: &str,
+    quality: sh2_core::CutawayQuality,
+    aspect_mode: sh2_core::CutawayAspectMode,
+    quads: &[OverlaySpriteQuad],
+) -> CutawayViewportTransform {
+    ensure_cutaway_cached(cache, base_pic, quality);
+    for q in quads {
+        ensure_cutaway_cached(cache, q.sheet_name, quality);
+    }
+
+    let fs_layout =
+        sh2_core::FullscreenImageLayout::compute(vp_w as f32, vp_h as f32, base_pic, aspect_mode);
+
+    let mut vp_transform = CutawayViewportTransform {
+        offset_x: fs_layout.draw_x,
+        offset_y: fs_layout.draw_y,
+        draw_width: fs_layout.draw_w,
+        draw_height: fs_layout.draw_h,
+        scale_x: fs_layout.draw_w / (vp_w.max(1) as f32),
+        scale_y: fs_layout.draw_h / (vp_h.max(1) as f32),
+    };
+
+    let vx0 = vp_x as f32;
+    let vy0 = vp_y as f32;
+    let vx1 = (vp_x + vp_w) as f32;
+    let vy1 = (vp_y + vp_h) as f32;
+
+    if let Some(base_tex) = cache.get(&(base_pic.to_string(), quality)) {
+        let (rgba, tw, th) = (
+            base_tex.texture.rgba.as_slice(),
+            base_tex.texture.width,
+            base_tex.texture.height,
+        );
+        if fs_layout.is_widescreen_cropped {
+            let x0 = vx0 + fs_layout.draw_x;
+            let y0 = vy0 + fs_layout.draw_y;
+            let x1 = x0 + fs_layout.draw_w;
+            let y1 = y0 + fs_layout.draw_h;
+            let base_tris = [
+                (x0, y0, 0.0, 0.0),
+                (x1, y0, 1.0, 0.0),
+                (x1, y1, 1.0, 1.0),
+                (x0, y0, 0.0, 0.0),
+                (x1, y1, 1.0, 1.0),
+                (x0, y1, 0.0, 1.0),
+            ];
+            if let Some(clipped) = clip_quad_triangles_to_viewport(&base_tris, vx0, vy0, vx1, vy1) {
+                rast.blit_overlay_triangles(&clipped, rgba, tw, th, 1.0);
+            }
+        } else {
+            vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
+            let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
+            let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
+            let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
+            let dst_h = (vp_transform.draw_height.round().max(1.0) as usize).min(vp_h);
+            rast.blit_rgba_scaled(dst_x, dst_y, dst_w, dst_h, rgba, tw, th, 1.0);
+        }
+    }
+
+    let draw_x = vx0 + vp_transform.offset_x;
+    let draw_y = vy0 + vp_transform.offset_y;
+    for quad in quads {
+        if let Some(sheet_tex) = cache.get(&(quad.sheet_name.to_string(), quality)) {
+            let tris = quad.to_viewport_triangles(
+                draw_x,
+                draw_y,
+                vp_transform.draw_width,
+                vp_transform.draw_height,
+            );
+            if let Some(clipped) = clip_quad_triangles_to_viewport(&tris, vx0, vy0, vx1, vy1) {
+                rast.blit_overlay_triangles(
+                    &clipped,
+                    &sheet_tex.texture.rgba,
+                    sheet_tex.texture.width,
+                    sheet_tex.texture.height,
+                    quad.alpha,
+                );
+            }
+        }
+    }
+
+    for bar in &fs_layout.black_bars {
+        if bar.is_non_empty() {
+            rast.fill_rect(
+                vp_x + (bar.x0.floor().max(0.0) as usize),
+                vp_y + (bar.y0.floor().max(0.0) as usize),
+                bar.width().ceil() as usize,
+                bar.height().ceil() as usize,
+                [0, 0, 0, 255],
+            );
+        }
+    }
+
+    vp_transform
+}
+
 /// Blits a `560x420` cutaway still (`base_pic`) at `(vp_x, vp_y, vp_w, vp_h)` along with
 /// custom `OverlaySpriteQuad` overlays and SH2:EE pillarbox bars.
 #[allow(clippy::too_many_arguments)]
@@ -244,123 +351,25 @@ pub(crate) fn blit_cutaway_viewport(
     } else {
         sh2_core::CutawayQuality::OriginalPs2
     };
-
-    ensure_cutaway_cached(
-        &mut state.story_progression_room.cutaway_cache,
-        base_pic,
-        quality,
-    );
-    for q in quads {
-        ensure_cutaway_cached(
-            &mut state.story_progression_room.cutaway_cache,
-            q.sheet_name,
-            quality,
-        );
-    }
-
     let aspect_mode = state
         .menu_ctrl
         .options_menu
         .original_config
         .video
         .cutaway_aspect_mode;
-    let fs_layout =
-        sh2_core::FullscreenImageLayout::compute(vp_w as f32, vp_h as f32, base_pic, aspect_mode);
 
-    let mut vp_transform = CutawayViewportTransform {
-        offset_x: fs_layout.draw_x,
-        offset_y: fs_layout.draw_y,
-        draw_width: fs_layout.draw_w,
-        draw_height: fs_layout.draw_h,
-        scale_x: fs_layout.draw_w / (vp_w.max(1) as f32),
-        scale_y: fs_layout.draw_h / (vp_h.max(1) as f32),
-    };
-
-    let vx0 = vp_x as f32;
-    let vy0 = vp_y as f32;
-    let vx1 = (vp_x + vp_w) as f32;
-    let vy1 = (vp_y + vp_h) as f32;
-
-    if let Some(base_tex) = state
-        .story_progression_room
-        .cutaway_cache
-        .get(&(base_pic.to_string(), quality))
-    {
-        let (rgba, tw, th) = (
-            base_tex.texture.rgba.clone(),
-            base_tex.texture.width,
-            base_tex.texture.height,
-        );
-        if fs_layout.is_widescreen_cropped {
-            let x0 = vx0 + fs_layout.draw_x;
-            let y0 = vy0 + fs_layout.draw_y;
-            let x1 = x0 + fs_layout.draw_w;
-            let y1 = y0 + fs_layout.draw_h;
-            let base_tris = [
-                (x0, y0, 0.0, 0.0),
-                (x1, y0, 1.0, 0.0),
-                (x1, y1, 1.0, 1.0),
-                (x0, y0, 0.0, 0.0),
-                (x1, y1, 1.0, 1.0),
-                (x0, y1, 0.0, 1.0),
-            ];
-            if let Some(clipped) = clip_quad_triangles_to_viewport(&base_tris, vx0, vy0, vx1, vy1) {
-                state
-                    .menu_rasterizer
-                    .blit_overlay_triangles(&clipped, &rgba, tw, th, 1.0);
-            }
-        } else {
-            vp_transform = base_tex.compute_viewport_transform(vp_w as f32, vp_h as f32);
-            let dst_x = vp_x + (vp_transform.offset_x.round().max(0.0) as usize);
-            let dst_y = vp_y + (vp_transform.offset_y.round().max(0.0) as usize);
-            let dst_w = (vp_transform.draw_width.round().max(1.0) as usize).min(vp_w);
-            let dst_h = (vp_transform.draw_height.round().max(1.0) as usize).min(vp_h);
-            state
-                .menu_rasterizer
-                .blit_rgba_scaled(dst_x, dst_y, dst_w, dst_h, &rgba, tw, th, 1.0);
-        }
-    }
-
-    let draw_x = vx0 + vp_transform.offset_x;
-    let draw_y = vy0 + vp_transform.offset_y;
-    for quad in quads {
-        if let Some(sheet_tex) = state
-            .story_progression_room
-            .cutaway_cache
-            .get(&(quad.sheet_name.to_string(), quality))
-        {
-            let tris = quad.to_viewport_triangles(
-                draw_x,
-                draw_y,
-                vp_transform.draw_width,
-                vp_transform.draw_height,
-            );
-            let (rgba, sw, sh) = (
-                sheet_tex.texture.rgba.clone(),
-                sheet_tex.texture.width,
-                sheet_tex.texture.height,
-            );
-            if let Some(clipped) = clip_quad_triangles_to_viewport(&tris, vx0, vy0, vx1, vy1) {
-                state
-                    .menu_rasterizer
-                    .blit_overlay_triangles(&clipped, &rgba, sw, sh, quad.alpha);
-            }
-        }
-    }
-
-    for bar in &fs_layout.black_bars {
-        if bar.is_non_empty() {
-            state.menu_rasterizer.fill_rect(
-                vp_x + (bar.x0.floor().max(0.0) as usize),
-                vp_y + (bar.y0.floor().max(0.0) as usize),
-                bar.width().ceil() as usize,
-                bar.height().ceil() as usize,
-                [0, 0, 0, 255],
-            );
-        }
-    }
-
-    vp_transform
+    blit_cutaway_into_rasterizer(
+        &mut state.menu_rasterizer,
+        &mut state.story_progression_room.cutaway_cache,
+        vp_x,
+        vp_y,
+        vp_w,
+        vp_h,
+        base_pic,
+        quality,
+        aspect_mode,
+        quads,
+    )
 }
 
 /// Draws the top header bar, 4 clickable/keyed tab pills (`[F1]`–`[F4]`), and bottom status bar.

@@ -12,6 +12,7 @@
 //!   - `FUN_0044b3e0` (`0x0044b3e0`): loads `data/menu/mc/savebg.tbn2` (Main) or `savebg2.tbn2` (BfW).
 //!   - `FUN_0044b520` (`0x0044b520`): `"%4d:%02d"` clamped to `599999` seconds.
 
+mod input;
 pub mod render;
 pub mod state;
 

@@ -978,7 +978,7 @@ pub(crate) fn build_map_texture_bind_groups(
                 let (m_idx, tex_id) = unique_tids[idx];
                 if let Some(tex) = map_file.textures.get(&tex_id) {
                     if let Ok(rgba) = tex.to_rgba() {
-                        let prepared = sh2_renderer::prepare_mipmapped_texture_cpu(
+                        let prepared = sh2_renderer::prepare_map_texture_cpu(
                             tex.width as u32,
                             tex.height as u32,
                             &rgba,

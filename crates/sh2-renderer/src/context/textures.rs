@@ -24,6 +24,66 @@ pub struct PreparedGpuTexture {
     pub mip_levels: Vec<(u32, u32, Vec<u8>)>,
 }
 
+/// Runs pure CPU preparation for a `.map` world texture with 1:1 PS2/PC mipmap parity (`SH2-161`):
+///
+/// - **Cutout `.map` textures** (containing transparent texels `alpha < 4`, such as packed
+///   zero-gutter foliage/sign atlases like `ob.map` `tid=4656`, `ob01.map` `tid=4650`/`4660`):
+///   uploaded with **1 mip level (level 0 only)**, matching `SLUS_202.28` `shGs_InitDefaultRegsEnv`
+///   (`0x001909e0`, `TEX1_1 (0x14) = 0x60` -> `MXL = 0`) and `sh2pc.exe` `FUN_00457200`
+///   (`0x00457200`) / `FUN_004590c0` (`0x004590c0`) / `FUN_0045aaa0` (`0x0045aaa0`) where `.map`
+///   texture header byte `+0x15` (`mip_flag == 0`) passes `Levels = 1` to `CreateTexture`.
+///   Combined with 1x bilinear sampling in [`RenderContext::upload_prepared_texture_bind_group_with_wrap`],
+///   this prevents mipmap downsampling and 16x anisotropic kernels from bleeding across zero-gutter
+///   atlas sub-rect boundaries (e.g. `tid=4656` pine boughs at `v=351.5` next to `#00FF00` / dark
+///   wood at `y=352` and `u=64.5` next to dark bark at `x=63`).
+/// - **Opaque `.map` textures** (no cutout alpha): full mipmap pyramid + 16x anisotropic filtering.
+#[must_use]
+pub fn prepare_map_texture_cpu(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    supports_bc: bool,
+) -> PreparedGpuTexture {
+    let w0 = width.max(1);
+    let h0 = height.max(1);
+    let expected0 = (w0 as usize) * (h0 as usize) * 4;
+    let has_cutout = rgba.len() >= expected0
+        && rgba[..expected0]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| px[3] < 4);
+
+    if !has_cutout {
+        return prepare_mipmapped_texture_cpu(width, height, rgba, supports_bc);
+    }
+
+    let mip0 = rgba[..expected0].to_vec();
+    let can_use_bc =
+        supports_bc && w0 >= 16 && h0 >= 16 && w0.is_multiple_of(4) && h0.is_multiple_of(4);
+    if can_use_bc {
+        let bc_bytes =
+            sh2_assets::formats::dxt::encode_dxt_rgba(&mip0, w0 as usize, h0 as usize, 5u8);
+        return PreparedGpuTexture {
+            width: w0,
+            height: h0,
+            format: wgpu::TextureFormat::Bc3RgbaUnorm,
+            block_bytes: 16,
+            is_bc: true,
+            mip_levels: vec![(w0, h0, bc_bytes)],
+        };
+    }
+
+    PreparedGpuTexture {
+        width: w0,
+        height: h0,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        block_bytes: 4,
+        is_bc: false,
+        mip_levels: vec![(w0, h0, mip0)],
+    }
+}
+
 /// Runs pure CPU mipmap pyramid generation and optional BC1/BC3 (`DXT1`/`DXT5`) block compression
 /// so callers can parallelize texture preparation across CPU cores before uploading to `wgpu`.
 #[must_use]
@@ -97,6 +157,18 @@ impl RenderContext {
             (false, false) => &self.clamp_sampler,
             (true, false) => &self.repeat_u_clamp_v_sampler,
             (false, true) => &self.clamp_u_repeat_v_sampler,
+        }
+    }
+
+    /// Returns the 1x bilinear sampler (`anisotropy_clamp = 1`) matching the requested
+    /// `(wrap_u, wrap_v)` UV addressing for single-level cutout `.map` atlases (`SH2-161`).
+    #[must_use]
+    pub fn bilinear_sampler_for_wrap(&self, wrap_u: bool, wrap_v: bool) -> &wgpu::Sampler {
+        match (wrap_u, wrap_v) {
+            (true, true) => &self.bilinear_repeat_sampler,
+            (false, false) => &self.bilinear_clamp_sampler,
+            (true, false) => &self.bilinear_repeat_u_clamp_v_sampler,
+            (false, true) => &self.bilinear_clamp_u_repeat_v_sampler,
         }
     }
 
@@ -216,7 +288,11 @@ impl RenderContext {
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = self.sampler_for_wrap(wrap_u, wrap_v);
+        let sampler = if prepared.mip_levels.len() <= 1 {
+            self.bilinear_sampler_for_wrap(wrap_u, wrap_v)
+        } else {
+            self.sampler_for_wrap(wrap_u, wrap_v)
+        };
         self.create_texture_bind_group_from_view_with_sampler(&view, sampler, label)
     }
 

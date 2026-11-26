@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::{effects, fog, pipeline, post, shadow, skeletal, water, GpuSkeletalMesh};
 
-pub use textures::{prepare_mipmapped_texture_cpu, PreparedGpuTexture};
+pub use textures::{prepare_map_texture_cpu, prepare_mipmapped_texture_cpu, PreparedGpuTexture};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RendererConfig {
@@ -176,6 +176,17 @@ pub struct RenderContext {
     pub repeat_u_clamp_v_sampler: wgpu::Sampler,
     /// 16x anisotropic sampler with `ClampToEdge` U and `Repeat` V.
     pub clamp_u_repeat_v_sampler: wgpu::Sampler,
+    /// 1x bilinear sampler (`anisotropy_clamp = 1`, `mipmap_filter = Nearest`) matching PS2
+    /// `SLUS_202.28` `shGs_InitDefaultRegsEnv` (`0x001909e0`, `TEX1_1 = 0x60`: `MXL = 0`,
+    /// `MMAG/MMIN = LINEAR`) and PC `sh2pc.exe` `FUN_005b4cc0` (`0x005b4cc0`) for single-level
+    /// packed cutout `.map` atlases (`ob.map` `tid=4656`, etc.).
+    pub bilinear_repeat_sampler: wgpu::Sampler,
+    /// 1x bilinear clamped sampler (`ClampToEdge` U and V) for single-level cutout `.map` atlases.
+    pub bilinear_clamp_sampler: wgpu::Sampler,
+    /// 1x bilinear sampler (`Repeat` U, `ClampToEdge` V) for single-level cutout `.map` atlases.
+    pub bilinear_repeat_u_clamp_v_sampler: wgpu::Sampler,
+    /// 1x bilinear sampler (`ClampToEdge` U, `Repeat` V) for single-level cutout `.map` atlases.
+    pub bilinear_clamp_u_repeat_v_sampler: wgpu::Sampler,
     pub default_view: wgpu::TextureView,
     pub default_texture_bind_group: Arc<wgpu::BindGroup>,
 }

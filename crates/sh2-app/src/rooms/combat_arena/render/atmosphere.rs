@@ -160,13 +160,36 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             room_eval.particle_range_x_mm,
             room_eval.particle_range_z_mm,
         );
-        // PS2 Y-down coordinate system: when `.fcl` specifies a fixed Y altitude (`fogSetLocalPosV`
-        // `SLUS_202.28` `0x0016c7c8..0x0016c7e4`, e.g. `obGB.fcl` `+10,000 mm` below the cliff),
-        // anchor particles at that exact altitude; otherwise center mist puffs 520 mm above floor.
-        let anchor_y = room_eval
-            .particle_fixed_y_mm
-            .unwrap_or(player_pos.y - 520.0);
-        let anchor = [player_pos.x, anchor_y, player_pos.z];
+        // Exact `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2965-2983`) +
+        // `obGB.fcl` floor cutoff (`param_1[5] = 0`, `param_1[6] = 700`, `bVar2 = 0x21` bit 0):
+        // On `ob01`, keep mist below the parking lot deck (`player_pos.y + 700.0 mm` in PS2 Y-down)
+        // so depth testing keeps the concrete & car crisp while billows rise behind the stone wall.
+        let cam_to_player = player_pos - cam_eye;
+        let cam_dist = cam_to_player.length();
+        let anchor = if ps2_room_id == R_OBSV_DECK_ID {
+            let horiz = if cam_dist > 2_000.0 {
+                cam_eye + (cam_to_player / cam_dist) * 2_000.0
+            } else {
+                player_pos
+            };
+            [
+                horiz.x,
+                player_pos.y + sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM,
+                horiz.z,
+            ]
+        } else if cam_dist > 2_000.0 {
+            let projected = cam_eye + (cam_to_player / cam_dist) * 2_000.0;
+            [
+                projected.x,
+                projected.y.max(player_pos.y - 400.0),
+                projected.z,
+            ]
+        } else {
+            let anchor_y = room_eval
+                .particle_fixed_y_mm
+                .unwrap_or(player_pos.y - 520.0);
+            [player_pos.x, anchor_y, player_pos.z]
+        };
         let player_arr = [player_pos.x, player_pos.y, player_pos.z];
         state.fog_particles.step(
             fog_dt,
@@ -175,6 +198,18 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             player_arr,
             room_eval.james_fog_influence_mm,
         );
+        // `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) uses `fogSetColor(0x80, 0x80, 0x80, 0x80)`
+        // (unity modulation of `fog.tex` bright mist) rather than dark `0x46` `FOGCOL`.
+        let particle_rgb = if ps2_room_id == R_OBSV_DECK_ID {
+            sh2_core::fog::PS2_FOG_PARTICLE_MIST_RGB
+        } else {
+            fog_rgb
+        };
+        let radius_scale = if ps2_room_id == R_OBSV_DECK_ID {
+            sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM / 300.0
+        } else {
+            1.0
+        };
         state
             .fog_particle_scratch
             .extend(
@@ -187,9 +222,9 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
                             anchor[0] + p.local_pos[0],
                             anchor[1] + p.local_pos[1],
                             anchor[2] + p.local_pos[2],
-                            p.radius_mm,
+                            p.radius_mm * radius_scale,
                         ],
-                        color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
+                        color_alpha: [particle_rgb[0], particle_rgb[1], particle_rgb[2], p.alpha],
                     }),
             );
     }

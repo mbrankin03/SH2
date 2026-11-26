@@ -235,18 +235,27 @@ fn configure_ob01_fog_and_valley_mist(
     assert!((fog_u.depth_fog_params[2] - OB_FOG_MIN_NORM).abs() < 1e-6);
     assert!((fog_u.depth_fog_params[3] - OB_FOG_MAX_NORM).abs() < 1e-6);
     fog_u.time = 1.5;
+    // Active `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`) drifting mist overlay over lake/hills
+    fog_u.screen_fog_uv = [0.5, 0.5, 0.125, 32.0 / 128.0];
     ctx.update_fog(&fog_u);
 
-    // Step authentic `obGB.fcl` `+10,000 mm` valley mist particle cloud
+    // Step authentic `obGB.fcl` valley mist particle cloud (`fogSetLocalPosV` `0x0016c6d0`)
     let mut vol = FogParticleVolume::new(
         eval.particle_count,
         eval.particle_range_x_mm,
         eval.particle_range_z_mm,
     );
+    let cam_to_player = player_pos - cam_eye;
+    let cam_dist = cam_to_player.length();
+    let horiz = if cam_dist > 2_000.0 {
+        cam_eye + (cam_to_player / cam_dist) * 2_000.0
+    } else {
+        player_pos
+    };
     let anchor = [
-        player_pos.x,
-        eval.particle_fixed_y_mm.unwrap_or(OB_FOG_ENV_FIXED_Y_MM),
-        player_pos.z,
+        horiz.x,
+        player_pos.y + sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM,
+        horiz.z,
     ];
     vol.step(
         1.0 / 30.0,
@@ -255,7 +264,8 @@ fn configure_ob01_fog_and_valley_mist(
         player_pos.to_array(),
         eval.james_fog_influence_mm,
     );
-    let fog_rgb = [fog_u.fog_color[0], fog_u.fog_color[1], fog_u.fog_color[2]];
+    let fog_rgb = sh2_core::fog::PS2_FOG_PARTICLE_MIST_RGB;
+    let radius_scale = sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM / 300.0;
     let gpu_particles: Vec<GpuFogParticle> = vol
         .particles()
         .iter()
@@ -264,7 +274,7 @@ fn configure_ob01_fog_and_valley_mist(
                 anchor[0] + p.local_pos[0],
                 anchor[1] + p.local_pos[1],
                 anchor[2] + p.local_pos[2],
-                p.radius_mm,
+                p.radius_mm * radius_scale,
             ],
             color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
         })

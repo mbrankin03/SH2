@@ -101,6 +101,7 @@ impl AppConfig {
                 self.video.enable_fire_heat_haze = false;
                 self.video.enable_spark_flash_lights = false;
                 self.video.fmv_source = FmvCutsceneSource::Enhanced1080p60;
+                self.video.grain_intensity = 45;
                 self.audio.spatial_audio_mode = SpatialAudioMode::ClassicPs2Stereo;
                 self.audio.enable_acoustic_occlusion = false;
                 self.audio.enable_dynamic_room_acoustics = false;
@@ -136,6 +137,7 @@ impl AppConfig {
                 self.video.enable_fire_heat_haze = true;
                 self.video.enable_spark_flash_lights = true;
                 self.video.fmv_source = FmvCutsceneSource::Auto;
+                self.video.grain_intensity = 45;
                 self.audio.spatial_audio_mode = SpatialAudioMode::BinauralHrtf;
                 self.audio.enable_acoustic_occlusion = true;
                 self.audio.enable_dynamic_room_acoustics = true;

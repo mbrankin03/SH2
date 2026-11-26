@@ -33,6 +33,23 @@ use crate::cutscene::{
 
 /// Room ID for Toluca Lake Observation Deck (`R_OBSV_DECK = 0x02` in `Patches.h`).
 pub const R_OBSV_DECK_ID: u32 = 0x02;
+/// Exact PS2 `obGB.fcl` (`FogEnv` at file offset `0x84..0x9b`, parsed by `fogSetData` `SLUS_202.28`
+/// `0x00168f40` / `Fog/fog.c:238-325`):
+/// - `+0x00` (`0x84`): `particle_count = 700` (`0x02bc`)
+/// - `+0x02` (`0x86`): `area_half_extent = 7000.0` mm (`0x1b58`)
+/// - `+0x04` (`0x88`): `particle_size = 700.0` mm (`0x02bc`)
+/// - `+0x08` (`0x8c`): `y_fixed = +10000.0` mm (`0x2710`)
+/// - `+0x13` (`0x97`): `fog_alpha_param = 48` (`0x30`, `48 / 128.0 = 0.375`)
+pub const OB_FOG_ENV_PARTICLE_COUNT: usize = 700;
+/// Exact `obGB.fcl` `+0x02` (`0x1b58 = 7000.0` mm) horizontal area half-extent.
+pub const OB_FOG_ENV_AREA_SIZE_MM: f32 = 7_000.0;
+/// Exact `obGB.fcl` `+0x04` (`0x02bc = 700.0` mm) billboard radius/half-size.
+pub const OB_FOG_ENV_PARTICLE_SIZE_MM: f32 = 700.0;
+/// Exact `obGB.fcl` `+0x13` (`0x30 = 48` / `128.0`) PS2 GS particle alpha scale.
+pub const OB_FOG_ENV_ALPHA_SCALE: f32 = 48.0 / 128.0;
+/// Exact PS2 `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) `fogSetColor(0x80, 0x80, 0x80, 0x80)`:
+/// on PS2 GS `0x80` (`128`) is unity texture modulation against `data/pic/effect/fog.tex` (mean `131/255`).
+pub const PS2_FOG_PARTICLE_MIST_RGB: [f32; 3] = [131.0 / 255.0, 131.0 / 255.0, 131.0 / 255.0];
 /// Exact PS2 fixed Y altitude (`+10,000.0` mm, PS2 Y-down = 10 m below the parking lot cliff)
 /// for Observation Deck (`ob01`) 3D fog particles from retail `data/bg/ob/obGB.fcl`
 /// (`FogEnv +0x08` at file offset `0x8c`, `subdiv (+0x12) = 4 != 0`), applied to
@@ -365,9 +382,9 @@ pub fn evaluate_room_fog_with_fixes(
                 )
             } else {
                 (
-                    PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                    PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                    PS2_DEFAULT_FOG_PARTICLE_COUNT,
+                    OB_FOG_ENV_AREA_SIZE_MM,
+                    OB_FOG_ENV_AREA_SIZE_MM,
+                    OB_FOG_ENV_PARTICLE_COUNT,
                 )
             };
             // Exact PS2 `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70`, `sh2pc.exe` `0x3f5530`):

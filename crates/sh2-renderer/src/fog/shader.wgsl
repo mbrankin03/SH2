@@ -217,20 +217,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let effective_density = clamp(fog.density * fog.fog_color.a, 0.0, 2.0);
 
     var fog_factor: f32 = 0.0;
+    var screen_fog_texel: f32 = 0.0;
+    var screen_fog_alpha: f32 = 0.0;
     var inscatter_rgb = vec3<f32>(0.0);
+
+    // 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2711`):
+    // Fullscreen scrolling `fog.tex` quad drawn after the 3D scene (`spkSetOTPacketS(..., -1, 1)`)
+    // modulated by `fogSetColor(0x80, 0x80, 0x80, 0x80)` (PS2 GS unity brightness) over ALL
+    // geometry including `PRIM.FGE = 0` vistas (Toluca Lake & far hills).
+    if (fog.screen_fog_uv.w > 0.001) {
+        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (fog.screen_fog_uv.z * 2.0);
+        screen_fog_texel = textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r;
+        screen_fog_alpha = clamp(fog.screen_fog_uv.w * effective_density, 0.0, 1.0);
+    }
 
     if (!volumetric_mode || fog.step_count <= 1u) {
         // 1:1 Classic PS2 analytical depth-fog (`sh2gfw_Set_DepthFog` FA/z + FB @ 0x00175df0)
-        // + `fog_view_screen_fog` (0x0016c1c0) UV-scrolling screen overlay
         let base_curve = eval_depth_curve(view_dist);
-        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (fog.screen_fog_uv.z * 2.0);
-        let screen_overlay = select(
-            0.0,
-            textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r * fog.screen_fog_uv.w,
-            fog.screen_fog_uv.w > 0.001,
-        );
-        let layered = clamp(base_curve + screen_overlay, 0.0, 1.0);
-        fog_factor = clamp(layered * effective_density, 0.0, 1.0);
+        fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
     } else {
         // ModernVolumetric dual-layer UV-scrolling noise plane contribution (non-Vanilla enhancement)
         let plane_noise = select(0.0, sample_dual_layer_planes(uv, world_pos.xz, drift_t), outdoor_enabled);
@@ -293,13 +297,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into mist color.
     // Pre-lit opaque vista/skybox geometry (`stride == 0x14`, e.g. Toluca Lake & hills in `ob01.map`)
     // encodes PS2 GS `PRIM.FGE = 0` (`original_color.a < 0.5` with `depth_val < 0.99999`) so it
-    // bypasses depth-fog whiteout exactly like PS2 hardware.
+    // bypasses per-vertex depth-fog whiteout while still receiving the post-scene
+    // `fog_view_screen_fog` (`0x0016c1c0`) drifting mist quad below.
     if (depth_val < 0.99999 && original_color.a < 0.5) {
         fog_factor = 0.0;
     } else if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
         fog_factor = 1.0;
     }
 
-    let fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
+    var fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
+    if (screen_fog_alpha > 0.001) {
+        fogged_rgb = mix(fogged_rgb, vec3<f32>(screen_fog_texel), screen_fog_alpha);
+    }
     textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, 1.0));
 }

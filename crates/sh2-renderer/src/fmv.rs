@@ -178,8 +178,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // `ldr_output_texture` stores sRGB-encoded display-space pixels and is presented via
-    // `ldr_output_srgb_view` (`Rgba8UnormSrgb`) on sRGB swapchains, so keep BT.601/BT.709
-    // gamma-encoded RGB directly without double `srgb_to_linear` darkening.
+    // `SurfaceBlitter::render_ldr_with_bind_group` (`fs_main_srgb_input`) on sRGB swapchains,
+    // so keep BT.601/BT.709 gamma-encoded RGB directly without double `srgb_to_linear` darkening.
     let faded = rgb * clamp(params.fade_alpha, 0.0, 1.0);
     return vec4<f32>(faded, 1.0);
 }

@@ -28,3 +28,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(src_texture, src_sampler, in.uv);
     return vec4<f32>(tex_color.rgb * uniforms.color_tint.rgb, tex_color.a * uniforms.color_tint.a);
 }
+
+// IEC 61966-2-1 sRGB EOTF (display sRGB -> linear) for presenting `Rgba8Unorm` display-space
+// `ldr_output_texture` frames onto sRGB swapchains (`Bgra8UnormSrgb` / `Rgba8UnormSrgb`) without
+// requiring `TextureDescriptor::view_formats` on `STORAGE_BINDING` textures (which fails on DX12
+// WARP / downlevel adapters).
+fn srgb_to_linear_channel(c: f32) -> f32 {
+    if c <= 0.04045 {
+        return c / 12.92;
+    }
+    return pow((c + 0.055) / 1.055, 2.4);
+}
+
+@fragment
+fn fs_main_srgb_input(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(src_texture, src_sampler, in.uv);
+    let linear_rgb = vec3<f32>(
+        srgb_to_linear_channel(tex_color.r),
+        srgb_to_linear_channel(tex_color.g),
+        srgb_to_linear_channel(tex_color.b),
+    );
+    return vec4<f32>(linear_rgb * uniforms.color_tint.rgb, tex_color.a * uniforms.color_tint.a);
+}

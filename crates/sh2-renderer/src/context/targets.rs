@@ -14,7 +14,7 @@ impl RenderContext {
         (wgpu::Texture, wgpu::TextureView),
         (wgpu::Texture, wgpu::TextureView),
         (wgpu::Texture, wgpu::TextureView),
-        (wgpu::Texture, wgpu::TextureView, wgpu::TextureView),
+        (wgpu::Texture, wgpu::TextureView),
     ) {
         let extent = wgpu::Extent3d {
             width: width.max(1),
@@ -69,21 +69,16 @@ impl RenderContext {
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
+            view_formats: &[],
         });
         let ldr_output_view =
             ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let ldr_output_srgb_view = ldr_output_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("LDR Output Color Texture (sRGB Present View)"),
-            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-            ..Default::default()
-        });
 
         (
             (depth_texture, depth_view),
             (hdr_color_texture, hdr_color_view),
             (fog_color_texture, fog_color_view),
-            (ldr_output_texture, ldr_output_view, ldr_output_srgb_view),
+            (ldr_output_texture, ldr_output_view),
         )
     }
 
@@ -220,7 +215,7 @@ impl RenderContext {
             (depth_texture, depth_view),
             (hdr_color_texture, hdr_color_view),
             (fog_color_texture, fog_color_view),
-            (ldr_output_texture, ldr_output_view, ldr_output_srgb_view),
+            (ldr_output_texture, ldr_output_view),
         ) = Self::create_offscreen_targets(&self.device, width, height);
 
         self.depth_texture = depth_texture;
@@ -231,7 +226,6 @@ impl RenderContext {
         self.fog_color_view = fog_color_view;
         self.ldr_output_texture = ldr_output_texture;
         self.ldr_output_view = ldr_output_view;
-        self.ldr_output_srgb_view = ldr_output_srgb_view;
 
         let stencil_depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("PS2 Stencil Shadow Depth24PlusStencil8 Texture"),

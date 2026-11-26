@@ -65,7 +65,7 @@ impl RenderContext {
             (depth_texture, depth_view),
             (hdr_color_texture, hdr_color_view),
             (fog_color_texture, fog_color_view),
-            (ldr_output_texture, ldr_output_view, ldr_output_srgb_view),
+            (ldr_output_texture, ldr_output_view),
         ) = Self::create_offscreen_targets(&device, config.width, config.height);
 
         let geometry_pipeline =
@@ -430,7 +430,6 @@ impl RenderContext {
             fog_color_view,
             ldr_output_texture,
             ldr_output_view,
-            ldr_output_srgb_view,
             geometry_pipeline,
             skeletal_pipeline,
             debug_line_pipeline,

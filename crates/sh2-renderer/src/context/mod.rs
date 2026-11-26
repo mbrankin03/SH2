@@ -63,10 +63,6 @@ pub struct RenderContext {
 
     pub ldr_output_texture: wgpu::Texture,
     pub ldr_output_view: wgpu::TextureView,
-    /// `Rgba8UnormSrgb` view over `ldr_output_texture` for `SurfaceBlitter` presentation onto
-    /// sRGB swapchains (`Bgra8UnormSrgb` / `Rgba8UnormSrgb`), preventing double-gamma washout
-    /// of PS2/PC 8-bit display-space sRGB frames.
-    pub ldr_output_srgb_view: wgpu::TextureView,
 
     pub geometry_pipeline: pipeline::GeometryPipeline,
     pub skeletal_pipeline: skeletal::SkeletalPipeline,
@@ -184,21 +180,6 @@ impl RenderContext {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
     pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
     pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-
-    /// Returns the appropriate `ldr_output_texture` view for `SurfaceBlitter` presentation:
-    /// - `ldr_output_srgb_view` (`Rgba8UnormSrgb`) when presenting to an sRGB swapchain
-    ///   (`surface_format.is_srgb()`), so hardware `srgb_to_linear` + `linear_to_srgb` produces a
-    ///   1:1 bit-exact pass-through of our PS2/PC display-space sRGB frame without double-gamma.
-    /// - `ldr_output_view` (`Rgba8Unorm`) when presenting to a linear/non-sRGB swapchain.
-    #[inline]
-    #[must_use]
-    pub fn ldr_present_view(&self, is_srgb_surface: bool) -> &wgpu::TextureView {
-        if is_srgb_surface {
-            &self.ldr_output_srgb_view
-        } else {
-            &self.ldr_output_view
-        }
-    }
     /// Capacity of the reusable GPU vertex buffer for 3D debug line overlays (65,536 vertices = ~2 MB).
     pub const MAX_DEBUG_LINE_VERTICES: usize = 65_536;
 }

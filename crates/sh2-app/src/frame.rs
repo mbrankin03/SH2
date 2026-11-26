@@ -485,7 +485,7 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
                     state.surface_config.width as f32,
                     state.surface_config.height as f32,
                 );
-                state.blitter.render_with_bind_group_in_viewport(
+                state.blitter.render_ldr_with_bind_group_in_viewport(
                     &mut encoder,
                     &state.blit_bind_group,
                     &surface_view,
@@ -494,7 +494,7 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
                 );
             }
         } else {
-            state.blitter.render_with_bind_group(
+            state.blitter.render_ldr_with_bind_group(
                 &mut encoder,
                 &state.blit_bind_group,
                 &surface_view,
@@ -545,9 +545,11 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
         && !state.menu_ctrl.title_sm.is_fading_out
         && state.fmv_session.is_some()
     {
-        state
-            .blitter
-            .render_with_bind_group(&mut encoder, &state.blit_bind_group, &surface_view);
+        state.blitter.render_ldr_with_bind_group(
+            &mut encoder,
+            &state.blit_bind_group,
+            &surface_view,
+        );
     } else {
         render_title_menu_overlay(state, &mut encoder, &surface_view);
     }

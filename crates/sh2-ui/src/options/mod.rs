@@ -662,7 +662,7 @@ mod tests {
         menu.adjust_value(1);
         assert_eq!(
             menu.draft_config.video.cutaway_aspect_mode,
-            sh2_core::CutawayAspectMode::Fill16x9WidescreenCrop
+            sh2_core::CutawayAspectMode::Fit4x3Pillarbox
         );
         menu.discard_changes();
         menu.selected_index = 0;

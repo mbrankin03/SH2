@@ -780,6 +780,20 @@ impl RoomController for CampaignRoomController {
                     .draw(rc_tex, &mut state.menu_rasterizer);
             }
             if let Some(ref text) = active_msg {
+                // Exact 1:1 `EvSubPictureFilter` (`0x001acdf0`) + `EvSubPictureEnd` (`0x001ace70`,
+                // `Event/event_sub.c:590-604`) & `sh2pc.exe` `0x005a0b3d`: 50% black dim overlay
+                // (`FIX = 64/128 -> alpha = 128`) over cutaway stills during item/inspect messages.
+                if has_cutaway {
+                    let w = state.menu_rasterizer.width;
+                    let h = state.menu_rasterizer.height;
+                    state.menu_rasterizer.fill_rect(
+                        0,
+                        0,
+                        w,
+                        h,
+                        [0, 0, 0, cutaway::EV_SUB_PICTURE_FILTER_ALPHA_U8],
+                    );
+                }
                 messages::draw_campaign_message(&mut state.menu_rasterizer, text);
             }
             if fade_alpha > 0.005 {

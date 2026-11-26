@@ -210,12 +210,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return shade_geometry_fragment(in);
 }
 
-// Opaque geometry entry point (`BlendState::REPLACE`): encodes PS2 GS `PRIM.FGE` (Fog Enable)
-// in `color_in.a` (`1.0` for lit 3D world geometry `stride >= 0x20`, `0.0` for pre-lit
-// skybox/vista geometry `stride == 0x14` such as Toluca Lake & distant hills in `ob01.map`).
+// Opaque geometry entry point (`BlendState::REPLACE`): all `.map` batches in `sh2pc.exe`
+// (`VS[1]` `0x008ef700`, `VS[2]` `0x008ef7c0`, `VS[3]` `0x008ef880`, `VS[4]` `0x008ef940`)
+// compute `mad oFog.x (0xc0010001), c23.y, r11.x, c23.x` with `D3DRS_FOGENABLE (0x1c) = 1`
+// (`FUN_005b4cc0` `0x005b4cc0`), including `stride == 0x14` Toluca Lake & distant hills (`ob01.map`).
 @fragment
 fn fs_opaque(in: VertexOutput) -> @location(0) vec4<f32> {
     let shaded = shade_geometry_fragment(in);
-    let fge = select(0.0, 1.0, length(in.normal) > 1e-4);
-    return vec4<f32>(shaded.rgb, fge);
+    return vec4<f32>(shaded.rgb, 1.0);
 }

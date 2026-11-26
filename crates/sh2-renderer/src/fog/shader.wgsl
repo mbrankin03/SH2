@@ -295,13 +295,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into mist color.
-    // Pre-lit opaque vista/skybox geometry (`stride == 0x14`, e.g. Toluca Lake & hills in `ob01.map`)
-    // encodes PS2 GS `PRIM.FGE = 0` (`original_color.a < 0.5` with `depth_val < 0.99999`) so it
-    // bypasses per-vertex depth-fog whiteout while still receiving the post-scene
-    // `fog_view_screen_fog` (`0x0016c1c0`) drifting mist quad below.
-    if (depth_val < 0.99999 && original_color.a < 0.5) {
-        fog_factor = 0.0;
-    } else if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
+    // All `.map` batches (`stride == 0x14..0x24`, including `ob01.map` Toluca Lake & hills)
+    // receive depth fog per `sh2pc.exe` `VS[1..4]` (`0x008ef700..0x008ef940` `oFog.x`)
+    // and `FUN_005b4cc0` (`0x005b4cc0`, `D3DRS_FOGENABLE = 1`).
+    if (depth_val >= 0.99999 && effective_density > 0.5 && outdoor_enabled) {
         fog_factor = 1.0;
     }
 

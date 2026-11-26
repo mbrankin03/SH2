@@ -32,6 +32,16 @@ pub const PS2_SCREEN_WIDTH_PX: f32 = 0.88 * 512.0;
 /// `DAT_002ad7e4 (1.0) * 448.0 = 448.0`, stored at `_DAT_010e5918`).
 pub const PS2_SCREEN_HEIGHT_PX: f32 = 448.0;
 
+/// Retail PC (`sh2pc.exe`) perspective half-height numerator in pixels
+/// (`sh2pc.exe` `FUN_0045b2a0` `0x0045b2a0`, `sh2pc_00450000.c:8022-8023`:
+/// `fVar8 = atan2(0x43800000 /* 256.0f */, DAT_01f5ee98 /* scr_z */);`
+/// `D3DXMatrixPerspectiveFovLH(..., fVar8 + fVar8, aspect, near, far)`).
+///
+/// Prototype-vs-retail note: `SLUS_202.28` `vbCalcViewScreenMatrix` (`0x00195230`) passed
+/// `ay = 448.0 / 484.0` (`242.0 / scr_z` -> `56.76°` at `scr_z = 448.0`), while retail PC
+/// `sh2pc.exe` / SH2:EE uses `256.0 / scr_z` (`59.49°` at `scr_z = 448.0`).
+pub const PC_PROJECTION_HALF_HEIGHT_PX: f32 = 256.0;
+
 /// `watch_mv_prm_user` (`SLUS_202.28` `0x00390510`, identical in `sh2pc.exe` `file 0x2c6a00`),
 /// units in rad/s² and rad/s.
 pub const WATCH_MV_PRM_USER: CameraWatchParam = CameraWatchParam {
@@ -140,11 +150,13 @@ pub fn sh_angle_regulate(mut angle: f32) -> f32 {
     angle
 }
 
-/// Converts PS2 projection focal distance `scr_z` into vertical FOV in radians without
-/// artificial clamps (`2 * atan((0.5 * 448.0) / scr_z)`).
+/// Converts projection focal distance `scr_z` into vertical FOV in radians without
+/// artificial clamps (`2 * atan2(256.0, scr_z)`).
 ///
-/// Matches `SLUS_202.28` `vcSetProjectionValue` (`0x0019db80`) and `vbCalcViewScreenMatrix`
-/// (`0x00195230`): falls back to `448.0` only when `scr_z <= 0.0`.
+/// Matches retail `sh2pc.exe` `FUN_0045b2a0` (`0x0045b2a0`, `sh2pc_00450000.c:8022-8023`):
+/// `fVar8 = FUN_00401a20(0x43800000 /* 256.0f */, scr_z)` -> `fov_y = fVar8 + fVar8`
+/// (`59.49°` at `scr_z = 448.0`), falling back to `448.0` only when `scr_z <= 0.0`
+/// (`SLUS_202.28` `vcSetProjectionValue` `0x0019db80`).
 #[inline]
 pub fn fov_y_from_ps2_projection_unclamped(scr_z: f32) -> f32 {
     let safe_z = if scr_z > 0.0 {
@@ -152,7 +164,7 @@ pub fn fov_y_from_ps2_projection_unclamped(scr_z: f32) -> f32 {
     } else {
         PS2_DEFAULT_PROJECTION_SCR_Z
     };
-    2.0 * ((0.5 * PS2_SCREEN_HEIGHT_PX) / safe_z).atan()
+    2.0 * PC_PROJECTION_HALF_HEIGHT_PX.atan2(safe_z)
 }
 
 /// Computes `(scr_half_ang_wx, scr_half_ang_wy)` in radians (`SLUS_202.28` `vcPreSetDataInVC_WORK`

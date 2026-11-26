@@ -237,20 +237,21 @@ pub enum ScriptCameraMode {
     },
 }
 
-/// Converts PS2 projection focal distance `scr_z` into vertical FOV in radians (`2 * atan(224.0 / scr_z)`).
+/// Converts projection focal distance `scr_z` into vertical FOV in radians (`2 * atan2(256.0, scr_z)`).
 ///
-/// Matches `SLUS_202.28` `vcSetProjectionValue` (`0x0019db80`) without artificial FOV clamps.
+/// Matches retail `sh2pc.exe` `FUN_0045b2a0` (`0x0045b2a0`) without artificial FOV clamps.
 #[inline]
 pub fn fov_y_from_ps2_projection(scr_z: f32) -> f32 {
     fov_y_from_ps2_projection_unclamped(scr_z)
 }
 
-/// Inverse conversion from vertical FOV in radians back to PS2 `scr_z` (`224.0 / tan(fov_y * 0.5)`).
+/// Inverse conversion from vertical FOV in radians back to projection `scr_z`
+/// (`256.0 / tan(fov_y * 0.5)`, exact inverse of `sh2pc.exe` `FUN_0045b2a0` `0x0045b2a0`).
 #[inline]
 pub fn ps2_projection_from_fov_y(fov_y_rad: f32) -> f32 {
     let tan_half = (fov_y_rad * 0.5).tan();
     if tan_half > f32::EPSILON {
-        224.0 / tan_half
+        crate::camera::kinematics::PC_PROJECTION_HALF_HEIGHT_PX / tan_half
     } else {
         PS2_DEFAULT_PROJECTION_SCR_Z
     }

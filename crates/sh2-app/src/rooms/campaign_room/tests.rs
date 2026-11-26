@@ -124,11 +124,13 @@ fn test_program_driven_message_and_clear_lifecycle() {
             DialogueMessage {
                 id: 0,
                 pages: vec!["Stage msg 0".to_string()],
+                colored_pages: Vec::new(),
                 text: "Stage msg 0".to_string(),
             },
             DialogueMessage {
                 id: 1,
                 pages: vec!["Page A".to_string(), "Page B".to_string()],
+                colored_pages: Vec::new(),
                 text: "Page A\x0CPage B".to_string(),
             },
         ],
@@ -137,6 +139,7 @@ fn test_program_driven_message_and_clear_lifecycle() {
         messages: vec![DialogueMessage {
             id: 0,
             pages: vec!["It's locked.".to_string()],
+            colored_pages: Vec::new(),
             text: "It's locked.".to_string(),
         }],
     };

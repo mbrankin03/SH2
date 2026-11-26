@@ -96,6 +96,81 @@ pub fn compute_ps2_subtitle_layout(canvas_height: usize, line_count: usize) -> P
     }
 }
 
+/// Converts a PS2 GS `fontSetColor` RGB triplet (`0..=128` unity) into 8-bit `[R, G, B, 255]`.
+#[inline]
+fn ps2_font_rgb_to_rgba8(rgb: [u8; 3]) -> [u8; 4] {
+    [
+        ((u16::from(rgb[0]) * 255) / 128).min(255) as u8,
+        ((u16::from(rgb[1]) * 255) / 128).min(255) as u8,
+        ((u16::from(rgb[2]) * 255) / 128).min(255) as u8,
+        255,
+    ]
+}
+
+/// Draws a multi-color `.mes` subtitle page using exact 1:1 `SLUS_202.28` `fontSetColor`
+/// (`0x001b73a0`, `FONT_COLOR_PALETTE_PS2`) per-span colors (e.g., index `3` green `(96,128,96)`
+/// for item-of-interest names like `"map of Silent Hill"`), centered per line with the exact
+/// `Ps2SubtitleLayout` metrics.
+pub fn draw_subtitle_spans_ps2(
+    rast: &mut TextRasterizer,
+    game_root: Option<&Path>,
+    spans: &[(u8, String)],
+    retail_pc_palette: bool,
+) {
+    let mut lines: Vec<Vec<(u8, String)>> = vec![Vec::new()];
+    for (color_idx, text) in spans {
+        let mut parts = text.split('\n');
+        if let Some(first) = parts.next() {
+            if !first.is_empty() {
+                lines
+                    .last_mut()
+                    .unwrap()
+                    .push((*color_idx, first.to_string()));
+            }
+        }
+        for part in parts {
+            let mut next_line = Vec::new();
+            if !part.is_empty() {
+                next_line.push((*color_idx, part.to_string()));
+            }
+            lines.push(next_line);
+        }
+    }
+    while lines.last().is_some_and(Vec::is_empty) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        return;
+    }
+
+    let layout = compute_ps2_subtitle_layout(rast.height, lines.len());
+    let center_x = rast.width / 2;
+    let font = AtlasFont::shared(game_root);
+    for (i, line_spans) in lines.iter().enumerate() {
+        let y = layout.top_y_px + i * layout.line_step_px;
+        let total_w: usize = line_spans
+            .iter()
+            .map(|(_, s)| font.text_width_aspect(s, layout.px_height, layout.x_scale))
+            .sum();
+        let mut cursor_x = center_x.saturating_sub(total_w / 2);
+        for (color_idx, seg) in line_spans {
+            let (top_rgb, bot_rgb) = crate::mes::font_set_color(*color_idx, retail_pc_palette);
+            let top = ps2_font_rgb_to_rgba8(top_rgb);
+            let bot = ps2_font_rgb_to_rgba8(bot_rgb);
+            font.draw_line_gradient_aspect(
+                rast,
+                seg,
+                (cursor_x, y),
+                layout.px_height,
+                layout.x_scale,
+                (top, bot),
+                true,
+            );
+            cursor_x += font.text_width_aspect(seg, layout.px_height, layout.x_scale);
+        }
+    }
+}
+
 /// Draws a (possibly multi-line) subtitle using the exact 1:1 PS2/SH2:EE layout, glyph scale,
 /// horizontal `4:3` pixel aspect (`1.25`), line spacing (`30 / 480`), bottom safe-area anchor
 /// (`0x8DC` in `fontPrintStrMain` `0x001b4a10` / `sh2pc.exe` `0x0047faa0`), and `(+1, +1)` virtual

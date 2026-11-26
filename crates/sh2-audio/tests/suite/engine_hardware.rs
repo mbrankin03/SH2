@@ -78,6 +78,7 @@ fn test_dialogue_subtitles_and_ducking() {
                 "Mary...".to_string(),
                 "Could you really be in this town?".to_string(),
             ],
+            colored_pages: Vec::new(),
             text: "Mary...\x0cCould you really be in this town?".to_string(),
         };
 

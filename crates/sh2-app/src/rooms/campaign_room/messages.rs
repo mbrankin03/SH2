@@ -35,8 +35,10 @@ pub(crate) struct ActiveCampaignMessage {
     pub source: CampaignMessageSource,
     /// Zero-based message ID within the `.mes` table.
     pub msg_id: u16,
-    /// Decoded pages from `DialogueMessage::pages`.
+    /// Decoded plain-text pages from `DialogueMessage::pages`.
     pub pages: Vec<String>,
+    /// Decoded colored spans (`(fontSetColor idx, text)`) per page (`fontPrintStrMain` `0x001b4a10`).
+    pub colored_pages: Vec<Vec<(u8, String)>>,
     /// Zero-based current page index (`0..pages.len()`).
     pub page_idx: usize,
     /// `true` when driven continuously by an active `StageProgramRunner` (`ev_prog`).
@@ -48,6 +50,12 @@ impl ActiveCampaignMessage {
     #[must_use]
     pub fn current_page_text(&self) -> Option<&str> {
         self.pages.get(self.page_idx).map(String::as_str)
+    }
+
+    /// Returns the colored spans of the currently visible page, if any.
+    #[must_use]
+    pub fn current_page_spans(&self) -> Option<&[(u8, String)]> {
+        self.colored_pages.get(self.page_idx).map(Vec::as_slice)
     }
 }
 
@@ -85,6 +93,14 @@ impl CampaignMessageState {
         self.active
             .as_ref()
             .and_then(ActiveCampaignMessage::current_page_text)
+    }
+
+    /// Returns the currently visible page colored spans for HUD rendering, if any.
+    #[must_use]
+    pub fn active_page_spans(&self) -> Option<&[(u8, String)]> {
+        self.active
+            .as_ref()
+            .and_then(ActiveCampaignMessage::current_page_spans)
     }
 
     /// Ensures `common_msg_e.mes` and the active stage's `stage_*_msg_e.mes` are loaded and cached.
@@ -158,7 +174,7 @@ impl CampaignMessageState {
         }
 
         self.ensure_tables_loaded(stage_id, prefer_sh2ee);
-        let pages = self.resolve_pages(source, msg_id);
+        let (pages, colored_pages) = self.resolve_pages_and_spans(source, msg_id);
         if pages.is_empty() {
             self.active = None;
             return;
@@ -168,6 +184,7 @@ impl CampaignMessageState {
             source,
             msg_id,
             pages,
+            colored_pages,
             page_idx: 0,
             driven_by_program: prog_running,
         });
@@ -194,22 +211,31 @@ impl CampaignMessageState {
         true
     }
 
-    /// Resolves decoded pages for `(source, msg_id)` from the cached tables.
+    /// Resolves decoded pages and colored spans for `(source, msg_id)` from the cached tables.
     #[must_use]
-    pub fn resolve_pages(&self, source: CampaignMessageSource, msg_id: u16) -> Vec<String> {
+    pub fn resolve_pages_and_spans(
+        &self,
+        source: CampaignMessageSource,
+        msg_id: u16,
+    ) -> (Vec<String>, Vec<Vec<(u8, String)>>) {
         let table = match source {
             CampaignMessageSource::Stage => self.stage_table.as_ref().map(|(_, _, t)| t),
             CampaignMessageSource::Common => self.common_table.as_ref().map(|(_, t)| t),
         };
         let Some(msg) = table.and_then(|t| t.get(usize::from(msg_id))) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         if !msg.pages.is_empty() {
-            msg.pages.clone()
+            let colored = if msg.colored_pages.len() == msg.pages.len() {
+                msg.colored_pages.clone()
+            } else {
+                msg.pages.iter().map(|p| vec![(0, p.clone())]).collect()
+            };
+            (msg.pages.clone(), colored)
         } else if !msg.text.is_empty() {
-            vec![msg.text.clone()]
+            (vec![msg.text.clone()], vec![vec![(0, msg.text.clone())]])
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
     }
 }
@@ -316,4 +342,16 @@ pub(crate) fn draw_campaign_message(rast: &mut sh2_ui::TextRasterizer, text: &st
         return;
     }
     sh2_ui::atlas_font::draw_subtitle_ps2(rast, None, &clean, CAMPAIGN_SUBTITLE_RGBA);
+}
+
+/// Renders an active campaign event message with exact 1:1 `.mes` `fontSetColor` (`0x001b73a0`)
+/// per-span colors (e.g., green `0x03` for item-of-interest names).
+pub(crate) fn draw_campaign_message_spans(
+    rast: &mut sh2_ui::TextRasterizer,
+    spans: &[(u8, String)],
+) {
+    if spans.is_empty() {
+        return;
+    }
+    sh2_ui::subtitle::draw_subtitle_spans_ps2(rast, None, spans, true);
 }

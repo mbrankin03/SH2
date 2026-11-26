@@ -751,6 +751,10 @@ impl RoomController for CampaignRoomController {
             .campaign_messages
             .active_page_text()
             .map(str::to_string);
+        let active_spans = state
+            .campaign_messages
+            .active_page_spans()
+            .map(<[(u8, String)]>::to_vec);
 
         if fade_alpha <= 0.005 && !show_red_cross && !has_cutaway && active_msg.is_none() {
             CombatArenaRoomController::render_hud(state, encoder, surface_view);
@@ -794,7 +798,11 @@ impl RoomController for CampaignRoomController {
                         [0, 0, 0, cutaway::EV_SUB_PICTURE_FILTER_ALPHA_U8],
                     );
                 }
-                messages::draw_campaign_message(&mut state.menu_rasterizer, text);
+                if let Some(ref spans) = active_spans {
+                    messages::draw_campaign_message_spans(&mut state.menu_rasterizer, spans);
+                } else {
+                    messages::draw_campaign_message(&mut state.menu_rasterizer, text);
+                }
             }
             if fade_alpha > 0.005 {
                 let w = state.menu_rasterizer.width;

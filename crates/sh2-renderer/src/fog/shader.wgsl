@@ -225,12 +225,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var screen_fog_alpha: f32 = 0.0;
     var inscatter_rgb = vec3<f32>(0.0);
 
-    // 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2711`):
-    // Fullscreen scrolling `fog.tex` quad drawn after the 3D scene (`spkSetOTPacketS(..., -1, 1)`)
-    // modulated by `fogSetColor(0x80, 0x80, 0x80, 0x80)` (PS2 GS unity brightness) over ALL
-    // geometry including `PRIM.FGE = 0` vistas (Toluca Lake & far hills).
+    // 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2711`) &
+    // `sh2pc.exe` `FUN_00487210` (`0x00487210`, `sh2pc_00480000.c:4354-4366`) + `FogFix.cpp:81-88`:
+    // Fullscreen scrolling `fog.tex` quad (`u ± layer1_x1`, `v ± layer1_y1`) modulated by
+    // `fogSetColor(0x80, 0x80, 0x80, 0x80)` (PS2 GS / D3D8 `MODULATE2X` unity RGB -> `tex.rgb`).
     if (fog.screen_fog_uv.w > 0.001) {
-        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (fog.screen_fog_uv.z * 2.0);
+        let half_span = select(
+            vec2<f32>(fog.screen_fog_uv.z, fog.screen_fog_uv.z),
+            fog.layer1_uv_scale.xy,
+            fog.layer1_uv_scale.x > 0.001 && fog.layer1_uv_scale.y > 0.001,
+        );
+        let screen_uv_window = fog.screen_fog_uv.xy + (uv - vec2<f32>(0.5)) * (half_span * 2.0);
         screen_fog_texel = textureSampleLevel(fog_noise_tex, fog_noise_sampler, screen_uv_window, 0.0).r;
         screen_fog_alpha = clamp(fog.screen_fog_uv.w * effective_density, 0.0, 1.0);
     }
@@ -309,10 +314,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
     if (screen_fog_alpha > 0.001) {
-        // Exact 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`, `Fog/fog.c:2695-2711`):
-        // fullscreen scrolling `fog.tex` quad (`ALPHA_1 = 0x44`, `As = (fog_color_a * fog_alpha_param) >> 9`).
+        // Exact 1:1 `fog_view_screen_fog` (`SLUS_202.28` `0x0016c1c0`) / `sh2pc.exe` `FUN_00487210`
+        // (`0x00487210`, `sh2pc_00480000.c:4366`): fullscreen scrolling `fog.tex` quad modulated by
+        // `0x808080` (`MODULATE2X` -> `fog.tex` RGB, NOT dark `0x46` `FOGCOL`) with `ALPHA_1 = 0x44`
+        // (`As = (fog_color_a * fog_alpha_param) >> 9`).
+        let screen_fog_rgb = vec3<f32>(screen_fog_texel);
         let screen_blend = clamp(screen_fog_alpha * screen_fog_texel, 0.0, 1.0);
-        fogged_rgb = mix(fogged_rgb, coupled_fog_rgb, screen_blend);
+        fogged_rgb = mix(fogged_rgb, screen_fog_rgb, screen_blend);
     }
     textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, 1.0));
 }

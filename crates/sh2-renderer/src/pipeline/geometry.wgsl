@@ -173,7 +173,9 @@ fn shade_geometry_fragment(in: VertexOutput) -> vec4<f32> {
     if (shade_mode == 0 && spotlight.map_ambient_c19.w > 0.5) {
         // Exact `sh2pc.exe` `.map` `VS[1..8]` (`0x008ef230..0x008efb68`) + `FUN_005b2d40` (`D3DTOP_MODULATE`):
         // - Parallel & demo point light colors (`sh2gfw_Set_DemoPointLight` `0x0017d600`) are scaled
-        //   by `4.0 * DAT_007f4120[0xc] = 0.25` (`FUN_0047a420:8121-8125`).
+        //   by `4.0 * DAT_007f4120[0xc] = 0.25` (`FUN_0047a420:8121-8125`). Note that
+        //   `sh2gfw_Get_DemoPointLight` (`0x0017d680`) is character-only in `SLUS_202.28`
+        //   (`sh2gfw_model_light.c:1116`), so `point_positions` must remain zeroed during normal gameplay rooms.
         // - Flashlight spotlight (`!is_primary_parallel`) is scaled by `0.5` to invert `2.0 * r3` (`oD0 = 2.0 * r3`).
         let bg_primary = select(primary_diffuse * 0.5, primary_diffuse * 0.25, is_primary_parallel);
         let bg_diffuse = bg_primary + (aux_parallel_diffuse + point_diffuse) * 0.25;

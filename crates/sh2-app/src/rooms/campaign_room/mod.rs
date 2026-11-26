@@ -480,7 +480,7 @@ impl RoomController for CampaignRoomController {
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::DramaDemo { .. })
         );
-        if in_drama_demo && !now_in_drama_demo {
+        if (in_drama_demo && !now_in_drama_demo) || (was_fmv && !is_fmv_now && !now_in_drama_demo) {
             state.drama_demo_session = None;
             if let Some(ref mut eng) = state.audio_engine {
                 eng.stop_voice(Duration::from_millis(50));

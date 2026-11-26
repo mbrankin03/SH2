@@ -21,6 +21,7 @@ use super::character::{
 };
 use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
+use super::probes::{PLAYER_HEIGHT_RAY_DOWN_NORMAL, PLAYER_HEIGHT_RAY_UP_NORMAL};
 use super::raycast::{raycast_acoustic_occlusion, AcousticOcclusionHit, EyeRayHit};
 use super::solver::{
     cl_check_column_to_bg_column_hit, cl_check_column_to_wall_hit, cl_collect_chara_all,
@@ -156,10 +157,8 @@ pub struct CollisionConfig {
     pub hit_height: f32,
     /// Forward cylinder offset along character yaw in world mm (`+25.0` mm).
     pub forward_offset: f32,
-    /// Maximum vertical climb/step-up threshold (`250.0` mm).
+    /// Maximum vertical climb/step-up threshold (`250.0` mm, `PlayerSetHeight` `0x00107aa0`).
     pub max_step_up: f32,
-    /// Maximum vertical drop/step-down threshold (`350.0` mm).
-    pub max_step_down: f32,
     /// Number of interleaved relaxation iterations (`5`, `clCollectCharaALL` `0x00132e20`).
     pub max_iterations: usize,
 }
@@ -173,11 +172,39 @@ impl Default for CollisionConfig {
             hit_radius: JAMES_HIT_RADIUS,
             hit_height: PLAYER_HIT_COL_HEIGHT,
             forward_offset: PLAYER_BASE_FORWARD_OFFSET,
-            max_step_up: 250.0,
-            max_step_down: 350.0,
+            max_step_up: PLAYER_HEIGHT_RAY_UP_NORMAL,
             max_iterations: CL_COLLECT_CHARA_ITERATIONS,
         }
     }
+}
+
+/// Individual `.cld` block preserved inside a merged [`CollisionWorld`] so
+/// `clGetHitSectListMOVEOutDoor` (`0x00138bc0`) and `clGetHitSectListMOVEInDoor` (`0x00138df0`)
+/// evaluate each block's own `header.disable` (`+0x1c`), `(sx, sz)` origin, and 4x4 `SpatialGrid`.
+#[derive(Debug, Clone)]
+pub struct CollisionSector {
+    /// Block origin coordinates `(sx, sz)` in world mm.
+    pub origin: [f32; 2],
+    /// Header `disable` flag (`+0x1c`). When non-zero, this `.cld` block is skipped.
+    pub disable: i32,
+    /// Preserved 4x4 spatial acceleration broadphase grid for this `.cld` block.
+    pub grid: SpatialGrid,
+    /// Start offset into `CollisionWorld::floors`.
+    pub floor_offset: usize,
+    /// Number of triangles belonging to this sector in `CollisionWorld::floors`.
+    pub floor_len: usize,
+    /// Start offset into `CollisionWorld::raw_walls`.
+    pub raw_wall_offset: usize,
+    /// Number of wall planes belonging to this sector in `CollisionWorld::raw_walls`.
+    pub raw_wall_len: usize,
+    /// Start offset into `CollisionWorld::raw_side_walls`.
+    pub raw_side_wall_offset: usize,
+    /// Number of side-wall planes belonging to this sector in `CollisionWorld::raw_side_walls`.
+    pub raw_side_wall_len: usize,
+    /// Start offset into `CollisionWorld::columns`.
+    pub column_offset: usize,
+    /// Number of static BG columns belonging to this sector in `CollisionWorld::columns`.
+    pub column_len: usize,
 }
 
 /// Static and dynamic collision state representing an active map room or combined streaming sectors.
@@ -209,6 +236,9 @@ pub struct CollisionWorld {
     pub dynamic_floors: Vec<DynamicFloor>,
     /// Authentic 4x4 spatial acceleration broadphase grid (`clGetHitSectListMOVE`).
     pub grid: SpatialGrid,
+    /// Per-`.cld` blocks preserved by [`CollisionWorld::merge`] (`loadBgCLD_GetLoadedDataAddrList`
+    /// in `clGetHitSectListMOVEOutDoor` `0x00138bc0`). Empty for single-`.cld` worlds.
+    pub sectors: Vec<CollisionSector>,
 }
 
 impl CollisionWorld {
@@ -234,6 +264,7 @@ impl CollisionWorld {
             dynamic_walls: Vec::new(),
             dynamic_floors: Vec::new(),
             grid,
+            sectors: Vec::new(),
         }
     }
 
@@ -275,10 +306,49 @@ impl CollisionWorld {
         )
     }
 
-    /// Merge multiple collision worlds into a single combined environment (`col_merge`).
+    /// Merge multiple collision worlds into a single combined environment (`col_merge`),
+    /// preserving each `.cld` block's independent `origin`, `disable` (`+0x1c`), and 4x4
+    /// `SpatialGrid` in [`CollisionWorld::sectors`] (`clGetHitSectListMOVEOutDoor` `0x00138bc0`).
     pub fn merge(parts: &[&CollisionWorld]) -> Self {
         let mut merged = Self::new();
         for p in parts {
+            let floor_base = merged.floors.len();
+            let raw_wall_base = merged.raw_walls.len();
+            let raw_side_wall_base = merged.raw_side_walls.len();
+            let column_base = merged.columns.len();
+
+            if p.sectors.is_empty() {
+                merged.sectors.push(CollisionSector {
+                    origin: p.origin,
+                    disable: p.disable,
+                    grid: p.grid.clone(),
+                    floor_offset: floor_base,
+                    floor_len: p.floors.len(),
+                    raw_wall_offset: raw_wall_base,
+                    raw_wall_len: p.raw_walls.len(),
+                    raw_side_wall_offset: raw_side_wall_base,
+                    raw_side_wall_len: p.raw_side_walls.len(),
+                    column_offset: column_base,
+                    column_len: p.columns.len(),
+                });
+            } else {
+                for s in &p.sectors {
+                    merged.sectors.push(CollisionSector {
+                        origin: s.origin,
+                        disable: s.disable,
+                        grid: s.grid.clone(),
+                        floor_offset: floor_base + s.floor_offset,
+                        floor_len: s.floor_len,
+                        raw_wall_offset: raw_wall_base + s.raw_wall_offset,
+                        raw_wall_len: s.raw_wall_len,
+                        raw_side_wall_offset: raw_side_wall_base + s.raw_side_wall_offset,
+                        raw_side_wall_len: s.raw_side_wall_len,
+                        column_offset: column_base + s.column_offset,
+                        column_len: s.column_len,
+                    });
+                }
+            }
+
             merged.floors.extend_from_slice(&p.floors);
             merged.walls.extend_from_slice(&p.walls);
             merged.raw_floors.extend_from_slice(&p.raw_floors);
@@ -291,19 +361,10 @@ impl CollisionWorld {
             merged.dynamic_floors.extend_from_slice(&p.dynamic_floors);
         }
 
-        // Rebuild spatial grid for merged geometry
-        let cld = CldFile {
-            origin: [0.0, 0.0],
-            floors: merged.floors.clone(),
-            walls: merged.walls.clone(),
-            raw_floors: merged.raw_floors.clone(),
-            raw_walls: merged.raw_walls.clone(),
-            raw_ceilings: merged.raw_ceilings.clone(),
-            raw_side_walls: merged.raw_side_walls.clone(),
-            columns: merged.columns.clone(),
-            ..Default::default()
-        };
-        merged.grid = SpatialGrid::from_cld(&cld);
+        if let Some(first) = merged.sectors.first() {
+            merged.origin = first.origin;
+            merged.grid = first.grid.clone();
+        }
         merged
     }
 
@@ -325,8 +386,58 @@ impl CollisionWorld {
     ) -> Option<FloorSample> {
         let mut best: Option<FloorSample> = None;
 
-        // 1. Broadphase: query floor triangles in the current grid cell (gated on `disable == 0`)
-        if self.disable == 0 {
+        // 1. Broadphase: query floor triangles per `.cld` sector (`clGetHitSectListMOVEOutDoor` `0x00138bc0`)
+        if !self.sectors.is_empty() {
+            for sector in &self.sectors {
+                if sector.disable != 0 {
+                    continue;
+                }
+                let sector_floors =
+                    &self.floors[sector.floor_offset..(sector.floor_offset + sector.floor_len)];
+                let (active_cells, cell_count) = sector.grid.query_move_cells_array(x, y_ref, z);
+                let mut queried_any = false;
+                for &cell in &active_cells[..cell_count] {
+                    let cell_tri_indices = &sector.grid.floor_cells[cell];
+                    if !cell_tri_indices.is_empty() {
+                        queried_any = true;
+                        for &idx in cell_tri_indices {
+                            if let Some(tri) = sector_floors.get(idx) {
+                                if let Some(y) = tri.sample_height(x, z) {
+                                    if y >= y_ref - up
+                                        && y <= y_ref + down
+                                        && best.is_none_or(|prev| y < prev.height_y)
+                                    {
+                                        best = Some(FloorSample {
+                                            height_y: y,
+                                            raw_material: tri.material,
+                                            surface: SurfaceMaterial::from_cld_material(
+                                                tri.material,
+                                            ),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !queried_any && !sector.grid.is_outdoor {
+                    for tri in sector_floors {
+                        if let Some(y) = tri.sample_height(x, z) {
+                            if y >= y_ref - up
+                                && y <= y_ref + down
+                                && best.is_none_or(|prev| y < prev.height_y)
+                            {
+                                best = Some(FloorSample {
+                                    height_y: y,
+                                    raw_material: tri.material,
+                                    surface: SurfaceMaterial::from_cld_material(tri.material),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        } else if self.disable == 0 {
             let cell = self.grid.point_to_cell(x, z);
             let cell_tri_indices = &self.grid.floor_cells[cell];
 
@@ -468,8 +579,65 @@ impl CollisionWorld {
             }
         }
 
-        // 2. SpatialGrid broadphase (`clGetHitSectListMOVE` 0x00138b60)
-        if self.disable == 0 {
+        // 2. SpatialGrid broadphase (`clGetHitSectListMOVE` 0x00138b60 / `OutDoor` 0x00138bc0)
+        if !self.sectors.is_empty() {
+            for sector in &self.sectors {
+                if sector.disable != 0 || hit_count >= CL_MAX_WALL_HITS {
+                    continue;
+                }
+                let (active_cells, cell_count) =
+                    sector
+                        .grid
+                        .query_move_cells_array(col.center_x, col.y_bottom, col.center_z);
+                let active_slice = &active_cells[..cell_count];
+                let sector_walls = &self.raw_walls
+                    [sector.raw_wall_offset..(sector.raw_wall_offset + sector.raw_wall_len)];
+                let sector_side_walls = &self.raw_side_walls[sector.raw_side_wall_offset
+                    ..(sector.raw_side_wall_offset + sector.raw_side_wall_len)];
+                let sector_cols =
+                    &self.columns[sector.column_offset..(sector.column_offset + sector.column_len)];
+
+                for &cell in active_slice {
+                    for &idx in &sector.grid.wall_cells[cell] {
+                        if hit_count >= CL_MAX_WALL_HITS {
+                            break;
+                        }
+                        if let Some(plane) = sector_walls.get(idx) {
+                            if let Some(hit) = cl_check_column_to_wall_hit(plane, col) {
+                                hits[hit_count] = hit;
+                                hit_count += 1;
+                            }
+                        }
+                    }
+                }
+                for &cell in active_slice {
+                    for &idx in &sector.grid.side_wall_cells[cell] {
+                        if hit_count >= CL_MAX_WALL_HITS {
+                            break;
+                        }
+                        if let Some(plane) = sector_side_walls.get(idx) {
+                            if let Some(hit) = cl_check_column_to_wall_hit(plane, col) {
+                                hits[hit_count] = hit;
+                                hit_count += 1;
+                            }
+                        }
+                    }
+                }
+                for &cell in active_slice {
+                    for &idx in &sector.grid.column_cells[cell] {
+                        if hit_count >= CL_MAX_WALL_HITS {
+                            break;
+                        }
+                        if let Some(bg_col) = sector_cols.get(idx) {
+                            if let Some(hit) = cl_check_column_to_bg_column_hit(bg_col, col) {
+                                hits[hit_count] = hit;
+                                hit_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if self.disable == 0 {
             let (active_cells, cell_count) =
                 self.grid
                     .query_move_cells_array(col.center_x, col.y_bottom, col.center_z);
@@ -669,13 +837,13 @@ impl CollisionWorld {
             pos.z += push.z;
         }
 
-        // 3. Sample floor height
+        // 3. Sample floor height (`PlayerSetHeight` `0x00107aa0`: `[-250.0, +1500.0]` mm probe)
         if let Some(floor_y) = self.sample_floor_height(
             pos.x,
             pos.z,
             current_pos.y,
             config.max_step_up,
-            config.max_step_down,
+            PLAYER_HEIGHT_RAY_DOWN_NORMAL,
         ) {
             pos.y = floor_y;
         }
@@ -753,9 +921,13 @@ impl CollisionController {
         }
     }
 
-    /// Per-frame lifecycle initialization (`clFrameInitCollisionData`).
+    /// Per-frame lifecycle initialization (`clFrameInitCollisionData` `0x00132120`, `cl_main.c:96-107`):
+    /// resets all per-frame dynamic wall, dynamic floor, extra wall, and registered character lists.
     pub fn frame_init(&mut self) {
         self.world.extra_walls.clear();
+        self.world.dynamic_walls.clear();
+        self.world.dynamic_floors.clear();
+        self.characters.clear();
     }
 
     /// Register or update a character cylinder (`clSetCharaHitColumn`).
@@ -799,7 +971,11 @@ impl CollisionController {
             return 0;
         }
 
-        // Exact PS2 `clCharaList[32]` fixed-capacity stack buffer (strictly zero-allocation)
+        // Exact PS2 `clCharaList[32]` fixed-capacity stack buffer (strictly zero-allocation).
+        // Per `clSetCharaHitColumn` (`0x001325e0`, `cl_main.c:226-260`), each entry starts at
+        // `prev_position` with `move_vec = position - prev_position`, per-actor `chara_type`, and
+        // `post_flag_timer` so `clCollectCharaALL` (`0x00132e20`) integrates `move_vec` inside
+        // the 5-iteration interleaved BG + actor separation loop.
         const MAX_CL_CHARA: usize = 32;
         let entry_count = self.characters.len().min(MAX_CL_CHARA);
         let mut entries = [CharaCollectEntry::EMPTY; MAX_CL_CHARA];
@@ -807,12 +983,21 @@ impl CollisionController {
             .iter_mut()
             .zip(self.characters.iter())
         {
+            let move_vec = Vec3::new(
+                c.position.x - c.prev_position.x,
+                0.0,
+                c.position.z - c.prev_position.z,
+            );
+            let mut start_col = c.move_column();
+            start_col.center_x = c.prev_position.x;
+            start_col.center_z = c.prev_position.z;
             *slot = CharaCollectEntry {
-                col: c.move_column(),
-                move_vec: Vec3::ZERO,
+                col: start_col,
+                move_vec,
                 push_vec: Vec3::ZERO,
-                prev_pos: c.position,
-                chara_type: 1,
+                prev_pos: c.prev_position,
+                chara_type: c.chara_type,
+                post_flag_timer: c.post_flag_timer,
             };
         }
 
@@ -828,10 +1013,12 @@ impl CollisionController {
                 cur_pos: Vec3::new(entry.col.center_x, entry.prev_pos.y, entry.col.center_z),
                 prev_pos: entry.prev_pos,
                 chara_type: entry.chara_type,
-                post_flag_timer: 0,
+                post_flag_timer: entry.post_flag_timer,
                 fps: 60.0,
             };
-            world.check_bg_to_chara(&entry.col, &mut ctx)
+            let push = world.check_bg_to_chara(&entry.col, &mut ctx);
+            entry.post_flag_timer = ctx.post_flag_timer;
+            push
         });
 
         for (chara, entry) in self
@@ -841,40 +1028,42 @@ impl CollisionController {
         {
             chara.position.x = entry.col.center_x;
             chara.position.z = entry.col.center_z;
+            chara.prev_position = chara.position;
+            chara.post_flag_timer = entry.post_flag_timer;
         }
 
         iterations
     }
 
-    /// Update a character's position through full environment collision and 5-iteration separation.
+    /// Update a character's position through unified `clCollectCharaALL` (`0x00132e20`)
+    /// 5-iteration interleaved `move_vec` + BG + actor separation, followed by floor height sampling.
     pub fn update_character_kinematics(&mut self, id: CharacterId, desired_pos: Vec3) -> Vec3 {
-        let (current_pos, config) = if let Some(c) = self.characters.iter().find(|c| c.id == id) {
-            let mut cfg = self.config;
-            cfg.radius = c.radius;
-            cfg.height = c.height;
-            cfg.y_bottom_offset = c.y_bottom_offset;
-            (c.position, cfg)
-        } else {
-            (desired_pos, self.config)
-        };
-
-        // 1. Resolve background world geometry collision
-        let resolved_pos = self
-            .world
-            .resolve_character_movement(current_pos, desired_pos, &config);
-
         if let Some(c) = self.characters.iter_mut().find(|c| c.id == id) {
-            c.position = resolved_pos;
+            let current_pos = c.position;
+            c.prev_position = current_pos;
+            c.position = desired_pos;
+
+            // Run unified 5-iteration `clCollectCharaALL` integrating `move_vec = desired_pos - current_pos`
+            // together with BG wall/column pushback and character-to-character separation.
+            self.resolve_character_separations();
+
+            if let Some(c) = self.characters.iter_mut().find(|c| c.id == id) {
+                if let Some(floor_y) = self.world.sample_floor_height(
+                    c.position.x,
+                    c.position.z,
+                    current_pos.y,
+                    self.config.max_step_up,
+                    PLAYER_HEIGHT_RAY_DOWN_NORMAL,
+                ) {
+                    c.position.y = floor_y;
+                }
+                c.prev_position = c.position;
+                return c.position;
+            }
         }
 
-        // 2. Resolve 5-iteration interleaved BG + actor-to-actor separations (`clCollectCharaALL`)
-        self.resolve_character_separations();
-
-        self.characters
-            .iter()
-            .find(|c| c.id == id)
-            .map(|c| c.position)
-            .unwrap_or(resolved_pos)
+        self.world
+            .resolve_character_movement(desired_pos, desired_pos, &self.config)
     }
 }
 

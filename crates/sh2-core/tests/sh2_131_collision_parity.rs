@@ -373,6 +373,7 @@ fn test_cl_collect_chara_all_5_iterations_and_weight_table() {
             push_vec: Vec3::ZERO,
             prev_pos: Vec3::ZERO,
             chara_type: 1,
+            post_flag_timer: 0,
         },
         CharaCollectEntry {
             col: CollisionColumn::new(200.0, -50.0, 0.0, -850.0, 175.0, 4),
@@ -380,6 +381,7 @@ fn test_cl_collect_chara_all_5_iterations_and_weight_table() {
             push_vec: Vec3::ZERO,
             prev_pos: Vec3::new(200.0, 0.0, 0.0),
             chara_type: 2,
+            post_flag_timer: 0,
         },
     ];
     let iters = cl_collect_chara_all(&mut entries, |_| Vec3::ZERO);

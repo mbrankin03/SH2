@@ -76,6 +76,10 @@ pub struct LocomotionInput {
     /// Lower-body animation completion flag (`_DAT_003c7f70 & 1`), used by `lower_wall_f_3d` (`0x0011a170`)
     /// and `lower_fall` (`0x0021f5c0`) to re-enable transition back to `LocomotionState::Stand`.
     pub lower_anim_finished: bool,
+    /// Accumulated freefall vertical velocity (`+0xb4` in `SLUS_202.28`, meters/tick from `PlayerSetHeight`
+    /// `0x00107aa0`: `fall_velocity += 9.8 * dt * dt`). Integrated into `delta_position.y` as
+    /// `fall_velocity * 500.0` (`PlayerUpdatePosition3D` `0x0011c340`, `m3_play_3d.c:3038,3044`).
+    pub fall_velocity: f32,
 }
 
 impl Default for LocomotionInput {
@@ -103,6 +107,7 @@ impl Default for LocomotionInput {
             floor_normal: Vec3::new(0.0, -1.0, 0.0),
             trigger_fall: false,
             lower_anim_finished: false,
+            fall_velocity: 0.0,
         }
     }
 }
@@ -497,7 +502,10 @@ impl PlayerLocomotionController {
         let cos_nz = input.floor_normal.z.cos();
         let delta_x = move_angle.sin() * final_speed_units_per_sec * dt * cos_nx * cos_nx;
         let delta_z = move_angle.cos() * final_speed_units_per_sec * dt * cos_nz * cos_nz;
-        let delta_position = Vec3::new(delta_x, 0.0, delta_z);
+        // Freefall vertical displacement (`PlayerUpdatePosition3D` 0x0011c340 lines 3038, 3044):
+        // `chara+0x44 = chara+0xb4` (`fall_velocity`), `_DAT_003c7f14 = (chara+0x44) * 500.0`.
+        let delta_y = input.fall_velocity * SH2_WORLD_UNIT_SCALE;
+        let delta_position = Vec3::new(delta_x, delta_y, delta_z);
 
         // Footstep timing & acoustic volume (`sh2pc.exe` 0x54A9A0 / 0x5495C0 24-frame gait cycle
         // with heel strikes at relative frames 5 and 17, plus SH2:EE DoubleFootstepFix.cpp debounce)

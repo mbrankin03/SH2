@@ -70,8 +70,10 @@ pub enum AnimationStateKind {
     Damage,
     /// Grabbed by creature and struggling to break free (`0x533d00`).
     Held,
-    /// Knocked down or collapsed on the floor.
+    /// Knocked down or falling from ledge (`Clips 111/112`, `lower_fall` `0x0021f5c0`).
     Fall,
+    /// Head-on sprint recoil against a wall (`Clips 128..130`, `lower_wall_f_3d` `0x0011a170`).
+    WallF,
 }
 
 /// Tuple representing an animation cursor: `(frame_0, frame_1, alpha)`.

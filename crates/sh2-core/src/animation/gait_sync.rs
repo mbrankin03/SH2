@@ -225,8 +225,15 @@ impl LocomotionAnimationSync {
                 clips.quick_turn_right,
                 1.0,
             ),
-            LocomotionState::WallF | LocomotionState::Fall => {
-                (AnimationStateKind::Idle, clips.idle, 1.0)
+            LocomotionState::WallF => {
+                // `SLUS_202.28` `m3_play.c:2157-2175` (`case 0x11`, `lower_wall_f_3d` `0x0011a170`):
+                // Plays non-looping wall-recoil clip (`Clip 128..=130`) with Mode 4 blend.
+                (AnimationStateKind::WallF, clips.wall_f, 1.0)
+            }
+            LocomotionState::Fall => {
+                // `SLUS_202.28` `m3_play.c:2191-2194` (`case 0x18`, `lower_fall` `0x0021f5c0`):
+                // Plays non-looping fall clip (`Clip 111/112`) with Mode 4 blend.
+                (AnimationStateKind::Fall, clips.fall, 1.0)
             }
         };
 

@@ -158,11 +158,14 @@ impl LakeWaveSystem {
         let dz = boat_world_pos.z * LAKE_WORLD_TO_WAVE_SCALE - LAKE_WAVE_ORIGIN_Z;
         let dist = (dx * dx + dz * dz).sqrt();
 
+        // Exact 1:1 `mizTestLakeWaveMain` (`SLUS_202.28` `0x0026f050` / `sh2pc.exe` `0x00559ef0`):
+        // Test `cur` starting at `self.newest_wave` BEFORE advancing to `self.rings[cur].next`,
+        // terminating when `next == start`.
         let start = self.newest_wave;
         let mut cur = start;
         loop {
-            cur = self.rings[cur].next;
-            if cur == start {
+            let next = self.rings[cur].next;
+            if next == start {
                 return None;
             }
             let r = &self.rings[cur];
@@ -178,6 +181,7 @@ impl LakeWaveSystem {
                     power: r.power,
                 });
             }
+            cur = next;
         }
     }
 }

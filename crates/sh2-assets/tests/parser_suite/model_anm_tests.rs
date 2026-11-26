@@ -523,6 +523,9 @@ fn test_sh2_56_quaternion_slerp_and_hermite_bone_interpolation() {
         bones: vec![Some(BoneTransform {
             rotation: Some(rot),
             translation: Some(trans),
+            next_translation: None,
+            axis_angle_delta: None,
+            nibble_flag: false,
             track_type: AnimationTrackType::TranslationAndRotation,
         })],
     };

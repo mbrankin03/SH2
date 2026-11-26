@@ -15,7 +15,8 @@
 //! - **`TeddyBearLookFix` (`Patches/TeddyBearLookFix.cpp`, `0x00542769`):**
 //!   - Ignores `kind == 0x0727` (`i_bear`) once game flag `0xAA` (`170`, `Bent needle` acquired) is set.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Quat, Vec3};
+use sh2_assets::formats::anm::{mat4_inverse, mat4_mul, quat_to_matrix};
 
 use crate::events::{
     act1_should_james_look_at_prop, Act1VanillaFixesConfig, EventFlags, ACT1_PROP_KIND_TEDDY_BEAR,
@@ -144,8 +145,9 @@ impl HeadLookTracker {
         );
     }
 
-    /// Applies the 20% neck / 80% head rotational split (`m3_play.c:1578-1579`) to `locals`
-    /// in-place before `evaluate_pose_into` (`M_new = M_orig * R_delta`).
+    /// Applies the 20% neck / 80% head rotational split (`m3_play.c:1578-1579`) to row-major local
+    /// bone matrices `locals` in-place without transposing or rotating local translation (`M_new[0..3][0..3] = M[0..3][0..3] * R_delta`,
+    /// matching `shCharacterAnimePartsControl` `0x00100a40`, `Chacter/anime.c:415-429`).
     pub fn apply_to_locals(
         &self,
         locals: &mut [[[f32; 4]; 4]],
@@ -169,6 +171,42 @@ impl HeadLookTracker {
         );
         apply_bone_yaw_pitch(
             locals,
+            head_bone,
+            yaw * NECK_CRANIAL_SHARE,
+            pitch * NECK_CRANIAL_SHARE,
+        );
+    }
+
+    /// Applies the 20% neck / 80% head rotational split (`PlayerCheckNeckAngle` `0x00108e10`,
+    /// `shCharacterAnimePartsControl` `0x00100a40`) **after** `evaluate_pose_into` on evaluated
+    /// model-space row-major matrices `pose_world`, propagating each bone's pivot rotation to all
+    /// descendant bones in `parents` without overwriting keyframed rotations or corrupting translations.
+    pub fn apply_to_pose(
+        &self,
+        pose_world: &mut [[[f32; 4]; 4]],
+        parents: &[u8],
+        neck_bone: usize,
+        head_bone: usize,
+        alpha: f32,
+    ) {
+        let t = alpha.clamp(0.0, 1.0);
+        let pitch = self.prev_pitch_rad + (self.pitch_rad - self.prev_pitch_rad) * t;
+        let yaw = self.prev_yaw_rad + (self.yaw_rad - self.prev_yaw_rad) * t;
+
+        if pitch.abs() < 1e-5 && yaw.abs() < 1e-5 {
+            return;
+        }
+
+        apply_pose_bone_yaw_pitch(
+            pose_world,
+            parents,
+            neck_bone,
+            yaw * NECK_UPPER_SPINE_SHARE,
+            pitch * NECK_UPPER_SPINE_SHARE,
+        );
+        apply_pose_bone_yaw_pitch(
+            pose_world,
+            parents,
             head_bone,
             yaw * NECK_CRANIAL_SHARE,
             pitch * NECK_CRANIAL_SHARE,
@@ -281,12 +319,70 @@ fn wrap_angle_pi(mut a: f32) -> f32 {
     a
 }
 
+/// Composes a row-major 3x3 rotation `rot_3x3` into the upper-left 3x3 block of `mat`
+/// (`M_new[0..3][0..3] = M[0..3][0..3] * rot_3x3`), preserving translation `M[0..3][3]` verbatim
+/// (`shCharacterAnimePartsControl` `0x00100a40`, `Chacter/anime.c:415-429`).
+#[inline]
+fn compose_row_major_rot3(mat: &mut [[f32; 4]; 4], rot_3x3: [[f32; 3]; 3]) {
+    let orig = *mat;
+    for r in 0..3 {
+        for c in 0..3 {
+            mat[r][c] = orig[r][0] * rot_3x3[0][c]
+                + orig[r][1] * rot_3x3[1][c]
+                + orig[r][2] * rot_3x3[2][c];
+        }
+    }
+}
+
+#[inline]
+fn is_descendant_of(mut idx: usize, ancestor: usize, parents: &[u8]) -> bool {
+    let mut depth = 0usize;
+    while idx < parents.len() && depth < parents.len() {
+        let p = parents[idx];
+        if p == 255 {
+            return false;
+        }
+        let p_usize = p as usize;
+        if p_usize == ancestor {
+            return true;
+        }
+        idx = p_usize;
+        depth += 1;
+    }
+    false
+}
+
 fn apply_bone_yaw_pitch(locals: &mut [[[f32; 4]; 4]], bone: usize, yaw: f32, pitch: f32) {
     let Some(slot) = locals.get_mut(bone) else {
         return;
     };
     let rot_delta = Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0);
-    let rot_mat = Mat4::from_quat(rot_delta);
-    let orig = Mat4::from_cols_array_2d(slot);
-    *slot = (orig * rot_mat).to_cols_array_2d();
+    let rot_3x3 = quat_to_matrix(rot_delta.to_array());
+    compose_row_major_rot3(slot, rot_3x3);
+}
+
+fn apply_pose_bone_yaw_pitch(
+    pose_world: &mut [[[f32; 4]; 4]],
+    parents: &[u8],
+    bone: usize,
+    yaw: f32,
+    pitch: f32,
+) {
+    if bone >= pose_world.len() {
+        return;
+    }
+    let w_old = pose_world[bone];
+    let mut w_new = w_old;
+    let rot_delta = Quat::from_euler(glam::EulerRot::YXZ, yaw, pitch, 0.0);
+    let rot_3x3 = quat_to_matrix(rot_delta.to_array());
+    compose_row_major_rot3(&mut w_new, rot_3x3);
+
+    let pivot_xform = mat4_mul(w_new, mat4_inverse(w_old));
+    pose_world[bone] = w_new;
+
+    for (idx, slot) in pose_world.iter_mut().enumerate() {
+        if idx != bone && is_descendant_of(idx, bone, parents) {
+            *slot = mat4_mul(pivot_xform, *slot);
+        }
+    }
 }

@@ -475,6 +475,10 @@ impl InventoryScreen {
         let ps2_x = (mouse_x - ox) * 512.0 / cw;
         let ps2_y = (mouse_y - oy) * 448.0 / ch;
 
+        if self.focus == InventoryFocus::ExamineOverlay {
+            return self.handle_nav(MenuNavAction::Confirm, inventory, snapshot);
+        }
+
         if self.focus == InventoryFocus::RadioVolume {
             self.focus = InventoryFocus::Carousel;
             return (MenuSoundCue::Confirm, InventoryAction::None);
@@ -532,8 +536,10 @@ impl InventoryScreen {
                 }
             }
             MenuNavAction::Up | MenuNavAction::Down => {
-                // Enter center bottom-row button (`Map`, `0x0a` at `x = 0xf0 = 240`)
-                self.focus = InventoryFocus::Corner(CornerButton::Map);
+                // Retail PC `sh2pc.exe` (`0x00473fc2..0x00473fd9`, `sh2pc_00470000.c:2957-2978`):
+                // pressing Up/Down from Carousel (`DAT_009417a9 == 1`) enters the center bottom-row
+                // button (`DAT_009417a9 = 3` = `CornerButton::Memo`, `x = 176..336`).
+                self.focus = InventoryFocus::Corner(CornerButton::Memo);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
             }
             MenuNavAction::Confirm => {
@@ -949,5 +955,36 @@ mod tests {
         assert_eq!(cue, MenuSoundCue::Cancel);
         assert_eq!(screen.focus, InventoryFocus::Carousel);
         assert_eq!(screen.examine_page, 0);
+
+        // Mouse click during ExamineOverlay advances/closes pages instead of hitting corner buttons
+        screen.focus = InventoryFocus::ExamineOverlay;
+        screen.examine_page = 0;
+        let (mcue, mact) = screen.handle_mouse_click(60.0, 420.0, 512.0, 448.0, &inv, &snap);
+        assert_eq!(mcue, MenuSoundCue::Confirm);
+        assert_eq!(mact, InventoryAction::None);
+        assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
+        assert_eq!(screen.examine_page, 1);
+
+        // Carousel Down -> center bottom button `Memo` (`sh2pc.exe` `0x00473fd9`) regardless of `has_any_memo`,
+        // plus Left/Right wraparound across `Options | Memo | Map`
+        screen.focus = InventoryFocus::Carousel;
+        for has_memo in [false, true] {
+            let s = InventoryPlayerSnapshot {
+                has_any_memo: has_memo,
+                ..Default::default()
+            };
+            screen.handle_nav(MenuNavAction::Down, &inv, &s);
+            assert_eq!(screen.focus, InventoryFocus::Corner(CornerButton::Memo));
+            screen.handle_nav(MenuNavAction::Left, &inv, &s);
+            assert_eq!(screen.focus, InventoryFocus::Corner(CornerButton::Option));
+            screen.handle_nav(MenuNavAction::Left, &inv, &s);
+            assert_eq!(screen.focus, InventoryFocus::Corner(CornerButton::Map));
+            screen.handle_nav(MenuNavAction::Right, &inv, &s);
+            assert_eq!(screen.focus, InventoryFocus::Corner(CornerButton::Option));
+            screen.handle_nav(MenuNavAction::Right, &inv, &s);
+            assert_eq!(screen.focus, InventoryFocus::Corner(CornerButton::Memo));
+            screen.handle_nav(MenuNavAction::Up, &inv, &s);
+            assert_eq!(screen.focus, InventoryFocus::Carousel);
+        }
     }
 }

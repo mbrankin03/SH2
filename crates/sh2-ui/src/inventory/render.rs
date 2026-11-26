@@ -292,24 +292,9 @@ fn draw_carousel_arc(
     let cy = c.y(PS2_UI_HEIGHT * 0.5);
     let font_px = ((16.0 * c.sy).round() as usize).clamp(10, 24);
 
-    if screen.owned_items.is_empty() {
-        font.draw_line_centered(
-            rasterizer,
-            "(No items carried)",
-            (cx as usize, cy as usize),
-            font_px,
-            Sh2TextColor::MutedFooter,
-            true,
-        );
-        return;
-    }
-
     // `lookline` (`SLUS_202.28` `0x001d6c30`, `sh2pc.exe` `FUN_0046af30` `0x0046af30`):
-    // Single closed `RGB(48, 96, 240)` reticle + two outer L-bracket corner accents at `(-6, -6)`
-    // and `(+6, +5)` framing the active focus target:
-    // - `Carousel` / `CombineTarget` (`case 1`): centered `(-55..+55, -65..+65)` -> `(201..311, 159..289)`
-    // - `CommandWindow` / `RadioVolume` (`case 6/7`): `(+80..+240, -203..-80)` -> `(336..496, 21..144)`
-    // - `Corner(Option | Memo | Map)` (`case 2/3/4`): `(-240..-80 | -80..+80 | +80..+240, +173..+203)`
+    // Draw before the empty-inventory early return so a focused bottom `CornerButton` still renders
+    // its blue selection reticle even when no items are carried.
     let (ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448) = match screen.focus {
         InventoryFocus::Carousel | InventoryFocus::CombineTarget => (201.0, 159.0, 311.0, 289.0),
         InventoryFocus::CommandWindow | InventoryFocus::RadioVolume => (336.0, 21.0, 496.0, 144.0),
@@ -351,6 +336,18 @@ fn draw_carousel_arc(
         ret_a,
         show_corner_brackets,
     );
+
+    if screen.owned_items.is_empty() {
+        font.draw_line_centered(
+            rasterizer,
+            "(No items carried)",
+            (cx as usize, cy as usize),
+            font_px,
+            Sh2TextColor::MutedFooter,
+            true,
+        );
+        return;
+    }
 
     // `item_allay` (`0x001d7640`): pulsing double-chevron L/R arrows flanking carousel reticle
     if screen.owned_items.len() > 1 {

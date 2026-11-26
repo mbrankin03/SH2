@@ -94,8 +94,9 @@ pub struct InventoryScreen {
     /// Animated 4-edge quad `[x0, y0, x1, y1]` in `512x448` PS2 space for `InlinePopup` /
     /// `InlineClosing` (`sh2pc.exe` `FUN_0046af30` `case 0xc <-> case 0xd` via `move_near(2.0, 1.0)`).
     pub examine_popup_rect: [f32; 4],
-    /// Front (`0`) vs back (`1`) side during 2-sided Wood Side coin examine (`otn_itemmain.c:646-666`,
-    /// items `0x2f` Old Man, `0x30` Prisoner, `0x31` Snake).
+    /// Front (`0`) vs back (`1`) side during 2-sided Wood Side coin examine (`sh2pc.exe`
+    /// `sh2pc_00460000.c:4874-4876`: retail PC IDs `0x32..=0x34` = Snake / Old Man / Prisoner,
+    /// shifted `+3` from `SLUS_202.28` `otn_itemmain.c:646-666` `0x2f..=0x31`).
     pub examine_coin_side: u8,
     /// Smooth carousel angular scroll offset in slots (`sh2pc.exe` `FUN_0046bcf0`, eased to `0.0`
     /// via `move_near(20.0, 110.0)` and clamped to `±1.5`).
@@ -421,10 +422,11 @@ impl InventoryScreen {
                     }
                     if settled {
                         self.examine_popup_rect = EXAMINE_POPUP_DISMISS_SLIT_RECT;
-                        // `otn_itemmain.c:660-666`: 2-sided Wood Side Apartments coins (`0x2f` Old Man,
-                        // `0x30` Prisoner, `0x31` Snake) flip from front (`0`) to back (`1`) and re-open.
+                        // `sh2pc.exe` `sh2pc_00460000.c:4874-4876` (shifted `+3` from `SLUS_202.28`
+                        // `otn_itemmain.c:660-666` `0x2f..=0x31`): 2-sided Wood Side Apartments coins
+                        // (`0x32` Snake, `0x33` Old Man, `0x34` Prisoner) flip from front (`0`) to back (`1`).
                         let is_two_sided_coin =
-                            matches!(self.selected_item_id(), Some(0x2f..=0x31));
+                            matches!(self.selected_item_id(), Some(0x32..=0x34));
                         if is_two_sided_coin && self.examine_coin_side == 0 {
                             self.examine_coin_side = 1;
                             self.examine_phase = ExaminePhase::InlinePopup;
@@ -1364,16 +1366,17 @@ mod tests {
             screen.handle_nav(MenuNavAction::Up, &inv, &s);
             assert_eq!(screen.focus, InventoryFocus::Carousel);
         }
-        // 2-sided Wood Side Apartments coin (`0x2f` Old Man) flips from front (`0`) -> back (`1`)
-        // on first dismiss (`otn_itemmain.c:660-666`) and exits to Carousel on second dismiss.
-        inv.item_get_now(0x2f);
+        // 2-sided Wood Side Apartments coin (`0x33` Coin [Old Man] in retail PC `sh2pc_00460000.c:4874-4876`,
+        // shifted `+3` from `SLUS_202.28` `0x2f..=0x31`) flips front (`0`) -> back (`1`) on first dismiss
+        // and exits to Carousel on second dismiss.
+        inv.item_get_now(0x33);
         screen.open(&inv);
         screen.screen_fade_alpha = 0.0;
         screen.selected_index = screen
             .owned_items
             .iter()
-            .position(|&id| id == 0x2f)
-            .expect("coin 0x2f must be owned");
+            .position(|&id| id == 0x33)
+            .expect("coin 0x33 must be owned");
         screen.handle_nav(MenuNavAction::Right, &inv, &snap);
         assert!((screen.carousel_anim_offset + 1.0).abs() < 1e-4);
         for _ in 0..20 {
@@ -1383,8 +1386,8 @@ mod tests {
         screen.selected_index = screen
             .owned_items
             .iter()
-            .position(|&id| id == 0x2f)
-            .expect("coin 0x2f must be owned");
+            .position(|&id| id == 0x33)
+            .expect("coin 0x33 must be owned");
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         screen.handle_nav(MenuNavAction::Down, &inv, &snap); // Examine
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);

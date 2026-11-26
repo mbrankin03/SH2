@@ -12,7 +12,7 @@ use crate::assets::open_drama_demo_session;
 use crate::rooms::combat_arena::CombatArenaRoomController;
 use crate::rooms::fmv_room::{
     clear_ldr_output_black, fade_out_fmv_audio, open_fmv_session, render_fmv_subtitles,
-    stop_active_fmv_session, tick_and_render_fmv_frame,
+    stop_active_fmv_session_with_bgm_policy, tick_and_render_fmv_frame,
 };
 use crate::rooms::RoomController;
 use crate::state::AppState;
@@ -417,7 +417,7 @@ impl RoomController for CampaignRoomController {
             fade_out_fmv_audio(state, fade_dur);
         }
         if was_fmv && !is_fmv_now {
-            stop_active_fmv_session(state);
+            stop_active_fmv_session_with_bgm_policy(state, false);
         }
 
         let allow_sim = effects.allow_gameplay_sim;

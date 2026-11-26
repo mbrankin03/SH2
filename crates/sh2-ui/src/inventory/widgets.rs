@@ -12,10 +12,16 @@ use crate::font::TextRasterizer;
 use crate::inventory::atlas::item_icon_rect;
 use crate::inventory::health_ecg::STATUS_SNAPSHOT_W_512;
 
-/// Native PS2 2D UI framebuffer width (`SLUS_202.28` `font_print` `0x001d4c00`).
+/// Native PS2 2D UI framebuffer width (`SLUS_202.28` `font_print` `0x001d4c00` & `sh2pc.exe` `FUN_004707b0:525`).
 pub const PS2_UI_WIDTH: f32 = 512.0;
-/// Native PS2 2D UI framebuffer height (`SLUS_202.28` `font_print` `0x001d4c00`).
+/// Native PS2 2D UI active height (`SLUS_202.28` `font_print` `0x001d4c00`).
 pub const PS2_UI_HEIGHT: f32 = 448.0;
+/// Retail PC `sh2pc.exe` 4:3 UI vertical projection height (`FUN_004707b0:526`: `0.0020833334 = 1.0 / 480.0`,
+/// `look_hp` `sh2pc_00460000.c:7525`: `0.5 - 0.36458334 = 65/480 = (49 + 16)/480`).
+pub const PC_UI_HEIGHT: f32 = 480.0;
+/// Top/bottom overscan margin `(480 - 448) / 2 = 16.0` px when mapping centered `512x448` coordinates
+/// into retail PC `512x480` space.
+pub const PC_UI_Y_OFFSET: f32 = 16.0;
 /// Half of `PS2_UI_WIDTH` (`256.0`) for centered-to-top-left PS2 conversion.
 pub const PS2_CENTER_X: f32 = 256.0;
 /// Half of `PS2_UI_HEIGHT` (`224.0`) for centered-to-top-left PS2 conversion.
@@ -113,7 +119,7 @@ impl Ps2Canvas {
             tex_w,
             tex_h,
             sx: tex_w / PS2_UI_WIDTH,
-            sy: tex_h / PS2_UI_HEIGHT,
+            sy: tex_h / PC_UI_HEIGHT,
         }
     }
 
@@ -121,8 +127,10 @@ impl Ps2Canvas {
         px * self.sx
     }
 
+    /// Maps a `512x448` top-left Y coordinate into retail PC `512x480` space (`(py + 16) * (h / 480)`),
+    /// matching `sh2pc.exe` `FUN_004707b0:526` (`1/480 = 0.0020833334`) and `look_hp` (`65/480`).
     pub fn y(&self, py: f32) -> f32 {
-        py * self.sy
+        (py + PC_UI_Y_OFFSET) * self.sy
     }
 
     pub fn xi(&self, px: f32) -> usize {
@@ -300,6 +308,39 @@ pub fn draw_lookline(
     let br_mid_y = (x1 + ox6, y0 + half_h);
     draw_segment(rasterizer, br_mid_x, br_corner, border, color);
     draw_segment(rasterizer, br_corner, br_mid_y, border, color);
+}
+
+/// Renders the `SLUS_202.28` `look_zanzo` (`0x001daab0`, `sh2pc.exe` `FUN_004707b0`) translucent
+/// motion-trail quad as the selection reticle glides between focus targets.
+pub fn draw_look_zanzo(
+    rasterizer: &mut TextRasterizer,
+    c: Ps2Canvas,
+    prev_rect_512: [f32; 4],
+    cur_rect_512: [f32; 4],
+) {
+    let moved = prev_rect_512
+        .iter()
+        .zip(cur_rect_512.iter())
+        .any(|(a, b)| (a - b).abs() > 0.5);
+    if !moved {
+        return;
+    }
+    let [r, g, b] = SH2_BLUE_LINE_RGB;
+    let trail_color = [r, g, b, 48];
+    let border = (c.sy * 0.45).round().max(1.0) as usize;
+    let mid = [
+        (prev_rect_512[0] + cur_rect_512[0]) * 0.5,
+        (prev_rect_512[1] + cur_rect_512[1]) * 0.5,
+        (prev_rect_512[2] + cur_rect_512[2]) * 0.5,
+        (prev_rect_512[3] + cur_rect_512[3]) * 0.5,
+    ];
+    for rect in [prev_rect_512, mid] {
+        let rx = c.xi(rect[0]);
+        let ry = c.yi(rect[1]);
+        let rw = c.xi(rect[2]).saturating_sub(rx).max(1);
+        let rh = c.yi(rect[3]).saturating_sub(ry).max(1);
+        rasterizer.draw_rect_outline(rx, ry, rw, rh, border, trail_color);
+    }
 }
 
 /// Computes the exact `SLUS_202.28` `sprite` (`0x001d8890`) RGB color for layer `layer` (`0..6`).

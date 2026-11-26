@@ -335,9 +335,9 @@ mod tests {
                 sx + sw <= ox + cw + 1e-3 && sy + sh <= oy + ch + 1e-3,
                 "{label}: snapshot overflows canvas"
             );
-            // `look_hp` (140x105 inside 512x448 -> 4:3): verify exact relative placement inside canvas
+            // `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7524-7578`: `X = 26..166 / 512`, `Y = 65..170 / 480`):
             assert!(((sx - ox) / cw - (26.0 / 512.0)).abs() < 1e-4, "{label}");
-            assert!(((sy - oy) / ch - (49.0 / 448.0)).abs() < 1e-4, "{label}");
+            assert!(((sy - oy) / ch - (65.0 / 480.0)).abs() < 1e-4, "{label}");
         }
     }
 }

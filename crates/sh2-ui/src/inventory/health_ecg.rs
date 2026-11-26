@@ -206,28 +206,29 @@ impl HealthEcgState {
     }
 
     /// Computes the `(x, y, width, height)` viewport pixel rectangle for the live 3D game snapshot
-    /// inside a swapchain of `(viewport_w, viewport_h)`, derived 1:1 from `SLUS_202.28` `look_hp`
-    /// (`0x001d9b6c..0x001d9bfc`) inside the centered 4:3 PS2 UI canvas (`ps2_ui_canvas_rect`).
+    /// inside a swapchain of `(viewport_w, viewport_h)`, derived 1:1 from `sh2pc.exe` `look_hp`
+    /// (`sh2pc_00460000.c:7524-7578`: `X = 26..166 / 512`, `Y = 65..170 / 480` = `(49 + 16) / 480`)
+    /// inside the centered 4:3 UI canvas (`ps2_ui_canvas_rect`).
     pub fn snapshot_viewport_rect(viewport_w: f32, viewport_h: f32) -> (f32, f32, f32, f32) {
         let (ox, oy, cw, ch) = crate::inventory::ps2_ui_canvas_rect(viewport_w, viewport_h);
         let sx = cw / 512.0;
-        let sy = ch / 448.0;
+        let sy = ch / 480.0;
         (
             ox + STATUS_SNAPSHOT_X_512 * sx,
-            oy + STATUS_SNAPSHOT_Y_448 * sy,
+            oy + (STATUS_SNAPSHOT_Y_448 + 16.0) * sy,
             STATUS_SNAPSHOT_W_512 * sx,
             STATUS_SNAPSHOT_H_448 * sy,
         )
     }
 
-    /// Renders the `SLUS_202.28` `look_hp` (`0x001d9a3c..0x001d9b50`) health tint wash over the live
-    /// frozen 3D snapshot cutout inside the full `512x448` rasterizer canvas (which is blitted into
-    /// `ps2_ui_canvas_rect` by `sh2-app`), with **no ECG waveform line and no status text**.
+    /// Renders the `SLUS_202.28` / `sh2pc.exe` `look_hp` (`0x001d9a3c..0x001d9b50` / `sh2pc_00460000.c:7505-7599`)
+    /// health tint wash over the live frozen 3D snapshot cutout inside the `512x480` rasterizer canvas
+    /// (which is blitted into `ps2_ui_canvas_rect` by `sh2-app`), with **no ECG waveform line and no status text**.
     pub fn draw_snapshot_tint(&self, hp: f32, max_hp: f32, rasterizer: &mut TextRasterizer) {
         let sx = rasterizer.width as f32 / 512.0;
-        let sy = rasterizer.height as f32 / 448.0;
+        let sy = rasterizer.height as f32 / 480.0;
         let x0 = (STATUS_SNAPSHOT_X_512 * sx).round() as usize;
-        let y0 = (STATUS_SNAPSHOT_Y_448 * sy).round() as usize;
+        let y0 = ((STATUS_SNAPSHOT_Y_448 + 16.0) * sy).round() as usize;
         let w = (STATUS_SNAPSHOT_W_512 * sx).round().max(1.0) as usize;
         let h = (STATUS_SNAPSHOT_H_448 * sy).round().max(1.0) as usize;
 

@@ -29,8 +29,8 @@ use crate::font::TextRasterizer;
 use crate::inventory::atlas::{item_icon_rect, project_carousel_slot};
 use crate::inventory::health_ecg::{ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_Y_448};
 use crate::inventory::widgets::{
-    draw_item_allay, draw_look_combine, draw_look_command, draw_look_volume, draw_lookline,
-    draw_sprite_bar, draw_stock_line, stock_line_width_for_count, Ps2Canvas,
+    draw_item_allay, draw_look_combine, draw_look_command, draw_look_volume, draw_look_zanzo,
+    draw_lookline, draw_sprite_bar, draw_stock_line, stock_line_width_for_count, Ps2Canvas,
     LOOK_COMMAND_ROW_PITCH, PS2_UI_HEIGHT, PS2_UI_WIDTH, SPRITE_BAR_WIDTH, SPRITE_BAR_X0,
     SPRITE_BOT_BAR_CY, SPRITE_TOP_BAR_CY, STOCK_LINE_WIDTH_ON_OFF,
 };
@@ -327,31 +327,25 @@ fn draw_carousel_arc(
     let cy = c.y(PS2_UI_HEIGHT * 0.5);
     let font_px = ((16.0 * c.sy).round() as usize).clamp(10, 24);
 
-    // `lookline` (`SLUS_202.28` `0x001d6c30`, `otn_itemmain.c:386`: hidden during `0xc`/`0xd` ExamineOverlay).
+    // `lookline` (`SLUS_202.28` `0x001d6c30`, `otn_itemmain.c:386`: hidden during `0xc`/`0xd` ExamineOverlay)
+    // + `look_zanzo` (`0x001daab0`) motion-trail quad while `focus_rect` glides between targets (`FUN_0046af30`).
     if screen.focus != InventoryFocus::ExamineOverlay {
-        let (ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448) = match screen.focus {
-            InventoryFocus::Carousel | InventoryFocus::CombineTarget => {
-                (201.0, 159.0, 311.0, 289.0)
-            }
-            InventoryFocus::CommandWindow | InventoryFocus::RadioVolume => {
-                (336.0, 21.0, 496.0, 144.0)
-            }
-            InventoryFocus::Corner(CornerButton::Option) => (16.0, 397.0, 176.0, 427.0),
-            InventoryFocus::Corner(CornerButton::Memo) => (176.0, 397.0, 336.0, 427.0),
-            InventoryFocus::Corner(CornerButton::Map) => (336.0, 397.0, 496.0, 427.0),
-            InventoryFocus::ExamineOverlay => (201.0, 159.0, 311.0, 289.0),
-        };
+        draw_look_zanzo(rasterizer, c, screen.prev_focus_rect, screen.focus_rect);
+        let [ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448] = screen.focus_rect;
         let rx = c.xi(ret_x0_512);
         let ry = c.yi(ret_y0_448);
         let ret_w = c.xi(ret_x1_512).saturating_sub(rx);
         let ret_h = c.yi(ret_y1_448).saturating_sub(ry);
-        let show_corner_brackets = matches!(
-            screen.focus,
-            InventoryFocus::Carousel
-                | InventoryFocus::CommandWindow
-                | InventoryFocus::RadioVolume
-                | InventoryFocus::Corner(_)
-        );
+        // `otn_itemmain.c:2611`: outer L-brackets appear only once the reticle settles (`DAT_0116e3e6 == 0`).
+        let is_settled = screen.is_focus_rect_settled();
+        let show_corner_brackets = is_settled
+            && matches!(
+                screen.focus,
+                InventoryFocus::Carousel
+                    | InventoryFocus::CommandWindow
+                    | InventoryFocus::RadioVolume
+                    | InventoryFocus::Corner(_)
+            );
         let ret_a = if matches!(
             screen.focus,
             InventoryFocus::Carousel
@@ -417,7 +411,7 @@ fn draw_carousel_arc(
         } else {
             CAROUSEL_UNSELECTED_SCALE
         };
-        let proj = project_carousel_slot(ofs as f32, slot_scale);
+        let proj = project_carousel_slot(ofs as f32 + screen.carousel_anim_offset, slot_scale);
         let px = cx + proj.offset_x_640 * x_640_to_512 * c.sx;
         let py = cy;
         let alpha = if ofs == 0 { 1.0 } else { proj.alpha };
@@ -506,17 +500,16 @@ fn draw_item_footer(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Retail PC `sh2pc.exe` `font_print` (`sh2pc_00470000.c:2272, 2280`) + `FUN_004707b0:525-526`
-    // (`1/512 = 0.001953125`, `1/480 = 0.0020833334`): Item Name at `(0x14 = 20, 0x145 = 325)` and
-    // Description at `(0x2d = 45, 0x168 = 360)` in `512x480` space -> scaled by `448/480` into `512x448`.
-    let y_480_to_448 = PS2_UI_HEIGHT / 480.0;
+    // Retail PC `sh2pc.exe` `font_print` (`sh2pc_00470000.c:2272, 2280`) in `512x480` space
+    // (`c.y(py_448) = (py_448 + 16) * (h / 480)`): Item Name at `(20, 325)` -> `325 - 16 = 309`,
+    // Description at `(45, 360)` -> `360 - 16 = 344` (`c.sx / c.sy = 1.25` in 4:3).
     let title_px = ((26.0 * c.sy).round() as usize).max(12);
     let body_px = ((24.0 * c.sy).round() as usize).max(11);
-    let x_scale = (c.sx / c.sy) * (480.0 / PS2_UI_HEIGHT);
+    let x_scale = c.sx / c.sy;
     let name_x = c.xi(20.0);
-    let name_y = c.yi(325.0 * y_480_to_448).saturating_sub(title_px);
+    let name_y = c.yi(309.0).saturating_sub(title_px);
     let desc_x = c.xi(45.0);
-    let desc_y = c.yi(360.0 * y_480_to_448).saturating_sub(body_px);
+    let desc_y = c.yi(344.0).saturating_sub(body_px);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
         font.draw_line_styled_aspect(
@@ -833,7 +826,7 @@ mod tests {
             ..Default::default()
         };
         let font = AtlasFont::shared(None);
-        let mut rast = TextRasterizer::new(512, 448);
+        let mut rast = TextRasterizer::new(512, 480);
 
         // 1. CommandWindow: green-teal `look_command` glow + active `Command` bar pulse
         screen.focus = InventoryFocus::CommandWindow;
@@ -844,30 +837,30 @@ mod tests {
         }
         screen.tab_pulse = 1.0; // Peak active pulse -> bright white-cyan on Command bar
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        // Status bar (col 0, x=26..166, y=35) must remain inactive cyan-blue [0, 60, 180]
-        let status_bar_px = &rast.pixels[(35 * 512 + 40) * 4..][..3];
+        // Status bar (col 0, x=26..166, y=35+16=51 in 512x480) must remain inactive cyan-blue [0, 60, 180]
+        let status_bar_px = &rast.pixels[(51 * 512 + 40) * 4..][..3];
         assert_eq!(status_bar_px, &[0, 60, 180]);
-        // Command bar (col 2, x=346..486, y=35) must pulse bright white-cyan [240, 240, 240]
-        let cmd_bar_px = &rast.pixels[(35 * 512 + 355) * 4..][..3];
+        // Command bar (col 2, x=346..486, y=35+16=51) must pulse bright white-cyan [240, 240, 240]
+        let cmd_bar_px = &rast.pixels[(51 * 512 + 355) * 4..][..3];
         assert_eq!(cmd_bar_px, &[240, 240, 240]);
-        // Green-teal `look_command` bar spans full column (check x = 470, well past old 439 cutoff)
-        let cmd_glow_px = &rast.pixels[(98 * 512 + 470) * 4..][..3];
+        // Green-teal `look_command` bar spans full column (check x = 470, y = 98+16 = 114)
+        let cmd_glow_px = &rast.pixels[(114 * 512 + 470) * 4..][..3];
         assert!(
             cmd_glow_px[1] > cmd_glow_px[2] && cmd_glow_px[0] == 0,
             "expected green-teal glow at x=470, got {cmd_glow_px:?}"
         );
 
-        // 2. RadioVolume: 16-bar green meter
+        // 2. RadioVolume: 16-bar green meter (y = 114+16 = 130)
         screen.focus = InventoryFocus::RadioVolume;
         rast.clear();
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        assert_eq!(&rast.pixels[(114 * 512 + 362) * 4..][..3], &[0, 0xb0, 0]);
+        assert_eq!(&rast.pixels[(130 * 512 + 362) * 4..][..3], &[0, 0xb0, 0]);
         assert_eq!(
-            &rast.pixels[(114 * 512 + (361 + 15 * 7 + 1)) * 4..][..3],
+            &rast.pixels[(130 * 512 + (361 + 15 * 7 + 1)) * 4..][..3],
             &[0, 0x30, 0]
         );
 
-        // 3. CombineTarget: 3 green-tinted combine preview slots
+        // 3. CombineTarget: 3 green-tinted combine preview slots (y = 290+16 = 306)
         screen.focus = InventoryFocus::CombineTarget;
         screen.combine_first_item_id = Some(24);
         for _ in 0..15 {
@@ -875,7 +868,7 @@ mod tests {
         }
         rast.clear();
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        let combine_px = &rast.pixels[(290 * 512 + 370) * 4..][..4];
+        let combine_px = &rast.pixels[(306 * 512 + 370) * 4..][..4];
         assert_eq!(combine_px[3], 160);
         assert!(combine_px[1] > combine_px[0]);
 

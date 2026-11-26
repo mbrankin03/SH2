@@ -94,6 +94,16 @@ pub struct InventoryScreen {
     /// Animated 4-edge quad `[x0, y0, x1, y1]` in `512x448` PS2 space for `InlinePopup` /
     /// `InlineClosing` (`sh2pc.exe` `FUN_0046af30` `case 0xc <-> case 0xd` via `move_near(2.0, 1.0)`).
     pub examine_popup_rect: [f32; 4],
+    /// Front (`0`) vs back (`1`) side during 2-sided Wood Side coin examine (`otn_itemmain.c:646-666`,
+    /// items `0x2f` Old Man, `0x30` Prisoner, `0x31` Snake).
+    pub examine_coin_side: u8,
+    /// Smooth carousel angular scroll offset in slots (`sh2pc.exe` `FUN_0046bcf0`, eased to `0.0`
+    /// via `move_near(20.0, 110.0)` and clamped to `±1.5`).
+    pub carousel_anim_offset: f32,
+    /// Animated 4-edge focus reticle `[x0, y0, x1, y1]` in `512x448` PS2 space (`FUN_0046af30`).
+    pub focus_rect: [f32; 4],
+    /// Previous frame's `focus_rect` for `look_zanzo` (`0x001daab0`) motion-trail rendering.
+    pub prev_focus_rect: [f32; 4],
     /// Inventory screen fade-to-black alpha (`1.0` = solid black, `0.0` = fully visible;
     /// `SLUS_202.28` `itemmain` `0x001cdb40:86` & `item_fade_out` `0x001db0e0:3740`: `0.5` s).
     pub screen_fade_alpha: f32,
@@ -140,6 +150,10 @@ impl InventoryScreen {
             examine_phase: ExaminePhase::InlinePopup,
             examine_rgb: 128.0,
             examine_popup_rect: EXAMINE_POPUP_DISMISS_SLIT_RECT,
+            examine_coin_side: 0,
+            carousel_anim_offset: 0.0,
+            focus_rect: [201.0, 159.0, 311.0, 289.0],
+            prev_focus_rect: [201.0, 159.0, 311.0, 289.0],
             screen_fade_alpha: 0.0,
             fade_transition: InventoryFadeTransition::None,
         }
@@ -163,6 +177,10 @@ impl InventoryScreen {
         self.fade_transition = InventoryFadeTransition::None;
         self.screen_fade_alpha = 1.0;
         self.examine_popup_rect = EXAMINE_POPUP_DISMISS_SLIT_RECT;
+        self.examine_coin_side = 0;
+        self.carousel_anim_offset = 0.0;
+        self.focus_rect = [201.0, 159.0, 311.0, 289.0];
+        self.prev_focus_rect = self.focus_rect;
         self.focus = InventoryFocus::Carousel;
         self.active_commands.clear();
         self.command_index = 0;
@@ -213,6 +231,35 @@ impl InventoryScreen {
     /// Returns the currently selected item ID in the carousel, if any.
     pub fn selected_item_id(&self) -> Option<u8> {
         self.owned_items.get(self.selected_index).copied()
+    }
+
+    /// Returns the exact `sh2pc.exe` `FUN_0046af30` target reticle rect `[x0, y0, x1, y1]` in
+    /// `512x448` PS2 space for the current [`InventoryFocus`].
+    #[must_use]
+    pub fn target_focus_rect(&self) -> [f32; 4] {
+        match self.focus {
+            InventoryFocus::Carousel | InventoryFocus::CombineTarget => {
+                [201.0, 159.0, 311.0, 289.0]
+            }
+            InventoryFocus::CommandWindow | InventoryFocus::RadioVolume => {
+                [336.0, 21.0, 496.0, 144.0]
+            }
+            InventoryFocus::Corner(CornerButton::Option) => [16.0, 397.0, 176.0, 427.0],
+            InventoryFocus::Corner(CornerButton::Memo) => [176.0, 397.0, 336.0, 427.0],
+            InventoryFocus::Corner(CornerButton::Map) => [336.0, 397.0, 496.0, 427.0],
+            InventoryFocus::ExamineOverlay => self.examine_popup_rect,
+        }
+    }
+
+    /// Returns `true` when `focus_rect` has settled on `target_focus_rect()` (`DAT_0116e3e6 == 0`
+    /// in `otn_itemmain.c:2611`), controlling visibility of the outer L-bracket corners.
+    #[must_use]
+    pub fn is_focus_rect_settled(&self) -> bool {
+        let tgt = self.target_focus_rect();
+        self.focus_rect
+            .iter()
+            .zip(tgt.iter())
+            .all(|(cur, t)| (cur - t).abs() <= 0.5)
     }
 
     /// Advances ECG animation, 3D carousel rotation, scale lerp, `item_allay` pulse/fade,
@@ -326,6 +373,26 @@ impl InventoryScreen {
             }
         }
 
+        // `sh2pc.exe` `FUN_0046bcf0` (`0x0046bcf0:5847`): smooth carousel angular scroll easing
+        // via `move_near(20.0, 110.0, cur * 1000.0, 0.0) * 0.001`.
+        if self.carousel_anim_offset.abs() > 0.001 {
+            let next_milli = move_near(20.0, 110.0, self.carousel_anim_offset * 1000.0, 0.0, dt);
+            self.carousel_anim_offset = next_milli * 0.001;
+            if self.carousel_anim_offset.abs() < 0.002 {
+                self.carousel_anim_offset = 0.0;
+            }
+        }
+
+        // `sh2pc.exe` `FUN_0046af30` (`0x0046af30`) + `look_zanzo` (`0x001daab0`): glide the 4-edge
+        // blue focus reticle toward `target_focus_rect()` via `move_near(2.0, 1.0)`.
+        self.prev_focus_rect = self.focus_rect;
+        if self.focus != InventoryFocus::ExamineOverlay {
+            let tgt = self.target_focus_rect();
+            for (cur, &t) in self.focus_rect.iter_mut().zip(tgt.iter()) {
+                *cur = move_near(2.0, 1.0, *cur, t, dt);
+            }
+        }
+
         // `InlinePopup` open/dismiss vertical flip-collapse animation (`sh2pc.exe` `FUN_0046af30`
         // `case 0xc` `(156, 74)..(356, 274)` <-> `case 0xd` `(201, 172)..(311, 176)` 4 px slit,
         // `move_near(div = 2.0, min_step = 1.0)` at 30 Hz).
@@ -354,8 +421,19 @@ impl InventoryScreen {
                     }
                     if settled {
                         self.examine_popup_rect = EXAMINE_POPUP_DISMISS_SLIT_RECT;
-                        self.examine_phase = ExaminePhase::InlinePopup;
-                        self.focus = InventoryFocus::Carousel;
+                        // `otn_itemmain.c:660-666`: 2-sided Wood Side Apartments coins (`0x2f` Old Man,
+                        // `0x30` Prisoner, `0x31` Snake) flip from front (`0`) to back (`1`) and re-open.
+                        let is_two_sided_coin =
+                            matches!(self.selected_item_id(), Some(0x2f..=0x31));
+                        if is_two_sided_coin && self.examine_coin_side == 0 {
+                            self.examine_coin_side = 1;
+                            self.examine_phase = ExaminePhase::InlinePopup;
+                        } else {
+                            self.examine_coin_side = 0;
+                            self.examine_phase = ExaminePhase::InlinePopup;
+                            self.focus = InventoryFocus::Carousel;
+                            self.focus_rect = EXAMINE_POPUP_DISMISS_SLIT_RECT;
+                        }
                     }
                 }
                 ExaminePhase::FullscreenInspect | ExaminePhase::FullscreenReading => {}
@@ -583,8 +661,10 @@ impl InventoryScreen {
         if cw <= 0.0 || ch <= 0.0 {
             return;
         }
+        // Retail PC `sh2pc.exe` `512x480` space (`FUN_004707b0:525-526`): subtract `16.0` overscan
+        // offset to obtain the `512x448` logical coordinates used by hitboxes.
         let ps2_x = (mouse_x - ox) * 512.0 / cw;
-        let ps2_y = (mouse_y - oy) * 448.0 / ch;
+        let ps2_y = (mouse_y - oy) * 480.0 / ch - 16.0;
 
         if self.focus == InventoryFocus::CommandWindow {
             if (CMD_WIN_MOUSE_X_MIN..=CMD_WIN_MOUSE_X_MAX).contains(&ps2_x)
@@ -636,8 +716,10 @@ impl InventoryScreen {
         if cw <= 0.0 || ch <= 0.0 {
             return (MenuSoundCue::None, InventoryAction::None);
         }
+        // Retail PC `sh2pc.exe` `512x480` space (`FUN_004707b0:525-526`): subtract `16.0` overscan
+        // offset to obtain the `512x448` logical coordinates used by hitboxes.
         let ps2_x = (mouse_x - ox) * 512.0 / cw;
-        let ps2_y = (mouse_y - oy) * 448.0 / ch;
+        let ps2_y = (mouse_y - oy) * 480.0 / ch - 16.0;
 
         if self.focus == InventoryFocus::ExamineOverlay {
             return self.handle_nav(MenuNavAction::Confirm, inventory, snapshot);
@@ -685,6 +767,8 @@ impl InventoryScreen {
                     let len = self.owned_items.len();
                     self.selected_index = (self.selected_index + len - 1) % len;
                     self.selected_scale = CAROUSEL_UNSELECTED_SCALE;
+                    // `sh2pc.exe` `FUN_0046bcf0:5851`: kick smooth angular scroll clamped to `±1.5`
+                    self.carousel_anim_offset = (self.carousel_anim_offset + 1.0).clamp(-1.5, 1.5);
                     (MenuSoundCue::CursorMove, InventoryAction::None)
                 } else {
                     (MenuSoundCue::None, InventoryAction::None)
@@ -694,6 +778,7 @@ impl InventoryScreen {
                 if !self.owned_items.is_empty() {
                     self.selected_index = (self.selected_index + 1) % self.owned_items.len();
                     self.selected_scale = CAROUSEL_UNSELECTED_SCALE;
+                    self.carousel_anim_offset = (self.carousel_anim_offset - 1.0).clamp(-1.5, 1.5);
                     (MenuSoundCue::CursorMove, InventoryAction::None)
                 } else {
                     (MenuSoundCue::None, InventoryAction::None)
@@ -874,6 +959,7 @@ impl InventoryScreen {
                     ItemCommand::Look => {
                         self.examine_page = 0;
                         self.examine_rgb = 128.0;
+                        self.examine_coin_side = 0;
                         self.examine_popup_rect = EXAMINE_POPUP_CMD_START_RECT;
                         // `sh2pc.exe` `FUN_0046a110` (`0x0046a110`) `case 9`: fullscreen `examine_main`
                         // (`0x001d3a00`) items fade out over `0.5` s (`command_main` `0x001cf9e0:1053`)
@@ -1047,18 +1133,18 @@ mod tests {
         );
 
         // SH2:EE CommandWindowMouseFix 3-option hitboxes inside a 4:3 (640x480) viewport:
-        // PS2 `512x448` `(390, 75/100/128)` scales to `(487.5, 80.36/107.14/137.14)` in 640x480.
+        // Retail PC `512x480` maps `y_448 -> y_448 + 16.0` (`FUN_004707b0:526`).
         let sx = 640.0 / 512.0;
-        let sy = 480.0 / 448.0;
-        screen.handle_mouse_move(390.0 * sx, 75.0 * sy, 640.0, 480.0);
+        screen.handle_mouse_move(390.0 * sx, 75.0 + 16.0, 640.0, 480.0);
         assert_eq!(screen.command_index, 0);
-        screen.handle_mouse_move(390.0 * sx, 100.0 * sy, 640.0, 480.0);
+        screen.handle_mouse_move(390.0 * sx, 100.0 + 16.0, 640.0, 480.0);
         assert_eq!(screen.command_index, 1);
-        screen.handle_mouse_move(390.0 * sx, 128.0 * sy, 640.0, 480.0);
+        screen.handle_mouse_move(390.0 * sx, 128.0 + 16.0, 640.0, 480.0);
         assert_eq!(screen.command_index, 2);
 
         // Click row 1 (`Combine`) at y = 100 -> enters CombineTarget preserving command_index == 1
-        let (cue, _) = screen.handle_mouse_click(390.0 * sx, 100.0 * sy, 640.0, 480.0, &inv, &snap);
+        let (cue, _) =
+            screen.handle_mouse_click(390.0 * sx, 100.0 + 16.0, 640.0, 480.0, &inv, &snap);
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(screen.focus, InventoryFocus::CombineTarget);
         assert_eq!(screen.command_index, 1);
@@ -1066,7 +1152,7 @@ mod tests {
         // Mouse click while in `RadioVolume` exits cleanly back to `Carousel` without hitting corner buttons
         screen.focus = InventoryFocus::RadioVolume;
         let (vol_cue, vol_act) =
-            screen.handle_mouse_click(60.0 * sx, 420.0 * sy, 640.0, 480.0, &inv, &snap);
+            screen.handle_mouse_click(60.0 * sx, 420.0 + 16.0, 640.0, 480.0, &inv, &snap);
         assert_eq!(vol_cue, MenuSoundCue::Confirm);
         assert_eq!(vol_act, InventoryAction::None);
         assert_eq!(screen.focus, InventoryFocus::Carousel);
@@ -1278,5 +1364,45 @@ mod tests {
             screen.handle_nav(MenuNavAction::Up, &inv, &s);
             assert_eq!(screen.focus, InventoryFocus::Carousel);
         }
+        // 2-sided Wood Side Apartments coin (`0x2f` Old Man) flips from front (`0`) -> back (`1`)
+        // on first dismiss (`otn_itemmain.c:660-666`) and exits to Carousel on second dismiss.
+        inv.item_get_now(0x2f);
+        screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
+        screen.selected_index = screen
+            .owned_items
+            .iter()
+            .position(|&id| id == 0x2f)
+            .expect("coin 0x2f must be owned");
+        screen.handle_nav(MenuNavAction::Right, &inv, &snap);
+        assert!((screen.carousel_anim_offset + 1.0).abs() < 1e-4);
+        for _ in 0..20 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        assert!(screen.carousel_anim_offset.abs() < 0.05);
+        screen.selected_index = screen
+            .owned_items
+            .iter()
+            .position(|&id| id == 0x2f)
+            .expect("coin 0x2f must be owned");
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        screen.handle_nav(MenuNavAction::Down, &inv, &snap); // Examine
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(screen.examine_coin_side, 0);
+        for _ in 0..20 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        for _ in 0..25 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
+        assert_eq!(screen.examine_coin_side, 1);
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        for _ in 0..25 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        assert_eq!(screen.focus, InventoryFocus::Carousel);
+        assert_eq!(screen.examine_coin_side, 0);
     }
 }

@@ -20,12 +20,18 @@ pub(super) fn render_combat_arena_hud(
     let white = [225, 225, 225, 255];
     let muted = [165, 165, 170, 255];
 
+    let is_campaign = state.campaign_orchestrator.is_some();
+
     let cutscene_locked = state
         .drama_demo_session
         .as_ref()
         .is_some_and(|s| s.player.locks_gameplay_input());
 
-    if state.debug_camera_hud && !state.story_progression_room.modal_3d_open && !cutscene_locked {
+    if !is_campaign
+        && state.debug_camera_hud
+        && !state.story_progression_room.modal_3d_open
+        && !cutscene_locked
+    {
         render_camera_and_player_telemetry(state, yellow, green, cyan, white, muted);
 
         if state.active_test_room == TestRoomKind::CombatArena {
@@ -33,13 +39,31 @@ pub(super) fn render_combat_arena_hud(
         }
     }
 
-    if state.debug_camera_hud || state.drama_demo_session.is_some() {
-        render_cutscene_telemetry_and_subtitles(state, yellow, cyan, muted);
-    }
+    let active_cutscene_subtitle =
+        if state.drama_demo_session.is_some() || (!is_campaign && state.debug_camera_hud) {
+            render_cutscene_borders_and_telemetry(state, is_campaign, yellow, cyan, muted)
+        } else {
+            None
+        };
 
     super::story_overlay::render_3d_story_overlay(state);
 
     state.finish_hud_overlay(encoder, surface_view);
+
+    // Render 3D cutscene subtitles onto the high-resolution `1920x1440` 4:3 PS2 UI rasterizer
+    // (`SH2-163`) and blit into `ps2_ui_viewport()` for crisp native-grade rendering with zero
+    // horizontal stretching on widescreen/4K monitors.
+    if let Some(sub_text) = active_cutscene_subtitle {
+        state.inventory_rasterizer.clear();
+        sh2_ui::atlas_font::draw_subtitle_ps2(
+            &mut state.inventory_rasterizer,
+            None,
+            &sub_text,
+            sh2_ui::atlas_font::PS2_SUBTITLE_COLOR_WHITE,
+        );
+        let vp = state.ps2_ui_viewport();
+        state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
+    }
 }
 
 fn render_subtle_aim_reticle(state: &mut AppState) {
@@ -329,12 +353,13 @@ fn render_combat_status_panel(
     }
 }
 
-fn render_cutscene_telemetry_and_subtitles(
+fn render_cutscene_borders_and_telemetry(
     state: &mut AppState,
+    is_campaign: bool,
     yellow: [u8; 4],
     cyan: [u8; 4],
     muted: [u8; 4],
-) {
+) -> Option<String> {
     if let Some(ref session) = state.drama_demo_session {
         let p = &session.player;
         // Render authentic 4:3 pillarbox / letterbox borders (`DisableCutsceneBorders` & `SetBlackPillarBoxes`, `SH2-77`)
@@ -360,76 +385,68 @@ fn render_cutscene_telemetry_and_subtitles(
             }
         }
 
-        let actors_str: Vec<String> = p
-            .actors
-            .iter()
-            .map(|a| {
-                let vis_tag = if a.culled_offscreen_4x3 {
-                    "CULL-4:3"
-                } else if a.visible {
-                    "Y"
-                } else {
-                    "N"
-                };
-                format!("{}(aid={},vis={})", a.actor_name, a.current_aid, vis_tag)
-            })
-            .collect();
-        state.menu_rasterizer.draw_text(
-            &format!(
-                "[3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [←/→] Scrub ±5s  [V] Aspect  [,/.] Prev/Next  [Esc/G] Skip",
-                p.info.demo_no,
-                p.info.title,
-                p.scene_frame.floor(),
-                p.total_frames(),
-                p.camera.fov_y_radians.to_degrees(),
-                p.widescreen_mode.label(),
-            ),
-            20,
-            575,
-            1,
-            yellow,
-            true,
-        );
-        state.menu_rasterizer.draw_text(
-            &format!(
-                "ACTORS ({}) : {} | VOICE: {} (@ {}) | ToD: {} | DoF: ({:.2},{:.2}) w={:.2} | Blur: {:.0}",
-                p.actors.len(),
-                actors_str.join(", "),
-                p.info.stream_no,
-                p.info.stream_start,
-                p.atmosphere.time_of_day_preset,
-                p.special_fx.dof_tap_offset_px[0],
-                p.special_fx.dof_tap_offset_px[1],
-                p.special_fx.dof_strength,
-                p.special_fx.raw_motion_blur_factor,
-            ),
-            20,
-            595,
-            1,
-            cyan,
-            true,
-        );
+        // Suppress all debug telemetry during Campaign cutscenes (`SH2-163`).
+        if !is_campaign {
+            let actors_str: Vec<String> = p
+                .actors
+                .iter()
+                .map(|a| {
+                    let vis_tag = if a.culled_offscreen_4x3 {
+                        "CULL-4:3"
+                    } else if a.visible {
+                        "Y"
+                    } else {
+                        "N"
+                    };
+                    format!("{}(aid={},vis={})", a.actor_name, a.current_aid, vis_tag)
+                })
+                .collect();
+            state.menu_rasterizer.draw_text(
+                &format!(
+                    "[3D CUTSCENE #{}: {}] FRAME {:04.0}/{:04} | FOV {:.1}° ({}) | [←/→] Scrub ±5s  [V] Aspect  [,/.] Prev/Next  [Esc/G] Skip",
+                    p.info.demo_no,
+                    p.info.title,
+                    p.scene_frame.floor(),
+                    p.total_frames(),
+                    p.camera.fov_y_radians.to_degrees(),
+                    p.widescreen_mode.label(),
+                ),
+                20,
+                575,
+                1,
+                yellow,
+                true,
+            );
+            state.menu_rasterizer.draw_text(
+                &format!(
+                    "ACTORS ({}) : {} | VOICE: {} (@ {}) | ToD: {} | DoF: ({:.2},{:.2}) w={:.2} | Blur: {:.0}",
+                    p.actors.len(),
+                    actors_str.join(", "),
+                    p.info.stream_no,
+                    p.info.stream_start,
+                    p.atmosphere.time_of_day_preset,
+                    p.special_fx.dof_tap_offset_px[0],
+                    p.special_fx.dof_tap_offset_px[1],
+                    p.special_fx.dof_strength,
+                    p.special_fx.raw_motion_blur_factor,
+                ),
+                20,
+                595,
+                1,
+                cyan,
+                true,
+            );
+        }
 
-        if let Some(msg_id) = p.active_subtitle_msg_id {
-            let sub_text = session
+        return p.active_subtitle_msg_id.map(|msg_id| {
+            session
                 .messages
                 .as_ref()
                 .and_then(|m| m.get_text(msg_id as usize))
                 .map(|s| s.replace('\x0C', "\n"))
-                .unwrap_or_else(|| format!("[Subtitle #{}]", msg_id));
-            let cx = state.menu_rasterizer.width / 2;
-            let by = state.menu_rasterizer.height.saturating_sub(56);
-            sh2_ui::draw_subtitle(
-                &mut state.menu_rasterizer,
-                None,
-                &sub_text,
-                cx,
-                by,
-                28,
-                [240, 240, 240, 255],
-            );
-        }
-    } else if !state.story_progression_room.modal_3d_open {
+                .unwrap_or_else(|| format!("[Subtitle #{}]", msg_id))
+        });
+    } else if !is_campaign && !state.story_progression_room.modal_3d_open {
         let demo_entry =
             &DRAMA_DEMO_CATALOG[state.selected_drama_demo_idx % DRAMA_DEMO_CATALOG.len()];
         state.menu_rasterizer.draw_text(
@@ -447,4 +464,5 @@ fn render_cutscene_telemetry_and_subtitles(
             true,
         );
     }
+    None
 }

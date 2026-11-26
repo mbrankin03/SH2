@@ -22,6 +22,17 @@ const CELL_H: usize = 64;
 const FIRST_CHAR: u32 = 0x20;
 const GLYPH_COUNT: usize = 224;
 
+/// Full atlas glyph cell height in virtual `512×480` pixels (`SH2:EE` `Patches/Fonts.cpp`
+/// `charH = 32`, `Common/Settings.h` `CustomFontCharHeight = 32`; `2×` = `CELL_H = 64`).
+pub const PS2_FONT_ATLAS_CELL_HEIGHT_VIRTUAL: f32 = 32.0;
+
+pub use crate::subtitle::{
+    compute_ps2_subtitle_layout, draw_subtitle, draw_subtitle_ps2, ps2_subtitle_top_y_480,
+    Ps2SubtitleLayout, PS2_FONT_GS_Y_ORIGIN, PS2_FONT_PIXEL_ASPECT_4X3, PS2_FONT_VIRTUAL_HEIGHT,
+    PS2_FONT_VIRTUAL_WIDTH, PS2_NORMAL_FONT_HEIGHT, PS2_NORMAL_FONT_WIDTH,
+    PS2_SUBTITLE_COLOR_WHITE, PS2_SUBTITLE_Y_ANCHOR_GS,
+};
+
 /// Authentic Silent Hill 2 text color palette from retail engine `0x47eca0` color table.
 /// Each palette entry defines a `(top_color, bottom_color)` RGBA pair for two-tone gradient shading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -416,14 +427,19 @@ impl AtlasFont {
         let (x, y) = pos;
         let px_height = px_height.max(4);
         let x_scale = x_scale.max(0.25);
-        let off = (px_height / 14).max(1);
+        // 1:1 PS2/PC drop shadow (`SLUS_202.28` `fontFlush` `0x001b7530`, `sh2pc.exe`
+        // `FUN_00482160` `0x00482160`): `+0x10` Q4 subpixels = `(+1, +1)` virtual pixels in
+        // `512×480` space, pure black (`_DAT_01157cc4 = 0x000000`) at 100% foreground alpha.
+        let virtual_px_y = px_height as f32 / PS2_FONT_ATLAS_CELL_HEIGHT_VIRTUAL;
+        let off_x = (virtual_px_y * x_scale).round().max(1.0) as usize;
+        let off_y = virtual_px_y.round().max(1.0) as usize;
 
         // Pass 0: drop shadow (if enabled)
         if shadow {
-            let shadow_alpha = (top_color[3].max(bottom_color[3]) as f32 * 0.85) as u8;
+            let shadow_alpha = top_color[3].max(bottom_color[3]);
             let shadow_col = [0, 0, 0, shadow_alpha];
-            let mut cx = (x + off) as f32;
-            let cy = y + off;
+            let mut cx = (x + off_x) as f32;
+            let cy = y + off_y;
             for ch in text.chars() {
                 if ch != ' ' {
                     if let Some(g) = self.glyph(ch) {
@@ -520,39 +536,6 @@ impl AtlasFont {
                 }
             }
         }
-    }
-}
-
-/// Draws a (possibly multi-line) subtitle centred on `center_x` with its last line ending at
-/// `bottom_y`. Uses the authentic proportional Silent Hill 2 font (via `AtlasFont::shared`).
-/// `px_height` is the line height in pixels.
-pub fn draw_subtitle(
-    rast: &mut TextRasterizer,
-    game_root: Option<&Path>,
-    text: &str,
-    center_x: usize,
-    bottom_y: usize,
-    px_height: usize,
-    color: [u8; 4],
-) {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.is_empty() {
-        return;
-    }
-    let line_h = px_height + px_height / 4;
-    let top = bottom_y.saturating_sub(line_h * lines.len());
-    let font = AtlasFont::shared(game_root);
-    for (i, line) in lines.iter().enumerate() {
-        let y = top + i * line_h;
-        let w = font.text_width(line, px_height);
-        font.draw_line(
-            rast,
-            line,
-            (center_x.saturating_sub(w / 2), y),
-            px_height,
-            color,
-            true,
-        );
     }
 }
 

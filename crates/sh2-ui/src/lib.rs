@@ -16,8 +16,9 @@ pub mod pause;
 pub mod quickslots;
 pub mod results;
 pub mod save_load;
+pub mod subtitle;
 
-pub use atlas_font::{draw_subtitle, AtlasFont, Sh2TextColor};
+pub use atlas_font::{AtlasFont, Sh2TextColor};
 pub use button_atlas::{AuthenticButtonSprite, ButtonSpriteSheet};
 pub use credits::{
     CreditsSequencePhase, EndingCreditsSequence, CREDITS_BIK_DURATION_SECS, END_BIK_DURATION_SECS,
@@ -66,6 +67,10 @@ pub use results::{draw_results_screen, ResultsRowData, ResultsScreen};
 pub use save_load::{
     draw_save_load_screen, SaveAddInfoMode, SaveLoadAction, SaveLoadConfig, SaveLoadMode,
     SaveLoadScreen, SaveLoadStep, YesNoChoice, SAVEBG2_TBN2_PATH, SAVEBG_TBN2_PATH,
+};
+pub use subtitle::{
+    compute_ps2_subtitle_layout, draw_subtitle, draw_subtitle_ps2, ps2_subtitle_top_y_480,
+    Ps2SubtitleLayout, PS2_SUBTITLE_COLOR_WHITE,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

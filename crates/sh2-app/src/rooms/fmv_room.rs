@@ -533,15 +533,11 @@ pub(crate) fn render_fmv_subtitles(state: &mut AppState) {
         movie_path,
     ) {
         let game_root = movie_path.and_then(sh2_assets::formats::bink::game_root_from_movie_path);
-        let w = state.menu_rasterizer.width;
-        sh2_ui::draw_subtitle(
+        sh2_ui::atlas_font::draw_subtitle_ps2(
             &mut state.menu_rasterizer,
             game_root.as_deref(),
             &sub_line,
-            w / 2,
-            645,
-            32,
-            [235, 235, 235, 255],
+            sh2_ui::atlas_font::PS2_SUBTITLE_COLOR_WHITE,
         );
     }
 }

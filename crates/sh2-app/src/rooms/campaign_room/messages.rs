@@ -15,11 +15,9 @@ use sh2_assets::AssetPathResolver;
 /// Relative path to the retail common message table (`sh2pc.exe` `0x006724d4`).
 pub(crate) const COMMON_MES_REL_PATH: &str = "etc/message/common_msg_e.mes";
 
-/// Default subtitle text color matching retail white (`fontSetColor(0)` `0x001b73a0` scaled to 8-bit).
-pub(crate) const CAMPAIGN_SUBTITLE_RGBA: [u8; 4] = [240, 240, 240, 255];
-
-/// Default subtitle glyph height in pixels at 720p (`28` px, matching `combat_arena/hud.rs`).
-pub(crate) const CAMPAIGN_SUBTITLE_PX_HEIGHT: usize = 28;
+/// Default subtitle text color matching retail white (`SLUS_202.28` `fontSetColor(0)`
+/// `0x001b73a0`, table `@1369` at `0x002baec0`: PS2 GS `0x808080` = unity `1.0` white).
+pub(crate) const CAMPAIGN_SUBTITLE_RGBA: [u8; 4] = sh2_ui::atlas_font::PS2_SUBTITLE_COLOR_WHITE;
 
 /// Origin of an active campaign event message (`EventMainStandard` `0x001a7b50`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,21 +307,13 @@ pub(crate) fn load_mes_table(rel_path: &str, prefer_sh2ee: bool) -> Option<Messa
 }
 
 /// Renders an active campaign event message at the authentic bottom-centered subtitle band
-/// (`fontPrintStrMain` `0x001b4a10` default subtitle position).
+/// (`SLUS_202.28` `fontPrintStrMain` `0x001b4a10` / `sh2pc.exe` `FUN_0047faa0` `0x0047faa0`
+/// `0x8DC` Y-anchor, `30/480` line step, `1.25` 4:3 pixel aspect, and `(+1, +1)` virtual drop
+/// shadow from `fontFlush` `0x001b7530`).
 pub(crate) fn draw_campaign_message(rast: &mut sh2_ui::TextRasterizer, text: &str) {
     let clean = text.replace('\x0C', "\n");
     if clean.trim().is_empty() {
         return;
     }
-    let cx = rast.width / 2;
-    let bottom_y = rast.height.saturating_sub(56);
-    sh2_ui::draw_subtitle(
-        rast,
-        None,
-        &clean,
-        cx,
-        bottom_y,
-        CAMPAIGN_SUBTITLE_PX_HEIGHT,
-        CAMPAIGN_SUBTITLE_RGBA,
-    );
+    sh2_ui::atlas_font::draw_subtitle_ps2(rast, None, &clean, CAMPAIGN_SUBTITLE_RGBA);
 }

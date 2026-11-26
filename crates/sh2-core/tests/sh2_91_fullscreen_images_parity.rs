@@ -160,7 +160,7 @@ fn test_overlay_sprites_stay_pixel_locked_to_background_across_resolutions() {
 #[test]
 fn test_cutaway_quality_presets_and_vanilla_ps2_gate() {
     let mut cfg = AppConfig::default();
-    assert_eq!(cfg.video.cutaway_quality, CutawayQuality::Ai4kMaster);
+    assert_eq!(cfg.video.cutaway_quality, CutawayQuality::Sh2eeHd);
 
     cfg.apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
     assert_eq!(cfg.video.cutaway_quality, CutawayQuality::OriginalPs2);

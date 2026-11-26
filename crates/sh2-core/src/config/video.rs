@@ -240,9 +240,9 @@ impl WorldTextureQuality {
 pub enum CutawayQuality {
     /// 4K AI Super-Resolution Master Pack (`mods/4k_cutaways/`, up to `4096x4096`),
     /// falling back to `Sh2eeHd` -> `OriginalPs2`.
-    #[default]
     Ai4kMaster,
     /// Silent Hill 2: Enhanced Edition HD Pack (`sh2e/pic/`, `2048x2048`).
+    #[default]
     Sh2eeHd,
     /// Original PS2 / Retail PC (`data/pic/`, `512x512`).
     OriginalPs2,
@@ -287,9 +287,9 @@ pub enum ShadowQualityMode {
     /// Authentic PS2 `.kg1`/`.kg2` two-pass stencil shadow volumes + lit-room drop shadows (`sh2shd_shadow_model.c`).
     ClassicPs2Stencil,
     /// SH2:EE per-room opacity (`170/255` default) + `~33`-frame fade-in soft stencil shadows (`EnableSoftShadows`).
+    #[default]
     EnhancedEditionSoft,
     /// Native `wgpu` Percentage-Closer Soft Shadows (PCSS) with contact-hardening penumbras & true self-shadowing.
-    #[default]
     NativePcss,
 }
 
@@ -332,9 +332,9 @@ pub enum LightingProfile {
     /// Strict 1:1 original PS2 `DrawEnvData` lighting without SH2:EE overrides.
     Ps2Authentic,
     /// PS2 `DrawEnvData` plus SH2:EE lighting parity fixes (`EnhancedFlashlight`, `CatacombsMeatRoom`, `SpecularFix`).
+    #[default]
     EnhancedEdition,
     /// SH2:EE lighting parity fixes combined with Native Enhanced PCSS self-shadowing.
-    #[default]
     NativeEnhanced,
 }
 
@@ -375,11 +375,11 @@ impl LightingProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OutdoorStreamingMode {
     /// Authentic 1:1 PS2 `loadbg_2x2` 2x2 quadrant streaming (`SLUS_202.28` `0x270dd0`).
+    #[default]
     ClassicPs2LoadBg2x2,
     /// Native `5x5` neighborhood GPU residency (25 tiles around the player's current cell).
     Native5x5Grid,
     /// Native Whole-Town GPU residency (pre-streams all tiles in the outdoor area onto GPU buffers).
-    #[default]
     NativeWholeTown,
 }
 
@@ -416,11 +416,11 @@ impl OutdoorStreamingMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FmvCutsceneSource {
     /// Automatically select `Upscaled4kMp4` when the 4K AI VSR pack is detected on disk, else `Enhanced1080p60`.
-    #[default]
     Auto,
     /// 4K AI VSR Master (`3840x2160` 30fps AV1 + multi-track FLAC).
     Upscaled4kMp4,
     /// SH2:EE 1080p60 AI-upscaled Bink (`sh2e/movie/*.bik`).
+    #[default]
     Enhanced1080p60,
     /// OG HQ PS2 Masters (`Natural 30fps Bink`).
     OgHqPs2Masters,
@@ -540,10 +540,10 @@ impl Default for VideoOptions {
             lighting_profile: LightingProfile::default(),
             outdoor_streaming_mode: OutdoorStreamingMode::default(),
             aces_tonemapping: false,
-            enable_water_reflections: true,
-            enable_oar_ripples: true,
-            enable_fire_heat_haze: true,
-            enable_spark_flash_lights: true,
+            enable_water_reflections: false,
+            enable_oar_ripples: false,
+            enable_fire_heat_haze: false,
+            enable_spark_flash_lights: false,
             enable_enhanced_title_screen: true,
             fmv_source: FmvCutsceneSource::default(),
         }

@@ -73,40 +73,44 @@ pub const CMD_WIN_ROW_0_MAX_Y: f32 = 88.0;
 /// Row 1/2 split Y boundary in 512x448 PS2/PC space (`CommandWindowMouseFix.cpp:47`, `MouseY < 114`).
 pub const CMD_WIN_ROW_1_MAX_Y: f32 = 114.0;
 
-/// Three bottom-row navigation buttons on the Status / Inventory screen
-/// (`SLUS_202.28` `font_print` @ `0x001d5c50..0x001d5ca8` & retail `item_msg_e.mes` `0x09..0x0b`,
-/// `y = 0x1ac = 428` in `512x448` space: `Option | Map | Memo`).
+/// Three bottom-row navigation buttons on the Status / Inventory screen.
+///
+/// Prototype vs Retail PC drift:
+/// - `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`): `Option (0x40) | Map (0xf0) | Memo (0x187)`
+/// - Retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`, `sh2pc_00470000.c:2620-2631`):
+///   `Options (0xfa, x=0x60) | Memo (0x0b, x=0x100) | Map (0x0a, x=0x1a0)` at `y = 0x1ac = 428`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CornerButton {
-    /// Open in-game Options menu (`0x09` `"Option"` at `x = 0x40 = 64, y = 0x1ac = 428`).
+    /// Open in-game Options menu (`sh2pc.exe` `0x00472c30`: `0xfa` `"Options"` at `x = 0x60 = 96, y = 0x1ac = 428`).
     Option = 0,
-    /// Open Fullscreen Paper Map (`0x0a` `"Map"` at `x = 0xf0 = 240, y = 0x1ac = 428`, `Event/chizu.c`).
-    Map = 1,
-    /// Open collected Memo List (`0x0b` `"Memo"` at `x = 0x187 = 391, y = 0x1ac = 428`, gated by `MemoCommandCheck`).
-    Memo = 2,
+    /// Open collected Memo List (`sh2pc.exe` `0x00472c20`: `0x0b` `"Memo"` at `x = 0x100 = 256, y = 0x1ac = 428`, gated by `MemoCommandCheck`).
+    Memo = 1,
+    /// Open Fullscreen Paper Map (`sh2pc.exe` `0x00472c38`: `0x0a` `"Map"` at `x = 0x1a0 = 416, y = 0x1ac = 428`, `Event/chizu.c`).
+    Map = 2,
 }
 
 impl CornerButton {
-    /// Ordered list of the three PS2 bottom-row buttons (`Option`, `Map`, `Memo`).
+    /// Ordered list of the three retail PC / SH2:EE bottom-row buttons (`Options`, `Memo`, `Map`).
     pub const ALL: [CornerButton; 3] =
-        [CornerButton::Option, CornerButton::Map, CornerButton::Memo];
+        [CornerButton::Option, CornerButton::Memo, CornerButton::Map];
 
-    /// Authentic PS2 / retail `item_msg_e.mes` (`0x09..0x0b`) display label.
+    /// Authentic retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`) display label.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::Option => "Option",
-            Self::Map => "Map",
+            Self::Option => "Options",
             Self::Memo => "Memo",
+            Self::Map => "Map",
         }
     }
 
-    /// Logical `512x448` PS2 hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `sprite`
-    /// (`0x001d8c80..0x001d8d58`: column width `140` at `x = 26, 186, 346`) and `font_print` (`y = 428`).
+    /// Logical `512x448` PS2/PC hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `sprite`
+    /// (`0x001d8c80..0x001d8d58`: column width `140` at `x = 26, 186, 346`) and `sh2pc.exe`
+    /// `0x00472c20..0x00472c50` (`Options | Memo | Map` at `y = 428`).
     pub const fn hitbox_512x448(&self) -> (f32, f32, f32, f32) {
         match self {
             Self::Option => (26.0, 408.0, 166.0, 442.0),
-            Self::Map => (186.0, 408.0, 326.0, 442.0),
-            Self::Memo => (346.0, 408.0, 486.0, 442.0),
+            Self::Memo => (186.0, 408.0, 326.0, 442.0),
+            Self::Map => (346.0, 408.0, 486.0, 442.0),
         }
     }
 }
@@ -135,14 +139,14 @@ pub enum ItemCommand {
 }
 
 impl ItemCommand {
-    /// Authentic Silent Hill 2 command window label.
+    /// Authentic Silent Hill 2 retail `item_msg_e.mes` (`0x00..0x0f`) command window label.
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Use => "Use",
             Self::Equip => "Equip",
             Self::Unequip => "Unequip",
             Self::Reload => "Reload",
-            Self::Look => "Look",
+            Self::Look => "Examine",
             Self::Combine => "Combine",
             Self::TurnOn => "ON",
             Self::TurnOff => "OFF",

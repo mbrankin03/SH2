@@ -72,6 +72,8 @@ pub struct InventoryScreen {
     pub examine_pitch_rad: f32,
     /// Free-orbit zoom multiplier `[0.5, 2.5]` when `enable_free_item_orbit` is enabled.
     pub examine_zoom: f32,
+    /// Active page index in multi-page `\x0c`-delimited `examine_text` (`EvSubMessage` pagination).
+    pub examine_page: usize,
 }
 
 impl Default for InventoryScreen {
@@ -109,6 +111,7 @@ impl InventoryScreen {
             examine_yaw_rad: 0.0,
             examine_pitch_rad: 0.0,
             examine_zoom: 1.0,
+            examine_page: 0,
         }
     }
 
@@ -301,9 +304,30 @@ impl InventoryScreen {
                 cmds.push(ItemCommand::Look);
             }
             ItemCategory::KeyItem | ItemCategory::PuzzleItem | ItemCategory::SubScenarioItem => {
+                // Exact `sh2pc.exe` `FUN_0046a110` (`0x0046a110`, `command_kind`):
+                // Only combinable puzzle items (`case 1`: `0x23, 0x35, 0x36, 0x3e, 0x3f, 0x40` and
+                // `case 10`: `0x24, 0x38, 0x39, 0x3b, 0x3c, 0x3d`) expose `Combine`; non-combinable
+                // items like `Photo of Mary` (`0x14`) and `Letter from Mary` (`0x15`) show only
+                // `Use` + `Examine` (`case 0xb` / `case 9`).
                 cmds.push(ItemCommand::Use);
+                let is_combinable = matches!(
+                    item_id,
+                    0x23 | 0x24
+                        | 0x35
+                        | 0x36
+                        | 0x38
+                        | 0x39
+                        | 0x3b
+                        | 0x3c
+                        | 0x3d
+                        | 0x3e
+                        | 0x3f
+                        | 0x40
+                );
+                if is_combinable {
+                    cmds.push(ItemCommand::Combine);
+                }
                 cmds.push(ItemCommand::Look);
-                cmds.push(ItemCommand::Combine);
             }
             ItemCategory::Weapon | ItemCategory::SecretItem => {
                 cmds.push(ItemCommand::Look);
@@ -331,7 +355,29 @@ impl InventoryScreen {
             InventoryFocus::RadioVolume => self.handle_radio_volume_nav(nav),
             InventoryFocus::CombineTarget => self.handle_combine_nav(nav),
             InventoryFocus::ExamineOverlay => match nav {
-                MenuNavAction::Confirm | MenuNavAction::Cancel => {
+                MenuNavAction::Confirm => {
+                    let page_count = self
+                        .selected_item_id()
+                        .and_then(item_metadata)
+                        .map(|m| {
+                            m.examine_text
+                                .unwrap_or(m.description)
+                                .split('\x0c')
+                                .count()
+                        })
+                        .unwrap_or(1)
+                        .max(1);
+                    if self.examine_page + 1 < page_count {
+                        self.examine_page += 1;
+                        (MenuSoundCue::Confirm, InventoryAction::None)
+                    } else {
+                        self.examine_page = 0;
+                        self.focus = InventoryFocus::Carousel;
+                        (MenuSoundCue::Cancel, InventoryAction::None)
+                    }
+                }
+                MenuNavAction::Cancel => {
+                    self.examine_page = 0;
                     self.focus = InventoryFocus::Carousel;
                     (MenuSoundCue::Cancel, InventoryAction::None)
                 }
@@ -515,20 +561,20 @@ impl InventoryScreen {
     ) -> (MenuSoundCue, InventoryAction) {
         match nav {
             MenuNavAction::Left => {
-                // Authentic `SLUS_202.28` `font_print` order: `Option | Map | Memo`
+                // Retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`) order: `Options | Memo | Map`
                 let next = match btn {
-                    CornerButton::Option => CornerButton::Memo,
-                    CornerButton::Map => CornerButton::Option,
-                    CornerButton::Memo => CornerButton::Map,
+                    CornerButton::Option => CornerButton::Map,
+                    CornerButton::Memo => CornerButton::Option,
+                    CornerButton::Map => CornerButton::Memo,
                 };
                 self.focus = InventoryFocus::Corner(next);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
             }
             MenuNavAction::Right => {
                 let next = match btn {
-                    CornerButton::Option => CornerButton::Map,
-                    CornerButton::Map => CornerButton::Memo,
-                    CornerButton::Memo => CornerButton::Option,
+                    CornerButton::Option => CornerButton::Memo,
+                    CornerButton::Memo => CornerButton::Map,
+                    CornerButton::Map => CornerButton::Option,
                 };
                 self.focus = InventoryFocus::Corner(next);
                 (MenuSoundCue::CursorMove, InventoryAction::None)
@@ -641,6 +687,7 @@ impl InventoryScreen {
                         }
                     }
                     ItemCommand::Look => {
+                        self.examine_page = 0;
                         self.focus = InventoryFocus::ExamineOverlay;
                         (MenuSoundCue::Confirm, InventoryAction::None)
                     }
@@ -767,18 +814,18 @@ mod tests {
         inv.item_get_now(16); // Chainsaw (SecretItem, still equippable!)
         inv.item_get_now(18); // Flashlight
         inv.item_get_now(19); // Radio
-        inv.item_get_now(24); // Key item (3 commands: Use, Look, Combine)
+        inv.item_get_now(0x24); // Combinable puzzle item (sh2pc.exe FUN_0046a110 case 10: Use, Combine, Examine)
 
         let snap = InventoryPlayerSnapshot::default();
         let mut screen = InventoryScreen::new();
         screen.open(&inv);
 
-        // Chainsaw (#16) must offer Equip & Look, NOT Flashlight ON/OFF!
+        // Chainsaw (#16) must offer Equip & Examine, NOT Flashlight ON/OFF!
         assert_eq!(
             screen.commands_for_item(16, &inv, &snap),
             vec![ItemCommand::Equip, ItemCommand::Look]
         );
-        // Flashlight (#18) offers ON, Look; Radio (#19) offers OFF, Volume, Look
+        // Flashlight (#18) offers ON, Examine; Radio (#19) offers OFF, Volume, Examine
         assert_eq!(
             screen.commands_for_item(18, &inv, &snap),
             vec![ItemCommand::TurnOn, ItemCommand::Look]
@@ -788,11 +835,15 @@ mod tests {
             vec![ItemCommand::TurnOff, ItemCommand::Volume, ItemCommand::Look]
         );
 
-        // Open command window on key item (#24) -> 3 options
+        // Open command window on combinable puzzle item (0x24) -> 3 options (Use, Combine, Examine)
         screen.selected_index = 5;
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(screen.focus, InventoryFocus::CommandWindow);
         assert_eq!(screen.active_commands.len(), 3);
+        assert_eq!(
+            screen.active_commands,
+            vec![ItemCommand::Use, ItemCommand::Combine, ItemCommand::Look]
+        );
 
         // SH2:EE CommandWindowMouseFix 3-option hitboxes inside a 4:3 (640x480) viewport:
         // PS2 `512x448` `(390, 75/100/128)` scales to `(487.5, 80.36/107.14/137.14)` in 640x480.
@@ -805,10 +856,11 @@ mod tests {
         screen.handle_mouse_move(390.0 * sx, 128.0 * sy, 640.0, 480.0);
         assert_eq!(screen.command_index, 2);
 
-        let (cue, _) = screen.handle_mouse_click(390.0 * sx, 128.0 * sy, 640.0, 480.0, &inv, &snap);
+        // Click row 1 (`Combine`) at y = 100 -> enters CombineTarget preserving command_index == 1
+        let (cue, _) = screen.handle_mouse_click(390.0 * sx, 100.0 * sy, 640.0, 480.0, &inv, &snap);
         assert_eq!(cue, MenuSoundCue::Confirm);
         assert_eq!(screen.focus, InventoryFocus::CombineTarget);
-        assert_eq!(screen.command_index, 2);
+        assert_eq!(screen.command_index, 1);
 
         // Mouse click while in `RadioVolume` exits cleanly back to `Carousel` without hitting corner buttons
         screen.focus = InventoryFocus::RadioVolume;
@@ -848,5 +900,54 @@ mod tests {
         let (cue, memo_act) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(cue, MenuSoundCue::Cancel);
         assert_eq!(memo_act, InventoryAction::None);
+    }
+
+    #[test]
+    fn test_sh2_152_retail_labels_non_combinable_mary_items_and_examine_pagination() {
+        // Retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`): `Options | Memo | Map`
+        assert_eq!(
+            CornerButton::ALL.map(|b| b.label()),
+            ["Options", "Memo", "Map"]
+        );
+        // Retail `item_msg_e.mes` (`0x06`): `"Examine"`
+        assert_eq!(ItemCommand::Look.label(), "Examine");
+
+        let mut inv = InventoryManager::new();
+        inv.item_get_now(20); // Photo of Mary (0x14)
+        inv.item_get_now(21); // Letter from Mary (0x15)
+        let snap = InventoryPlayerSnapshot::default();
+        let mut screen = InventoryScreen::new();
+        screen.open(&inv);
+
+        // `sh2pc.exe` `FUN_0046a110` (`0x0046a110`): Photo & Letter expose `Use` + `Examine` ONLY (no `Combine`)
+        assert_eq!(
+            screen.commands_for_item(20, &inv, &snap),
+            vec![ItemCommand::Use, ItemCommand::Look]
+        );
+        assert_eq!(
+            screen.commands_for_item(21, &inv, &snap),
+            vec![ItemCommand::Use, ItemCommand::Look]
+        );
+
+        // Select Letter from Mary (idx 1), open CommandWindow, choose Examine -> 4-page `\x0c` pagination
+        screen.selected_index = 1;
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(screen.focus, InventoryFocus::CommandWindow);
+        screen.handle_nav(MenuNavAction::Down, &inv, &snap); // row 1 = Examine
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
+        assert_eq!(screen.examine_page, 0);
+
+        for expected_page in 1..=3 {
+            let (cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+            assert_eq!(cue, MenuSoundCue::Confirm);
+            assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
+            assert_eq!(screen.examine_page, expected_page);
+        }
+        // Final Confirm after page 3 closes ExamineOverlay back to Carousel
+        let (cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(cue, MenuSoundCue::Cancel);
+        assert_eq!(screen.focus, InventoryFocus::Carousel);
+        assert_eq!(screen.examine_page, 0);
     }
 }

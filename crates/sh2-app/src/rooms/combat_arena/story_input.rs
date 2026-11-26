@@ -276,7 +276,6 @@ fn handle_open_modal_key(state: &mut AppState, key_code: KeyCode) -> bool {
             ) {
                 if !state.sim_core.scenario.flags.get(28) {
                     state.sim_core.scenario.flags.set(28, true);
-                    state.sim_core.scenario.inventory_mgr.give_raw(19, 1);
                     state.sim_core.scenario.cutaway_overlay.set_incar_alpha(0.0);
                     if let (Some(eng), Some(bank)) =
                         (state.audio_engine.as_mut(), state.audio_bank.as_ref())

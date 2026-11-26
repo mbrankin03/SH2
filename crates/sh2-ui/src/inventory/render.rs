@@ -304,17 +304,38 @@ fn draw_carousel_arc(
         return;
     }
 
-    // `lookline` (`0x001d6c30`): single closed `RGB(48, 96, 240)` square reticle + two outer
-    // L-bracket corner accents at `(-6, -6)` and `(+6, +5)` when active on `Carousel`.
-    let ret_h_f = STATUS_SNAPSHOT_H_448 * c.sy;
-    let ret_h = ret_h_f.round() as usize;
-    let ret_w = c.width_for_height(ret_h_f, 1.0).round() as usize;
-    let rx = (cx as usize).saturating_sub(ret_w / 2);
-    let ry = (cy as usize).saturating_sub(ret_h / 2);
-    let is_carousel_active = screen.focus == InventoryFocus::Carousel;
+    // `lookline` (`SLUS_202.28` `0x001d6c30`, `sh2pc.exe` `FUN_0046af30` `0x0046af30`):
+    // Single closed `RGB(48, 96, 240)` reticle + two outer L-bracket corner accents at `(-6, -6)`
+    // and `(+6, +5)` framing the active focus target:
+    // - `Carousel` / `CombineTarget` (`case 1`): centered `(-55..+55, -65..+65)` -> `(201..311, 159..289)`
+    // - `CommandWindow` / `RadioVolume` (`case 6/7`): `(+80..+240, -203..-80)` -> `(336..496, 21..144)`
+    // - `Corner(Option | Memo | Map)` (`case 2/3/4`): `(-240..-80 | -80..+80 | +80..+240, +173..+203)`
+    let (ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448) = match screen.focus {
+        InventoryFocus::Carousel | InventoryFocus::CombineTarget => (201.0, 159.0, 311.0, 289.0),
+        InventoryFocus::CommandWindow | InventoryFocus::RadioVolume => (336.0, 21.0, 496.0, 144.0),
+        InventoryFocus::Corner(CornerButton::Option) => (16.0, 397.0, 176.0, 427.0),
+        InventoryFocus::Corner(CornerButton::Memo) => (176.0, 397.0, 336.0, 427.0),
+        InventoryFocus::Corner(CornerButton::Map) => (336.0, 397.0, 496.0, 427.0),
+        InventoryFocus::ExamineOverlay => (201.0, 159.0, 311.0, 289.0),
+    };
+    let rx = c.xi(ret_x0_512);
+    let ry = c.yi(ret_y0_448);
+    let ret_w = c.xi(ret_x1_512).saturating_sub(rx);
+    let ret_h = c.yi(ret_y1_448).saturating_sub(ry);
+    let show_corner_brackets = matches!(
+        screen.focus,
+        InventoryFocus::Carousel
+            | InventoryFocus::CommandWindow
+            | InventoryFocus::RadioVolume
+            | InventoryFocus::Corner(_)
+    );
     let ret_a = if matches!(
         screen.focus,
-        InventoryFocus::Carousel | InventoryFocus::CombineTarget
+        InventoryFocus::Carousel
+            | InventoryFocus::CombineTarget
+            | InventoryFocus::CommandWindow
+            | InventoryFocus::RadioVolume
+            | InventoryFocus::Corner(_)
     ) {
         0xff
     } else {
@@ -328,11 +349,13 @@ fn draw_carousel_arc(
         ret_w,
         ret_h,
         ret_a,
-        is_carousel_active,
+        show_corner_brackets,
     );
 
     // `item_allay` (`0x001d7640`): pulsing double-chevron L/R arrows flanking carousel reticle
-    draw_item_allay(rasterizer, c, screen.arrow_pulse, screen.arrow_fade);
+    if screen.owned_items.len() > 1 {
+        draw_item_allay(rasterizer, c, screen.arrow_pulse, screen.arrow_fade);
+    }
 
     let total = screen.owned_items.len();
     let draw_order: &[isize] = if total >= 7 {
@@ -569,11 +592,18 @@ fn draw_examine_overlay(
             Sh2TextColor::White,
             true,
         );
-        let text = meta.examine_text.unwrap_or(meta.description);
-        for (i, line) in text.lines().take(4).enumerate() {
+        let raw_text = meta.examine_text.unwrap_or(meta.description);
+        let pages: Vec<&str> = raw_text.split('\x0c').collect();
+        let active_page = pages
+            .get(screen.examine_page.min(pages.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or("");
+        for (i, raw_line) in active_page.lines().take(6).enumerate() {
+            // Strip any stray ASCII control bytes (`< 0x20`) so `.mes` control codes never leak as `?`
+            let clean_line: String = raw_line.chars().filter(|&ch| !ch.is_control()).collect();
             font.draw_line_centered(
                 rasterizer,
-                line,
+                &clean_line,
                 (
                     w / 2,
                     text_y0 + title_px + (8.0 * c.sy).round() as usize + i * (body_px + 6),
@@ -682,5 +712,48 @@ mod tests {
         let combine_px = &rast.pixels[(290 * 512 + 370) * 4..][..4];
         assert_eq!(combine_px[3], 160);
         assert!(combine_px[1] > combine_px[0]);
+
+        // 4. Optional Layer 4 visual snapshots for SH2-152 (CommandWindow + Letter Examine)
+        if let Ok(out_dir) = std::env::var("SH2_INV_BEAT4_DIR") {
+            let _ = std::fs::create_dir_all(&out_dir);
+            let mut inv_mary = InventoryManager::new();
+            inv_mary.item_get_now(20); // Photo of Mary
+            inv_mary.item_get_now(21); // Letter from Mary
+            let mut scr = InventoryScreen::new();
+            scr.open(&inv_mary);
+            let snap_mary = InventoryPlayerSnapshot::default();
+            let mut big = TextRasterizer::new(1024, 768);
+
+            // CommandWindow focused on Photo of Mary (matches inv_02.png)
+            scr.focus = InventoryFocus::CommandWindow;
+            scr.active_commands = scr.commands_for_item(20, &inv_mary, &snap_mary);
+            scr.command_index = 0;
+            for _ in 0..10 {
+                scr.tick(1.0 / 30.0, &snap_mary);
+            }
+            big.fill_rect(0, 0, 1024, 768, [0, 0, 0, 255]);
+            draw_inventory_screen(&scr, &inv_mary, &snap_mary, None, None, font, &mut big);
+            let _ = image::save_buffer(
+                format!("{out_dir}/inv_cmd_window.png"),
+                &big.pixels,
+                1024,
+                768,
+                image::ColorType::Rgba8,
+            );
+
+            // ExamineOverlay on Letter from Mary (page 0, zero '?' control-code leak)
+            scr.selected_index = 1;
+            scr.focus = InventoryFocus::ExamineOverlay;
+            scr.examine_page = 0;
+            big.clear();
+            draw_inventory_screen(&scr, &inv_mary, &snap_mary, None, None, font, &mut big);
+            let _ = image::save_buffer(
+                format!("{out_dir}/inv_letter_examine.png"),
+                &big.pixels,
+                1024,
+                768,
+                image::ColorType::Rgba8,
+            );
+        }
     }
 }

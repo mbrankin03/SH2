@@ -307,7 +307,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var fogged_rgb = mix(original_color.rgb, coupled_fog_rgb, fog_factor) + inscatter_rgb;
     if (screen_fog_alpha > 0.001) {
-        fogged_rgb = mix(fogged_rgb, vec3<f32>(screen_fog_texel), screen_fog_alpha);
+        // PS2 `fog_view_screen_fog` (`0x0016c1c0`) uses `fog.tex` as alpha-modulated mist density
+        // so clear gaps never lift foreground blacks (doorway/puddles), while distant vista
+        // geometry (`view_dist > fog_near`, Toluca Lake & far hills) receives full atmospheric haze.
+        let dist_haze = clamp((view_dist - fog.fog_near) / max(1.0, fog.fog_far - fog.fog_near), 0.0, 1.0);
+        let vista_boost = select(1.0, 1.0 + dist_haze * 2.5, depth_val < 0.99999 && original_color.a < 0.5);
+        let screen_blend = clamp(screen_fog_alpha * screen_fog_texel * vista_boost, 0.0, 0.65);
+        fogged_rgb = mix(fogged_rgb, coupled_fog_rgb * 1.45, screen_blend);
     }
     textureStore(color_out, pixel_coords, vec4<f32>(fogged_rgb, 1.0));
 }

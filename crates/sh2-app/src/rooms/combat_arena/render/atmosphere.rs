@@ -118,12 +118,16 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     let cam_delta = cam_eye - state.last_screen_fog_cam;
     state.last_screen_fog_cam = cam_eye;
     if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.0 {
-        // `layer_transparencies[0]` is normalized `[0..1]` from PS2/SH2:EE `u8` (`128 / 255.0`),
-        // so scale by `255.0` to recover the exact `fog_alpha_param` byte (`128`, `FogFix.cpp`
-        // `fog_transparency_layer1 = 128` -> `(128 * 128) >> 9 = 32` -> `32 / 128.0 = 0.25`).
-        let fog_alpha_param = (effective_fog.layer_transparencies[0] * 255.0)
-            .round()
-            .clamp(0.0, 255.0) as u8;
+        // `obGB.fcl +0x13` (`0x97`) sets `fog_alpha_param = 0x30` (`48`, `Fog/fog.c:305`) on `ob01`
+        // so foreground shadows (restroom doorway, puddles) stay deep & unlifted (`(128*48)>>9 = 12/128`);
+        // other outdoor rooms use `layer_transparencies[0] * 255.0` (`128`, `FogFix.cpp`).
+        let fog_alpha_param = if ps2_room_id == R_OBSV_DECK_ID {
+            0x30u8
+        } else {
+            (effective_fog.layer_transparencies[0] * 255.0)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
         let fog_color_a = (effective_fog.fog_color[3] * f32::from(PS2_FOG_DEFAULT_COLOR_ALPHA_U8))
             .round()
             .clamp(0.0, 255.0) as u8;

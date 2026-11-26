@@ -181,7 +181,7 @@ impl CampaignRoomController {
             let se_listener = sh2_audio::SeListenerContext {
                 camera_pos: state.sim_core.active_camera_eye(1.0),
                 player_pos: state.sim_core.scenario.player_position,
-                wvs_matrix: state.sim_core.active_view_matrix(1.0),
+                wvs_matrix: state.sim_core.active_ps2_wvs_matrix(1.0),
                 room_id: state.bgm_manager.room_id as u16,
             };
             let mut pool_actions = Vec::new();

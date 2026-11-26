@@ -188,7 +188,9 @@ impl AiSubsystem {
                 insect_count == 0,
             )),
         };
-        self.enemies.push(EnemyActor::new(enemy));
+        let sub_type = variant.sub_type.clamp(0, u8::MAX as i16) as u8;
+        self.enemies
+            .push(EnemyActor::new(enemy).with_sub_type(sub_type));
     }
 
     /// Populate enemies from a [`crate::campaign::RoomLoadManifest`] `enemy_spawns` list

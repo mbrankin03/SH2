@@ -1,4 +1,9 @@
-//! `.mes`-synchronized dialogue, `voice.afs` cutscene voice streams, and automatic BGM ducking on [`AudioEngine`].
+//! `.mes`-synchronized dialogue and `voice.afs` cutscene voice streams on [`AudioEngine`].
+//!
+//! Cutscene BGM ducking (`0.7` for non-exempt `DramaDemo` cutscenes, `0.5` for pause/menus,
+//! ramped at `±dt * 0.5`) is owned exclusively by [`crate::BgmManager`] (`SeBgmManager`
+//! `SLUS_202.28` `0x00194300` / `sh2pc.exe` `0x00516430`); voice playback does not apply a
+//! secondary BGM ducking multiplier (`SH2-167`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,15 +18,13 @@ use sh2_assets::{DecodedAdx, DialogueMessage, WavEntry};
 use super::{adx_to_frames_48k, wav_entry_to_frames_48k, ActiveDialogue, AudioEngine, AudioError};
 
 impl AudioEngine {
-    /// Triggers a dialogue voice clip synchronized with `.mes` subtitles and volume ducking.
+    /// Triggers a dialogue voice clip synchronized with `.mes` subtitles.
     pub fn play_dialogue(
         &mut self,
         voice_adx: &DecodedAdx,
         message: DialogueMessage,
         voice_id: Option<u32>,
     ) -> Result<(), AudioError> {
-        self.apply_ducking(true);
-
         let voice_track = self
             .voice_track
             .as_ref()
@@ -66,10 +69,11 @@ impl AudioEngine {
     }
 
     /// Plays a decoded cutscene voice stream (`WavEntry` from `voice.afs` entry `stream_no - 60001`)
-    /// on the dedicated voice track with automatic BGM ducking (`SH2-63`).
+    /// on the dedicated voice track (`SH2-63`, `SH2-167`).
+    ///
+    /// BGM ducking during cutscenes is handled solely by [`crate::BgmManager`] (`0.7` `DramaDemo`).
     pub fn play_cutscene_voice(&mut self, wav: &WavEntry) -> Result<(), AudioError> {
         self.stop_voice(Duration::from_millis(20));
-        self.apply_ducking(true);
 
         let voice_track = self
             .voice_track
@@ -101,7 +105,7 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Stops any currently playing voice stream (`SeCall(0x3F4)` on cutscene skip) and releases BGM ducking.
+    /// Stops any currently playing voice stream (`SeCall(0x3F4)` on cutscene skip).
     pub fn stop_voice(&mut self, fade_out: Duration) {
         if let Some(mut handle) = self.active_voice_handle.take() {
             handle.stop(Tween {
@@ -111,7 +115,6 @@ impl AudioEngine {
             });
         }
         self.active_dialogue = None;
-        self.apply_ducking(false);
     }
 
     /// Returns whether a voice stream is currently active on the voice track.
@@ -129,32 +132,10 @@ impl AudioEngine {
             .map(|h| h.position() as f32)
     }
 
-    /// Applies or releases volume ducking on the BGM track.
-    pub(super) fn apply_ducking(&mut self, ducked: bool) {
-        if let Some(ref mut track) = self.bgm_track {
-            let target_gain = if ducked {
-                (self.bgm_volume * self.ducking_attenuation * self.master_volume) as f64
-            } else {
-                (self.bgm_volume * self.master_volume) as f64
-            };
-            track.set_volume(
-                Volume::Amplitude(target_gain),
-                Tween {
-                    duration: Duration::from_millis(200),
-                    easing: Easing::Linear,
-                    ..Default::default()
-                },
-            );
-        }
-    }
-
-    /// Per-frame update step: advances active dialogue subtitle triggers and releases ducking on completion.
+    /// Per-frame update step: advances active dialogue subtitle triggers.
     pub fn update(&mut self, dt: Duration) {
         if let Some(ref mut dialogue) = self.active_dialogue {
             dialogue.update(dt);
-            if dialogue.is_finished {
-                self.apply_ducking(false);
-            }
         }
 
         if let Some(ref dialogue) = self.active_dialogue {

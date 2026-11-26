@@ -338,7 +338,7 @@ pub(crate) fn handle_endings_key(state: &mut AppState, key_code: KeyCode) {
                 rm.chainsaw_sfx.start_idle(rm.chainsaw_fix_enabled);
             }
             let spec = &CHAINSAW_ATTACK_SPECS[rm.chainsaw_attack_idx];
-            rm.last_chainsaw_audio = Some(rm.chainsaw_sfx.tick(ChainsawTickInput {
+            let out = rm.chainsaw_sfx.tick(ChainsawTickInput {
                 dt_secs: 0.55,
                 james_pos_mm: s.player_position,
                 weapon_volume: 0.85,
@@ -347,12 +347,14 @@ pub(crate) fn handle_endings_key(state: &mut AppState, key_code: KeyCode) {
                 anim_speed_q11: 2048,
                 hit_this_frame: true,
                 enable_chainsaw_sound_fix: rm.chainsaw_fix_enabled,
-            }));
+            });
+            rm.last_chainsaw_audio = Some(out);
+            let fix_enabled = rm.chainsaw_fix_enabled;
             rm.status_banner = format!(
                 "Revved Chainsaw Attack #{:02}: AP={:.0}, Range={:.0}mm, SFX=0x{:04X}",
                 spec.id, spec.ap, spec.max_range, spec.sfx_id
             );
-            play_confirm_se(state);
+            crate::audio_dispatch::dispatch_chainsaw_audio(state, out, fix_enabled);
         }
         KeyCode::KeyM => {
             CombatArenaRoomController::handle_key_input(state, KeyCode::KeyC, true, false);

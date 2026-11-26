@@ -371,6 +371,16 @@ impl CreatureStats {
             return None;
         }
 
+        // Friendly-fire species immunities (`enCheckDamage` `SLUS_202.28` `0x001423a0` lines 812–813 /
+        // `sh2pc.exe` `0x004a92ee` lines 6915–6916):
+        // - Lying Figure (`type 1`, SCU) is immune to acid spray (`0x24` proto / `0x2a` = `42` retail).
+        // - Creeper (`type 3`, TYU) is immune to creeper bite (`0x33` proto / `0x39` = `57` retail).
+        if (species == EnemySpecies::LyingFigure && attack_id == 42)
+            || (species == EnemySpecies::Creeper && attack_id == 57)
+        {
+            return None;
+        }
+
         // Hyper Spray (`8 | 9`) vs bosses: White (0) and Yellow (1) have no effect
         // (`enCheckDamage` `0x001423a0` lines 814–822).
         if matches!(attack_id, 8 | 9) {

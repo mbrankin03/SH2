@@ -24,13 +24,17 @@ pub use boss_events::AiBossEvents;
 pub use enemy_actor::EnemyActor;
 pub use spawn::EnemySpawnVariant;
 
+use crate::ai::creatures::creeper::TyuState;
 use crate::ai::creatures::flesh_lips::IkeState;
 use crate::ai::creatures::insects::InsectState;
+use crate::ai::creatures::lying_figure::ScuState;
+use crate::ai::creatures::mannequin::MknState;
 use crate::ai::creatures::twin_pyramid_head::TwinPartnerSnapshot;
 use crate::ai::creatures::{
     en_check_sleep_in, en_check_sleep_out, EnemySpecies, StagePlace, TribeCommunicationBus,
 };
 use crate::ai::maria::MariaCompanionController;
+use crate::ai::pathfinding::{en_room_forbidden_area, RoomForbiddenAreas};
 use crate::ai::radio::{
     en_kind_from_species, RadioEnemySample, RadioNoiseEvaluator, RadioStaticOutput,
 };
@@ -62,6 +66,8 @@ pub struct AiSubsystem {
     pub is_outdoor: bool,
     /// 8-slot tribe alert communication bus (`enSetCommunication` / `enCommunicateTribe`).
     pub tribe_bus: TribeCommunicationBus,
+    /// Active room forbidden areas & flags (`enRoomForbiddenArea` `0x00147000` / `sh2pc 0x004a84a0`).
+    pub forbidden_areas: RoomForbiddenAreas,
     /// True when the player has 0 firearm ammo (`enCheckPlayerBulletEmpty` for Mary Boss pity timer).
     pub player_ammo_empty: bool,
     /// True while the player is actively firing Hyper Spray (`enCheckPlayerSprayNow` for Moth Swarm escape).
@@ -96,6 +102,7 @@ impl Default for AiSubsystem {
             stage_place: StagePlace::Default,
             is_outdoor: false,
             tribe_bus: TribeCommunicationBus::default(),
+            forbidden_areas: RoomForbiddenAreas::default(),
             player_ammo_empty: false,
             player_spraying: false,
             player_radius_mm: 200.0,
@@ -112,6 +119,12 @@ impl Default for AiSubsystem {
 }
 
 impl AiSubsystem {
+    /// Load active room forbidden rectangles and room flags for `(stage_id, room_id)`
+    /// (`enRoomForbiddenArea` `SLUS_202.28` `0x00147000` / `sh2pc.exe` `0x004a84a0`).
+    pub fn set_room_forbidden_areas(&mut self, stage_id: u32, room_id: u32, retail_pc: bool) {
+        self.forbidden_areas = en_room_forbidden_area(stage_id, room_id, retail_pc);
+    }
+
     /// Primary 60 Hz AI simulation update loop (`enExecTask` `SLUS_202.28` `0x001413f0`).
     pub fn update(
         &mut self,
@@ -234,10 +247,21 @@ impl AiSubsystem {
         // Advance Mary hover sway (`shSway1f(-250.0, 0.1)` `enBOSMoveExec` `0x00140df0`).
         self.sway_phase += dt * 60.0 * 0.1;
         let mary_sway_y_sample = self.sway_phase.sin() * 250.0;
+        let path_sway_sample = (self.sway_phase.sin() * 0.5).clamp(-0.5, 0.5);
         let has_collision_floors = collision.is_some_and(|c| c.all_floors().next().is_some());
+        let walls = collision.map_or(&[][..], |c| c.walls.as_slice());
+
+        // Update bit 0 of room forbidden-area flags (`enExecTask` `SLUS 0x001413f0`):
+        // true when player is standing inside an active forbidden rectangle.
+        self.forbidden_areas.flags.player_in_forbidden = self
+            .forbidden_areas
+            .rects
+            .iter()
+            .any(|r| r.contains_xz(player_pos));
 
         let mut mary_swarm_spawn: Option<(Vec3, f32)> = None;
         let mut insects_despawn_all = false;
+        let mut pending_tribe_posts: Vec<(f32, u32, u32, Vec3, i32)> = Vec::new();
 
         let twin_snapshots = &self.scratch_twin_snapshots;
         let flesh_lips_info = &self.scratch_flesh_lips_info;
@@ -320,11 +344,39 @@ impl AiSubsystem {
                 &player_target
             };
 
+            let tribe_id = match &enemy.controller {
+                ActiveEnemy::LyingFigure(_) => Some(1),
+                ActiveEnemy::Mannequin(_) => Some(2),
+                ActiveEnemy::Creeper(_) => Some(3),
+                _ => None,
+            };
+            let tribe_alert_pos = tribe_id
+                .and_then(|tid| self.tribe_bus.query_nearest(tid, enemy.position()))
+                .map(|a| a.position);
+
+            let prev_scu_state = match &enemy.controller {
+                ActiveEnemy::LyingFigure(e) => Some(e.state),
+                _ => None,
+            };
+            let prev_mkn_state = match &enemy.controller {
+                ActiveEnemy::Mannequin(e) => Some(e.state),
+                _ => None,
+            };
+            let prev_tyu_state = match &enemy.controller {
+                ActiveEnemy::Creeper(e) => Some(e.state),
+                _ => None,
+            };
+
             let mut ctx = EnemyUpdateContext {
                 player_radius_mm: self.player_radius_mm,
                 player_ammo_empty: self.player_ammo_empty,
                 player_spraying: self.player_spraying,
                 mary_sway_y_sample,
+                walls,
+                forbidden_areas: (!self.forbidden_areas.rects.is_empty())
+                    .then_some(&self.forbidden_areas),
+                tribe_alert_pos,
+                path_sway_sample,
                 ..EnemyUpdateContext::default()
             };
 
@@ -374,7 +426,25 @@ impl AiSubsystem {
             enemy.step_hitback();
             enemy.tick_fallback_anim(dt);
 
+            // Post tribe communication alerts on aggro/wake transitions
+            // (`enSetCommunication` `SLUS 0x00146d80`: SCU `en_scu.c:572` 4000mm/120t,
+            // MKN `en_mkn.c:344,382` 1000mm/2t, TYU `en_tyu.c:821` 5000mm/300t).
             match &enemy.controller {
+                ActiveEnemy::LyingFigure(e)
+                    if e.state == ScuState::Chase && prev_scu_state != Some(ScuState::Chase) =>
+                {
+                    pending_tribe_posts.push((4000.0, 1, 1, e.position, 120));
+                }
+                ActiveEnemy::Mannequin(e)
+                    if prev_mkn_state == Some(MknState::Stay) && e.state != MknState::Stay =>
+                {
+                    pending_tribe_posts.push((1000.0, 2, 1, e.position, 2));
+                }
+                ActiveEnemy::Creeper(e)
+                    if e.state == TyuState::Attack && prev_tyu_state != Some(TyuState::Attack) =>
+                {
+                    pending_tribe_posts.push((5000.0, 3, 1, e.position, 300));
+                }
                 ActiveEnemy::MaryBoss(m)
                     if m.moth_swarm_active && !has_alive_insects && mary_swarm_spawn.is_none() =>
                 {
@@ -387,6 +457,13 @@ impl AiSubsystem {
                 }
                 _ => {}
             }
+        }
+
+        // Decay existing tribe alert TTLs (`enExecTask` `0x001413f0` lines 272–282), then post
+        // newly emitted alerts so same-frame listeners can observe them on the next tick.
+        self.tribe_bus.tick();
+        for (radius, tribe_id, msg_type, pos, ttl) in pending_tribe_posts {
+            self.tribe_bus.post(radius, tribe_id, msg_type, pos, ttl);
         }
 
         if insects_despawn_all {
@@ -407,9 +484,6 @@ impl AiSubsystem {
                 self.spawn_enemy(EnemySpecies::RoomInsect, id, spawn_pos, spawn_yaw);
             }
         }
-
-        // Decay tribe alert bus TTLs (`enExecTask` `0x001413f0` lines 272–282)
-        self.tribe_bus.tick();
 
         // 3. Update Pocket Radio proximity static (`RadioNoise` `0x001ab300` & `enSetRadioVolume` `0x00143890`)
         self.step_radio_only(radio_enabled, player_pos, dt);

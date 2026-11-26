@@ -82,6 +82,10 @@ pub struct CombatInputSnapshot {
     pub native_light_pressed: bool,
     /// Native zero-latency dedicated Heavy Attack / Two-Footed Stomp pulse (`CombatInputMode::NativeZeroLatency`).
     pub native_heavy_pressed: bool,
+    /// Guard/Block button rising-edge trigger this tick (`shPadTrigger` in `PlayerChectGuardSuccess` `0x001101d0`).
+    pub guard_pressed: bool,
+    /// Guard/Block button currently held (`shPadPress` in `PlayerChectGuardSuccess` `0x001101d0`).
+    pub guard_held: bool,
 }
 
 /// Player combat state machine and inventory ammunition tracking.
@@ -127,6 +131,12 @@ pub struct CombatController {
     pub hyper_spray_color: HyperSprayColor,
     /// Persistent Guard/Block latch state (`DAT_003c83b7` / `DAT_01fb80b7`).
     pub guard_state: GuardState,
+    /// Rising-edge Guard/Block trigger captured from the most recent [`CombatInputSnapshot`]
+    /// (`shPadTrigger` in `PlayerChectGuardSuccess` `0x001101d0`).
+    pub last_guard_triggered: bool,
+    /// Held Guard/Block state captured from the most recent [`CombatInputSnapshot`]
+    /// (`shPadPress` in `PlayerChectGuardSuccess` `0x001101d0`).
+    pub last_guard_held: bool,
     /// Player current health (max 100.0 James Normal/Hard, 200.0 Easy; 80.0/160.0 Maria).
     pub health: f32,
     pub max_health: f32,
@@ -205,6 +215,8 @@ impl CombatController {
             hyper_spray_shakes: HYPER_SPRAY_INITIAL_SHAKES,
             hyper_spray_color: HyperSprayColor::White,
             guard_state: GuardState::default(),
+            last_guard_triggered: false,
+            last_guard_held: false,
             health: max_hp,
             max_health: max_hp,
             health_recovery_pool: 0.0,
@@ -351,6 +363,20 @@ impl CombatController {
         }
     }
 
+    /// Returns `true` when the player's current [`CombatMode`] is eligible to Guard/Block
+    /// (`DAT_003c7f50 < 0x14 && DAT_003c7f50 != 0x11` in `PlayerChectGuardSuccess` `0x001101d0` / `0x00534210`).
+    #[inline]
+    pub const fn can_guard(&self) -> bool {
+        !matches!(
+            self.mode,
+            CombatMode::Hurt
+                | CombatMode::Held
+                | CombatMode::Dying
+                | CombatMode::Dead
+                | CombatMode::Stomp
+        )
+    }
+
     /// Evaluate Guard/Block against an incoming enemy attack (`PlayerChectGuardSuccess`,
     /// `SLUS_202.28` `0x001101d0` / `sh2pc.exe` `0x00534210`).
     #[allow(clippy::too_many_arguments)]
@@ -364,14 +390,7 @@ impl CombatController {
         player_yaw: f32,
         attacker_yaw: f32,
     ) -> bool {
-        let player_can_guard = !matches!(
-            self.mode,
-            CombatMode::Hurt
-                | CombatMode::Held
-                | CombatMode::Dying
-                | CombatMode::Dead
-                | CombatMode::Stomp
-        );
+        let player_can_guard = self.can_guard();
         check_guard_success(
             &mut self.guard_state,
             enemy_attack_active,
@@ -418,6 +437,41 @@ impl CombatController {
         if self.health >= self.max_health {
             self.health_recovery_pool = 0.0;
         }
+    }
+
+    /// Apply 10% Guard chip damage when `PlayerChectGuardSuccess` succeeds
+    /// (`SLUS_202.28` `Chacter/m3_play.c:1440-1448`: `hp -= incoming * 0.1`, sets guard-recoil
+    /// flag `0x200000` without entering full `CombatMode::Hurt` unless fatal).
+    pub fn apply_guard_chip_damage(&mut self, chip_ap: f32) {
+        if self.god_mode
+            || self.invulnerability_timer > 0.0
+            || self.mode == CombatMode::Dead
+            || self.mode == CombatMode::Dying
+        {
+            return;
+        }
+        self.health = (self.health - chip_ap).max(0.0);
+        self.invulnerability_timer = 1.0;
+        if self.health <= 0.0 {
+            self.mode = CombatMode::Dying;
+            self.anim_frame = 0.0;
+            self.clip_length = 25.0;
+            self.pending_sfx = Some(11024);
+        }
+    }
+
+    /// Enforce Pyramid Head Great Knife overhead chop instant-kill (`shBattleDamageRevise`
+    /// `SLUS_202.28` `0x001205a0` / `sh2pc.exe` `0x005434a0`: writes `0xbf800000` = `-1.0f` to
+    /// player HP on retail attack `51` / proto `0x2d`).
+    pub fn apply_instant_kill(&mut self) {
+        if self.god_mode || self.mode == CombatMode::Dead || self.mode == CombatMode::Dying {
+            return;
+        }
+        self.health = -1.0;
+        self.mode = CombatMode::Dying;
+        self.anim_frame = 0.0;
+        self.clip_length = 25.0;
+        self.pending_sfx = Some(11024);
     }
 
     /// Player receives attack damage from enemy.
@@ -535,6 +589,8 @@ impl CombatController {
         let action_pressed = input.action_pressed;
         let action_held = input.action_held;
         let has_downed_enemy_nearby = input.has_downed_enemy_nearby;
+        self.last_guard_triggered = input.guard_pressed;
+        self.last_guard_held = input.guard_held;
         self.pending_sfx = None;
 
         if self.invulnerability_timer > 0.0 {

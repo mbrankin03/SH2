@@ -338,26 +338,49 @@ impl EnemyActor {
     }
 
     /// Retail `sh2_attack_list` ID for this enemy's active attack (or `None` when not attacking).
+    ///
+    /// Verified 1:1 against `SLUS_202.28` `Enemy/en_*.c` `enAttackCheck` / `enAttackCheckHug`
+    /// with the retail PC **+6** Born From a Wish shift (`sh2pc.exe` `0x00629000`):
+    /// - Lying Figure (`SCU`, `en_scu.c:1161` `0x24`): `42` (`0x2a`)
+    /// - Mannequin (`MKN`, `en_mkn.c:325,328,1080,1083` `0x26`/`0x27`): `44` (arm) / `45` (kick)
+    /// - Nurse (`NSE`, `en_nse.c:471-488` `0x28..=0x2b`): `46`/`47` (normal) or `48`/`49` (dark)
+    /// - Creeper (`TYU`, `en_tyu.c:740` `0x33`): `57` (`0x39`)
+    /// - Pyramid Head (`RED`, `en_red.c:560,563,767,955,973` `0x2c..=0x30`): `50`/`51`/`53`/`54`
+    /// - Twin Pyramid Head (`ONI`, `en_oni.c:281,792,869` `0x31`/`0x32`): `55`/`56`
+    /// - Eddie (`EDB`, `en_edb.c:943,1176` `0x34`/`0x35`): `58`/`59`
+    /// - Flesh Lips (`IKE`, `en_ike.c:663,688,739` `0x36..=0x38`): `60`/`61`/`62`
+    /// - Abstract Daddy (`PAP`, `en_pap.c:649,663` `0x39`/`0x3a`): `63`/`64`
+    /// - Mary Boss (`BOS`, `en_bos.c:328,337,468,497,548` `0x3b..=0x3f`): `65..=69`
+    /// - Mandarin (`ARM`, `en_arm.c:337,340` `0x40`/`0x41`): `70`/`71`
+    /// - Room Insect (`INS`, `en_insect.c`): `None` (moth swarm attacks `68`/`69` are dispatched by Mary Boss)
     pub fn active_attack_id(&self) -> Option<u32> {
         if !self.is_attacking() || self.is_dead() {
             return None;
         }
         match &self.controller {
-            ActiveEnemy::LyingFigure(_) => Some(42), // SCU acid fog (proto 0x24 + 6)
-            ActiveEnemy::Mannequin(_) => Some(43),   // MKN strike (proto 0x25 + 6)
-            ActiveEnemy::Nurse(_) => Some(46),       // NSE pipe strike (proto 0x28 + 6)
-            ActiveEnemy::Creeper(_) => Some(44),     // TYU bite
-            ActiveEnemy::PyramidHead(e) => e.active_attack_id.map(u32::from).or(Some(50)), // RED slash / seize
-            ActiveEnemy::AbstractDaddy(_) => Some(63), // PAP grab/hug
-            ActiveEnemy::FleshLips(_) => Some(60),     // IKE strike/hug
-            ActiveEnemy::Mandarin(_) => Some(70),      // ARM needle (proto 0x40 + 6)
-            ActiveEnemy::Eddie(e) => match e.state {
-                EdbState::Shoot => Some(58), // EDB revolver shot (proto 0x34 + 6, 5000mm)
-                _ => Some(59),               // EDB punch
-            },
-            ActiveEnemy::TwinPyramidHead(_) => Some(55), // ONI spear strike
-            ActiveEnemy::MaryBoss(_) => Some(65),        // BOS tentacle/hug
-            ActiveEnemy::RoomInsect(_) => Some(45),
+            ActiveEnemy::LyingFigure(_) => Some(42),
+            ActiveEnemy::Mannequin(e) => Some(if e.is_kick_next { 45 } else { 44 }),
+            ActiveEnemy::Nurse(e) => Some(u32::from(e.active_attack_id())),
+            ActiveEnemy::Creeper(_) => Some(57),
+            ActiveEnemy::PyramidHead(e) => e.active_attack_id.map(u32::from).or(Some(50)),
+            ActiveEnemy::AbstractDaddy(e) => e.active_attack_id.map(u32::from).or(Some(63)),
+            ActiveEnemy::FleshLips(e) => e.active_attack_id.map(u32::from).or(Some(60)),
+            ActiveEnemy::Mandarin(e) => e
+                .active_attack_id
+                .map(u32::from)
+                .or_else(|| e.active_hand.map(|h| if h == 0 { 70 } else { 71 })),
+            ActiveEnemy::Eddie(e) => e.active_attack_id.map(u32::from).or(Some(match e.state {
+                EdbState::Shoot => 58,
+                _ => 59,
+            })),
+            ActiveEnemy::TwinPyramidHead(e) => {
+                e.active_attack_id.map(u32::from).or(Some(match e.state {
+                    OniState::Attack3 => 56,
+                    _ => 55,
+                }))
+            }
+            ActiveEnemy::MaryBoss(e) => e.active_attack_id.map(u32::from).or(Some(65)),
+            ActiveEnemy::RoomInsect(_) => None,
         }
     }
 
@@ -487,15 +510,72 @@ impl EnemyActor {
             self.stats_mut().reduce_hp(scaled_ap);
             if self.stats().health <= 0.0 {
                 self.apply_post_damage_state(true, true);
-            } else if self.stats().endurance <= 0.0 {
-                self.stats_mut().down_timer = 10.0;
-                self.apply_post_damage_state(false, true);
-            } else {
-                self.stats_mut().flinch_timer = 0.5;
-                self.apply_post_damage_state(false, false);
+            } else if !self.apply_confuse_state() {
+                if self.stats().endurance <= 0.0 {
+                    self.stats_mut().down_timer = 10.0;
+                    self.apply_post_damage_state(false, true);
+                } else {
+                    self.stats_mut().flinch_timer = 0.5;
+                    self.apply_post_damage_state(false, false);
+                }
             }
         }
         true
+    }
+
+    /// Transition the inner controller into its `en*CtrlConfuse` state on Hyper Spray hit
+    /// (`enCheckSpray` `0x001425a0`: `en_scu.c:1297`, `en_mkn.c:1196`, `en_nse.c:604`,
+    /// `en_pap.c:258`, `en_red.c:300`, `en_oni.c:369`).
+    ///
+    /// Returns `true` if the species has a dedicated `Confuse` state, or `false` otherwise.
+    fn apply_confuse_state(&mut self) -> bool {
+        match &mut self.controller {
+            ActiveEnemy::LyingFigure(e) => {
+                e.state = ScuState::Confuse;
+                e.sub_state = 0;
+                e.stats.flinch_timer = 0.0;
+                e.anim.sync_lying_figure(e.state);
+                true
+            }
+            ActiveEnemy::Mannequin(e) => {
+                e.state = MknState::Confuse;
+                e.sub_state = 0;
+                e.stats.flinch_timer = 0.0;
+                e.anim.sync_mannequin(e.state, e.is_kick_next);
+                true
+            }
+            ActiveEnemy::Nurse(e) => {
+                e.state = NseState::Confuse;
+                e.sub_state = 0;
+                e.stats.flinch_timer = 0.0;
+                e.anim.sync_nurse(e.state);
+                true
+            }
+            ActiveEnemy::AbstractDaddy(e) => {
+                e.state = PapState::Confuse;
+                e.sub_state = 0;
+                e.active_attack_id = None;
+                true
+            }
+            ActiveEnemy::PyramidHead(e) => {
+                e.state = RedState::Confuse;
+                e.sub_state = 0;
+                e.active_attack_id = None;
+                true
+            }
+            ActiveEnemy::TwinPyramidHead(e) => {
+                e.state = OniState::Confuse;
+                e.sub_state = 0;
+                e.active_attack_id = None;
+                true
+            }
+            ActiveEnemy::Creeper(_)
+            | ActiveEnemy::FleshLips(_)
+            | ActiveEnemy::Mandarin(_)
+            | ActiveEnemy::Eddie(_)
+            | ActiveEnemy::MaryBoss(_)
+            | ActiveEnemy::RoomInsect(_) => false,
+        }
     }
 
     /// Synchronize inner controller FSM state after taking damage/knockdown/death.

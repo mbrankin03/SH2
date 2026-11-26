@@ -49,14 +49,19 @@ impl CombatRng {
         }
     }
 
-    /// Generate the next uniform float in `[0.0, 1.0)`.
-    pub fn next_f32(&mut self) -> f32 {
+    /// Generate the next raw 32-bit LCG state (`shRandI` equivalent).
+    pub fn next_u32(&mut self) -> u32 {
         // Standard 32-bit LCG (Numerical Recipes constants, same family as PS2 shRandI).
         self.state = self
             .state
             .wrapping_mul(1_664_525)
             .wrapping_add(1_013_904_223);
-        ((self.state >> 8) as f32) * (1.0 / 16_777_216.0)
+        self.state
+    }
+
+    /// Generate the next uniform float in `[0.0, 1.0)`.
+    pub fn next_f32(&mut self) -> f32 {
+        ((self.next_u32() >> 8) as f32) * (1.0 / 16_777_216.0)
     }
 }
 
@@ -214,13 +219,19 @@ impl CombatHitbox {
         }
     }
 
-    /// Create downed / fallen character hitbox (wide horizontal torso cylinder).
+    /// Create downed / fallen character hitbox (`enSetHitColumn`, `SLUS_202.28` `0x001440c0`
+    /// lines 2258 & 2313–2316).
+    ///
+    /// Expects `radius` to already include `EnBattleCollisionRate` and the single `1.5x` downed
+    /// multiplier (from [`crate::ai::creatures::EnemySize::battle_radius`]) and preserves the
+    /// exact `enSetNewSize` downed `height` (e.g. `200.0` mm for SCU/MKN/NSE, `250.0` mm for
+    /// PAP/BOS) without applying any secondary scale factor.
     pub fn new_downed(pos: Vec3, radius: f32, height: f32) -> Self {
         Self {
             center_x: pos.x,
             center_z: pos.z,
-            radius: radius * 1.5,
-            top_y: pos.y - height * 0.3,
+            radius,
+            top_y: pos.y - height,
             bottom_y: pos.y,
             is_downed: true,
         }

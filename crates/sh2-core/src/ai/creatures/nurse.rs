@@ -10,12 +10,14 @@
 
 use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
+use crate::ai::pathfinding::{check_path_ray, EnemyPathState, PathEnemyType, RoomForbiddenAreas};
 use crate::ai::sensory::{
-    evaluate_sensory, normalize_angle, nse_walk_speed_scale, DifficultyLevel, PerceivableTarget,
-    RoomLighting, SensoryNotice, SensoryProfile,
+    evaluate_sensory_with_los, normalize_angle, nse_walk_speed_scale, DifficultyLevel,
+    PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sh2_assets::formats::cld::WallSegment;
 
 /// Authentic Nurse state enum (`0x4bb390`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -46,6 +48,14 @@ pub struct NurseController {
     /// Confuse countdown timer in 60 Hz ticks (`600 - 90 * mode`, `enNSECtrlConfuse` `SLUS 0x001589a0`).
     pub confuse_timer_ticks: f32,
     pub sub_state: u8,
+    /// True for the `0x20b` Town Tough / Dark Nurse variant (`enNSEInitData` `0x001577b0`,
+    /// uses retail attack IDs `48`/`49` instead of `46`/`47` in `enNSECtrlAttack` `0x001583a0`).
+    pub is_dark_variant: bool,
+    /// True when the active attack is a lunge strike (`anime == 4` -> retail `47`/`49`;
+    /// close strike `anime == 3` -> retail `46`/`48`, `enNSECtrlAttack` `0x001583a0` lines 471–488).
+    pub is_lunge_attack: bool,
+    /// Obstacle-avoidance pathfinding state (`enInitPath` `0x00144aa0` / `enSetPath` `0x00144ae0`).
+    pub path_state: EnemyPathState,
     pub sensory: SensoryProfile,
     pub anim: CreatureAnimationController,
 }
@@ -95,8 +105,25 @@ impl NurseController {
             twitch_timer: 0.0,
             confuse_timer_ticks: 0.0,
             sub_state: 0,
+            is_dark_variant,
+            is_lunge_attack: false,
+            path_state: EnemyPathState::new(yaw),
             sensory: SensoryProfile::nurse(),
             anim: CreatureAnimationController::new_nurse(),
+        }
+    }
+
+    /// Retail PC `sh2_attack_list` ID for this Nurse's current attack (`enNSECtrlAttack`
+    /// `SLUS_202.28` `0x001583a0` lines 471–488, +6 shifted):
+    /// - Normal Nurse (`0x207`): `46` (`0x2e`, proto `0x28`) close strike / `47` (`0x2f`, proto `0x29`) lunge
+    /// - Dark Nurse (`0x20b`): `48` (`0x30`, proto `0x2a`) close strike / `49` (`0x31`, proto `0x2b`) lunge
+    #[inline]
+    pub const fn active_attack_id(&self) -> u16 {
+        match (self.is_dark_variant, self.is_lunge_attack) {
+            (false, false) => 46,
+            (false, true) => 47,
+            (true, false) => 48,
+            (true, true) => 49,
         }
     }
 
@@ -105,6 +132,22 @@ impl NurseController {
         target: &PerceivableTarget,
         lighting: RoomLighting,
         difficulty: DifficultyLevel,
+        dt: f32,
+    ) {
+        self.update_with_world(target, lighting, difficulty, &[], None, 0.0, dt);
+    }
+
+    /// Update Nurse AI with `.cld` wall LOS (`enCheckHitEyes` `0x00145540`), `enSetPath`
+    /// (`0x00144ae0`), and [`RoomForbiddenAreas`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_world(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        walls: &[WallSegment],
+        forbidden: Option<&RoomForbiddenAreas>,
+        path_sway_sample: f32,
         dt: f32,
     ) {
         if self.state == NseState::Dying {
@@ -138,7 +181,7 @@ impl NurseController {
         let dist = (dx * dx + dz * dz).sqrt();
         let target_dir = dx.atan2(dz);
 
-        let (notice, alert) = evaluate_sensory(
+        let (notice, alert) = evaluate_sensory_with_los(
             &self.sensory,
             self.position,
             self.yaw,
@@ -146,6 +189,7 @@ impl NurseController {
             target,
             lighting,
             difficulty,
+            walls,
             dt,
         );
         self.alert_timer = alert;
@@ -170,6 +214,7 @@ impl NurseController {
                 if notice != SensoryNotice::None {
                     self.state = NseState::Precaution;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
@@ -183,17 +228,36 @@ impl NurseController {
                 {
                     self.state = NseState::Chase;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
             NseState::Chase => {
-                self.turn_towards(target_dir, 3.2 * dt);
+                let steer_dir =
+                    if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
+                        let ticks = (dt * 60.0).round().max(1.0) as i16;
+                        self.path_state.cur_angle = self.yaw;
+                        self.path_state.set_path(
+                            PathEnemyType::Nurse,
+                            self.position,
+                            target.position,
+                            path_sway_sample,
+                            ticks,
+                            |a, b| check_path_ray(a, b, 150.0, walls, forbidden),
+                        );
+                        self.path_state.target_angle
+                    } else {
+                        target_dir
+                    };
+                self.turn_towards(steer_dir, 3.2 * dt);
 
                 if matches!(
                     notice,
                     SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
-                ) || dist <= self.sensory.attack_ranges[difficulty.as_index()]
+                ) || (walls.is_empty()
+                    && dist <= self.sensory.attack_ranges[difficulty.as_index()])
                 {
+                    self.is_lunge_attack = notice == SensoryNotice::InLungeRange;
                     self.state = NseState::Attack;
                     self.state_timer = 0.0;
                     return;

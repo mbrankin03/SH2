@@ -60,12 +60,32 @@ impl EnemyAttackWork {
     }
 }
 
+/// Guard/Block input state passed into [`dispatch_enemy_attack_ex`]
+/// (`PlayerChectGuardSuccess` `SLUS_202.28` `0x001101d0` / `sh2pc.exe` `0x00534210`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EnemyAttackGuardInput {
+    /// Rising-edge Guard/Block trigger (`shPadTrigger`).
+    pub guard_triggered: bool,
+    /// Held Guard/Block button state (`shPadPress`).
+    pub guard_held: bool,
+    /// True when the player's current combat mode is eligible to guard (`lower_st < 0x14 && lower_st != 0x11`).
+    pub player_can_guard: bool,
+}
+
+/// Retail PC `sh2_attack_list` ID for Pyramid Head's Great Knife overhead chop instant-kill
+/// (`shBattleDamageRevise` `SLUS_202.28` `0x001205a0` `0x2d` -> `sh2pc.exe` `0x005434a0` `0x33` = `51`).
+pub const PH_OVERHEAD_CHOP_ATTACK_ID: u32 = 51;
+
+/// Chip-damage multiplier applied on successful Guard/Block
+/// (`SLUS_202.28` `Chacter/m3_play.c:1444`: `hp -= incoming * 0.1`).
+pub const GUARD_CHIP_DAMAGE_SCALE: f32 = 0.1;
+
 /// Result of evaluating one frame of an enemy attack against the player.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EnemyAttackOutcome {
     /// Whether the attack geometry intersected the player's hitbox.
     pub hit_player: bool,
-    /// Damage AP to apply to James (`0.0` if missed or guarded).
+    /// Damage AP to apply to James (`atk.ap * 0.1` when guarded per `m3_play.c:1444`, `0.0` if missed).
     pub damage_ap: f32,
     /// Retail `sh2_attack_list` ID of the attack.
     pub attack_id: u32,
@@ -73,9 +93,13 @@ pub struct EnemyAttackOutcome {
     pub is_hug: bool,
     /// True if a `Fog` (`attack_type == 4`) acid spit connected.
     pub is_fog: bool,
-    /// True if `PlayerChectGuardSuccess` (`0x001101d0`) blocked the hit.
+    /// True if `PlayerChectGuardSuccess` (`0x001101d0`) blocked the hit (10% chip damage applies).
     pub guarded: bool,
-    /// Optional PS2 SFX ID triggered this frame (e.g. `12000` acid spit, `0x4719` Eddie shot).
+    /// True if Pyramid Head's overhead chop (`51` retail / `0x2d` proto) connected and must force
+    /// `hp = -1.0` (`0xbf800000`, `shBattleDamageRevise` `0x001205a0` / `sh2pc.exe` `0x005434a0`).
+    pub instant_kill: bool,
+    /// Optional PS2 SFX ID triggered this frame (e.g. `12000` acid spit, `0x4719` Eddie shot,
+    /// `0x2fdc`/`0x2fdd` randomized needle).
     pub sfx_id: Option<u32>,
 }
 
@@ -121,6 +145,10 @@ pub fn enemy_fog_range_at_frame(atk: &AttackSpec, anim_frame: u8, is_outdoor: bo
 
 /// Dispatch an active enemy attack against James (`shBattleExecAttackQueue` `0x00123760`
 /// + `shBattleAttackByEnemy{Slash,Strike,Fog,Hug,Needle,Shot}` `0x00122310..0x00122eb0`).
+///
+/// Convenience wrapper over [`dispatch_enemy_attack_ex`] using `player_guard.guard_armed` as
+/// held-only guard input and `rng_bits = 0`. Callers with live controller input (such as
+/// [`crate::combat::CombatArena`]) should use [`dispatch_enemy_attack_ex`].
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch_enemy_attack(
     species: EnemySpecies,
@@ -134,6 +162,47 @@ pub fn dispatch_enemy_attack(
     player_guard: &mut GuardState,
     difficulty: u8,
     is_outdoor: bool,
+) -> EnemyAttackOutcome {
+    let guard_input = EnemyAttackGuardInput {
+        guard_triggered: false,
+        guard_held: player_guard.guard_armed,
+        player_can_guard: true,
+    };
+    dispatch_enemy_attack_ex(
+        species,
+        atk,
+        work,
+        anim_frame,
+        enemy_pos,
+        enemy_yaw,
+        player_pos,
+        player_yaw,
+        player_guard,
+        guard_input,
+        difficulty,
+        is_outdoor,
+        0,
+    )
+}
+
+/// Full-fidelity enemy attack dispatcher accepting explicit Guard/Block inputs
+/// (`PlayerChectGuardSuccess` `0x001101d0`) and deterministic `rng_bits` for Needle SFX
+/// randomization (`(shRandI() >> 10 & 1) + 0x2fdc` in `shBattleAttackByEnemyNeedle` `0x00122d10`).
+#[allow(clippy::too_many_arguments)]
+pub fn dispatch_enemy_attack_ex(
+    species: EnemySpecies,
+    atk: &AttackSpec,
+    work: &mut EnemyAttackWork,
+    anim_frame: u8,
+    enemy_pos: Vec3,
+    enemy_yaw: f32,
+    player_pos: Vec3,
+    player_yaw: f32,
+    player_guard: &mut GuardState,
+    guard_input: EnemyAttackGuardInput,
+    difficulty: u8,
+    is_outdoor: bool,
+    rng_bits: u32,
 ) -> EnemyAttackOutcome {
     let Some(dispatcher) = select_enemy_dispatcher(atk) else {
         return EnemyAttackOutcome::default();
@@ -180,6 +249,7 @@ pub fn dispatch_enemy_attack(
                         enemy_yaw,
                         player_yaw,
                         player_guard,
+                        guard_input,
                         difficulty,
                     );
                 }
@@ -211,6 +281,7 @@ pub fn dispatch_enemy_attack(
                         enemy_yaw,
                         player_yaw,
                         player_guard,
+                        guard_input,
                         difficulty,
                     );
                 }
@@ -240,6 +311,7 @@ pub fn dispatch_enemy_attack(
                                 enemy_yaw,
                                 player_yaw,
                                 player_guard,
+                                guard_input,
                                 difficulty,
                             );
                             break;
@@ -272,10 +344,12 @@ pub fn dispatch_enemy_attack(
         }
 
         EnemyAttackDispatcher::Needle => {
-            // `shBattleAttackByEnemyNeedle` (`0x00122d10`): 2-ray needle/tentacle probe.
+            // `shBattleAttackByEnemyNeedle` (`0x00122d10` / `sh2pc 0x00540000.c:3371`):
+            // 2-ray needle/tentacle probe with randomized SFX `(shRandI() >> 10 & 1) + 0x2fdc`
+            // (`0x2fdc` or `0x2fdd`).
             let right = Vec3::new(enemy_yaw.cos(), 0.0, -enemy_yaw.sin());
             if !work.sfx_played {
-                outcome.sfx_id = Some(0x2fdc);
+                outcome.sfx_id = Some(0x2fdc + ((rng_bits >> 10) & 1));
                 work.sfx_played = true;
             }
             // Derive dual arm/tentacle lateral offset from `enSetSize` (`0x001426e0`) body radius.
@@ -292,6 +366,7 @@ pub fn dispatch_enemy_attack(
                         enemy_yaw,
                         player_yaw,
                         player_guard,
+                        guard_input,
                         difficulty,
                     );
                     break;
@@ -316,6 +391,7 @@ pub fn dispatch_enemy_attack(
                         enemy_yaw,
                         player_yaw,
                         player_guard,
+                        guard_input,
                         difficulty,
                     );
                 }
@@ -335,26 +411,34 @@ fn apply_hit_with_guard(
     enemy_yaw: f32,
     player_yaw: f32,
     player_guard: &mut GuardState,
+    guard_input: EnemyAttackGuardInput,
     difficulty: u8,
 ) {
-    let guard_held = player_guard.guard_armed;
     if check_guard_success(
         player_guard,
         true,
         difficulty,
-        guard_held,
-        guard_held,
-        true,
+        guard_input.guard_triggered,
+        guard_input.guard_held,
+        guard_input.player_can_guard,
         atk.id,
         player_yaw,
         enemy_yaw,
     ) {
+        // `SLUS_202.28` `Chacter/m3_play.c:1440-1448`: successful Guard reduces incoming damage
+        // to 10% chip damage (`incoming * 0.1`), NOT `0.0`.
         outcome.hit_player = true;
         outcome.guarded = true;
-        outcome.damage_ap = 0.0;
+        outcome.damage_ap = atk.ap * GUARD_CHIP_DAMAGE_SCALE;
     } else {
         outcome.hit_player = true;
         outcome.damage_ap = atk.ap;
+        // `shBattleDamageRevise` (`SLUS_202.28` `0x001205a0` / `sh2pc.exe` `0x005434a0`):
+        // Pyramid Head Great Knife overhead chop (`0x2d` proto / `0x33` = `51` retail) writes
+        // `-1.0f` (`0xbf800000`) directly to player HP (instant kill).
+        if atk.id == PH_OVERHEAD_CHOP_ATTACK_ID {
+            outcome.instant_kill = true;
+        }
     }
 }
 

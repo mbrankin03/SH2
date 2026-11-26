@@ -218,6 +218,7 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             attack_pressure,
             native_light_pressed: state.sim_core.input.state.native_light_attack_pressed,
             native_heavy_pressed: state.sim_core.input.state.native_heavy_attack_pressed,
+            ..Default::default()
         };
 
         let prev_enemy_states: Vec<(f32, bool)> = state

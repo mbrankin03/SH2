@@ -13,18 +13,59 @@ pub mod comm;
 pub mod forbidden;
 
 pub use comm::{
-    en_check_sleep_in, en_check_sleep_out, TribeCommPool, TribeCommSlot, ENEMY_SLEEP_IN_DIST_MM,
-    ENEMY_SLEEP_OUT_DIST_MM,
+    en_check_sleep_in, en_check_sleep_out, TribeAlert, TribeCommPool, TribeCommSlot,
+    TribeCommunicationBus, ENEMY_SLEEP_IN_DIST_MM, ENEMY_SLEEP_OUT_DIST_MM, EN_SLEEP_IN_DIST_MM,
+    EN_SLEEP_OUT_DIST_MM, MAX_TRIBE_COMM_SLOTS,
 };
 pub use forbidden::{
     en_check_forbidden_area_sub, en_room_forbidden_area, ForbiddenAreaFlags, ForbiddenRect,
     RoomForbiddenAreas,
 };
 
-use crate::ai::sensory::normalize_angle;
+use crate::ai::sensory::{check_hit_eyes, normalize_angle};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sh2_assets::formats::cld::WallSegment;
 use std::f32::consts::PI;
+
+/// Evaluate `enCheckPath` (`SLUS_202.28` `0x00145350`) against both `.cld` `walls`
+/// (`enCheckHitEyes` `0x00145540`) and active [`RoomForbiddenAreas`] (`enCheckForbiddenAreaSub`
+/// `0x00147420`).
+///
+/// - Returns **negative distance** (`-dist_mm`) when the segment `from -> to` is clear.
+/// - Returns **positive hit distance** (`+hit_dist_mm >= 0.0`) when blocked by a `.cld` wall
+///   or an inflated forbidden rectangle.
+pub fn check_path_ray(
+    from: Vec3,
+    to: Vec3,
+    body_radius_mm: f32,
+    walls: &[WallSegment],
+    forbidden: Option<&RoomForbiddenAreas>,
+) -> f32 {
+    let mut best_hit: Option<f32> = None;
+
+    if !walls.is_empty() {
+        let wall_res = check_hit_eyes(from, to, walls);
+        if wall_res >= 0.0 {
+            best_hit = Some(wall_res);
+        }
+    }
+
+    if let Some(areas) = forbidden {
+        for &rect in &areas.rects {
+            let mut clipped = to;
+            if en_check_forbidden_area_sub(body_radius_mm, rect, from, &mut clipped) {
+                let d = Vec3::new(clipped.x - from.x, 0.0, clipped.z - from.z).length();
+                best_hit = Some(best_hit.map_or(d, |b| b.min(d)));
+            }
+        }
+    }
+
+    match best_hit {
+        Some(hit_dist) => hit_dist,
+        None => -from.distance(to),
+    }
+}
 
 /// 15 degrees in radians (`0x3e860a92` in `SLUS_202.28` `enSetPath` `0x00144ae0`).
 pub const PATH_STEP_ANGLE_RAD: f32 = 0.261_799_4;

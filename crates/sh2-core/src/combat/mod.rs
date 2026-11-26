@@ -43,8 +43,9 @@ pub use controller::{
     PS2_PRESSURE_HEAVY_THRESHOLD,
 };
 pub use enemy_attack::{
-    dispatch_enemy_attack, enemy_fog_range_at_frame, select_enemy_dispatcher,
-    EnemyAttackDispatcher, EnemyAttackOutcome, EnemyAttackWork,
+    dispatch_enemy_attack, dispatch_enemy_attack_ex, enemy_fog_range_at_frame,
+    select_enemy_dispatcher, EnemyAttackDispatcher, EnemyAttackGuardInput, EnemyAttackOutcome,
+    EnemyAttackWork, GUARD_CHIP_DAMAGE_SCALE, PH_OVERHEAD_CHOP_ATTACK_ID,
 };
 pub use grapple::{
     compute_creature_grapple_transform, compute_grapple_coupling, get_grapple_spec, BestiaryId,

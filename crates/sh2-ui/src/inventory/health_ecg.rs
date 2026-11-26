@@ -46,6 +46,10 @@ pub const ECG_CRITICAL_DANGER_RATIO: f32 = 0.25;
 pub const ECG_BASE_COLOR_INTENSITY: f32 = 160.0;
 /// GS alpha byte emitted by `look_hp` (`0xa0` = `160` at `0x001d9ad0` and `0x001d9b30`).
 pub const ECG_GS_ALPHA: u8 = 0xa0;
+/// Retail PC `sh2pc.exe` (`0x0046efxx`, `sh2pc_00460000.c:7595`) fine-health green tint overlay
+/// drawn over the Status 3D snapshot at `hp == max_hp`: `D3DCOLOR 0x1680FF80` -> `RGBA(128, 255, 128, 22)`.
+/// (Prototype-vs-retail drift: `SLUS_202.28` `0x001d9afc` omitted this green tint at 100% HP.)
+pub const STATUS_FINE_OVERLAY_RGBA: [u8; 4] = [0x80, 0xff, 0x80, 0x16];
 
 /// Top-left `Status` 3D snapshot X in `512x448` PS2 logical space (`256 + (-230) = 26`,
 /// `SLUS_202.28` `look_hp` `0x001d9b6c`, `addiu $4, $zero, -0xe6`).
@@ -233,7 +237,11 @@ impl HealthEcgState {
             0.0
         };
         let color = self.status_color_rgba(hp, max_hp);
-        if ratio >= ECG_DANGER_COLOR_RATIO {
+        if ratio >= 1.0 {
+            // Retail PC `sh2pc.exe` (`sh2pc_00460000.c:7595`, `0x1680FF80`): subtle green health
+            // overlay over the frozen Status 3D snapshot when at full health (`Fine`).
+            rasterizer.fill_rect(x0, y0, w, h, STATUS_FINE_OVERLAY_RGBA);
+        } else if ratio >= ECG_DANGER_COLOR_RATIO {
             // `look_hp` (`0x001d9afc`): neutral `R=G=B=160*pulse`; when `pulse < 1.0` (`hp < 0.8`),
             // dim the snapshot proportionally to `(1.0 - pulse) * ECG_GS_ALPHA`.
             let dim_a =
@@ -312,11 +320,16 @@ mod tests {
         assert_eq!(HealthEcgState::glitch_scanline_iterations(50.0, 100.0), 5);
         assert_eq!(HealthEcgState::glitch_scanline_iterations(0.0, 100.0), 10);
 
-        // At 100% HP, zero glitch pixels are drawn; below 100% HP, glitch scanlines appear
+        // At 100% HP, retail `sh2pc.exe` (`0x1680FF80`) draws the subtle green fine-health tint inside
+        // the `140x105` Status snapshot rect (`x=26..166, y=49..154`) and leaves everything outside transparent.
         let mut rast = TextRasterizer::new(512, 448);
         ecg.pulse_brightness = 1.0;
         ecg.draw_snapshot_tint(100.0, 100.0, &mut rast);
-        assert!(rast.pixels.iter().all(|&b| b == 0));
+        let inside = &rast.pixels[(100 * 512 + 80) * 4..][..4];
+        assert_eq!(inside[3], STATUS_FINE_OVERLAY_RGBA[3]);
+        assert!(inside[1] > inside[0] && inside[0] == inside[2]);
+        let outside = &rast.pixels[(10 * 512 + 10) * 4..][..4];
+        assert_eq!(outside, &[0, 0, 0, 0]);
 
         // Run a few frames at 60% HP (neutral tint, pulse=1.0 -> dim_a=0, only glitch scanlines draw)
         let mut drew_glitch = false;

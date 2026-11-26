@@ -122,9 +122,10 @@ fn draw_top_headers(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` in `512x448`) centered over each
-    // `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
-    let font_px = ((22.0 * c.sy).round() as usize).max(12);
+    // `font_print` (`0x001d5cb4..0x001d5cfc`, `sh2pc_00470000.c:2614` `fontCrushOff()` -> `FontSize[0]` = `20x30`)
+    // centered over each `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
+    let font_px = ((30.0 * c.sy).round() as usize).max(14);
+    let x_scale = c.sx / c.sy;
     let y_bar = c.yi(SPRITE_TOP_BAR_CY);
     let y_text = y_bar.saturating_sub(font_px / 2);
 
@@ -147,11 +148,12 @@ fn draw_top_headers(
             screen.tab_pulse,
         );
         let cx = c.xi(bar_x + SPRITE_BAR_WIDTH * 0.5);
-        font.draw_line_centered(
+        font.draw_line_centered_aspect(
             rasterizer,
             label,
             (cx, y_text),
             font_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
@@ -227,17 +229,20 @@ fn draw_command_column(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    let font_px = ((18.0 * c.sy).round() as usize).max(12);
+    // `sh2pc_00470000.c:2614` (`fontCrushOff()` -> `FontSize[0]` = `20x30` in `512x448` space).
+    let font_px = ((28.0 * c.sy).round() as usize).max(12);
+    let x_scale = c.sx / c.sy;
     let text_x = c.xi(COMMAND_TEXT_X);
 
     // `command_main` case 7 (`DAT_0116e3e4 == 1`, `0x001d0790`) + `look_volume` (`0x001d9480`):
     // render `"Volume"` header at `font_print` `(0x15e = 350, 0x5a = 90)` and 16-bar green meter at `y = 104..124`.
     if screen.focus == InventoryFocus::RadioVolume {
-        font.draw_line_styled(
+        font.draw_line_styled_aspect(
             rasterizer,
             "Volume",
             (c.xi(350.0), c.yi(90.0).saturating_sub(font_px)),
             font_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
@@ -273,7 +278,15 @@ fn draw_command_column(
         } else {
             Sh2TextColor::MutedFooter
         };
-        font.draw_line_styled(rasterizer, cmd.label(), (text_x, ry), font_px, color, true);
+        font.draw_line_styled_aspect(
+            rasterizer,
+            cmd.label(),
+            (text_x, ry),
+            font_px,
+            x_scale,
+            color,
+            true,
+        );
     }
 }
 
@@ -469,30 +482,34 @@ fn draw_item_footer(
 ) {
     // Exact `SLUS_202.28` `font_print` (`0x001d5b50..0x001d5b90`) in `512x448`:
     // Item Name at `(0x14 = 20, 0x145 = 325)`, Description at `(0x2d = 45, 0x168 = 360)`
-    let title_px = ((18.0 * c.sy).round() as usize).max(12);
-    let body_px = ((15.0 * c.sy).round() as usize).max(10);
+    // (`FontSize[1]` = `16x24` small/crushed font for item name & description).
+    let title_px = ((24.0 * c.sy).round() as usize).max(12);
+    let body_px = ((22.0 * c.sy).round() as usize).max(10);
+    let x_scale = c.sx / c.sy;
     let name_x = c.xi(20.0);
     let name_y = c.yi(325.0).saturating_sub(title_px);
     let desc_x = c.xi(45.0);
     let desc_y = c.yi(360.0).saturating_sub(body_px);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
-        font.draw_line_styled(
+        font.draw_line_styled_aspect(
             rasterizer,
             meta.name,
             (name_x, name_y),
             title_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
         let mut line_y = desc_y;
         for line in meta.description.lines().take(3) {
-            font.draw_line_styled(
+            font.draw_line_styled_aspect(
                 rasterizer,
                 line,
                 (desc_x, line_y),
                 body_px,
-                Sh2TextColor::SilverUnselected,
+                x_scale,
+                Sh2TextColor::White,
                 true,
             );
             line_y += body_px + 4;
@@ -500,11 +517,12 @@ fn draw_item_footer(
     }
 
     if let Some(ref toast) = screen.status_toast {
-        font.draw_line_styled(
+        font.draw_line_styled_aspect(
             rasterizer,
             toast,
             (desc_x, c.yi(395.0)),
-            ((14.0 * c.sy).round() as usize).clamp(10, 20),
+            ((16.0 * c.sy).round() as usize).clamp(10, 22),
+            x_scale,
             Sh2TextColor::Green,
             true,
         );
@@ -518,9 +536,10 @@ fn draw_bottom_nav_bar(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`: `Option | Map | Memo`) centered
-    // over each `sprite` (`0x001d8890`) 6-layer tapering cyan-blue bar (`cy = 413`).
-    let font_px = ((22.0 * c.sy).round() as usize).max(12);
+    // Retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`, `fontCrushOff()` -> `FontSize[0]` = `20x30`):
+    // `Options | Memo | Map` centered over each `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`cy = 413`).
+    let font_px = ((30.0 * c.sy).round() as usize).max(14);
+    let x_scale = c.sx / c.sy;
     let y_bar = c.yi(SPRITE_BOT_BAR_CY);
     let y_text = y_bar.saturating_sub(font_px / 2);
 
@@ -544,11 +563,12 @@ fn draw_bottom_nav_bar(
             Sh2TextColor::White
         };
         let cx = c.xi(SPRITE_BAR_X0[col_idx] + SPRITE_BAR_WIDTH * 0.5);
-        font.draw_line_centered(
+        font.draw_line_centered_aspect(
             rasterizer,
             btn.label(),
             (cx, y_text),
             font_px,
+            x_scale,
             text_color,
             true,
         );
@@ -576,16 +596,18 @@ fn draw_examine_overlay(
         rasterizer.blit_rgba_scaled(dx, dy, max_w, max_h, rgba, tw, th, 1.0);
     }
 
-    let title_px = ((20.0 * c.sy).round() as usize).max(12);
-    let body_px = ((16.0 * c.sy).round() as usize).max(10);
+    let title_px = ((26.0 * c.sy).round() as usize).max(12);
+    let body_px = ((22.0 * c.sy).round() as usize).max(10);
+    let x_scale = c.sx / c.sy;
     let text_y0 = c.yi(325.0);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
-        font.draw_line_centered(
+        font.draw_line_centered_aspect(
             rasterizer,
             meta.name,
             (w / 2, text_y0),
             title_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
@@ -598,7 +620,7 @@ fn draw_examine_overlay(
         for (i, raw_line) in active_page.lines().take(6).enumerate() {
             // Strip any stray ASCII control bytes (`< 0x20`) so `.mes` control codes never leak as `?`
             let clean_line: String = raw_line.chars().filter(|&ch| !ch.is_control()).collect();
-            font.draw_line_centered(
+            font.draw_line_centered_aspect(
                 rasterizer,
                 &clean_line,
                 (
@@ -606,7 +628,8 @@ fn draw_examine_overlay(
                     text_y0 + title_px + (8.0 * c.sy).round() as usize + i * (body_px + 6),
                 ),
                 body_px,
-                Sh2TextColor::SilverUnselected,
+                x_scale,
+                Sh2TextColor::White,
                 true,
             );
         }
@@ -630,8 +653,14 @@ mod tests {
 
         let mut rast = TextRasterizer::new(1280, 960);
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        // Top-left Status snapshot area must stay transparent at 100% HP so 3D snapshot shows through
-        assert_eq!(rast.pixels[(200 * 1280 + 160) * 4 + 3], 0);
+        // Top-left Status snapshot area receives retail `sh2pc.exe` (`0x1680FF80`) subtle green
+        // health wash at 100% HP (`alpha = 0x16`, `G > R == B`) so the 3D snapshot shows through tinted green.
+        let status_px = &rast.pixels[(200 * 1280 + 160) * 4..][..4];
+        assert_eq!(
+            status_px[3],
+            crate::inventory::health_ecg::STATUS_FINE_OVERLAY_RGBA[3]
+        );
+        assert!(status_px[1] > status_px[0] && status_px[0] == status_px[2]);
 
         if let Ok(out_path) = std::env::var("SH2_PREVIEW_OUT") {
             let _ = image::save_buffer(&out_path, &rast.pixels, 1280, 960, image::ColorType::Rgba8);

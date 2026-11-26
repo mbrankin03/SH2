@@ -16,9 +16,9 @@ pub struct Act1StageItemEntry {
     pub pos_x: f32,
     /// World Z coordinate in PS2 millimeters (`CharToFloat4`).
     pub pos_z: f32,
-    /// World Y coordinate in PS2 millimeters (`i16`).
+    /// World Y coordinate encoded as Team Silent `f16` bits (`CharToFloat2` `0x001a9280`).
     pub pos_y: i16,
-    /// Item yaw angle in Q12 / raw units (`i16`).
+    /// Item yaw angle in radians encoded as Team Silent `f16` bits (`CharToFloat2` `0x001a9280`).
     pub rot_y: i16,
     /// Packed status/condition bitfield (`(st >> 29) & 7` = `ITEM_KIND_TABLE` index, `st & 0x3fff` = `flag_id`).
     pub st: u32,

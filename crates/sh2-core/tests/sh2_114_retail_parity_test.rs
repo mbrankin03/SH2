@@ -185,13 +185,10 @@ fn retail_trg10_key_doors_fire_on_action_while_carrying_key_or_menu_item_use() {
     let action_no_item = EventEvalInput {
         player_pos: [0.0, 0.0, -200.0],
         player_rot_y: 0.0,
-        ev_active: 0,
         action_pressed: true,
-        map_disabled_pressed: false,
-        room_changed: false,
-        stage_changed: false,
         used_item_id: None,
-        is_demo_mode: false,
+        is_dark_room: false,
+        flashlight_on: true,
         action_difficulty: ActionDifficulty::Normal,
         player_can_search: true,
     };
@@ -200,8 +197,8 @@ fn retail_trg10_key_doors_fire_on_action_while_carrying_key_or_menu_item_use() {
         let table = stage_table_act2(stage_id).expect("stage table");
         let raw = table.event_list[ev_idx];
         assert_eq!(
-            RetailTriggerKind::from_entry(&raw),
-            Some(RetailTriggerKind::UseOrActionCarryingItem)
+            raw.trigger_kind(),
+            Some(EventTriggerKind::ActionHasItemOrUseItem)
         );
         assert_eq!(raw.required_item_id(), key_id);
 
@@ -219,81 +216,40 @@ fn retail_trg10_key_doors_fire_on_action_while_carrying_key_or_menu_item_use() {
 
         // 1. Without carrying the key, pressing Action must NOT fire.
         let empty_inv = InventoryManager::new();
-        assert!(!RetailTriggerKind::UseOrActionCarryingItem.matches_input(
-            key_id,
+        assert!(!evaluate_event_entry(
+            &raw_at_origin,
+            &ps2_origin_point,
+            &flags,
+            &empty_inv,
             &action_no_item,
-            &empty_inv
         ));
-        let norm_missing =
-            normalize_retail_event_entry_for_input(raw_at_origin, &action_no_item, &empty_inv);
-        assert_eq!(
-            norm_missing.trigger_kind(),
-            Some(EventTriggerKind::UseItemLook)
-        );
-        let mut ts = EventTriggerState::new();
-        assert_eq!(
-            evaluate_event_entry(
-                0,
-                &norm_missing,
-                &ps2_origin_point,
-                &flags,
-                &action_no_item,
-                &mut ts
-            ),
-            0.0
-        );
 
-        // 2. Carrying the key and pressing Action with `used_item_id == None` MUST fire (`ActionLook`).
+        // 2. Carrying the key and pressing Action with `used_item_id == None` MUST fire.
         let mut carried_inv = InventoryManager::new();
         carried_inv.give_raw(key_id, 1);
-        assert!(RetailTriggerKind::UseOrActionCarryingItem.matches_input(
-            key_id,
-            &action_no_item,
-            &carried_inv
-        ));
-        let norm_carried =
-            normalize_retail_event_entry_for_input(raw_at_origin, &action_no_item, &carried_inv);
-        assert_eq!(
-            norm_carried.trigger_kind(),
-            Some(EventTriggerKind::ActionLook)
-        );
         assert!(
             evaluate_event_entry(
-                0,
-                &norm_carried,
+                &raw_at_origin,
                 &ps2_origin_point,
                 &flags,
+                &carried_inv,
                 &action_no_item,
-                &mut ts
-            ) > 0.0,
+            ),
             "stage {stage_id} ev[{ev_idx}] key {key_id} failed action-while-carrying fire"
         );
-        let adapted_list = table.engine_event_list_for_input(&action_no_item, &carried_inv);
-        assert_eq!(
-            adapted_list[ev_idx].trigger_kind(),
-            Some(EventTriggerKind::ActionLook)
-        );
 
-        // 3. Explicit menu item use (`used_item_id == Some(key_id)`, `action_pressed == false`) MUST also fire (`UseItemLook`).
+        // 3. Explicit menu item use (`used_item_id == Some(key_id)`, `action_pressed == false`) MUST also fire.
         let menu_use = EventEvalInput {
             action_pressed: false,
             used_item_id: Some(key_id),
             ..action_no_item
         };
-        assert!(RetailTriggerKind::UseOrActionCarryingItem.matches_input(
-            key_id,
+        assert!(evaluate_event_entry(
+            &raw_at_origin,
+            &ps2_origin_point,
+            &flags,
+            &carried_inv,
             &menu_use,
-            &carried_inv
         ));
-        let norm_menu =
-            normalize_retail_event_entry_for_input(raw_at_origin, &menu_use, &carried_inv);
-        assert_eq!(
-            norm_menu.trigger_kind(),
-            Some(EventTriggerKind::UseItemLook)
-        );
-        assert!(
-            evaluate_event_entry(0, &norm_menu, &ps2_origin_point, &flags, &menu_use, &mut ts)
-                > 0.0
-        );
     }
 }

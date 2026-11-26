@@ -5,7 +5,8 @@ use super::enums::{EventDestShapeKind, EventResultKind, EventShapeKind, EventTri
 
 /// 16-byte stage event descriptor (`Event_List` in `event.h` / `event.c`).
 ///
-/// Terminated in stage tables by an entry where `(flag & 0xffff) == 0xffff` (`flag_1 == 0x3fff`).
+/// Terminated in stage tables by an entry where `cond == 0 && rslt0 == 0`
+/// (`SLUS_202.28` `EventCheck` `0x001a8020`, `sh2pc.exe` `0x0048e1a2`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EventListEntry {
@@ -16,11 +17,11 @@ pub struct EventListEntry {
 }
 
 impl EventListEntry {
-    /// Returns `true` if this entry is the end-of-table sentinel (`(flag & 0xffff) == 0xffff`
-    /// or `flag_1() == 0x3fff`, matching `EventCheck` at `0x001a8ee8`).
+    /// Returns `true` if this entry is the end-of-table sentinel (`cond == 0 && rslt0 == 0`,
+    /// matching `EventCheck` at `SLUS_202.28` `0x001a8020` and `sh2pc.exe` `0x0048e1a2`).
     #[inline]
     pub const fn is_sentinel(&self) -> bool {
-        (self.flag & 0x3fff) == 0x3fff
+        self.cond == 0 && self.rslt0 == 0
     }
 
     /// Extracts field `kind` (`1..=22`) exactly as `EventListElement` (`SLUS_202.28` `0x001a9090`).
@@ -124,9 +125,11 @@ impl EventListEntry {
         ((self.cond >> 3) & 1) != 0
     }
 
-    /// Selector `12`: Whether this event is disabled during Demo/Auto mode (`(cond >> 2) & 1`).
+    /// Selector `12`: Whether this event requires light (`(cond >> 2) & 1`), i.e., skipped when
+    /// `sh2gfw_Get_NightOrDay() != 0 && LightSpotOnOffCheck() == 0`
+    /// (`SLUS_202.28` `EventCheck` `0x001a80ec`, `sh2pc.exe` `0x0048e1a9`).
     #[inline]
-    pub const fn disabled_in_demo(&self) -> bool {
+    pub const fn requires_light(&self) -> bool {
         ((self.cond >> 2) & 1) != 0
     }
 

@@ -2,50 +2,77 @@
 //! (`SLUS_202.28` `src/Event/event.c`).
 
 /// Trigger condition type (`(cond >> 28) & 0xf`, `EventListElement` selector `7`).
+///
+/// Verified 1:1 against `EventCheck` (`SLUS_202.28` `0x001a7ed0`, `sh2pc.exe` `0x0048e070`):
+/// - `0`, `1`: Unconditional every frame when `flag_0`/`flag_1` hold (no button or shape test).
+/// - `2`: Action button pressed + `EventCheckIn` (`shape 11..=13`) or `EventCheckLook` (`0..=10`).
+/// - `3`: Passive look (`EventCheckLook`, `shape 0..=10`, no button required).
+/// - `4`: Passive area (`EventCheckIn`, `shape 11..=13`, no button required).
+/// - `5`: Menu item use (`used_item_id == required_item_id`) + `EventCheckLook` (`0..=10`).
+/// - `6`: Menu item use (`used_item_id == required_item_id`) + `EventCheckIn` (`11..=13`).
+/// - `7`: Action button pressed while carrying `required_item_id` + `In` (`11..=13`) or `Look` (`0..=10`).
+/// - `8`: Carrying `required_item_id` + passive `EventCheckLook` (`0..=10`).
+/// - `9`: Carrying `required_item_id` + passive `EventCheckIn` (`11..=13`).
+/// - `10`: `(Action + carrying required_item_id) || (menu use required_item_id)` + `In` or `Look`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EventTriggerKind {
-    /// `0`: Triggered every frame while the player is inside/touching the shape (`ev_active != 2`).
-    TouchContinuous = 0,
-    /// `1`: Triggered on the rising edge when the player first touches the shape (`ev_active != 2`).
-    TouchEdge = 1,
-    /// `2`: Triggered when pressing the Action/Confirm button while looking at the shape (`ev_active == 0`).
-    ActionLook = 2,
-    /// `3`: Triggered when pressing the Action/Confirm button inside the shape (`ev_active == 0`).
-    ActionTouch = 3,
-    /// `4`: Triggered automatically when entering a new room (`RoomChange != 0`, `ev_active != 2`).
-    RoomInit = 4,
-    /// `5`: Triggered automatically when loading a new stage (`StageChange != 0`, `ev_active != 2`).
-    StageInit = 5,
-    /// `6`: Triggered when using the specified inventory item (`cond.item_id`) while looking at the shape.
-    UseItemLook = 6,
-    /// `7`: Triggered on the rising edge of entering the zone (`ev_active == 0`).
-    ZoneEnterEdge = 7,
-    /// `8`: Triggered when using the specified inventory item (`cond.item_id`) inside the shape.
-    UseItemTouch = 8,
-    /// `9`: Triggered unconditionally every frame (`ev_active == 0`).
-    Always = 9,
-    /// `10`: Triggered when pressing the Map button while map viewing is disabled (`ev_active == 0`).
-    MapDisabled = 10,
+    /// `0`: Unconditional every frame when `flag_0`/`flag_1` hold (`SLUS_202.28` `0x001a81a8`, `sh2pc.exe` `0x0048e1de`).
+    Unconditional0 = 0,
+    /// `1`: Unconditional every frame when `flag_0`/`flag_1` hold (`SLUS_202.28` `0x001a81a8`, `sh2pc.exe` `0x0048e1de`).
+    Unconditional1 = 1,
+    /// `2`: Action button pressed + `EventCheckIn` (`shape 11..=13`) or `EventCheckLook` (`shape 0..=10`).
+    Action = 2,
+    /// `3`: Passive `EventCheckLook` (`shape 0..=10`, no button required).
+    PassiveLook = 3,
+    /// `4`: Passive `EventCheckIn` (`shape 11..=13`, no button required).
+    PassiveIn = 4,
+    /// `5`: Menu item use (`used_item_id == required_item_id`) + `EventCheckLook` (`shape 0..=10`).
+    UseItemLook = 5,
+    /// `6`: Menu item use (`used_item_id == required_item_id`) + `EventCheckIn` (`shape 11..=13`).
+    UseItemIn = 6,
+    /// `7`: Action button pressed while carrying `required_item_id` + `In` (`11..=13`) or `Look` (`0..=10`).
+    ActionHasItem = 7,
+    /// `8`: Carrying `required_item_id` + passive `EventCheckLook` (`shape 0..=10`).
+    PassiveHasItemLook = 8,
+    /// `9`: Carrying `required_item_id` + passive `EventCheckIn` (`shape 11..=13`).
+    PassiveHasItemIn = 9,
+    /// `10`: `(Action + carrying required_item_id) || (menu use required_item_id)` + `In` (`11..=13`) or `Look` (`0..=10`).
+    ActionHasItemOrUseItem = 10,
 }
 
 impl EventTriggerKind {
     /// Converts a 4-bit raw trigger nibble (`0..=10`) into [`EventTriggerKind`].
     pub const fn from_raw(raw: u8) -> Option<Self> {
         match raw {
-            0 => Some(Self::TouchContinuous),
-            1 => Some(Self::TouchEdge),
-            2 => Some(Self::ActionLook),
-            3 => Some(Self::ActionTouch),
-            4 => Some(Self::RoomInit),
-            5 => Some(Self::StageInit),
-            6 => Some(Self::UseItemLook),
-            7 => Some(Self::ZoneEnterEdge),
-            8 => Some(Self::UseItemTouch),
-            9 => Some(Self::Always),
-            10 => Some(Self::MapDisabled),
+            0 => Some(Self::Unconditional0),
+            1 => Some(Self::Unconditional1),
+            2 => Some(Self::Action),
+            3 => Some(Self::PassiveLook),
+            4 => Some(Self::PassiveIn),
+            5 => Some(Self::UseItemLook),
+            6 => Some(Self::UseItemIn),
+            7 => Some(Self::ActionHasItem),
+            8 => Some(Self::PassiveHasItemLook),
+            9 => Some(Self::PassiveHasItemIn),
+            10 => Some(Self::ActionHasItemOrUseItem),
             _ => None,
         }
+    }
+
+    /// Returns `true` if `EventCheck` (`SLUS_202.28` `0x001a8330`, `sh2pc.exe` `0x0048e2d8`)
+    /// consumes `required_item_id` when `entry.consume_item()` is set (triggers `5..=10`).
+    #[inline]
+    pub const fn supports_consume_item(self) -> bool {
+        matches!(
+            self,
+            Self::UseItemLook
+                | Self::UseItemIn
+                | Self::ActionHasItem
+                | Self::PassiveHasItemLook
+                | Self::PassiveHasItemIn
+                | Self::ActionHasItemOrUseItem
+        )
     }
 }
 
@@ -162,28 +189,32 @@ impl EventDestShapeKind {
 }
 
 /// Result action type (`(rslt0 >> 28) & 0xf`, `EventListElement` selector `13`).
+///
+/// Verified 1:1 against `EventMainStandard` (`SLUS_202.28` `0x001a7b50`, `sh2pc.exe` `0x0048e610`):
+/// `1=FlagSet`, `2=FlagClear`, `3=Program`, `4=Move`, `5=MovePlusProgram`, `6=Message`,
+/// `7=DoorLocked`, `8=DoorBroken`, `9=DoorUnlocked`, `10=SavePoint`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EventResultKind {
-    /// `1`: Set flag (`rslt1 & 0x3fff`) via `EventExecFlag`.
+    /// `1`: Set flag (`rslt1 & 0x3fff`) via `EventExecFlag` (`_ev_m_step = 1`).
     FlagSet = 1,
-    /// `2`: Clear flag (`rslt1 & 0x3fff`) via `EventExecFlag`.
+    /// `2`: Clear flag (`rslt1 & 0x3fff`) via `EventExecFlag` (`_ev_m_step = 1`).
     FlagClear = 2,
-    /// `3`: Move player to destination (`ev_pos[dest_offset]`), optionally changing stage (`EventExecMove`).
-    Move = 3,
-    /// `4`: Display stage `.mes` message (`(rslt1 >> 14) & 0xff`) via `EventExecMessage`.
-    Message = 4,
-    /// `5`: Execute stage program `ev_prog[(rslt1 >> 14) & 0x7f]` via `EventExecProgram`.
-    Program = 5,
-    /// `6`: Move player (`EventExecMove`) and then chain directly into `EventExecProgram`.
-    MovePlusProgram = 6,
-    /// `7`: Locked door feedback (`EventExecDoor`: locked sound + message).
+    /// `3`: Execute stage program `ev_prog[(rslt1 >> 14) & 0x7f]` via `EventExecProgram` (`_ev_m_step = 2`).
+    Program = 3,
+    /// `4`: Move player to destination (`ev_pos[dest_offset]`), optionally changing stage (`EventExecMove`, `_ev_m_step = 5`).
+    Move = 4,
+    /// `5`: Move player (`EventExecMove`, `_ev_m_step = 3`) and then chain directly into `EventExecProgram` (`_ev_m_step = 4`).
+    MovePlusProgram = 5,
+    /// `6`: Display stage `.mes` message (`(rslt1 >> 14) & 0xff`) via `EventExecMessage` (`_ev_m_step = 6`).
+    Message = 6,
+    /// `7`: Locked door feedback (`EventExecDoor`: locked sound + message, `_ev_m_step = 7`).
     DoorLocked = 7,
-    /// `8`: Broken lock feedback (`EventExecDoor`: broken sound + common message 4).
+    /// `8`: Broken lock feedback (`EventExecDoor`: broken sound + common message 4, `_ev_m_step = 7`).
     DoorBroken = 8,
-    /// `9`: Unlocked door feedback (`EventExecDoor`: unlock sound + message).
+    /// `9`: Unlocked door feedback (`EventExecDoor`: unlock sound + message, `_ev_m_step = 7`).
     DoorUnlocked = 9,
-    /// `10`: Save point interaction (`EventExecSave`).
+    /// `10`: Save point interaction (`EventExecSave`, `_ev_m_step = 9`).
     SavePoint = 10,
 }
 
@@ -192,10 +223,10 @@ impl EventResultKind {
         match raw {
             1 => Some(Self::FlagSet),
             2 => Some(Self::FlagClear),
-            3 => Some(Self::Move),
-            4 => Some(Self::Message),
-            5 => Some(Self::Program),
-            6 => Some(Self::MovePlusProgram),
+            3 => Some(Self::Program),
+            4 => Some(Self::Move),
+            5 => Some(Self::MovePlusProgram),
+            6 => Some(Self::Message),
             7 => Some(Self::DoorLocked),
             8 => Some(Self::DoorBroken),
             9 => Some(Self::DoorUnlocked),

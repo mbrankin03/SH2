@@ -237,8 +237,9 @@ pub struct ClearData {
     /// - Bits `0..=3`: Riddle difficulty clears (`Easy = 0x01`, `Normal = 0x02`, `Hard = 0x04`, `Extra = 0x08`).
     /// - Bits `5..=7`: Action difficulty clears (`Easy = 0x20`, `Normal = 0x40`, `Hard = 0x80`).
     pub cleared_levels: u8,
-    /// Seen endings bitmask (`0x01` Leave, `0x02` In Water, `0x04` Maria, `0x08` Rebirth,
-    /// `0x10` UFO, `0x20` Dog, `0x40` Born from a Wish).
+    /// Seen endings bitmask (`sh2pc.exe` `0x0048d330` / `playing.clear_end_kind` at `0x01dbbf84`):
+    /// `0x01` Leave, `0x02` Maria, `0x04` In Water, `0x08` Rebirth,
+    /// `0x10` Dog, `0x20` UFO, `0x40` Born from a Wish.
     pub endings_seen: u8,
     /// Total main-scenario clears (`0..=99`).
     pub clear_count: u8,
@@ -264,19 +265,19 @@ impl ClearData {
     /// Action difficulty clear bit: Hard (`0x80`).
     pub const ACTION_HARD_CLEARED: u8 = 0x80;
 
-    /// Seen ending bit: Leave (`0x01`).
+    /// Seen ending bit: Leave / Recovery (`0x01`, `sh2pc.exe` `0x0059fa0f` -> `0x0048d330`).
     pub const ENDING_LEAVE: u8 = 0x01;
-    /// Seen ending bit: In Water (`0x02`).
-    pub const ENDING_IN_WATER: u8 = 0x02;
-    /// Seen ending bit: Maria (`0x04`).
-    pub const ENDING_MARIA: u8 = 0x04;
-    /// Seen ending bit: Rebirth (`0x08`).
+    /// Seen ending bit: Maria (`0x02`, `sh2pc.exe` `0x005a12a5` -> `0x0048d330`).
+    pub const ENDING_MARIA: u8 = 0x02;
+    /// Seen ending bit: In Water / Suicide (`0x04`, `sh2pc.exe` `0x0043f242` -> `0x0048d330`).
+    pub const ENDING_IN_WATER: u8 = 0x04;
+    /// Seen ending bit: Rebirth (`0x08`, `sh2pc.exe` `0x0057df70` -> `0x0048d330`).
     pub const ENDING_REBIRTH: u8 = 0x08;
-    /// Seen ending bit: UFO (`0x10`).
-    pub const ENDING_UFO: u8 = 0x10;
-    /// Seen ending bit: Dog (`0x20`).
-    pub const ENDING_DOG: u8 = 0x20;
-    /// Seen ending bit: *Born from a Wish* (`0x40`).
+    /// Seen ending bit: Dog (`0x10`, `sh2pc.exe` `0x005745ba` -> `0x0048d330`).
+    pub const ENDING_DOG: u8 = 0x10;
+    /// Seen ending bit: UFO (`0x20`, `sh2pc.exe` `0x00578ed4` -> `0x0048d330`).
+    pub const ENDING_UFO: u8 = 0x20;
+    /// Seen ending bit: *Born from a Wish* (`0x40`, `sh2pc.exe` `0x00573b8b` -> `0x0048d330`).
     pub const ENDING_BORN_FROM_A_WISH: u8 = 0x40;
 
     /// Returns `true` if selecting `RiddleDifficulty::Hard` is promoted to

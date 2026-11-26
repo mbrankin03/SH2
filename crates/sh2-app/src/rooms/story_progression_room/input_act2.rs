@@ -9,13 +9,13 @@ use super::{
 use crate::state::AppState;
 use sh2_core::config::{ActionDifficulty, RiddleDifficulty};
 use sh2_core::events::stages_act2::{
-    apply_prison_scaffold_tablet, hangman_innocent_slot, normalize_retail_event_entry_for_input,
-    pull_hangman_noose, rotate_labyrinth_face_cube, selected_briefcase_word, stage_table_act2,
-    turn_briefcase_drum, Act2EnhancementToggles, BoardRotation, CubeTurnDirection, GravestoneBoard,
-    MusicBoxKind, RetailTriggerKind, ALL_ACT2_STAGE_IDS, BRIEFCASE_TRUNK_DRUMS,
-    ITEM_MUSIC_BOX_CINDERELLA, ITEM_MUSIC_BOX_LITTLE_MERMAID, ITEM_MUSIC_BOX_SNOW_WHITE,
+    apply_prison_scaffold_tablet, hangman_innocent_slot, pull_hangman_noose,
+    rotate_labyrinth_face_cube, selected_briefcase_word, stage_table_act2, turn_briefcase_drum,
+    Act2EnhancementToggles, BoardRotation, CubeTurnDirection, GravestoneBoard, MusicBoxKind,
+    ALL_ACT2_STAGE_IDS, BRIEFCASE_TRUNK_DRUMS, ITEM_MUSIC_BOX_CINDERELLA,
+    ITEM_MUSIC_BOX_LITTLE_MERMAID, ITEM_MUSIC_BOX_SNOW_WHITE,
 };
-use sh2_core::events::{evaluate_event_entry, EventEvalInput, EventTriggerState, PZ_DRUM};
+use sh2_core::events::{evaluate_event_entry, EventEvalInput, PZ_DRUM};
 use sh2_core::InventoryManager;
 
 pub(crate) fn handle_act2_key(state: &mut AppState, key_code: KeyCode) {
@@ -405,21 +405,15 @@ fn test_act2_trg10_door(
     let input = EventEvalInput {
         player_pos: [0.0, 0.0, -200.0],
         player_rot_y: 0.0,
-        ev_active: 0,
         action_pressed: !is_menu,
-        map_disabled_pressed: false,
-        room_changed: false,
-        stage_changed: false,
         used_item_id: (is_menu && rm.act2_carrying_key).then_some(key_id),
-        is_demo_mode: false,
+        is_dark_room: false,
+        flashlight_on: true,
         action_difficulty: ActionDifficulty::Normal,
         player_can_search: true,
     };
-    let pre = RetailTriggerKind::UseOrActionCarryingItem.matches_input(key_id, &input, &inv);
-    let norm = normalize_retail_event_entry_for_input(raw, &input, &inv);
-    let mut ts = EventTriggerState::new();
     let box_pos = [0u8; 10];
-    let fired = pre && evaluate_event_entry(0, &norm, &box_pos, &flags, &input, &mut ts) > 0.0;
+    let fired = evaluate_event_entry(&raw, &box_pos, &flags, &inv, &input);
     rm.act2_trg10_unlocked = Some(fired);
     let mode = if is_menu {
         "Inventory Menu Use"

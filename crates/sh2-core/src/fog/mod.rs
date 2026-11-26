@@ -48,8 +48,9 @@ pub const OB_FOG_ENV_PARTICLE_SIZE_MM: f32 = 700.0;
 /// Exact `obGB.fcl` `+0x13` (`0x30 = 48` / `128.0`) PS2 GS particle alpha scale.
 pub const OB_FOG_ENV_ALPHA_SCALE: f32 = 48.0 / 128.0;
 /// Exact PS2 `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) `fogSetColor(0x80, 0x80, 0x80, 0x80)`:
-/// on PS2 GS `0x80` (`128`) is unity texture modulation against `data/pic/effect/fog.tex` (mean `131/255`).
-pub const PS2_FOG_PARTICLE_MIST_RGB: [f32; 3] = [131.0 / 255.0, 131.0 / 255.0, 131.0 / 255.0];
+/// on PS2 GS `0x80` (`128`) is unity (`1.0`) texture modulation against bright `data/pic/effect/fog.tex`
+/// cloud peaks (`0.72..0.85` misty grey-white).
+pub const PS2_FOG_PARTICLE_MIST_RGB: [f32; 3] = [0.74, 0.76, 0.78];
 /// Exact PS2 fixed Y altitude (`+10,000.0` mm, PS2 Y-down = 10 m below the parking lot cliff)
 /// for Observation Deck (`ob01`) 3D fog particles from retail `data/bg/ob/obGB.fcl`
 /// (`FogEnv +0x08` at file offset `0x8c`, `subdiv (+0x12) = 4 != 0`), applied to

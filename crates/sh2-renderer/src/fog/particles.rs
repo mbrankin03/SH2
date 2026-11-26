@@ -99,11 +99,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (r2 >= 1.0) {
         discard;
     }
-    let radial = pow(1.0 - r2, 2.0);
+    let radial = pow(1.0 - r2, 1.8);
     let tex_n = textureSample(fog_tex, fog_sampler, in.uv).r;
     // PS2 GS sprite alpha (`obGB.fcl +0x13 = 0x30 = 48/128 = 0.375`, `fog_part_alp` 0x0016b9a0)
     // modulated by retail `fog.tex` cloud density and smooth radial falloff.
-    let alpha = radial * (0.35 + 0.65 * tex_n) * in.color_alpha.a * 0.375;
+    let alpha = radial * (0.45 + 0.55 * tex_n) * in.color_alpha.a * 0.45;
     if (alpha < 0.003) {
         discard;
     }

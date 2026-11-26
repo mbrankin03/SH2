@@ -22,6 +22,9 @@ pub struct CampaignTickInput {
     pub overlay_toggle: Option<OverlayMenuKind>,
     /// Set to `true` when the active `.dds` `DramaDemoPlayer` finished playing this frame.
     pub drama_demo_finished: bool,
+    /// Current playback frame of the active `.dds` `DramaDemoPlayer` (`0x01f7a7b8`), used for
+    /// mid-cutscene stage hooks such as `tenbou`'s `1400.0` BGM switch (`sh2pc.exe` `0x005a0936`).
+    pub drama_demo_frame: Option<f32>,
     /// Set to `true` when the active `.bik` FMV finished playing this frame.
     pub fmv_finished: bool,
     /// Set to `true` when the player confirmed exit from `GameOver` or `EndingCredits`.
@@ -58,6 +61,10 @@ pub struct CampaignEffects {
     pub positional_sounds: Vec<EventPositionalSound>,
     /// Stage ID for BGM manager synchronization whenever a stage load completes.
     pub bgm_stage_id: Option<u32>,
+    /// Active `EvBgmControl` (`Stage_Data::bgm_control`) channel bitmask for the current stage
+    /// and demo state (e.g. `stg_ovservation` `0x005a1390`: `0x04` -> `0x0e` during `tenbou`,
+    /// `0`/`1` in gameplay).
+    pub bgm_control_mask: Option<u32>,
     /// Outdoor `.map` multi-tile streaming plan (`LoadBgSync` `0x0020b240`) when outdoors.
     pub outdoor_plan: Option<TileStreamingPlan>,
     /// Common `.mes` message ID emitted by `EventMainStandard`.

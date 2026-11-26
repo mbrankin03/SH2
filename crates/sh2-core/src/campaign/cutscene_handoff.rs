@@ -67,10 +67,28 @@ pub struct AutoDemoRule {
     pub post_yaw: Option<f32>,
 }
 
+/// Post-`tenbou` spawn position `[x, y, z]` in PS2 mm (`sh2pc.exe` `0x008e7b38`, passed to
+/// `CharaSetPos` `0x005396c0` at `0x005a08b2`).
+pub const TENBOU_POST_POS: [f32; 3] = [19_350.25, 0.0, -507.74];
+/// Post-`tenbou` player facing yaw in radians (`sh2pc.exe` `0x005a08aa`: `push 0x0` -> `0.0f`
+/// written to `chara + 0x30` & `chara + 0xe0` in `FUN_005396c0`).
+pub const TENBOU_POST_YAW: f32 = 0.0;
+/// `tenbou` mid-cutscene frame threshold (`1400.0`, `sh2pc.exe` `0x006b61d8`) compared against
+/// `drama_demo_frame` (`0x01f7a7b8`) at `0x005a0936..0x005a0955` to switch Observation Deck BGM.
+pub const TENBOU_BGM_SWITCH_FRAME: f32 = 1400.0;
+/// Event flag `517` (`0x01f7aa20 |= 0x20` at `sh2pc.exe` `0x005a094e`) set once `tenbou` passes
+/// frame `1400.0`, switching `EvBgmControl` (`0x005a1390`) from `0x04` to `0x0e`.
+pub const TENBOU_BGM_SWITCH_FLAG: usize = 517;
+/// Post-`tenbou` flag `1504` (`0x5e0`, `sh2pc.exe` `0x005a08c8`: `0x01f7aa9c |= 0x1`).
+pub const TENBOU_POST_FLAG_A: usize = 1504;
+/// Post-`tenbou` flag `1553` (`0x611`, `sh2pc.exe` `0x005a08c2`: `0x01f7aaa0 |= 0x20000`).
+pub const TENBOU_POST_FLAG_B: usize = 1553;
+
 /// Verified stage-entry automatic `DramaDemo` rules from `SLUS_202.28` / `sh2pc.exe`:
 /// - Stage `2` (`stg_toilet.c` `0x008e7ce8` entry 0: flag `0x0020` = 32, `demo_no = 1` `first_toilet`,
 ///   preceded by `toilet.bik` via [`evaluate_auto_stage_fmv`]).
-/// - Stage `3` (`stg_ovservation.c` `0x008e7948` entry 0: flag `0x0021` = 33, `demo_no = 2` `tenbou`).
+/// - Stage `3` (`stg_ovservation.c` `0x008e7948` entry 0: flag `0x0021` = 33, `demo_no = 2` `tenbou`,
+///   post-demo `CharaSetPos` `0x005a08b2` -> `0x008e7b38` `(19350.25, 0.0, -507.74)`, yaw `0.0`).
 pub const AUTO_STAGE_DEMO_RULES: &[AutoDemoRule] = &[
     AutoDemoRule {
         stage_id: 2,
@@ -84,10 +102,34 @@ pub const AUTO_STAGE_DEMO_RULES: &[AutoDemoRule] = &[
         stage_id: 3,
         completion_flag: 0x0021,
         demo_no: CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO as u32,
-        post_pos: None,
-        post_yaw: None,
+        post_pos: Some(TENBOU_POST_POS),
+        post_yaw: Some(TENBOU_POST_YAW),
     },
 ];
+
+/// Evaluates per-frame mid-cutscene stage hooks during an active `DramaDemo`.
+///
+/// For `tenbou` (`demo_no == 2`, `stg_ovservation.c` `0x005a0936..0x005a0955`), sets
+/// `flag(517)` (`0x01f7aa20 |= 0x20`) as soon as `demo_frame > 1400.0` (`0x006b61d8`),
+/// causing `EvBgmControl` (`0x005a1390`) to switch from `0x04` to `0x0e`.
+pub fn tick_demo_stage_hooks(demo_no: u32, demo_frame: Option<f32>, flags: &mut EventFlags) {
+    if demo_no == CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO as u32
+        && demo_frame.is_some_and(|frame| frame > TENBOU_BGM_SWITCH_FRAME)
+    {
+        flags.set(TENBOU_BGM_SWITCH_FLAG, true);
+    }
+}
+
+/// Applies stage-specific post-cutscene flag writes when a `DramaDemo` finishes or is skipped.
+///
+/// For `tenbou` (`demo_no == 2`, `stg_ovservation.c` `0x005a08b7..0x005a08d8`), sets
+/// `flag(1504)` (`0x01f7aa9c |= 0x1`) and `flag(1553)` (`0x01f7aaa0 |= 0x20000`).
+pub fn apply_post_demo_stage_flags(demo_no: u32, flags: &mut EventFlags) {
+    if demo_no == CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO as u32 {
+        flags.set(TENBOU_POST_FLAG_A, true);
+        flags.set(TENBOU_POST_FLAG_B, true);
+    }
+}
 
 /// Evaluates whether the current `stage_id` has an unplayed automatic stage-entry FMV
 /// (`sh2pc.exe` `0x005a14a0` `stg_toilet` `ev_prog[1]`: plays `toilet.bik` before `first_toilet`).

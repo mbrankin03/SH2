@@ -133,20 +133,19 @@ pub(super) fn handle_puzzle_cutaway_key_input(
             play_confirm_sound(state);
             return;
         }
-        // [Space]: Start Stage 3 Car Map Program (#1 if flag 28 is clear, #2 if flag 28 is set)
+        // [Space]: Start Stage 3 Car Map Program (#2 if flag 24 is clear, #3 if flag 24 is set)
         KeyCode::Space if !repeat => {
-            let has_map = state.sim_core.scenario.flags.get(28);
+            let has_map = state.sim_core.scenario.flags.get(24);
             if !has_map {
-                state.sim_core.scenario.prog_runner.start(3, 1, 28);
+                state.sim_core.scenario.prog_runner.start(3, 2, 24);
                 state.puzzle_cutaway_room.preset_idx = 0;
                 state.puzzle_cutaway_room.last_event_desc =
-                    "Started Stage 3 ev_prog #1 (s03_item_in_car). Press [Enter] to take Silent Hill map!"
+                    "Started Stage 3 ev_prog #2 (0x005a09b0). Press [Enter] to take Silent Hill map!"
                         .to_string();
             } else {
-                state.sim_core.scenario.prog_runner.start(3, 2, 0);
+                state.sim_core.scenario.prog_runner.start(3, 3, 0);
                 state.puzzle_cutaway_room.last_event_desc =
-                    "Started Stage 3 ev_prog #2 (s03_nothing_in_car: map already taken)."
-                        .to_string();
+                    "Started Stage 3 ev_prog #3 (0x005a0ca0: map already taken).".to_string();
             }
             play_confirm_sound(state);
             return;
@@ -166,14 +165,14 @@ pub(super) fn handle_puzzle_cutaway_key_input(
     let preset_pic = CUTAWAY_PRESETS[state.puzzle_cutaway_room.preset_idx].0;
     match preset_pic {
         "out_p_incar" if key_code == KeyCode::KeyS && !repeat => {
-            state.sim_core.scenario.flags.set(28, false);
+            state.sim_core.scenario.flags.set(24, false);
             state
                 .sim_core
                 .scenario
                 .cutaway_overlay
                 .set_picture(Some("out_p_incar"), &state.sim_core.scenario.flags);
             state.puzzle_cutaway_room.last_event_desc =
-                "Reset Flag 28 (Map returned to car seat; incar_alpha = 1.0)".to_string();
+                "Reset Flag 24 (Map returned to car seat; incar_alpha = 1.0)".to_string();
         }
         "apt_clock_close" | "apt_clock_open" if key_code == KeyCode::KeyS && !repeat => {
             state

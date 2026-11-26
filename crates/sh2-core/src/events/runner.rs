@@ -65,6 +65,9 @@ pub struct StageProgramRunner {
     requested_demo: Option<u32>,
     /// Sub-scenario / main game ending bit triggered by `p_game_end`, if any.
     triggered_ending: Option<u8>,
+    /// Auto-walk displacement delta `[dx, dy, dz]` in PS2 mm requested by boundary warning
+    /// programs (`0x005a0cb0` `-500.0 mm` Z, `0x005a0de0` `-500.0 mm` X via `0x0053b3c0`).
+    pending_walkback_delta: Option<[f32; 3]>,
 }
 
 impl StageProgramRunner {
@@ -78,12 +81,14 @@ impl StageProgramRunner {
         self.active_message_id = None;
         self.sound_effects.clear();
         self.requested_demo = None;
+        self.pending_walkback_delta = None;
     }
 
     /// Aborts any running stage program and hides any active cutaway still.
     pub fn abort(&mut self, overlay: &mut CutawayOverlayEngine, flags: &EventFlags) {
         self.active = None;
         self.active_message_id = None;
+        self.pending_walkback_delta = None;
         overlay.set_picture(None, flags);
     }
 
@@ -125,6 +130,12 @@ impl StageProgramRunner {
     /// Consumes and returns any ending bit triggered by `p_game_end`.
     pub fn take_triggered_ending(&mut self) -> Option<u8> {
         self.triggered_ending.take()
+    }
+
+    /// Consumes and returns any auto-walk displacement delta `[dx, dy, dz]` in PS2 mm emitted by
+    /// boundary warning programs (`stg_ovservation.c` `0x005a0cb0` / `0x005a0de0`).
+    pub fn take_walkback_delta(&mut self) -> Option<[f32; 3]> {
+        self.pending_walkback_delta.take()
     }
 
     /// Resolves the retail `sh2pc.exe` `ev_prog` function VA for `(stage, prog_no)` from
@@ -219,76 +230,28 @@ impl StageProgramRunner {
                 }
                 _ => true,
             },
-            // Stage 3 #1: Observation deck car map pickup (s03_item_in_car, 0x5a0bd0)
-            // Displays out_p_incar with out/p_incar_map sprite, waits for button, fades map over 1.0s
-            // with SE 0x2b17, shows message 49 ("Got the map of Silent Hill."), and sets flag 28.
-            (3, 1) => match p.step {
-                0 => {
-                    p.locked = true;
-                    overlay.set_picture(Some("out_p_incar"), flags);
-                    overlay.set_incar_alpha(1.0);
-                    p.step = 1;
-                    false
+            // Stage 3 #1..#6 (`stg_ovservation.c`, `ACT1_OBSERVATION_EV_PROGS` `0x008e7a18`)
+            (3, 1..=6) => {
+                let out = super::runner_stage3::tick_stage3_prog(
+                    &mut p,
+                    down,
+                    dt,
+                    self.active_message_id,
+                    flags,
+                    overlay,
+                );
+                self.active_message_id = out.active_message_id;
+                if let Some(se) = out.sound_effect {
+                    self.sound_effects.push(se);
                 }
-                1 => {
-                    if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
-                        self.sound_effects.push(0x2b17);
-                        p.timer = 0.0;
-                        p.step = 2;
-                    }
-                    false
+                if let Some(demo_no) = out.requested_demo {
+                    self.requested_demo = Some(demo_no);
                 }
-                2 => {
-                    p.timer += dt;
-                    let a = (1.0 - p.timer).max(0.0);
-                    overlay.set_incar_alpha(a);
-                    if p.timer >= 1.0 {
-                        self.active_message_id = Some(49);
-                        p.step = 3;
-                    }
-                    false
+                if let Some(delta) = out.walkback_delta {
+                    self.pending_walkback_delta = Some(delta);
                 }
-                3 => {
-                    if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
-                        self.active_message_id = None;
-                        overlay.set_picture(None, flags);
-                        p.locked = false;
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => true,
-            },
-            // Stage 3 #2: Re-examining the car after map pickup (s03_nothing_in_car, 0x5a0d80)
-            (3, 2) => match p.step {
-                0 => {
-                    p.locked = true;
-                    p.flag_set = false;
-                    overlay.set_picture(Some("out_p_incar"), flags);
-                    overlay.set_incar_alpha(0.0);
-                    p.step = 1;
-                    false
-                }
-                1 => {
-                    if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
-                        self.active_message_id = Some(50);
-                        p.step = 2;
-                    }
-                    false
-                }
-                2 => {
-                    if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
-                        self.active_message_id = None;
-                        overlay.set_picture(None, flags);
-                        p.locked = false;
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => true,
-            },
+                out.finished
+            }
             // Stage 7 #1: Wood Side E 2F scream jumpscare (EvProgAnyoneCry, 0x59b1f0)
             // Locks player, starts stage anim 0x4e22, plays SE 0x9c49 at (-99400, -500, 26400),
             // waits 2.0s, shows stage message 0 ("What was that!?"), and unlocks on dismissal.

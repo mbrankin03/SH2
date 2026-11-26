@@ -419,11 +419,24 @@ fn key_to_nav(key_code: KeyCode, close_on_m: bool, close_on_inv: bool) -> Option
     }
 }
 
-/// Routes mouse cursor movement when Inventory is open (`CommandWindowMouseFix.cpp`).
+/// Routes mouse cursor movement when Inventory or Inventory->Options is open (`CommandWindowMouseFix.cpp`).
 pub(crate) fn handle_mouse_move(state: &mut AppState, mouse_x: f32, mouse_y: f32) {
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    if state.ingame_menus.options_from_inventory && !state.ingame_menus.options_closing_to_inventory
+    {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(vw, vh);
+        if cw > 0.0 && ch > 0.0 {
+            let ps2_x = (mouse_x - ox) * 512.0 / cw;
+            let ps2_y = (mouse_y - oy) * 448.0 / ch;
+            if state.menu_ctrl.options_menu.handle_mouse_move(ps2_x, ps2_y) {
+                state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+                emit_menu_sound(state, MenuSoundCue::CursorMove, "Inventory Options");
+            }
+        }
+        return;
+    }
     if state.ingame_menus.inventory.is_open {
-        let vw = state.surface_config.width.max(1) as f32;
-        let vh = state.surface_config.height.max(1) as f32;
         state
             .ingame_menus
             .inventory
@@ -431,11 +444,35 @@ pub(crate) fn handle_mouse_move(state: &mut AppState, mouse_x: f32, mouse_y: f32
     }
 }
 
-/// Routes left mouse click when Inventory is open.
+/// Routes left mouse click when Inventory or Inventory->Options is open.
 pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f32) {
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    if state.ingame_menus.options_from_inventory && !state.ingame_menus.options_closing_to_inventory
+    {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(vw, vh);
+        if cw > 0.0 && ch > 0.0 {
+            let ps2_x = (mouse_x - ox) * 512.0 / cw;
+            let ps2_y = (mouse_y - oy) * 448.0 / ch;
+            if let Some(cue) = state
+                .menu_ctrl
+                .options_menu
+                .handle_mouse_click(ps2_x, ps2_y)
+            {
+                let (saved_cfg, _) = state.menu_ctrl.options_menu.commit_changes();
+                state.menu_ctrl.config_applied_pending = Some(saved_cfg.clone());
+                let _ = saved_cfg.save_to_file(&state.menu_ctrl.config_path);
+                crate::menu_events::sync_audio_config(state, &saved_cfg);
+                let sound = match cue {
+                    sh2_ui::options::OptionsSoundCue::ValueChange => MenuSoundCue::CursorMove,
+                    _ => MenuSoundCue::Confirm,
+                };
+                emit_menu_sound(state, sound, "Inventory Options");
+            }
+        }
+        return;
+    }
     if state.ingame_menus.inventory.is_open {
-        let vw = state.surface_config.width.max(1) as f32;
-        let vh = state.surface_config.height.max(1) as f32;
         let snapshot = build_player_snapshot(state);
         let (cue, action) = state.ingame_menus.inventory.handle_mouse_click(
             mouse_x,
@@ -447,6 +484,34 @@ pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f3
         );
         emit_menu_sound(state, cue, "Inventory");
         apply_inventory_action(state, action);
+    }
+}
+
+/// Routes mouse scroll wheel when Inventory->Options is open.
+pub(crate) fn handle_mouse_wheel(state: &mut AppState, steps: i32) {
+    if !state.ingame_menus.options_from_inventory
+        || state.ingame_menus.options_closing_to_inventory
+        || steps == 0
+    {
+        return;
+    }
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    let hover_ps2 = state.last_cursor_pos.and_then(|(mx, my)| {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(vw, vh);
+        if cw > 0.0 && ch > 0.0 {
+            Some(((mx as f32 - ox) * 512.0 / cw, (my as f32 - oy) * 448.0 / ch))
+        } else {
+            None
+        }
+    });
+    let cue = state
+        .menu_ctrl
+        .options_menu
+        .handle_mouse_wheel(steps, hover_ps2);
+    if cue != sh2_ui::options::OptionsSoundCue::None {
+        state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+        emit_menu_sound(state, MenuSoundCue::CursorMove, "Inventory Options");
     }
 }
 

@@ -126,12 +126,21 @@ impl ApplicationHandler for SilentHillApp {
                         event_loop.exit();
                     }
                 } else if pressed
-                    && button == winit::event::MouseButton::Left
                     && state.menu_ctrl.in_game_active
                     && state.ingame_menus.is_any_open()
                 {
-                    if let Some((mx, my)) = state.last_cursor_pos {
-                        ingame_menus::handle_mouse_click(state, mx as f32, my as f32);
+                    if button == winit::event::MouseButton::Right
+                        && state.ingame_menus.options_from_inventory
+                    {
+                        ingame_menus::handle_key_input(
+                            state,
+                            winit::keyboard::KeyCode::Escape,
+                            true,
+                        );
+                    } else if button == winit::event::MouseButton::Left {
+                        if let Some((mx, my)) = state.last_cursor_pos {
+                            ingame_menus::handle_mouse_click(state, mx as f32, my as f32);
+                        }
                     }
                 } else if state.menu_ctrl.in_game_active
                     && !state.menu_ctrl.pause_menu.is_open
@@ -206,6 +215,7 @@ impl ApplicationHandler for SilentHillApp {
                     || (state.menu_ctrl.pause_menu.is_open
                         && state.menu_ctrl.pause_menu.sub_phase
                             == sh2_ui::pause::PauseSubPhase::InOptionsMenu)
+                    || state.ingame_menus.options_from_inventory
                 {
                     let steps = if raw_lines.abs() >= 0.1 {
                         let s = (-raw_lines).round() as i32;
@@ -222,16 +232,20 @@ impl ApplicationHandler for SilentHillApp {
                         0
                     };
                     if steps != 0 {
-                        let vw = state.surface_config.width.max(1) as f32;
-                        let vh = state.surface_config.height.max(1) as f32;
-                        let cue = state.menu_ctrl.handle_mouse_wheel(
-                            steps,
-                            state.last_cursor_pos,
-                            vw,
-                            vh,
-                        );
-                        if cue != sh2_ui::menu::MenuSoundCue::None {
-                            emit_menu_sound(state, cue, "MenuScroll");
+                        if state.ingame_menus.options_from_inventory {
+                            ingame_menus::handle_mouse_wheel(state, steps);
+                        } else {
+                            let vw = state.surface_config.width.max(1) as f32;
+                            let vh = state.surface_config.height.max(1) as f32;
+                            let cue = state.menu_ctrl.handle_mouse_wheel(
+                                steps,
+                                state.last_cursor_pos,
+                                vw,
+                                vh,
+                            );
+                            if cue != sh2_ui::menu::MenuSoundCue::None {
+                                emit_menu_sound(state, cue, "MenuScroll");
+                            }
                         }
                     }
                 } else if state.menu_ctrl.in_game_active {

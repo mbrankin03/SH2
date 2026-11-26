@@ -100,6 +100,9 @@ pub struct MemoReader {
     pub current_page: usize,
     /// Backdrop dimming interpolation `_alpha_563` (`1.0` = `0x80`, `0.0` = `0x40`, `MemoDisplay` `0x00230c70`).
     pub dim_alpha: f32,
+    /// Fullscreen fade-in scrim alpha (`1.0` = solid black, `0.0` = visible; `Event/memo.c:130`
+    /// `ScreenEffectFadeStart(0, 4)`).
+    pub screen_fade_alpha: f32,
 }
 
 impl Default for MemoReader {
@@ -121,7 +124,13 @@ impl MemoReader {
             last_selected_catalog_index: 0,
             current_page: 0,
             dim_alpha: 1.0,
+            screen_fade_alpha: 0.0,
         }
+    }
+
+    /// Starts the `Event/memo.c:130` (`ScreenEffectFadeStart(0, 4)`) `0.5` s fade-in from black.
+    pub fn start_fade_in(&mut self) {
+        self.screen_fade_alpha = 1.0;
     }
 
     /// Opens the Memo Reader matching `MemoInit` (`0x002305f0` / `0x00498e50`):
@@ -261,8 +270,12 @@ impl MemoReader {
         if !self.is_open {
             return;
         }
+        let dt = dt.clamp(0.0, 0.1);
+        if self.screen_fade_alpha > 0.0 {
+            self.screen_fade_alpha = (self.screen_fade_alpha - dt * 2.0).max(0.0);
+        }
         if self.phase == MemoPhase::ViewingText {
-            self.dim_alpha = (self.dim_alpha - dt.clamp(0.0, 0.1) * MEMO_DIM_RATE).max(0.0);
+            self.dim_alpha = (self.dim_alpha - dt * MEMO_DIM_RATE).max(0.0);
         }
     }
 

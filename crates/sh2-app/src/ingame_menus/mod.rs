@@ -54,6 +54,9 @@ pub(crate) struct InGameMenuState {
     pub held_map_pan: [bool; 4],
     /// True when Options was opened via the Inventory `OPTION` corner button.
     pub options_from_inventory: bool,
+    /// Options subscreen fade-in scrim alpha (`1.0` = solid black, `0.0` = visible;
+    /// `SLUS_202.28` `otn_option.c:2038` `ScreenEffectFadeStart(0x3f800000, 4)` = `1.0` s).
+    pub options_fade_alpha: f32,
     /// Whether `memo_msg_e.mes` has been attempted to load from disk.
     pub(crate) memo_mes_loaded: bool,
     /// Cached parsed `memo_msg_e.mes` / `memo_x_msg_e.mes` message table.
@@ -128,6 +131,9 @@ impl InGameMenuState {
         }
         if self.memo_reader.is_open {
             self.memo_reader.tick(dt);
+        }
+        if self.options_from_inventory && self.options_fade_alpha > 0.0 {
+            self.options_fade_alpha = (self.options_fade_alpha - dt.clamp(0.0, 0.1)).max(0.0);
         }
         if let Some(ref mut sl) = self.save_load {
             sl.tick(dt);
@@ -257,6 +263,7 @@ fn open_map_sheet(
         state.active_maria,
         from_inventory,
     );
+    state.ingame_menus.map_viewer.start_fade_in();
     ensure_map_sheet_loaded(state, map_id);
     play_map_paper_sfx(state);
 }
@@ -268,6 +275,7 @@ pub(crate) fn open_memo_reader(state: &mut AppState) {
         .ingame_menus
         .memo_reader
         .open(&state.sim_core.scenario.flags);
+    state.ingame_menus.memo_reader.start_fade_in();
     emit_menu_sound(state, MenuSoundCue::Confirm, "Memo");
 }
 
@@ -436,6 +444,14 @@ pub(crate) fn render_overlay(
             font,
             &mut state.inventory_rasterizer,
         );
+        if state.ingame_menus.options_fade_alpha > 0.001 {
+            let a = (state.ingame_menus.options_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let rw = state.inventory_rasterizer.width;
+            let rh = state.inventory_rasterizer.height;
+            state
+                .inventory_rasterizer
+                .fill_rect(0, 0, rw, rh, [0, 0, 0, a]);
+        }
         let vp = state.ps2_ui_viewport();
         state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
         return;

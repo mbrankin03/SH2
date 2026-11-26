@@ -122,6 +122,7 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
                 .options_menu
                 .set_audio_devices(fresh_devices);
             state.ingame_menus.options_from_inventory = true;
+            state.ingame_menus.options_fade_alpha = 1.0;
         }
         InventoryAction::UseHealing(item_id) => {
             let hp = state.sim_core.scenario.health;

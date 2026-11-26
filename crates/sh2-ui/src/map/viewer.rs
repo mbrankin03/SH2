@@ -121,6 +121,9 @@ pub struct PaperMapViewer {
     pub transcription_ticks: u32,
     /// Current fade-in alpha (`0..=0x80`) of the newly transcribed marker.
     pub transcription_alpha: u8,
+    /// Fullscreen fade-in scrim alpha (`1.0` = solid black, `0.0` = visible; `Event/chizu.c:107`
+    /// `ScreenEffectFadeStart(0, 4)`).
+    pub screen_fade_alpha: f32,
 }
 
 impl Default for PaperMapViewer {
@@ -148,7 +151,13 @@ impl PaperMapViewer {
             transcribing_flag_id: None,
             transcription_ticks: 0,
             transcription_alpha: TRANSCRIBE_FADE_TARGET_ALPHA,
+            screen_fade_alpha: 0.0,
         }
+    }
+
+    /// Starts the `Event/chizu.c:107` (`ScreenEffectFadeStart(0, 4)`) `0.5` s fade-in from black.
+    pub fn start_fade_in(&mut self) {
+        self.screen_fade_alpha = 1.0;
     }
 
     /// Opens the fullscreen paper map on `map_id` (`1..=36`) centered at `(0.0, 0.0)`.
@@ -265,6 +274,9 @@ impl PaperMapViewer {
             return;
         }
         let dt = dt.clamp(0.0, 0.1);
+        if self.screen_fade_alpha > 0.0 {
+            self.screen_fade_alpha = (self.screen_fade_alpha - dt * 2.0).max(0.0);
+        }
         match self.zoom_step {
             MapZoomStep::ZoomingIn => {
                 self.zoom_t += dt * CHIZU_ZOOM_RATE;

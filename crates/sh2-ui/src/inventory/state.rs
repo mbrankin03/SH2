@@ -19,6 +19,18 @@ use sh2_core::inventory::{
 };
 use sh2_core::lighting::darkness::ITEM_ID_FLASHLIGHT;
 
+/// Inline examine open rect in `512x448` PS2 space (`sh2pc.exe` `FUN_0046af30` `case 0xc`:
+/// `(-100, -150) .. (+100, +50)` centered -> `(156, 74) .. (356, 274)`).
+pub const EXAMINE_POPUP_OPEN_RECT: [f32; 4] = [156.0, 74.0, 356.0, 274.0];
+
+/// Inline examine dismiss flip-collapse slit rect in `512x448` PS2 space (`sh2pc.exe` `FUN_0046af30`
+/// `case 0xd`: `(-55, -52) .. (+55, -48)` centered -> `(201, 172) .. (311, 176)`, 4 px tall).
+pub const EXAMINE_POPUP_DISMISS_SLIT_RECT: [f32; 4] = [201.0, 172.0, 311.0, 176.0];
+
+/// Command Window focus rect in `512x448` PS2 space (`sh2pc.exe` `FUN_0046af30` `case 5`:
+/// `(336, 21) .. (496, 144)`), used as the starting quad when opening an inline examine popup.
+pub const EXAMINE_POPUP_CMD_START_RECT: [f32; 4] = [336.0, 21.0, 496.0, 144.0];
+
 /// Authentic PS2 / SH2:EE Single-Screen Status & Inventory state machine (`Item/otn_itemmain.c`).
 #[derive(Debug, Clone)]
 pub struct InventoryScreen {
@@ -79,9 +91,9 @@ pub struct InventoryScreen {
     /// Fullscreen examine image brightness `_examine_rgb` (`0x80 = 128.0` -> `0x45 = 69.0` at `-300.0 * dt`,
     /// `SLUS_202.28` `examine_main` `0x001d3a00` lines 1678–1681).
     pub examine_rgb: f32,
-    /// Normalized `InlinePopup` open/close zoom progress (`0.0` = carousel reticle, `1.0` = `200x200` popup,
-    /// eased via `move_near` matching `sh2pc.exe` `FUN_0046af30` `case 0xc`).
-    pub examine_popup_t: f32,
+    /// Animated 4-edge quad `[x0, y0, x1, y1]` in `512x448` PS2 space for `InlinePopup` /
+    /// `InlineClosing` (`sh2pc.exe` `FUN_0046af30` `case 0xc <-> case 0xd` via `move_near(2.0, 1.0)`).
+    pub examine_popup_rect: [f32; 4],
     /// Inventory screen fade-to-black alpha (`1.0` = solid black, `0.0` = fully visible;
     /// `SLUS_202.28` `itemmain` `0x001cdb40:86` & `item_fade_out` `0x001db0e0:3740`: `0.5` s).
     pub screen_fade_alpha: f32,
@@ -127,7 +139,7 @@ impl InventoryScreen {
             examine_page: 0,
             examine_phase: ExaminePhase::InlinePopup,
             examine_rgb: 128.0,
-            examine_popup_t: 0.0,
+            examine_popup_rect: EXAMINE_POPUP_DISMISS_SLIT_RECT,
             screen_fade_alpha: 0.0,
             fade_transition: InventoryFadeTransition::None,
         }
@@ -150,7 +162,7 @@ impl InventoryScreen {
         self.is_open = true;
         self.fade_transition = InventoryFadeTransition::None;
         self.screen_fade_alpha = 1.0;
-        self.examine_popup_t = 0.0;
+        self.examine_popup_rect = EXAMINE_POPUP_DISMISS_SLIT_RECT;
         self.focus = InventoryFocus::Carousel;
         self.active_commands.clear();
         self.command_index = 0;
@@ -314,19 +326,34 @@ impl InventoryScreen {
             }
         }
 
-        // `InlinePopup` open/dismiss zoom animation (`sh2pc.exe` `FUN_0046af30` `case 0xc <-> case 1`,
-        // `move_near(div = 2.0, speed = 0.06)` at 30 Hz).
+        // `InlinePopup` open/dismiss vertical flip-collapse animation (`sh2pc.exe` `FUN_0046af30`
+        // `case 0xc` `(156, 74)..(356, 274)` <-> `case 0xd` `(201, 172)..(311, 176)` 4 px slit,
+        // `move_near(div = 2.0, min_step = 1.0)` at 30 Hz).
         if self.focus == InventoryFocus::ExamineOverlay {
             match self.examine_phase {
                 ExaminePhase::InlinePopup => {
-                    self.examine_popup_t =
-                        move_near(2.0, 0.06, self.examine_popup_t, 1.0, dt).clamp(0.0, 1.0);
+                    for (cur, &tgt) in self
+                        .examine_popup_rect
+                        .iter_mut()
+                        .zip(EXAMINE_POPUP_OPEN_RECT.iter())
+                    {
+                        *cur = move_near(2.0, 1.0, *cur, tgt, dt);
+                    }
                 }
                 ExaminePhase::InlineClosing => {
-                    self.examine_popup_t =
-                        move_near(2.0, 0.06, self.examine_popup_t, 0.0, dt).clamp(0.0, 1.0);
-                    if self.examine_popup_t <= 0.001 {
-                        self.examine_popup_t = 0.0;
+                    let mut settled = true;
+                    for (cur, &tgt) in self
+                        .examine_popup_rect
+                        .iter_mut()
+                        .zip(EXAMINE_POPUP_DISMISS_SLIT_RECT.iter())
+                    {
+                        *cur = move_near(2.0, 1.0, *cur, tgt, dt);
+                        if (*cur - tgt).abs() > 0.5 {
+                            settled = false;
+                        }
+                    }
+                    if settled {
+                        self.examine_popup_rect = EXAMINE_POPUP_DISMISS_SLIT_RECT;
                         self.examine_phase = ExaminePhase::InlinePopup;
                         self.focus = InventoryFocus::Carousel;
                     }
@@ -845,7 +872,7 @@ impl InventoryScreen {
                     ItemCommand::Look => {
                         self.examine_page = 0;
                         self.examine_rgb = 128.0;
-                        self.examine_popup_t = 0.0;
+                        self.examine_popup_rect = EXAMINE_POPUP_CMD_START_RECT;
                         // `sh2pc.exe` `FUN_0046a110` (`0x0046a110`) `case 9`: fullscreen `examine_main`
                         // (`0x001d3a00`) items fade out over `0.5` s (`command_main` `0x001cf9e0:1053`)
                         // then fade back in on `FullscreenInspect` (`item_examine_fade_out` `0x001db170:3769`).
@@ -1109,19 +1136,20 @@ mod tests {
         assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
         assert_eq!(screen.examine_phase, ExaminePhase::InlinePopup);
         assert!(!screen.is_fullscreen_examine());
-        for _ in 0..15 {
-            screen.tick(1.0 / 30.0, &snap);
-        }
-        assert!(screen.examine_popup_t > 0.95);
-        // Dismissing InlinePopup plays smooth InlineClosing shrink animation back to Carousel
-        let (close_cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
-        assert_eq!(close_cue, MenuSoundCue::Cancel);
-        assert_eq!(screen.examine_phase, ExaminePhase::InlineClosing);
         for _ in 0..20 {
             screen.tick(1.0 / 30.0, &snap);
         }
+        assert!((screen.examine_popup_rect[0] - EXAMINE_POPUP_OPEN_RECT[0]).abs() < 1.0);
+        assert!((screen.examine_popup_rect[1] - EXAMINE_POPUP_OPEN_RECT[1]).abs() < 1.0);
+        // Dismissing InlinePopup plays `case 0xd` vertical flip-collapse into the 4 px slit `(201,172)..(311,176)`
+        let (close_cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(close_cue, MenuSoundCue::Cancel);
+        assert_eq!(screen.examine_phase, ExaminePhase::InlineClosing);
+        for _ in 0..25 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
         assert_eq!(screen.focus, InventoryFocus::Carousel);
-        assert_eq!(screen.examine_popup_t, 0.0);
+        assert_eq!(screen.examine_popup_rect, EXAMINE_POPUP_DISMISS_SLIT_RECT);
 
         // Select Letter from Mary (idx 1), open CommandWindow, choose Examine -> 2-phase `examine_main`:
         // `0.5` s fade-out (`command_main` `0x001cf9e0:1053`) -> Phase 0 (`FullscreenInspect`, bright

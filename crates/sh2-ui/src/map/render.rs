@@ -106,6 +106,12 @@ pub fn draw_paper_map(
 
     // 6. Enforce pure black widescreen/ultrawide pillarboxes (`SetBlackPillarBoxes`)
     clipper.draw_black_pillarbox_bars(rasterizer);
+
+    // 7. `Event/chizu.c:107` (`ScreenEffectFadeStart(0, 4)`) fade-in scrim
+    if viewer.screen_fade_alpha > 0.001 {
+        let a = (viewer.screen_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, a]);
+    }
 }
 
 /// Renders a single `ChizuMarkerDraw` (`0x001c7e90`) decal using exact top-left anchor `(x_ps2, y_ps2)`

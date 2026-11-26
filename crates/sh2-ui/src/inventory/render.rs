@@ -602,7 +602,11 @@ fn draw_bottom_nav_bar(
 }
 
 /// Renders the inline `200x200` framed Examine popup over the Inventory screen
-/// (`sh2pc.exe` `FUN_0046af30` `case 0xc`: `X = [-100, +100] -> [156, 356]`, `Y = [-150, +50] -> [74, 274]`).
+/// (`sh2pc.exe` `FUN_0046af30` `case 0xc` & `case 0xd`, `SLUS_202.28` `examine2_main` `0x001d4040`).
+///
+/// Stretches `examine_tex_rgba` directly to the animated 4-edge quad `screen.examine_popup_rect`
+/// (`PictureDraw` `otn_itemmain.c:1826-1839`) so dismissing (`case 0xd`) collapses vertically into
+/// the 4 px horizontal slit `(201, 172)..(311, 176)` like a 3D vertical card flip.
 fn draw_inline_examine_popup(
     screen: &InventoryScreen,
     item_atlas_rgba: Option<(&[u8], usize, usize)>,
@@ -610,63 +614,31 @@ fn draw_inline_examine_popup(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Interpolate smoothly between carousel reticle `(201, 159)..(311, 289)` and full `FUN_0046af30`
-    // `case 0xc` popup `(156, 74)..(356, 274)` using `examine_popup_t` (`0.0..=1.0`).
-    let t = screen.examine_popup_t.clamp(0.0, 1.0);
-    let lerp = |a: f32, b: f32| a + (b - a) * t;
-    let x0 = c.xi(lerp(201.0, 156.0));
-    let y0 = c.yi(lerp(159.0, 74.0));
-    let w = c.xi(lerp(311.0, 356.0)).saturating_sub(x0);
-    let h = c.yi(lerp(289.0, 274.0)).saturating_sub(y0);
+    let [rx0, ry0, rx1, ry1] = screen.examine_popup_rect;
+    let x0 = c.xi(rx0);
+    let y0 = c.yi(ry0);
+    let x1 = c.xi(rx1);
+    let y1 = c.yi(ry1);
+    let w = x1.saturating_sub(x0).max(1);
+    let h = y1.saturating_sub(y0).max(1);
     let border = (c.sy * 0.85).round().max(1.0) as usize;
 
-    // Opaque black popup fill + crisp 1px neutral gray frame (`0x808080`)
+    // Opaque black popup fill (`examine2_main` `0x001d4040`)
     rasterizer.fill_rect(x0, y0, w, h, [0, 0, 0, 255]);
-    rasterizer.draw_rect_outline(x0, y0, w, h, border, [128, 128, 128, 255]);
-
-    let pad = (6.0 * c.sy).round() as usize;
-    let inner_h = h.saturating_sub(pad * 2).max(1) as f32;
-    let inner_w = w.saturating_sub(pad * 2).max(1) as f32;
-    let cx = x0 as f32 + w as f32 * 0.5;
-    let cy = y0 as f32 + h as f32 * 0.5;
 
     if let Some((rgba, tw, th)) = examine_tex_rgba {
-        let aspect = tw as f32 / th.max(1) as f32;
-        let mut dh = inner_h;
-        let mut dw = c.width_for_height(dh, aspect);
-        if dw > inner_w {
-            let scale = inner_w / dw.max(1.0);
-            dw *= scale;
-            dh *= scale;
-        }
-        let dx = (cx - dw * 0.5).round().max(0.0) as usize;
-        let dy = (cy - dh * 0.5).round().max(0.0) as usize;
-        rasterizer.blit_rgba_scaled(
-            dx,
-            dy,
-            dw.round().max(1.0) as usize,
-            dh.round().max(1.0) as usize,
-            rgba,
-            tw,
-            th,
-            1.0,
-        );
+        // `examine2_main` (`otn_itemmain.c:1826-1839`): `PictureDraw` stretches directly to the
+        // animated quad `(x0, y0)..(x1, y1)`, producing the vertical flip-collapse in `case 0xd`.
+        rasterizer.blit_rgba_scaled(x0, y0, w, h, rgba, tw, th, 1.0);
     } else if let (Some((atlas, aw, ah)), Some(rect)) = (
         item_atlas_rgba,
         screen.selected_item_id().and_then(item_icon_rect),
     ) {
-        let mut dh = inner_h * 0.9;
-        let mut dw = c.width_for_height(dh, rect.aspect());
-        if dw > inner_w * 0.9 {
-            let scale = (inner_w * 0.9) / dw.max(1.0);
-            dw *= scale;
-            dh *= scale;
-        }
         let (u0, v0, u1, v1) = rect.normalized_uv();
-        let bx0 = cx - dw * 0.5;
-        let by0 = cy - dh * 0.5;
-        let bx1 = cx + dw * 0.5;
-        let by1 = cy + dh * 0.5;
+        let bx0 = x0 as f32;
+        let by0 = y0 as f32;
+        let bx1 = (x0 + w) as f32;
+        let by1 = (y0 + h) as f32;
         let tris = [
             (bx0, by0, u0, v0),
             (bx1, by0, u1, v0),
@@ -677,6 +649,8 @@ fn draw_inline_examine_popup(
         ];
         rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, 1.0);
     }
+
+    rasterizer.draw_rect_outline(x0, y0, w, h, border, [128, 128, 128, 255]);
 }
 
 /// Renders the 2-phase fullscreen `examine_main` (`SLUS_202.28` `0x001d3a00`) screen:

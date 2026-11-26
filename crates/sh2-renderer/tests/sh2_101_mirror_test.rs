@@ -205,13 +205,31 @@ fn retail_er01_and_ap84_mirror_decal_batch_extraction() {
     let er01_bytes = std::fs::read(root.join("data/bg/er/er01.map")).expect("read er01.map");
     let er01 = parse_map(&er01_bytes, "er01").expect("parse er01.map");
     let er01_spec = PlanarMirrorSpec::for_room_and_map(0x01, &er01).expect("er01 spec");
-    assert_eq!(er01_spec.decal_batch_index, None);
+    let er01_idx = er01_spec
+        .decal_batch_index
+        .expect("er01.map must match its authentic framed mirror decal batch (mat=10)");
+    assert_eq!(er01.batches[er01_idx].material_index, 10);
     assert!((er01_spec.wall_pos() - (-20_000.0)).abs() < 1e-3);
+
+    let sh2e_er01_path = root.join("sh2e/bg/er/er01.map");
+    if sh2e_er01_path.exists() {
+        let sh2e_er01_bytes = std::fs::read(&sh2e_er01_path).expect("read sh2e er01.map");
+        let sh2e_er01 = parse_map(&sh2e_er01_bytes, "er01").expect("parse sh2e er01.map");
+        let sh2e_spec =
+            PlanarMirrorSpec::for_room_and_map(0x01, &sh2e_er01).expect("sh2e er01 spec");
+        let sh2e_idx = sh2e_spec
+            .decal_batch_index
+            .expect("sh2e/bg/er/er01.map must match its authentic framed mirror decal batch");
+        assert_eq!(sh2e_er01.batches[sh2e_idx].material_index, 10);
+    }
 
     let ap84_bytes = std::fs::read(root.join("data/bg/ap/ap84.map")).expect("read ap84.map");
     let ap84 = parse_map(&ap84_bytes, "ap84").expect("parse ap84.map");
     let ap84_spec = PlanarMirrorSpec::for_room_and_map(0x24, &ap84).expect("ap84 spec");
-    assert_eq!(ap84_spec.decal_batch_index, Some(1));
+    let ap84_idx = ap84_spec
+        .decal_batch_index
+        .expect("ap84.map must match its authentic mirror decal batch (geo_id=0x0302)");
+    assert_eq!(ap84.batches[ap84_idx].geo_id, 0x0302);
     assert!((ap84_spec.wall_pos() - (-99_995.0)).abs() < 1e-3);
 
     let glas_path = root.join("data/pic/effect/glas03.tbn2");
@@ -422,5 +440,155 @@ fn headless_render_ap84_blue_creek_109_mirror() {
     assert!(
         avg_luma > 2.0,
         "ap84 mirror render should be non-black (avg_luma={avg_luma:.2})"
+    );
+}
+
+#[test]
+fn headless_render_er01_sh2ee_camera_has_intact_concrete_wall_and_zero_clear_seam() {
+    let Some(root) = game_root() else {
+        return;
+    };
+    let Some(ctx) = RenderContext::new_headless(RendererConfig {
+        width: 960,
+        height: 540,
+        enable_fog: false,
+        enable_post: true,
+        ..Default::default()
+    }) else {
+        return;
+    };
+    ctx.pcss_enabled
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    // Set bright cyan clear color (`[0, 255, 255, 255]`) as an adversarial seam detector:
+    // if the recessed concrete upper wall (`X = -20064.1`) or tile ledge back were clipped,
+    // cyan pixels would bleed through along the wall/tile junction.
+    ctx.set_room_clear_color(false, Some([0, 255, 255, 255]));
+
+    let loader = TextureLoader::new(root.join("data"), Some(root.join("sh2e")));
+    let map = loader
+        .load_map_with_hd_overrides("bg/er/er01.map", "er01")
+        .expect("load sh2e er01.map");
+    let gpu_map = GpuMap::from_map(&ctx.device, &map);
+    let map_tex_bgs = build_map_texture_bgs(&ctx, &map, "er01");
+
+    let mirror_spec = PlanarMirrorSpec::for_room_and_gpu_map(0x01, &gpu_map)
+        .expect("er01 mirror spec from GpuMap");
+    assert!(
+        mirror_spec.decal_batch_index.is_some(),
+        "er01 GpuMap must resolve authentic mat=10 mirror decal batch"
+    );
+    ctx.set_planar_mirror(Some(mirror_spec));
+
+    // Load James (`hhh_jms.mdl` + `jms_stg_toilet.anm`) at authentic er01 spawn
+    let mdl_bytes = std::fs::read(root.join("data/chr/jms/hhh_jms.mdl")).expect("read hhh_jms.mdl");
+    let mut model = parse_mdl(&mdl_bytes).expect("parse hhh_jms.mdl");
+    let anm_bytes = std::fs::read(root.join("data/chr/jms/jms_stg_toilet.anm"))
+        .expect("read jms_stg_toilet.anm");
+    let anm = parse_anm(&anm_bytes, model.bone_count, &model.parents).expect("parse anm");
+
+    let mut chr_tex_bgs: Vec<Arc<wgpu::BindGroup>> = Vec::new();
+    let mut tid_to_slot = std::collections::HashMap::new();
+    let mut tids: Vec<u32> = model.textures.keys().copied().collect();
+    tids.sort_unstable();
+    for tid in tids {
+        let tex = &model.textures[&tid];
+        let rgba = tex.to_rgba().expect("decode hhh_jms tex");
+        let slot = chr_tex_bgs.len() as u16;
+        chr_tex_bgs.push(ctx.create_texture_bind_group(
+            tex.width as u32,
+            tex.height as u32,
+            &rgba,
+            Some(&format!("hhh_jms_{tid}")),
+        ));
+        tid_to_slot.insert(tid, slot);
+    }
+    for pr in &mut model.primitives {
+        if let Some(&slot) = tid_to_slot.get(&(pr.texture_index as u32)) {
+            pr.texture_index = slot;
+        }
+    }
+    let gpu_mesh = GpuSkeletalMesh::from_model(
+        &ctx.device,
+        &ctx.skeletal_pipeline.bone_bind_group_layout,
+        &ctx.skeletal_pipeline.material_bind_group_layout,
+        &model,
+    );
+    let bind_locals = compute_bind_locals(&model.parents, &model.initial_matrices);
+    let mut pose = Vec::new();
+    evaluate_pose_into(&model.parents, &bind_locals, &anm.frames[0], &mut pose);
+    let mut skin = Vec::new();
+    compute_skin_matrices_with_inv_into(&pose, &model.inv_initial_matrices, &mut skin);
+
+    let yaw = -std::f32::consts::FRAC_PI_2;
+    let (sy, cy) = yaw.sin_cos();
+    let world_mat = [
+        [cy, 0.0, sy, -19_475.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [-sy, 0.0, cy, 20_429.6],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    for m in &mut skin {
+        let orig = *m;
+        for r in 0..4 {
+            for c in 0..4 {
+                m[r][c] = world_mat[r][0] * orig[0][c]
+                    + world_mat[r][1] * orig[1][c]
+                    + world_mat[r][2] * orig[2][c]
+                    + world_mat[r][3] * orig[3][c];
+            }
+        }
+    }
+    gpu_mesh.update_bone_matrices(&ctx.queue, &skin);
+
+    // Exact `er01.cam` Record #2 camera matching `er_04.png` / opening restroom view
+    let eye = Vec3::new(-18_684.0, -1003.0, 20_361.0);
+    let target = Vec3::new(-20_036.3, -342.7, 20_513.5);
+    let view = Mat4::look_at_rh(eye, target, Vec3::new(0.0, -1.0, 0.0));
+    let proj = Mat4::perspective_rh(33.0_f32.to_radians(), 16.0 / 9.0, 25.0, 50_000.0);
+    ctx.update_camera(proj * view, proj.inverse(), eye);
+
+    // Authentic `er01` `DrawEnvData` lighting (`SLUS_202.28` `ER_DrawEnvData`)
+    let er01_env = sh2_core::lighting::lookup_draw_env("ER", 1).expect("ER room 1 DrawEnv");
+    let mut pool = sh2_renderer::light::CharacterLightPool::new();
+    let spot = sh2_renderer::light::build_cutscene_light_uniforms(
+        &mut pool,
+        &sh2_renderer::light::CutsceneLightInput {
+            draw_env: Some(er01_env),
+            demo_lights: &[],
+            ambient_tint: [1.0, 1.0, 1.0, 1.0],
+            base_amb_scale: (er01_env.ambient[0]
+                .max(er01_env.ambient[1])
+                .max(er01_env.ambient[2])
+                * 2.2)
+                .clamp(0.25, 2.2),
+            is_dark_room: false,
+            cam_eye: eye,
+            actor_pos: Vec3::new(-19_475.0, 0.0, 20_429.6),
+            flashlight_suppressed: false,
+        },
+    );
+    ctx.update_spotlight(&spot);
+
+    ctx.render_scene(
+        Some(&gpu_map),
+        Some(&map_tex_bgs),
+        &[(&gpu_mesh, skin.as_slice(), Some(chr_tex_bgs.as_slice()))],
+    );
+
+    let rgba = readback_ldr_rgba8(&ctx);
+    if let Ok(out_path) = std::env::var("SH2_MIRROR_ER01_SH2EE_PPM") {
+        write_ppm_rgb(&out_path, 960, 540, &rgba);
+    }
+
+    // Count cyan clear-color leak pixels (`G > 200 && B > 200 && R < 40`)
+    let cyan_leak_pixels = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[0] < 40 && p[1] > 200 && p[2] > 200)
+        .count();
+    assert_eq!(
+        cyan_leak_pixels, 0,
+        "er01 restroom wall/tile junction must have zero clear-color leak pixels"
     );
 }

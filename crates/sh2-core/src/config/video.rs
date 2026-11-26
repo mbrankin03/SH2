@@ -103,9 +103,9 @@ impl WindowDisplayMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum FogQuality {
     /// Classic fixed-function PS2 atmospheric emulation.
+    #[default]
     ClassicPs2,
     /// Modern 3D volumetric compute fog.
-    #[default]
     ModernVolumetric,
 }
 
@@ -198,9 +198,9 @@ impl FrameRateCap {
 pub enum WorldTextureQuality {
     /// 4K AI Super-Resolution Master Pack (`realesr-general-wdn-x4v3` + PBR Detail Maps),
     /// falling back to `Sh2eeHd` -> `OriginalPs2`.
-    #[default]
     Ai4kMaster,
     /// Silent Hill 2: Enhanced Edition HD texture pack (`sh2e/bg/` and `sh2e/chr/`).
+    #[default]
     Sh2eeHd,
     /// Original PS2 / Retail PC textures (`data/bg/` and `data/chr/`).
     OriginalPs2,
@@ -530,7 +530,7 @@ impl Default for VideoOptions {
             framerate_cap: FrameRateCap::default(),
             fog_quality: FogQuality::default(),
             grain_intensity: 65,
-            volumetric_light: true,
+            volumetric_light: false,
             lens_flare: true,
             depth_of_field: true,
             texture_quality: WorldTextureQuality::default(),
@@ -539,7 +539,7 @@ impl Default for VideoOptions {
             shadow_quality: ShadowQualityMode::default(),
             lighting_profile: LightingProfile::default(),
             outdoor_streaming_mode: OutdoorStreamingMode::default(),
-            aces_tonemapping: true,
+            aces_tonemapping: false,
             enable_water_reflections: true,
             enable_oar_ripples: true,
             enable_fire_heat_haze: true,

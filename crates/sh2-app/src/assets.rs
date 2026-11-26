@@ -150,8 +150,8 @@ pub(crate) fn find_map_file_for_room(
                     });
                     let fog = sh2_renderer::fog::FogUniforms::from_room_evaluation(
                         &eval,
-                        sh2_core::config::FogQuality::ModernVolumetric,
-                        true,
+                        sh2_core::config::FogQuality::ClassicPs2,
+                        false,
                     );
                     // Authentic parking lot overlook coordinates: X: 0.0, Y: -100.0, Z: -5000.0
                     return (map, glam::Vec3::new(0.0, -100.0, -5000.0), 0.0, fog);

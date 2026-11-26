@@ -319,7 +319,19 @@ mod tests {
         assert_eq!(cfg.video.resolution.prev(), InternalResolution::Res4k);
 
         assert_eq!(cfg.video.display_mode.next(), WindowDisplayMode::Windowed);
-        assert_eq!(cfg.video.fog_quality.toggle(), FogQuality::ClassicPs2);
+        assert_eq!(cfg.video.fog_quality, FogQuality::ClassicPs2);
+        assert_eq!(cfg.video.fog_quality.toggle(), FogQuality::ModernVolumetric);
+        assert_eq!(cfg.video.texture_quality, WorldTextureQuality::Sh2eeHd);
+        assert_eq!(
+            cfg.video.texture_quality.next(),
+            WorldTextureQuality::OriginalPs2
+        );
+        assert_eq!(
+            cfg.video.texture_quality.prev(),
+            WorldTextureQuality::Ai4kMaster
+        );
+        assert!(!cfg.video.aces_tonemapping);
+        assert!(!cfg.video.volumetric_light);
 
         assert_eq!(
             cfg.audio.speaker_config.next(),

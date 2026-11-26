@@ -553,26 +553,26 @@ fn test_sh2_136_aces_tonemapping_options_toggle_and_persistence() {
     controller.handle_nav(MenuNavAction::Confirm); // Enter Advanced Options submenu
     assert_eq!(controller.options_menu.active_tab, OptionsTab::Video);
 
-    // Row 12 in Video tab is ACES Tonemapping (default ON for Native Enhanced)
+    // Row 12 in Video tab is ACES Tonemapping (default OFF for 1:1 PS2/SH2:EE baseline, SH2-154)
     controller.options_menu.selected_index = 12;
     let (label, val0) = controller.options_menu.item_display(12).unwrap();
     assert_eq!(label, "ACES Tonemapping");
-    assert_eq!(val0, "ON (Filmic HDR)");
-    assert!(controller.options_menu.draft_config.video.aces_tonemapping);
-
-    // Toggle OFF -> strict PS2 Linear clamp, commit & verify JSON roundtrip
-    controller.handle_nav(MenuNavAction::Right);
+    assert_eq!(val0, "OFF (PS2 Linear)");
     assert!(!controller.options_menu.draft_config.video.aces_tonemapping);
+
+    // Toggle ON -> Filmic HDR, commit & verify JSON roundtrip
+    controller.handle_nav(MenuNavAction::Right);
+    assert!(controller.options_menu.draft_config.video.aces_tonemapping);
     assert_eq!(
         controller.options_menu.item_display(12).unwrap().1,
-        "OFF (PS2 Linear)"
+        "ON (Filmic HDR)"
     );
     assert_eq!(
         controller.handle_nav(MenuNavAction::Confirm),
         MenuSoundCue::Confirm
     );
     let reloaded = AppConfig::load_from_file(&cfg_path);
-    assert!(!reloaded.video.aces_tonemapping);
+    assert!(reloaded.video.aces_tonemapping);
 
     // Verify Enhanced tab row 11 toggles the same field and respects version presets
     controller.options_menu.active_tab = OptionsTab::Enhanced;

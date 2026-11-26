@@ -55,7 +55,35 @@ pub(crate) fn build_player_snapshot(state: &AppState) -> InventoryPlayerSnapshot
     }
 }
 
+/// `SLUS_202.28` `Item/otn_option.c:405, 414, 429, 438` (`SeCall(1.0, 0x4a49)`): volume slider preview SFX.
+pub(crate) const OPTION_VOLUME_SE_ID: u32 = 0x4a49;
+
+/// Plays `SeCall(1.0, 0x4a49)` when adjusting an Options volume slider, falling back to
+/// `MenuSoundCue::CursorMove` if the bank cannot resolve `0x4a49`.
+pub(crate) fn play_options_volume_or_cursor_sfx(state: &mut AppState) {
+    let is_volume_row = match state.menu_ctrl.options_menu.active_tab {
+        sh2_ui::options::OptionsTab::Root => {
+            matches!(state.menu_ctrl.options_menu.selected_index, 8..=10)
+        }
+        sh2_ui::options::OptionsTab::Audio => {
+            matches!(state.menu_ctrl.options_menu.selected_index, 0..=3)
+        }
+        _ => false,
+    };
+    if is_volume_row {
+        if let (Some(ref mut eng), Some(ref bank)) = (&mut state.audio_engine, &state.audio_bank) {
+            if bank.play_se_id(eng, OPTION_VOLUME_SE_ID, 1.0).is_ok() {
+                return;
+            }
+        }
+    }
+    emit_menu_sound(state, MenuSoundCue::CursorMove, "Inventory Options");
+}
+
 pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: KeyCode) {
+    if state.ingame_menus.options_closing_to_inventory {
+        return;
+    }
     let sound = match key_code {
         KeyCode::KeyW | KeyCode::ArrowUp => {
             state.menu_ctrl.options_menu.navigate_vertical(-1);
@@ -66,12 +94,24 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             MenuSoundCue::CursorMove
         }
         KeyCode::KeyA | KeyCode::ArrowLeft => {
-            state.menu_ctrl.options_menu.adjust_value(-1);
-            MenuSoundCue::CursorMove
+            let cue = state.menu_ctrl.options_menu.adjust_value(-1);
+            let draft = state.menu_ctrl.options_menu.draft_config.clone();
+            sync_audio_config(state, &draft);
+            if cue == OptionsSoundCue::ValueChange {
+                play_options_volume_or_cursor_sfx(state);
+                return;
+            }
+            MenuSoundCue::None
         }
         KeyCode::KeyD | KeyCode::ArrowRight => {
-            state.menu_ctrl.options_menu.adjust_value(1);
-            MenuSoundCue::CursorMove
+            let cue = state.menu_ctrl.options_menu.adjust_value(1);
+            let draft = state.menu_ctrl.options_menu.draft_config.clone();
+            sync_audio_config(state, &draft);
+            if cue == OptionsSoundCue::ValueChange {
+                play_options_volume_or_cursor_sfx(state);
+                return;
+            }
+            MenuSoundCue::None
         }
         KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
             if state.menu_ctrl.options_menu.enter_submenu() {
@@ -92,12 +132,9 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             if state.menu_ctrl.options_menu.exit_to_root() {
                 return emit_menu_sound(state, MenuSoundCue::Cancel, "Inventory Options");
             }
-            state.menu_ctrl.options_menu.discard_changes();
-            state.ingame_menus.options_from_inventory = false;
-            state
-                .ingame_menus
-                .inventory
-                .open(&state.sim_core.scenario.inventory_mgr);
+            // `otn_option.c:2056` (`fade_out`): fade Options to black over `1.0` s before
+            // discarding unsaved changes and re-opening Inventory.
+            state.ingame_menus.options_closing_to_inventory = true;
             MenuSoundCue::Cancel
         }
         _ => MenuSoundCue::None,
@@ -107,7 +144,17 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
 
 pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryAction) {
     match action {
-        InventoryAction::None | InventoryAction::Close => {}
+        InventoryAction::None => {}
+        InventoryAction::Close => {
+            // `SLUS_202.28` `otn_itemmain.c:471-473` (`DAT_0116e65d = 1`) -> `PlayableMain` `case 3`
+            // (`gamemain.c:448`: `ScreenEffectFadeStart(0x3f99999a, 4)`): fade gameplay back in from black.
+            if let Some(ref mut orch) = state.campaign_orchestrator {
+                orch.fade.start_fade_in(
+                    sh2_core::campaign::PS2_DEFAULT_FADE_SPEED,
+                    orch.delayed_fade_in_fix,
+                );
+            }
+        }
         InventoryAction::OpenMap => open_map_direct(state, true),
         InventoryAction::OpenMemo => open_memo_reader(state),
         InventoryAction::OpenOptions => {
@@ -122,6 +169,8 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
                 .options_menu
                 .set_audio_devices(fresh_devices);
             state.ingame_menus.options_from_inventory = true;
+            state.ingame_menus.options_closing_to_inventory = false;
+            state.ingame_menus.options_fade_alpha = 1.0;
         }
         InventoryAction::UseHealing(item_id) => {
             let hp = state.sim_core.scenario.health;
@@ -364,17 +413,29 @@ pub(crate) fn ensure_item_atlas_loaded(state: &mut AppState) {
     }
 }
 
-/// Lazily loads the close-up 2D inspection still (`meta.inspect_texture_path`) when `Look` is opened.
-pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
+/// Lazily loads the close-up 2D inspection still (`meta.inspect_texture_path`, or retail PC
+/// `data/pic/item/x_coin*_ura.tex` back-side texture when `coin_side == 1` per `sh2pc_00460000.c:4874-4876`).
+pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8, coin_side: u8) {
     if state
         .ingame_menus
         .cached_examine_tex
         .as_ref()
-        .is_some_and(|(id, _, _, _)| *id == item_id)
+        .is_some_and(|(id, side, _, _, _)| *id == item_id && *side == coin_side)
     {
         return;
     }
-    let Some(tex_path) = sh2_core::item_metadata(item_id).and_then(|m| m.inspect_texture_path)
+    let back_coin_path = if coin_side == 1 {
+        match item_id {
+            0x32 => Some("pic/item/x_coinsnake_ura.tex"),
+            0x33 => Some("pic/item/x_coinelder_ura.tex"),
+            0x34 => Some("pic/item/x_coinprisoner_ura.tex"),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let Some(tex_path) = back_coin_path
+        .or_else(|| sh2_core::item_metadata(item_id).and_then(|m| m.inspect_texture_path))
     else {
         return;
     };
@@ -383,6 +444,7 @@ pub(crate) fn ensure_examine_tex_loaded(state: &mut AppState, item_id: u8) {
     if let Ok(cut) = loader.load_cutaway_texture_for_quality(tex_path, prefer_sh2ee, apply_4k) {
         state.ingame_menus.cached_examine_tex = Some((
             item_id,
+            coin_side,
             cut.texture.width,
             cut.texture.height,
             cut.texture.rgba,

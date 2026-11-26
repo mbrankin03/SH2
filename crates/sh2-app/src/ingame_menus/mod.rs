@@ -10,13 +10,13 @@
 mod actions;
 mod save_load;
 
-use actions::{
-    apply_inventory_action, ensure_examine_tex_loaded, ensure_item_atlas_loaded,
-    ensure_map_sheet_loaded, ensure_memo_assets_loaded, handle_options_from_inventory_key,
-};
 pub(crate) use actions::{
-    build_player_snapshot, ensure_gameover_tex_loaded, ensure_red_cross_tex_loaded,
-    ensure_savebg_loaded,
+    apply_inventory_action, build_player_snapshot, ensure_gameover_tex_loaded,
+    ensure_red_cross_tex_loaded, ensure_savebg_loaded,
+};
+use actions::{
+    ensure_examine_tex_loaded, ensure_item_atlas_loaded, ensure_map_sheet_loaded,
+    ensure_memo_assets_loaded, handle_options_from_inventory_key,
 };
 use save_load::handle_save_load_key;
 pub(crate) use save_load::open_save_load;
@@ -26,7 +26,9 @@ use winit::keyboard::KeyCode;
 use crate::menu_events::emit_menu_sound;
 use crate::state::AppState;
 use sh2_assets::formats::mes::MessageTable;
-use sh2_ui::inventory::{draw_inventory_screen, InventoryPlayerSnapshot, InventoryScreen};
+use sh2_ui::inventory::{
+    draw_inventory_screen, InventoryAction, InventoryPlayerSnapshot, InventoryScreen,
+};
 use sh2_ui::map::{
     chizu_can_read_map, chizu_current_position_check, chizu_possession_check, chizu_select,
     draw_paper_map, stage_to_default_room_id, MapReadCheck, PaperMapAction, PaperMapPlayerState,
@@ -52,6 +54,11 @@ pub(crate) struct InGameMenuState {
     pub held_map_pan: [bool; 4],
     /// True when Options was opened via the Inventory `OPTION` corner button.
     pub options_from_inventory: bool,
+    /// Options subscreen fade-in / fade-out scrim alpha (`1.0` = solid black, `0.0` = visible;
+    /// `SLUS_202.28` `otn_option.c:2038, 2056` `ScreenEffectFadeStart(0x3f800000, 4/1)` = `1.0` s).
+    pub options_fade_alpha: f32,
+    /// True while Options opened from Inventory is fading to black before returning to Inventory.
+    pub options_closing_to_inventory: bool,
     /// Whether `memo_msg_e.mes` has been attempted to load from disk.
     pub(crate) memo_mes_loaded: bool,
     /// Cached parsed `memo_msg_e.mes` / `memo_x_msg_e.mes` message table.
@@ -70,8 +77,8 @@ pub(crate) struct InGameMenuState {
     pub(crate) item_atlas_loaded: bool,
     /// Cached decoded `itemmenu2.tex` (`4096x4096` SH2:EE HD or `1024x1024` PS2/PC) `(width, height, rgba)`.
     pub(crate) cached_item_atlas: Option<(usize, usize, Vec<u8>)>,
-    /// Cached decoded close-up examine `.tex` `(item_id, width, height, rgba)`.
-    pub(crate) cached_examine_tex: Option<(u8, usize, usize, Vec<u8>)>,
+    /// Cached decoded close-up examine `.tex` `(item_id, coin_side, width, height, rgba)`.
+    pub(crate) cached_examine_tex: Option<(u8, u8, usize, usize, Vec<u8>)>,
     /// Game Over screen state (`GameoverMain` `0x001c4c70`).
     pub gameover: sh2_ui::GameOverScreen,
     /// Low-Health Red Cross Icon state (`sh2pc.exe` `0x00476280`).
@@ -103,14 +110,25 @@ impl InGameMenuState {
         self.memo_reader.close();
         self.held_map_pan = [false; 4];
         self.options_from_inventory = false;
+        self.options_closing_to_inventory = false;
+        self.options_fade_alpha = 0.0;
         self.save_load = None;
     }
 
     /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/pan/transcription, memo dim, save/load blink).
-    pub fn tick(&mut self, dt: f32, snapshot: &InventoryPlayerSnapshot) {
-        if self.inventory.is_open {
-            self.inventory.tick(dt, snapshot);
-        }
+    ///
+    /// Returns any deferred [`InventoryAction`] triggered when an Inventory fade-to-black transition
+    /// finishes (`otn_itemmain.c` `item_fade_out` `0x001db0e0`).
+    pub fn tick(
+        &mut self,
+        dt: f32,
+        snapshot: &InventoryPlayerSnapshot,
+    ) -> (Option<InventoryAction>, bool) {
+        let deferred_action = if self.inventory.is_open {
+            self.inventory.tick(dt, snapshot)
+        } else {
+            None
+        };
         if self.map_viewer.is_open {
             let axis_x = (self.held_map_pan[3] as i32 - self.held_map_pan[2] as i32) as f32;
             let axis_y = (self.held_map_pan[1] as i32 - self.held_map_pan[0] as i32) as f32;
@@ -122,9 +140,26 @@ impl InGameMenuState {
         if self.memo_reader.is_open {
             self.memo_reader.tick(dt);
         }
+        let mut return_to_inventory = false;
+        if self.options_from_inventory {
+            let dt_clamped = dt.clamp(0.0, 0.1);
+            if self.options_closing_to_inventory {
+                // `otn_option.c:2056` (`fade_out`): `1.0` s fade to black before returning to Inventory
+                self.options_fade_alpha = (self.options_fade_alpha + dt_clamped).min(1.0);
+                if self.options_fade_alpha >= 1.0 {
+                    self.options_closing_to_inventory = false;
+                    self.options_from_inventory = false;
+                    return_to_inventory = true;
+                }
+            } else if self.options_fade_alpha > 0.0 {
+                // `otn_option.c:2038` (`fade_in`): `1.0` s fade in from black
+                self.options_fade_alpha = (self.options_fade_alpha - dt_clamped).max(0.0);
+            }
+        }
         if let Some(ref mut sl) = self.save_load {
             sl.tick(dt);
         }
+        (deferred_action, return_to_inventory)
     }
 }
 
@@ -249,6 +284,7 @@ fn open_map_sheet(
         state.active_maria,
         from_inventory,
     );
+    state.ingame_menus.map_viewer.start_fade_in();
     ensure_map_sheet_loaded(state, map_id);
     play_map_paper_sfx(state);
 }
@@ -260,6 +296,7 @@ pub(crate) fn open_memo_reader(state: &mut AppState) {
         .ingame_menus
         .memo_reader
         .open(&state.sim_core.scenario.flags);
+    state.ingame_menus.memo_reader.start_fade_in();
     emit_menu_sound(state, MenuSoundCue::Confirm, "Memo");
 }
 
@@ -311,6 +348,12 @@ pub(crate) fn handle_key_input(state: &mut AppState, key_code: KeyCode, pressed:
                             .ingame_menus
                             .inventory
                             .open(&state.sim_core.scenario.inventory_mgr);
+                    } else if let Some(ref mut orch) = state.campaign_orchestrator {
+                        // `gamemain.c:448` (`ScreenEffectFadeStart(0x3f99999a, 4)`): fade gameplay back in
+                        orch.fade.start_fade_in(
+                            sh2_core::campaign::PS2_DEFAULT_FADE_SPEED,
+                            orch.delayed_fade_in_fix,
+                        );
                     }
                 }
                 PaperMapAction::None => {}
@@ -376,11 +419,24 @@ fn key_to_nav(key_code: KeyCode, close_on_m: bool, close_on_inv: bool) -> Option
     }
 }
 
-/// Routes mouse cursor movement when Inventory is open (`CommandWindowMouseFix.cpp`).
+/// Routes mouse cursor movement when Inventory or Inventory->Options is open (`CommandWindowMouseFix.cpp`).
 pub(crate) fn handle_mouse_move(state: &mut AppState, mouse_x: f32, mouse_y: f32) {
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    if state.ingame_menus.options_from_inventory && !state.ingame_menus.options_closing_to_inventory
+    {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(vw, vh);
+        if cw > 0.0 && ch > 0.0 {
+            let ps2_x = (mouse_x - ox) * 512.0 / cw;
+            let ps2_y = (mouse_y - oy) * 448.0 / ch;
+            if state.menu_ctrl.options_menu.handle_mouse_move(ps2_x, ps2_y) {
+                state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+                emit_menu_sound(state, MenuSoundCue::CursorMove, "Inventory Options");
+            }
+        }
+        return;
+    }
     if state.ingame_menus.inventory.is_open {
-        let vw = state.surface_config.width.max(1) as f32;
-        let vh = state.surface_config.height.max(1) as f32;
         state
             .ingame_menus
             .inventory
@@ -388,11 +444,35 @@ pub(crate) fn handle_mouse_move(state: &mut AppState, mouse_x: f32, mouse_y: f32
     }
 }
 
-/// Routes left mouse click when Inventory is open.
+/// Routes left mouse click when Inventory or Inventory->Options is open.
 pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f32) {
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    if state.ingame_menus.options_from_inventory && !state.ingame_menus.options_closing_to_inventory
+    {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(vw, vh);
+        if cw > 0.0 && ch > 0.0 {
+            let ps2_x = (mouse_x - ox) * 512.0 / cw;
+            let ps2_y = (mouse_y - oy) * 448.0 / ch;
+            if let Some(cue) = state
+                .menu_ctrl
+                .options_menu
+                .handle_mouse_click(ps2_x, ps2_y)
+            {
+                let (saved_cfg, _) = state.menu_ctrl.options_menu.commit_changes();
+                state.menu_ctrl.config_applied_pending = Some(saved_cfg.clone());
+                let _ = saved_cfg.save_to_file(&state.menu_ctrl.config_path);
+                crate::menu_events::sync_audio_config(state, &saved_cfg);
+                if cue == sh2_ui::options::OptionsSoundCue::ValueChange {
+                    actions::play_options_volume_or_cursor_sfx(state);
+                } else {
+                    emit_menu_sound(state, MenuSoundCue::Confirm, "Inventory Options");
+                }
+            }
+        }
+        return;
+    }
     if state.ingame_menus.inventory.is_open {
-        let vw = state.surface_config.width.max(1) as f32;
-        let vh = state.surface_config.height.max(1) as f32;
         let snapshot = build_player_snapshot(state);
         let (cue, action) = state.ingame_menus.inventory.handle_mouse_click(
             mouse_x,
@@ -404,6 +484,34 @@ pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f3
         );
         emit_menu_sound(state, cue, "Inventory");
         apply_inventory_action(state, action);
+    }
+}
+
+/// Routes mouse scroll wheel when Inventory->Options is open.
+pub(crate) fn handle_mouse_wheel(state: &mut AppState, steps: i32) {
+    if !state.ingame_menus.options_from_inventory
+        || state.ingame_menus.options_closing_to_inventory
+        || steps == 0
+    {
+        return;
+    }
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    let hover_ps2 = state.last_cursor_pos.and_then(|(mx, my)| {
+        let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(vw, vh);
+        if cw > 0.0 && ch > 0.0 {
+            Some(((mx as f32 - ox) * 512.0 / cw, (my as f32 - oy) * 448.0 / ch))
+        } else {
+            None
+        }
+    });
+    let cue = state
+        .menu_ctrl
+        .options_menu
+        .handle_mouse_wheel(steps, hover_ps2);
+    if cue != sh2_ui::options::OptionsSoundCue::None {
+        state.menu_ctrl.revision = state.menu_ctrl.revision.wrapping_add(1);
+        emit_menu_sound(state, MenuSoundCue::CursorMove, "Inventory Options");
     }
 }
 
@@ -421,15 +529,26 @@ pub(crate) fn render_overlay(
     let font = AtlasFont::shared(None);
 
     if state.ingame_menus.options_from_inventory {
-        state.draw_fullscreen_dim_scrim(encoder, surface_view, 210);
-        state.inventory_rasterizer.clear();
+        // `otn_option.c` (`0x002170c0`): solid black fullscreen backdrop + native widescreen
+        // Options UI (`menu_rasterizer`) with full-viewport `1.0` s fade-in scrim.
+        state.draw_fullscreen_dim_scrim(encoder, surface_view, 255);
         draw_options_screen(
             &state.menu_ctrl.options_menu,
             font,
-            &mut state.inventory_rasterizer,
+            &mut state.menu_rasterizer,
         );
-        let vp = state.ps2_ui_viewport();
-        state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
+        if let Some((mx, my)) = state.last_cursor_pos {
+            let norm_x = (mx as f32) / state.surface_config.width.max(1) as f32;
+            let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
+            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
+        }
+        if state.ingame_menus.options_fade_alpha > 0.001 {
+            let a = (state.ingame_menus.options_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let rw = state.menu_rasterizer.width;
+            let rh = state.menu_rasterizer.height;
+            state.menu_rasterizer.fill_rect(0, 0, rw, rh, [0, 0, 0, a]);
+        }
+        state.finish_hud_overlay(encoder, surface_view);
         return;
     } else if state.ingame_menus.save_load.is_some() {
         let scenario = state.menu_ctrl.title_sm.selected_scenario;
@@ -512,9 +631,10 @@ pub(crate) fn render_overlay(
             &mut state.menu_rasterizer,
         );
     } else if state.ingame_menus.inventory.is_open {
+        let coin_side = state.ingame_menus.inventory.examine_coin_side;
         if state.ingame_menus.inventory.focus == sh2_ui::inventory::InventoryFocus::ExamineOverlay {
             if let Some(id) = state.ingame_menus.inventory.selected_item_id() {
-                ensure_examine_tex_loaded(state, id);
+                ensure_examine_tex_loaded(state, id, coin_side);
             }
         }
         let snapshot = build_player_snapshot(state);
@@ -532,8 +652,8 @@ pub(crate) fn render_overlay(
                     .ingame_menus
                     .cached_examine_tex
                     .as_ref()
-                    .filter(|(id, _, _, _)| *id == sel_id)
-                    .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h))
+                    .filter(|(id, side, _, _, _)| *id == sel_id && *side == coin_side)
+                    .map(|(_, _, w, h, rgba)| (rgba.as_slice(), *w, *h))
             });
         state.inventory_rasterizer.clear();
         draw_inventory_screen(

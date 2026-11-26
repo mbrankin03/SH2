@@ -48,7 +48,7 @@ impl Sh2TextColor {
     /// Returns the `(top_color, bottom_color)` RGBA values for this color style.
     pub const fn to_gradient(self) -> ([u8; 4], [u8; 4]) {
         match self {
-            Self::White => ([240, 240, 240, 255], [210, 210, 210, 255]),
+            Self::White => ([255, 255, 255, 255], [255, 255, 255, 255]),
             // Authentic SH2 selected menu item: bright gold top fading into warm amber bottom
             Self::GoldSelected => ([255, 230, 90, 255], [220, 160, 30, 255]),
             // Authentic SH2 unselected menu item: silver-white top fading into soft shadow gray bottom
@@ -232,8 +232,18 @@ impl AtlasFont {
 
     /// Width in destination pixels of `text` (one line) rendered `px_height` tall.
     pub fn text_width(&self, text: &str, px_height: usize) -> usize {
-        let adv: usize = text.chars().map(|c| self.advance(c)).sum();
-        adv * px_height / CELL_H
+        self.text_width_aspect(text, px_height, 1.0)
+    }
+
+    /// Width in destination pixels of `text` rendered `px_height` tall with horizontal pixel aspect `x_scale`
+    /// (e.g. `c.sx / c.sy = 7/6` when rasterizing PS2 `512x448` UI into a square-pixel `4:3` buffer).
+    pub fn text_width_aspect(&self, text: &str, px_height: usize, x_scale: f32) -> usize {
+        let x_scale = x_scale.max(0.25);
+        let adv: f32 = text
+            .chars()
+            .map(|c| (self.advance(c) as f32 * px_height as f32 / CELL_H as f32) * x_scale)
+            .sum();
+        adv.round() as usize
     }
 
     fn blend(rast: &mut TextRasterizer, x: usize, y: usize, color: [u8; 4], cover: f32) {
@@ -261,19 +271,21 @@ impl AtlasFont {
         x: usize,
         y: usize,
         px_height: usize,
+        x_scale: f32,
         color: [u8; 4],
     ) {
         if g.min_x > g.max_x {
             return;
         }
-        let step = CELL_H as f32 / px_height as f32; // source pixels per destination pixel
-        let w = ((g.max_x - g.min_x + 1) as f32 / step).ceil() as usize;
+        let step_y = CELL_H as f32 / px_height as f32; // source pixels per destination Y pixel
+        let step_x = step_y / x_scale.max(0.25); // source pixels per destination X pixel
+        let w = ((g.max_x - g.min_x + 1) as f32 / step_x).ceil() as usize;
         for dy in 0..px_height {
-            let sy0 = dy as f32 * step;
-            let sy1 = sy0 + step;
+            let sy0 = dy as f32 * step_y;
+            let sy1 = sy0 + step_y;
             for dx in 0..w {
-                let sx0 = g.min_x as f32 + dx as f32 * step;
-                let sx1 = sx0 + step;
+                let sx0 = g.min_x as f32 + dx as f32 * step_x;
+                let sx1 = sx0 + step_x;
                 let mut sum = 0.0;
                 let mut area = 0.0;
                 let mut sy = sy0.floor() as usize;
@@ -310,8 +322,23 @@ impl AtlasFont {
         style: Sh2TextColor,
         shadow: bool,
     ) {
+        self.draw_line_styled_aspect(rast, text, pos, px_height, 1.0, style, shadow);
+    }
+
+    /// Draws a styled string with horizontal pixel aspect ratio `x_scale`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_line_styled_aspect(
+        &self,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        x_scale: f32,
+        style: Sh2TextColor,
+        shadow: bool,
+    ) {
         let gradient = style.to_gradient();
-        self.draw_line_gradient(rast, text, pos, px_height, gradient, shadow);
+        self.draw_line_gradient_aspect(rast, text, pos, px_height, x_scale, gradient, shadow);
     }
 
     /// Draws a string centered horizontally at `center_x` with top edge at `y`.
@@ -324,10 +351,25 @@ impl AtlasFont {
         style: Sh2TextColor,
         shadow: bool,
     ) {
+        self.draw_line_centered_aspect(rast, text, pos, px_height, 1.0, style, shadow);
+    }
+
+    /// Draws a horizontally centered string with horizontal pixel aspect ratio `x_scale`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_line_centered_aspect(
+        &self,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        x_scale: f32,
+        style: Sh2TextColor,
+        shadow: bool,
+    ) {
         let (center_x, y) = pos;
-        let w = self.text_width(text, px_height);
+        let w = self.text_width_aspect(text, px_height, x_scale);
         let x = center_x.saturating_sub(w / 2);
-        self.draw_line_styled(rast, text, (x, y), px_height, style, shadow);
+        self.draw_line_styled_aspect(rast, text, (x, y), px_height, x_scale, style, shadow);
     }
 
     /// Draws one line of text with its top-left at `pos`; optional drop shadow like the menus.
@@ -340,7 +382,7 @@ impl AtlasFont {
         color: [u8; 4],
         shadow: bool,
     ) {
-        self.draw_line_gradient(rast, text, pos, px_height, (color, color), shadow);
+        self.draw_line_gradient_aspect(rast, text, pos, px_height, 1.0, (color, color), shadow);
     }
 
     /// Draws one line of text with its top-left at `pos` with vertical two-tone gradient shading
@@ -355,53 +397,89 @@ impl AtlasFont {
         gradient: ([u8; 4], [u8; 4]),
         shadow: bool,
     ) {
+        self.draw_line_gradient_aspect(rast, text, pos, px_height, 1.0, gradient, shadow);
+    }
+
+    /// Draws one line of gradient-shaded text with horizontal pixel aspect ratio `x_scale`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_line_gradient_aspect(
+        &self,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        x_scale: f32,
+        gradient: ([u8; 4], [u8; 4]),
+        shadow: bool,
+    ) {
         let (top_color, bottom_color) = gradient;
         let (x, y) = pos;
         let px_height = px_height.max(4);
+        let x_scale = x_scale.max(0.25);
         let off = (px_height / 14).max(1);
 
         // Pass 0: drop shadow (if enabled)
         if shadow {
             let shadow_alpha = (top_color[3].max(bottom_color[3]) as f32 * 0.85) as u8;
             let shadow_col = [0, 0, 0, shadow_alpha];
-            let mut cx = x + off;
+            let mut cx = (x + off) as f32;
             let cy = y + off;
             for ch in text.chars() {
                 if ch != ' ' {
                     if let Some(g) = self.glyph(ch) {
-                        Self::draw_glyph(g, rast, cx, cy, px_height, shadow_col);
+                        Self::draw_glyph(
+                            g,
+                            rast,
+                            cx.round() as usize,
+                            cy,
+                            px_height,
+                            x_scale,
+                            shadow_col,
+                        );
                     }
                 }
-                cx += self.advance(ch) * px_height / CELL_H;
+                cx += (self.advance(ch) as f32 * px_height as f32 / CELL_H as f32) * x_scale;
             }
         }
 
         // Pass 1: gradient text
-        let mut cx = x;
+        let mut cx = x as f32;
         for ch in text.chars() {
             if ch != ' ' {
                 if let Some(g) = self.glyph(ch) {
-                    Self::draw_glyph_gradient(g, rast, cx, y, px_height, top_color, bottom_color);
+                    Self::draw_glyph_gradient(
+                        g,
+                        rast,
+                        cx.round() as usize,
+                        y,
+                        px_height,
+                        x_scale,
+                        top_color,
+                        bottom_color,
+                    );
                 }
             }
-            cx += self.advance(ch) * px_height / CELL_H;
+            cx += (self.advance(ch) as f32 * px_height as f32 / CELL_H as f32) * x_scale;
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_glyph_gradient(
         g: &Glyph,
         rast: &mut TextRasterizer,
         x: usize,
         y: usize,
         px_height: usize,
+        x_scale: f32,
         top_color: [u8; 4],
         bottom_color: [u8; 4],
     ) {
         if g.min_x > g.max_x {
             return;
         }
-        let step = CELL_H as f32 / px_height as f32; // source pixels per destination pixel
-        let w = ((g.max_x - g.min_x + 1) as f32 / step).ceil() as usize;
+        let step_y = CELL_H as f32 / px_height as f32; // source pixels per destination Y pixel
+        let step_x = step_y / x_scale.max(0.25); // source pixels per destination X pixel
+        let w = ((g.max_x - g.min_x + 1) as f32 / step_x).ceil() as usize;
         let max_dy = (px_height.saturating_sub(1)).max(1) as f32;
 
         for dy in 0..px_height {
@@ -413,11 +491,11 @@ impl AtlasFont {
                 (top_color[3] as f32 * (1.0 - t) + bottom_color[3] as f32 * t).round() as u8,
             ];
 
-            let sy0 = dy as f32 * step;
-            let sy1 = sy0 + step;
+            let sy0 = dy as f32 * step_y;
+            let sy1 = sy0 + step_y;
             for dx in 0..w {
-                let sx0 = g.min_x as f32 + dx as f32 * step;
-                let sx1 = sx0 + step;
+                let sx0 = g.min_x as f32 + dx as f32 * step_x;
+                let sx1 = sx0 + step_x;
                 let mut sum = 0.0;
                 let mut area = 0.0;
                 let mut sy = sy0.floor() as usize;

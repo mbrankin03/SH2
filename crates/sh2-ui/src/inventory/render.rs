@@ -29,13 +29,13 @@ use crate::font::TextRasterizer;
 use crate::inventory::atlas::{item_icon_rect, project_carousel_slot};
 use crate::inventory::health_ecg::{ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_Y_448};
 use crate::inventory::widgets::{
-    draw_item_allay, draw_look_combine, draw_look_command, draw_look_volume, draw_lookline,
-    draw_sprite_bar, draw_stock_line, stock_line_width_for_count, Ps2Canvas,
+    draw_item_allay, draw_look_combine, draw_look_command, draw_look_volume, draw_look_zanzo,
+    draw_lookline, draw_sprite_bar, draw_stock_line, stock_line_width_for_count, Ps2Canvas,
     LOOK_COMMAND_ROW_PITCH, PS2_UI_HEIGHT, PS2_UI_WIDTH, SPRITE_BAR_WIDTH, SPRITE_BAR_X0,
     SPRITE_BOT_BAR_CY, SPRITE_TOP_BAR_CY, STOCK_LINE_WIDTH_ON_OFF,
 };
 use crate::inventory::{
-    CornerButton, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
+    CornerButton, ExaminePhase, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
     CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_Y_MIN,
 };
 use sh2_core::inventory::ITEM_ID_RADIO;
@@ -66,9 +66,15 @@ pub fn draw_inventory_screen(
 
     let c = Ps2Canvas::from_viewport(rasterizer.width, rasterizer.height);
 
-    // Close-up Examine Overlay (`Look` command): render exclusively on pure black with zero
-    // bleed-through from the underlying Status/Command/Carousel screen.
-    if screen.focus == InventoryFocus::ExamineOverlay {
+    // Fullscreen `examine_main` (`0x001d3a00`, `command_kind == 9`: Letter from Mary, Laura's Letter,
+    // Rebirth books) renders exclusively on pure black. Inline popup (`command_kind == 0xb/8`: Photo of
+    // Mary, etc.) keeps the Inventory screen visible underneath and draws the `200x200` framed popup on top.
+    if screen.focus == InventoryFocus::ExamineOverlay
+        && matches!(
+            screen.examine_phase,
+            ExaminePhase::FullscreenInspect | ExaminePhase::FullscreenReading
+        )
+    {
         draw_examine_overlay(screen, examine_tex_rgba, font, rasterizer, c);
         return;
     }
@@ -114,6 +120,22 @@ pub fn draw_inventory_screen(
 
     // 8. Bottom navigation row with 6-layer tapering cyan-blue bars (`sprite` `0x001d8890`)
     draw_bottom_nav_bar(screen, snapshot, font, rasterizer, c);
+
+    // 9. Inline `200x200` Examine Popup (`sh2pc.exe` `FUN_0046af30` `case 0xc`: Photo of Mary, etc.)
+    if screen.focus == InventoryFocus::ExamineOverlay
+        && matches!(
+            screen.examine_phase,
+            ExaminePhase::InlinePopup | ExaminePhase::InlineClosing
+        )
+    {
+        draw_inline_examine_popup(screen, item_atlas_rgba, examine_tex_rgba, rasterizer, c);
+    }
+
+    // 10. Inventory fade-in / fade-out scrim (`SLUS_202.28` `itemmain` `0x001cdb40` & `item_fade_out` `0x001db0e0`)
+    if screen.screen_fade_alpha > 0.001 {
+        let a = (screen.screen_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, a]);
+    }
 }
 
 fn draw_top_headers(
@@ -122,9 +144,10 @@ fn draw_top_headers(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // `font_print` (`0x001d5cb4..0x001d5cfc`, `y = 0x32 = 50` in `512x448`) centered over each
-    // `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
-    let font_px = ((22.0 * c.sy).round() as usize).max(12);
+    // `font_print` (`0x001d5cb4..0x001d5cfc`, `sh2pc_00470000.c:2614` `fontCrushOff()` -> `FontSize[0]` = `20x30`)
+    // centered over each `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`x0 = 26, 186, 346`, `w = 140`, `cy = 35`).
+    let font_px = ((30.0 * c.sy).round() as usize).max(14);
+    let x_scale = c.sx / c.sy;
     let y_bar = c.yi(SPRITE_TOP_BAR_CY);
     let y_text = y_bar.saturating_sub(font_px / 2);
 
@@ -147,11 +170,12 @@ fn draw_top_headers(
             screen.tab_pulse,
         );
         let cx = c.xi(bar_x + SPRITE_BAR_WIDTH * 0.5);
-        font.draw_line_centered(
+        font.draw_line_centered_aspect(
             rasterizer,
             label,
             (cx, y_text),
             font_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
@@ -227,17 +251,20 @@ fn draw_command_column(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    let font_px = ((18.0 * c.sy).round() as usize).max(12);
+    // `sh2pc_00470000.c:2614` (`fontCrushOff()` -> `FontSize[0]` = `20x30` in `512x448` space).
+    let font_px = ((28.0 * c.sy).round() as usize).max(12);
+    let x_scale = c.sx / c.sy;
     let text_x = c.xi(COMMAND_TEXT_X);
 
     // `command_main` case 7 (`DAT_0116e3e4 == 1`, `0x001d0790`) + `look_volume` (`0x001d9480`):
     // render `"Volume"` header at `font_print` `(0x15e = 350, 0x5a = 90)` and 16-bar green meter at `y = 104..124`.
     if screen.focus == InventoryFocus::RadioVolume {
-        font.draw_line_styled(
+        font.draw_line_styled_aspect(
             rasterizer,
             "Volume",
             (c.xi(350.0), c.yi(90.0).saturating_sub(font_px)),
             font_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
@@ -273,7 +300,15 @@ fn draw_command_column(
         } else {
             Sh2TextColor::MutedFooter
         };
-        font.draw_line_styled(rasterizer, cmd.label(), (text_x, ry), font_px, color, true);
+        font.draw_line_styled_aspect(
+            rasterizer,
+            cmd.label(),
+            (text_x, ry),
+            font_px,
+            x_scale,
+            color,
+            true,
+        );
     }
 }
 
@@ -292,6 +327,49 @@ fn draw_carousel_arc(
     let cy = c.y(PS2_UI_HEIGHT * 0.5);
     let font_px = ((16.0 * c.sy).round() as usize).clamp(10, 24);
 
+    // `lookline` (`SLUS_202.28` `0x001d6c30`, `otn_itemmain.c:386`: hidden during `0xc`/`0xd` ExamineOverlay)
+    // + `look_zanzo` (`0x001daab0`) motion-trail quad while `focus_rect` glides between targets (`FUN_0046af30`).
+    if screen.focus != InventoryFocus::ExamineOverlay {
+        draw_look_zanzo(rasterizer, c, screen.prev_focus_rect, screen.focus_rect);
+        let [ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448] = screen.focus_rect;
+        let rx = c.xi(ret_x0_512);
+        let ry = c.yi(ret_y0_448);
+        let ret_w = c.xi(ret_x1_512).saturating_sub(rx);
+        let ret_h = c.yi(ret_y1_448).saturating_sub(ry);
+        // `otn_itemmain.c:2611`: outer L-brackets appear only once the reticle settles (`DAT_0116e3e6 == 0`).
+        let is_settled = screen.is_focus_rect_settled();
+        let show_corner_brackets = is_settled
+            && matches!(
+                screen.focus,
+                InventoryFocus::Carousel
+                    | InventoryFocus::CommandWindow
+                    | InventoryFocus::RadioVolume
+                    | InventoryFocus::Corner(_)
+            );
+        let ret_a = if matches!(
+            screen.focus,
+            InventoryFocus::Carousel
+                | InventoryFocus::CombineTarget
+                | InventoryFocus::CommandWindow
+                | InventoryFocus::RadioVolume
+                | InventoryFocus::Corner(_)
+        ) {
+            0xff
+        } else {
+            ECG_GS_ALPHA
+        };
+        draw_lookline(
+            rasterizer,
+            c,
+            rx,
+            ry,
+            ret_w,
+            ret_h,
+            ret_a,
+            show_corner_brackets,
+        );
+    }
+
     if screen.owned_items.is_empty() {
         font.draw_line_centered(
             rasterizer,
@@ -304,35 +382,10 @@ fn draw_carousel_arc(
         return;
     }
 
-    // `lookline` (`0x001d6c30`): single closed `RGB(48, 96, 240)` square reticle + two outer
-    // L-bracket corner accents at `(-6, -6)` and `(+6, +5)` when active on `Carousel`.
-    let ret_h_f = STATUS_SNAPSHOT_H_448 * c.sy;
-    let ret_h = ret_h_f.round() as usize;
-    let ret_w = c.width_for_height(ret_h_f, 1.0).round() as usize;
-    let rx = (cx as usize).saturating_sub(ret_w / 2);
-    let ry = (cy as usize).saturating_sub(ret_h / 2);
-    let is_carousel_active = screen.focus == InventoryFocus::Carousel;
-    let ret_a = if matches!(
-        screen.focus,
-        InventoryFocus::Carousel | InventoryFocus::CombineTarget
-    ) {
-        0xff
-    } else {
-        ECG_GS_ALPHA
-    };
-    draw_lookline(
-        rasterizer,
-        c,
-        rx,
-        ry,
-        ret_w,
-        ret_h,
-        ret_a,
-        is_carousel_active,
-    );
-
     // `item_allay` (`0x001d7640`): pulsing double-chevron L/R arrows flanking carousel reticle
-    draw_item_allay(rasterizer, c, screen.arrow_pulse, screen.arrow_fade);
+    if screen.owned_items.len() > 1 {
+        draw_item_allay(rasterizer, c, screen.arrow_pulse, screen.arrow_fade);
+    }
 
     let total = screen.owned_items.len();
     let draw_order: &[isize] = if total >= 7 {
@@ -358,7 +411,7 @@ fn draw_carousel_arc(
         } else {
             CAROUSEL_UNSELECTED_SCALE
         };
-        let proj = project_carousel_slot(ofs as f32, slot_scale);
+        let proj = project_carousel_slot(ofs as f32 + screen.carousel_anim_offset, slot_scale);
         let px = cx + proj.offset_x_640 * x_640_to_512 * c.sx;
         let py = cy;
         let alpha = if ofs == 0 { 1.0 } else { proj.alpha };
@@ -447,32 +500,36 @@ fn draw_item_footer(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Exact `SLUS_202.28` `font_print` (`0x001d5b50..0x001d5b90`) in `512x448`:
-    // Item Name at `(0x14 = 20, 0x145 = 325)`, Description at `(0x2d = 45, 0x168 = 360)`
-    let title_px = ((18.0 * c.sy).round() as usize).max(12);
-    let body_px = ((15.0 * c.sy).round() as usize).max(10);
+    // Retail PC `sh2pc.exe` `font_print` (`sh2pc_00470000.c:2272, 2280`) in `512x480` space
+    // (`c.y(py_448) = (py_448 + 16) * (h / 480)`): Item Name at `(20, 325)` -> `325 - 16 = 309`,
+    // Description at `(45, 360)` -> `360 - 16 = 344` (`c.sx / c.sy = 1.25` in 4:3).
+    let title_px = ((26.0 * c.sy).round() as usize).max(12);
+    let body_px = ((24.0 * c.sy).round() as usize).max(11);
+    let x_scale = c.sx / c.sy;
     let name_x = c.xi(20.0);
-    let name_y = c.yi(325.0).saturating_sub(title_px);
+    let name_y = c.yi(309.0).saturating_sub(title_px);
     let desc_x = c.xi(45.0);
-    let desc_y = c.yi(360.0).saturating_sub(body_px);
+    let desc_y = c.yi(344.0).saturating_sub(body_px);
 
     if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
-        font.draw_line_styled(
+        font.draw_line_styled_aspect(
             rasterizer,
             meta.name,
             (name_x, name_y),
             title_px,
+            x_scale,
             Sh2TextColor::White,
             true,
         );
         let mut line_y = desc_y;
         for line in meta.description.lines().take(3) {
-            font.draw_line_styled(
+            font.draw_line_styled_aspect(
                 rasterizer,
                 line,
                 (desc_x, line_y),
                 body_px,
-                Sh2TextColor::SilverUnselected,
+                x_scale,
+                Sh2TextColor::White,
                 true,
             );
             line_y += body_px + 4;
@@ -480,11 +537,12 @@ fn draw_item_footer(
     }
 
     if let Some(ref toast) = screen.status_toast {
-        font.draw_line_styled(
+        font.draw_line_styled_aspect(
             rasterizer,
             toast,
             (desc_x, c.yi(395.0)),
-            ((14.0 * c.sy).round() as usize).clamp(10, 20),
+            ((16.0 * c.sy).round() as usize).clamp(10, 22),
+            x_scale,
             Sh2TextColor::Green,
             true,
         );
@@ -498,9 +556,10 @@ fn draw_bottom_nav_bar(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    // Exact `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`: `Option | Map | Memo`) centered
-    // over each `sprite` (`0x001d8890`) 6-layer tapering cyan-blue bar (`cy = 413`).
-    let font_px = ((22.0 * c.sy).round() as usize).max(12);
+    // Retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`, `fontCrushOff()` -> `FontSize[0]` = `20x30`):
+    // `Options | Memo | Map` centered over each `sprite` (`0x001d8890`) 6-layer cyan-blue bar (`cy = 413`).
+    let font_px = ((30.0 * c.sy).round() as usize).max(14);
+    let x_scale = c.sx / c.sy;
     let y_bar = c.yi(SPRITE_BOT_BAR_CY);
     let y_text = y_bar.saturating_sub(font_px / 2);
 
@@ -524,17 +583,99 @@ fn draw_bottom_nav_bar(
             Sh2TextColor::White
         };
         let cx = c.xi(SPRITE_BAR_X0[col_idx] + SPRITE_BAR_WIDTH * 0.5);
-        font.draw_line_centered(
+        font.draw_line_centered_aspect(
             rasterizer,
             btn.label(),
             (cx, y_text),
             font_px,
+            x_scale,
             text_color,
             true,
         );
     }
 }
 
+/// Renders the inline `200x200` framed Examine popup over the Inventory screen
+/// (`sh2pc.exe` `FUN_0046af30` `case 0xc` & `case 0xd`, `SLUS_202.28` `examine2_main` `0x001d4040`).
+///
+/// Stretches `examine_tex_rgba` directly to the animated 4-edge quad `screen.examine_popup_rect`
+/// (`PictureDraw` `otn_itemmain.c:1826-1839`) so dismissing (`case 0xd`) collapses vertically into
+/// the 4 px horizontal slit `(201, 172)..(311, 176)` like a 3D vertical card flip.
+fn draw_inline_examine_popup(
+    screen: &InventoryScreen,
+    item_atlas_rgba: Option<(&[u8], usize, usize)>,
+    examine_tex_rgba: Option<(&[u8], usize, usize)>,
+    rasterizer: &mut TextRasterizer,
+    c: Ps2Canvas,
+) {
+    let [rx0, ry0, rx1, ry1] = screen.examine_popup_rect;
+    let x0 = c.xi(rx0);
+    let y0 = c.yi(ry0);
+    let x1 = c.xi(rx1);
+    let y1 = c.yi(ry1);
+    let w = x1.saturating_sub(x0).max(1);
+    let h = y1.saturating_sub(y0).max(1);
+    let border = (c.sy * 0.45).round().max(1.0) as usize;
+
+    // Opaque black popup fill (`examine2_main` `0x001d4040`)
+    rasterizer.fill_rect(x0, y0, w, h, [0, 0, 0, 255]);
+
+    if let Some((rgba, tw, th)) = examine_tex_rgba {
+        // `examine2_main` (`otn_itemmain.c:1826-1839`): `PictureDraw` stretches directly to the
+        // animated quad `(x0, y0)..(x1, y1)`, producing the vertical flip-collapse in `case 0xd`.
+        rasterizer.blit_rgba_scaled(x0, y0, w, h, rgba, tw, th, 1.0);
+    } else if let (Some((atlas, aw, ah)), Some(rect)) = (
+        item_atlas_rgba,
+        screen.selected_item_id().and_then(item_icon_rect),
+    ) {
+        let (u0, v0, u1, v1) = rect.normalized_uv();
+        let bx0 = x0 as f32;
+        let by0 = y0 as f32;
+        let bx1 = (x0 + w) as f32;
+        let by1 = (y0 + h) as f32;
+        let tris = [
+            (bx0, by0, u0, v0),
+            (bx1, by0, u1, v0),
+            (bx1, by1, u1, v1),
+            (bx0, by0, u0, v0),
+            (bx1, by1, u1, v1),
+            (bx0, by1, u0, v1),
+        ];
+        rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, 1.0);
+    }
+
+    // `examine2_main` (`SLUS_202.28` `0x001d4040`, `otn_itemmain.c:1857-1970`, `lcolor = 45` at `0x003400c8`):
+    // 4 outward-expanding + 4 inward-shrinking concentric 1 px feathered gray borders with
+    // `v = 45 * (3 - i) + 0x1e` (`165, 120, 75, 30`) and GS alpha `0x20` (`64 / 255`).
+    const LCOLOR: usize = 45;
+    for i in 0..4usize {
+        let v = (LCOLOR * (3 - i) + 0x1e).min(255) as u8;
+        let col = [v, v, v, 64];
+        let step_x = ((i as f32) * c.sx).round() as usize;
+        let step_y = ((i as f32) * c.sy).round() as usize;
+        // Outward layer (`-i` / `+i`)
+        let ox = x0.saturating_sub(step_x);
+        let oy = y0.saturating_sub(step_y);
+        let ow = w.saturating_add(step_x * 2);
+        let oh = h.saturating_add(step_y * 2);
+        rasterizer.draw_rect_outline(ox, oy, ow, oh, border, col);
+        // Inward layer (`+i` / `-i`)
+        if w > step_x * 2 + 1 && h > step_y * 2 + 1 {
+            let ix = x0 + step_x;
+            let iy = y0 + step_y;
+            let iw = w - step_x * 2;
+            let ih = h - step_y * 2;
+            rasterizer.draw_rect_outline(ix, iy, iw, ih, border, col);
+        }
+    }
+}
+
+/// Renders the 2-phase fullscreen `examine_main` (`SLUS_202.28` `0x001d3a00`) screen:
+/// - Phase 0 (`FullscreenInspect`): full-height `PictureDraw` at `100%` brightness (`_examine_rgb = 0x80`),
+///   zero text (`fontClear()`).
+/// - Phase 1 (`FullscreenReading`): smoothly dims the image to `0x45 / 0x80` (`69/128`) and overlays the
+///   active `\x0c` page centered directly over the image (`0xFFFA` `\a`) in `fontSetColor(1)`
+///   (`item_msg_e.mes` byte `0x2298`: `0xFF01` -> `RGB(192, 192, 255)`), left-aligned block-centered.
 fn draw_examine_overlay(
     screen: &InventoryScreen,
     examine_tex_rgba: Option<(&[u8], usize, usize)>,
@@ -547,42 +688,84 @@ fn draw_examine_overlay(
     rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, 255]);
 
     if let Some((rgba, tw, th)) = examine_tex_rgba {
-        let max_h = (270.0 * c.sy).round() as usize;
-        let max_w = c
-            .width_for_height(max_h as f32, tw as f32 / th.max(1) as f32)
-            .round() as usize;
-        let dx = w.saturating_sub(max_w) / 2;
-        let dy = c.yi(36.0);
-        rasterizer.blit_rgba_scaled(dx, dy, max_w, max_h, rgba, tw, th, 1.0);
+        // Fullscreen `PictureDraw` (`otn_itemmain.c:1699, 1729`): fill viewport height preserving aspect
+        let aspect = tw as f32 / th.max(1) as f32;
+        let mut dh = h as f32;
+        let mut dw = c.width_for_height(dh, aspect);
+        if dw > w as f32 {
+            let scale = w as f32 / dw.max(1.0);
+            dw *= scale;
+            dh *= scale;
+        }
+        let dst_w = dw.round().max(1.0) as usize;
+        let dst_h = dh.round().max(1.0) as usize;
+        let dx = w.saturating_sub(dst_w) / 2;
+        let dy = h.saturating_sub(dst_h) / 2;
+        rasterizer.blit_rgba_scaled(dx, dy, dst_w, dst_h, rgba, tw, th, 1.0);
+
+        // Dim image smoothly from `0x80` (128) -> `0x45` (69) during Phase 1 (`otn_itemmain.c:1678-1699`)
+        if screen.examine_phase == ExaminePhase::FullscreenReading {
+            let brightness = (screen.examine_rgb / 128.0).clamp(0.0, 1.0);
+            let dim_a = ((1.0 - brightness) * 255.0).round().clamp(0.0, 255.0) as u8;
+            if dim_a > 0 {
+                rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, dim_a]);
+            }
+        }
     }
 
-    let title_px = ((20.0 * c.sy).round() as usize).max(12);
-    let body_px = ((16.0 * c.sy).round() as usize).max(10);
-    let text_y0 = c.yi(325.0);
+    if screen.examine_phase == ExaminePhase::FullscreenReading {
+        // `item_msg_e.mes` byte `0x2298`: `0xFFFA` (`\a` vertical center) + `0xFF01` (`fontSetColor(1)` ->
+        // `FONT_COLOR_PALETTE_PS2[1] = [96, 96, 128]` in PS2 0..128 = `RGB(192, 192, 255)` in 8-bit).
+        let body_px = ((30.0 * c.sy).round() as usize).max(14);
+        let x_scale = c.sx / c.sy;
+        let line_pitch = ((32.0 * c.sy).round() as usize).max(body_px + 2);
+        let letter_color = Sh2TextColor::Custom {
+            top: [192, 192, 255, 255],
+            bottom: [192, 192, 255, 255],
+        };
 
-    if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
-        font.draw_line_centered(
-            rasterizer,
-            meta.name,
-            (w / 2, text_y0),
-            title_px,
-            Sh2TextColor::White,
-            true,
-        );
-        let text = meta.examine_text.unwrap_or(meta.description);
-        for (i, line) in text.lines().take(4).enumerate() {
-            font.draw_line_centered(
-                rasterizer,
-                line,
-                (
-                    w / 2,
-                    text_y0 + title_px + (8.0 * c.sy).round() as usize + i * (body_px + 6),
-                ),
-                body_px,
-                Sh2TextColor::SilverUnselected,
-                true,
-            );
+        if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
+            let raw_text = meta.examine_text.unwrap_or(meta.description);
+            let pages: Vec<&str> = raw_text.split('\x0c').collect();
+            let active_page = pages
+                .get(screen.examine_page.min(pages.len().saturating_sub(1)))
+                .copied()
+                .unwrap_or("");
+            let clean_lines: Vec<String> = active_page
+                .lines()
+                .take(6)
+                .map(|l| l.chars().filter(|&ch| !ch.is_control()).collect())
+                .collect();
+            if !clean_lines.is_empty() {
+                // `MesAlign::BlockCenter` (`\l`): compute max line width, left-align lines at `(w - max_w)/2`,
+                // vertically centered (`\a` `0xFFFA`) directly over the dimmed examine image.
+                let max_w = clean_lines
+                    .iter()
+                    .map(|l| font.text_width_aspect(l, body_px, x_scale))
+                    .max()
+                    .unwrap_or(0);
+                let block_x = w.saturating_sub(max_w) / 2;
+                let total_h = clean_lines.len() * line_pitch;
+                let block_y0 = h.saturating_sub(total_h) / 2;
+                for (i, line) in clean_lines.iter().enumerate() {
+                    font.draw_line_styled_aspect(
+                        rasterizer,
+                        line,
+                        (block_x, block_y0 + i * line_pitch),
+                        body_px,
+                        x_scale,
+                        letter_color,
+                        true,
+                    );
+                }
+            }
         }
+    }
+
+    // Apply `0.5` s fade-in / fade-out scrim (`item_examine_fade_out` `0x001db170` & `examine_main` `0x001d3a00:1704`)
+    if screen.screen_fade_alpha > 0.001 {
+        let a = (screen.screen_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
     }
 }
 
@@ -598,20 +781,25 @@ mod tests {
         }
         let mut screen = InventoryScreen::new();
         screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
         let snap = InventoryPlayerSnapshot::default();
         let font = AtlasFont::shared(None);
 
         let mut rast = TextRasterizer::new(1280, 960);
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        // Top-left Status snapshot area must stay transparent at 100% HP so 3D snapshot shows through
-        assert_eq!(rast.pixels[(200 * 1280 + 160) * 4 + 3], 0);
+        // Top-left Status snapshot area receives retail `sh2pc.exe` (`160/255` base dim + `0x1680FF80`
+        // green health tint) at 100% HP with straight-alpha compositing (`G > R == B`, `alpha > 0`).
+        let status_px = &rast.pixels[(200 * 1280 + 160) * 4..][..4];
+        assert!(status_px[3] > 0 && status_px[3] < 255);
+        assert!(status_px[1] > status_px[0] && status_px[0] == status_px[2]);
 
         if let Ok(out_path) = std::env::var("SH2_PREVIEW_OUT") {
             let _ = image::save_buffer(&out_path, &rast.pixels, 1280, 960, image::ColorType::Rgba8);
         }
 
-        // Examine overlay must fill opaque black with zero bleed-through from inventory chrome
+        // Fullscreen Examine overlay (`Letter from Mary`) must fill opaque black with zero bleed-through
         screen.focus = InventoryFocus::ExamineOverlay;
+        screen.examine_phase = ExaminePhase::FullscreenReading;
         rast.clear();
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
         assert_eq!(rast.pixels[3], 255);
@@ -625,6 +813,7 @@ mod tests {
         }
         let mut screen = InventoryScreen::new();
         screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
         let snap = InventoryPlayerSnapshot {
             hp: 35.0,
             max_hp: 100.0,
@@ -637,7 +826,7 @@ mod tests {
             ..Default::default()
         };
         let font = AtlasFont::shared(None);
-        let mut rast = TextRasterizer::new(512, 448);
+        let mut rast = TextRasterizer::new(512, 480);
 
         // 1. CommandWindow: green-teal `look_command` glow + active `Command` bar pulse
         screen.focus = InventoryFocus::CommandWindow;
@@ -648,30 +837,30 @@ mod tests {
         }
         screen.tab_pulse = 1.0; // Peak active pulse -> bright white-cyan on Command bar
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        // Status bar (col 0, x=26..166, y=35) must remain inactive cyan-blue [0, 60, 180]
-        let status_bar_px = &rast.pixels[(35 * 512 + 40) * 4..][..3];
+        // Status bar (col 0, x=26..166, y=35+16=51 in 512x480) must remain inactive cyan-blue [0, 60, 180]
+        let status_bar_px = &rast.pixels[(51 * 512 + 40) * 4..][..3];
         assert_eq!(status_bar_px, &[0, 60, 180]);
-        // Command bar (col 2, x=346..486, y=35) must pulse bright white-cyan [240, 240, 240]
-        let cmd_bar_px = &rast.pixels[(35 * 512 + 355) * 4..][..3];
+        // Command bar (col 2, x=346..486, y=35+16=51) must pulse bright white-cyan [240, 240, 240]
+        let cmd_bar_px = &rast.pixels[(51 * 512 + 355) * 4..][..3];
         assert_eq!(cmd_bar_px, &[240, 240, 240]);
-        // Green-teal `look_command` bar spans full column (check x = 470, well past old 439 cutoff)
-        let cmd_glow_px = &rast.pixels[(98 * 512 + 470) * 4..][..3];
+        // Green-teal `look_command` bar spans full column (check x = 470, y = 98+16 = 114)
+        let cmd_glow_px = &rast.pixels[(114 * 512 + 470) * 4..][..3];
         assert!(
             cmd_glow_px[1] > cmd_glow_px[2] && cmd_glow_px[0] == 0,
             "expected green-teal glow at x=470, got {cmd_glow_px:?}"
         );
 
-        // 2. RadioVolume: 16-bar green meter
+        // 2. RadioVolume: 16-bar green meter (y = 114+16 = 130)
         screen.focus = InventoryFocus::RadioVolume;
         rast.clear();
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        assert_eq!(&rast.pixels[(114 * 512 + 362) * 4..][..3], &[0, 0xb0, 0]);
+        assert_eq!(&rast.pixels[(130 * 512 + 362) * 4..][..3], &[0, 0xb0, 0]);
         assert_eq!(
-            &rast.pixels[(114 * 512 + (361 + 15 * 7 + 1)) * 4..][..3],
+            &rast.pixels[(130 * 512 + (361 + 15 * 7 + 1)) * 4..][..3],
             &[0, 0x30, 0]
         );
 
-        // 3. CombineTarget: 3 green-tinted combine preview slots
+        // 3. CombineTarget: 3 green-tinted combine preview slots (y = 290+16 = 306)
         screen.focus = InventoryFocus::CombineTarget;
         screen.combine_first_item_id = Some(24);
         for _ in 0..15 {
@@ -679,8 +868,53 @@ mod tests {
         }
         rast.clear();
         draw_inventory_screen(&screen, &inv, &snap, None, None, font, &mut rast);
-        let combine_px = &rast.pixels[(290 * 512 + 370) * 4..][..4];
+        let combine_px = &rast.pixels[(306 * 512 + 370) * 4..][..4];
         assert_eq!(combine_px[3], 160);
         assert!(combine_px[1] > combine_px[0]);
+
+        // 4. Optional Layer 4 visual snapshots for SH2-152 (CommandWindow + Letter Examine)
+        if let Ok(out_dir) = std::env::var("SH2_INV_BEAT4_DIR") {
+            let _ = std::fs::create_dir_all(&out_dir);
+            let mut inv_mary = InventoryManager::new();
+            inv_mary.item_get_now(20); // Photo of Mary
+            inv_mary.item_get_now(21); // Letter from Mary
+            let mut scr = InventoryScreen::new();
+            scr.open(&inv_mary);
+            let snap_mary = InventoryPlayerSnapshot::default();
+            let mut big = TextRasterizer::new(1024, 768);
+
+            // CommandWindow focused on Photo of Mary (matches inv_02.png)
+            scr.focus = InventoryFocus::CommandWindow;
+            scr.active_commands = scr.commands_for_item(20, &inv_mary, &snap_mary);
+            scr.command_index = 0;
+            for _ in 0..10 {
+                scr.tick(1.0 / 30.0, &snap_mary);
+            }
+            big.fill_rect(0, 0, 1024, 768, [0, 0, 0, 255]);
+            draw_inventory_screen(&scr, &inv_mary, &snap_mary, None, None, font, &mut big);
+            let _ = image::save_buffer(
+                format!("{out_dir}/inv_cmd_window.png"),
+                &big.pixels,
+                1024,
+                768,
+                image::ColorType::Rgba8,
+            );
+
+            // ExamineOverlay on Letter from Mary (Phase 1 reading, periwinkle-blue centered over letter)
+            scr.selected_index = 1;
+            scr.focus = InventoryFocus::ExamineOverlay;
+            scr.examine_phase = ExaminePhase::FullscreenReading;
+            scr.examine_rgb = 69.0;
+            scr.examine_page = 0;
+            big.clear();
+            draw_inventory_screen(&scr, &inv_mary, &snap_mary, None, None, font, &mut big);
+            let _ = image::save_buffer(
+                format!("{out_dir}/inv_letter_examine.png"),
+                &big.pixels,
+                1024,
+                768,
+                image::ColorType::Rgba8,
+            );
+        }
     }
 }

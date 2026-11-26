@@ -49,7 +49,18 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
 
     if is_in_game && state.ingame_menus.is_any_open() {
         let snapshot = crate::ingame_menus::build_player_snapshot(state);
-        state.ingame_menus.tick(dt.as_secs_f32(), &snapshot);
+        let (deferred_action, return_to_inventory) =
+            state.ingame_menus.tick(dt.as_secs_f32(), &snapshot);
+        if let Some(action) = deferred_action {
+            crate::ingame_menus::apply_inventory_action(state, action);
+        }
+        if return_to_inventory {
+            state.menu_ctrl.options_menu.discard_changes();
+            state
+                .ingame_menus
+                .inventory
+                .open(&state.sim_core.scenario.inventory_mgr);
+        }
     }
 
     // 5. Advance simulation time and frame counter for animated post-processing
@@ -454,9 +465,7 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
         // frozen 3D gameplay snapshot blitted strictly into the top-left `Status` box (omitted
         // during full-screen `ExamineOverlay` so nothing bleeds behind the examined item).
         if state.ingame_menus.inventory.is_open && !state.menu_ctrl.pause_menu.is_open {
-            if state.ingame_menus.inventory.focus
-                == sh2_ui::inventory::InventoryFocus::ExamineOverlay
-            {
+            if state.ingame_menus.inventory.is_fullscreen_examine() {
                 let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Inventory Examine Clear Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -505,7 +514,7 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
         // If in-game pause menu is active, dim the full widescreen window edge-to-edge, then
         // render the crisp 1920x1440 4:3 Pause/Options UI centered on top with 1:1 square pixels.
         if state.menu_ctrl.pause_menu.is_open {
-            state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 165);
+            state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 96);
             state.inventory_rasterizer.clear();
             let font = sh2_ui::AtlasFont::shared(None);
 

@@ -177,6 +177,12 @@ pub fn draw_memo_reader(
 
     // 6. Enforce pure black pillarboxes outside the 4:3 canvas
     clipper.draw_black_pillarbox_bars(rasterizer);
+
+    // 7. `Event/memo.c:130` (`ScreenEffectFadeStart(0, 4)`) fade-in scrim
+    if reader.screen_fade_alpha > 0.001 {
+        let a = (reader.screen_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, a]);
+    }
 }
 
 /// Renders `MemoSelect` (`0x00230810` / `0x0049a0c0`) 11-row centered or 13-row circular list

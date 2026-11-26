@@ -73,40 +73,44 @@ pub const CMD_WIN_ROW_0_MAX_Y: f32 = 88.0;
 /// Row 1/2 split Y boundary in 512x448 PS2/PC space (`CommandWindowMouseFix.cpp:47`, `MouseY < 114`).
 pub const CMD_WIN_ROW_1_MAX_Y: f32 = 114.0;
 
-/// Three bottom-row navigation buttons on the Status / Inventory screen
-/// (`SLUS_202.28` `font_print` @ `0x001d5c50..0x001d5ca8` & retail `item_msg_e.mes` `0x09..0x0b`,
-/// `y = 0x1ac = 428` in `512x448` space: `Option | Map | Memo`).
+/// Three bottom-row navigation buttons on the Status / Inventory screen.
+///
+/// Prototype vs Retail PC drift:
+/// - `SLUS_202.28` `font_print` (`0x001d5c50..0x001d5ca8`): `Option (0x40) | Map (0xf0) | Memo (0x187)`
+/// - Retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`, `sh2pc_00470000.c:2620-2631`):
+///   `Options (0xfa, x=0x60) | Memo (0x0b, x=0x100) | Map (0x0a, x=0x1a0)` at `y = 0x1ac = 428`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CornerButton {
-    /// Open in-game Options menu (`0x09` `"Option"` at `x = 0x40 = 64, y = 0x1ac = 428`).
+    /// Open in-game Options menu (`sh2pc.exe` `0x00472c30`: `0xfa` `"Options"` at `x = 0x60 = 96, y = 0x1ac = 428`).
     Option = 0,
-    /// Open Fullscreen Paper Map (`0x0a` `"Map"` at `x = 0xf0 = 240, y = 0x1ac = 428`, `Event/chizu.c`).
-    Map = 1,
-    /// Open collected Memo List (`0x0b` `"Memo"` at `x = 0x187 = 391, y = 0x1ac = 428`, gated by `MemoCommandCheck`).
-    Memo = 2,
+    /// Open collected Memo List (`sh2pc.exe` `0x00472c20`: `0x0b` `"Memo"` at `x = 0x100 = 256, y = 0x1ac = 428`, gated by `MemoCommandCheck`).
+    Memo = 1,
+    /// Open Fullscreen Paper Map (`sh2pc.exe` `0x00472c38`: `0x0a` `"Map"` at `x = 0x1a0 = 416, y = 0x1ac = 428`, `Event/chizu.c`).
+    Map = 2,
 }
 
 impl CornerButton {
-    /// Ordered list of the three PS2 bottom-row buttons (`Option`, `Map`, `Memo`).
+    /// Ordered list of the three retail PC / SH2:EE bottom-row buttons (`Options`, `Memo`, `Map`).
     pub const ALL: [CornerButton; 3] =
-        [CornerButton::Option, CornerButton::Map, CornerButton::Memo];
+        [CornerButton::Option, CornerButton::Memo, CornerButton::Map];
 
-    /// Authentic PS2 / retail `item_msg_e.mes` (`0x09..0x0b`) display label.
+    /// Authentic retail PC `sh2pc.exe` (`0x00472c20..0x00472c50`) display label.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::Option => "Option",
-            Self::Map => "Map",
+            Self::Option => "Options",
             Self::Memo => "Memo",
+            Self::Map => "Map",
         }
     }
 
-    /// Logical `512x448` PS2 hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `sprite`
-    /// (`0x001d8c80..0x001d8d58`: column width `140` at `x = 26, 186, 346`) and `font_print` (`y = 428`).
+    /// Logical `512x448` PS2/PC hitbox `(x0, y0, x1, y1)` matching `SLUS_202.28` `sprite`
+    /// (`0x001d8c80..0x001d8d58`: column width `140` at `x = 26, 186, 346`) and `sh2pc.exe`
+    /// `0x00472c20..0x00472c50` (`Options | Memo | Map` at `y = 428`).
     pub const fn hitbox_512x448(&self) -> (f32, f32, f32, f32) {
         match self {
             Self::Option => (26.0, 408.0, 166.0, 442.0),
-            Self::Map => (186.0, 408.0, 326.0, 442.0),
-            Self::Memo => (346.0, 408.0, 486.0, 442.0),
+            Self::Memo => (186.0, 408.0, 326.0, 442.0),
+            Self::Map => (346.0, 408.0, 486.0, 442.0),
         }
     }
 }
@@ -135,20 +139,42 @@ pub enum ItemCommand {
 }
 
 impl ItemCommand {
-    /// Authentic Silent Hill 2 command window label.
+    /// Authentic Silent Hill 2 retail `item_msg_e.mes` (`0x00..0x0f`) command window label.
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Use => "Use",
             Self::Equip => "Equip",
             Self::Unequip => "Unequip",
             Self::Reload => "Reload",
-            Self::Look => "Look",
+            Self::Look => "Examine",
             Self::Combine => "Combine",
             Self::TurnOn => "ON",
             Self::TurnOff => "OFF",
             Self::Volume => "Volume",
         }
     }
+}
+
+/// Sub-phase of `InventoryFocus::ExamineOverlay` matching `SLUS_202.28` `command_main` (`0x001cf9e0`),
+/// `examine_main` (`0x001d3a00`), and `sh2pc.exe` `FUN_0046a110` / `FUN_0046af30`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExaminePhase {
+    /// Inline `200x200` framed popup over the Inventory screen (`sh2pc.exe` `FUN_0046af30` `case 0xc`:
+    /// `X = [-100, +100], Y = [-150, +50]` centered) used for `command_kind` `0xb`/`8` items such as
+    /// `Photo of Mary` (`0x14`).
+    #[default]
+    InlinePopup,
+    /// Closing animation for `InlinePopup`, smoothly shrinking the popup box back into the
+    /// carousel reticle (`FUN_0046af30` `case 0xc -> case 1` via `move_near`).
+    InlineClosing,
+    /// Fullscreen close-up inspect (`examine_main` `DAT_0116e3d2 == 0`, `0x001d3a00`): full-brightness
+    /// (`_examine_rgb = 0x80`) image on pure black with no text, used for `command_kind` `9` items
+    /// (`Letter from Mary` `0x15`, `Laura's Letter` `0x16`, Rebirth books).
+    FullscreenInspect,
+    /// Fullscreen reading (`examine_main` `DAT_0116e3d2 == 1`, `0x001d3a00`): smoothly dims the image
+    /// from `0x80` (128) to `0x45` (69) at `-300.0 * dt` and overlays `EvSubMessage` `\x0c` pages
+    /// centered over the image in `fontSetColor(1)` (`RGB(192, 192, 255)`).
+    FullscreenReading,
 }
 
 /// Active input focus zone within the Status / Inventory screen (`otn_itemmain.c`).
@@ -208,6 +234,30 @@ pub enum InventoryAction {
 
 /// Default Pocket Radio volume level (`SLUS_202.28` `ItemDataInit` `0x001ad860`: `DAT_01126900 = 0xc`).
 pub const DEFAULT_RADIO_VOLUME: u8 = 0x0c;
+
+/// Inventory screen fade-in / fade-out duration in seconds (`SLUS_202.28` `itemmain` `0x001cdb40:86`,
+/// `command_main` `0x001cf9e0:1053`, `item_fade_out` `0x001db0e0:3740`, `item_examine_fade_out`
+/// `0x001db170:3769`: `ScreenEffectFadeStart(0x3f000000)` = `0.5` s).
+pub const INVENTORY_FADE_DURATION_SEC: f32 = 0.5;
+
+/// Pending fade-to-black transition inside [`InventoryScreen`] (`DAT_0116e65c` in `otn_itemmain.c`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InventoryFadeTransition {
+    /// No pending fade-out; `screen_fade_alpha` fades smoothly in toward `0.0`.
+    #[default]
+    None,
+    /// `DAT_0116e65c == 1` (`item_fade_out` `0x001db0e0`): fading to black to close Inventory.
+    ClosingToGameplay,
+    /// `DAT_0116e65c == 1` (`otn_itemmain.c:497, 530, 567`: `DAT_0116e65d = 7/8/5`): fading to black
+    /// before opening `Options`, `Memo`, or `Map`.
+    OpeningSubscreen(CornerButton),
+    /// `DAT_0116e65c == 2` (`item_examine_fade_out` `0x001db170`): fading to black before entering
+    /// fullscreen `examine_main` (`Letter from Mary`, etc.), then fading back in over `0.5` s.
+    EnteringFullscreenExamine,
+    /// `examine_main` (`0x001d3a00:1704`): fading to black before returning to Inventory Carousel,
+    /// then fading back in over `0.5` s.
+    ExitingFullscreenExamine,
+}
 
 /// Snapshot of runtime player status passed into [`InventoryScreen`] for rendering & commands.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -285,9 +335,9 @@ mod tests {
                 sx + sw <= ox + cw + 1e-3 && sy + sh <= oy + ch + 1e-3,
                 "{label}: snapshot overflows canvas"
             );
-            // `look_hp` (140x105 inside 512x448 -> 4:3): verify exact relative placement inside canvas
+            // `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7524-7578`: `X = 26..166 / 512`, `Y = 65..170 / 480`):
             assert!(((sx - ox) / cw - (26.0 / 512.0)).abs() < 1e-4, "{label}");
-            assert!(((sy - oy) / ch - (49.0 / 448.0)).abs() < 1e-4, "{label}");
+            assert!(((sy - oy) / ch - (65.0 / 480.0)).abs() < 1e-4, "{label}");
         }
     }
 }

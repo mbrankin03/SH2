@@ -64,7 +64,10 @@ fn main_scenario_prologue_loads_stage2_triggers_first_toilet_and_hands_off_witho
     let (saw_loading, saw_load_room, loaded_stage) =
         drive_connect_to_completion(&mut orch, &mut sim, 1.0 / 60.0);
 
-    assert!(saw_loading, "Prologue must trigger NowLoadingEnable");
+    assert!(
+        !saw_loading,
+        "New Game must go straight from black screen to toilet.bik without NowLoading (SH2-150)"
+    );
     assert!(saw_load_room, "connectMain must emit RoomLoadManifest");
     assert_eq!(loaded_stage, Some(MAIN_SCENARIO_START_STAGE));
     assert_eq!(sim.scenario.current_stage, MAIN_SCENARIO_START_STAGE);

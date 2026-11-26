@@ -243,7 +243,6 @@ impl CampaignOrchestrator {
                     scenario,
                     action_difficulty,
                     riddle_difficulty,
-                    &mut effects,
                 );
             }
             CampaignPhase::RoomLoading {

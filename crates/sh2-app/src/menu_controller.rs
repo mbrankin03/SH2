@@ -225,7 +225,17 @@ impl AppMenuController {
         let require_press = debug.require_press_to_continue;
         let instant = debug.instant_room_transitions;
 
-        if instant {
+        let is_new_game_campaign = matches!(
+            self.title_sm.launch_target,
+            LaunchTarget::Campaign {
+                is_continue: false,
+                ..
+            }
+        );
+
+        // Retail SH2 / SH2:EE goes straight from New Game -> black screen -> opening FMV
+        // without showing the `NOW LOADING...` footstep screen (`SH2-150`).
+        if instant || is_new_game_campaign {
             *loading_screen = None;
             self.complete_game_transition();
             return LoadingTransitionStep {
@@ -1002,6 +1012,8 @@ mod tests {
         controller.title_sm.phase = TitlePhase::TransitionToGame;
         controller.title_sm.fade_alpha = 1.0;
         controller.title_sm.start_fade_out();
+        controller.title_sm.launch_target =
+            LaunchTarget::TestRoom(sh2_ui::menu::TestRoomKind::ObservationDeck);
 
         let mut loading_screen: Option<LoadingScreen> = None;
         let step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
@@ -1037,6 +1049,8 @@ mod tests {
         controller.title_sm.phase = TitlePhase::TransitionToGame;
         controller.title_sm.fade_alpha = 1.0;
         controller.title_sm.start_fade_out();
+        controller.title_sm.launch_target =
+            LaunchTarget::TestRoom(sh2_ui::menu::TestRoomKind::ObservationDeck);
 
         let mut loading_screen: Option<LoadingScreen> = None;
 
@@ -1069,6 +1083,41 @@ mod tests {
             assert!(!post_step.entered_game);
             assert!(loading_screen.is_none());
         }
+
+        let _ = std::fs::remove_file(&cfg_path);
+    }
+
+    #[test]
+    fn test_new_game_skips_loading_screen_straight_to_black_and_fmv() {
+        let temp_dir = std::env::temp_dir();
+        let cfg_path = temp_dir.join("test_sh2_new_game_no_loading_config.json");
+        let _ = std::fs::remove_file(&cfg_path);
+
+        let mut controller = AppMenuController::new(&cfg_path);
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .instant_room_transitions = false;
+        controller
+            .options_menu
+            .draft_config
+            .debug
+            .min_loading_screen_seconds = 3;
+        controller.title_sm.phase = TitlePhase::TransitionToGame;
+        controller.title_sm.launch_target = LaunchTarget::Campaign {
+            scenario: sh2_core::ScenarioKind::LetterFromSilentHeaven,
+            is_continue: false,
+        };
+
+        let mut loading_screen: Option<LoadingScreen> = None;
+        let step = controller.tick_with_loading(&mut loading_screen, 1.0 / 60.0);
+        assert!(step.entered_game);
+        assert!(controller.in_game_active);
+        assert!(
+            loading_screen.is_none(),
+            "New Game must go straight to black screen + opening FMV with no loading screen"
+        );
 
         let _ = std::fs::remove_file(&cfg_path);
     }

@@ -787,7 +787,13 @@ fn render_title_menu_overlay(
                     ls.use_hd_footmark = use_hd_footmark;
                     ls.use_4k_footmark = use_4k_footmark;
                     ls.render(font, &mut state.inventory_rasterizer);
-                } else {
+                } else if !matches!(
+                    state.menu_ctrl.title_sm.launch_target,
+                    sh2_ui::menu::LaunchTarget::Campaign {
+                        is_continue: false,
+                        ..
+                    }
+                ) {
                     let label = state.menu_ctrl.title_sm.selected_test_room.label();
                     let center_x = state.inventory_rasterizer.width / 2;
                     let center_y = (state.inventory_rasterizer.height * 7) / 10;

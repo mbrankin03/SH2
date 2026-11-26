@@ -134,16 +134,22 @@ impl TextRasterizer {
         if alpha == 255 {
             self.pixels[offset..offset + 4].copy_from_slice(&color);
         } else {
-            let inv_alpha = 255 - alpha;
-            let dst_r = self.pixels[offset] as u32;
-            let dst_g = self.pixels[offset + 1] as u32;
-            let dst_b = self.pixels[offset + 2] as u32;
             let dst_a = self.pixels[offset + 3] as u32;
-
-            self.pixels[offset] = ((color[0] as u32 * alpha + dst_r * inv_alpha) / 255) as u8;
-            self.pixels[offset + 1] = ((color[1] as u32 * alpha + dst_g * inv_alpha) / 255) as u8;
-            self.pixels[offset + 2] = ((color[2] as u32 * alpha + dst_b * inv_alpha) / 255) as u8;
-            self.pixels[offset + 3] = (alpha + (dst_a * inv_alpha) / 255).min(255) as u8;
+            if dst_a == 0 {
+                // Straight-alpha output (matching `AtlasFont::blend` and GPU `ALPHA_BLENDING`):
+                // writing premultiplied RGB onto a transparent pixel would double-multiply by alpha on GPU blit.
+                self.pixels[offset..offset + 4].copy_from_slice(&color);
+            } else {
+                let inv_alpha = 255 - alpha;
+                let out_a = (alpha + (dst_a * inv_alpha) / 255).clamp(1, 255);
+                let dst_weight = (dst_a * inv_alpha) / 255;
+                for (c, &src) in color.iter().enumerate().take(3) {
+                    let dst = self.pixels[offset + c] as u32;
+                    self.pixels[offset + c] =
+                        ((src as u32 * alpha + dst * dst_weight) / out_a).min(255) as u8;
+                }
+                self.pixels[offset + 3] = out_a as u8;
+            }
         }
     }
 

@@ -238,14 +238,18 @@ impl HealthEcgState {
         };
         let color = self.status_color_rgba(hp, max_hp);
         if ratio >= 1.0 {
-            // Retail PC `sh2pc.exe` (`sh2pc_00460000.c:7595`, `0x1680FF80`): subtle green health
-            // overlay over the frozen Status 3D snapshot when at full health (`Fine`).
+            // Retail PC `sh2pc.exe` `look_hp` (`sh2pc_00460000.c:7505-7599`):
+            // 1. Base snapshot brightness is modulated by `ECG_BASE_COLOR_INTENSITY / 255.0` (`160/255`)
+            //    -> darken overlay alpha `255 - 160 = 95` (`0x5f`).
+            // 2. Second overlay quad (`0x1680FF80` -> `RGBA(128, 255, 128, 22)`) adds the green health tint.
+            let base_dim_a = (255.0 - ECG_BASE_COLOR_INTENSITY).round().clamp(0.0, 255.0) as u8;
+            rasterizer.fill_rect(x0, y0, w, h, [0, 0, 0, base_dim_a]);
             rasterizer.fill_rect(x0, y0, w, h, STATUS_FINE_OVERLAY_RGBA);
         } else if ratio >= ECG_DANGER_COLOR_RATIO {
-            // `look_hp` (`0x001d9afc`): neutral `R=G=B=160*pulse`; when `pulse < 1.0` (`hp < 0.8`),
-            // dim the snapshot proportionally to `(1.0 - pulse) * ECG_GS_ALPHA`.
-            let dim_a =
-                ((1.0 - self.pulse_brightness).clamp(0.0, 1.0) * ECG_GS_ALPHA as f32).round() as u8;
+            // `look_hp` (`0x001d9afc`): neutral `R=G=B=160*pulse` modulation over the 3D snapshot.
+            let dim_a = (255.0 - ECG_BASE_COLOR_INTENSITY * self.pulse_brightness)
+                .round()
+                .clamp(0.0, 255.0) as u8;
             if dim_a > 0 {
                 rasterizer.fill_rect(x0, y0, w, h, [0, 0, 0, dim_a]);
             }
@@ -326,7 +330,7 @@ mod tests {
         ecg.pulse_brightness = 1.0;
         ecg.draw_snapshot_tint(100.0, 100.0, &mut rast);
         let inside = &rast.pixels[(100 * 512 + 80) * 4..][..4];
-        assert_eq!(inside[3], STATUS_FINE_OVERLAY_RGBA[3]);
+        assert!(inside[3] > 0 && inside[3] < 255);
         assert!(inside[1] > inside[0] && inside[0] == inside[2]);
         let outside = &rast.pixels[(10 * 512 + 10) * 4..][..4];
         assert_eq!(outside, &[0, 0, 0, 0]);

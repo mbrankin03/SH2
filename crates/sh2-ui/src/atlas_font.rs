@@ -48,7 +48,7 @@ impl Sh2TextColor {
     /// Returns the `(top_color, bottom_color)` RGBA values for this color style.
     pub const fn to_gradient(self) -> ([u8; 4], [u8; 4]) {
         match self {
-            Self::White => ([240, 240, 240, 255], [210, 210, 210, 255]),
+            Self::White => ([255, 255, 255, 255], [255, 255, 255, 255]),
             // Authentic SH2 selected menu item: bright gold top fading into warm amber bottom
             Self::GoldSelected => ([255, 230, 90, 255], [220, 160, 30, 255]),
             // Authentic SH2 unselected menu item: silver-white top fading into soft shadow gray bottom

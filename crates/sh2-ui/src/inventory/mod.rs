@@ -155,6 +155,25 @@ impl ItemCommand {
     }
 }
 
+/// Sub-phase of `InventoryFocus::ExamineOverlay` matching `SLUS_202.28` `command_main` (`0x001cf9e0`),
+/// `examine_main` (`0x001d3a00`), and `sh2pc.exe` `FUN_0046a110` / `FUN_0046af30`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExaminePhase {
+    /// Inline `200x200` framed popup over the Inventory screen (`sh2pc.exe` `FUN_0046af30` `case 0xc`:
+    /// `X = [-100, +100], Y = [-150, +50]` centered) used for `command_kind` `0xb`/`8` items such as
+    /// `Photo of Mary` (`0x14`).
+    #[default]
+    InlinePopup,
+    /// Fullscreen close-up inspect (`examine_main` `DAT_0116e3d2 == 0`, `0x001d3a00`): full-brightness
+    /// (`_examine_rgb = 0x80`) image on pure black with no text, used for `command_kind` `9` items
+    /// (`Letter from Mary` `0x15`, `Laura's Letter` `0x16`, Rebirth books).
+    FullscreenInspect,
+    /// Fullscreen reading (`examine_main` `DAT_0116e3d2 == 1`, `0x001d3a00`): smoothly dims the image
+    /// from `0x80` (128) to `0x45` (69) at `-300.0 * dt` and overlays `EvSubMessage` `\x0c` pages
+    /// centered over the image in `fontSetColor(1)` (`RGB(192, 192, 255)`).
+    FullscreenReading,
+}
+
 /// Active input focus zone within the Status / Inventory screen (`otn_itemmain.c`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InventoryFocus {

@@ -7,10 +7,10 @@ use crate::inventory::widgets::{
     LOOK_COMMAND_MAX_GLOW, RADIO_VOLUME_BARS,
 };
 use crate::inventory::{
-    CornerButton, InventoryAction, InventoryFocus, InventoryPlayerSnapshot, ItemCommand,
-    CAROUSEL_SCALE_STEP, CAROUSEL_SELECTED_SCALE, CAROUSEL_UNSELECTED_SCALE, CMD_WIN_MOUSE_X_MAX,
-    CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MAX, CMD_WIN_MOUSE_Y_MIN, CMD_WIN_ROW_0_MAX_Y,
-    CMD_WIN_ROW_1_MAX_Y, DEFAULT_RADIO_VOLUME,
+    CornerButton, ExaminePhase, InventoryAction, InventoryFocus, InventoryPlayerSnapshot,
+    ItemCommand, CAROUSEL_SCALE_STEP, CAROUSEL_SELECTED_SCALE, CAROUSEL_UNSELECTED_SCALE,
+    CMD_WIN_MOUSE_X_MAX, CMD_WIN_MOUSE_X_MIN, CMD_WIN_MOUSE_Y_MAX, CMD_WIN_MOUSE_Y_MIN,
+    CMD_WIN_ROW_0_MAX_Y, CMD_WIN_ROW_1_MAX_Y, DEFAULT_RADIO_VOLUME,
 };
 use crate::menu::{MenuNavAction, MenuSoundCue};
 use sh2_core::inventory::{
@@ -74,6 +74,11 @@ pub struct InventoryScreen {
     pub examine_zoom: f32,
     /// Active page index in multi-page `\x0c`-delimited `examine_text` (`EvSubMessage` pagination).
     pub examine_page: usize,
+    /// Active `ExamineOverlay` phase (`InlinePopup` vs 2-phase `examine_main` `0x001d3a00`).
+    pub examine_phase: ExaminePhase,
+    /// Fullscreen examine image brightness `_examine_rgb` (`0x80 = 128.0` -> `0x45 = 69.0` at `-300.0 * dt`,
+    /// `SLUS_202.28` `examine_main` `0x001d3a00` lines 1678–1681).
+    pub examine_rgb: f32,
 }
 
 impl Default for InventoryScreen {
@@ -112,6 +117,8 @@ impl InventoryScreen {
             examine_pitch_rad: 0.0,
             examine_zoom: 1.0,
             examine_page: 0,
+            examine_phase: ExaminePhase::InlinePopup,
+            examine_rgb: 128.0,
         }
     }
 
@@ -229,6 +236,15 @@ impl InventoryScreen {
             self.combine_fade = (self.combine_fade + dt * LOOK_COMBINE_FADE_RATE).min(1.0);
         } else {
             self.combine_fade = (self.combine_fade - dt * LOOK_COMBINE_FADE_RATE).max(0.0);
+        }
+
+        // `examine_main` (`0x001d3a00` lines 1678–1681): dim `_examine_rgb` from `0x80` (128) down
+        // to `0x45` (69) at `-300.0 * dt` while reading fullscreen text over the examine image.
+        if self.focus == InventoryFocus::ExamineOverlay
+            && self.examine_phase == ExaminePhase::FullscreenReading
+            && self.examine_rgb > 69.0
+        {
+            self.examine_rgb = (self.examine_rgb - dt * 300.0).max(69.0);
         }
 
         if self.status_toast_timer > 0.0 {
@@ -355,29 +371,45 @@ impl InventoryScreen {
             InventoryFocus::RadioVolume => self.handle_radio_volume_nav(nav),
             InventoryFocus::CombineTarget => self.handle_combine_nav(nav),
             InventoryFocus::ExamineOverlay => match nav {
-                MenuNavAction::Confirm => {
-                    let page_count = self
-                        .selected_item_id()
-                        .and_then(item_metadata)
-                        .map(|m| {
-                            m.examine_text
-                                .unwrap_or(m.description)
-                                .split('\x0c')
-                                .count()
-                        })
-                        .unwrap_or(1)
-                        .max(1);
-                    if self.examine_page + 1 < page_count {
-                        self.examine_page += 1;
-                        (MenuSoundCue::Confirm, InventoryAction::None)
-                    } else {
+                MenuNavAction::Confirm => match self.examine_phase {
+                    ExaminePhase::InlinePopup => {
                         self.examine_page = 0;
                         self.focus = InventoryFocus::Carousel;
                         (MenuSoundCue::Cancel, InventoryAction::None)
                     }
-                }
+                    ExaminePhase::FullscreenInspect => {
+                        // `examine_main` (`0x001d3a00` lines 1731–1734): Confirm transitions from
+                        // Phase 0 (clean full-brightness image) to Phase 1 (dim image + text pages).
+                        self.examine_phase = ExaminePhase::FullscreenReading;
+                        self.examine_page = 0;
+                        (MenuSoundCue::Confirm, InventoryAction::None)
+                    }
+                    ExaminePhase::FullscreenReading => {
+                        let page_count = self
+                            .selected_item_id()
+                            .and_then(item_metadata)
+                            .map(|m| {
+                                m.examine_text
+                                    .unwrap_or(m.description)
+                                    .split('\x0c')
+                                    .count()
+                            })
+                            .unwrap_or(1)
+                            .max(1);
+                        if self.examine_page + 1 < page_count {
+                            self.examine_page += 1;
+                            (MenuSoundCue::Confirm, InventoryAction::None)
+                        } else {
+                            self.examine_page = 0;
+                            self.examine_rgb = 128.0;
+                            self.focus = InventoryFocus::Carousel;
+                            (MenuSoundCue::Cancel, InventoryAction::None)
+                        }
+                    }
+                },
                 MenuNavAction::Cancel => {
                     self.examine_page = 0;
+                    self.examine_rgb = 128.0;
                     self.focus = InventoryFocus::Carousel;
                     (MenuSoundCue::Cancel, InventoryAction::None)
                 }
@@ -694,6 +726,20 @@ impl InventoryScreen {
                     }
                     ItemCommand::Look => {
                         self.examine_page = 0;
+                        self.examine_rgb = 128.0;
+                        // `sh2pc.exe` `FUN_0046a110` (`0x0046a110`) `case 9`: fullscreen `examine_main`
+                        // (`0x001d3a00`) items (Letter from Mary `0x15`, Laura's Letter `0x16`, Rebirth books
+                        // `0x4a, 0x4b, 0x4f, 0x50, 0x51, 0x54`). All other examinable items (`Photo of Mary`
+                        // `0x14`, etc.) use the inline `200x200` popup (`FUN_0046af30` `case 0xc`).
+                        let is_fullscreen_examine = matches!(
+                            item_id,
+                            0x15 | 0x16 | 0x4a | 0x4b | 0x4f | 0x50 | 0x51 | 0x54
+                        );
+                        self.examine_phase = if is_fullscreen_examine {
+                            ExaminePhase::FullscreenInspect
+                        } else {
+                            ExaminePhase::InlinePopup
+                        };
                         self.focus = InventoryFocus::ExamineOverlay;
                         (MenuSoundCue::Confirm, InventoryAction::None)
                     }
@@ -935,14 +981,39 @@ mod tests {
             vec![ItemCommand::Use, ItemCommand::Look]
         );
 
-        // Select Letter from Mary (idx 1), open CommandWindow, choose Examine -> 4-page `\x0c` pagination
+        // Select Photo of Mary (idx 0), Examine -> InlinePopup (`sh2pc.exe` `FUN_0046af30` `case 0xc`)
+        screen.selected_index = 0;
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        screen.handle_nav(MenuNavAction::Down, &inv, &snap); // row 1 = Examine
+        screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
+        assert_eq!(screen.examine_phase, ExaminePhase::InlinePopup);
+        let (close_cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(close_cue, MenuSoundCue::Cancel);
+        assert_eq!(screen.focus, InventoryFocus::Carousel);
+
+        // Select Letter from Mary (idx 1), open CommandWindow, choose Examine -> 2-phase `examine_main`:
+        // Phase 0 (`FullscreenInspect`, bright image, no text) -> Confirm -> Phase 1 (`FullscreenReading`,
+        // dims `examine_rgb` 128 -> 69 and paginates 4 `\x0c` pages).
         screen.selected_index = 1;
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(screen.focus, InventoryFocus::CommandWindow);
         screen.handle_nav(MenuNavAction::Down, &inv, &snap); // row 1 = Examine
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
+        assert_eq!(screen.examine_phase, ExaminePhase::FullscreenInspect);
+        assert!((screen.examine_rgb - 128.0).abs() < 1e-3);
+
+        // Confirm enters Phase 1 (`FullscreenReading`, page 0)
+        let (cue0, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
+        assert_eq!(cue0, MenuSoundCue::Confirm);
+        assert_eq!(screen.examine_phase, ExaminePhase::FullscreenReading);
         assert_eq!(screen.examine_page, 0);
+        // Tick dims `examine_rgb` down to `69.0` (`0x45`) at `-300.0 * dt`
+        for _ in 0..10 {
+            screen.tick(0.05, &snap);
+        }
+        assert!((screen.examine_rgb - 69.0).abs() < 1e-3);
 
         for expected_page in 1..=3 {
             let (cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
@@ -958,6 +1029,7 @@ mod tests {
 
         // Mouse click during ExamineOverlay advances/closes pages instead of hitting corner buttons
         screen.focus = InventoryFocus::ExamineOverlay;
+        screen.examine_phase = ExaminePhase::FullscreenReading;
         screen.examine_page = 0;
         let (mcue, mact) = screen.handle_mouse_click(60.0, 420.0, 512.0, 448.0, &inv, &snap);
         assert_eq!(mcue, MenuSoundCue::Confirm);

@@ -26,6 +26,13 @@ pub(crate) fn handle_3d_story_key_input(
     pressed: bool,
     repeat: bool,
 ) -> bool {
+    // Unified Campaign mode (`CampaignOrchestrator`) uses retail `EventMainStandard` /
+    // `EventCheckLook` (`SLUS_202.28` `0x001a7b50` / `0x001a8780`) and must never execute
+    // debug Story Checkpoint shortcuts (`[PgUp/PgDn]`, `[E/Enter]`, `[7/8/U/L]`) (`SH2-162`).
+    if state.campaign_orchestrator.is_some() {
+        return false;
+    }
+
     ensure_demo_scenario_seeded(state);
 
     // 1. If a 3D cutaway/UFO/Ending modal is open, route input to the modal first

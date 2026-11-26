@@ -316,6 +316,9 @@ impl RoomController for CampaignRoomController {
             return;
         }
 
+        let cutaway_or_prog_active =
+            cutaway::has_active_cutaway(state) || state.sim_core.scenario.prog_runner.is_running();
+
         if pressed && !repeat {
             if matches!(
                 key_code,
@@ -330,15 +333,23 @@ impl RoomController for CampaignRoomController {
                     state.campaign_pending_input.action_pressed = true;
                     state.campaign_pending_input.message_dismissed = true;
                     state.campaign_pending_input.confirm_terminal_exit = true;
+                    if cutaway_or_prog_active || key_code != KeyCode::Space {
+                        return;
+                    }
                 }
                 KeyCode::Backspace => {
                     state.campaign_pending_input.cancel_pressed = true;
+                    if cutaway_or_prog_active {
+                        return;
+                    }
                 }
                 KeyCode::KeyM => {
                     state.campaign_pending_input.overlay_toggle = Some(OverlayMenuKind::Map);
+                    return;
                 }
                 KeyCode::KeyI | KeyCode::Tab => {
                     state.campaign_pending_input.overlay_toggle = Some(OverlayMenuKind::Inventory);
+                    return;
                 }
                 _ => {}
             }
@@ -741,33 +752,38 @@ impl RoomController for CampaignRoomController {
             return;
         }
 
-        if show_red_cross && !has_cutaway {
-            crate::ingame_menus::ensure_red_cross_tex_loaded(state);
-        }
-        state.begin_hud_overlay();
         if has_cutaway {
-            cutaway::render_campaign_cutaway(state);
+            cutaway::render_campaign_cutaway_native(state, encoder, surface_view);
         }
-        if show_red_cross && !has_cutaway {
-            let rc_tex = state
-                .ingame_menus
-                .cached_red_cross_tex
-                .as_ref()
-                .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
-            state
-                .ingame_menus
-                .red_cross
-                .draw(rc_tex, &mut state.menu_rasterizer);
+
+        let needs_hud_pass =
+            (show_red_cross && !has_cutaway) || active_msg.is_some() || fade_alpha > 0.005;
+        if needs_hud_pass {
+            if show_red_cross && !has_cutaway {
+                crate::ingame_menus::ensure_red_cross_tex_loaded(state);
+            }
+            state.begin_hud_overlay();
+            if show_red_cross && !has_cutaway {
+                let rc_tex = state
+                    .ingame_menus
+                    .cached_red_cross_tex
+                    .as_ref()
+                    .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
+                state
+                    .ingame_menus
+                    .red_cross
+                    .draw(rc_tex, &mut state.menu_rasterizer);
+            }
+            if let Some(ref text) = active_msg {
+                messages::draw_campaign_message(&mut state.menu_rasterizer, text);
+            }
+            if fade_alpha > 0.005 {
+                let w = state.menu_rasterizer.width;
+                let h = state.menu_rasterizer.height;
+                let a = (fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+                state.menu_rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
+            }
+            state.finish_hud_overlay(encoder, surface_view);
         }
-        if let Some(ref text) = active_msg {
-            messages::draw_campaign_message(&mut state.menu_rasterizer, text);
-        }
-        if fade_alpha > 0.005 {
-            let w = state.menu_rasterizer.width;
-            let h = state.menu_rasterizer.height;
-            let a = (fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
-            state.menu_rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, a]);
-        }
-        state.finish_hud_overlay(encoder, surface_view);
     }
 }

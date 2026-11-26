@@ -25,6 +25,12 @@ use sh2_ui::menu::TestRoomKind;
 /// 2. Bottom In-Game Story Action Bar (`y = 635..708`) while walking around in 3D.
 /// 3. Centered Interactive `.tex` Cutaway / UFO / Ending Judge Modal Overlay when popped up with `[E]` / `[Enter]`.
 pub(crate) fn render_3d_story_overlay(state: &mut AppState) {
+    // Unified Campaign mode must never display debug Story Checkpoint banners, action bars,
+    // or debug cutaway modals (`SH2-162`).
+    if state.campaign_orchestrator.is_some() {
+        return;
+    }
+
     let cutscene_locked = state
         .drama_demo_session
         .as_ref()

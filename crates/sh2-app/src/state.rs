@@ -578,10 +578,26 @@ impl AppState {
             let stage_id = self
                 .bgm_stage_override
                 .unwrap_or_else(|| u32::from(self.sim_core.scenario.current_stage));
-            let event_mode_active = self
-                .drama_demo_session
-                .as_ref()
-                .is_some_and(|s| s.player.step != sh2_core::cutscene::DramaDemoStep::Finished);
+            // Match `sh2pc.exe` `0x00932194 & 0x40` (`EvBgmControl` event-mode gate): asserted
+            // while any `DramaDemo` or stage `ev_prog` is active, and while transitioning into
+            // Stage 3 (`ob01`) before `tenbou` (`flag(33)` = `0x21`) has played so `ob01` Calm
+            // ambient tracks (`Tracks 2..4`) cannot bleed into `tenbou` before frame 0 (`SH2-160`).
+            let in_campaign_demo_or_pending_tenbou =
+                self.campaign_orchestrator.as_ref().is_some_and(|o| {
+                    matches!(o.phase, sh2_core::campaign::CampaignPhase::DramaDemo { .. })
+                        || (stage_id == 3
+                            && !self.sim_core.scenario.has_flag(0x0021)
+                            && matches!(
+                                o.phase,
+                                sh2_core::campaign::CampaignPhase::DoorTransition { .. }
+                            ))
+                });
+            let event_mode_active = in_campaign_demo_or_pending_tenbou
+                || self.sim_core.scenario.prog_runner.is_running()
+                || self
+                    .drama_demo_session
+                    .as_ref()
+                    .is_some_and(|s| s.player.step != sh2_core::cutscene::DramaDemoStep::Finished);
             let hotel_music_box_active = stage_id == 40
                 && self
                     .sim_core

@@ -33,6 +33,15 @@ pub(super) fn step_cutscene_player(
             session
                 .player
                 .tick_with_voice_sync(dt.as_secs_f32(), subs_enabled, voice_pos_secs);
+            // Fire mid-cutscene stage hooks (e.g. `stg_ovservation.c` `0x005a0936..0x005a0955`:
+            // sets `flag(517)` / `flag_620 |= 0x20` once `tenbou` passes frame `1400.0`, switching
+            // `EvBgmControl` `0x005a1390` from Situation `4` to `14` Mute so `forest/bgm_114_b.aix`
+            // Track 1 fades out instead of overlapping `voice.afs[118]` narration/music, `SH2-160`).
+            sh2_core::campaign::cutscene_handoff::tick_demo_stage_hooks(
+                u32::from(session.player.info.demo_no),
+                Some(session.player.msg_frame.max(session.player.scene_frame)),
+                &mut state.sim_core.scenario.flags,
+            );
             if session.player.pending_voice_trigger {
                 session.player.pending_voice_trigger = false;
                 voice_afs_to_play = session.player.info.voice_afs_index();

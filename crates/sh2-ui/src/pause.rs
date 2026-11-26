@@ -223,6 +223,133 @@ impl PauseMenu {
             }
         }
     }
+
+    /// Maps window pixel coordinates `(mouse_x, mouse_y)` into the 4:3 pillarboxed `512 × 480`
+    /// virtual coordinate space used by [`draw_pause_screen_with_scrim`].
+    fn window_to_pause_virtual(
+        mouse_x: f32,
+        mouse_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> Option<(f32, f32)> {
+        if win_w <= 0.0 || win_h <= 0.0 {
+            return None;
+        }
+        let target_4_3_w = win_h * (4.0 / 3.0);
+        let (x_offset, base_w) = if target_4_3_w <= win_w {
+            ((win_w - target_4_3_w) * 0.5, target_4_3_w)
+        } else {
+            (0.0, win_w)
+        };
+        let vx = (mouse_x - x_offset) * PAUSE_VIRTUAL_W / base_w;
+        let vy = mouse_y * PAUSE_VIRTUAL_H / win_h;
+        Some((vx, vy))
+    }
+
+    /// Hit-tests `Main` pause menu rows (`0..5`, skipping disabled `Save`) in `512 × 480` space.
+    fn hit_test_main_row(&self, vx: f32, vy: f32) -> Option<usize> {
+        if !(148.0..=364.0).contains(&vx) {
+            return None;
+        }
+        for (i, &opt) in PauseMenuOption::ALL.iter().enumerate() {
+            let y0 = PAUSE_ITEM_START_Y + (i as f32) * PAUSE_ITEM_PITCH_Y;
+            let y1 = y0 + PAUSE_ITEM_PITCH_Y;
+            if vy >= y0 && vy < y1 {
+                if opt == PauseMenuOption::Save && !self.can_save {
+                    return None;
+                }
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Hit-tests `QuitConfirm` `"Yes"` (`0`) and `"No"` (`1`) labels in `512 × 480` space.
+    fn hit_test_quit_confirm(vx: f32, vy: f32) -> Option<usize> {
+        let y0 = PAUSE_QUIT_YES_XY.1 - 6.0;
+        let y1 = PAUSE_QUIT_YES_XY.1 + PAUSE_ITEM_PITCH_Y + 6.0;
+        if !(y0..=y1).contains(&vy) {
+            return None;
+        }
+        if (PAUSE_QUIT_YES_XY.0 - 30.0..=PAUSE_QUIT_YES_XY.0 + 30.0).contains(&vx) {
+            Some(0)
+        } else if (PAUSE_QUIT_NO_XY.0 - 30.0..=PAUSE_QUIT_NO_XY.0 + 30.0).contains(&vx) {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
+    /// Updates hover selection for `Main` and `QuitConfirm` pause sub-phases. Returns `true`
+    /// when the highlighted item changed.
+    pub fn handle_mouse_move(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> bool {
+        if !self.is_open {
+            return false;
+        }
+        let Some((vx, vy)) = Self::window_to_pause_virtual(mouse_x, mouse_y, win_w, win_h) else {
+            return false;
+        };
+        match self.sub_phase {
+            PauseSubPhase::Main => {
+                if let Some(idx) = self.hit_test_main_row(vx, vy) {
+                    if idx != self.selected_index {
+                        self.selected_index = idx;
+                        return true;
+                    }
+                }
+                false
+            }
+            PauseSubPhase::QuitConfirm => {
+                if let Some(idx) = Self::hit_test_quit_confirm(vx, vy) {
+                    if idx != self.quit_confirm_index {
+                        self.quit_confirm_index = idx;
+                        return true;
+                    }
+                }
+                false
+            }
+            PauseSubPhase::InOptionsMenu => false,
+        }
+    }
+
+    /// Handles left-click confirmation on `Main` or `QuitConfirm` pause items.
+    pub fn handle_mouse_click(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> (MenuSoundCue, PauseAction) {
+        if !self.is_open {
+            return (MenuSoundCue::None, PauseAction::None);
+        }
+        let Some((vx, vy)) = Self::window_to_pause_virtual(mouse_x, mouse_y, win_w, win_h) else {
+            return (MenuSoundCue::None, PauseAction::None);
+        };
+        match self.sub_phase {
+            PauseSubPhase::Main => {
+                if let Some(idx) = self.hit_test_main_row(vx, vy) {
+                    self.selected_index = idx;
+                    return self.handle_nav(MenuNavAction::Confirm);
+                }
+                (MenuSoundCue::None, PauseAction::None)
+            }
+            PauseSubPhase::QuitConfirm => {
+                if let Some(idx) = Self::hit_test_quit_confirm(vx, vy) {
+                    self.quit_confirm_index = idx;
+                    return self.handle_nav(MenuNavAction::Confirm);
+                }
+                (MenuSoundCue::None, PauseAction::None)
+            }
+            PauseSubPhase::InOptionsMenu => (MenuSoundCue::None, PauseAction::None),
+        }
+    }
 }
 
 /// Retail PC `sh2pc.exe` Pause Menu 512×480 virtual coordinates (`FUN_00407300` `0x00407300`

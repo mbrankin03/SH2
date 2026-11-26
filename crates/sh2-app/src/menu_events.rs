@@ -216,6 +216,26 @@ pub(crate) fn handle_pause_menu_key_input(state: &mut AppState, key_code: KeyCod
         _ => (MenuSoundCue::None, PauseAction::None),
     };
 
+    apply_pause_action(state, sound, action);
+}
+
+/// Handles left mouse click when the in-game Pause Menu (including Pause -> Options) is open.
+pub(crate) fn handle_pause_menu_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f32) {
+    let vw = state.surface_config.width.max(1) as f32;
+    let vh = state.surface_config.height.max(1) as f32;
+    let (sound, action) = state
+        .menu_ctrl
+        .handle_pause_mouse_click(mouse_x, mouse_y, vw, vh);
+    apply_pause_action(state, sound, action);
+}
+
+/// Handles right mouse click (Cancel / Back) when the in-game Pause Menu is open.
+pub(crate) fn handle_pause_menu_right_click(state: &mut AppState) {
+    let (sound, action) = state.menu_ctrl.handle_pause_nav(MenuNavAction::Cancel);
+    apply_pause_action(state, sound, action);
+}
+
+fn apply_pause_action(state: &mut AppState, sound: MenuSoundCue, action: PauseAction) {
     if let Some(cfg) = state.menu_ctrl.config_applied_pending.clone() {
         sync_audio_config(state, &cfg);
     }

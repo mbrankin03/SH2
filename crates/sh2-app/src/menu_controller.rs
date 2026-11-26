@@ -307,12 +307,17 @@ impl AppMenuController {
         let ps2_y = (mouse_y - oy) * 448.0 / ch;
 
         if self.in_game_active {
-            if self.pause_menu.is_open
-                && self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu
-                && self.options_menu.handle_mouse_move(ps2_x, ps2_y)
-            {
-                self.revision = self.revision.wrapping_add(1);
-                return MenuSoundCue::CursorMove;
+            if self.pause_menu.is_open {
+                let moved = if self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
+                    self.options_menu.handle_mouse_move(ps2_x, ps2_y)
+                } else {
+                    self.pause_menu
+                        .handle_mouse_move(mouse_x, mouse_y, win_w, win_h)
+                };
+                if moved {
+                    self.revision = self.revision.wrapping_add(1);
+                    return MenuSoundCue::CursorMove;
+                }
             }
             return MenuSoundCue::None;
         }
@@ -375,6 +380,60 @@ impl AppMenuController {
                 .handle_mouse_move(ps2_x - 256.0, ps2_y - 224.0);
             self.handle_nav(MenuNavAction::Confirm)
         }
+    }
+
+    /// Routes left mouse click `(mouse_x, mouse_y)` in window pixels when the in-game Pause Menu
+    /// (Main, QuitConfirm, or Pause -> Options) is open.
+    pub fn handle_pause_mouse_click(
+        &mut self,
+        mouse_x: f32,
+        mouse_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> (MenuSoundCue, PauseAction) {
+        if !self.in_game_active || !self.pause_menu.is_open {
+            return (MenuSoundCue::None, PauseAction::None);
+        }
+        if self.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
+            let (ox, oy, cw, ch) = sh2_ui::inventory::ps2_ui_canvas_rect(win_w, win_h);
+            if cw <= 0.0 || ch <= 0.0 {
+                return (MenuSoundCue::None, PauseAction::None);
+            }
+            let ps2_x = (mouse_x - ox) * 512.0 / cw;
+            let ps2_y = (mouse_y - oy) * 448.0 / ch;
+            if let Some(cue) = self.options_menu.handle_mouse_click(ps2_x, ps2_y) {
+                self.revision = self.revision.wrapping_add(1);
+                let (saved_cfg, _) = self.options_menu.commit_changes();
+                self.config_applied_pending = Some(saved_cfg.clone());
+                let _ = saved_cfg.save_to_file(&self.config_path);
+                self.refresh_save_dir(&saved_cfg);
+                let sound = match cue {
+                    OptionsSoundCue::ValueChange => MenuSoundCue::CursorMove,
+                    _ => MenuSoundCue::Confirm,
+                };
+                return (sound, PauseAction::None);
+            }
+            return (MenuSoundCue::None, PauseAction::None);
+        }
+        let (sound, action) = self
+            .pause_menu
+            .handle_mouse_click(mouse_x, mouse_y, win_w, win_h);
+        if sound != MenuSoundCue::None || action != PauseAction::None {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        if action == PauseAction::OpenOptions {
+            let fresh_devices = sh2_audio::AudioEngine::enumerate_output_devices();
+            self.options_menu = OptionsMenu::new_with_audio_packs(
+                self.options_menu.original_config.clone(),
+                self.audio_pack_status,
+            );
+            self.options_menu.set_audio_devices(fresh_devices);
+        } else if action == PauseAction::QuitToTitle {
+            self.in_game_active = false;
+            self.title_sm.phase = TitlePhase::MainMenu;
+            self.title_sm.fade_alpha = 1.0;
+        }
+        (sound, action)
     }
 
     /// Routes mouse scroll wheel (`steps > 0` = scroll down, `steps < 0` = scroll up) inside the Options menu.

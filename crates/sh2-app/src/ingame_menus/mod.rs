@@ -18,8 +18,11 @@ use actions::{
     ensure_examine_tex_loaded, ensure_item_atlas_loaded, ensure_map_sheet_loaded,
     ensure_memo_assets_loaded, handle_options_from_inventory_key,
 };
-use save_load::handle_save_load_key;
 pub(crate) use save_load::open_save_load;
+use save_load::{
+    handle_save_load_key, handle_save_load_mouse_click, handle_save_load_mouse_move,
+    handle_save_load_mouse_wheel, handle_save_load_right_click,
+};
 
 use winit::keyboard::KeyCode;
 
@@ -436,6 +439,10 @@ pub(crate) fn handle_mouse_move(state: &mut AppState, mouse_x: f32, mouse_y: f32
         }
         return;
     }
+    if state.ingame_menus.save_load.is_some() {
+        handle_save_load_mouse_move(state, mouse_x, mouse_y, vw, vh);
+        return;
+    }
     if state.ingame_menus.inventory.is_open {
         state
             .ingame_menus
@@ -444,7 +451,7 @@ pub(crate) fn handle_mouse_move(state: &mut AppState, mouse_x: f32, mouse_y: f32
     }
 }
 
-/// Routes left mouse click when Inventory or Inventory->Options is open.
+/// Routes left mouse click when Inventory, Inventory->Options, or Save/Load is open.
 pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f32) {
     let vw = state.surface_config.width.max(1) as f32;
     let vh = state.surface_config.height.max(1) as f32;
@@ -472,6 +479,10 @@ pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f3
         }
         return;
     }
+    if state.ingame_menus.save_load.is_some() {
+        handle_save_load_mouse_click(state, mouse_x, mouse_y, vw, vh);
+        return;
+    }
     if state.ingame_menus.inventory.is_open {
         let snapshot = build_player_snapshot(state);
         let (cue, action) = state.ingame_menus.inventory.handle_mouse_click(
@@ -487,11 +498,23 @@ pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f3
     }
 }
 
-/// Routes mouse scroll wheel when Inventory->Options is open.
+/// Routes right mouse click (Cancel / Back) when Save/Load is open.
+pub(crate) fn handle_mouse_right_click(state: &mut AppState) {
+    if state.ingame_menus.save_load.is_some() {
+        handle_save_load_right_click(state);
+    }
+}
+
+/// Routes mouse scroll wheel when Inventory->Options or Save/Load is open.
 pub(crate) fn handle_mouse_wheel(state: &mut AppState, steps: i32) {
-    if !state.ingame_menus.options_from_inventory
-        || state.ingame_menus.options_closing_to_inventory
-        || steps == 0
+    if steps == 0 {
+        return;
+    }
+    if state.ingame_menus.save_load.is_some() {
+        handle_save_load_mouse_wheel(state, steps);
+        return;
+    }
+    if !state.ingame_menus.options_from_inventory || state.ingame_menus.options_closing_to_inventory
     {
         return;
     }

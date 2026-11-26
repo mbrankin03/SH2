@@ -141,6 +141,64 @@ pub(super) fn handle_save_load_key(state: &mut AppState, key_code: KeyCode) {
         };
         sl.handle_nav(nav)
     };
+    apply_save_load_action(state, action);
+}
+
+pub(super) fn handle_save_load_mouse_move(
+    state: &mut AppState,
+    mouse_x: f32,
+    mouse_y: f32,
+    vw: f32,
+    vh: f32,
+) {
+    let moved = state
+        .ingame_menus
+        .save_load
+        .as_mut()
+        .is_some_and(|sl| sl.handle_mouse_move(mouse_x, mouse_y, vw, vh));
+    if moved {
+        emit_menu_sound(state, MenuSoundCue::CursorMove, "SaveLoad");
+    }
+}
+
+pub(super) fn handle_save_load_mouse_click(
+    state: &mut AppState,
+    mouse_x: f32,
+    mouse_y: f32,
+    vw: f32,
+    vh: f32,
+) {
+    let (changed, action) = match state.ingame_menus.save_load.as_mut() {
+        Some(sl) => sl.handle_mouse_click(mouse_x, mouse_y, vw, vh),
+        None => return,
+    };
+    if changed && action == sh2_ui::SaveLoadAction::None {
+        emit_menu_sound(state, MenuSoundCue::CursorMove, "SaveLoad");
+    }
+    apply_save_load_action(state, action);
+}
+
+pub(super) fn handle_save_load_right_click(state: &mut AppState) {
+    let action = match state.ingame_menus.save_load.as_mut() {
+        Some(sl) => sl.handle_nav(sh2_ui::menu::MenuNavAction::Cancel),
+        None => return,
+    };
+    emit_menu_sound(state, MenuSoundCue::Cancel, "SaveLoad");
+    apply_save_load_action(state, action);
+}
+
+pub(super) fn handle_save_load_mouse_wheel(state: &mut AppState, steps: i32) {
+    let moved = state
+        .ingame_menus
+        .save_load
+        .as_mut()
+        .is_some_and(|sl| sl.handle_mouse_wheel(steps));
+    if moved {
+        emit_menu_sound(state, MenuSoundCue::CursorMove, "SaveLoad");
+    }
+}
+
+fn apply_save_load_action(state: &mut AppState, action: sh2_ui::SaveLoadAction) {
     let save_dir = state.menu_ctrl.save_dir.clone();
     let repo = sh2_core::campaign::SaveSlotRepository::new(&save_dir);
     let g = &state.menu_ctrl.options_menu.original_config.game;

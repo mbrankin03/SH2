@@ -127,16 +127,29 @@ impl ApplicationHandler for SilentHillApp {
                     }
                 } else if pressed
                     && state.menu_ctrl.in_game_active
+                    && state.menu_ctrl.pause_menu.is_open
+                {
+                    if button == winit::event::MouseButton::Right {
+                        menu_events::handle_pause_menu_right_click(state);
+                    } else if button == winit::event::MouseButton::Left {
+                        if let Some((mx, my)) = state.last_cursor_pos {
+                            menu_events::handle_pause_menu_mouse_click(state, mx as f32, my as f32);
+                        }
+                    }
+                } else if pressed
+                    && state.menu_ctrl.in_game_active
                     && state.ingame_menus.is_any_open()
                 {
-                    if button == winit::event::MouseButton::Right
-                        && state.ingame_menus.options_from_inventory
-                    {
-                        ingame_menus::handle_key_input(
-                            state,
-                            winit::keyboard::KeyCode::Escape,
-                            true,
-                        );
+                    if button == winit::event::MouseButton::Right {
+                        if state.ingame_menus.options_from_inventory {
+                            ingame_menus::handle_key_input(
+                                state,
+                                winit::keyboard::KeyCode::Escape,
+                                true,
+                            );
+                        } else if state.ingame_menus.save_load.is_some() {
+                            ingame_menus::handle_mouse_right_click(state);
+                        }
                     } else if button == winit::event::MouseButton::Left {
                         if let Some((mx, my)) = state.last_cursor_pos {
                             ingame_menus::handle_mouse_click(state, mx as f32, my as f32);
@@ -168,11 +181,7 @@ impl ApplicationHandler for SilentHillApp {
             WindowEvent::CursorMoved { position, .. } => {
                 let vw = state.surface_config.width.max(1) as f32;
                 let vh = state.surface_config.height.max(1) as f32;
-                if !state.menu_ctrl.in_game_active
-                    || (state.menu_ctrl.pause_menu.is_open
-                        && state.menu_ctrl.pause_menu.sub_phase
-                            == sh2_ui::pause::PauseSubPhase::InOptionsMenu)
-                {
+                if !state.menu_ctrl.in_game_active || state.menu_ctrl.pause_menu.is_open {
                     let cue = state.menu_ctrl.handle_mouse_move(
                         position.x as f32,
                         position.y as f32,
@@ -216,6 +225,7 @@ impl ApplicationHandler for SilentHillApp {
                         && state.menu_ctrl.pause_menu.sub_phase
                             == sh2_ui::pause::PauseSubPhase::InOptionsMenu)
                     || state.ingame_menus.options_from_inventory
+                    || state.ingame_menus.save_load.is_some()
                 {
                     let steps = if raw_lines.abs() >= 0.1 {
                         let s = (-raw_lines).round() as i32;
@@ -232,7 +242,9 @@ impl ApplicationHandler for SilentHillApp {
                         0
                     };
                     if steps != 0 {
-                        if state.ingame_menus.options_from_inventory {
+                        if state.ingame_menus.options_from_inventory
+                            || state.ingame_menus.save_load.is_some()
+                        {
                             ingame_menus::handle_mouse_wheel(state, steps);
                         } else {
                             let vw = state.surface_config.width.max(1) as f32;

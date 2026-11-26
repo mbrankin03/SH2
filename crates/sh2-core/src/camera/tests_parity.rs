@@ -183,13 +183,23 @@ fn test_vw_calc_velocity_and_angular_golden_vectors() {
 
 #[test]
 fn test_vc_get_use_watch_and_cam_mv_param_and_smooth_flag() {
-    let (w_in, c_in) = vc_get_use_watch_and_cam_mv_param(0.0, 1.0, false, false, 1.5, None, None);
+    let (w_in, c_in) =
+        vc_get_use_watch_and_cam_mv_param(0.0, 1.0, false, 0, false, 1.5, None, None);
     // Indoor far_watch_rate=1.0 scales cam_mv_prm_nrml by (1 + 1) = 2.0 and adds +50% to watch_prm + 1.5 to ang_accel_y.
     assert!((c_in.accel_xz - CAM_MV_PRM_NRML.accel_xz * 2.0).abs() < 1e-3);
     assert!((w_in.ang_accel_y - (WATCH_MV_PRM_NRML.ang_accel_y * 1.5 + 1.5)).abs() < 1e-3);
 
-    let (_w_out, c_out) = vc_get_use_watch_and_cam_mv_param(0.0, 1.0, true, false, 0.0, None, None);
+    let (_w_out, c_out) =
+        vc_get_use_watch_and_cam_mv_param(0.0, 1.0, true, 0, false, 0.0, None, None);
     assert_eq!(c_out, CAM_MV_PRM_OUTDOOR);
+
+    // Stage 5 (Toluca Lake) is treated as outdoor even when `is_outdoor == false` (`vc_main.c:3342,3377`).
+    let (_w_st5, c_st5) =
+        vc_get_use_watch_and_cam_mv_param(0.0, 1.0, false, 5, false, 0.0, None, None);
+    assert_eq!(c_st5, CAM_MV_PRM_OUTDOOR);
+    let (_w_boat, c_boat) =
+        vc_get_use_watch_and_cam_mv_param(0.0, 1.0, false, 5, true, 0.0, None, None);
+    assert_eq!(c_boat, crate::camera::kinematics::CAM_MV_PRM_ON_BOAT);
 
     // vcRetSmoothCamMvF (0x00196360) exact cut thresholds.
     assert!(vc_ret_smooth_cam_mv_f(
@@ -369,9 +379,12 @@ fn test_fixed_angle_ideal_pos_and_180_warp() {
 
 #[test]
 fn test_settle_base_angle_bounds_framing_fov_and_self_view_hysteresis() {
-    // Character bounds (`0x0019df50`): standing bottom = pos.y, top = pos.y - 925.0; crouch = -250.0.
-    assert_eq!(compute_chara_y_bounds(100.0, 0.0), (100.0, -825.0, -362.5));
-    assert_eq!(compute_chara_y_bounds(100.0, 1.0), (-150.0, -825.0, -487.5));
+    // Retail character bounds (`sh2pc.exe` `0x005193a0`): standing bottom = pos.y, top = pos.y - 937.5; crouch = -250.0.
+    assert_eq!(compute_chara_y_bounds(100.0, 0.0), (100.0, -837.5, -368.75));
+    assert_eq!(
+        compute_chara_y_bounds(100.0, 1.0),
+        (-150.0, -837.5, -493.75)
+    );
 
     // Unclamped FOV + horizontal `scr_half_ang_wx` framing.
     let wide_fov = fov_y_from_ps2_projection_unclamped(100.0);
@@ -553,4 +566,227 @@ fn test_fixed_angle_warp_clamps_y_via_adj_tgt_mv_vec_y() {
     );
     assert!(ctrl.raw_state.cam_tgt_velo.iter().all(|v| v.is_finite()));
     assert!(ctrl.raw_state.cam_tgt_spd.is_finite());
+}
+
+#[test]
+fn test_sh2_169_vc_exec_camera_ordering_through_door_and_projection_ramp() {
+    use crate::camera::chase::vc_make_normal_watch_tgt_pos;
+    use crate::camera::road_priority::{
+        is_road_excluded_by_enemy_flags, signed_xz_dist_from_lim_sw,
+    };
+    use crate::camera::Ps2CameraController;
+    use sh2_assets::formats::cam::{
+        CamFile, VC_RD_MARGE_ROAD_F, VC_RD_USE_NEAR_ENEMY_F, VC_RD_USE_NO_ENEMY_F,
+    };
+
+    // 1. ThroughDoorSession routes through `vcRenewalCamData` + `vcRenewalCamMatAng` instead of teleporting.
+    let mut td_ctrl = Ps2CameraController::new();
+    td_ctrl.reset_to_player(Vec3::new(0.0, 0.0, 0.0), 0.0);
+    let initial_eye = td_ctrl.curr_snapshot.eye;
+    td_ctrl.activate_through_door(Vec3::new(0.0, 0.0, 0.0), 0.0, false);
+    td_ctrl.tick(Vec3::new(0.0, 0.0, 20.0), 0.0, 0.0, 0.0);
+    assert_eq!(td_ctrl.mv_type, CamMovementType::ThroughDoor);
+    // Ideal eye on InitialPullback is `(0, -1137.5, -300.0)` while initial eye was `(0, -1137.5, -1000.0)`.
+    // Velocity-bounded integration moves smoothly (< 100 mm in 1 tick), NOT teleporting 700 mm!
+    assert!(
+        (td_ctrl.curr_snapshot.eye - initial_eye).length() < 100.0,
+        "ThroughDoor must integrate via vcRenewalCamData, not teleport (delta={})",
+        (td_ctrl.curr_snapshot.eye - initial_eye).length()
+    );
+
+    // 2. FixedAngle `trigger_fix_ang_warp` fires `vcWarpForFixAngCam` during `tick`.
+    let fix_rec = RoadRecord {
+        lim_sw: rect_area(-4000.0, 4000.0, -4000.0, 4000.0, 500.0, -3000.0),
+        lim_rd: rect_area(-2000.0, 2000.0, -2000.0, 2000.0, -1200.0, -1800.0),
+        kind_id: 1,
+        rd_dir_type: 0,
+        cam_mv_type: CamMovementType::FixedAngle,
+        mv_y_type: 3,
+        projection: 448.0,
+        params: CamMovementParams::FixedAngle(FixAngCamParam {
+            ang_x: -0.2,
+            ang_y: 0.0,
+            ofs_hy: -200.0,
+            cam2wth_dist: 2000.0,
+        }),
+        ..RoadRecord::default()
+    };
+    let mut fix_ctrl = Ps2CameraController::new();
+    fix_ctrl.set_cam_file(Some(CamFile {
+        records: vec![fix_rec],
+    }));
+    fix_ctrl.reset_to_player(Vec3::ZERO, PI);
+    assert_eq!(fix_ctrl.raw_state.fix_cam_mng.exception_f, 0);
+    fix_ctrl.search_button_pressed = true;
+    fix_ctrl.tick(Vec3::ZERO, PI, 0.0, 0.0);
+    assert_eq!(
+        fix_ctrl.raw_state.fix_cam_mng.exception_f, 1,
+        "FixedAngle search button facing 180 deg away must trigger vcWarpForFixAngCam"
+    );
+
+    // 3. Stage 1 (`x >= -20000`, `1.75x`) & Toluca Lake boat (`2550/5610` retail PC) in `vcMakeNormalWatchTgtPos`.
+    let chase_rec = RoadRecord {
+        area_size_type: AreaSizeType::Wide,
+        cam_mv_type: CamMovementType::Chase,
+        ofs_watch_hy: -300.0,
+        ..RoadRecord::default()
+    };
+    let normal_tgt = vc_make_normal_watch_tgt_pos(
+        &chase_rec,
+        Vec3::new(0.0, -1200.0, -1000.0),
+        Vec3::ZERO,
+        0.0,
+        0.0,
+        0,
+        false,
+    );
+    let stg1_tgt = vc_make_normal_watch_tgt_pos(
+        &chase_rec,
+        Vec3::new(0.0, -1200.0, -1000.0),
+        Vec3::ZERO,
+        0.0,
+        0.0,
+        1,
+        false,
+    );
+    let boat_tgt = vc_make_normal_watch_tgt_pos(
+        &chase_rec,
+        Vec3::new(0.0, -1200.0, -1000.0),
+        Vec3::ZERO,
+        0.0,
+        0.0,
+        5,
+        true,
+    );
+    // Normal Wide: cir_r=1000, min_dist=2800, cam2chr=1000 -> extra=2800 -> tgt.z = 3800
+    assert!((normal_tgt.z - 3800.0).abs() < 1e-2);
+    // Stage 1 (x=0 >= -20000): extra = (1750 + 4900) - 1000 = 5650; tgt.z = 5650 + 1750 = 7400
+    assert!((stg1_tgt.z - 7400.0).abs() < 1e-2);
+    // Boat retail: cir_r=2550, min_dist=5610 -> extra = 8160 - 1000 = 7160; tgt.z = 7160 + 2550 = 9710
+    assert!((boat_tgt.z - 9710.0).abs() < 1e-2);
+
+    // 4. Oriented `lim_sw`, `flags & 0x80` (`VC_RD_MARGE_ROAD_F`), Y-excess, and `0x40`/`0x20` enemy flags.
+    let rot_sw = RoadArea {
+        x0: 0.0,
+        z0: 1000.0,
+        x1: -1000.0,
+        z1: 0.0,
+        x2: 0.0,
+        z2: -1000.0,
+        min_hy: 500.0,
+        max_hy: -500.0,
+    };
+    let rec_no_merge = RoadRecord {
+        lim_sw: rot_sw,
+        flags: 0,
+        ..RoadRecord::default()
+    };
+    let rec_merge = RoadRecord {
+        lim_sw: rot_sw,
+        flags: VC_RD_MARGE_ROAD_F,
+        ..RoadRecord::default()
+    };
+    assert_eq!(signed_xz_dist_from_lim_sw(&rec_no_merge, Vec3::ZERO), 0.0);
+    assert!(signed_xz_dist_from_lim_sw(&rec_merge, Vec3::ZERO) < -500.0);
+    assert!(signed_xz_dist_from_lim_sw(&rec_no_merge, Vec3::new(-1000.0, 0.0, 1000.0)) > 0.0);
+    assert!(
+        (signed_xz_dist_from_lim_sw(&rec_no_merge, Vec3::new(0.0, -700.0, 0.0)) - 200.0).abs()
+            < 1e-3
+    );
+    assert!(is_road_excluded_by_enemy_flags(
+        VC_RD_USE_NEAR_ENEMY_F,
+        false
+    ));
+    assert!(!is_road_excluded_by_enemy_flags(
+        VC_RD_USE_NEAR_ENEMY_F,
+        true
+    ));
+    assert!(is_road_excluded_by_enemy_flags(VC_RD_USE_NO_ENEMY_F, true));
+    assert!(!is_road_excluded_by_enemy_flags(
+        VC_RD_USE_NO_ENEMY_F,
+        false
+    ));
+
+    // 5. `vcChangeProjectionValue` ramping on smooth road switch (`proj_sec > 0.0`).
+    let r0 = RoadRecord {
+        lim_sw: rect_area(-2000.0, 0.0, -1000.0, 1000.0, 500.0, -500.0),
+        lim_rd: rect_area(-2000.0, 0.0, -1000.0, 1000.0, -1000.0, -1500.0),
+        projection: 448.0,
+        proj_sec: 0.0,
+        ..RoadRecord::default()
+    };
+    let r1 = RoadRecord {
+        lim_sw: rect_area(0.0, 2000.0, -1000.0, 1000.0, 500.0, -500.0),
+        lim_rd: rect_area(0.0, 2000.0, -1000.0, 1000.0, -1000.0, -1500.0),
+        projection: 800.0,
+        proj_sec: 1.0,
+        ..RoadRecord::default()
+    };
+    let mut proj_ctrl = Ps2CameraController::new();
+    proj_ctrl.set_cam_file(Some(CamFile {
+        records: vec![r0, r1],
+    }));
+    proj_ctrl.reset_to_player(Vec3::new(-500.0, 0.0, 0.0), 0.0);
+    assert!((proj_ctrl.projection_ramp.current_scr_z - 448.0).abs() < 1e-3);
+    proj_ctrl.tick(Vec3::new(600.0, 0.0, 0.0), 0.5, 0.0, 0.0);
+    assert_eq!(proj_ctrl.active_road_index, Some(1));
+    assert!(
+        proj_ctrl.projection_ramp.current_scr_z > 448.0
+            && proj_ctrl.projection_ramp.current_scr_z < 500.0,
+        "projection must ramp smoothly on smooth switch (got {})",
+        proj_ctrl.projection_ramp.current_scr_z
+    );
+    for _ in 0..60 {
+        proj_ctrl.tick(Vec3::new(600.0, 0.0, 0.0), 0.5, 0.0, 0.0);
+    }
+    assert!((proj_ctrl.projection_ramp.current_scr_z - 800.0).abs() < 1e-2);
+}
+
+#[test]
+fn test_sh2_169_classic_yaw_classic_only_and_scripted_fov_256() {
+    use crate::config::{AppConfig, CameraCyclePreset, EnhancedPreset, GameplayCameraMode};
+    use crate::event_camera::ScriptedCameraShot;
+    use crate::input::ControlScheme;
+    use crate::scenario::ScenarioKind;
+    use crate::simulation::SimulationCore;
+    use crate::types::EventCamSetData;
+
+    // 1. ClassicPs2Rail 2D AnalogDirectional camera_yaw uses `(target - eye)`, not `eye.x.atan2(eye.z)`.
+    let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+    sim.collision = crate::collision::CollisionWorld::new();
+    sim.input
+        .set_control_scheme(ControlScheme::AnalogDirectional);
+    sim.snap_player_transform(Vec3::new(5000.0, 0.0, 0.0), 0.0);
+    sim.camera.curr_snapshot.eye = Vec3::new(5000.0, -1200.0, -1000.0);
+    sim.camera.curr_snapshot.target = Vec3::new(5000.0, -1200.0, 0.0);
+    sim.camera.prev_snapshot = sim.camera.curr_snapshot;
+    sim.input.state.left_stick_x = 0.0;
+    sim.input.state.left_stick_y = 1.0;
+    let (loc_in, is_tank) = sim.prepare_locomotion_for_camera();
+    assert!(!is_tank);
+    assert!(
+        loc_in.camera_yaw.abs() < 1e-4,
+        "ClassicPs2Rail camera_yaw must be 0.0 (+Z facing), not origin azimuth (got {})",
+        loc_in.camera_yaw
+    );
+
+    // 2. `EnhancedPreset::Ps2Authentic` locks `R3` via `CameraCyclePreset::ClassicOnly`.
+    let mut cfg = AppConfig::default();
+    cfg.apply_enhanced_preset(EnhancedPreset::Ps2Authentic);
+    assert_eq!(
+        cfg.controls.camera_cycle_preset,
+        CameraCyclePreset::ClassicOnly
+    );
+    sim.apply_control_options(&cfg.controls);
+    sim.input.press_camera_mode_cycle();
+    sim.tick();
+    assert_eq!(sim.active_camera_mode(), GameplayCameraMode::ClassicPs2Rail);
+
+    // 3. `ScriptedCameraShot::from_event_cam_set_data` uses retail `256.0` half-height.
+    let ev_cam = EventCamSetData {
+        fov: 90.0,
+        ..EventCamSetData::default()
+    };
+    let shot = ScriptedCameraShot::from_event_cam_set_data(&ev_cam);
+    assert!((shot.projection_scr_z.unwrap() - 256.0).abs() < 1e-3);
 }

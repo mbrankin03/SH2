@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::modern_camera::{
     CameraCyclePreset, GameplayCameraMode, OtsShoulderSide, ReticleMode,
 };
+use crate::widescreen_rail::{AspectRailConfig, IntraRoomWarpOption, WidescreenClearanceMode};
 
 fn default_first_person_fov_deg() -> u32 {
     75
@@ -341,6 +342,25 @@ pub struct ControlOptions {
     /// in `sh2pc.exe` `0x005343a0` / `0x005345c0`) above which a trigger pull registers as Heavy/Stomp (`SH2-83`).
     #[serde(default = "default_r2_heavy_pressure_threshold")]
     pub r2_heavy_pressure_threshold: f32,
+    /// Dynamic widescreen camera rail clearance scaling (`SH2-53`, `SH2-169`). Defaults to authentic 4:3 PS2 margins.
+    #[serde(default)]
+    pub widescreen_rail_clearance: WidescreenClearanceMode,
+    /// Intra-room `.cam` warp cut smoothing policy (`SH2-53`, `SH2-169`). Defaults to authentic PS2 instant cuts.
+    #[serde(default)]
+    pub intra_room_warp_policy: IntraRoomWarpOption,
+}
+
+impl ControlOptions {
+    /// Builds the runtime [`AspectRailConfig`] from these options and the active `viewport_aspect`.
+    pub fn aspect_rail_config(&self, viewport_aspect: f32) -> AspectRailConfig {
+        let base = match self.widescreen_rail_clearance {
+            WidescreenClearanceMode::Authentic4x3Crt => AspectRailConfig::authentic_ps2_4x3(),
+            WidescreenClearanceMode::DynamicAspectScaled => {
+                AspectRailConfig::dynamic_widescreen(viewport_aspect)
+            }
+        };
+        base.with_transition_policy(self.intra_room_warp_policy.to_policy())
+    }
 }
 
 impl Default for ControlOptions {
@@ -361,6 +381,8 @@ impl Default for ControlOptions {
             enable_analog_trigger_rowing: false,
             combat_input_mode: CombatInputMode::default(),
             r2_heavy_pressure_threshold: default_r2_heavy_pressure_threshold(),
+            widescreen_rail_clearance: WidescreenClearanceMode::default(),
+            intra_room_warp_policy: IntraRoomWarpOption::default(),
         }
     }
 }

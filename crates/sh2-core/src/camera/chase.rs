@@ -53,10 +53,21 @@ pub const IDEAL_CAM_POS_H_INDOOR_OFS_MM: f32 = -200.0;
 /// Outdoor `ideal_cam_pos_h` offset from `chara_top_y` in mm (`-450.0`, `SLUS_202.28` `0x00196be0`).
 pub const IDEAL_CAM_POS_H_OUTDOOR_OFS_MM: f32 = -450.0;
 
-/// Standing character top offset from `chara_pos.y` in mm (`-925.0`, `SLUS_202.28` `vcMoveAndSetCamera` `0x0019df50`).
-pub const CHARA_TOP_Y_OFFSET_MM: f32 = -925.0;
+/// Retail standing character top offset from `chara_pos.y` in mm (`-937.5`, `sh2pc.exe`
+/// `FUN_005193a0` `0x005193a0`, `sh2pc_00510000.c:7097`; prototype `SLUS_202.28`
+/// `vcMoveAndSetCamera` `0x0019df50` used `-925.0`).
+pub const CHARA_TOP_Y_OFFSET_MM: f32 = -crate::camera::CHARA_TOP_HEIGHT_MM;
 
-/// Crouching character bottom offset from `chara_pos.y` in mm (`-250.0`, `SLUS_202.28` `vcMoveAndSetCamera` `0x0019df50`).
+/// Stage 1 (`observation/forest`) X threshold in PS2 world mm above which `1.75x` watch
+/// scaling applies (`SLUS_202.28` `vcMakeNormalWatchTgtPos` `0x00198d80`, `vc_main.c:1962`;
+/// `sh2pc.exe` `FUN_0051dd90` `0x0051dd90`, `sh2pc_00510000.c:10033`).
+pub const STAGE1_WATCH_X_THRESHOLD_MM: f32 = -20_000.0;
+
+/// Stage 1 (`observation/forest`) normal watch circle / min-distance multiplier (`1.75`,
+/// `SLUS_202.28` `0x00198d80`, `vc_main.c:1975-1976`; `sh2pc.exe` `0x0051dd90`, `sh2pc_00510000.c:10044-10045`).
+pub const STAGE1_WATCH_SCALE: f32 = 1.75;
+
+/// Crouching character bottom offset from `chara_pos.y` in mm (`-250.0`, `SLUS_202.28` `vcMoveAndSetCamera` `0x0019df50`, `sh2pc.exe` `0x005193a0`).
 pub const CHARA_CROUCH_BOTTOM_Y_OFFSET_MM: f32 = -250.0;
 
 /// 5-point Q12 base pitch curve for `Settle` mode (`SLUS_202.28` `0x002b9420`,
@@ -78,10 +89,11 @@ pub fn compute_ideal_cam_pos_h(chara_top_y: f32, is_outdoor: bool) -> f32 {
 }
 
 /// Computes character vertical bounds `(chara_bottom_y, chara_top_y, chara_center_y)` in PS2 world mm
-/// (`SLUS_202.28` `vcMoveAndSetCamera` `0x0019df50` & `vcSetSubjChara` `0x00195f00`).
+/// (`sh2pc.exe` `FUN_005193a0` `0x005193a0` & `SLUS_202.28` `vcSetSubjChara` `0x00195f00`).
 ///
 /// `crouch_rate` is `0.0` when standing (`chara_bottom_y == chara_pos_y`) and `1.0` when fully
-/// crouching (`chara_bottom_y == chara_pos_y - 250.0`). `chara_top_y` is always `chara_pos_y - 925.0`.
+/// crouching (`chara_bottom_y == chara_pos_y - 250.0`). `chara_top_y` is `chara_pos_y - 937.5`
+/// (retail `sh2pc.exe` `0x005193a0`; prototype `SLUS_202.28` `0x0019df50` used `-925.0`).
 #[inline]
 pub fn compute_chara_y_bounds(chara_pos_y: f32, crouch_rate: f32) -> (f32, f32, f32) {
     let bottom_y = chara_pos_y + crouch_rate * CHARA_CROUCH_BOTTOM_Y_OFFSET_MM;
@@ -374,19 +386,45 @@ pub fn vc_make_new_base_cam_ang(
 }
 
 /// Computes the normal gameplay watch target position (`SLUS_202.28` `vcMakeNormalWatchTgtPos`
-/// `0x00198d80` & `vcSetWatchTgtXzPos` `0x00199ca0`).
+/// `0x00198d80`, `vc_main.c:1962-1977` & `vcSetWatchTgtXzPos` `0x00199ca0`; retail `sh2pc.exe`
+/// `FUN_0051dd90` `0x0051dd90`, `sh2pc_00510000.c:10033-10046`).
+///
+/// Includes:
+/// - Stage 1 (`stage_id == 1 && chara_pos.x >= -20000.0`) `1.75x` radius & min-distance scaling.
+/// - Toluca Lake boat (`on_boat == true`) retail override (`cir_r = 2550.0`, `min_dist = 5610.0`;
+///   prototype `SLUS_202.28` `0x00198d80` used `2000.0` / `5000.0`).
+#[allow(clippy::too_many_arguments)]
 pub fn vc_make_normal_watch_tgt_pos(
     rec: &RoadRecord,
     cam_pos: Vec3,
     chara_pos: Vec3,
     chara_bottom_y: f32,
     chara_eye_ang_y: f32,
+    stage_id: i32,
+    on_boat: bool,
 ) -> Vec3 {
     let size_idx = rec.area_size_type as usize;
-    let (mut cir_r, min_dist) = (
-        NML_TGT_WATCH_CIR_R[size_idx],
-        NML_CAM2WTH_MIN_DIST[size_idx],
-    );
+    let (mut cir_r, min_dist) = if rec.cam_mv_type == CamMovementType::Settle {
+        (
+            NML_TGT_WATCH_CIR_R[size_idx],
+            NML_CAM2WTH_MIN_DIST[size_idx],
+        )
+    } else if stage_id == 1 && chara_pos.x >= STAGE1_WATCH_X_THRESHOLD_MM {
+        (
+            NML_TGT_WATCH_CIR_R[size_idx] * STAGE1_WATCH_SCALE,
+            NML_CAM2WTH_MIN_DIST[size_idx] * STAGE1_WATCH_SCALE,
+        )
+    } else if on_boat {
+        (
+            crate::camera::locus_door::BOAT_NML_TGT_WATCH_CIR_R_RETAIL_MM,
+            crate::camera::locus_door::BOAT_NML_CAM2WTH_MIN_DIST_RETAIL_MM,
+        )
+    } else {
+        (
+            NML_TGT_WATCH_CIR_R[size_idx],
+            NML_CAM2WTH_MIN_DIST[size_idx],
+        )
+    };
 
     let dx = chara_pos.x - cam_pos.x;
     let dz = chara_pos.z - cam_pos.z;

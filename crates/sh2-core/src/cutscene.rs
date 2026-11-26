@@ -191,11 +191,15 @@ mod tests {
         assert_eq!(player.actors[0].actor_name, "hhh_jms_pos");
         assert!(!player.voice_started);
 
-        // Tick 1 requests `0x80` stream preload; tick 2 crosses `stream_start` (`0x100`) at frame 750.
+        // Tick 1 requests `0x80` stream preload; tick 2 advances `scene_frame` to 750.0 while
+        // `scene_frame` at entry was 1.0 (< `stream_start` 246, `demoview.c:101`); tick 3 sees
+        // `scene_frame >= stream_start` and triggers `0x100` voice playback.
         player.tick(1.0 / 30.0, true);
         assert!(player.voice_preload_requested);
         assert!(!player.voice_started);
         player.tick(749.0 / 30.0, true);
+        assert!(!player.voice_started);
+        player.tick(1.0 / 30.0, true);
         assert!(player.voice_started);
         assert!(player.pending_voice_trigger);
         assert_eq!(player.active_subtitle_msg_id, Some(7));

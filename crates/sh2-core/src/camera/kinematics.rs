@@ -326,20 +326,26 @@ pub fn vw_ret_new_ang_spd_to_target_ang(
 }
 
 /// Resolves active watch and camera movement parameter profiles (`SLUS_202.28`
-/// `vcGetUseWatchAndCamMvParam` `0x0019c4b0`).
+/// `vcGetUseWatchAndCamMvParam` `0x0019c4b0`, `vc_main.c:3333-3399`).
+///
+/// Treats `stage_id == 5` (Toluca Lake) as outdoor alongside `BgIsOut() != 0`
+/// (`vc_main.c:3342, 3357, 3377`: `(BgIsOut() == 0) && (*(int *)(_stage + 0x24) != 5)`).
+#[allow(clippy::too_many_arguments)]
 pub fn vc_get_use_watch_and_cam_mv_param(
     self_view_rate: f32,
     far_watch_rate: f32,
     is_outdoor: bool,
+    stage_id: i32,
     is_on_boat: bool,
     chara_mv_spd: f32,
     user_watch_override: Option<CameraWatchParam>,
     user_cam_override: Option<CameraMoveParam>,
 ) -> (CameraWatchParam, CameraMoveParam) {
+    let effective_outdoor = is_outdoor || stage_id == 5;
     let watch_prm = if let Some(user_w) = user_watch_override {
         user_w
     } else {
-        let base = if !is_outdoor {
+        let base = if !effective_outdoor {
             WATCH_MV_PRM_NRML
         } else if !is_on_boat {
             WATCH_MV_PRM_OUTDOOR
@@ -356,7 +362,7 @@ pub fn vc_get_use_watch_and_cam_mv_param(
             max_ang_spd_y: base.max_ang_spd_y
                 + self_view_rate * (SELF_VIEW_WATCH_MV_PRM.max_ang_spd_y - base.max_ang_spd_y),
         };
-        if !is_outdoor {
+        if !effective_outdoor {
             w.ang_accel_x += base.ang_accel_x * far_watch_rate * 0.5;
             w.ang_accel_y += base.ang_accel_y * far_watch_rate * 0.5;
             w.max_ang_spd_x += base.max_ang_spd_x * far_watch_rate * 0.5;
@@ -369,7 +375,7 @@ pub fn vc_get_use_watch_and_cam_mv_param(
     let cam_prm = if let Some(user_c) = user_cam_override {
         user_c
     } else {
-        let (base, scale) = if !is_outdoor {
+        let (base, scale) = if !effective_outdoor {
             (CAM_MV_PRM_NRML, far_watch_rate + 1.0)
         } else if !is_on_boat {
             (CAM_MV_PRM_OUTDOOR, 1.0)

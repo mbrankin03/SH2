@@ -10,6 +10,7 @@
 //!   without altering `lim_rd` wall clearance; `VC_RD_NOT_WARP_F` (`0x0400`) vetoes intra-room warps.
 
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 use sh2_assets::formats::cam::{
     AreaSizeType, CamMovementParams, CamMovementType, RoadArea, RoadRecord, RoadType,
     VC_RD_CAM_LIKE_SETTLE_F, VC_RD_NOT_WARP_F, VC_RD_NO_EXTRA_AREA_F, VC_RD_WARP_IN_F,
@@ -40,13 +41,81 @@ pub const DEFAULT_SMOOTH_WARP_EYE_LERP: f32 = 0.15;
 pub const DEFAULT_SMOOTH_WARP_TARGET_LERP: f32 = 0.18;
 
 /// Camera rail wall-clearance scaling mode (`SH2-53`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum WidescreenClearanceMode {
     /// Preserve exact 4:3 CRT PS2 `vcGetMinInRoadDist` (`0x001a6bd0`) margins (`400.0`/`500.0` mm).
     #[default]
     Authentic4x3Crt,
     /// Scale clearance when `viewport_aspect > 4.0 / 3.0` by `(viewport_aspect / (4.0 / 3.0)).sqrt()`.
     DynamicAspectScaled,
+}
+
+impl WidescreenClearanceMode {
+    /// User-facing label for the Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Authentic4x3Crt => "OFF (PS2 4:3 Margins)",
+            Self::DynamicAspectScaled => "ON (Dynamic Widescreen)",
+        }
+    }
+
+    /// Toggles between authentic 4:3 CRT margins and dynamic aspect-scaled clearance.
+    pub const fn toggle(self) -> Self {
+        match self {
+            Self::Authentic4x3Crt => Self::DynamicAspectScaled,
+            Self::DynamicAspectScaled => Self::Authentic4x3Crt,
+        }
+    }
+}
+
+/// Serializable Options-menu selector for [`IntraRoomTransitionPolicy`] (`SH2-53`, `SH2-169`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum IntraRoomWarpOption {
+    /// Preserve 1:1 PS2 instant cuts on `VC_RD_WARP_OUT_F` / `VC_RD_WARP_IN_F`.
+    #[default]
+    AuthenticPs2Instant,
+    /// Smooth `VC_RD_WARP_OUT_F` exits while keeping `VC_RD_WARP_IN_F` cuts instant (SH2:EE style).
+    SmoothWarpOutOnly,
+    /// Smooth all intra-room warp cuts at 60 Hz.
+    SmoothAllWarps,
+}
+
+impl IntraRoomWarpOption {
+    /// User-facing label for the Options menu.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::AuthenticPs2Instant => "Authentic PS2 (Instant)",
+            Self::SmoothWarpOutOnly => "Smooth Exit (SH2:EE)",
+            Self::SmoothAllWarps => "Smooth All Intra-Room",
+        }
+    }
+
+    /// Next cyclical warp transition option.
+    pub const fn next(self) -> Self {
+        match self {
+            Self::AuthenticPs2Instant => Self::SmoothWarpOutOnly,
+            Self::SmoothWarpOutOnly => Self::SmoothAllWarps,
+            Self::SmoothAllWarps => Self::AuthenticPs2Instant,
+        }
+    }
+
+    /// Previous cyclical warp transition option.
+    pub const fn prev(self) -> Self {
+        match self {
+            Self::AuthenticPs2Instant => Self::SmoothAllWarps,
+            Self::SmoothWarpOutOnly => Self::AuthenticPs2Instant,
+            Self::SmoothAllWarps => Self::SmoothWarpOutOnly,
+        }
+    }
+
+    /// Converts into the runtime [`IntraRoomTransitionPolicy`].
+    pub const fn to_policy(self) -> IntraRoomTransitionPolicy {
+        match self {
+            Self::AuthenticPs2Instant => IntraRoomTransitionPolicy::AuthenticPs2InstantWarp,
+            Self::SmoothWarpOutOnly => IntraRoomTransitionPolicy::smooth_warp_out_default(),
+            Self::SmoothAllWarps => IntraRoomTransitionPolicy::smooth_all_default(),
+        }
+    }
 }
 
 /// 60 Hz per-tick camera eye and look-target exponential lerp coefficients (`0.0..=1.0`, `SH2-53`).

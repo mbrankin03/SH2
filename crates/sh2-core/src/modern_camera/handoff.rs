@@ -57,6 +57,7 @@ impl GameplayCameraMode {
     /// Cycles to the next camera mode within the user's configured `R3` [`CameraCyclePreset`].
     pub const fn cycle_with_preset(self, preset: CameraCyclePreset) -> Self {
         match preset {
+            CameraCyclePreset::ClassicOnly => Self::ClassicPs2Rail,
             CameraCyclePreset::AllThree => self.next(),
             CameraCyclePreset::ClassicAndOts => match self {
                 Self::ClassicPs2Rail => Self::OverTheShoulder,
@@ -77,6 +78,8 @@ impl GameplayCameraMode {
 /// Configurable subset of camera modes cycled when pressing `R3` in-game (`SH2-93`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CameraCyclePreset {
+    /// Strict 1:1 Vanilla PS2 lock: `R3` never switches out of `ClassicPs2Rail`.
+    ClassicOnly,
     /// Cycle all three modes: `ClassicPs2Rail -> OverTheShoulder -> FirstPerson`.
     #[default]
     AllThree,
@@ -92,6 +95,7 @@ impl CameraCyclePreset {
     /// User-facing label for the Options menu.
     pub const fn label(self) -> &'static str {
         match self {
+            Self::ClassicOnly => "Classic PS2 Only (Locked)",
             Self::AllThree => "Rail / OTS / FPS",
             Self::ClassicAndOts => "Rail / OTS Only",
             Self::ClassicAndFirstPerson => "Rail / FPS Only",
@@ -105,17 +109,19 @@ impl CameraCyclePreset {
             Self::AllThree => Self::ClassicAndOts,
             Self::ClassicAndOts => Self::ClassicAndFirstPerson,
             Self::ClassicAndFirstPerson => Self::OtsAndFirstPerson,
-            Self::OtsAndFirstPerson => Self::AllThree,
+            Self::OtsAndFirstPerson => Self::ClassicOnly,
+            Self::ClassicOnly => Self::AllThree,
         }
     }
 
     /// Previous cyclical `R3` preset.
     pub const fn prev(self) -> Self {
         match self {
-            Self::AllThree => Self::OtsAndFirstPerson,
+            Self::AllThree => Self::ClassicOnly,
             Self::ClassicAndOts => Self::AllThree,
             Self::ClassicAndFirstPerson => Self::ClassicAndOts,
             Self::OtsAndFirstPerson => Self::ClassicAndFirstPerson,
+            Self::ClassicOnly => Self::OtsAndFirstPerson,
         }
     }
 }

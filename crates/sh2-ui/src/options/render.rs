@@ -357,6 +357,12 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
         (OptionsTab::Controls, "Controller Config (PS2)") => {
             "Open PS2 Controller Type 1/2/3 presets & 13-action remapping (config_main)"
         }
+        (OptionsTab::Controls, "Widescreen Rail Clearance") => {
+            "Scale PS2 .cam rail wall margins for 16:9/21:9 viewports (OFF = authentic 4:3 PS2)"
+        }
+        (OptionsTab::Controls, "Intra-Room Camera Cuts") => {
+            "Smooth intra-room .cam warp transitions or keep authentic PS2 instant cuts"
+        }
 
         (OptionsTab::Game, "Action Difficulty") => {
             "Combat challenge and monster durability difficulty"

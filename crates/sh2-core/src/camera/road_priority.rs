@@ -16,8 +16,8 @@
 use crate::camera::locus_door::regulate_angle;
 use glam::Vec3;
 use sh2_assets::formats::cam::{
-    RoadRecord, RoadType, VC_RD_NOT_WARP_F, VC_RD_NO_EXTRA_AREA_F, VC_RD_WARP_IN_F,
-    VC_RD_WARP_OUT_F,
+    RoadRecord, RoadType, VC_RD_MARGE_ROAD_F, VC_RD_NOT_WARP_F, VC_RD_NO_EXTRA_AREA_F,
+    VC_RD_USE_NEAR_ENEMY_F, VC_RD_USE_NO_ENEMY_F, VC_RD_WARP_IN_F, VC_RD_WARP_OUT_F,
 };
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -299,41 +299,41 @@ pub struct RoadSwitchDecision {
     pub warp_cut: bool,
 }
 
-/// Computes signed XZ distance from a road's `lim_sw` AABB (`<= 0.0` inside, `> 0.0` outside)
-/// matching `vcGetXZSumDistFromLimArea` (`SLUS_202.28` `0x0019d980`).
-pub fn signed_xz_dist_from_lim_sw(rec: &RoadRecord, pos: Vec3) -> f32 {
-    let (min_x, max_x) = rec.lim_sw.x_bounds();
-    let (min_z, max_z) = rec.lim_sw.z_bounds();
-
-    let dx = if pos.x > max_x {
-        pos.x - max_x
-    } else if pos.x < min_x {
-        min_x - pos.x
-    } else if pos.x >= (min_x + max_x) * 0.5 {
-        pos.x - max_x
+/// Returns `true` when a `.cam` road record is excluded by enemy-presence flags
+/// (`SLUS_202.28` `vcSetNearRoadAryByCharaPos` `0x00197310`, `vc_main.c:998-1004`).
+///
+/// - When no enemy is nearby (`!has_nearest_enemy`): records with `VC_RD_USE_NEAR_ENEMY_F` (`0x40`) are skipped.
+/// - When an enemy is nearby (`has_nearest_enemy`): records with `VC_RD_USE_NO_ENEMY_F` (`0x20`) are skipped.
+#[inline]
+pub fn is_road_excluded_by_enemy_flags(flags: u16, has_nearest_enemy: bool) -> bool {
+    if has_nearest_enemy {
+        (flags & VC_RD_USE_NO_ENEMY_F) != 0
     } else {
-        min_x - pos.x
-    };
-
-    let dz = if pos.z > max_z {
-        pos.z - max_z
-    } else if pos.z < min_z {
-        min_z - pos.z
-    } else if pos.z >= (min_z + max_z) * 0.5 {
-        pos.z - max_z
-    } else {
-        min_z - pos.z
-    };
-
-    if dx >= 0.0 && dz >= 0.0 {
-        dx + dz
-    } else if dx >= 0.0 {
-        dx
-    } else if dz >= 0.0 {
-        dz
-    } else {
-        dx.max(dz)
+        (flags & VC_RD_USE_NEAR_ENEMY_F) != 0
     }
+}
+
+/// Computes oriented local-frame distance from a road's `lim_sw` volume plus vertical Y-excess
+/// (`SLUS_202.28` `vcSetNearRoadAryByCharaPos` `0x00197310`, `vc_main.c:1122-1138` &
+/// `vcGetXZSumDistFromLimArea` `0x0019d980`, `vc_main.c:4026-4081`).
+///
+/// - Transforms `(pos.x, pos.z)` into `rec.lim_sw`'s oriented local frame (`world_to_local_xz`).
+/// - Gates negative inside depth on `VC_RD_MARGE_ROAD_F` (`0x80`); otherwise clamps inside XZ distance to `0.0`.
+/// - Adds vertical Y-excess outside `[min_y, max_y]` instead of hard-rejecting the road.
+pub fn signed_xz_dist_from_lim_sw(rec: &RoadRecord, pos: Vec3) -> f32 {
+    let merge_road = (rec.flags & VC_RD_MARGE_ROAD_F) != 0;
+    let (xz_dist, _, _) = rec
+        .lim_sw
+        .xz_sum_dist_from_lim_area(pos.x, pos.z, merge_road);
+    let (min_y, max_y) = rec.lim_sw.y_bounds();
+    let y_excess = if pos.y > max_y {
+        pos.y - max_y
+    } else if pos.y < min_y {
+        min_y - pos.y
+    } else {
+        0.0
+    };
+    xz_dist + y_excess
 }
 
 /// Evaluates whether the camera should keep `old_road` or switch to `best_new_road`.
@@ -438,7 +438,7 @@ mod tests {
             lim_sw: RoadArea {
                 x0: min_x,
                 z0: -1000.0,
-                x1: max_x,
+                x1: min_x,
                 z1: 1000.0,
                 x2: max_x,
                 z2: 1000.0,

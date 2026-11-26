@@ -104,12 +104,16 @@ impl SimulationCore {
                 }
             };
             let camera_yaw = match mode {
-                GameplayCameraMode::ClassicPs2Rail => self
-                    .camera
-                    .curr_snapshot
-                    .eye
-                    .x
-                    .atan2(self.camera.curr_snapshot.eye.z),
+                GameplayCameraMode::ClassicPs2Rail => {
+                    // Use camera facing yaw (`(target - eye)` / `cam_mat_ang[1]`) instead of world origin azimuth
+                    // (`eye.x.atan2(eye.z)`), matching `SLUS_202.28` `vcWork.cam_mat_ang[1]` for 2D directional controls.
+                    let fwd = self.camera.curr_snapshot.target - self.camera.curr_snapshot.eye;
+                    if fwd.x * fwd.x + fwd.z * fwd.z > 1e-6 {
+                        fwd.x.atan2(fwd.z)
+                    } else {
+                        self.camera.raw_state.cam_mat_ang[1]
+                    }
+                }
                 GameplayCameraMode::OverTheShoulder => self.modern_camera.ots.orbit_yaw,
                 GameplayCameraMode::FirstPerson => self.modern_camera.first_person.look_yaw,
             };
@@ -180,6 +184,9 @@ impl SimulationCore {
         self.input.config.stick_deadzone = opts.stick_deadzone.clamp(0.0, 0.5);
         self.input.config.vibration_intensity = opts.vibration_intensity.clamp(0.0, 1.0);
         self.stick_sensitivity = opts.stick_sensitivity.clamp(0.2, 4.0);
+        self.camera.set_aspect_rail_config(
+            opts.aspect_rail_config(self.camera.aspect_rail_config.viewport_aspect),
+        );
         self.modern_camera.apply_control_options(
             opts,
             &self.camera.curr_snapshot,

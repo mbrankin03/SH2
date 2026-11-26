@@ -18,7 +18,7 @@ impl OptionsMenu {
                     11
                 }
             }
-            OptionsTab::Controls => 15,
+            OptionsTab::Controls => 17,
             OptionsTab::Game => 13,
             OptionsTab::Enhanced => {
                 if self.audio_pack_status.both_detected() {
@@ -370,6 +370,14 @@ impl OptionsMenu {
                 } else {
                     "OFF (PS2 Sticks)".into()
                 },
+            )),
+            15 => Some((
+                "Widescreen Rail Clearance",
+                c.widescreen_rail_clearance.label().to_string(),
+            )),
+            16 => Some((
+                "Intra-Room Camera Cuts",
+                c.intra_room_warp_policy.label().to_string(),
             )),
             _ => None,
         }
@@ -1014,6 +1022,14 @@ impl OptionsMenu {
                     (c.r2_heavy_pressure_threshold + step).clamp(0.25, 0.95);
             }
             14 => c.enable_analog_trigger_rowing = !c.enable_analog_trigger_rowing,
+            15 => c.widescreen_rail_clearance = c.widescreen_rail_clearance.toggle(),
+            16 => {
+                c.intra_room_warp_policy = if forward {
+                    c.intra_room_warp_policy.next()
+                } else {
+                    c.intra_room_warp_policy.prev()
+                };
+            }
             _ => return Some(OptionsSoundCue::None),
         }
         None

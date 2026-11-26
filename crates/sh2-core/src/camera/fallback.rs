@@ -25,24 +25,30 @@ impl Ps2CameraController {
             Some((idx, rec.clone()))
         });
 
-        let (eye, target, fov_y, mv_type) = if let Some((idx, rec)) = active_rec {
+        let (eye, target, up, fov_y, mv_type) = if let Some((idx, rec)) = active_rec {
             self.active_road_index = idx;
-            self.step_road_record(&rec, player_pos, player_yaw, true, true, 0.0)
+            self.projection_ramp.schedule(rec.projection, 0);
+            let (e, t, u, f, mv, _) = self.step_road_record(
+                &rec, player_pos, player_yaw, 0.0, 0.0, None, None, true, true, 0.0,
+            );
+            (e, t, u, f, mv)
         } else {
             self.active_road_index = None;
+            self.projection_ramp
+                .schedule(kinematics::PS2_DEFAULT_PROJECTION_SCR_Z, 0);
             let (fb_eye, fb_tgt, fb_fov, fb_mv) = Self::fallback_placement(player_pos, player_yaw);
             self.raw_state.cam_pos = [fb_eye.x, fb_eye.y, fb_eye.z, 1.0];
             self.raw_state.cam_tgt_pos = [fb_eye.x, fb_eye.y, fb_eye.z, 1.0];
             let ang = kinematics::vw_vector_to_angle(fb_tgt - fb_eye);
             self.raw_state.ofs_cam_ang = [ang.x, ang.y, ang.z, 0.0];
             self.raw_state.cam_mat_ang = [ang.x, ang.y, ang.z, 0.0];
-            (fb_eye, fb_tgt, fb_fov, fb_mv)
+            (fb_eye, fb_tgt, Vec3::new(0.0, -1.0, 0.0), fb_fov, fb_mv)
         };
 
         let snap = CameraSnapshot {
             eye,
             target,
-            up: Vec3::new(0.0, -1.0, 0.0),
+            up,
             fov_y,
         };
 

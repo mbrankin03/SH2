@@ -72,6 +72,11 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = false;
                 self.audio.audio_pack_source = AudioPackPreference::Ps2Original;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.controls.camera_cycle_preset = CameraCyclePreset::ClassicOnly;
+                self.controls.widescreen_rail_clearance =
+                    crate::widescreen_rail::WidescreenClearanceMode::Authentic4x3Crt;
+                self.controls.intra_room_warp_policy =
+                    crate::widescreen_rail::IntraRoomWarpOption::AuthenticPs2Instant;
                 self.controls.enable_analog_trigger_rowing = false;
                 self.controls.combat_input_mode = CombatInputMode::Ps2Pressure;
                 self.game.enable_delayed_fade_in = false;
@@ -107,6 +112,11 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Sh2eeLossless;
                 self.controls.default_camera_mode = GameplayCameraMode::ClassicPs2Rail;
+                self.controls.camera_cycle_preset = CameraCyclePreset::ClassicOnly;
+                self.controls.widescreen_rail_clearance =
+                    crate::widescreen_rail::WidescreenClearanceMode::DynamicAspectScaled;
+                self.controls.intra_room_warp_policy =
+                    crate::widescreen_rail::IntraRoomWarpOption::SmoothWarpOutOnly;
                 self.controls.enable_analog_trigger_rowing = false;
                 self.controls.combat_input_mode = CombatInputMode::Sh2eeTapHold;
                 self.game.enable_delayed_fade_in = true;
@@ -142,6 +152,11 @@ impl AppConfig {
                 self.audio.enable_restored_cut_audio = true;
                 self.audio.audio_pack_source = AudioPackPreference::Auto;
                 self.controls.default_camera_mode = GameplayCameraMode::OverTheShoulder;
+                self.controls.camera_cycle_preset = CameraCyclePreset::AllThree;
+                self.controls.widescreen_rail_clearance =
+                    crate::widescreen_rail::WidescreenClearanceMode::DynamicAspectScaled;
+                self.controls.intra_room_warp_policy =
+                    crate::widescreen_rail::IntraRoomWarpOption::SmoothAllWarps;
                 self.controls.enable_analog_trigger_rowing = true;
                 self.controls.combat_input_mode = CombatInputMode::NativeZeroLatency;
                 self.game.enable_delayed_fade_in = true;

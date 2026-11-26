@@ -79,6 +79,14 @@ pub struct InventoryScreen {
     /// Fullscreen examine image brightness `_examine_rgb` (`0x80 = 128.0` -> `0x45 = 69.0` at `-300.0 * dt`,
     /// `SLUS_202.28` `examine_main` `0x001d3a00` lines 1678–1681).
     pub examine_rgb: f32,
+    /// Normalized `InlinePopup` open/close zoom progress (`0.0` = carousel reticle, `1.0` = `200x200` popup,
+    /// eased via `move_near` matching `sh2pc.exe` `FUN_0046af30` `case 0xc`).
+    pub examine_popup_t: f32,
+    /// Inventory screen fade-to-black alpha (`1.0` = solid black, `0.0` = fully visible;
+    /// `SLUS_202.28` `itemmain` `0x001cdb40:86` & `item_fade_out` `0x001db0e0:3740`: `0.5` s).
+    pub screen_fade_alpha: f32,
+    /// True while fading out to close the Inventory screen (`DAT_0116e65c == 1` in `item_fade_out`).
+    pub is_closing: bool,
 }
 
 impl Default for InventoryScreen {
@@ -119,7 +127,20 @@ impl InventoryScreen {
             examine_page: 0,
             examine_phase: ExaminePhase::InlinePopup,
             examine_rgb: 128.0,
+            examine_popup_t: 0.0,
+            screen_fade_alpha: 0.0,
+            is_closing: false,
         }
+    }
+
+    /// Returns `true` when a fullscreen `examine_main` (`0x001d3a00`) overlay (`Letter from Mary`,
+    /// `Laura's Letter`, Rebirth books) is active and the top-left 3D `Status` snapshot must be hidden.
+    pub fn is_fullscreen_examine(&self) -> bool {
+        self.focus == InventoryFocus::ExamineOverlay
+            && matches!(
+                self.examine_phase,
+                ExaminePhase::FullscreenInspect | ExaminePhase::FullscreenReading
+            )
     }
 
     /// Opens the Status / Inventory screen, refreshing the owned item carousel from `inventory`.
@@ -127,6 +148,9 @@ impl InventoryScreen {
     /// while preserving ambient room BGM playback.
     pub fn open(&mut self, inventory: &InventoryManager) {
         self.is_open = true;
+        self.is_closing = false;
+        self.screen_fade_alpha = 1.0;
+        self.examine_popup_t = 0.0;
         self.focus = InventoryFocus::Carousel;
         self.active_commands.clear();
         self.command_index = 0;
@@ -236,6 +260,41 @@ impl InventoryScreen {
             self.combine_fade = (self.combine_fade + dt * LOOK_COMBINE_FADE_RATE).min(1.0);
         } else {
             self.combine_fade = (self.combine_fade - dt * LOOK_COMBINE_FADE_RATE).max(0.0);
+        }
+
+        // Inventory fade-in / fade-out (`SLUS_202.28` `itemmain` `0x001cdb40:86` & `item_fade_out`
+        // `0x001db0e0:3740`: `ScreenEffectFadeStart(0.5)` -> `2.0 / s`).
+        let fade_rate = 1.0 / super::INVENTORY_FADE_DURATION_SEC;
+        if self.is_closing {
+            self.screen_fade_alpha = (self.screen_fade_alpha + dt * fade_rate).min(1.0);
+            if self.screen_fade_alpha >= 1.0 {
+                self.is_closing = false;
+                self.close();
+                return;
+            }
+        } else if self.screen_fade_alpha > 0.0 {
+            self.screen_fade_alpha = (self.screen_fade_alpha - dt * fade_rate).max(0.0);
+        }
+
+        // `InlinePopup` open/dismiss zoom animation (`sh2pc.exe` `FUN_0046af30` `case 0xc <-> case 1`,
+        // `move_near(div = 2.0, speed = 0.06)` at 30 Hz).
+        if self.focus == InventoryFocus::ExamineOverlay {
+            match self.examine_phase {
+                ExaminePhase::InlinePopup => {
+                    self.examine_popup_t =
+                        move_near(2.0, 0.06, self.examine_popup_t, 1.0, dt).clamp(0.0, 1.0);
+                }
+                ExaminePhase::InlineClosing => {
+                    self.examine_popup_t =
+                        move_near(2.0, 0.06, self.examine_popup_t, 0.0, dt).clamp(0.0, 1.0);
+                    if self.examine_popup_t <= 0.001 {
+                        self.examine_popup_t = 0.0;
+                        self.examine_phase = ExaminePhase::InlinePopup;
+                        self.focus = InventoryFocus::Carousel;
+                    }
+                }
+                ExaminePhase::FullscreenInspect | ExaminePhase::FullscreenReading => {}
+            }
         }
 
         // `examine_main` (`0x001d3a00` lines 1678–1681): dim `_examine_rgb` from `0x80` (128) down
@@ -360,7 +419,7 @@ impl InventoryScreen {
         inventory: &InventoryManager,
         snapshot: &InventoryPlayerSnapshot,
     ) -> (MenuSoundCue, InventoryAction) {
-        if !self.is_open {
+        if !self.is_open || self.is_closing {
             return (MenuSoundCue::None, InventoryAction::None);
         }
 
@@ -374,9 +433,10 @@ impl InventoryScreen {
                 MenuNavAction::Confirm => match self.examine_phase {
                     ExaminePhase::InlinePopup => {
                         self.examine_page = 0;
-                        self.focus = InventoryFocus::Carousel;
+                        self.examine_phase = ExaminePhase::InlineClosing;
                         (MenuSoundCue::Cancel, InventoryAction::None)
                     }
+                    ExaminePhase::InlineClosing => (MenuSoundCue::None, InventoryAction::None),
                     ExaminePhase::FullscreenInspect => {
                         // `examine_main` (`0x001d3a00` lines 1731–1734): Confirm transitions from
                         // Phase 0 (clean full-brightness image) to Phase 1 (dim image + text pages).
@@ -407,12 +467,20 @@ impl InventoryScreen {
                         }
                     }
                 },
-                MenuNavAction::Cancel => {
-                    self.examine_page = 0;
-                    self.examine_rgb = 128.0;
-                    self.focus = InventoryFocus::Carousel;
-                    (MenuSoundCue::Cancel, InventoryAction::None)
-                }
+                MenuNavAction::Cancel => match self.examine_phase {
+                    ExaminePhase::InlinePopup => {
+                        self.examine_page = 0;
+                        self.examine_phase = ExaminePhase::InlineClosing;
+                        (MenuSoundCue::Cancel, InventoryAction::None)
+                    }
+                    ExaminePhase::InlineClosing => (MenuSoundCue::None, InventoryAction::None),
+                    ExaminePhase::FullscreenInspect | ExaminePhase::FullscreenReading => {
+                        self.examine_page = 0;
+                        self.examine_rgb = 128.0;
+                        self.focus = InventoryFocus::Carousel;
+                        (MenuSoundCue::Cancel, InventoryAction::None)
+                    }
+                },
                 MenuNavAction::Left if self.enable_free_item_orbit => {
                     self.examine_yaw_rad -= 0.25;
                     (MenuSoundCue::None, InventoryAction::None)
@@ -585,7 +653,8 @@ impl InventoryScreen {
                 }
             }
             MenuNavAction::Cancel => {
-                self.close();
+                // `item_fade_out` (`0x001db0e0`): smoothly fade Inventory to black over `0.5` s
+                self.is_closing = true;
                 (MenuSoundCue::Cancel, InventoryAction::Close)
             }
         }
@@ -727,6 +796,7 @@ impl InventoryScreen {
                     ItemCommand::Look => {
                         self.examine_page = 0;
                         self.examine_rgb = 128.0;
+                        self.examine_popup_t = 0.0;
                         // `sh2pc.exe` `FUN_0046a110` (`0x0046a110`) `case 9`: fullscreen `examine_main`
                         // (`0x001d3a00`) items (Letter from Mary `0x15`, Laura's Letter `0x16`, Rebirth books
                         // `0x4a, 0x4b, 0x4f, 0x50, 0x51, 0x54`). All other examinable items (`Photo of Mary`
@@ -988,9 +1058,20 @@ mod tests {
         screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(screen.focus, InventoryFocus::ExamineOverlay);
         assert_eq!(screen.examine_phase, ExaminePhase::InlinePopup);
+        assert!(!screen.is_fullscreen_examine());
+        for _ in 0..15 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
+        assert!(screen.examine_popup_t > 0.95);
+        // Dismissing InlinePopup plays smooth InlineClosing shrink animation back to Carousel
         let (close_cue, _) = screen.handle_nav(MenuNavAction::Confirm, &inv, &snap);
         assert_eq!(close_cue, MenuSoundCue::Cancel);
+        assert_eq!(screen.examine_phase, ExaminePhase::InlineClosing);
+        for _ in 0..20 {
+            screen.tick(1.0 / 30.0, &snap);
+        }
         assert_eq!(screen.focus, InventoryFocus::Carousel);
+        assert_eq!(screen.examine_popup_t, 0.0);
 
         // Select Letter from Mary (idx 1), open CommandWindow, choose Examine -> 2-phase `examine_main`:
         // Phase 0 (`FullscreenInspect`, bright image, no text) -> Confirm -> Phase 1 (`FullscreenReading`,

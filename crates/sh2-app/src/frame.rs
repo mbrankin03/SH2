@@ -454,9 +454,7 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
         // frozen 3D gameplay snapshot blitted strictly into the top-left `Status` box (omitted
         // during full-screen `ExamineOverlay` so nothing bleeds behind the examined item).
         if state.ingame_menus.inventory.is_open && !state.menu_ctrl.pause_menu.is_open {
-            if state.ingame_menus.inventory.focus
-                == sh2_ui::inventory::InventoryFocus::ExamineOverlay
-            {
+            if state.ingame_menus.inventory.is_fullscreen_examine() {
                 let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Inventory Examine Clear Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -123,9 +123,18 @@ pub fn draw_inventory_screen(
 
     // 9. Inline `200x200` Examine Popup (`sh2pc.exe` `FUN_0046af30` `case 0xc`: Photo of Mary, etc.)
     if screen.focus == InventoryFocus::ExamineOverlay
-        && screen.examine_phase == ExaminePhase::InlinePopup
+        && matches!(
+            screen.examine_phase,
+            ExaminePhase::InlinePopup | ExaminePhase::InlineClosing
+        )
     {
         draw_inline_examine_popup(screen, item_atlas_rgba, examine_tex_rgba, rasterizer, c);
+    }
+
+    // 10. Inventory fade-in / fade-out scrim (`SLUS_202.28` `itemmain` `0x001cdb40` & `item_fade_out` `0x001db0e0`)
+    if screen.screen_fade_alpha > 0.001 {
+        let a = (screen.screen_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, a]);
     }
 }
 
@@ -318,50 +327,54 @@ fn draw_carousel_arc(
     let cy = c.y(PS2_UI_HEIGHT * 0.5);
     let font_px = ((16.0 * c.sy).round() as usize).clamp(10, 24);
 
-    // `lookline` (`SLUS_202.28` `0x001d6c30`, `sh2pc.exe` `FUN_0046af30` `0x0046af30`):
-    // Draw before the empty-inventory early return so a focused bottom `CornerButton` still renders
-    // its blue selection reticle even when no items are carried.
-    let (ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448) = match screen.focus {
-        InventoryFocus::Carousel | InventoryFocus::CombineTarget => (201.0, 159.0, 311.0, 289.0),
-        InventoryFocus::CommandWindow | InventoryFocus::RadioVolume => (336.0, 21.0, 496.0, 144.0),
-        InventoryFocus::Corner(CornerButton::Option) => (16.0, 397.0, 176.0, 427.0),
-        InventoryFocus::Corner(CornerButton::Memo) => (176.0, 397.0, 336.0, 427.0),
-        InventoryFocus::Corner(CornerButton::Map) => (336.0, 397.0, 496.0, 427.0),
-        InventoryFocus::ExamineOverlay => (201.0, 159.0, 311.0, 289.0),
-    };
-    let rx = c.xi(ret_x0_512);
-    let ry = c.yi(ret_y0_448);
-    let ret_w = c.xi(ret_x1_512).saturating_sub(rx);
-    let ret_h = c.yi(ret_y1_448).saturating_sub(ry);
-    let show_corner_brackets = matches!(
-        screen.focus,
-        InventoryFocus::Carousel
-            | InventoryFocus::CommandWindow
-            | InventoryFocus::RadioVolume
-            | InventoryFocus::Corner(_)
-    );
-    let ret_a = if matches!(
-        screen.focus,
-        InventoryFocus::Carousel
-            | InventoryFocus::CombineTarget
-            | InventoryFocus::CommandWindow
-            | InventoryFocus::RadioVolume
-            | InventoryFocus::Corner(_)
-    ) {
-        0xff
-    } else {
-        ECG_GS_ALPHA
-    };
-    draw_lookline(
-        rasterizer,
-        c,
-        rx,
-        ry,
-        ret_w,
-        ret_h,
-        ret_a,
-        show_corner_brackets,
-    );
+    // `lookline` (`SLUS_202.28` `0x001d6c30`, `otn_itemmain.c:386`: hidden during `0xc`/`0xd` ExamineOverlay).
+    if screen.focus != InventoryFocus::ExamineOverlay {
+        let (ret_x0_512, ret_y0_448, ret_x1_512, ret_y1_448) = match screen.focus {
+            InventoryFocus::Carousel | InventoryFocus::CombineTarget => {
+                (201.0, 159.0, 311.0, 289.0)
+            }
+            InventoryFocus::CommandWindow | InventoryFocus::RadioVolume => {
+                (336.0, 21.0, 496.0, 144.0)
+            }
+            InventoryFocus::Corner(CornerButton::Option) => (16.0, 397.0, 176.0, 427.0),
+            InventoryFocus::Corner(CornerButton::Memo) => (176.0, 397.0, 336.0, 427.0),
+            InventoryFocus::Corner(CornerButton::Map) => (336.0, 397.0, 496.0, 427.0),
+            InventoryFocus::ExamineOverlay => (201.0, 159.0, 311.0, 289.0),
+        };
+        let rx = c.xi(ret_x0_512);
+        let ry = c.yi(ret_y0_448);
+        let ret_w = c.xi(ret_x1_512).saturating_sub(rx);
+        let ret_h = c.yi(ret_y1_448).saturating_sub(ry);
+        let show_corner_brackets = matches!(
+            screen.focus,
+            InventoryFocus::Carousel
+                | InventoryFocus::CommandWindow
+                | InventoryFocus::RadioVolume
+                | InventoryFocus::Corner(_)
+        );
+        let ret_a = if matches!(
+            screen.focus,
+            InventoryFocus::Carousel
+                | InventoryFocus::CombineTarget
+                | InventoryFocus::CommandWindow
+                | InventoryFocus::RadioVolume
+                | InventoryFocus::Corner(_)
+        ) {
+            0xff
+        } else {
+            ECG_GS_ALPHA
+        };
+        draw_lookline(
+            rasterizer,
+            c,
+            rx,
+            ry,
+            ret_w,
+            ret_h,
+            ret_a,
+            show_corner_brackets,
+        );
+    }
 
     if screen.owned_items.is_empty() {
         font.draw_line_centered(
@@ -597,10 +610,14 @@ fn draw_inline_examine_popup(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
 ) {
-    let x0 = c.xi(156.0);
-    let y0 = c.yi(74.0);
-    let w = c.xi(356.0).saturating_sub(x0);
-    let h = c.yi(274.0).saturating_sub(y0);
+    // Interpolate smoothly between carousel reticle `(201, 159)..(311, 289)` and full `FUN_0046af30`
+    // `case 0xc` popup `(156, 74)..(356, 274)` using `examine_popup_t` (`0.0..=1.0`).
+    let t = screen.examine_popup_t.clamp(0.0, 1.0);
+    let lerp = |a: f32, b: f32| a + (b - a) * t;
+    let x0 = c.xi(lerp(201.0, 156.0));
+    let y0 = c.yi(lerp(159.0, 74.0));
+    let w = c.xi(lerp(311.0, 356.0)).saturating_sub(x0);
+    let h = c.yi(lerp(289.0, 274.0)).saturating_sub(y0);
     let border = (c.sy * 0.85).round().max(1.0) as usize;
 
     // Opaque black popup fill + crisp 1px neutral gray frame (`0x808080`)
@@ -770,6 +787,7 @@ mod tests {
         }
         let mut screen = InventoryScreen::new();
         screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
         let snap = InventoryPlayerSnapshot::default();
         let font = AtlasFont::shared(None);
 
@@ -801,6 +819,7 @@ mod tests {
         }
         let mut screen = InventoryScreen::new();
         screen.open(&inv);
+        screen.screen_fade_alpha = 0.0;
         let snap = InventoryPlayerSnapshot {
             hp: 35.0,
             max_hp: 100.0,

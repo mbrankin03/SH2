@@ -164,6 +164,9 @@ pub enum ExaminePhase {
     /// `Photo of Mary` (`0x14`).
     #[default]
     InlinePopup,
+    /// Closing animation for `InlinePopup`, smoothly shrinking the popup box back into the
+    /// carousel reticle (`FUN_0046af30` `case 0xc -> case 1` via `move_near`).
+    InlineClosing,
     /// Fullscreen close-up inspect (`examine_main` `DAT_0116e3d2 == 0`, `0x001d3a00`): full-brightness
     /// (`_examine_rgb = 0x80`) image on pure black with no text, used for `command_kind` `9` items
     /// (`Letter from Mary` `0x15`, `Laura's Letter` `0x16`, Rebirth books).
@@ -231,6 +234,10 @@ pub enum InventoryAction {
 
 /// Default Pocket Radio volume level (`SLUS_202.28` `ItemDataInit` `0x001ad860`: `DAT_01126900 = 0xc`).
 pub const DEFAULT_RADIO_VOLUME: u8 = 0x0c;
+
+/// Inventory screen fade-in / fade-out duration in seconds (`SLUS_202.28` `itemmain` `0x001cdb40:86`
+/// & `item_fade_out` `0x001db0e0:3740`: `ScreenEffectFadeStart(0x3f000000)` = `0.5` s).
+pub const INVENTORY_FADE_DURATION_SEC: f32 = 0.5;
 
 /// Snapshot of runtime player status passed into [`InventoryScreen`] for rendering & commands.
 #[derive(Debug, Clone, Copy, PartialEq)]

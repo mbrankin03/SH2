@@ -8,7 +8,7 @@ use crate::state::AppState;
 use sh2_assets::formats::mes::parse_mes;
 use sh2_assets::{AssetPathResolver, TextureLoader};
 use sh2_core::combat::{CombatController, WeaponGrip};
-use sh2_ui::inventory::{InventoryAction, InventoryPlayerSnapshot};
+use sh2_ui::inventory::{InventoryAction, InventoryFadeTransition, InventoryPlayerSnapshot};
 use sh2_ui::map::{map_spec, CHIZU_CURSOR_TEX_PATH};
 use sh2_ui::memo::{memo_command_check, DEFAULT_MEMO_BACKDROP_TEX};
 use sh2_ui::menu::MenuSoundCue;
@@ -114,6 +114,14 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             MenuSoundCue::None
         }
         KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
+            if let Some(sub_cue) = state.menu_ctrl.options_menu.handle_subscreen_confirm() {
+                let cue = if sub_cue == OptionsSoundCue::None {
+                    MenuSoundCue::None
+                } else {
+                    MenuSoundCue::Confirm
+                };
+                return emit_menu_sound(state, cue, "Inventory Options");
+            }
             if state.menu_ctrl.options_menu.enter_submenu() {
                 return emit_menu_sound(state, MenuSoundCue::Confirm, "Inventory Options");
             }
@@ -256,24 +264,92 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
             });
         }
         InventoryAction::SetRadioVolume(vol) => {
-            state.ingame_menus.inventory.radio_volume = vol.min(15);
-        }
-        InventoryAction::UseKeyOrPuzzleItem(_item_id) => {
-            state
-                .ingame_menus
-                .inventory
-                .show_toast("Can't use this here.");
-        }
-        InventoryAction::CombinedItems { result_id, .. } => {
-            if state.sim_core.scenario.inventory_mgr.has_item(result_id) {
-                state.ingame_menus.inventory.active_combo_id = Some(result_id);
-                state
-                    .ingame_menus
-                    .inventory
-                    .show_toast(format!("Combined items ready (combo #{result_id})."));
+            let clamped = vol.min(15);
+            state.ingame_menus.inventory.radio_volume = clamped;
+            // Forward discrete radio volume (`DAT_01126900`, `0..=15`) to AI radio evaluator
+            // (`SLUS_202.28` `command_main` `case 7` `0x001cf9e0`, `otn_itemmain.c:980-989`).
+            state.combat_arena.ai.radio_evaluator.volume_level = clamped;
+            // `SLUS_202.28` `otn_itemmain.c:981, 988`: `SeCall(((float)DAT_01126900 + 4.0) / 20.0, 0x4a49)`.
+            let gain = (f32::from(clamped) + 4.0) / 20.0;
+            if let (Some(ref mut eng), Some(ref bank)) =
+                (&mut state.audio_engine, &state.audio_bank)
+            {
+                let _ = bank.play_se_id(eng, OPTION_VOLUME_SE_ID, gain);
             }
         }
+        InventoryAction::UseKeyOrPuzzleItem(item_id) => {
+            dispatch_use_key_or_puzzle_item(
+                item_id,
+                state.campaign_orchestrator.is_some(),
+                &mut state.campaign_pending_input,
+                &mut state.ingame_menus.inventory,
+            );
+        }
+        InventoryAction::CombinedItems {
+            first_id,
+            second_id,
+            third_id,
+            result_id,
+        } => {
+            dispatch_combined_items(
+                first_id,
+                second_id,
+                third_id,
+                result_id,
+                state.campaign_orchestrator.is_some(),
+                &mut state.sim_core.scenario,
+                &mut state.campaign_pending_input,
+                &mut state.ingame_menus.inventory,
+            );
+        }
     }
+}
+
+/// Dispatches `InventoryAction::UseKeyOrPuzzleItem` (`SLUS_202.28` `event_item_use` `0x001d3840`,
+/// `otn_itemmain.c:1599-1617`): queues `item_id` on `campaign_pending_input.item_use_id` and begins
+/// closing inventory when a campaign orchestrator is active; otherwise displays the authentic
+/// `"It looks like I can't use that here."` message (`ITEM_SYSTEM_MESSAGES[16]`).
+pub(crate) fn dispatch_use_key_or_puzzle_item(
+    item_id: u8,
+    has_campaign: bool,
+    pending_input: &mut sh2_core::campaign::CampaignTickInput,
+    inventory_screen: &mut sh2_ui::inventory::InventoryScreen,
+) {
+    if has_campaign {
+        pending_input.item_use_id = item_id;
+        inventory_screen.fade_transition = InventoryFadeTransition::ClosingToGameplay;
+    } else {
+        inventory_screen.show_toast(sh2_core::inventory::ITEM_SYSTEM_MESSAGES[16]);
+    }
+}
+
+/// Dispatches `InventoryAction::CombinedItems` (`SLUS_202.28` `combine_item_use` `0x001d38d0`,
+/// `otn_itemmain.c:1624-1656`): records `active_combo_id` directly without checking `has_item` on
+/// unadded pseudo-items (`86..=96`), queuing `result_id` for campaign event evaluation when in a
+/// campaign, or consuming constituent parts and granting `result_id` directly in sandbox rooms.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dispatch_combined_items(
+    first_id: u8,
+    second_id: u8,
+    third_id: Option<u8>,
+    result_id: u8,
+    has_campaign: bool,
+    scenario: &mut sh2_core::scenario::ScenarioState,
+    pending_input: &mut sh2_core::campaign::CampaignTickInput,
+    inventory_screen: &mut sh2_ui::inventory::InventoryScreen,
+) {
+    let _ = (first_id, second_id, third_id);
+    inventory_screen.active_combo_id = Some(result_id);
+    if has_campaign {
+        pending_input.item_use_id = result_id;
+        inventory_screen.fade_transition = InventoryFadeTransition::ClosingToGameplay;
+    } else {
+        scenario.inventory_mgr.item_lose(result_id);
+        scenario.inventory_mgr.give_raw(result_id, 1);
+        scenario.sync_legacy_views();
+        inventory_screen.refresh_owned_items(&scenario.inventory_mgr);
+    }
+    inventory_screen.show_toast(format!("Combined items ready (combo #{result_id})."));
 }
 
 fn mod_aware_loader(state: &AppState) -> TextureLoader {
@@ -499,5 +575,76 @@ pub(crate) fn ensure_savebg_loaded(
     let loader = mod_aware_loader(state);
     if let Ok(tex) = loader.load_texture_for_quality(path, prefer_sh2ee, apply_4k) {
         state.ingame_menus.cached_savebg_tex = Some((tex.width, tex.height, tex.rgba));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sh2_core::campaign::CampaignTickInput;
+    use sh2_core::scenario::{ScenarioKind, ScenarioState};
+    use sh2_ui::inventory::InventoryScreen;
+
+    #[test]
+    fn test_sh2_166_use_key_and_combined_items_dispatch() {
+        let mut pending = CampaignTickInput::default();
+        let mut inv_screen = InventoryScreen::new();
+        inv_screen.is_open = true;
+
+        // Outside campaign: authentic PS2 toast, no item_use_id queued
+        dispatch_use_key_or_puzzle_item(35, false, &mut pending, &mut inv_screen);
+        assert_eq!(pending.item_use_id, 0);
+        assert_eq!(
+            inv_screen.status_toast.as_deref(),
+            Some("It looks like I can't use that here.")
+        );
+
+        // Inside campaign: queues item_use_id and starts ClosingToGameplay fade
+        dispatch_use_key_or_puzzle_item(35, true, &mut pending, &mut inv_screen);
+        assert_eq!(pending.item_use_id, 35);
+        assert_eq!(
+            inv_screen.fade_transition,
+            InventoryFadeTransition::ClosingToGameplay
+        );
+
+        // CombinedItems (3-item Toluca Prison Hatch: 64 + 62 + 63 -> 96) in campaign mode
+        let mut scenario = ScenarioState::new(ScenarioKind::LetterFromSilentHeaven);
+        scenario.inventory_mgr.item_get_now(62);
+        scenario.inventory_mgr.item_get_now(63);
+        scenario.inventory_mgr.item_get_now(64);
+        let mut pending_combo = CampaignTickInput::default();
+        inv_screen.fade_transition = InventoryFadeTransition::None;
+        dispatch_combined_items(
+            64,
+            62,
+            Some(63),
+            96,
+            true,
+            &mut scenario,
+            &mut pending_combo,
+            &mut inv_screen,
+        );
+        assert_eq!(inv_screen.active_combo_id, Some(96));
+        assert_eq!(pending_combo.item_use_id, 96);
+        assert_eq!(
+            inv_screen.fade_transition,
+            InventoryFadeTransition::ClosingToGameplay
+        );
+
+        // CombinedItems outside campaign: consumes parts and grants pseudo-item directly
+        dispatch_combined_items(
+            64,
+            62,
+            Some(63),
+            96,
+            false,
+            &mut scenario,
+            &mut pending_combo,
+            &mut inv_screen,
+        );
+        assert_eq!(scenario.inventory_mgr.count(62), 0);
+        assert_eq!(scenario.inventory_mgr.count(63), 0);
+        assert_eq!(scenario.inventory_mgr.count(64), 0);
+        assert_eq!(scenario.inventory_mgr.count(96), 1);
     }
 }

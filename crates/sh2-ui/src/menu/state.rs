@@ -1,7 +1,7 @@
 //! Title screen and main menu state machine (`SLUS_202.28` `Event/title.c` `0x001c0b00..0x001c4740`
 //! and retail PC `sh2pc.exe` `0x00495520..0x00498d80`).
 
-use super::boot::{BootProfile, BootSequenceState};
+use super::boot::{BootLogoStage, BootProfile, BootSequenceState};
 use super::types::{
     resolve_effective_riddle, LaunchTarget, MainMenuOption, MenuNavAction, MenuSoundCue,
     SaveAvailability, TestRoomKind, TitlePhase,
@@ -65,6 +65,8 @@ pub struct TitleStateMachine {
     pub is_fading_out: bool,
     /// Boot logo sequence state (`logo.c` `0x0020c910..0x0020d220` / `sh2pc` `0x00405e80`).
     pub boot_sequence: BootSequenceState,
+    /// Optional override allowing skip input during `BootProfile::Ps2Original` (`false` = strict 1:1 `logo.c`).
+    pub allow_ps2_boot_skip: bool,
     /// Legacy timer for splash screen duration in seconds.
     pub splash_timer: f32,
     /// Continuous elapsed time in seconds across all title phases (drives `StartPrompt` pulse).
@@ -116,6 +118,7 @@ impl TitleStateMachine {
             is_fading_in: true,
             is_fading_out: false,
             boot_sequence: BootSequenceState::new(BootProfile::Ps2Original),
+            allow_ps2_boot_skip: false,
             splash_timer: 0.0,
             elapsed_timer: 0.0,
             attract_timer: TITLE_ATTRACT_TIMEOUT_SECS,
@@ -249,13 +252,20 @@ impl TitleStateMachine {
 
         match self.phase {
             TitlePhase::SplashIntro => {
-                // Skip straight to TitleLogo on confirm/cancel (preserves responsive boot skip).
-                self.phase = TitlePhase::TitleLogo;
-                self.fade_alpha = 1.0;
-                self.is_fading_out = false;
-                self.is_fading_in = false;
-                self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
-                sound = MenuSoundCue::Confirm;
+                // Delegate to `BootSequenceState::handle_skip` (`SLUS_202.28` `logo.c`
+                // `0x0020c910..0x0020d220` unskippable by default; retail PC `sh2pc.exe`
+                // `0x00405e80` fast-skips fade/hold per logo).
+                if matches!(action, MenuNavAction::Confirm | MenuNavAction::Cancel)
+                    && self.boot_sequence.handle_skip(self.allow_ps2_boot_skip)
+                {
+                    self.fade_alpha = self.boot_sequence.alpha;
+                    if self.boot_sequence.stage == BootLogoStage::Complete {
+                        self.phase = TitlePhase::TitleLogo;
+                        self.start_fade_in();
+                        self.attract_timer = TITLE_ATTRACT_TIMEOUT_SECS;
+                    }
+                    sound = MenuSoundCue::Confirm;
+                }
             }
             TitlePhase::TitleLogo => {
                 // Any confirm proceeds to Main Menu with save-aware default cursor.
@@ -293,7 +303,7 @@ impl TitleStateMachine {
                                 self.scenario_index = 0;
                                 sound = MenuSoundCue::Confirm;
                             }
-                            MainMenuOption::Continue | MainMenuOption::Load => {
+                            MainMenuOption::Continue => {
                                 self.launch_target = LaunchTarget::Campaign {
                                     scenario: self.selected_scenario,
                                     is_continue: true,
@@ -301,6 +311,13 @@ impl TitleStateMachine {
                                 self.phase = TitlePhase::TransitionToGame;
                                 self.start_fade_out();
                                 sound = MenuSoundCue::GameStartTransition;
+                            }
+                            MainMenuOption::Load => {
+                                // `SLUS_202.28` `titleFadeOut` (`0x001c30d0`) / `titleExit` (`0x001c3300`)
+                                // -> `mcLoadMenu` (`0x00243e20`): open multi-slot `SaveLoadScreen` in Load mode.
+                                self.phase = TitlePhase::LoadMenu;
+                                self.start_fade_in_duration(0.5);
+                                sound = MenuSoundCue::Confirm;
                             }
                             MainMenuOption::Options => {
                                 self.phase = TitlePhase::OptionsMenu;
@@ -512,7 +529,7 @@ impl TitleStateMachine {
                 }
                 _ => {}
             },
-            TitlePhase::OptionsMenu | TitlePhase::TransitionToGame => {}
+            TitlePhase::OptionsMenu | TitlePhase::LoadMenu | TitlePhase::TransitionToGame => {}
         }
 
         self.pending_audio_cue = sound;

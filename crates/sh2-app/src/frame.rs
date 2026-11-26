@@ -575,7 +575,10 @@ fn render_title_menu_overlay(
                 };
                 state.boot_logo_bgs[idx].as_ref()
             }),
-        TitlePhase::OptionsMenu | TitlePhase::TestRoomsSelect | TitlePhase::TransitionToGame => {
+        TitlePhase::OptionsMenu
+        | TitlePhase::LoadMenu
+        | TitlePhase::TestRoomsSelect
+        | TitlePhase::TransitionToGame => {
             None // Authentic PS2 draws over pure black backdrop
         }
         _ => active_title_bg.or(state.splash_konami_bg.as_ref()),
@@ -734,6 +737,20 @@ fn render_title_menu_overlay(
                     font,
                     &mut state.inventory_rasterizer,
                 );
+            }
+            TitlePhase::LoadMenu => {
+                if state.ingame_menus.save_load.is_none() {
+                    crate::ingame_menus::open_save_load(state, sh2_ui::SaveLoadMode::Load);
+                }
+                let bg = state
+                    .ingame_menus
+                    .cached_savebg_tex
+                    .as_ref()
+                    .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
+                if let Some(ref mut sl) = state.ingame_menus.save_load {
+                    sl.tick(1.0 / 60.0);
+                    sh2_ui::draw_save_load_screen(sl, bg, font, &mut state.inventory_rasterizer);
+                }
             }
             TitlePhase::TestRoomsSelect => {
                 sh2_ui::draw_test_rooms_screen(

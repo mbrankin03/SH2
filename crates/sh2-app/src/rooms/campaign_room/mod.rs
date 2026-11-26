@@ -707,8 +707,15 @@ impl RoomController for CampaignRoomController {
                         .total_items_picked_up(),
                 );
                 info.hidden_item_get = state.sim_core.scenario.inventory_mgr.secret_items_mask();
-                let results =
-                    sh2_ui::ResultsScreen::from_playing_info(&info, action, riddle, ruleset);
+                let current_ending = sh2_ui::results::state::ending_from_stage(ending_stage as u8)
+                    .unwrap_or(sh2_core::endings::GameEnding::Leave);
+                let results = sh2_ui::ResultsScreen::from_playing_info_with_ending(
+                    &info,
+                    current_ending,
+                    action,
+                    riddle,
+                    ruleset,
+                );
                 state.begin_hud_overlay();
                 sh2_ui::draw_results_screen(&results, font, &mut state.menu_rasterizer);
                 state.finish_hud_overlay(encoder, surface_view);

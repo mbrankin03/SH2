@@ -91,6 +91,15 @@ fn apply_loaded_snapshot(
     state.menu_ctrl.title_sm.riddle_difficulty = snapshot.riddle_difficulty;
     state.menu_ctrl.pause_menu.play_time_secs = snapshot.play_time_secs;
     state.ingame_menus.save_load = None;
+    let target = sh2_ui::menu::LaunchTarget::Campaign {
+        scenario: snapshot.scenario,
+        is_continue: true,
+    };
+    state.menu_ctrl.title_sm.launch_target = target;
+    state.active_launch_target = target;
+    if !state.menu_ctrl.in_game_active {
+        state.menu_ctrl.in_game_active = true;
+    }
     if let Some(ref mut engine) = state.audio_engine {
         engine.set_bgm_paused(false);
     }
@@ -271,6 +280,14 @@ fn apply_save_load_action(state: &mut AppState, action: sh2_ui::SaveLoadAction) 
         }
         sh2_ui::SaveLoadAction::Close => {
             state.ingame_menus.save_load = None;
+            if !state.menu_ctrl.in_game_active
+                && state.menu_ctrl.title_sm.phase == sh2_ui::menu::TitlePhase::LoadMenu
+            {
+                state
+                    .menu_ctrl
+                    .title_sm
+                    .show_phase_immediately(sh2_ui::menu::TitlePhase::MainMenu);
+            }
             if let Some(ref mut eng) = state.audio_engine {
                 eng.set_bgm_paused(false);
             }

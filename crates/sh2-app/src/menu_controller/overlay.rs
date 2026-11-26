@@ -84,6 +84,10 @@ impl AppMenuController {
                     lines.push("[Cancel to Return to Main Menu]".into());
                 }
             }
+            TitlePhase::LoadMenu => {
+                lines.push("=== LOAD GAME ===".into());
+                lines.push("[Up/Down: Select Slot, Confirm: Load, Cancel: Back]".into());
+            }
             TitlePhase::TestRoomsSelect => {
                 lines.push("=== TEST ROOMS / DEBUG STAGES ===".into());
                 for (idx, room) in sh2_ui::menu::TestRoomKind::ALL.iter().enumerate() {

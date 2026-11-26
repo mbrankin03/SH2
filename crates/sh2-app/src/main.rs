@@ -57,6 +57,10 @@ impl ApplicationHandler for SilentHillApp {
                     let pressed = key_event.state == winit::event::ElementState::Pressed;
 
                     if !state.menu_ctrl.in_game_active {
+                        if state.ingame_menus.save_load.is_some() {
+                            ingame_menus::handle_key_input(state, key_code, pressed);
+                            return;
+                        }
                         handle_title_menu_key_input(state, key_code, pressed);
                         if state.menu_ctrl.title_sm.exit_requested {
                             tracing::info!("Main Menu: Exit confirmed, closing application.");
@@ -109,6 +113,14 @@ impl ApplicationHandler for SilentHillApp {
                 }
 
                 if pressed && !state.menu_ctrl.in_game_active {
+                    if state.ingame_menus.save_load.is_some() {
+                        if button == winit::event::MouseButton::Right {
+                            ingame_menus::handle_mouse_right_click(state);
+                        } else if let Some((mx, my)) = state.last_cursor_pos {
+                            ingame_menus::handle_mouse_click(state, mx as f32, my as f32);
+                        }
+                        return;
+                    }
                     let vw = state.surface_config.width.max(1) as f32;
                     let vh = state.surface_config.height.max(1) as f32;
                     let sound = if button == winit::event::MouseButton::Right {
@@ -181,7 +193,9 @@ impl ApplicationHandler for SilentHillApp {
             WindowEvent::CursorMoved { position, .. } => {
                 let vw = state.surface_config.width.max(1) as f32;
                 let vh = state.surface_config.height.max(1) as f32;
-                if !state.menu_ctrl.in_game_active || state.menu_ctrl.pause_menu.is_open {
+                if !state.menu_ctrl.in_game_active && state.ingame_menus.save_load.is_some() {
+                    ingame_menus::handle_mouse_move(state, position.x as f32, position.y as f32);
+                } else if !state.menu_ctrl.in_game_active || state.menu_ctrl.pause_menu.is_open {
                     let cue = state.menu_ctrl.handle_mouse_move(
                         position.x as f32,
                         position.y as f32,

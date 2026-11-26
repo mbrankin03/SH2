@@ -239,11 +239,18 @@ fn configure_ob01_fog_and_valley_mist(
     fog_u.screen_fog_uv = [0.5, 0.5, 0.125, 32.0 / 128.0];
     ctx.update_fog(&fog_u);
 
-    // Step authentic `obGB.fcl` valley mist particle cloud (`fogSetLocalPosV` `0x0016c6d0`,
-    // `bVar2 = 0x21`: valley Z-lock + floor fade band `Y = -700..0 mm`), concentrated cleanly
-    // between the stone parapet (`Z = 400 mm`) and Toluca Lake skybox (`Z = 5800 mm`).
-    let mut vol = FogParticleVolume::new(eval.particle_count, eval.particle_range_x_mm, 2_700.0);
-    let anchor = [player_pos.x, player_pos.y - 450.0, 3_100.0];
+    // Exact 1:1 `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`, `DAT_00581534 == 0x05`)
+    // and `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `subdiv = 4`, `area = 7000 mm`).
+    let mut vol = FogParticleVolume::new(
+        eval.particle_count,
+        eval.particle_range_x_mm,
+        eval.particle_range_z_mm,
+    );
+    let anchor = [
+        player_pos.x,
+        sh2_core::fog::OB_FOG_ANCHOR_Y_MM,
+        sh2_core::fog::OB_FOG_ANCHOR_Z_MM,
+    ];
     vol.step(
         1.0 / 30.0,
         eval.speed_mult,
@@ -256,15 +263,30 @@ fn configure_ob01_fog_and_valley_mist(
     let gpu_particles: Vec<GpuFogParticle> = vol
         .particles()
         .iter()
-        .filter(|p| (400.0..=5_800.0).contains(&(anchor[2] + p.local_pos[2])))
-        .map(|p| GpuFogParticle {
-            world_pos_radius: [
-                anchor[0] + p.local_pos[0],
-                anchor[1] + p.local_pos[1],
-                anchor[2] + p.local_pos[2],
-                p.radius_mm * radius_scale,
-            ],
-            color_alpha: [fog_rgb[0], fog_rgb[1], fog_rgb[2], p.alpha],
+        .map(|p| {
+            let norm_y = ((p.local_pos[1] / sh2_core::fog::PS2_DEFAULT_FOG_HEIGHT_BAND_MM) * 0.5
+                + 0.5)
+                .clamp(0.0, 1.0);
+            let local_y = -norm_y * sh2_core::fog::OB_FOG_Y_SPAN_MM;
+            let top_fade = if local_y < 300.0 - sh2_core::fog::OB_FOG_Y_SPAN_MM {
+                ((sh2_core::fog::OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            GpuFogParticle {
+                world_pos_radius: [
+                    anchor[0] + p.local_pos[0],
+                    anchor[1] + local_y,
+                    anchor[2] + p.local_pos[2],
+                    p.radius_mm * radius_scale,
+                ],
+                color_alpha: [
+                    fog_rgb[0],
+                    fog_rgb[1],
+                    fog_rgb[2],
+                    p.alpha * top_fade * sh2_core::fog::OB_FOG_ALPHA_NORM,
+                ],
+            }
         })
         .collect();
     ctx.update_fog_particles(&gpu_particles);

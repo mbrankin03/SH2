@@ -162,30 +162,26 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         } else {
             sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_COUNT
         };
-        // On `ob01`, concentrate the full valley mist particle budget cleanly between the stone
-        // parapet (`Z = 400 mm`) and the Toluca Lake skybox (`Z = 5800 mm < 6394 mm`) so zero
-        // billboards spill onto the parking lot or clip into the lake backdrop mesh.
-        let effective_range_z = if ps2_room_id == R_OBSV_DECK_ID {
-            2_700.0
-        } else {
-            room_eval.particle_range_z_mm
-        };
         state.fog_particles.reconfigure(
             target_count,
             room_eval.particle_range_x_mm,
-            effective_range_z,
+            room_eval.particle_range_z_mm,
         );
-        // Exact `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2958-2997`) +
-        // `obGB.fcl` (`bVar2 = 0x21`: bit 0 floor cutoff `param_1[5]=0, param_1[6]=700` -> fade
-        // band `Y = -700..0 mm`; bit 5 `0x20` valley Z-lock): on `ob01`, anchor the valley mist
-        // volume out over the cliff/valley (`Z = 6000 mm`, `Y = player_pos.y - 450 mm`, filtered
-        // to `world_z > 400 mm` behind the stone parapet) so `700..1026 mm` billboards span
-        // `Y = -1475..+575 mm`, completely veiling the dark bottom treeline of `tex4662/4663/4664`
-        // (`Z = 6394..11606 mm`) while keeping the parking lot, blue car, and parapet crisp.
+        // Exact 1:1 `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`, `DAT_00581534 == 0x05`)
+        // and `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `sh2pc_00480000.c:4194-4240`):
+        // On `ob01` (`R_OBSV_DECK`), Team Silent pins `anchor_y = +1000.0 mm` (`0x447a0000`) and
+        // `anchor_z = +7000.0 mm` (`0x45dac000`), with `obGB.fcl` `subdiv = 4` (`area = 7000 mm`)
+        // mapping particle `local_y` into `[-(7000*2)/16, 0] = [-875.0, 0.0]` -> world Y
+        // `[+125.0, +1000.0] mm` (with a `300 mm` fade at the upper Y border `local_y < -575`)
+        // and `obGB.fcl +0x13 = 0x30` (`48/128 = 0.375`) sprite alpha.
         let cam_to_player = player_pos - cam_eye;
         let cam_dist = cam_to_player.length();
         let anchor = if ps2_room_id == R_OBSV_DECK_ID {
-            [player_pos.x, player_pos.y - 450.0, 3_100.0]
+            [
+                player_pos.x,
+                sh2_core::fog::OB_FOG_ANCHOR_Y_MM,
+                sh2_core::fog::OB_FOG_ANCHOR_Z_MM,
+            ]
         } else if cam_dist > 2_000.0 {
             let projected = cam_eye + (cam_to_player / cam_dist) * 2_000.0;
             [
@@ -219,25 +215,40 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         } else {
             1.0
         };
-        state.fog_particle_scratch.extend(
-            state
-                .fog_particles
-                .particles()
-                .iter()
-                .filter(|p| {
-                    ps2_room_id != R_OBSV_DECK_ID
-                        || (400.0..=5_800.0).contains(&(anchor[2] + p.local_pos[2]))
-                })
-                .map(|p| GpuFogParticle {
+        state
+            .fog_particle_scratch
+            .extend(state.fog_particles.particles().iter().map(|p| {
+                let (wy, alpha) = if ps2_room_id == R_OBSV_DECK_ID {
+                    // Exact `sh2pc.exe` `FUN_00486d10` (`0x00486d10`) `subdiv = 4` Y band:
+                    // map symmetric `[-100, +100]` into `[-875.0, 0.0]` (`world_y ∈ [+125, +1000]`)
+                    // with `300 mm` upper fade (`sh2pc_00480000.c:4235-4240`) and `0x30/128` alpha.
+                    let norm_y = ((p.local_pos[1] / sh2_core::fog::PS2_DEFAULT_FOG_HEIGHT_BAND_MM)
+                        * 0.5
+                        + 0.5)
+                        .clamp(0.0, 1.0);
+                    let local_y = -norm_y * sh2_core::fog::OB_FOG_Y_SPAN_MM;
+                    let top_fade = if local_y < 300.0 - sh2_core::fog::OB_FOG_Y_SPAN_MM {
+                        ((sh2_core::fog::OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    (
+                        anchor[1] + local_y,
+                        p.alpha * top_fade * sh2_core::fog::OB_FOG_ALPHA_NORM,
+                    )
+                } else {
+                    (anchor[1] + p.local_pos[1], p.alpha)
+                };
+                GpuFogParticle {
                     world_pos_radius: [
                         anchor[0] + p.local_pos[0],
-                        anchor[1] + p.local_pos[1],
+                        wy,
                         anchor[2] + p.local_pos[2],
                         p.radius_mm * radius_scale,
                     ],
-                    color_alpha: [particle_rgb[0], particle_rgb[1], particle_rgb[2], p.alpha],
-                }),
-        );
+                    color_alpha: [particle_rgb[0], particle_rgb[1], particle_rgb[2], alpha],
+                }
+            }));
     }
 
     // Step 1:1 `Fog/fog_blow.c` (`0x00274ca0..0x00275480`) steam-vent particles for indoor

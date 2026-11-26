@@ -71,6 +71,20 @@ pub const OB_FOG_MIN_NORM: f32 = (255.0 - 230.0) / 255.0;
 /// normalized maximum depth-fog blend factor (`1.0 - 40.0 / 255.0 = 215.0 / 255.0`), verified in
 /// `sh2pc.exe` `FUN_00458c30(_DAT_00942c38 * 0.003921569)` (`sh2pc_00470000.c:7922`).
 pub const OB_FOG_MAX_NORM: f32 = (255.0 - 40.0) / 255.0;
+/// Exact `ob01` (`DAT_00581534 == 0x05`) fixed valley fog anchor Y in PS2 mm (`0x447a0000 = 1000.0f`),
+/// verified 1:1 in `SLUS_202.28` `Fog/fogdata.c:169` (`0x0016cb40`).
+pub const OB_FOG_ANCHOR_Y_MM: f32 = 1000.0;
+/// Exact `ob01` (`DAT_00581534 == 0x05`) fixed valley fog anchor Z in PS2 mm (`0x45dac000 = 7000.0f`),
+/// verified 1:1 in `SLUS_202.28` `Fog/fogdata.c:170` (`0x0016cb40`).
+pub const OB_FOG_ANCHOR_Z_MM: f32 = 7000.0;
+/// Exact `ob01` vertical particle span in PS2 mm from `sh2pc.exe` `FUN_00486d10` (`0x00486d10`,
+/// `sh2pc_00480000.c:4194-4205`): `(area * 2.0) / (1 << subdiv) = (7000.0 * 2.0) / 16.0 = 875.0 mm`
+/// (`local_y ∈ [-875.0, 0.0]` -> world `Y ∈ [+125.0, +1000.0] mm`).
+pub const OB_FOG_Y_SPAN_MM: f32 = 875.0;
+/// Exact `obGB.fcl +0x13` (`0x97 = 0x30 = 48`) normalized PS2 GS sprite alpha (`48.0 / 128.0 = 0.375`),
+/// verified in `SLUS_202.28` `fogSetEnvironment` (`Fog/fog.c:305`) and `sh2pc.exe` `FUN_004858a0`
+/// (`sh2pc_00480000.c:3302-3307`).
+pub const OB_FOG_ALPHA_NORM: f32 = 48.0 / 128.0;
 /// Room ID for Forest Trail & Cemetery (`R_FOREST_CEMETERY = 0x03` in `Patches.h`).
 pub const R_FOREST_CEMETERY_ID: u32 = 0x03;
 /// Room ID for Silent Hill Town East (`R_TOWN_EAST = 0x04` in `Patches.h`).
@@ -378,7 +392,7 @@ pub fn evaluate_room_fog_with_fixes(
             let (range_x, range_z, count) = if ctx.extended_observation_deck_range {
                 (
                     OBSERVATION_DECK_ULTRAWIDE_MAX_POS_X,
-                    12000.0,
+                    OB_FOG_ENV_AREA_SIZE_MM,
                     OBSERVATION_DECK_FOG_PARTICLE_MAX,
                 )
             } else {

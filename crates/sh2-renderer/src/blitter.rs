@@ -5,6 +5,10 @@ use wgpu::util::DeviceExt;
 /// Window surface presentation blitter.
 pub struct SurfaceBlitter {
     pub pipeline: wgpu::RenderPipeline,
+    /// Pipeline for presenting `Rgba8Unorm` display-space sRGB LDR buffers (`ldr_output_texture`)
+    /// onto `target_format`: decodes sRGB->linear when `target_format.is_srgb()` so the swapchain's
+    /// hardware linear->sRGB write produces a 1:1 pass-through without double-gamma washout.
+    pub ldr_pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
     pub default_uniform_buffer: wgpu::Buffer,
@@ -85,6 +89,41 @@ impl SurfaceBlitter {
             cache: None,
         });
 
+        let ldr_entry_point = if target_format.is_srgb() {
+            "fs_main_srgb_input"
+        } else {
+            "fs_main"
+        };
+        let ldr_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Surface LDR Blit Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(ldr_entry_point),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Surface Blit Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -103,6 +142,7 @@ impl SurfaceBlitter {
 
         Self {
             pipeline,
+            ldr_pipeline,
             bind_group_layout,
             sampler,
             default_uniform_buffer,
@@ -218,6 +258,68 @@ impl SurfaceBlitter {
         if vw > 0.0 && vh > 0.0 {
             rpass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
             rpass.set_pipeline(&self.pipeline);
+            rpass.set_bind_group(0, bind_group, &[]);
+            rpass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Presents a display-space sRGB `Rgba8Unorm` LDR frame (`ldr_output_view`) using
+    /// `ldr_pipeline` so sRGB swapchains do not apply a second gamma curve.
+    pub fn render_ldr_with_bind_group(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        dst_view: &wgpu::TextureView,
+    ) {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Surface LDR Blit Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: dst_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        rpass.set_pipeline(&self.ldr_pipeline);
+        rpass.set_bind_group(0, bind_group, &[]);
+        rpass.draw(0..3, 0..1);
+    }
+
+    /// Presents a display-space sRGB `Rgba8Unorm` LDR frame into a sub-rectangle `viewport` of
+    /// `dst_view` (used by the PS2 Status/Inventory live snapshot box).
+    pub fn render_ldr_with_bind_group_in_viewport(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        dst_view: &wgpu::TextureView,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+        viewport: (f32, f32, f32, f32),
+    ) {
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Surface LDR Viewport Blit Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: dst_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: load_op,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        let (vx, vy, vw, vh) = viewport;
+        if vw > 0.0 && vh > 0.0 {
+            rpass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
+            rpass.set_pipeline(&self.ldr_pipeline);
             rpass.set_bind_group(0, bind_group, &[]);
             rpass.draw(0..3, 0..1);
         }

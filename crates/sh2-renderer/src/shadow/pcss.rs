@@ -280,9 +280,9 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
             },
         });
 
-        // Match MapVertex stride (48 bytes), reading only @location(0) position
+        // Match MapVertex stride, reading only @location(0) position
         let static_vb = [wgpu::VertexBufferLayout {
-            array_stride: 48,
+            array_stride: std::mem::size_of::<sh2_assets::formats::map::MapVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[wgpu::VertexAttribute {
                 offset: 0,

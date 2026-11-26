@@ -52,23 +52,6 @@ fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Exact IEC 61966-2-1 sRGB transfer functions so PS2 8-bit display-space GS blends
-// (`sh2gfw_SendDraw_Noise` `ALPHA_1 = (0x60 << 32) | 0x21`) operate in display sRGB space
-// rather than linear light space before `Bgra8UnormSrgb` swapchain presentation.
-fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
-    let clamped = max(c, vec3<f32>(0.0));
-    let lo = clamped * 12.92;
-    let hi = 1.055 * pow(clamped, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, clamped <= vec3<f32>(0.0031308));
-}
-
-fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
-    let clamped = max(c, vec3<f32>(0.0));
-    let lo = clamped / 12.92;
-    let hi = pow((clamped + 0.055) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, clamped <= vec3<f32>(0.04045));
-}
-
 // Resolution-independent PCG hash fallback when PS2 tiled noise flag is off
 fn hash_u32(x: u32) -> u32 {
     var state = x * 747796405u + 2891336453u;
@@ -196,10 +179,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         let cs_srgb = vec3<f32>(noise_texel * PS2_NOISE_VTX_MODULATE);
         let grain_weight = PS2_NOISE_BLEND_WEIGHT * clamp(post.grain_intensity, 0.0, 1.0);
-        // PS2 GS blends `Cd` and `Cs` (`0x00` or `43/255`) in 8-bit display (sRGB) space.
-        let ldr_srgb = linear_to_srgb(ldr);
-        let noisy_srgb = clamp(mix(ldr_srgb, cs_srgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
-        ldr = srgb_to_linear(noisy_srgb);
+        // PS2 GS blends `Cd` (`ldr`, already in 8-bit display sRGB space) and `Cs` (`0x00` or `43/255`) directly.
+        ldr = clamp(mix(ldr, cs_srgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     // 3. PS2 Black/White/Red screen fade (`sh2gfw_Fade2` 0x00179d60, `sh2gfw_Fade3` 0x0017a2e0)

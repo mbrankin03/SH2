@@ -371,7 +371,10 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
                 base_amb_scale
             };
 
-            const PARALLEL_LIGHT_LINEAR_SCALE: f32 = 0.07 * 2.2;
+            // Exact `SLUS_202.28` `sh2gfw_set_CommonCharacterLight` (`0x00130d20`: `0x3f800000 = 1.0f`)
+            // `1.0` scale for `DrawEnvData` / `CharacterLightPool` light colors (`.map` applies `0.25` in `pipeline.rs`).
+            const PARALLEL_LIGHT_LINEAR_SCALE: f32 =
+                sh2_renderer::light::CHARACTER_POOL_LINEAR_SCALE;
             // Extract packed parallel directional lights from `CharacterLightPool::update_parallels`
             // (`UpdateParallels` `0x00126d30`: `parallel_nlm` + `parallel_lcm` matrix 0).
             let mut pool_parallels = [sh2_renderer::light::ParallelLightParams::default(); 3];
@@ -438,7 +441,7 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
                 f32::from(sh2_renderer::skeletal::ENVIRON_PACKET_RGB_U8),
             ) as u8;
 
-            if spot_active {
+            let mut u = if spot_active {
                 // Flashlight ON (including 30-frame turn-on ramp, 6-frame turn-off ramp, and LCG flicker):
                 // 1-spot + 2-parallel (`sh2gfw_setsp1para2LGT_blk` @ 0x0017ddd0, `Calculate_Jms_Spot` @ 0x0028e940).
                 let fl_mul = sh2_core::lighting::flashlight_wall_brightness_multiplier(
@@ -550,7 +553,17 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
                     env_alpha_u8,
                 );
                 u
+            };
+            if let Some(ref env) = draw_env {
+                u.set_draw_env_constants(
+                    env,
+                    gun_light,
+                    dark_trim,
+                    is_dark_room,
+                    darkness.ambient_scale,
+                );
             }
+            u
         };
     state.render_ctx.update_spotlight(&spot_uniforms);
     let video = &state.menu_ctrl.options_menu.draft_config.video;
@@ -589,19 +602,13 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
         .render_ctx
         .update_shadow_config(effective_shadow_mode, opacity, specular_scale);
 
-    // Sync SH2-136 PS2 room clear color (`0x00175930`), soft stencil shadow blur (`0x001767e0`),
-    // dual GS composite mode (`0x00175f90`), and `Check_DrawOrder` (`0x001a08a0`).
-    let room_clear_rgba = world_color_rgb.map(|rgb| {
-        [
-            rgb[0],
-            rgb[1],
-            rgb[2],
-            if is_dark_room { 0x7c } else { 0x40 },
-        ]
-    });
-    state
-        .render_ctx
-        .set_room_clear_color(is_dark_room, room_clear_rgba);
+    // Sync SH2-136 PS2 room clear color (`0x00175930` / `SetupDrawEnvData` `0x00251370:357-399`),
+    // soft stencil shadow blur (`0x001767e0`), dual GS composite mode (`0x00175f90`), and
+    // `Check_DrawOrder` (`0x001a08a0`). Note: `DrawEnvData::clear_color_rgb` in `draw_env_tables.rs`
+    // holds header bytes `+0x08..+0x0b` (not `+0x1a0`), so pass `None` to use the exact
+    // `SetupDrawEnvData` defaults (`[0x46, 0x46, 0x46, 0x40]` Day / `[0x00, 0x00, 0x00, 0x7c]` Night).
+    let _ = world_color_rgb;
+    state.render_ctx.set_room_clear_color(is_dark_room, None);
     state.render_ctx.set_soft_shadow_blur_enabled(
         effective_shadow_mode != sh2_core::config::ShadowQualityMode::NativePcss,
     );

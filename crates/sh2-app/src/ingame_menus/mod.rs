@@ -463,11 +463,11 @@ pub(crate) fn handle_mouse_click(state: &mut AppState, mouse_x: f32, mouse_y: f3
                 state.menu_ctrl.config_applied_pending = Some(saved_cfg.clone());
                 let _ = saved_cfg.save_to_file(&state.menu_ctrl.config_path);
                 crate::menu_events::sync_audio_config(state, &saved_cfg);
-                let sound = match cue {
-                    sh2_ui::options::OptionsSoundCue::ValueChange => MenuSoundCue::CursorMove,
-                    _ => MenuSoundCue::Confirm,
-                };
-                emit_menu_sound(state, sound, "Inventory Options");
+                if cue == sh2_ui::options::OptionsSoundCue::ValueChange {
+                    actions::play_options_volume_or_cursor_sfx(state);
+                } else {
+                    emit_menu_sound(state, MenuSoundCue::Confirm, "Inventory Options");
+                }
             }
         }
         return;

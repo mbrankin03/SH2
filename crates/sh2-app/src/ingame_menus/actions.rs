@@ -55,6 +55,31 @@ pub(crate) fn build_player_snapshot(state: &AppState) -> InventoryPlayerSnapshot
     }
 }
 
+/// `SLUS_202.28` `Item/otn_option.c:405, 414, 429, 438` (`SeCall(1.0, 0x4a49)`): volume slider preview SFX.
+pub(crate) const OPTION_VOLUME_SE_ID: u32 = 0x4a49;
+
+/// Plays `SeCall(1.0, 0x4a49)` when adjusting an Options volume slider, falling back to
+/// `MenuSoundCue::CursorMove` if the bank cannot resolve `0x4a49`.
+pub(crate) fn play_options_volume_or_cursor_sfx(state: &mut AppState) {
+    let is_volume_row = match state.menu_ctrl.options_menu.active_tab {
+        sh2_ui::options::OptionsTab::Root => {
+            matches!(state.menu_ctrl.options_menu.selected_index, 8..=10)
+        }
+        sh2_ui::options::OptionsTab::Audio => {
+            matches!(state.menu_ctrl.options_menu.selected_index, 0..=3)
+        }
+        _ => false,
+    };
+    if is_volume_row {
+        if let (Some(ref mut eng), Some(ref bank)) = (&mut state.audio_engine, &state.audio_bank) {
+            if bank.play_se_id(eng, OPTION_VOLUME_SE_ID, 1.0).is_ok() {
+                return;
+            }
+        }
+    }
+    emit_menu_sound(state, MenuSoundCue::CursorMove, "Inventory Options");
+}
+
 pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: KeyCode) {
     if state.ingame_menus.options_closing_to_inventory {
         return;
@@ -69,12 +94,24 @@ pub(crate) fn handle_options_from_inventory_key(state: &mut AppState, key_code: 
             MenuSoundCue::CursorMove
         }
         KeyCode::KeyA | KeyCode::ArrowLeft => {
-            state.menu_ctrl.options_menu.adjust_value(-1);
-            MenuSoundCue::CursorMove
+            let cue = state.menu_ctrl.options_menu.adjust_value(-1);
+            let draft = state.menu_ctrl.options_menu.draft_config.clone();
+            sync_audio_config(state, &draft);
+            if cue == OptionsSoundCue::ValueChange {
+                play_options_volume_or_cursor_sfx(state);
+                return;
+            }
+            MenuSoundCue::None
         }
         KeyCode::KeyD | KeyCode::ArrowRight => {
-            state.menu_ctrl.options_menu.adjust_value(1);
-            MenuSoundCue::CursorMove
+            let cue = state.menu_ctrl.options_menu.adjust_value(1);
+            let draft = state.menu_ctrl.options_menu.draft_config.clone();
+            sync_audio_config(state, &draft);
+            if cue == OptionsSoundCue::ValueChange {
+                play_options_volume_or_cursor_sfx(state);
+                return;
+            }
+            MenuSoundCue::None
         }
         KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => {
             if state.menu_ctrl.options_menu.enter_submenu() {

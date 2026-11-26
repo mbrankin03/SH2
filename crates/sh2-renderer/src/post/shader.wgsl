@@ -16,6 +16,7 @@ struct PostUniforms {
 const POST_FLAG_ACES_TONEMAP: u32 = 1u;
 const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
 const POST_FLAG_FIRE_HEAT_HAZE: u32 = 4u;
+const POST_FLAG_SH2EE_NOISE: u32 = 8u;
 
 // PS2 `sh2gfw_SendDraw_Noise` (`0x00177f30`) & `Noise_and_FontDraw` (`0x0019ff70`) GS constants:
 // - `noise_clut` (`0x002ab5c0`): 16-entry PSMT4 CLUT with RGB = `0x00` or `0x18` (`24 / 255.0`).
@@ -29,6 +30,18 @@ const PS2_NOISE_BLEND_WEIGHT: f32 = (128.0 - 96.0) / 128.0;
 // noise (`sh2gfw_SendDraw_Noise` `0x00177f30`). Scaling X by `aspect` gives exact `4.0 x 3.5` at
 // `512x448` and keeps grain texels square on 16:9 / 21:9 / 4K displays.
 const PS2_NOISE_TILES_Y: f32 = 448.0 / 128.0;
+// Retail PC `sh2pc.exe` (`FUN_00477d30` `0x00477d30`, `FUN_0047c680` `0x0047c680`, `FUN_00478070`
+// `0x00478070`: `0x20x0x20` DXT1 = `128x128` tiled at native pixel resolution with RGB565 `0xde99`)
+// + SH2:EE `PS2NoiseFilter.cpp` (`BrightnessControl = 7.4`, `FilterByteEDX = 0x1d7` =>
+// `tfactor_rgb = (222 / 7.4) / 255 = 30 / 255`, `alpha_weight = ((0x1d7 - 0xc0) >> 2) / 255 = 69 / 255`,
+// `D3DTOP_MODULATE2X` x `2.0`).
+const SH2EE_NOISE_TILE_PX: f32 = 128.0;
+const SH2EE_NOISE_CS_HIGH: vec3<f32> = vec3<f32>(
+    (30.0 / 255.0) * 2.0 * (27.0 / 31.0),
+    (30.0 / 255.0) * 2.0 * (52.0 / 63.0),
+    (30.0 / 255.0) * 2.0 * (25.0 / 31.0),
+);
+const SH2EE_NOISE_BLEND_WEIGHT: f32 = 69.0 / 255.0;
 
 // PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) & `sh2gfw_Swap_GlowSoft` (`0x00178d60`) 12.4 sub-pixel
 // half-texel bias (`-4` in 12.4 fixed-point = `-4.0 / 16.0 = -0.25` px) and PS2 NTSC vertical
@@ -165,11 +178,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     //    modulates by `DAT_002adb55 = 0xe6` (`230 / 128.0`), and blends with `ALPHA_1 = (0x60 << 32) | 0x21`
     //    (`DAT_002adb52 = 0x60 = 96` => `mix(Cd, Cs, 32 / 128.0)` scaled by user `grain_intensity`).
     if (post.grain_intensity > 0.001) {
+        let use_sh2ee_noise = (post.flags & POST_FLAG_SH2EE_NOISE) != 0u;
         var noise_texel: f32;
         if ((post.flags & POST_FLAG_PS2_LCG_NOISE) != 0u) {
             let fdims = max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
             let uv = (vec2<f32>(global_id.xy) + vec2<f32>(0.5, 0.5)) / fdims;
-            let tiles = vec2<f32>(PS2_NOISE_TILES_Y * (fdims.x / fdims.y), PS2_NOISE_TILES_Y);
+            let tiles = select(
+                vec2<f32>(PS2_NOISE_TILES_Y * (fdims.x / fdims.y), PS2_NOISE_TILES_Y),
+                max(fdims / SH2EE_NOISE_TILE_PX, vec2<f32>(PS2_NOISE_TILES_Y * (fdims.x / fdims.y), PS2_NOISE_TILES_Y)),
+                use_sh2ee_noise,
+            );
             noise_texel = textureSampleLevel(ps2_noise_tex, ps2_noise_sampler, uv * tiles, 0.0).r;
         } else {
             let frame_seed = u32(post.time * 30.0);
@@ -177,9 +195,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             noise_texel = select(0.0, PS2_NOISE_CLUT_HIGH, rand_f >= 0.5);
         }
 
-        let cs_srgb = vec3<f32>(noise_texel * PS2_NOISE_VTX_MODULATE);
-        let grain_weight = PS2_NOISE_BLEND_WEIGHT * clamp(post.grain_intensity, 0.0, 1.0);
-        // PS2 GS blends `Cd` (`ldr`, already in 8-bit display sRGB space) and `Cs` (`0x00` or `43/255`) directly.
+        let norm_noise = clamp(noise_texel / PS2_NOISE_CLUT_HIGH, 0.0, 1.0);
+        let cs_srgb = select(
+            vec3<f32>(noise_texel * PS2_NOISE_VTX_MODULATE),
+            SH2EE_NOISE_CS_HIGH * norm_noise,
+            use_sh2ee_noise,
+        );
+        let base_weight = select(PS2_NOISE_BLEND_WEIGHT, SH2EE_NOISE_BLEND_WEIGHT, use_sh2ee_noise);
+        let grain_weight = base_weight * clamp(post.grain_intensity, 0.0, 1.0);
+        // PS2 GS / D3D8 blends `Cd` (`ldr`, already in 8-bit display sRGB space) and `Cs` directly.
         ldr = clamp(mix(ldr, cs_srgb, grain_weight), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 

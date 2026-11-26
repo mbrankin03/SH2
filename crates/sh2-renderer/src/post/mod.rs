@@ -33,6 +33,11 @@ pub const POST_FLAG_PS2_LCG_NOISE: u32 = 1 << 1;
 /// distortion for fire scenes (`native-upgrade`, `SH2-100`). Cleared in strict 1:1 Vanilla PS2 mode.
 pub const POST_FLAG_FIRE_HEAT_HAZE: u32 = 1 << 2;
 
+/// Bitflag in [`PostUniforms::flags`]: enables `sh2pc.exe` (`0x00477d30` / `0x0047c680` /
+/// `0x00478070`) + SH2:EE `PS2NoiseFilter.cpp` (`BrightnessControl = 7.4`, `FilterByteEDX = 0x1d7`)
+/// finer `128px`-tiled noise filter instead of strict `SLUS_202.28` `448p` `3.5`-tile GS grain.
+pub const POST_FLAG_SH2EE_NOISE: u32 = 1 << 3;
+
 /// Uniform buffer payload passed to the post-processing compute shader (`SH2-105`, `SH2-136`).
 ///
 /// Layout is 64 bytes (`4 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).

@@ -172,6 +172,16 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
     if aces_enabled {
         post_flags |= sh2_renderer::post::POST_FLAG_ACES_TONEMAP;
     }
+    if state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality
+        != sh2_core::config::WorldTextureQuality::OriginalPs2
+    {
+        post_flags |= sh2_renderer::post::POST_FLAG_SH2EE_NOISE;
+    }
 
     state
         .render_ctx

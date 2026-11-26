@@ -119,11 +119,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let view_pos_h = camera.inv_proj * clip_pos;
         let view_dist = length(view_pos_h.xyz / max(1e-5, abs(view_pos_h.w)));
 
+        // Exact `sh2pc.exe` `0x005a1b50` Z-plane split (`z_ndc = 0x3f49cd3e` -> `focus_mm = 1180.8 mm`):
+        // foreground (`view_dist < focus_mm`) uses `near_strength`; background uses `far_strength`.
         let focus_mm = post.dof_focus_params.x;
-        let near_mask = smoothstep(focus_mm + 120.0, focus_mm - 120.0, view_dist);
-        let far_mask = 1.0 - near_mask;
         let local_blur = clamp(
-            near_mask * post.dof_focus_params.y + far_mask * post.dof_focus_params.z,
+            select(post.dof_focus_params.z, post.dof_focus_params.y, view_dist < focus_mm),
             0.0,
             1.0,
         );

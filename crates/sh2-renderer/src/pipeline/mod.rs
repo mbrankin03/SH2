@@ -108,6 +108,9 @@ pub struct GeometryPipeline {
     pub pipeline: wgpu::RenderPipeline,
     /// Stenciled planar mirror reflected opaque pipeline (`FrontFace::Cw`, `Depth24PlusStencil8`, `stencil == 1`).
     pub mirror_reflected_pipeline: wgpu::RenderPipeline,
+    /// Planar water reflection opaque pipeline (`FrontFace::Cw`, `Depth32Float`, no stencil) for
+    /// negative-determinant `mirrored_reflection_view_proj` (`SH2-80` / `SH2-168`).
+    pub water_reflected_pipeline: wgpu::RenderPipeline,
     /// Coplanar decal pipeline (`ALPHA_BLENDING`, `depth_write_enabled: false`, negative depth bias).
     pub decal_pipeline: wgpu::RenderPipeline,
     /// Semi-transparent glass/water/foliage fringe pipeline (`ALPHA_BLENDING`, `depth_write_enabled: false`).
@@ -427,9 +430,43 @@ impl GeometryPipeline {
                 cache: None,
             });
 
+        let water_reflected_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Geometry Planar Water Reflected Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_buffer_layout,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_opaque"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: color_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: mirror_primitive,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
         Self {
             pipeline,
             mirror_reflected_pipeline,
+            water_reflected_pipeline,
             decal_pipeline,
             transparent_pipeline,
             bind_group_layout,
@@ -447,6 +484,7 @@ mod tests {
         let src = GeometryPipeline::WGSL_SHADER;
         assert!(src.contains("vec3<f32>(0.045, 0.045, 0.045)"));
         assert!(src.contains("vec3<f32>(0.18, 0.18, 0.18)"));
+        assert!(src.contains("(aux_parallel_diffuse + point_diffuse) * 0.25"));
         assert!(!src.contains("0.07, 0.075, 0.085"));
         assert!(!src.contains("0.18, 0.19, 0.21"));
     }

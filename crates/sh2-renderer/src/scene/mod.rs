@@ -261,10 +261,13 @@ impl RenderContext {
                 );
             }
 
-            // 1d-1. Render Toluca Lake water surface (`SH2-80`)
-            if self
-                .lake_water_enabled
-                .load(std::sync::atomic::Ordering::Relaxed)
+            // 1d-1. Render Toluca Lake water surface (`SH2-80`) in Pass 1 only when the depth-fog
+            // compute pass is disabled; when `enable_fog` is true, water is rendered post-depth-fog
+            // in `dispatch_compute_passes` so it is never double-fogged (`SH2-168`).
+            if !self.config.enable_fog
+                && self
+                    .lake_water_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed)
             {
                 self.water_pipeline.draw(&mut rpass);
             }
@@ -502,6 +505,37 @@ impl RenderContext {
                 cpass.set_pipeline(&self.fog_pipeline.pipeline);
                 cpass.set_bind_group(0, &self.fog_bind_group, &[]);
                 cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+            }
+
+            // Render Toluca Lake water surface (`SH2-80`) AFTER `FogComputePipeline` when depth fog
+            // is enabled so the water's own distance fog is never double-fogged by `FogComputePipeline`
+            // (which otherwise sees `depth = 1.0` because water has `depth_write_enabled: false`, `SH2-168`).
+            if self
+                .lake_water_enabled
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Toluca Lake Water Post-Depth-Fog Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.fog_color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                self.water_pipeline.draw(&mut rpass);
             }
 
             // Render localized 3D proximity fog particle billboards (`fogMakePacket` `0x0016bb70`,

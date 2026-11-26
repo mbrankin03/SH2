@@ -443,6 +443,10 @@ mod tests {
     fn test_classic_ps2_fog_wgsl_omits_uncited_042_plane_blend() {
         let src = include_str!("shader.wgsl");
         assert!(!src.contains("plane_noise * base_curve * 0.42"));
+        assert!(src.contains(
+            "let classic_half_span = vec2<f32>(fog.screen_fog_uv.z, fog.screen_fog_uv.z);"
+        ));
+        assert!(src.contains("clamp(screen_fog_alpha, 0.0, 1.0)"));
         assert!(src.contains("screen_fog_alpha * screen_fog_texel"));
     }
 }

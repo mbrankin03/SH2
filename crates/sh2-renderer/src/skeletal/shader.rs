@@ -220,10 +220,12 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         }
     }
     let camera_fill = vec3<f32>(spotlight.fill_and_range.x * max(dot(norm, view_dir), 0.0));
-    // Gun muzzle flash ambient boost (`(sh2gfw_Get_GunLight() * 2.0) / 4.0 = gun_light * 0.5` in
-    // 1.0-normalized ambient space, factoring out `4.0` VU1 ambient scale in `0x0017d7f0` / `0x0017ddd0`)
-    // and `DARK_Hosei` ambient trim (`0x002ab710` = 0.5, `sh2gfw_Get_DarkTrimFactor` 0x0028e350).
-    let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x);
+    // Gun muzzle flash ambient boost (`sh2gfw_Get_GunLight` `0x0028e290` -> `gun_light * 0.5` in
+    // `spotlight.gun_and_dark_trim.x`) + `sh2gfw_Get_JmsGunLight` (`SLUS_202.28` `0x0028e240`,
+    // `Chacter_Draw/sh2_JmsSpot_Man.c:97-109`: constant `+0.075` James floor `GUN_LIGHT_JMS_BASE_OFFSET`)
+    // and `DARK_Hosei` ambient trim (`0x002ab710` = 0.5, `sh2gfw_Get_DarkTrimFactor` `0x0028e350`).
+    let jms_gun_floor = select(0.0, 0.075, spotlight.char_global_ambient.w > 0.5);
+    let gun_boost = vec3<f32>(spotlight.gun_and_dark_trim.x + jms_gun_floor);
     let dark_trim_scale = 1.0 + spotlight.gun_and_dark_trim.y * spotlight.gun_and_dark_trim.z;
 
     // Non-PS2 3-Point Studio Rig (Key + Warm Fill + Cool Rim) used exclusively in Model Viewer
@@ -262,10 +264,9 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
     let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
 
-    let legacy_game_diffuse_light = (mat_ambient * base_ambient * env_ambient_scale * dark_trim_scale + gun_boost + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
+    let legacy_game_diffuse_light = (mat_ambient * (base_ambient * env_ambient_scale * dark_trim_scale + gun_boost) + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
     let model3_od0 = clamp(
-        material.ambient_shininess.xyz * spotlight.char_global_ambient.xyz
-            + gun_boost
+        material.ambient_shininess.xyz * (spotlight.char_global_ambient.xyz + gun_boost)
             + material.diffuse_mtype.xyz * (spot_diffuse + camera_fill),
         vec3<f32>(0.0),
         vec3<f32>(1.0),
@@ -381,5 +382,15 @@ mod tests {
     fn wgsl_skinning_shader_uses_slus_draw_env_base_ambient_002ad900() {
         assert!(WGSL_SKINNING_SHADER.contains("vec3<f32>(0.045, 0.045, 0.045)"));
         assert!(!WGSL_SKINNING_SHADER.contains("0.06, 0.06, 0.068"));
+    }
+
+    #[test]
+    fn wgsl_skinning_shader_multiplies_gun_boost_by_material_ambient_with_jms_floor() {
+        assert!(WGSL_SKINNING_SHADER.contains(
+            "let jms_gun_floor = select(0.0, 0.075, spotlight.char_global_ambient.w > 0.5);"
+        ));
+        assert!(WGSL_SKINNING_SHADER.contains(
+            "material.ambient_shininess.xyz * (spotlight.char_global_ambient.xyz + gun_boost)"
+        ));
     }
 }

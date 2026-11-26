@@ -555,13 +555,7 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
                 u
             };
             if let Some(ref env) = draw_env {
-                u.set_draw_env_constants(
-                    env,
-                    gun_light,
-                    dark_trim,
-                    is_dark_room,
-                    darkness.ambient_scale,
-                );
+                u.set_draw_env_constants(env, gun_light, dark_trim, is_dark_room);
             }
             u
         };

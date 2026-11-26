@@ -546,10 +546,10 @@ impl RenderContext {
             billboard_fx_batches: std::sync::Mutex::new(effects::FxDrawBatches::default()),
             blood_quad_count: std::sync::atomic::AtomicU32::new(0),
             blood_subtractive_mode: std::sync::atomic::AtomicBool::new(true),
-            pcss_enabled: std::sync::atomic::AtomicBool::new(true),
+            pcss_enabled: std::sync::atomic::AtomicBool::new(false),
             lake_water_enabled: std::sync::atomic::AtomicBool::new(false),
             water_reflection_pass_enabled: std::sync::atomic::AtomicBool::new(false),
-            volumetric_god_rays_enabled: std::sync::atomic::AtomicBool::new(true),
+            volumetric_god_rays_enabled: std::sync::atomic::AtomicBool::new(false),
             soft_shadow_blur_enabled: std::sync::atomic::AtomicBool::new(true),
             shadow_composite_mode: std::sync::atomic::AtomicU8::new(1),
             shadow_draw_order: std::sync::atomic::AtomicU8::new(
@@ -579,5 +579,28 @@ impl RenderContext {
             default_view,
             default_texture_bind_group,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn headless_render_context_defaults_to_strict_vanilla_ps2() {
+        let Some(ctx) = RenderContext::new_headless(RendererConfig::default()) else {
+            return;
+        };
+        assert!(
+            !ctx.pcss_enabled.load(Ordering::Relaxed),
+            "pcss_enabled must default to false for strict Vanilla PS2 parity"
+        );
+        assert!(
+            !ctx.volumetric_god_rays_enabled.load(Ordering::Relaxed),
+            "volumetric_god_rays_enabled must default to false for strict Vanilla PS2 parity"
+        );
+        assert!(!ctx.lake_water_enabled.load(Ordering::Relaxed));
+        assert!(!ctx.water_reflection_pass_enabled.load(Ordering::Relaxed));
     }
 }

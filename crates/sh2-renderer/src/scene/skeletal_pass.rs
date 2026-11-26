@@ -9,6 +9,18 @@ impl RenderContext {
         rpass: &mut wgpu::RenderPass<'a>,
         skeletal_meshes: &'a [SkeletalDrawItem<'a>],
     ) {
+        self.draw_skeletal_meshes_with_winding(rpass, skeletal_meshes, false);
+    }
+
+    /// Draws skeletal meshes into a `Depth32Float` render pass. When `invert_winding` is `true`
+    /// (e.g. negative-determinant `mirrored_reflection_view_proj` in `water_pass.rs`), front/back
+    /// culling is flipped (`CullFront` <-> `CullBack`) so reflected characters are not inside-out.
+    pub(super) fn draw_skeletal_meshes_with_winding<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        skeletal_meshes: &'a [SkeletalDrawItem<'a>],
+        invert_winding: bool,
+    ) {
         let stages = [
             SkeletalPassStage::Opaque,
             SkeletalPassStage::TransparentCore,
@@ -23,8 +35,11 @@ impl RenderContext {
                     .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
                 mesh.primitives.iter().any(|p| {
                     p.is_transparent == want_transparent
-                        && p.draw_range(mesh.player_visibility, is_mirror_duplicate)
-                            .is_some()
+                        && p.draw_range(
+                            mesh.player_visibility,
+                            is_mirror_duplicate || invert_winding,
+                        )
+                        .is_some()
                 })
             });
             if !has_any {
@@ -52,15 +67,17 @@ impl RenderContext {
                     if prim.is_transparent != want_transparent {
                         continue;
                     }
-                    if let Some(range) =
-                        prim.draw_range(mesh.player_visibility, is_mirror_duplicate)
-                    {
-                        let pkey = (prim.backface_culling, is_mirror_duplicate);
+                    if let Some(range) = prim.draw_range(
+                        mesh.player_visibility,
+                        is_mirror_duplicate || invert_winding,
+                    ) {
+                        let use_flipped_cull = is_mirror_duplicate ^ invert_winding;
+                        let pkey = (prim.backface_culling, use_flipped_cull);
                         if active_pipeline_key != Some(pkey) {
                             rpass.set_pipeline(self.skeletal_pipeline.select_pipeline(
                                 stage,
                                 prim.backface_culling,
-                                is_mirror_duplicate,
+                                use_flipped_cull,
                             ));
                             active_pipeline_key = Some(pkey);
                         }

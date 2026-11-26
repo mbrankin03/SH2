@@ -89,18 +89,21 @@ impl RenderContext {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            // Negative-determinant `mirrored_reflection_view_proj` flips CCW triangles to CW,
+            // requiring CW front-face (`water_reflected_pipeline`) and inverted skeletal culling
+            // (matching `mirror_pass.rs`).
             if let Some(map) = gpu_map {
                 self.draw_map_batches_for_group(
                     &mut rpass,
                     map,
                     map_texture_bind_groups,
                     BatchGroup::Opaque,
-                    &self.geometry_pipeline.pipeline,
+                    &self.geometry_pipeline.water_reflected_pipeline,
                     vis_filter,
                 );
             }
             if !skeletal_meshes.is_empty() {
-                self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
+                self.draw_skeletal_meshes_with_winding(&mut rpass, skeletal_meshes, true);
             }
         }
         self.queue.submit(Some(refl_encoder.finish()));

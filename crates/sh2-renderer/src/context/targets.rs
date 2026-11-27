@@ -15,6 +15,7 @@ impl RenderContext {
         (wgpu::Texture, wgpu::TextureView),
         (wgpu::Texture, wgpu::TextureView),
         (wgpu::Texture, wgpu::TextureView),
+        (wgpu::Texture, wgpu::TextureView),
     ) {
         let extent = wgpu::Extent3d {
             width: width.max(1),
@@ -76,11 +77,25 @@ impl RenderContext {
         let ldr_output_view =
             ldr_output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        let prev_frame_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PS2 Filter_Retain Previous Frame Feedback Texture (0x00179b10)"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let prev_frame_view =
+            prev_frame_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         (
             (depth_texture, depth_view),
             (hdr_color_texture, hdr_color_view),
             (fog_color_texture, fog_color_view),
             (ldr_output_texture, ldr_output_view),
+            (prev_frame_texture, prev_frame_view),
         )
     }
 
@@ -100,6 +115,7 @@ impl RenderContext {
         fog_noise_view: &wgpu::TextureView,
         fog_noise_sampler: &wgpu::Sampler,
         ldr_output_view: &wgpu::TextureView,
+        prev_frame_view: &wgpu::TextureView,
     ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
         let fog_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Fog Bind Group"),
@@ -176,6 +192,10 @@ impl RenderContext {
                     binding: 6,
                     resource: camera_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(prev_frame_view),
+                },
             ],
         });
 
@@ -211,6 +231,10 @@ impl RenderContext {
                     binding: 6,
                     resource: camera_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(prev_frame_view),
+                },
             ],
         });
 
@@ -234,6 +258,7 @@ impl RenderContext {
             (hdr_color_texture, hdr_color_view),
             (fog_color_texture, fog_color_view),
             (ldr_output_texture, ldr_output_view),
+            (prev_frame_texture, prev_frame_view),
         ) = Self::create_offscreen_targets(&self.device, width, height);
 
         self.depth_texture = depth_texture;
@@ -244,6 +269,8 @@ impl RenderContext {
         self.fog_color_view = fog_color_view;
         self.ldr_output_texture = ldr_output_texture;
         self.ldr_output_view = ldr_output_view;
+        self.prev_frame_texture = prev_frame_texture;
+        self.prev_frame_view = prev_frame_view;
 
         let stencil_depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("PS2 Stencil Shadow Depth24PlusStencil8 Texture"),
@@ -318,6 +345,7 @@ impl RenderContext {
                 &self.fog_noise_view,
                 &self.fog_noise_sampler,
                 &self.ldr_output_view,
+                &self.prev_frame_view,
             );
 
         self.fog_bind_group = fog_bind_group;

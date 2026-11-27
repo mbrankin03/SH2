@@ -64,6 +64,12 @@ pub struct RenderContext {
     pub ldr_output_texture: wgpu::Texture,
     pub ldr_output_view: wgpu::TextureView,
 
+    /// Previous-frame LDR feedback texture (`Rgba8Unorm`) for PS2 `sh2gfw_Filter_Retain`
+    /// (`0x00179b10`, `ALPHA_1 = 0x8000000062`) pause-freeze and `sh2gfw_Filter_Blur`
+    /// (`0x00177440`, `ALPHA_1 = 0x44`) temporal motion blur.
+    pub prev_frame_texture: wgpu::Texture,
+    pub prev_frame_view: wgpu::TextureView,
+
     pub geometry_pipeline: pipeline::GeometryPipeline,
     pub skeletal_pipeline: skeletal::SkeletalPipeline,
     pub debug_line_pipeline: pipeline::DebugLinePipeline,
@@ -138,6 +144,19 @@ pub struct RenderContext {
     pub post_bind_group_fog: wgpu::BindGroup,
     pub post_bind_group_direct: wgpu::BindGroup,
 
+    /// Per-character `SpotlightUniforms` buffers and bind groups for `Model3UpdateLightEnv`
+    /// (`SLUS_202.28` `0x00128e00`) gameplay lighting in `skeletal_pass.rs`.
+    pub(crate) skeletal_light_buffers: Vec<wgpu::Buffer>,
+    pub(crate) skeletal_light_bind_groups: Vec<wgpu::BindGroup>,
+    pub(crate) skeletal_light_active_slots: std::sync::atomic::AtomicUsize,
+    pub(crate) last_spotlight_uniforms: std::sync::Mutex<crate::light::SpotlightUniforms>,
+    /// Optional gameplay `(CharacterLightPool, is_night, is_cutscene)` evaluated per skeletal mesh.
+    pub(crate) gameplay_char_light_pool:
+        std::sync::Mutex<Option<(crate::light::CharacterLightPool, bool, bool)>>,
+    /// True while `POST_FLAG_FILTER_RETAIN` (`sh2gfw_Filter_Retain` `0x00179b10`) is active,
+    /// freezing `prev_frame_texture` updates until pause-retain is released.
+    pub(crate) filter_retain_frozen: std::sync::atomic::AtomicBool,
+
     pub fog_particle_count: std::sync::atomic::AtomicU32,
     pub shadow_volume_vertex_count: std::sync::atomic::AtomicU32,
     pub drop_shadow_vertex_count: std::sync::atomic::AtomicU32,
@@ -197,4 +216,6 @@ impl RenderContext {
     pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
     /// Capacity of the reusable GPU vertex buffer for 3D debug line overlays (65,536 vertices = ~2 MB).
     pub const MAX_DEBUG_LINE_VERTICES: usize = 65_536;
+    /// Maximum number of per-character `Model3UpdateLightEnv` (`0x00128e00`) light uniform slots.
+    pub const MAX_SKELETAL_LIGHT_SLOTS: usize = 16;
 }

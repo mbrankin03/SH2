@@ -84,6 +84,12 @@ pub struct DrawEnvData {
     pub fog_near: f32,
     /// Fog far distance in PS2 mm (`+0xa0`).
     pub fog_far: f32,
+    /// Fog maximum alpha/density floor in PS2 GS 0..255 units (`+0xa8`, `DAT_002adac8`,
+    /// `SetupDrawEnvData` `0x00251370:354,382`; Day default `20.0`, Night default `100.0`).
+    pub fog_max: f32,
+    /// Fog minimum alpha/density ceiling in PS2 GS 0..255 units (`+0xac`, `DAT_002adacc`,
+    /// `SetupDrawEnvData` `0x00251370:355,383`; Day default `235.0`, Night default `255.0`).
+    pub fog_min: f32,
     /// Up to 5 room-local point/fake lights (`+0xb0, +0xe0, +0x110, +0x140, +0x170`, stride `0x30` = 48 bytes).
     pub point_lights: [DrawEnvPointLight; 5],
     /// Room ambient color RGB (`+0x1b0..+0x1bb`, e.g. `0.9` in OB, `0.65` in ER, `0.15` in AP).
@@ -115,6 +121,25 @@ impl DrawEnvData {
     pub fn active_point_lights(&self) -> &[DrawEnvPointLight] {
         let count = usize::from(self.point_light_count).min(self.point_lights.len());
         &self.point_lights[..count]
+    }
+
+    /// Resolves `(fog_far, fog_near, fog_max, fog_min)` matching `SLUS_202.28` `SetupDrawEnvData`
+    /// (`0x00251370`, `GFW/sh2_DrawEnvData.c:344-385`).
+    ///
+    /// When `self.fog_far == 0.0`, returns the PS2 Day (`5500.0, 3000.0, 20.0, 235.0`) or Night
+    /// (`8000.0, 3000.0, 100.0, 255.0`) defaults. Otherwise returns the verbatim per-room table values.
+    #[inline]
+    #[must_use]
+    pub const fn effective_fog_bounds(&self, is_night: bool) -> (f32, f32, f32, f32) {
+        if self.fog_far == 0.0 {
+            if is_night {
+                (8000.0, 3000.0, 100.0, 255.0)
+            } else {
+                (5500.0, 3000.0, 20.0, 235.0)
+            }
+        } else {
+            (self.fog_far, self.fog_near, self.fog_max, self.fog_min)
+        }
     }
 }
 
@@ -177,6 +202,12 @@ mod tests {
         assert!((ob.ambient[0] - 0.9).abs() < 1e-4);
         assert!((ob.flashlight_range - 6000.0).abs() < 1e-2);
         assert!((ob.fog_far - 33000.0).abs() < 1e-2);
+        // `SetupDrawEnvData` (`0x00251370:344-385`): `OB_DrawEnvData` fog_max (+0xa8) = 40.0, fog_min (+0xac) = 230.0
+        assert!((ob.fog_max - 40.0).abs() < 1e-4);
+        assert!((ob.fog_min - 230.0).abs() < 1e-4);
+        let (_eff_far, _eff_near, eff_max, eff_min) = ob.effective_fog_bounds(false);
+        assert!((eff_max - 40.0).abs() < 1e-4);
+        assert!((eff_min - 230.0).abs() < 1e-4);
 
         // ER_DrawEnvData[0] is room_no=9, stage_id=6, point_light_count=1
         let er = lookup_draw_env("ER", 9).expect("ER_DrawEnvData room 9");

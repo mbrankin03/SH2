@@ -69,6 +69,101 @@ pub const ENEMY_RADIO_TRACK_WEIGHTS: [[f32; RADIO_TRACK_COUNT]; 16] = [
     [0.0, 0.0, 0.0, 0.0], // 15: unused / 0
 ];
 
+/// Retail `sh2pc.exe` `FUN_0048c710` (`0x0048c710`, `sh2pc_00480000.c:7841`, `DAT_0088a0f8`)
+/// per-species 4-track weight table (16 entries × 4 floats at `+0x00..+0x0f` of each 32-byte row).
+///
+/// Prototype (`SLUS_202.28` `0x002b9850`) vs Retail PC (`sh2pc.exe` `0x0088a0f8`) drift:
+/// retail PC rebalanced per-species weights across all 4 static tracks and paired each track
+/// with its own per-species detection radius in [`SH2PC_RADIO_TRACK_RADII_MM`].
+pub const SH2PC_RADIO_TRACK_WEIGHTS: [[f32; RADIO_TRACK_COUNT]; 16] = [
+    [0.0, 0.0, 0.0, 0.0], // 0: none
+    [1.0, 1.0, 0.6, 0.8], // 1: Lying Figure (scu)
+    [0.9, 0.8, 1.0, 0.5], // 2: Mannequin (mkn)
+    [0.5, 0.2, 0.5, 0.0], // 3: Creeper (tyu)
+    [0.5, 0.5, 0.5, 1.0], // 4: Pyramid Head (red)
+    [0.3, 0.3, 0.3, 1.0], // 5: Twin Pyramid Head (oni)
+    [1.0, 0.8, 1.0, 0.0], // 6: Bubble Head Nurse (nse)
+    [0.0, 0.0, 0.0, 0.0], // 7: Flesh Lips (ike)
+    [0.8, 1.0, 0.8, 0.8], // 8: Abstract Daddy (pap)
+    [0.0, 0.0, 0.0, 0.0], // 9: Eddie (edb)
+    [0.4, 0.8, 1.0, 0.5], // 10: Mandarin (arm)
+    [0.0, 0.0, 0.0, 0.0], // 11: Mary Boss (bos)
+    [0.0, 0.0, 0.0, 0.0], // 12: nik
+    [0.5, 0.2, 0.5, 0.0], // 13: ty2
+    [0.5, 0.2, 0.5, 0.0], // 14: fly / ty3
+    [0.0, 0.0, 0.0, 0.0], // 15: unused
+];
+
+/// Retail `sh2pc.exe` `FUN_0048c710` (`0x0048c710`, `sh2pc_00480000.c:7787`, `DAT_0088a108`)
+/// per-species 4-track detection radius table in world mm (16 entries × 4 floats at `+0x10..+0x1f`
+/// of each 32-byte row starting at `0x0088a0f8`).
+pub const SH2PC_RADIO_TRACK_RADII_MM: [[f32; RADIO_TRACK_COUNT]; 16] = [
+    [0.0, 0.0, 0.0, 0.0],                     // 0: none
+    [12_500.0, 5_000.0, 1_250.0, 7_500.0],    // 1: Lying Figure (scu)
+    [14_000.0, 6_000.0, 1_500.0, 5_000.0],    // 2: Mannequin (mkn)
+    [7_500.0, 1_500.0, 2_500.0, 0.0],         // 3: Creeper (tyu)
+    [10_000.0, 9_000.0, 8_000.0, 10_000.0],   // 4: Pyramid Head (red)
+    [10_000.0, 10_000.0, 10_000.0, 10_000.0], // 5: Twin Pyramid Head (oni)
+    [8_000.0, 6_000.0, 4_000.0, 0.0],         // 6: Bubble Head Nurse (nse)
+    [0.0, 0.0, 0.0, 0.0],                     // 7: Flesh Lips (ike)
+    [15_000.0, 7_500.0, 2_500.0, 7_500.0],    // 8: Abstract Daddy (pap)
+    [0.0, 0.0, 0.0, 0.0],                     // 9: Eddie (edb)
+    [5_000.0, 3_500.0, 1_500.0, 5_000.0],     // 10: Mandarin (arm)
+    [0.0, 0.0, 0.0, 0.0],                     // 11: Mary Boss (bos)
+    [0.0, 0.0, 0.0, 0.0],                     // 12: nik
+    [7_500.0, 1_500.0, 2_500.0, 0.0],         // 13: ty2
+    [7_500.0, 1_500.0, 2_500.0, 0.0],         // 14: fly / ty3
+    [0.0, 0.0, 0.0, 0.0],                     // 15: unused
+];
+
+/// Retail `sh2pc.exe` `FUN_0048c710` (`sh2pc_00480000.c:7831`) inner full-volume deadzone in mm.
+pub const SH2PC_RADIO_INNER_DEADZONE_MM: f32 = 1.5;
+
+/// Retail `sh2pc.exe` `FUN_0048c710` (`sh2pc_00480000.c:7826`) threat score threshold gating track 3.
+pub const SH2PC_RADIO_TRACK3_THREAT_THRESHOLD: i32 = 9;
+
+/// Retail `sh2pc.exe` `FUN_0048c710` (`sh2pc_00480000.c:7946`) per-rank geometric decay factor (`1/3`).
+pub const SH2PC_RADIO_GEOMETRIC_DECAY: f32 = 1.0 / 3.0;
+
+/// Retail `sh2pc.exe` `FUN_0048c710` (`sh2pc_00480000.c:7953`) early-out threshold for decayed contributors.
+pub const SH2PC_RADIO_DECAY_CUTOFF: f32 = 0.1;
+
+/// Evaluates the retail `sh2pc.exe` `FUN_0048c710` (`sh2pc_00480000.c:7794-7812`) threat score
+/// contribution when an enemy is strictly within `SH2PC_RADIO_TRACK_RADII_MM[kind][3]`.
+#[inline]
+pub const fn sh2pc_radio_threat_score(kind: u8) -> i32 {
+    match kind {
+        1 | 2 | 6 => 3,
+        3 | 13 | 14 => 1,
+        4 | 5 => 9,
+        8 | 10 => 6,
+        _ => 0,
+    }
+}
+
+/// Evaluates the retail `sh2pc.exe` `FUN_0048c710` (`sh2pc_00480000.c:7831-7838`) cosine proximity
+/// curve with `1.5` mm inner deadzone and per-species/per-track `max_radius_mm`.
+#[inline]
+pub fn sh2pc_radio_cosine_attenuation(dist_mm: f32, max_radius_mm: f32) -> f32 {
+    if !dist_mm.is_finite()
+        || !max_radius_mm.is_finite()
+        || dist_mm < 0.0
+        || dist_mm > max_radius_mm
+    {
+        return 0.0;
+    }
+    if dist_mm < SH2PC_RADIO_INNER_DEADZONE_MM {
+        return 1.0;
+    }
+    let denom = max_radius_mm - SH2PC_RADIO_INNER_DEADZONE_MM;
+    if denom <= 0.0 {
+        return 0.0;
+    }
+    (((dist_mm - SH2PC_RADIO_INNER_DEADZONE_MM) / denom) * FRAC_PI_2)
+        .cos()
+        .max(0.0)
+}
+
 /// Converts an [`EnemySpecies`] to its `SLUS_202.28` `enLocalWork.kind` index (`0..=14`,
 /// `enTransID` `0x00141b30` in `Enemy/en_common.c:452`, retail `sh2pc.exe` `FUN_004a5ba0`
 /// `0x004a5ba0` in `sh2pc_004a0000.c:3644`). Unmapped IDs including `RoomInsect` (`0x20f`)

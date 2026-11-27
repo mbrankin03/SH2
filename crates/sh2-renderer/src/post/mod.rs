@@ -38,6 +38,10 @@ pub const POST_FLAG_FIRE_HEAT_HAZE: u32 = 1 << 2;
 /// finer `128px`-tiled noise filter instead of strict `SLUS_202.28` `448p` `3.5`-tile GS grain.
 pub const POST_FLAG_SH2EE_NOISE: u32 = 1 << 3;
 
+/// Bitflag in [`PostUniforms::flags`]: activates PS2 `sh2gfw_Filter_Retain` (`0x00179b10`,
+/// `sh2gfw_Set_PauseRetain` `0x0017ae90`, `ALPHA_1 = 0x8000000062`) previous-frame freeze.
+pub const POST_FLAG_FILTER_RETAIN: u32 = 1 << 4;
+
 /// Uniform buffer payload passed to the post-processing compute shader (`SH2-105`, `SH2-136`).
 ///
 /// Layout is 64 bytes (`4 * vec4<f32>`, 16-byte aligned for WGSL uniform buffers).
@@ -198,6 +202,18 @@ impl PostProcessPipeline {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Previous-frame LDR feedback texture for `sh2gfw_Filter_Retain` (`0x00179b10`,
+                // `ALPHA_1 = 0x8000000062`) and `sh2gfw_Filter_Blur` (`0x00177440`, `ALPHA_1 = 0x44`).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },

@@ -559,12 +559,14 @@ impl RoomController for CampaignRoomController {
                         50 => sh2_core::endings::GameEnding::InWater,
                         51 => sh2_core::endings::GameEnding::Rebirth,
                         52 => sh2_core::endings::GameEnding::Dog,
+                        53 => sh2_core::endings::GameEnding::Ufo,
                         54 => sh2_core::endings::GameEnding::BornFromAWish,
                         _ => sh2_core::endings::GameEnding::Leave,
                     };
                     sh2_ui::credits::EndingCreditsSequence::start(ending)
                 });
                 seq.tick(dt_sec, false);
+                seq.prepare_ufo_slide_from_disk(&state.bgm_manager.game_root);
             }
             _ => {}
         }

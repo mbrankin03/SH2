@@ -49,6 +49,24 @@ pub enum ScuState {
 /// Authentic Lying Figure crawl recovery probability (`enSCUGetCrawlProbability` `SLUS 0x002ab280` / `sh2pc 0x004c4710`).
 pub const SCU_CRAWL_PROBABILITY: f32 = 0.8;
 
+/// Authentic `SLUS_202.28` `enSCUGetFeelRange` (`0x2ab150`) feel ranges by difficulty (mm).
+pub const SCU_FEEL_RANGE_MM: [f32; 4] = [400.0, 750.0, 1000.0, 1500.0];
+
+/// Authentic `SLUS_202.28` `enSCUGetRotSpeed` (`0x00164b00`, `0x2ab210`) turn scale × `0.05235988` rad/tick.
+pub const SCU_ROT_SPEED_SCALE: [f32; 4] = [0.5, 0.7, 1.0, 1.2];
+
+/// Base rotation quantum per 60 Hz tick (`0.05235988` rad = 3°/tick, `enSCUGetRotSpeed` `0x00164b00`).
+pub const SCU_ROT_BASE_RAD_PER_TICK: f32 = 0.052_359_88;
+
+/// Authentic `SLUS_202.28` `enSCUGetAttackProbability` (`0x00164930`, `0x2ab1b0`).
+pub const SCU_ATTACK_PROBABILITY: [f32; 4] = [0.2, 0.5, 0.7, 0.8];
+
+/// Authentic `SLUS_202.28` `enSCUGetRepertAttackProbability` (`0x00164a10`, `0x2ab1d0`).
+pub const SCU_REPEAT_ATTACK_PROBABILITY: [f32; 4] = [0.0, 0.0, 0.2, 0.5];
+
+/// Leash return timer in 60 Hz ticks (`enSetTimer(param_1, 300)`, `enSCUCtrlWander` `0x001609d0:457`).
+pub const SCU_WANDER_RETURN_TICKS: f32 = 300.0;
+
 /// Ambush zone entry (`ambush_data` `SLUS 0x002aac30..0x002ab02c` / `sh2pc 0x00890a0c`, 0 diffs).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ScuAmbushEntry {
@@ -244,29 +262,57 @@ impl LyingFigureController {
         let dist = (dx * dx + dz * dz).sqrt();
         let target_dir = dx.atan2(dz);
 
+        let diff_idx = difficulty.as_index();
+        let feel_range = SCU_FEEL_RANGE_MM[diff_idx];
+        let rot_speed_rad_s = SCU_ROT_SPEED_SCALE[diff_idx] * SCU_ROT_BASE_RAD_PER_TICK * 60.0;
+
         match self.state {
             ScuState::Wander => {
-                // Stand or wander forward; stay within 3500 of origin
+                // `enSCUCtrlWander` (`SLUS_202.28` `0x001609d0` lines 343-482):
+                // Tribe alert, sound, or `dist < feel_range` (non-Beginner) -> Precaution;
+                // Direct sight -> Attack (`2`) or Chase (`1`); leash `3500.0` mm with `300`-tick return.
+                if tribe_alert_pos.is_some()
+                    || notice == SensoryNotice::AuditoryContact
+                    || (dist < feel_range && difficulty != DifficultyLevel::Beginner)
+                {
+                    self.state = ScuState::Precaution;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
+                    return;
+                }
+                if notice == SensoryNotice::InAttackRange {
+                    self.state = ScuState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    return;
+                }
+                if notice == SensoryNotice::VisualContact {
+                    self.state = ScuState::Chase;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
+                    return;
+                }
+
                 let odx = self.position.x - self.origin_pos.x;
                 let odz = self.position.z - self.origin_pos.z;
                 if odx * odx + odz * odz > 3500.0 * 3500.0 {
-                    // Turn back towards origin
-                    self.yaw = (-odx).atan2(-odz);
+                    self.turn_towards((-odx).atan2(-odz), rot_speed_rad_s * dt);
+                    if self.state_timer >= SCU_WANDER_RETURN_TICKS / 60.0 {
+                        // `enSCUCtrlWander` (`0x001609d0:372-383`): reset wander origin after 300 ticks
+                        self.origin_pos = self.position;
+                        self.state_timer = 0.0;
+                    }
                 }
-
-                // Advance forward at walk speed (402 units/s)
                 self.position.x += self.yaw.sin() * 402.0 * dt;
                 self.position.z += self.yaw.cos() * 402.0 * dt;
-
-                if notice != SensoryNotice::None || tribe_alert_pos.is_some() {
-                    self.state = ScuState::Precaution;
-                    self.state_timer = 0.0;
-                    self.path_state.init(self.yaw);
-                }
             }
 
             ScuState::Precaution => {
-                // Turn towards target (or tribe alert source) for 1.5 seconds, then enter Chase
+                // `enSCUCtrlPrecaution` (`SLUS_202.28` `0x00160fe0` lines 508-533):
+                // Turns at `enSCUGetRotSpeed`; transitions on `enSCUCanSeePlayer` (`2`->Attack,
+                // `1` && `dist > 500.0` -> Chase, else `dist > attack_range` -> Wander).
                 let aim_dir = if notice == SensoryNotice::None {
                     self.tribe_alert_target.map_or(target_dir, |p| {
                         (p.x - self.position.x).atan2(p.z - self.position.z)
@@ -274,16 +320,32 @@ impl LyingFigureController {
                 } else {
                     target_dir
                 };
-                self.turn_towards(aim_dir, 3.0 * dt);
-                if self.state_timer >= 1.5 || notice == SensoryNotice::InAttackRange {
+                self.turn_towards(aim_dir, rot_speed_rad_s * dt);
+                if notice == SensoryNotice::InAttackRange {
+                    self.state = ScuState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                } else if notice == SensoryNotice::VisualContact && dist > 500.0 {
                     self.state = ScuState::Chase;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     self.path_state.init(self.yaw);
+                } else if notice == SensoryNotice::None
+                    && tribe_alert_pos.is_none()
+                    && dist > self.sensory.attack_ranges[diff_idx]
+                    // Transitional clip-end stand-in (`0.5s`): `enSCUCtrlPrecaution` (`0x00160fe0`)
+                    // checks `.anm` completion (`*(short *)(work + 0x14) == -1`) once animation
+                    // playback state is plumbed into `update()`.
+                    && self.state_timer >= 0.5
+                {
+                    self.state = ScuState::Wander;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
                 }
             }
 
             ScuState::Chase => {
-                // Obstacle-avoidance steering (`enSetPath` `0x00144ae0` / `sh2pc 0x004aadf0`)
+                // `enSCUCtrlChase` (`SLUS_202.28` `0x00161190` lines 566-613)
                 let steer_dir =
                     if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
                         let ticks = (dt * 60.0).round().max(1.0) as i16;
@@ -300,46 +362,58 @@ impl LyingFigureController {
                     } else {
                         target_dir
                     };
-                self.turn_towards(steer_dir, 3.0 * dt);
+                self.turn_towards(steer_dir, rot_speed_rad_s * dt);
 
-                // Backward retreat if player is too close (< 750 units) on normal/hard
+                // Backward retreat if player is too close (`dist < 750.0`, non-Beginner, `en_scu.c:596`)
                 if dist < 750.0 && difficulty != DifficultyLevel::Beginner {
                     self.state = ScuState::Backward;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     return;
                 }
 
                 // Spitting range check (`enSCUGetAttackRange` `0x00164860`, `enSCUGetAttackAngle` `0x001648e0`)
-                let diff_idx = difficulty.as_index();
                 if dist <= self.sensory.attack_ranges[diff_idx] && self.attack_cooldown <= 0.0 {
                     let angle_diff = (normalize_angle(target_dir - self.yaw)).abs();
                     if angle_diff <= self.sensory.attack_half_angles[diff_idx] {
                         self.state = ScuState::Attack;
+                        self.sub_state = 0;
                         self.state_timer = 0.0;
                         return;
                     }
                 }
 
                 // HP-scaled walk speed (`enSCUGetWalkSpeed` `0x001646a0`)
-                let walk_speed = 402.0 * scu_walk_speed_scale(difficulty, self.stats.hp_rate);
+                let speed_rate = normalize_angle(target_dir - self.yaw)
+                    .cos()
+                    .clamp(0.25, 1.0);
+                let walk_speed =
+                    402.0 * scu_walk_speed_scale(difficulty, self.stats.hp_rate) * speed_rate;
                 self.position.x += self.yaw.sin() * walk_speed * dt;
                 self.position.z += self.yaw.cos() * walk_speed * dt;
 
-                // Lost contact
-                if notice == SensoryNotice::None && self.state_timer > 6.0 {
-                    self.state = ScuState::Wander;
+                // Lost contact (`enSCUCtrlChase` `0x00161190:592-612`): immediate return when `notice == None && dist > feel_range`
+                if notice == SensoryNotice::None && dist > feel_range {
+                    self.state = if tribe_alert_pos.is_some() {
+                        ScuState::Precaution
+                    } else {
+                        ScuState::Wander
+                    };
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                 }
             }
 
             ScuState::Backward => {
-                // Walk backward away from target
-                self.turn_towards(target_dir, 2.0 * dt);
-                self.position.x -= self.yaw.sin() * 250.0 * dt;
-                self.position.z -= self.yaw.cos() * 250.0 * dt;
+                // `enSCUCtrlBackward` (`SLUS_202.28` `0x00161420`)
+                self.turn_towards(target_dir, rot_speed_rad_s * dt);
+                let walk_speed = 402.0 * scu_walk_speed_scale(difficulty, self.stats.hp_rate);
+                self.position.x -= self.yaw.sin() * walk_speed * dt;
+                self.position.z -= self.yaw.cos() * walk_speed * dt;
 
-                if dist >= 900.0 || self.state_timer > 2.0 {
+                if dist >= 750.0 {
                     self.state = ScuState::Chase;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                 }
             }
@@ -502,16 +576,18 @@ mod tests {
             LyingFigureController::new(1, Vec3::new(0.0, 0.0, 0.0), 0.0, DifficultyLevel::Normal);
         assert_eq!(scu.state, ScuState::Wander);
 
-        // Player appears ahead in lit room (1500 units): triggers precaution -> chase
+        // Player appears ahead in lit room (1500 units): `enSCUCtrlWander` (`0x00161300`)
+        // transitions immediately to `Chase` on visual contact.
         let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 1500.0), PI, false, false);
         scu.update(&target, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
-        assert_eq!(scu.state, ScuState::Precaution);
-
-        // Tick precaution past 1.5s -> enters Chase
-        for _ in 0..20 {
-            scu.update(&target, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
-        }
         assert_eq!(scu.state, ScuState::Chase);
+
+        // Player behind within feel range (1000 mm < 2500 mm Normal feel range) triggers `Precaution`.
+        let mut scu_alert =
+            LyingFigureController::new(2, Vec3::new(0.0, 0.0, 0.0), 0.0, DifficultyLevel::Normal);
+        let behind = PerceivableTarget::new(Vec3::new(0.0, 0.0, -1000.0), 0.0, false, false);
+        scu_alert.update(&behind, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
+        assert_eq!(scu_alert.state, ScuState::Precaution);
 
         // Damage knockdown test (`enReduceHP` 0x00142200: AP reduces both HP and Endurance;
         // `enSetHitBack` 0x00142630: SP drives hitback impulse `sp * 2.0`).
@@ -547,11 +623,18 @@ mod tests {
         scu.update(&far, RoomLighting::Lit, DifficultyLevel::Normal, 1.0 / 60.0);
         assert_eq!(scu.state, ScuState::Precaution);
 
-        // Confuse expires after 600 - 90*2 = 420 ticks -> Precaution.
+        // Confuse expires after 600 - 90*2 = 420 ticks -> Precaution (tested with unseen target
+        // outside Lit sight range so Precaution does not immediately transition to Chase).
+        let unseen = PerceivableTarget::new(Vec3::new(0.0, 0.0, -1000.0), 0.0, false, false);
         scu.state = ScuState::Confuse;
         scu.sub_state = 0;
-        for _ in 0..425 {
-            scu.update(&far, RoomLighting::Lit, DifficultyLevel::Normal, 1.0 / 60.0);
+        for _ in 0..421 {
+            scu.update(
+                &unseen,
+                RoomLighting::Lit,
+                DifficultyLevel::Normal,
+                1.0 / 60.0,
+            );
         }
         assert_eq!(scu.state, ScuState::Precaution);
     }

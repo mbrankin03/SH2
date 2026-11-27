@@ -310,8 +310,9 @@ pub fn draw_lookline(
     draw_segment(rasterizer, br_corner, br_mid_y, border, color);
 }
 
-/// Renders the `SLUS_202.28` `look_zanzo` (`0x001daab0`, `sh2pc.exe` `FUN_004707b0`) translucent
-/// motion-trail quad as the selection reticle glides between focus targets.
+/// Renders the `SLUS_202.28` `look_zanzo` (`0x001daab0`, `Item/otn_itemmain.c:3588-3659`,
+/// `sh2pc.exe` `FUN_004707b0`) 4-edge filled `TRISTRIP` motion-trail quads connecting
+/// `prev_rect_512` to `cur_rect_512` with exact PS2 ABGR `0xf06030` (`RGB(0x30, 0x60, 0xf0)`).
 pub fn draw_look_zanzo(
     rasterizer: &mut TextRasterizer,
     c: Ps2Canvas,
@@ -325,21 +326,30 @@ pub fn draw_look_zanzo(
     if !moved {
         return;
     }
-    let [r, g, b] = SH2_BLUE_LINE_RGB;
-    let trail_color = [r, g, b, 48];
-    let border = (c.sy * 0.45).round().max(1.0) as usize;
-    let mid = [
-        (prev_rect_512[0] + cur_rect_512[0]) * 0.5,
-        (prev_rect_512[1] + cur_rect_512[1]) * 0.5,
-        (prev_rect_512[2] + cur_rect_512[2]) * 0.5,
-        (prev_rect_512[3] + cur_rect_512[3]) * 0.5,
+    // Exact `look_zanzo` (`0x001daab0:3622`): `0xf06030` (ABGR) -> `RGB(0x30, 0x60, 0xf0)`, translucent alpha.
+    let trail_color = [0x30, 0x60, 0xf0, 48];
+    let p_corners = [
+        (c.x(prev_rect_512[0]), c.y(prev_rect_512[1])),
+        (c.x(prev_rect_512[2]), c.y(prev_rect_512[1])),
+        (c.x(prev_rect_512[2]), c.y(prev_rect_512[3])),
+        (c.x(prev_rect_512[0]), c.y(prev_rect_512[3])),
     ];
-    for rect in [prev_rect_512, mid] {
-        let rx = c.xi(rect[0]);
-        let ry = c.yi(rect[1]);
-        let rw = c.xi(rect[2]).saturating_sub(rx).max(1);
-        let rh = c.yi(rect[3]).saturating_sub(ry).max(1);
-        rasterizer.draw_rect_outline(rx, ry, rw, rh, border, trail_color);
+    let c_corners = [
+        (c.x(cur_rect_512[0]), c.y(cur_rect_512[1])),
+        (c.x(cur_rect_512[2]), c.y(cur_rect_512[1])),
+        (c.x(cur_rect_512[2]), c.y(cur_rect_512[3])),
+        (c.x(cur_rect_512[0]), c.y(cur_rect_512[3])),
+    ];
+    // 4 `look_zanzo` calls (`otn_itemmain.c:381-384`), each emitting a 4-vertex `TRISTRIP`
+    // `(p[e], p[(e+1)%4], c[e], c[(e+1)%4])` = 2 filled triangles per edge.
+    for edge in 0..4 {
+        let next = (edge + 1) % 4;
+        let v0 = p_corners[edge];
+        let v1 = p_corners[next];
+        let v2 = c_corners[edge];
+        let v3 = c_corners[next];
+        rasterizer.fill_triangle([v0, v1, v2], trail_color);
+        rasterizer.fill_triangle([v1, v3, v2], trail_color);
     }
 }
 

@@ -30,11 +30,13 @@ pub mod tables;
 mod tests;
 
 pub use tables::{
-    en_kind_from_species, en_set_radio_volume, radio_cosine_attenuation, RadioDuckingState,
-    RadioEnemySample, RadioMode, RadioStaticOutput, ENEMY_RADIO_TRACK_WEIGHTS,
-    RADIO_CONTRIB_WEIGHTS, RADIO_MAX_DISTANCE_MM, RADIO_MAX_NEAREST_ENEMIES,
-    RADIO_MAX_VOLUME_LEVEL, RADIO_MODE1_BASE_VOLUME, RADIO_PAN_RAMP_DIVISOR, RADIO_TRACK_COUNT,
-    RADIO_VOLUME_RAMP_DIVISOR,
+    en_kind_from_species, en_set_radio_volume, radio_cosine_attenuation,
+    sh2pc_radio_cosine_attenuation, sh2pc_radio_threat_score, RadioDuckingState, RadioEnemySample,
+    RadioMode, RadioStaticOutput, ENEMY_RADIO_TRACK_WEIGHTS, RADIO_CONTRIB_WEIGHTS,
+    RADIO_MAX_DISTANCE_MM, RADIO_MAX_NEAREST_ENEMIES, RADIO_MAX_VOLUME_LEVEL,
+    RADIO_MODE1_BASE_VOLUME, RADIO_PAN_RAMP_DIVISOR, RADIO_TRACK_COUNT, RADIO_VOLUME_RAMP_DIVISOR,
+    SH2PC_RADIO_DECAY_CUTOFF, SH2PC_RADIO_GEOMETRIC_DECAY, SH2PC_RADIO_INNER_DEADZONE_MM,
+    SH2PC_RADIO_TRACK3_THREAT_THRESHOLD, SH2PC_RADIO_TRACK_RADII_MM, SH2PC_RADIO_TRACK_WEIGHTS,
 };
 
 use glam::{Mat4, Vec3, Vec4};
@@ -320,6 +322,152 @@ impl RadioNoiseEvaluator {
                     global_duck: self.global_duck,
                 }
             }
+        }
+    }
+
+    /// Steps retail `sh2pc.exe` `FUN_0048c710` (`0x0048c710`, `sh2pc_00480000.c:7773-7980`)
+    /// Pocket Radio evaluation using per-species per-track detection radii (`DAT_0088a108`),
+    /// per-species track weights (`DAT_0088a0f8`), `1.5` mm inner deadzone, threat-score gating
+    /// (`>= 9`) for track 3, descending contributor sorting per track, and `1/3^k` geometric decay.
+    pub fn evaluate_enemies_retail_pc(
+        &mut self,
+        radio_enabled: bool,
+        camera_pos: Vec3,
+        player_pos: Vec3,
+        wvs_matrix: Mat4,
+        enemies: &[RadioEnemySample],
+        dt_secs: f32,
+    ) -> RadioStaticOutput {
+        if !radio_enabled {
+            self.active = false;
+            self.track_volumes = [0.0; RADIO_TRACK_COUNT];
+            self.track_pans = [0.0; RADIO_TRACK_COUNT];
+            self.global_duck = 0.0;
+            return RadioStaticOutput::default();
+        }
+        if !matches!(self.mode, RadioMode::Normal) {
+            return self.evaluate_enemies(
+                radio_enabled,
+                camera_pos,
+                player_pos,
+                wvs_matrix,
+                enemies,
+                dt_secs,
+            );
+        }
+        if !self.active {
+            self.track_volumes = [0.0; RADIO_TRACK_COUNT];
+            self.track_pans = [0.0; RADIO_TRACK_COUNT];
+            self.global_duck = 0.0;
+            self.active = true;
+        }
+
+        let dt = dt_secs.max(0.0);
+        let mut active_enemies: Vec<(usize, f32, f32)> = Vec::new();
+        let mut threat_score: i32 = 0;
+        let mut nearest_enemy_dist = f32::MAX;
+
+        for (idx, enemy) in enemies.iter().enumerate() {
+            if enemy.kind == 0 {
+                continue;
+            }
+            let rv = enemy.radio_volume();
+            if rv == 0.0 {
+                continue;
+            }
+            let kind = (enemy.kind as usize).min(15);
+            let radii = SH2PC_RADIO_TRACK_RADII_MM[kind];
+            let dist = (enemy.position - player_pos).length();
+            if dist <= radii[0] || dist <= radii[1] || dist <= radii[2] || dist <= radii[3] {
+                if dist < nearest_enemy_dist {
+                    nearest_enemy_dist = dist;
+                }
+                if dist < radii[3] {
+                    threat_score += sh2pc_radio_threat_score(enemy.kind);
+                }
+                active_enemies.push((idx, dist, rv));
+            }
+        }
+
+        let vol_step = dt / RADIO_VOLUME_RAMP_DIVISOR;
+        let pan_step = dt / RADIO_PAN_RAMP_DIVISOR;
+
+        for t in 0..RADIO_TRACK_COUNT {
+            let mut per_enemy: Vec<(f32, f32)> = Vec::with_capacity(active_enemies.len());
+            for &(idx, dist, rv) in &active_enemies {
+                let kind = (enemies[idx].kind as usize).min(15);
+                let max_r = SH2PC_RADIO_TRACK_RADII_MM[kind][t];
+                if (t == 3 && threat_score < SH2PC_RADIO_TRACK3_THREAT_THRESHOLD) || dist > max_r {
+                    per_enemy.push((0.0, 0.0));
+                } else {
+                    let atten = sh2pc_radio_cosine_attenuation(dist, max_r);
+                    let vol = SH2PC_RADIO_TRACK_WEIGHTS[kind][t] * rv * atten;
+                    let dir = radio_pos_direction_deg(wvs_matrix, enemies[idx].position);
+                    let pan = (dir as f32) * (1.0 / 90.0);
+                    per_enemy.push((vol, pan));
+                }
+            }
+
+            // Descending sort by track volume (`sh2pc_00480000.c:7860-7933`).
+            per_enemy.sort_by(|a, b| b.0.total_cmp(&a.0));
+
+            let mut target_vol = per_enemy.first().map(|v| v.0).unwrap_or(0.0);
+            let mut target_pan = per_enemy.first().map(|v| v.1).unwrap_or(0.0);
+            let mut decay = 1.0f32;
+            for (rank, &(v, p)) in per_enemy.iter().enumerate().skip(1) {
+                decay *= SH2PC_RADIO_GEOMETRIC_DECAY;
+                let dv = v * decay;
+                let dp = p * decay;
+                if rank > 2 && dv < SH2PC_RADIO_DECAY_CUTOFF {
+                    break;
+                }
+                target_vol += dv;
+                target_pan += dp;
+            }
+            target_vol = target_vol.clamp(0.0, 1.0);
+            target_pan = target_pan.clamp(-1.0, 1.0);
+
+            if self.track_volumes[t] < target_vol {
+                self.track_volumes[t] = (self.track_volumes[t] + vol_step).min(target_vol);
+            } else if target_vol < self.track_volumes[t] {
+                self.track_volumes[t] = (self.track_volumes[t] - vol_step).max(target_vol);
+            }
+            if self.track_pans[t] < target_pan {
+                self.track_pans[t] = (self.track_pans[t] + pan_step).min(target_pan);
+            } else if target_pan < self.track_pans[t] {
+                self.track_pans[t] = (self.track_pans[t] - pan_step).max(target_pan);
+            }
+        }
+
+        let target_duck = self.ducking_state.target_gain();
+        if self.global_duck < target_duck {
+            self.global_duck = (self.global_duck + dt).min(target_duck);
+        } else if target_duck < self.global_duck {
+            self.global_duck = (self.global_duck - dt).max(target_duck);
+        }
+
+        let level_ratio = (self.volume_level.min(RADIO_MAX_VOLUME_LEVEL) as f32)
+            / (RADIO_MAX_VOLUME_LEVEL as f32);
+        let mut driver_volumes = [0u8; RADIO_TRACK_COUNT];
+        let mut driver_pans = [64u8; RADIO_TRACK_COUNT];
+        for t in 0..RADIO_TRACK_COUNT {
+            driver_volumes[t] = (self.track_volumes[t] * 127.0 * self.global_duck * level_ratio)
+                .clamp(0.0, 127.0) as u8;
+            driver_pans[t] = (self.track_pans[t] * 32.0 + 64.0).clamp(0.0, 127.0) as u8;
+        }
+
+        let max_vol =
+            self.track_volumes.into_iter().fold(0.0f32, f32::max) * self.global_duck * level_ratio;
+
+        RadioStaticOutput {
+            is_active: true,
+            volume: max_vol,
+            nearest_enemy_dist,
+            track_volumes: self.track_volumes,
+            track_pans: self.track_pans,
+            driver_volumes,
+            driver_pans,
+            global_duck: self.global_duck,
         }
     }
 

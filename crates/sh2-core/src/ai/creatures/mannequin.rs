@@ -25,7 +25,24 @@ use crate::ai::sensory::{
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use sh2_assets::formats::cld::WallSegment;
-use std::f32::consts::PI;
+
+/// Authentic `SLUS_202.28` `enMKNGetFeelRange` (`0x00157330`, `0x2aa560`) feel ranges (mm).
+pub const MKN_FEEL_RANGE_MM: [f32; 4] = [400.0, 750.0, 1000.0, 1500.0];
+
+/// Authentic `SLUS_202.28` `enMKNGetAttackProbability` (`0x001573a0`, `0x2aa580`).
+pub const MKN_ATTACK_PROBABILITY: [f32; 4] = [0.02, 0.5, 0.8, 0.9];
+
+/// Authentic `SLUS_202.28` `enMKNGetRepertAttackProbability` (`0x00157410`, `0x2aa5a0`).
+pub const MKN_REPEAT_ATTACK_PROBABILITY: [f32; 4] = [0.0, 0.0, 0.2, 0.6];
+
+/// Authentic `SLUS_202.28` `enMKNGetRotSpeed` (`0x00157500`, `0x2aa5e0`) turn scale × `0.05235988` rad/tick.
+pub const MKN_ROT_SPEED_SCALE: [f32; 4] = [0.5, 0.8, 1.0, 1.2];
+
+/// Base rotation quantum per 60 Hz tick (`0.05235988` rad = 3°/tick, `enMKNGetRotSpeed` `0x00157500`).
+pub const MKN_ROT_BASE_RAD_PER_TICK: f32 = 0.052_359_88;
+
+/// Leash return timer in 60 Hz ticks (`enSetTimer(param_1, 300)`, `enMKNCtrlWander` `0x00154a10:824`).
+pub const MKN_WANDER_RETURN_TICKS: f32 = 300.0;
 
 /// Authentic Mannequin state enum (`0x4c3790`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -204,6 +221,22 @@ impl MannequinController {
                 target.is_flashlight_on,
             );
 
+        let diff_idx = difficulty.as_index();
+        let feel_range = MKN_FEEL_RANGE_MM[diff_idx];
+        let rot_speed_rad_s = MKN_ROT_SPEED_SCALE[diff_idx] * MKN_ROT_BASE_RAD_PER_TICK * 60.0;
+        let (notice, alert) = evaluate_sensory_with_los(
+            &self.sensory,
+            self.position,
+            self.yaw,
+            self.alert_timer,
+            target,
+            lighting,
+            difficulty,
+            walls,
+            dt,
+        );
+        self.alert_timer = alert;
+
         match self.state {
             MknState::Stay => {
                 // Mannequin stands completely still like a prop until:
@@ -215,56 +248,78 @@ impl MannequinController {
                     || tribe_alert_pos.is_some()
                 {
                     if los_clear && dist <= 1000.0 {
-                        // Instant strike if player is immediately adjacent
                         self.state = MknState::Attack;
                     } else {
                         self.state = MknState::Precaution;
                     }
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     self.path_state.init(self.yaw);
                 }
             }
 
             MknState::Wander => {
+                // `enMKNCtrlWander` (`SLUS_202.28` `0x00154a10` lines 780-855):
+                // 5000mm leash with 300-tick return timer; direct Attack (`2`), Chase (`1`), or Precaution (`< feel_range`).
                 let odx = self.position.x - self.origin_pos.x;
                 let odz = self.position.z - self.origin_pos.z;
                 if odx * odx + odz * odz > 5000.0 * 5000.0 {
-                    self.yaw = (-odx).atan2(-odz);
+                    self.turn_towards((-odx).atan2(-odz), rot_speed_rad_s * dt);
+                    if self.state_timer >= MKN_WANDER_RETURN_TICKS / 60.0 {
+                        self.origin_pos = self.position;
+                        self.state_timer = 0.0;
+                    }
                 }
 
-                self.position.x += self.yaw.sin() * 576.0 * dt;
-                self.position.z += self.yaw.cos() * 576.0 * dt;
+                let walk_speed = 576.0 * mkn_walk_speed_scale(difficulty, self.stats.hp_rate);
+                self.position.x += self.yaw.sin() * walk_speed * dt;
+                self.position.z += self.yaw.cos() * walk_speed * dt;
 
-                let (notice, alert) = evaluate_sensory_with_los(
-                    &self.sensory,
-                    self.position,
-                    self.yaw,
-                    self.alert_timer,
-                    target,
-                    lighting,
-                    difficulty,
-                    walls,
-                    dt,
-                );
-                self.alert_timer = alert;
-
-                if notice != SensoryNotice::None || tribe_alert_pos.is_some() {
+                if notice == SensoryNotice::InAttackRange {
+                    self.state = MknState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                } else if notice == SensoryNotice::VisualContact {
+                    self.state = MknState::Chase;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
+                } else if dist < feel_range || tribe_alert_pos.is_some() {
                     self.state = MknState::Precaution;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     self.path_state.init(self.yaw);
                 }
             }
 
             MknState::Precaution => {
-                self.turn_towards(target_dir, 3.5 * dt);
-                if self.state_timer > 1.0 {
+                // `enMKNCtrlPrecaution` (`SLUS_202.28` `0x00155040` lines 877-899):
+                // Turns at `enMKNGetRotSpeed`; Attack if `2`, Chase if `1 && dist > 350.0`, Wander if `dist > feel_range`.
+                self.turn_towards(target_dir, rot_speed_rad_s * dt);
+                if notice == SensoryNotice::InAttackRange {
+                    self.state = MknState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                } else if notice == SensoryNotice::VisualContact && dist > 350.0 {
                     self.state = MknState::Chase;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     self.path_state.init(self.yaw);
+                } else if dist > feel_range
+                    && notice == SensoryNotice::None
+                    // Transitional clip-end stand-in (`0.5s`): `enMKNCtrlPrecaution` (`0x00155040`)
+                    // checks `.anm` completion (`*(short *)(work + 0x14) == -1`) once animation
+                    // playback state is plumbed into `update()`.
+                    && self.state_timer >= 0.5
+                {
+                    self.state = MknState::Wander;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
                 }
             }
 
             MknState::Chase => {
+                // `enMKNCtrlChase` (`SLUS_202.28` `0x001551a0` lines 928-965)
                 let steer_dir =
                     if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
                         let ticks = (dt * 60.0).round().max(1.0) as i16;
@@ -281,33 +336,54 @@ impl MannequinController {
                     } else {
                         target_dir
                     };
-                self.turn_towards(steer_dir, 3.5 * dt);
+                self.turn_towards(steer_dir, rot_speed_rad_s * dt);
 
-                let diff_idx = difficulty.as_index();
                 if dist <= self.sensory.attack_ranges[diff_idx] {
                     let diff = (normalize_angle(target_dir - self.yaw)).abs();
                     if diff <= self.sensory.attack_half_angles[diff_idx] {
                         self.state = MknState::Attack;
+                        self.sub_state = 0;
                         self.state_timer = 0.0;
                         return;
                     }
                 }
 
-                // HP-scaled walk speed (`enMKNGetWalkSpeed` `0x00157290`)
-                let walk_speed = 576.0 * mkn_walk_speed_scale(difficulty, self.stats.hp_rate);
+                // HP-scaled walk speed (`enMKNGetWalkSpeed` `0x00157290` × `enCalcSpeedRate`)
+                let speed_rate = normalize_angle(target_dir - self.yaw)
+                    .cos()
+                    .clamp(0.25, 1.0);
+                let walk_speed =
+                    576.0 * mkn_walk_speed_scale(difficulty, self.stats.hp_rate) * speed_rate;
                 self.position.x += self.yaw.sin() * walk_speed * dt;
                 self.position.z += self.yaw.cos() * walk_speed * dt;
 
-                // If player breaks line of sight or turns away, enter Circle flank mode (`0x4c2a90`)
-                if self.state_timer > 4.0 && dist > 1500.0 {
-                    self.state = MknState::Circle;
+                // `enMKNCtrlChase` (`0x001551a0:948-963`):
+                // If lost sight & `dist > feel_range`: `Circle` (`Around`) on Normal/Hard, else `Wander`.
+                if notice == SensoryNotice::None && dist > feel_range {
+                    self.state =
+                        if matches!(difficulty, DifficultyLevel::Normal | DifficultyLevel::Hard) {
+                            MknState::Circle
+                        } else {
+                            MknState::Wander
+                        };
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                } else if dist < 350.0 {
+                    self.state = MknState::Precaution;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                 }
             }
 
             MknState::Circle => {
-                // Circle flank: move to point 1000 units away, 120° offset from player's facing
-                let flank_angle = target.yaw + 120.0 * PI / 180.0;
+                // `enMKNCtrlAround` (`SLUS_202.28` `0x001553d0` lines 997-1037):
+                // Flank point 1000mm away at `±120°` (`2.0943952` rad) from player's facing.
+                let rel = normalize_angle(target_dir - target.yaw);
+                let flank_angle = if rel < 0.0 {
+                    target.yaw + 2.094_395_2
+                } else {
+                    target.yaw - 2.094_395_2
+                };
                 let flank_goal = Vec3::new(
                     target.position.x + flank_angle.sin() * 1000.0,
                     target.position.y,
@@ -315,15 +391,24 @@ impl MannequinController {
                 );
                 let fdx = flank_goal.x - self.position.x;
                 let fdz = flank_goal.z - self.position.z;
-                self.turn_towards(fdx.atan2(fdz), 4.0 * dt);
+                let fdist = (fdx * fdx + fdz * fdz).sqrt();
+                self.turn_towards(fdx.atan2(fdz), rot_speed_rad_s * dt);
 
-                self.position.x += self.yaw.sin() * 576.0 * dt;
-                self.position.z += self.yaw.cos() * 576.0 * dt;
+                let walk_speed = 576.0 * mkn_walk_speed_scale(difficulty, self.stats.hp_rate);
+                self.position.x += self.yaw.sin() * walk_speed * dt;
+                self.position.z += self.yaw.cos() * walk_speed * dt;
 
-                if self.state_timer > 3.0
-                    || dist <= self.sensory.attack_ranges[difficulty.as_index()]
-                {
+                if notice == SensoryNotice::InAttackRange {
+                    self.state = MknState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                } else if fdist < 500.0 || dist < feel_range {
                     self.state = MknState::Chase;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                } else if dist > 3500.0 {
+                    self.state = MknState::Wander;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                 }
             }
@@ -562,6 +647,7 @@ pub const fn fix_rotating_mannequin_glitch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::PI;
 
     #[test]
     fn test_mannequin_dormant_stay_and_wake() {
@@ -628,7 +714,10 @@ mod tests {
             );
         }
         assert_eq!(jumper.position.y, 0.0);
-        assert!(matches!(jumper.state, MknState::Chase | MknState::Attack));
+        assert!(matches!(
+            jumper.state,
+            MknState::Chase | MknState::Attack | MknState::Circle
+        ));
 
         // Event stand-up completes when stand-up animation finishes (`*(i32*)(work+0x14) == -1`).
         mkn.state = MknState::Event;

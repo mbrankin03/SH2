@@ -36,6 +36,16 @@ pub const KARI_SPOT_SPREAD_BIAS_SCALE: f32 = 0.8;
 /// (`0x44480000` = `800.0f` mm).
 pub const MODEL3_LIGHT_ENV_RADIUS_MM: f32 = 800.0;
 
+/// Nighttime reflection highlight dimming factor (`0x3e4ccccd = 0.2f`) applied by `UpdateExtras`
+/// (`SLUS_202.28` `Chacter_Draw/light_n.c` `0x00127360` lines 681-689) when no extra point/spot
+/// lights influence a character during non-cutscene night gameplay (`sh2gfw_Get_NightOrDay() != 0
+/// && DramaDemoNumber() == 0`).
+pub const UPDATE_EXTRAS_NIGHT_REFLECTION_SCALE: f32 = 0.2;
+
+/// Minimum fake-light attenuation threshold (`1e-5f`) below which `UpdateFake_DirandColor`
+/// (`SLUS_202.28` `Chacter_Draw/sh2gfw_model_light.c` `0x0012f450` line 171) deactivates a fake light.
+pub const FAKE_LIGHT_MIN_ATTENUATION: f32 = 1e-5;
+
 /// Light entry type discriminant (`*light_ptr` in `Chacter_Draw/light_n.c`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u32)]
@@ -84,6 +94,12 @@ pub struct CharacterLightEntry {
     pub world_dir: Vec3,
     /// Linear RGB color (`+0x60`).
     pub color: Vec3,
+    /// Unattenuated base RGB color for `FakePoint`/`FakeSpot` lights (`*(Vec4*)puVar4[7]` in
+    /// `UpdateFake_DirandColor` `0x0012f450`, `sh2gfw_model_light.c:156-166`).
+    pub fake_base_color: Vec3,
+    /// Spotlight axis direction for `FakeSpot` lights (`puVar1 + 0xc` in `UpdateFake_DirandColor`
+    /// `0x0012f450`, `sh2gfw_model_light.c:144`).
+    pub fake_spot_dir: Vec3,
     /// Falloff near/far distances in PS2 mm (`+0x70`, `+0x74`).
     pub falloff_near_mm: f32,
     pub falloff_far_mm: f32,
@@ -114,6 +130,8 @@ impl Default for CharacterLightEntry {
             world_pos: Vec3::ZERO,
             world_dir: Vec3::Z, // 0x2a94d0 = [0, 0, 1, 0]
             color: Vec3::ZERO,
+            fake_base_color: Vec3::ZERO,
+            fake_spot_dir: Vec3::Z,
             falloff_near_mm: 0.0,
             falloff_far_mm: 0.0,
             spread_inner: 1.0,
@@ -214,6 +232,9 @@ pub struct CharacterLightPool {
     reflection_brightness: f32,
     /// Selected reflection highlight color (`0x419cd0`, `LightGetReflectionColor` `0x00127780`).
     reflection_color: Vec3,
+    /// Base reflection color computed by `UpdateReflections` (`0x00126f90`) prior to per-character
+    /// `UpdateExtras` (`0x00127360`) night dimming (`0.2`) or highlight restoration (`1.0`).
+    base_reflection_color: Vec3,
     /// Computed Normal-to-Halfway Matrix (`0x419d20`, `LightGetNthViewNHM` `0x001277c0`).
     nhm: Mat4,
 }
@@ -237,6 +258,7 @@ impl CharacterLightPool {
             valid_extra_count: 0,
             reflection_brightness: 0.0,
             reflection_color: Vec3::ZERO,
+            base_reflection_color: Vec3::ZERO,
             nhm: Mat4::IDENTITY,
         }
     }
@@ -292,6 +314,124 @@ impl CharacterLightPool {
             };
             s.update_intensity();
             s.update_f_param();
+        }
+    }
+
+    /// Configures a fake point light (`LightSetFakePoint` `0x001263f0`, `Chacter_Draw/light_n.c:180-197`).
+    ///
+    /// Stored as `kind = Parallel` with `fake_kind = FakePoint (1)` and evaluated per-character by
+    /// [`Self::update_fake_lights`] (`UpdateFake_DirandColor` `0x0012f450`).
+    pub fn set_fake_point(
+        &mut self,
+        index: usize,
+        pos: Vec3,
+        color: Vec3,
+        near_mm: f32,
+        far_mm: f32,
+    ) {
+        if let Some(s) = self.slots.get_mut(index) {
+            *s = CharacterLightEntry {
+                kind: CharacterLightType::Parallel,
+                fake_kind: FakeLightKind::FakePoint,
+                world_pos: pos,
+                world_dir: Vec3::Z,
+                color,
+                fake_base_color: color,
+                falloff_near_mm: near_mm,
+                falloff_far_mm: far_mm,
+                ..Default::default()
+            };
+            s.update_intensity();
+            s.update_f_param();
+        }
+    }
+
+    /// Configures a fake spotlight (`LightSetFakeSpot` `0x001264c0`, `Chacter_Draw/light_n.c:200-218`).
+    ///
+    /// Stored as `kind = Parallel` with `fake_kind = FakeSpot (2)` and evaluated per-character by
+    /// [`Self::update_fake_lights`] (`UpdateFake_DirandColor` `0x0012f450`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_fake_spot(
+        &mut self,
+        index: usize,
+        pos: Vec3,
+        spot_dir: Vec3,
+        color: Vec3,
+        near_mm: f32,
+        far_mm: f32,
+        spread_inner: f32,
+        spread_outer: f32,
+    ) {
+        if let Some(s) = self.slots.get_mut(index) {
+            *s = CharacterLightEntry {
+                kind: CharacterLightType::Parallel,
+                fake_kind: FakeLightKind::FakeSpot,
+                world_pos: pos,
+                world_dir: Vec3::Z,
+                color,
+                fake_base_color: color,
+                fake_spot_dir: if spot_dir.length_squared() == 0.0 {
+                    Vec3::Z
+                } else {
+                    spot_dir.normalize()
+                },
+                falloff_near_mm: near_mm,
+                falloff_far_mm: far_mm,
+                spread_inner,
+                spread_outer,
+                ..Default::default()
+            };
+            s.update_intensity();
+            s.update_f_param();
+            s.update_s_param();
+        }
+    }
+
+    /// Evaluates all `FakePoint`/`FakeSpot` light slots for a character at `char_pos` matching
+    /// `SLUS_202.28` `UpdateFake_DirandColor` (`Chacter_Draw/sh2gfw_model_light.c` `0x0012f450`,
+    /// lines 80-187).
+    ///
+    /// Converts each fake light into an attenuated directional (`Parallel`) light pointing from
+    /// `world_pos` to `char_pos`, or disables it (`CharacterLightType::None`) when attenuation
+    /// `<= 1e-5` (`FAKE_LIGHT_MIN_ATTENUATION`).
+    pub fn update_fake_lights(&mut self, char_pos: Vec3) {
+        for slot in &mut self.slots {
+            if slot.fake_kind == FakeLightKind::Real {
+                continue;
+            }
+            let delta = char_pos - slot.world_pos;
+            slot.world_dir = delta.normalize_or(Vec3::Z);
+            let dist = delta.length();
+            let mut atten = (slot.linear_fb + slot.linear_fa * dist).clamp(0.0, 1.0);
+
+            if slot.fake_kind == FakeLightKind::FakeSpot {
+                // `UpdateFake_DirandColor` (`0x0012f450` lines 124-155):
+                // Project onto XZ if `dy^2 <= dx^2 || dy^2 <= dz^2`, else onto XY.
+                let sq = delta * delta;
+                let vertical_dominant = sq.y > sq.x && sq.y > sq.z;
+                let proj_delta = if vertical_dominant {
+                    Vec3::new(delta.x, delta.y, 0.0).normalize_or_zero()
+                } else {
+                    Vec3::new(delta.x, 0.0, delta.z).normalize_or_zero()
+                };
+                let proj_spot = if vertical_dominant {
+                    Vec3::new(slot.fake_spot_dir.x, slot.fake_spot_dir.y, 0.0).normalize_or_zero()
+                } else {
+                    Vec3::new(slot.fake_spot_dir.x, 0.0, slot.fake_spot_dir.z).normalize_or_zero()
+                };
+                let cos_a = proj_delta.dot(proj_spot);
+                let ang = (slot.spread_sb + slot.spread_sa * cos_a).clamp(0.0, 1.0);
+                atten *= ang;
+            }
+
+            if atten <= FAKE_LIGHT_MIN_ATTENUATION {
+                slot.kind = CharacterLightType::None;
+                slot.color = Vec3::ZERO;
+            } else {
+                slot.kind = CharacterLightType::Parallel;
+                slot.color = slot.fake_base_color * atten;
+                slot.update_intensity();
+            }
         }
     }
 
@@ -449,11 +589,32 @@ impl CharacterLightPool {
         );
         self.reflection_brightness = best.signed_intensity;
         self.reflection_color = best.color;
+        self.base_reflection_color = best.color;
     }
 
     /// Evaluates `CalcInfluence` for all Point/Spot slots and selects the top 6 descending by influence
     /// (`UpdateExtras` `0x00127360`, `CompareByInfluence` `0x00126c00`).
     pub fn update_extras(&mut self, radius_mm: f32, char_pos: Vec3) {
+        self.update_extras_with_context(radius_mm, char_pos, false, false, false);
+    }
+
+    /// Full `SLUS_202.28` `UpdateExtras` (`Chacter_Draw/light_n.c` `0x00127360` lines 652-724):
+    /// - Evaluates `CalcInfluence` for all Point/Spot slots and selects up to 6 descending by influence.
+    /// - When `valid_extra_count == 0`, `is_night` (`sh2gfw_Get_NightOrDay() != 0`), and `!is_cutscene`
+    ///   (`DramaDemoNumber() == 0`), dims `reflection_color` to `[1, 1, 1] * 0.2` (`0x3e4ccccd`,
+    ///   `SLUS_202.28` `0x002a9560`).
+    /// - When `valid_extra_count > 0`, `demo_refl_highlight` (`sh2gfw_Check_DemoRefrectionHightLight()`),
+    ///   and `!is_cutscene`, restores `reflection_color` to `[1, 1, 1] * 1.0` (`0x3f800000`,
+    ///   `SLUS_202.28` `0x002a9570`).
+    pub fn update_extras_with_context(
+        &mut self,
+        radius_mm: f32,
+        char_pos: Vec3,
+        is_night: bool,
+        is_cutscene: bool,
+        demo_refl_highlight: bool,
+    ) {
+        self.reflection_color = self.base_reflection_color;
         let mut active: Vec<usize> = Vec::with_capacity(CHARACTER_LIGHT_SLOT_COUNT);
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if matches!(
@@ -467,6 +628,15 @@ impl CharacterLightPool {
             }
         }
 
+        if active.is_empty() {
+            self.valid_extra_count = 0;
+            if is_night && !is_cutscene {
+                // `UpdateExtras` (`0x00127360` lines 684-688): `_1181` (`0x2a9560` = `[1,1,1,1]`) * `0.2f`
+                self.reflection_color = Vec3::splat(UPDATE_EXTRAS_NIGHT_REFLECTION_SCALE);
+            }
+            return;
+        }
+
         // `CompareByInfluence` (`0x00126c00`): descending by `influence`
         active.sort_by(|&a, &b| self.slots[b].influence.total_cmp(&self.slots[a].influence));
 
@@ -474,6 +644,11 @@ impl CharacterLightPool {
         self.valid_extra_count = count;
         for (dst, &src) in self.valid_extras.iter_mut().zip(active.iter()).take(count) {
             *dst = src;
+        }
+
+        if demo_refl_highlight && !is_cutscene {
+            // `UpdateExtras` (`0x00127360` lines 716-720): `_1204` (`0x2a9570` = `[1,1,1,1]`) * `1.0f`
+            self.reflection_color = Vec3::ONE;
         }
     }
 
@@ -509,5 +684,49 @@ impl CharacterLightPool {
     #[must_use]
     pub fn nhm(&self) -> Mat4 {
         self.nhm
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_extras_night_reflection_dimming_and_fake_lights() {
+        let mut pool = CharacterLightPool::new();
+        pool.set_reflection(0, Vec3::Y, Vec3::ONE);
+        pool.update_reflections(Vec3::ZERO, Vec3::Z);
+        // With no active Point/Spot extras at night in gameplay, `UpdateExtras` (`0x00127360`)
+        // dims reflection_color to `0.2` (`0x3e4ccccd`).
+        pool.update_extras_with_context(1000.0, Vec3::ZERO, true, false, false);
+        assert_eq!(pool.valid_extra_count(), 0);
+        assert!((pool.reflection_color().x - UPDATE_EXTRAS_NIGHT_REFLECTION_SCALE).abs() < 1e-6);
+
+        // `UpdateFake_DirandColor` (`0x0012f450`): fake point light attenuates and converts to Parallel.
+        pool.set_fake_point(
+            1,
+            Vec3::new(0.0, 0.0, 2000.0),
+            Vec3::new(1.0, 0.8, 0.6),
+            500.0,
+            4500.0,
+        );
+        pool.update_fake_lights(Vec3::ZERO);
+        assert_eq!(pool.slots[1].kind, CharacterLightType::Parallel);
+        assert!(pool.slots[1].color.x > 0.0 && pool.slots[1].color.x < 1.0);
+        assert!((pool.slots[1].world_dir - (-Vec3::Z)).length() < 1e-5);
+
+        // Fake spot outside cone (`spread_outer = 0.7`, perpendicular offset) attenuates to `1e-5`.
+        pool.set_fake_spot(
+            2,
+            Vec3::new(1000.0, 0.0, 0.0),
+            Vec3::Z,
+            Vec3::ONE,
+            100.0,
+            5000.0,
+            0.9,
+            0.7,
+        );
+        pool.update_fake_lights(Vec3::ZERO);
+        assert!(pool.slots[2].color.x <= FAKE_LIGHT_MIN_ATTENUATION + 1e-6);
     }
 }

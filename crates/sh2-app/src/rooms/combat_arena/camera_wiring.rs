@@ -339,13 +339,23 @@ pub(crate) fn update_spotlight_uniforms(state: &mut AppState, alpha: f32) {
             let cam_eye = state.sim_core.active_camera_eye(alpha);
             let char_pos = state.sim_core.scenario.player_position;
             let view_dir = (cam_eye - char_pos).normalize_or(glam::Vec3::Z);
+            state.char_light_pool.update_fake_lights(char_pos);
             state.char_light_pool.update_parallels();
             state
                 .char_light_pool
                 .update_reflections(view_dir, glam::Vec3::NEG_Y);
-            state
-                .char_light_pool
-                .update_extras(sh2_renderer::light::MODEL3_LIGHT_ENV_RADIUS_MM, char_pos);
+            state.char_light_pool.update_extras_with_context(
+                sh2_renderer::light::MODEL3_LIGHT_ENV_RADIUS_MM,
+                char_pos,
+                is_dark_room,
+                false,
+                false,
+            );
+            state.render_ctx.update_gameplay_character_light_pool(Some((
+                state.char_light_pool.clone(),
+                is_dark_room,
+                false,
+            )));
 
             let darkness = sh2_core::lighting::evaluate_room_darkness(
                 &sh2_core::lighting::RoomDarknessInput {

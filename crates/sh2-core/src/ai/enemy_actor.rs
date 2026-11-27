@@ -323,7 +323,7 @@ impl EnemyActor {
                 )
             }
             ActiveEnemy::Nurse(e) => matches!(e.state, NseState::Precaution | NseState::Chase),
-            ActiveEnemy::Creeper(e) => e.state == TyuState::Swarm,
+            ActiveEnemy::Creeper(e) => matches!(e.state, TyuState::Chase | TyuState::Gathering),
             ActiveEnemy::PyramidHead(e) => matches!(e.state, RedState::Chase | RedState::Stairs),
             ActiveEnemy::AbstractDaddy(e) => matches!(e.state, PapState::Chase | PapState::Rush),
             ActiveEnemy::FleshLips(e) => matches!(e.state, IkeState::Chase | IkeState::Move),
@@ -614,6 +614,11 @@ impl EnemyActor {
             ActiveEnemy::Creeper(e) => {
                 if dead {
                     e.state = TyuState::Dead;
+                } else {
+                    e.state = TyuState::Down;
+                    e.sub_state = 1;
+                    e.timer_ticks = crate::ai::creatures::creeper::TYU_STOP_TIME_TICKS
+                        [e.difficulty.as_index()] as f32;
                 }
             }
             ActiveEnemy::AbstractDaddy(e) => {
@@ -710,7 +715,7 @@ impl EnemyActor {
                 e.state = if attacking {
                     TyuState::Attack
                 } else {
-                    TyuState::Swarm
+                    TyuState::Chase
                 };
             }
             ActiveEnemy::PyramidHead(e) => {

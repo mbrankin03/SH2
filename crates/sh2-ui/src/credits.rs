@@ -19,8 +19,48 @@ pub use sh2_core::endings::{
     IN_WATER_CLOSING_SCROLL_DURATION_SECS, WATER_BIK_DURATION_SECS,
 };
 
+use std::path::Path;
+
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
 use crate::font::TextRasterizer;
+use sh2_assets::formats::texture::parse_texture_container;
+
+/// Decoded RGBA8 UFO ending slide texture (`staff01..07.tex` / `hj01..07.tex` / `words01..07.tex` /
+/// `ufomado01..03.tex` / `ufomizu01..04.tex` / `ufoniwa01..04.tex`, `EvProgUfoMado` `0x00578c50`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedUfoSlide {
+    pub path: String,
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+/// Loads and decodes a retail UFO ending `.tex` slide relative to `game_root` (checking `sh2e/`
+/// override first, then `data/`).
+#[must_use]
+pub fn load_ufo_slide_texture(game_root: &Path, rel_path: &str) -> Option<DecodedUfoSlide> {
+    let sh2e_rel = rel_path.strip_prefix("data/").unwrap_or(rel_path);
+    let candidates = [
+        game_root.join("sh2e").join(sh2e_rel),
+        game_root.join(rel_path),
+    ];
+    let bytes = candidates.iter().find_map(|p| std::fs::read(p).ok())?;
+    let textures = parse_texture_container(&bytes, 0).ok()?;
+    let tex = textures.first()?;
+    let rgba = tex.to_rgba().ok()?;
+    if tex.width == 0
+        || tex.height == 0
+        || rgba.len() < (tex.width as usize) * (tex.height as usize) * 4
+    {
+        return None;
+    }
+    Some(DecodedUfoSlide {
+        path: rel_path.to_string(),
+        width: tex.width as usize,
+        height: tex.height as usize,
+        rgba,
+    })
+}
 
 /// Lifecycle phase of an ending's epilogue & staff credits presentation (`0x0043ed20..0x005a12d0`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,6 +121,8 @@ pub struct EndingCreditsSequence {
     pub phase: CreditsSequencePhase,
     /// Most recently triggered `voice.afs` stream ID (`0xEAE1`, `0xEA64`, `0xEAB2`).
     pub last_triggered_voice_stream: Option<u32>,
+    /// Cached decoded retail `.tex` slide for `CreditsSequencePhase::UfoSlideShow`.
+    pub cached_ufo_slide: Option<DecodedUfoSlide>,
 }
 
 impl EndingCreditsSequence {
@@ -129,6 +171,7 @@ impl EndingCreditsSequence {
             descriptor,
             phase,
             last_triggered_voice_stream: None,
+            cached_ufo_slide: None,
         }
     }
 
@@ -271,19 +314,61 @@ impl EndingCreditsSequence {
                 );
             }
             CreditsSequencePhase::UfoSlideShow(player) => {
-                font.draw_line_centered(
-                    rast,
-                    player.current_texture_path(),
-                    (rast.width / 2, rast.height.saturating_sub(36)),
-                    18,
-                    Sh2TextColor::MutedFooter,
-                    true,
-                );
+                // Blit the decoded retail UFO slide texture (`staff01..07.tex`, etc., `EvProgUfoMado` `0x00578c50`)
+                // centered with 4:3 aspect preservation rather than rendering filename text.
+                rast.fill_rect(0, 0, rast.width, rast.height, [0, 0, 0, 255]);
+                let cur_path = player.current_texture_path();
+                if let Some(slide) = self
+                    .cached_ufo_slide
+                    .as_ref()
+                    .filter(|s| s.path == cur_path)
+                {
+                    let target_w = ((rast.height as f32) * (4.0 / 3.0))
+                        .round()
+                        .min(rast.width as f32) as usize;
+                    let target_h = ((target_w as f32) * (3.0 / 4.0))
+                        .round()
+                        .min(rast.height as f32) as usize;
+                    let dst_x = rast.width.saturating_sub(target_w) / 2;
+                    let dst_y = rast.height.saturating_sub(target_h) / 2;
+                    rast.blit_rgba_scaled(
+                        dst_x,
+                        dst_y,
+                        target_w,
+                        target_h,
+                        &slide.rgba,
+                        slide.width,
+                        slide.height,
+                        1.0,
+                    );
+                }
             }
             CreditsSequencePhase::Idle
             | CreditsSequencePhase::InWaterBedside { .. }
             | CreditsSequencePhase::EpilogueScene { .. }
             | CreditsSequencePhase::Finished => {}
+        }
+    }
+
+    /// Ensures the active UFO ending slide `.tex` (`staff01..07.tex`, etc.) is decoded from
+    /// `game_root` before rendering (`EvProgUfoMado` `0x00578c50`).
+    pub fn prepare_ufo_slide_from_disk(&mut self, game_root: &Path) -> bool {
+        let CreditsSequencePhase::UfoSlideShow(player) = &self.phase else {
+            return false;
+        };
+        let cur_path = player.current_texture_path();
+        if self
+            .cached_ufo_slide
+            .as_ref()
+            .is_some_and(|s| s.path == cur_path)
+        {
+            return true;
+        }
+        if let Some(decoded) = load_ufo_slide_texture(game_root, cur_path) {
+            self.cached_ufo_slide = Some(decoded);
+            true
+        } else {
+            false
         }
     }
 }
@@ -446,5 +531,43 @@ mod tests {
 
         let wish = EndingCreditsSequence::start(GameEnding::BornFromAWish);
         assert_eq!(wish.music_theme(), CreditsMusicTheme::LovePsalm);
+    }
+
+    #[test]
+    fn ufo_ending_blits_actual_retail_staff_tex_slides() {
+        let game_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2");
+        if !game_root.join("data/pic/ufo/staff01.tex").exists() {
+            return;
+        }
+        for i in 1..=7 {
+            let rel = format!("data/pic/ufo/staff0{i}.tex");
+            let decoded = load_ufo_slide_texture(&game_root, &rel)
+                .unwrap_or_else(|| panic!("expected retail UFO slide {rel} to decode"));
+            assert!(decoded.width > 0 && decoded.height > 0);
+            assert_eq!(
+                decoded.rgba.len(),
+                (decoded.width as usize) * (decoded.height as usize) * 4
+            );
+        }
+
+        let font = AtlasFont::load_embedded();
+        let mut ufo = EndingCreditsSequence::start(GameEnding::Ufo);
+        assert!(ufo.prepare_ufo_slide_from_disk(&game_root));
+        // Advance past fade-in so slide alpha > 0
+        ufo.tick(2.5, false);
+        let mut rast = TextRasterizer::new(640, 480);
+        ufo.render(&mut rast, &font);
+        let non_black = rast
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|px| px[0] > 0 || px[1] > 0 || px[2] > 0)
+            .count();
+        assert!(
+            non_black > 5_000,
+            "expected retail UFO slide texture to blit visible pixels, got {non_black}"
+        );
     }
 }

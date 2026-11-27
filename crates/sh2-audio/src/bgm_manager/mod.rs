@@ -199,6 +199,11 @@ impl BgmManager {
         let glb = stage_glb_crd(stage_id);
         self.room_id = bgm_room_id(glb, player_pos.x, player_pos.z);
         let page = pick_bgm_page(stage_id, self.room_id, &self.event_flags);
+        // Retail `sh2pc.exe` `SeBgmChange` (`0x00516028:4512-4516`): stage 15 (Pete's Bowl-O-Rama)
+        // sets `DAT_01f80bd0 = 1` when `(flag_5f0 & 0x8000_0000) == 0` to delay BGM start.
+        if stage_id == 15 && (self.event_flags.flag_5f0 & 0x8000_0000) == 0 {
+            self.event_flags.bowling_bgm_delay = true;
+        }
         self.request_page(page);
         page
     }
@@ -242,7 +247,10 @@ impl BgmManager {
 
         // 1. Check if a page transition is waiting for active tracks to finish fading out (`0x516089..0x5160F3`)
         let mut waiting_for_fadeout = false;
-        if self.current_play_id != self.next_play_id && self.next_play_id != 0 {
+        if self.current_play_id != self.next_play_id
+            && self.next_play_id != 0
+            && !self.event_flags.bowling_bgm_delay
+        {
             let all_off = self.tracks.iter().all(|t| t.status == BgmTrackStatus::Off);
             if all_off {
                 if let Some(eng) = engine.as_deref_mut() {
@@ -280,8 +288,8 @@ impl BgmManager {
             } else {
                 waiting_for_fadeout = true;
             }
-        } else if self.pending_load_id != 0 {
-            // Immediate first load when `current_play_id == 0` (`0x5160F4..0x516299`)
+        } else if self.pending_load_id != 0 && !self.event_flags.bowling_bgm_delay {
+            // Immediate first load when `current_play_id == 0` (`0x5160F4..0x516299`, gated by `DAT_01f80bd0 == 0` at `0x00516430:4666`)
             let load_id = self.pending_load_id;
             self.pending_load_id = 0;
             self.current_play_id = self.next_play_id;
@@ -404,5 +412,35 @@ impl BgmManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn retail_sh2pc_bowling_bgm_delay_and_game_mode_0xb_situation_15() {
+        // `sh2pc.exe` `FUN_00516650`: `game_mode == 0x0b` forces situation 15.
+        let flags = BgmEventFlags {
+            game_mode: 0x0b,
+            ..Default::default()
+        };
+        let sit = evaluate_situation_page(2, 0, 1.0, None, &flags);
+        assert_eq!(sit, 15);
+
+        // `sh2pc.exe` `SeBgmChange` (`0x00516028`): stage 15 (Bowling) with `(flag_5f0 & 0x8000_0000) == 0`
+        // arms `bowling_bgm_delay` (`DAT_01f80bd0`) and delays `pending_load_id` until cleared.
+        let mut mgr = BgmManager::new(PathBuf::from("."), AudioPackSource::OriginalPs2);
+        mgr.tick(15, Vec3::ZERO, 1.0, None, 0.016, None).unwrap();
+        assert!(mgr.event_flags.bowling_bgm_delay);
+        assert_ne!(mgr.pending_load_id, 0);
+
+        // Once `bowling_bgm_delay` clears, `pending_load_id` is consumed on next tick.
+        mgr.event_flags.bowling_bgm_delay = false;
+        mgr.event_flags.flag_5f0 = 0x8000_0000;
+        mgr.tick(15, Vec3::ZERO, 1.0, None, 0.016, None).unwrap();
+        assert_eq!(mgr.pending_load_id, 0);
     }
 }

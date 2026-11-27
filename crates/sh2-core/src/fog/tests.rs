@@ -157,6 +157,53 @@ fn forest_trail_ca11_particle_y_sign_and_alpha_match_cagb_fcl_and_fun_004896e0()
 }
 
 #[test]
+fn town_east_and_west_match_cbgb_and_ccgb_fcl_env0_and_yfix() {
+    for (stage_code, room_id) in [("cb54", R_TOWN_EAST_ID), ("cc01", R_TOWN_WEST_ID)] {
+        assert_eq!(room_id_from_stage_code(stage_code), room_id);
+        let eval = evaluate_room_fog(&RoomFogContext {
+            room_id,
+            ..Default::default()
+        });
+        assert_eq!(eval.particle_count, CB_CC_FOG_ENV_PARTICLE_COUNT);
+        assert_eq!(eval.particle_fixed_y_mm, Some(CB_CC_FOG_ENV_FIXED_Y_MM));
+        assert_eq!(eval.particle_size_mm, PS2_DEFAULT_FOG_PARTICLE_SIZE_MM);
+        assert_eq!(eval.particle_subdiv, PS2_DEFAULT_FOG_ENV_SUBDIV);
+        assert_eq!(eval.particle_alpha_u8, PS2_DEFAULT_FOG_ENV_ALPHA_U8);
+        assert!(!eval.particle_floor_follow);
+        assert_eq!(eval.particle_color_rgb, PS2_FOG_PARTICLE_MIST_RGB);
+
+        // Verify `yfix = -100.0` mm (`cbGB.fcl` @ `0x29ec`, `ccGB.fcl` @ `0x298c`):
+        // mid-volume (`local_y_sym = 0.0`) -> `world_y = -1100.0` mm, full `16/255` alpha;
+        // at `yfix` (`local_y_sym = -100.0`) -> `world_y = -100.0` mm, culled (`0.0`).
+        let (wy_mid, a_mid) = evaluate_ps2_particle_y_and_alpha(
+            CB_CC_FOG_ENV_FIXED_Y_MM,
+            0.0,
+            1.0,
+            eval.particle_range_z_mm,
+            eval.particle_subdiv,
+            eval.particle_alpha_u8,
+            eval.particle_fixed_y_mm,
+            eval.particle_size_mm,
+        );
+        assert!((wy_mid - (-1100.0)).abs() < 1e-4);
+        assert!((a_mid - (f32::from(PS2_DEFAULT_FOG_ENV_ALPHA_U8) / 255.0)).abs() < 1e-6);
+
+        let (wy_bot, a_bot) = evaluate_ps2_particle_y_and_alpha(
+            CB_CC_FOG_ENV_FIXED_Y_MM,
+            -100.0,
+            1.0,
+            eval.particle_range_z_mm,
+            eval.particle_subdiv,
+            eval.particle_alpha_u8,
+            eval.particle_fixed_y_mm,
+            eval.particle_size_mm,
+        );
+        assert!((wy_bot - CB_CC_FOG_ENV_FIXED_Y_MM).abs() < 1e-4);
+        assert!(a_bot.abs() < 1e-6);
+    }
+}
+
+#[test]
 fn restroom_and_default_indoor_rooms_match_setup_draw_env_data() {
     let er = evaluate_room_fog(&RoomFogContext {
         room_id: R_RESTROOM_START_ID,

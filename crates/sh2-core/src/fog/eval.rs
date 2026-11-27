@@ -153,11 +153,19 @@ pub fn evaluate_room_fog_with_fixes(
             // `count = 400`, `area = 2000 mm`, `size = 400 mm`, `flags = 0x08` (floor-follow),
             // `subdiv = 1` (`y_span = 2000 mm`), `alpha = 0x10` (`16/255`), and `fogInit` (`0x001687d0`)
             // `fogSetColor(0x80, 0x80, 0x80, 0x80)` -> `[1.0, 1.0, 1.0]` unity modulation of `fog.tex`.
+            // Town East (`cb*`) & Town West (`cc*`) match retail `data/bg/cb/cbGB.fcl` (`Env[0]` @ `0x29e4`)
+            // and `data/bg/cc/ccGB.fcl` (`Env[0]` @ `0x2984`): `count = 400`, `area = 2000 mm`,
+            // `size = 300 mm`, `y_fix = -100 mm`, `flags = 0x00`, `subdiv = 1`, `alpha = 0x10`.
             let is_forest = ctx.room_id == R_FOREST_CEMETERY_ID;
             let particle_count = if is_forest {
                 CA_FOG_ENV_PARTICLE_COUNT
             } else {
-                PS2_DEFAULT_FOG_PARTICLE_COUNT
+                CB_CC_FOG_ENV_PARTICLE_COUNT
+            };
+            let particle_fixed_y_mm = if is_forest {
+                None
+            } else {
+                Some(CB_CC_FOG_ENV_FIXED_Y_MM)
             };
             let particle_size_mm = if is_forest {
                 CA_FOG_ENV_PARTICLE_SIZE_MM
@@ -192,7 +200,7 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_count,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                particle_fixed_y_mm: None,
+                particle_fixed_y_mm,
                 particle_size_mm,
                 particle_subdiv,
                 particle_alpha_u8,

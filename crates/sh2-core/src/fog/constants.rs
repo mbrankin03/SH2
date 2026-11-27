@@ -103,6 +103,14 @@ pub const CA_FOG_ENV_PARTICLE_SIZE_MM: f32 = 400.0;
 pub const CA_FOG_ENV_SUBDIV: u8 = 1;
 /// Exact retail `data/bg/ca/caGB.fcl` `FogEnv[0] +0x13` (`0x1113 = 0x10 = 16`) `fog_alpha_param`.
 pub const CA_FOG_ENV_ALPHA_U8: u8 = 0x10;
+/// Exact retail `data/bg/cb/cbGB.fcl` (`Env[0]` @ `0x29e4`) and `data/bg/cc/ccGB.fcl` (`Env[0]` @ `0x2984`)
+/// particle count (`+0x00 = 0x0190 = 400`).
+pub const CB_CC_FOG_ENV_PARTICLE_COUNT: usize = 400;
+/// Exact retail `data/bg/cb/cbGB.fcl` (`Env[0] +0x08` @ `0x29ec`) and `data/bg/cc/ccGB.fcl`
+/// (`Env[0] +0x08` @ `0x298c`) fixed floor/anchor Y (`0xff9c = -100.0` mm, PS2 Y-down = 10 cm above street pavement),
+/// applied when `subdiv != 0` in `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2980-2982`)
+/// and as `floor_y` in `FUN_004896e0` (`sh2pc.exe` `0x004896e0`, `sh2pc_00480000.c:5678`) since `flags = 0x00`.
+pub const CB_CC_FOG_ENV_FIXED_Y_MM: f32 = -100.0;
 /// Exact retail `data/bg/ob/obGB.fcl` `FogEnv[0] +0x12` (`0x96 = 0x04`) vertical subdivision shift (`y_span = 14000 / 16 = 875 mm`).
 pub const OB_FOG_ENV_SUBDIV: u8 = 4;
 /// Exact retail `data/bg/ob/obGB.fcl` `FogEnv[0] +0x13` (`0x97 = 0x30 = 48`) `fog_alpha_param`.

@@ -219,7 +219,14 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
         let radius_scale =
             room_eval.particle_size_mm / sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_SIZE_MM;
         let area_mm = room_eval.particle_range_z_mm;
-        let floor_y = room_eval.particle_floor_follow.then_some(player_pos.y);
+        // Exact `fogMakePacket` (`0x0016bb70`, `Fog/fog.c:2338-2339`) & `FUN_004896e0` (`0x004896e0`,
+        // `sh2pc_00480000.c:5603-5604, 5678`): `floor_y` tracks `player_pos.y` when `flags & 0x08 != 0`
+        // (`caGB.fcl`), otherwise stays at `.fcl` `y_fix` (`cbGB.fcl`/`ccGB.fcl` = `-100.0` mm, `obGB.fcl` = `10000.0` mm).
+        let floor_y = if room_eval.particle_floor_follow {
+            Some(player_pos.y)
+        } else {
+            room_eval.particle_fixed_y_mm
+        };
         state
             .fog_particle_scratch
             .extend(state.fog_particles.particles().iter().map(|p| {

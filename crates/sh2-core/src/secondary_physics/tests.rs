@@ -4,18 +4,20 @@ use std::path::Path;
 #[test]
 fn test_secondary_physics_presets_and_step() {
     let mut sim_james = SecondaryBonePhysics::for_james();
-    assert!(sim_james.configs.contains_key(&11));
-    assert!(sim_james.configs.contains_key(&12));
-    assert!(sim_james.configs.contains_key(&16));
-    assert!(sim_james.configs.contains_key(&17));
-    assert!(sim_james.configs.contains_key(&23));
-    assert!(sim_james.configs.contains_key(&24));
+    let has_bone =
+        |sim: &SecondaryBonePhysics, b: usize| sim.joints.iter().any(|j| j.bone_index == b);
+    assert!(has_bone(&sim_james, 11));
+    assert!(has_bone(&sim_james, 12));
+    assert!(has_bone(&sim_james, 16));
+    assert!(has_bone(&sim_james, 17));
+    assert!(has_bone(&sim_james, 23));
+    assert!(has_bone(&sim_james, 24));
 
     let sim_maria = SecondaryBonePhysics::for_maria();
-    assert!(sim_maria.configs.contains_key(&12));
-    assert!(sim_maria.configs.contains_key(&17));
-    assert!(sim_maria.configs.contains_key(&13));
-    assert!(sim_maria.configs.contains_key(&14));
+    assert!(has_bone(&sim_maria, 12));
+    assert!(has_bone(&sim_maria, 17));
+    assert!(has_bone(&sim_maria, 13));
+    assert!(has_bone(&sim_maria, 14));
 
     let dt = 1.0 / 60.0;
     let p0 = Vec3::new(0.0, 0.0, 0.0);
@@ -24,7 +26,12 @@ fn test_secondary_physics_presets_and_step() {
     sim_james.step(dt, p0, 0.0);
     sim_james.step(dt, p1, 0.0);
 
-    let st11 = sim_james.states.get(&11).unwrap();
+    let st11 = sim_james
+        .joints
+        .iter()
+        .find(|j| j.bone_index == 11)
+        .unwrap()
+        .state;
     assert!(st11.deflection.x != 0.0 || st11.angular_velocity.x != 0.0);
 
     let mut locals = vec![[[0.0; 4]; 4]; 40];

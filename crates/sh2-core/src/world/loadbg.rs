@@ -51,6 +51,17 @@ pub struct TileStreamingPlan {
     pub evict_blocks: Vec<u16>,
 }
 
+/// Cache key identifying when an [`OutdoorTileStreamer`] plan can be reused without replanning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PlanCacheKey {
+    stage_id: u16,
+    gx: i16,
+    gz: i16,
+    mode: OutdoorStreamingMode,
+    quadrant: (i8, i8),
+    cutoff_mask: u8,
+}
+
 /// Stateful outdoor `.map` tile streaming planner supporting PS2 `2x2` parity, Native `5x5`,
 /// and Native Whole-Town GPU residency modes.
 #[derive(Debug, Clone)]
@@ -58,6 +69,14 @@ pub struct OutdoorTileStreamer {
     mode: OutdoorStreamingMode,
     active_area: Option<OutdoorArea>,
     resident_blocks: HashSet<u16>,
+    /// Cache key of [`Self::cached_plan`]; invalidated on resident/mode/reset changes.
+    last_plan_key: Option<PlanCacheKey>,
+    /// Cached most recent streaming plan (reuses its internal `Vec` capacities across replans).
+    cached_plan: TileStreamingPlan,
+    /// Reusable scratch buffer of `(tile, distance_mm, priority_band)` (no `String` formatting).
+    scratch_candidates: Vec<(OutdoorTileId, f32, u8)>,
+    /// Reusable scratch set of desired block IDs for eviction filtering.
+    scratch_desired_set: HashSet<u16>,
 }
 
 impl Default for OutdoorTileStreamer {
@@ -74,6 +93,10 @@ impl OutdoorTileStreamer {
             mode,
             active_area: None,
             resident_blocks: HashSet::new(),
+            last_plan_key: None,
+            cached_plan: TileStreamingPlan::default(),
+            scratch_candidates: Vec::with_capacity(80),
+            scratch_desired_set: HashSet::with_capacity(80),
         }
     }
 
@@ -86,23 +109,36 @@ impl OutdoorTileStreamer {
 
     /// Updates the active [`OutdoorStreamingMode`] (e.g. when toggled live in the Options menu).
     pub fn set_mode(&mut self, mode: OutdoorStreamingMode) {
-        self.mode = mode;
+        if self.mode != mode {
+            self.mode = mode;
+            self.last_plan_key = None;
+        }
     }
 
     /// Marks `block_no` as resident in GPU memory (called when a background load finishes uploading).
     pub fn mark_resident(&mut self, block_no: u16) {
-        self.resident_blocks.insert(block_no);
+        if self.resident_blocks.insert(block_no) {
+            self.last_plan_key = None;
+        }
     }
 
     /// Marks `block_no` as evicted from GPU memory.
     pub fn mark_evicted(&mut self, block_no: u16) {
-        self.resident_blocks.remove(&block_no);
+        if self.resident_blocks.remove(&block_no) {
+            self.last_plan_key = None;
+        }
     }
 
     /// Clears all resident tracking (e.g. on stage transition).
     pub fn reset(&mut self) {
         self.active_area = None;
         self.resident_blocks.clear();
+        self.last_plan_key = None;
+        self.cached_plan.area = None;
+        self.cached_plan.priority_gb_cam = None;
+        self.cached_plan.desired_blocks.clear();
+        self.cached_plan.load_queue.clear();
+        self.cached_plan.evict_blocks.clear();
     }
 
     /// Computes the PS2 `loadBgAll_SetLoadRequestOutdoor2x2` (`0x00270e50..0x00270f68`) priority band
@@ -118,23 +154,88 @@ impl OutdoorTileStreamer {
         band
     }
 
-    /// Evaluates the outdoor streaming plan for `(stage_id, player_x_mm, player_z_mm)`.
-    #[must_use]
-    pub fn plan(&mut self, stage_id: u16, player_x_mm: f32, player_z_mm: f32) -> TileStreamingPlan {
+    /// Evaluates the outdoor streaming plan for `(stage_id, player_x_mm, player_z_mm)`, returning
+    /// a borrowed reference to the cached plan and a boolean indicating whether the plan changed.
+    ///
+    /// Performs zero heap allocations when `(stage_id, gx, gz, mode, quadrant, cutoff_mask)` and
+    /// residency state are unchanged since the previous tick.
+    pub fn plan_ref(
+        &mut self,
+        stage_id: u16,
+        player_x_mm: f32,
+        player_z_mm: f32,
+    ) -> (&TileStreamingPlan, bool) {
         let Some(area) = OutdoorArea::from_stage_id(stage_id) else {
-            return TileStreamingPlan::default();
+            let changed = self.cached_plan.area.is_some() || self.last_plan_key.is_some();
+            if changed {
+                self.last_plan_key = None;
+                self.cached_plan.area = None;
+                self.cached_plan.priority_gb_cam = None;
+                self.cached_plan.desired_blocks.clear();
+                self.cached_plan.load_queue.clear();
+                self.cached_plan.evict_blocks.clear();
+            }
+            return (&self.cached_plan, false);
         };
 
         if self.active_area != Some(area) {
             self.active_area = Some(area);
             self.resident_blocks.clear();
+            self.last_plan_key = None;
         }
 
         let (player_gx, player_gz) = OutdoorArea::world_to_grid(player_x_mm, player_z_mm);
-        let mut candidates: Vec<TileLoadRequest> = match self.mode {
+        let (quadrant, cutoff_mask) = match self.mode {
             OutdoorStreamingMode::ClassicPs2LoadBg2x2 => {
-                Self::collect_ps2_2x2_tiles(area, player_x_mm, player_z_mm, player_gx, player_gz)
+                let (cx, cz) = OutdoorArea::grid_cell_center_mm(player_gx, player_gz);
+                let dir_x: i8 = if player_x_mm < cx { -1 } else { 1 };
+                let dir_z: i8 = if player_z_mm < cz { -1 } else { 1 };
+                let offsets = [
+                    (player_gx, player_gz),
+                    (player_gx + i16::from(dir_x), player_gz),
+                    (player_gx, player_gz + i16::from(dir_z)),
+                    (player_gx + i16::from(dir_x), player_gz + i16::from(dir_z)),
+                ];
+                let cutoff_sq = LOADBG_PREFETCH_CUTOFF_MM * LOADBG_PREFETCH_CUTOFF_MM;
+                let mut mask = 1u8; // current cell always included
+                for (i, &(gx, gz)) in offsets.iter().enumerate().skip(1) {
+                    let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
+                    let dx = player_x_mm - tcx;
+                    let dz = player_z_mm - tcz;
+                    if dx * dx + dz * dz < cutoff_sq {
+                        mask |= 1u8 << i;
+                    }
+                }
+                ((dir_x, dir_z), mask)
             }
+            OutdoorStreamingMode::Native5x5Grid | OutdoorStreamingMode::NativeWholeTown => {
+                ((0, 0), 0)
+            }
+        };
+
+        let key = PlanCacheKey {
+            stage_id,
+            gx: player_gx,
+            gz: player_gz,
+            mode: self.mode,
+            quadrant,
+            cutoff_mask,
+        };
+        if self.last_plan_key == Some(key) {
+            return (&self.cached_plan, false);
+        }
+
+        self.scratch_candidates.clear();
+        match self.mode {
+            OutdoorStreamingMode::ClassicPs2LoadBg2x2 => Self::collect_ps2_2x2_tiles(
+                area,
+                player_x_mm,
+                player_z_mm,
+                player_gx,
+                player_gz,
+                quadrant,
+                &mut self.scratch_candidates,
+            ),
             OutdoorStreamingMode::Native5x5Grid => Self::collect_grid_radius_tiles(
                 area,
                 player_x_mm,
@@ -142,42 +243,77 @@ impl OutdoorTileStreamer {
                 player_gx,
                 player_gz,
                 2,
+                &mut self.scratch_candidates,
             ),
-            OutdoorStreamingMode::NativeWholeTown => {
-                Self::collect_whole_town_tiles(area, player_x_mm, player_z_mm)
-            }
-        };
+            OutdoorStreamingMode::NativeWholeTown => Self::collect_whole_town_tiles(
+                area,
+                player_x_mm,
+                player_z_mm,
+                &mut self.scratch_candidates,
+            ),
+        }
 
         // Sort nearest-first (`loadBgAll_Sort2x2Block` `0x00270b60`), deterministic tie-break by block_no.
-        candidates.sort_by(|a, b| {
-            a.distance_mm
-                .total_cmp(&b.distance_mm)
-                .then_with(|| a.tile.block_no.cmp(&b.tile.block_no))
+        self.scratch_candidates.sort_by(|a, b| {
+            a.1.total_cmp(&b.1)
+                .then_with(|| a.0.block_no.cmp(&b.0.block_no))
         });
 
-        let desired_set: HashSet<u16> = candidates.iter().map(|c| c.tile.block_no).collect();
-        let desired_blocks: Vec<u16> = candidates.iter().map(|c| c.tile.block_no).collect();
+        self.scratch_desired_set.clear();
+        self.cached_plan.area = Some(area);
+        self.cached_plan.priority_gb_cam = area.global_cam_rel_path();
+        self.cached_plan.desired_blocks.clear();
+        self.cached_plan.load_queue.clear();
+        self.cached_plan.evict_blocks.clear();
 
-        let load_queue: Vec<TileLoadRequest> = candidates
-            .into_iter()
-            .filter(|c| !self.resident_blocks.contains(&c.tile.block_no))
-            .collect();
-
-        let mut evict_blocks: Vec<u16> = self
-            .resident_blocks
-            .iter()
-            .copied()
-            .filter(|b| !desired_set.contains(b))
-            .collect();
-        evict_blocks.sort_unstable();
-
-        TileStreamingPlan {
-            area: Some(area),
-            priority_gb_cam: area.global_cam_rel_path(),
-            desired_blocks,
-            load_queue,
-            evict_blocks,
+        for &(tile, distance_mm, priority_band) in &self.scratch_candidates {
+            self.scratch_desired_set.insert(tile.block_no);
+            self.cached_plan.desired_blocks.push(tile.block_no);
+            if !self.resident_blocks.contains(&tile.block_no) {
+                self.cached_plan.load_queue.push(TileLoadRequest {
+                    map_rel_path: tile.map_rel_path(),
+                    tile,
+                    distance_mm,
+                    priority_band,
+                });
+            }
         }
+
+        for &block_no in &self.resident_blocks {
+            if !self.scratch_desired_set.contains(&block_no) {
+                self.cached_plan.evict_blocks.push(block_no);
+            }
+        }
+        self.cached_plan.evict_blocks.sort_unstable();
+
+        self.last_plan_key = Some(key);
+        (&self.cached_plan, true)
+    }
+
+    /// Evaluates the outdoor streaming plan for `(stage_id, player_x_mm, player_z_mm)`, returning
+    /// `Some(plan)` only when the streaming plan changed since the previous call.
+    ///
+    /// Zero-allocation fast path for 60 Hz campaign ticks when the player remains in the same
+    /// `(stage_id, gx, gz, mode, quadrant)` and residency state is unchanged.
+    #[must_use]
+    pub fn plan_if_changed(
+        &mut self,
+        stage_id: u16,
+        player_x_mm: f32,
+        player_z_mm: f32,
+    ) -> Option<TileStreamingPlan> {
+        let (plan, changed) = self.plan_ref(stage_id, player_x_mm, player_z_mm);
+        if changed && plan.area.is_some() {
+            Some(plan.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Evaluates the outdoor streaming plan for `(stage_id, player_x_mm, player_z_mm)`.
+    #[must_use]
+    pub fn plan(&mut self, stage_id: u16, player_x_mm: f32, player_z_mm: f32) -> TileStreamingPlan {
+        self.plan_ref(stage_id, player_x_mm, player_z_mm).0.clone()
     }
 
     /// Exact PS2 `loadBgAll_PrepareAround` (`0x002715d0`) + `loadBgAll_SetLoadRequestOutdoor2x2`
@@ -188,10 +324,11 @@ impl OutdoorTileStreamer {
         player_z_mm: f32,
         player_gx: i16,
         player_gz: i16,
-    ) -> Vec<TileLoadRequest> {
-        let (cx, cz) = OutdoorArea::grid_cell_center_mm(player_gx, player_gz);
-        let dir_x: i16 = if player_x_mm < cx { -1 } else { 1 };
-        let dir_z: i16 = if player_z_mm < cz { -1 } else { 1 };
+        quadrant_dir: (i8, i8),
+        out: &mut Vec<(OutdoorTileId, f32, u8)>,
+    ) {
+        let dir_x = i16::from(quadrant_dir.0);
+        let dir_z = i16::from(quadrant_dir.1);
 
         let quadrant = [
             (player_gx, player_gz),
@@ -200,7 +337,6 @@ impl OutdoorTileStreamer {
             (player_gx + dir_x, player_gz + dir_z),
         ];
 
-        let mut out = Vec::with_capacity(4);
         for (gx, gz) in quadrant {
             if let Some(block_no) = area.block_no_at(gx, gz) {
                 let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
@@ -213,16 +349,10 @@ impl OutdoorTileStreamer {
                         gx,
                         gz,
                     };
-                    out.push(TileLoadRequest {
-                        map_rel_path: tile.map_rel_path(),
-                        tile,
-                        distance_mm: dist,
-                        priority_band: Self::ps2_priority_band(dist),
-                    });
+                    out.push((tile, dist, Self::ps2_priority_band(dist)));
                 }
             }
         }
-        out
     }
 
     /// Collects all valid tiles within Chebyshev radius `radius` (e.g. `radius = 2` -> `5x5` grid).
@@ -233,8 +363,8 @@ impl OutdoorTileStreamer {
         player_gx: i16,
         player_gz: i16,
         radius: i16,
-    ) -> Vec<TileLoadRequest> {
-        let mut out = Vec::new();
+        out: &mut Vec<(OutdoorTileId, f32, u8)>,
+    ) {
         for &(gx, gz, block_no) in area.block_table() {
             if (gx - player_gx).abs() <= radius && (gz - player_gz).abs() <= radius {
                 let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
@@ -245,15 +375,9 @@ impl OutdoorTileStreamer {
                     gx,
                     gz,
                 };
-                out.push(TileLoadRequest {
-                    map_rel_path: tile.map_rel_path(),
-                    tile,
-                    distance_mm: dist,
-                    priority_band: Self::ps2_priority_band(dist),
-                });
+                out.push((tile, dist, Self::ps2_priority_band(dist)));
             }
         }
-        out
     }
 
     /// Collects ALL tiles in the outdoor area for Native Whole-Town GPU Residency (`< 45 MB` VRAM).
@@ -261,26 +385,19 @@ impl OutdoorTileStreamer {
         area: OutdoorArea,
         player_x_mm: f32,
         player_z_mm: f32,
-    ) -> Vec<TileLoadRequest> {
-        area.block_table()
-            .iter()
-            .map(|&(gx, gz, block_no)| {
-                let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
-                let dist = (player_x_mm - tcx).hypot(player_z_mm - tcz);
-                let tile = OutdoorTileId {
-                    area,
-                    block_no,
-                    gx,
-                    gz,
-                };
-                TileLoadRequest {
-                    map_rel_path: tile.map_rel_path(),
-                    tile,
-                    distance_mm: dist,
-                    priority_band: Self::ps2_priority_band(dist),
-                }
-            })
-            .collect()
+        out: &mut Vec<(OutdoorTileId, f32, u8)>,
+    ) {
+        for &(gx, gz, block_no) in area.block_table() {
+            let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
+            let dist = (player_x_mm - tcx).hypot(player_z_mm - tcz);
+            let tile = OutdoorTileId {
+                area,
+                block_no,
+                gx,
+                gz,
+            };
+            out.push((tile, dist, Self::ps2_priority_band(dist)));
+        }
     }
 }
 

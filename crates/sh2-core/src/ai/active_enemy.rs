@@ -16,7 +16,8 @@ use crate::ai::creatures::nurse::NurseController;
 use crate::ai::creatures::pyramid_head::PyramidHeadController;
 use crate::ai::creatures::twin_pyramid_head::{TwinPartnerSnapshot, TwinPyramidHeadController};
 use crate::ai::pathfinding::RoomForbiddenAreas;
-use crate::ai::sensory::{DifficultyLevel, PerceivableTarget, RoomLighting};
+use crate::ai::sensory::{AiWallSource, DifficultyLevel, PerceivableTarget, RoomLighting};
+use crate::collision::CollisionWorld;
 use glam::Vec3;
 use sh2_assets::formats::cld::WallSegment;
 
@@ -36,6 +37,8 @@ pub struct EnemyUpdateContext<'a> {
     pub mary_sway_y_sample: f32,
     /// Active `.cld` wall segments for `enCheckHitEyes` (`0x00145540`) LOS & `enSetPath` (`0x00144ae0`).
     pub walls: &'a [WallSegment],
+    /// Optional [`CollisionWorld`] enabling `SpatialGrid`-accelerated AI LOS & pathfinding raycasts.
+    pub collision: Option<&'a CollisionWorld>,
     /// Active room forbidden rectangles (`enRoomForbiddenArea` `0x00147000` / `sh2pc 0x004a84a0`).
     pub forbidden_areas: Option<&'a RoomForbiddenAreas>,
     /// Nearest active tribe alert position matching this enemy's tribe (`enCommunicateTribe` `0x00146e40`).
@@ -58,6 +61,7 @@ impl Default for EnemyUpdateContext<'_> {
             insect_leader: None,
             mary_sway_y_sample: 0.0,
             walls: &[],
+            collision: None,
             forbidden_areas: None,
             tribe_alert_pos: None,
             path_sway_sample: 0.0,
@@ -237,42 +241,45 @@ impl ActiveEnemy {
         ctx: EnemyUpdateContext<'_>,
         dt: f32,
     ) {
+        let wall_source = ctx
+            .collision
+            .map_or(AiWallSource::Slice(ctx.walls), AiWallSource::World);
         match self {
-            Self::LyingFigure(e) => e.update_with_world(
+            Self::LyingFigure(e) => e.update_with_wall_source(
                 target,
                 lighting,
                 difficulty,
-                ctx.walls,
+                wall_source,
                 ctx.forbidden_areas,
                 ctx.tribe_alert_pos,
                 ctx.path_sway_sample,
                 dt,
             ),
-            Self::Mannequin(e) => e.update_with_world(
+            Self::Mannequin(e) => e.update_with_wall_source(
                 target,
                 lighting,
                 difficulty,
-                ctx.walls,
+                wall_source,
                 ctx.forbidden_areas,
                 ctx.tribe_alert_pos,
                 ctx.path_sway_sample,
                 dt,
             ),
-            Self::Nurse(e) => e.update_with_world(
+            Self::Nurse(e) => e.update_with_wall_source(
                 target,
                 lighting,
                 difficulty,
-                ctx.walls,
+                wall_source,
                 ctx.forbidden_areas,
                 ctx.path_sway_sample,
                 dt,
             ),
             Self::Creeper(e) => e.update(target, dt),
-            Self::PyramidHead(e) => e.update_with_world(
+            Self::PyramidHead(e) => e.update_with_wall_source(
                 target,
                 lighting,
                 difficulty,
-                ctx.walls,
+                wall_source,
                 ctx.forbidden_areas,
                 ctx.path_sway_sample,
                 dt,

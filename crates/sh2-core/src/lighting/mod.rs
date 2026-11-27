@@ -55,6 +55,6 @@ pub use hyper_spray::{
     MAX_SPRAY_PARTICLES, SPRAY_Y_ADJUST_60HZ,
 };
 pub use lens_flare::{
-    evaluate_lens_flares, LensFlareQuad, LensFlareSource, LensFlareSpriteSpec, LENS_FLARE_SPRITES,
-    LENS_FLARE_SPRITE_COUNT,
+    evaluate_lens_flares, evaluate_lens_flares_into, LensFlareQuad, LensFlareSource,
+    LensFlareSpriteSpec, LENS_FLARE_SPRITES, LENS_FLARE_SPRITE_COUNT,
 };

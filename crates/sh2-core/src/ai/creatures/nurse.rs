@@ -10,10 +10,12 @@
 
 use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
-use crate::ai::pathfinding::{check_path_ray, EnemyPathState, PathEnemyType, RoomForbiddenAreas};
+use crate::ai::pathfinding::{
+    check_path_ray_with_source, EnemyPathState, PathEnemyType, RoomForbiddenAreas,
+};
 use crate::ai::sensory::{
-    evaluate_sensory_with_los, normalize_angle, nse_walk_speed_scale, DifficultyLevel,
-    PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
+    evaluate_sensory_with_wall_source, normalize_angle, nse_walk_speed_scale, AiWallSource,
+    DifficultyLevel, PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -180,6 +182,28 @@ impl NurseController {
         path_sway_sample: f32,
         dt: f32,
     ) {
+        self.update_with_wall_source(
+            target,
+            lighting,
+            difficulty,
+            AiWallSource::Slice(walls),
+            forbidden,
+            path_sway_sample,
+            dt,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn update_with_wall_source(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        wall_source: AiWallSource<'_>,
+        forbidden: Option<&RoomForbiddenAreas>,
+        path_sway_sample: f32,
+        dt: f32,
+    ) {
         if self.state == NseState::Dying {
             return;
         }
@@ -211,7 +235,7 @@ impl NurseController {
         let dist = (dx * dx + dz * dz).sqrt();
         let target_dir = dx.atan2(dz);
 
-        let (notice, alert) = evaluate_sensory_with_los(
+        let (notice, alert) = evaluate_sensory_with_wall_source(
             &self.sensory,
             self.position,
             self.yaw,
@@ -219,7 +243,7 @@ impl NurseController {
             target,
             lighting,
             difficulty,
-            walls,
+            wall_source,
             dt,
         );
         self.alert_timer = alert;
@@ -292,7 +316,7 @@ impl NurseController {
                 if matches!(
                     notice,
                     SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
-                ) || (walls.is_empty() && dist <= self.sensory.attack_ranges[diff_idx])
+                ) || (wall_source.is_empty() && dist <= self.sensory.attack_ranges[diff_idx])
                 {
                     self.state = NseState::Attack;
                     self.sub_state = 0;
@@ -308,7 +332,7 @@ impl NurseController {
                 }
 
                 let steer_dir =
-                    if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
+                    if !wall_source.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
                         let ticks = (dt * 60.0).round().max(1.0) as i16;
                         self.path_state.cur_angle = self.yaw;
                         self.path_state.set_path(
@@ -317,7 +341,7 @@ impl NurseController {
                             target.position,
                             path_sway_sample,
                             ticks,
-                            |a, b| check_path_ray(a, b, 150.0, walls, forbidden),
+                            |a, b| check_path_ray_with_source(a, b, 150.0, wall_source, forbidden),
                         );
                         self.path_state.target_angle
                     } else {
@@ -356,7 +380,7 @@ impl NurseController {
                 let in_strike_range = matches!(
                     notice,
                     SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
-                ) || (walls.is_empty()
+                ) || (wall_source.is_empty()
                     && dist <= self.sensory.attack_ranges[diff_idx]);
 
                 match self.sub_state {

@@ -123,16 +123,18 @@ pub struct LensFlareQuad {
     pub color_rgba: [f32; 4],
 }
 
-/// Evaluates all visible [`LensFlareSource`] emitters against the active camera and produces
-/// 7 screen-space [`LensFlareQuad`]s per visible light (`shLensFlareExec` @ `0x00187af0`).
-#[must_use]
-pub fn evaluate_lens_flares(
+/// Evaluates all visible [`LensFlareSource`] emitters against the active camera and writes
+/// 7 screen-space [`LensFlareQuad`]s per visible light into `out` (`shLensFlareExec` @ `0x00187af0`).
+///
+/// Reusing `out` across frames avoids per-frame heap allocations.
+pub fn evaluate_lens_flares_into(
     sources: &[LensFlareSource],
     view_proj: Mat4,
     cam_pos: Vec3,
     aspect_ratio: f32,
-) -> Vec<LensFlareQuad> {
-    let mut quads = Vec::with_capacity(sources.len() * LENS_FLARE_SPRITE_COUNT);
+    out: &mut Vec<LensFlareQuad>,
+) {
+    out.clear();
     let aspect = aspect_ratio.max(0.1);
 
     for src in sources {
@@ -165,7 +167,7 @@ pub fn evaluate_lens_flares(
             let center = ndc * spec.axis_t;
             let half_h = (spec.radius_px / PS2_LENS_FLARE_HALF_HEIGHT_PX) * (0.5 + 0.5 * dist_fade);
             let half_w = half_h / aspect;
-            quads.push(LensFlareQuad {
+            out.push(LensFlareQuad {
                 ndc_center: [center.x, center.y],
                 ndc_half_size: [half_w, half_h],
                 uv_min: spec.uv_min,
@@ -179,7 +181,22 @@ pub fn evaluate_lens_flares(
             });
         }
     }
+}
 
+/// Evaluates all visible [`LensFlareSource`] emitters against the active camera and produces
+/// 7 screen-space [`LensFlareQuad`]s per visible light (`shLensFlareExec` @ `0x00187af0`).
+#[must_use]
+pub fn evaluate_lens_flares(
+    sources: &[LensFlareSource],
+    view_proj: Mat4,
+    cam_pos: Vec3,
+    aspect_ratio: f32,
+) -> Vec<LensFlareQuad> {
+    if sources.is_empty() {
+        return Vec::new();
+    }
+    let mut quads = Vec::with_capacity(sources.len() * LENS_FLARE_SPRITE_COUNT);
+    evaluate_lens_flares_into(sources, view_proj, cam_pos, aspect_ratio, &mut quads);
     quads
 }
 

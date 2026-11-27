@@ -22,7 +22,7 @@ pub use forbidden::{
     RoomForbiddenAreas,
 };
 
-use crate::ai::sensory::{check_hit_eyes, normalize_angle};
+use crate::ai::sensory::{normalize_angle, AiWallSource};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use sh2_assets::formats::cld::WallSegment;
@@ -42,10 +42,28 @@ pub fn check_path_ray(
     walls: &[WallSegment],
     forbidden: Option<&RoomForbiddenAreas>,
 ) -> f32 {
+    check_path_ray_with_source(
+        from,
+        to,
+        body_radius_mm,
+        AiWallSource::Slice(walls),
+        forbidden,
+    )
+}
+
+/// Evaluate `enCheckPath` (`SLUS_202.28` `0x00145350`) using [`AiWallSource`]
+/// (`SpatialGrid`-accelerated when backed by a [`crate::collision::CollisionWorld`]).
+pub fn check_path_ray_with_source(
+    from: Vec3,
+    to: Vec3,
+    body_radius_mm: f32,
+    wall_source: AiWallSource<'_>,
+    forbidden: Option<&RoomForbiddenAreas>,
+) -> f32 {
     let mut best_hit: Option<f32> = None;
 
-    if !walls.is_empty() {
-        let wall_res = check_hit_eyes(from, to, walls);
+    if !wall_source.is_empty() {
+        let wall_res = wall_source.check_hit_eyes(from, to);
         if wall_res >= 0.0 {
             best_hit = Some(wall_res);
         }

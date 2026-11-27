@@ -288,10 +288,10 @@ fn spatial_trigger_geometry_look_point_line_and_polygons() {
     let decoded = decode_ev_pos_shape(&poly_pos, 0, EventShapeKind::Polyline3).unwrap();
     assert_eq!(
         decoded,
-        EvPosShape::Polyline {
-            y: char_to_float2(float_to_char2(0.0)),
-            vertices: vec![[1000.0, 2000.0], [0.0, 2000.0], [0.0, 3000.0]],
-        }
+        EvPosShape::polyline(
+            char_to_float2(float_to_char2(0.0)),
+            &[[1000.0, 2000.0], [0.0, 2000.0], [0.0, 3000.0]],
+        )
     );
     assert!(event_check_look(
         &poly_pos,
@@ -311,31 +311,31 @@ fn spatial_trigger_geometry_look_point_line_and_polygons() {
     let y0 = char_to_float2(float_to_char2(0.0));
     assert_eq!(
         decode_ev_pos_shape(&line_pos, 0, EventShapeKind::LinePosX),
-        Some(EvPosShape::Polyline {
-            y: y0,
-            vertices: vec![[1000.0, 2000.0], [1800.0, 2000.0]],
-        })
+        Some(EvPosShape::polyline(
+            y0,
+            &[[1000.0, 2000.0], [1800.0, 2000.0]]
+        ))
     );
     assert_eq!(
         decode_ev_pos_shape(&line_pos, 0, EventShapeKind::LineNegX),
-        Some(EvPosShape::Polyline {
-            y: y0,
-            vertices: vec![[1000.0, 2000.0], [200.0, 2000.0]],
-        })
+        Some(EvPosShape::polyline(
+            y0,
+            &[[1000.0, 2000.0], [200.0, 2000.0]]
+        ))
     );
     assert_eq!(
         decode_ev_pos_shape(&line_pos, 0, EventShapeKind::LineNegZ),
-        Some(EvPosShape::Polyline {
-            y: y0,
-            vertices: vec![[1000.0, 2000.0], [1000.0, 1200.0]],
-        })
+        Some(EvPosShape::polyline(
+            y0,
+            &[[1000.0, 2000.0], [1000.0, 1200.0]]
+        ))
     );
     assert_eq!(
         decode_ev_pos_shape(&line_pos, 0, EventShapeKind::LinePosZ),
-        Some(EvPosShape::Polyline {
-            y: y0,
-            vertices: vec![[1000.0, 2000.0], [1000.0, 2800.0]],
-        })
+        Some(EvPosShape::polyline(
+            y0,
+            &[[1000.0, 2000.0], [1000.0, 2800.0]]
+        ))
     );
 
     assert_eq!(

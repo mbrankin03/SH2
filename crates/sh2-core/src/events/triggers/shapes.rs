@@ -14,17 +14,29 @@ use crate::types::{
 
 use super::EVENT_IGNORE_HEIGHT_Y;
 
+/// Maximum number of vertices stored inline in [`EvPosShape::Polyline`].
+///
+/// All retail `EventShapeKind` polyline variants (`LinePosX..=Polyline7`, shapes `1..=10`)
+/// contain `2..=7` vertices (`SLUS_202.28` `EventCheckLook` `0x001a8780`).
+pub const MAX_POLYLINE_VERTICES: usize = 8;
+
 /// Decoded spatial trigger shape from a stage's raw `ev_pos` byte array.
 ///
 /// Matches the 10-byte header `[f32 x0, f16 y, f32 z0]` in `SLUS_202.28` (`0x001a8780`,
 /// `0x001a8d70`) and `sh2pc.exe` (`0x0048d4d0`, `0x0048da90`). There is no per-shape radius
 /// field in `ev_pos`; look checks use the fixed `400.0` mm radius (`0x001a8b00`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EvPosShape {
     /// Shape `0`: Point `(x, y, z)` in PS2 world millimeters.
     Point { x: f32, y: f32, z: f32 },
     /// Shapes `1..=10`: One or more 2D line segments at height `y` in PS2 world millimeters.
-    Polyline { y: f32, vertices: Vec<[f32; 2]> },
+    ///
+    /// Active vertices live in `vertices[..usize::from(len)]` (stack-allocated, zero heap allocs).
+    Polyline {
+        y: f32,
+        vertices: [[f32; 2]; MAX_POLYLINE_VERTICES],
+        len: u8,
+    },
     /// Shape `11`: Axis-aligned rectangle `(x..=x+w, z..=z+d)` at height `y`.
     Rectangle {
         x: f32,
@@ -37,6 +49,36 @@ pub enum EvPosShape {
     Triangle { y: f32, vertices: [[f32; 2]; 3] },
     /// Shape `13`: Convex 2D quad at height `y`.
     Quad { y: f32, vertices: [[f32; 2]; 4] },
+}
+
+impl EvPosShape {
+    /// Constructs a stack-allocated [`EvPosShape::Polyline`] from up to [`MAX_POLYLINE_VERTICES`]
+    /// 2D `(x, z)` vertices.
+    #[inline]
+    #[must_use]
+    pub fn polyline(y: f32, pts: &[[f32; 2]]) -> Self {
+        let mut vertices = [[0.0; 2]; MAX_POLYLINE_VERTICES];
+        let count = pts.len().min(MAX_POLYLINE_VERTICES);
+        vertices[..count].copy_from_slice(&pts[..count]);
+        Self::Polyline {
+            y,
+            vertices,
+            len: count as u8,
+        }
+    }
+
+    /// Returns the active slice of 2D `(x, z)` vertices if `self` is [`EvPosShape::Polyline`].
+    #[inline]
+    #[must_use]
+    pub fn polyline_vertices(&self) -> Option<&[[f32; 2]]> {
+        match self {
+            Self::Polyline { vertices, len, .. } => {
+                let count = usize::from(*len).min(MAX_POLYLINE_VERTICES);
+                Some(&vertices[..count])
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Reads a 2-byte Team Silent half-float (`CharToFloat2`, `SLUS_202.28` `0x001a9280`).
@@ -79,31 +121,19 @@ pub fn decode_ev_pos_shape(
         EventShapeKind::Point => Some(EvPosShape::Point { x: x0, y, z: z0 }),
         EventShapeKind::LinePosX => {
             let len = read_f16(ev_pos, offset + 10)?;
-            Some(EvPosShape::Polyline {
-                y,
-                vertices: vec![[x0, z0], [x0 + len, z0]],
-            })
+            Some(EvPosShape::polyline(y, &[[x0, z0], [x0 + len, z0]]))
         }
         EventShapeKind::LineNegX => {
             let len = read_f16(ev_pos, offset + 10)?;
-            Some(EvPosShape::Polyline {
-                y,
-                vertices: vec![[x0, z0], [x0 - len, z0]],
-            })
+            Some(EvPosShape::polyline(y, &[[x0, z0], [x0 - len, z0]]))
         }
         EventShapeKind::LineNegZ => {
             let len = read_f16(ev_pos, offset + 10)?;
-            Some(EvPosShape::Polyline {
-                y,
-                vertices: vec![[x0, z0], [x0, z0 - len]],
-            })
+            Some(EvPosShape::polyline(y, &[[x0, z0], [x0, z0 - len]]))
         }
         EventShapeKind::LinePosZ => {
             let len = read_f16(ev_pos, offset + 10)?;
-            Some(EvPosShape::Polyline {
-                y,
-                vertices: vec![[x0, z0], [x0, z0 + len]],
-            })
+            Some(EvPosShape::polyline(y, &[[x0, z0], [x0, z0 + len]]))
         }
         EventShapeKind::Polyline2
         | EventShapeKind::Polyline3
@@ -112,14 +142,19 @@ pub fn decode_ev_pos_shape(
         | EventShapeKind::Polyline6
         | EventShapeKind::Polyline7 => {
             let extra_vertices = (shape as usize) - 4;
-            let mut vertices = Vec::with_capacity(extra_vertices + 1);
-            vertices.push([x0, z0]);
+            debug_assert!(extra_vertices < MAX_POLYLINE_VERTICES);
+            let mut vertices = [[0.0; 2]; MAX_POLYLINE_VERTICES];
+            vertices[0] = [x0, z0];
             for i in 0..extra_vertices {
                 let dx = read_f16(ev_pos, offset + 10 + i * 4)?;
                 let dz = read_f16(ev_pos, offset + 12 + i * 4)?;
-                vertices.push([x0 + dx, z0 + dz]);
+                vertices[i + 1] = [x0 + dx, z0 + dz];
             }
-            Some(EvPosShape::Polyline { y, vertices })
+            Some(EvPosShape::Polyline {
+                y,
+                vertices,
+                len: (extra_vertices + 1) as u8,
+            })
         }
         EventShapeKind::Rectangle => {
             let w = read_f16(ev_pos, offset + 10)?;

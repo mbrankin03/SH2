@@ -36,8 +36,9 @@ pub use save::{
     SAVE_FORMAT_VERSION,
 };
 pub use stage_loader::{
-    resolve_outdoor_room_id, resolve_room_id_for_stage_pos, resolve_stage_manifest, room_area_dir,
-    CampaignEnemySpawn, CampaignPickupSpawn, RoomLoadManifest,
+    resolve_outdoor_area_block, resolve_outdoor_room_id, resolve_room_id_for_stage_pos,
+    resolve_stage_manifest, room_area_dir, room_id_matches_outdoor_block, CampaignEnemySpawn,
+    CampaignPickupSpawn, RoomLoadManifest,
 };
 pub use state::{
     CampaignPhase, ConnectStep, FadeDirection, FmvExitState, OverlayMenuKind, RoomLoadTarget,

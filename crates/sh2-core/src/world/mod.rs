@@ -48,4 +48,6 @@ pub use pushable_objects::{
     FLAG_HOSPITAL_B1_SHELF_PUSHED, FLASHLIGHT_CLOCK_PUSH_CAM_Y_MM, ROOM_APT_E_RM_208,
     SYS_FLAG_MASK_CLOCK_PUSH_FIX, SYS_FLAG_MASK_VANILLA,
 };
-pub use room_pickups::{resolve_active_room_pickups, ActiveRoomPickup};
+pub use room_pickups::{
+    resolve_active_room_pickups, resolve_active_room_pickups_into, ActiveRoomPickup,
+};

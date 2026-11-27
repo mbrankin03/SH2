@@ -197,25 +197,34 @@ impl ImpactSparkSystem {
         self.flashes.retain(|(_, age, max_age)| *age < *max_age);
     }
 
+    /// Writes active micro-point-light flashes for metallic bullet impacts into caller-owned
+    /// `out` when `native_upgrade` is enabled; clears `out` in strict 1:1 Vanilla PS2 mode.
+    pub fn active_flash_lights_into(&self, native_upgrade: bool, out: &mut Vec<SparkFlashLight>) {
+        out.clear();
+        if !native_upgrade {
+            return;
+        }
+        for (pos, age, max_age) in &self.flashes {
+            let k = (1.0 - age / max_age).clamp(0.0, 1.0);
+            out.push(SparkFlashLight {
+                position: [pos.x, pos.y, pos.z],
+                color: [1.0 * k, 0.78 * k, 0.35 * k],
+                near_mm: 200.0,
+                far_mm: 1800.0,
+            });
+        }
+    }
+
     /// Returns active micro-point-light flashes for metallic bullet impacts when `native_upgrade`
     /// is enabled; returns empty in strict 1:1 Vanilla PS2 mode.
     #[must_use]
     pub fn active_flash_lights(&self, native_upgrade: bool) -> Vec<SparkFlashLight> {
-        if !native_upgrade {
+        if !native_upgrade || self.flashes.is_empty() {
             return Vec::new();
         }
-        self.flashes
-            .iter()
-            .map(|(pos, age, max_age)| {
-                let k = (1.0 - age / max_age).clamp(0.0, 1.0);
-                SparkFlashLight {
-                    position: [pos.x, pos.y, pos.z],
-                    color: [1.0 * k, 0.78 * k, 0.35 * k],
-                    near_mm: 200.0,
-                    far_mm: 1800.0,
-                }
-            })
-            .collect()
+        let mut out = Vec::with_capacity(self.flashes.len());
+        self.active_flash_lights_into(native_upgrade, &mut out);
+        out
     }
 }
 

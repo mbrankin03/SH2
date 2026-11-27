@@ -20,6 +20,13 @@ pub enum SkeletalPassStage {
     /// depth-write disabled (`LessEqual`), `BlendState::ALPHA_BLENDING`
     /// (`SLUS_202.28` `0x002a9780` / `sh2pc.exe` `FUN_00503800` `0x00503800` `alpha_u8 > 0`).
     TransparentFringe,
+    /// Post-depth-fog semi-transparent hair/eyelash fringe (`1 <= alpha_u8 <= 254`, `SH2-192`):
+    /// rendered after `FogComputePipeline` into `fog_color_view` with `depth_write_enabled: false`
+    /// and in-shader depth fog evaluated at the hair fragment's own `view_z` (`SLUS_202.28`
+    /// `Model3DrawVu0Parts` `0x0012bd50`, `SortEnvPrim` `0x00128550`, `sh2_Model_MakeMatrixParams`
+    /// `0x001281d0`, `sh2gfw_Set_DepthFog` `0x00175df0`; `sh2pc.exe` `FUN_00503800` `0x00503800`
+    /// `D3DRS_FOGENABLE = 1`) so screen-space depth fog never erases hair tips over far backgrounds.
+    TransparentFringeFogged,
 }
 
 /// Rendering pipeline collection for skeletal character meshes with GPU Linear Blend Skinning (LBS).
@@ -34,6 +41,8 @@ pub struct SkeletalPipeline {
     transparent_core_pipelines: [wgpu::RenderPipeline; 3],
     /// `[DoubleSided, CullBack, CullFront]` pipelines for [`SkeletalPassStage::TransparentFringe`].
     transparent_fringe_pipelines: [wgpu::RenderPipeline; 3],
+    /// `[DoubleSided, CullBack, CullFront]` pipelines for [`SkeletalPassStage::TransparentFringeFogged`].
+    transparent_fringe_fogged_pipelines: [wgpu::RenderPipeline; 3],
     /// Stenciled planar mirror `[DoubleSided, CullBack]` pipelines (`FrontFace::Cw`, `Depth24PlusStencil8`, `stencil == 1`).
     mirror_opaque_pipelines: [wgpu::RenderPipeline; 2],
     mirror_core_pipelines: [wgpu::RenderPipeline; 2],
@@ -173,6 +182,12 @@ impl SkeletalPipeline {
             wgpu::BlendState::ALPHA_BLENDING,
             false,
         );
+        let transparent_fringe_fogged_pipelines = build_cull_triplet(
+            "Transparent Fringe Fogged",
+            "fs_transparent_fringe_fogged",
+            wgpu::BlendState::ALPHA_BLENDING,
+            false,
+        );
 
         let stencil_equal_keep = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Equal,
@@ -256,6 +271,7 @@ impl SkeletalPipeline {
             opaque_pipelines,
             transparent_core_pipelines,
             transparent_fringe_pipelines,
+            transparent_fringe_fogged_pipelines,
             mirror_opaque_pipelines,
             mirror_core_pipelines,
             mirror_fringe_pipelines,
@@ -273,7 +289,9 @@ impl SkeletalPipeline {
         match stage {
             SkeletalPassStage::Opaque => &self.mirror_opaque_pipelines[slot],
             SkeletalPassStage::TransparentCore => &self.mirror_core_pipelines[slot],
-            SkeletalPassStage::TransparentFringe => &self.mirror_fringe_pipelines[slot],
+            SkeletalPassStage::TransparentFringe | SkeletalPassStage::TransparentFringeFogged => {
+                &self.mirror_fringe_pipelines[slot]
+            }
         }
     }
 
@@ -296,6 +314,9 @@ impl SkeletalPipeline {
             SkeletalPassStage::Opaque => &self.opaque_pipelines[cull_slot],
             SkeletalPassStage::TransparentCore => &self.transparent_core_pipelines[cull_slot],
             SkeletalPassStage::TransparentFringe => &self.transparent_fringe_pipelines[cull_slot],
+            SkeletalPassStage::TransparentFringeFogged => {
+                &self.transparent_fringe_fogged_pipelines[cull_slot]
+            }
         }
     }
 }

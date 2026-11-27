@@ -132,12 +132,66 @@ impl RenderContext {
         rpass: &mut wgpu::RenderPass<'a>,
         skeletal_meshes: &'a [SkeletalDrawItem<'a>],
     ) {
-        self.draw_skeletal_meshes_with_camera(
+        // When screen-space `FogComputePipeline` is enabled, defer `TransparentFringe`
+        // (`depth_write_enabled: false`) until immediately after `FogComputePipeline` in
+        // `dispatch_compute_passes` (`SH2-192`), so semi-transparent hair tips (e.g. Angela's
+        // `agl.mdl` `tprim[0..3]` in `haka_agl.dds`) are fogged at their own `view_z` instead
+        // of inheriting far skybox/background depth (`depth == 1.0`) and being erased by fog.
+        let stages: &[SkeletalPassStage] = if self.config.enable_fog {
+            &[
+                SkeletalPassStage::Opaque,
+                SkeletalPassStage::TransparentCore,
+            ]
+        } else {
+            &[
+                SkeletalPassStage::Opaque,
+                SkeletalPassStage::TransparentCore,
+                SkeletalPassStage::TransparentFringe,
+            ]
+        };
+        self.draw_skeletal_meshes_stages(
             rpass,
             skeletal_meshes,
             &self.geometry_bind_group,
             false,
             true,
+            stages,
+        );
+    }
+
+    /// Returns `true` when at least one active skeletal primitive requires the post-depth-fog
+    /// [`SkeletalPassStage::TransparentFringeFogged`] pass (`SH2-192`).
+    pub(super) fn has_transparent_skeletal_primitives(
+        &self,
+        skeletal_meshes: &[SkeletalDrawItem<'_>],
+    ) -> bool {
+        skeletal_meshes.iter().enumerate().any(|(i, (mesh, _, _))| {
+            let is_mirror_duplicate = skeletal_meshes[..i]
+                .iter()
+                .any(|(prev_mesh, _, _)| std::ptr::eq(*prev_mesh, *mesh));
+            mesh.primitives.iter().any(|p| {
+                p.is_transparent
+                    && p.draw_range(mesh.player_visibility, is_mirror_duplicate)
+                        .is_some()
+            })
+        })
+    }
+
+    /// Draws semi-transparent skeletal hair/eyelash fringe (`1 <= alpha_u8 <= 254`) into
+    /// `fog_color_view` immediately after `FogComputePipeline`, evaluating depth fog in-shader at
+    /// each fragment's own `view_z` (`SH2-192`).
+    pub(super) fn draw_skeletal_transparent_fringe_post_fog<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        skeletal_meshes: &'a [SkeletalDrawItem<'a>],
+    ) {
+        self.draw_skeletal_meshes_stages(
+            rpass,
+            skeletal_meshes,
+            &self.geometry_bind_group,
+            false,
+            true,
+            &[SkeletalPassStage::TransparentFringeFogged],
         );
     }
 
@@ -153,13 +207,30 @@ impl RenderContext {
         invert_winding: bool,
         use_per_char_light_slots: bool,
     ) {
-        let stages = [
-            SkeletalPassStage::Opaque,
-            SkeletalPassStage::TransparentCore,
-            SkeletalPassStage::TransparentFringe,
-        ];
+        self.draw_skeletal_meshes_stages(
+            rpass,
+            skeletal_meshes,
+            common_bind_group,
+            invert_winding,
+            use_per_char_light_slots,
+            &[
+                SkeletalPassStage::Opaque,
+                SkeletalPassStage::TransparentCore,
+                SkeletalPassStage::TransparentFringe,
+            ],
+        );
+    }
 
-        for stage in stages {
+    fn draw_skeletal_meshes_stages<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        skeletal_meshes: &'a [SkeletalDrawItem<'a>],
+        common_bind_group: &'a wgpu::BindGroup,
+        invert_winding: bool,
+        use_per_char_light_slots: bool,
+        stages: &[SkeletalPassStage],
+    ) {
+        for &stage in stages {
             let want_transparent = stage != SkeletalPassStage::Opaque;
             let has_any = skeletal_meshes.iter().enumerate().any(|(i, (mesh, _, _))| {
                 let is_mirror_duplicate = skeletal_meshes[..i]

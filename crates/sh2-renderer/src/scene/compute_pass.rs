@@ -1,11 +1,15 @@
 //! Post-geometry compute passes: Volumetric Fog, post-depth-fog Toluca Lake water & 3D fog
 //! particles, ACES/PS2 Post-Processing, and `prev_frame_texture` feedback copy.
 
-use crate::RenderContext;
+use crate::{RenderContext, SkeletalDrawItem};
 
 impl RenderContext {
     /// Dispatches the Volumetric Fog and ACES/PS2 Post-Processing compute passes.
-    pub(super) fn dispatch_compute_passes(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub(super) fn dispatch_compute_passes(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        skeletal_meshes: &[SkeletalDrawItem<'_>],
+    ) {
         let workgroups_x = self.config.width.div_ceil(16);
         let workgroups_y = self.config.height.div_ceil(16);
 
@@ -23,6 +27,8 @@ impl RenderContext {
             // Render Toluca Lake water surface (`SH2-80`) AFTER `FogComputePipeline` when depth fog
             // is enabled so the water's own distance fog is never double-fogged by `FogComputePipeline`
             // (which otherwise sees `depth = 1.0` because water has `depth_write_enabled: false`, `SH2-168`).
+            // Runs BEFORE `Skeletal Transparent Fringe Post-Depth-Fog Pass` so foreground character
+            // hair tips (e.g. `ob01` / Rosewater Park) blend over the lake rather than behind it (`SH2-192`).
             if self
                 .lake_water_enabled
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -49,6 +55,39 @@ impl RenderContext {
                     occlusion_query_set: None,
                 });
                 self.water_pipeline.draw(&mut rpass);
+            }
+
+            // Render semi-transparent skeletal hair/eyelash fringe (`1 <= alpha_u8 <= 254`,
+            // `depth_write_enabled: false`) AFTER `FogComputePipeline` (and after distant Toluca
+            // Lake water) with in-shader depth fog at each hair fragment's own `view_z`
+            // (`SLUS_202.28` `Model3DrawVu0Parts` `0x0012bd50`, `SortEnvPrim` `0x00128550`,
+            // `sh2pc.exe` `FUN_00503800` `0x00503800` `D3DRS_FOGENABLE = 1`), preventing
+            // screen-space depth fog from overwriting hair tips over far backgrounds (`SH2-192`).
+            if !skeletal_meshes.is_empty()
+                && self.has_transparent_skeletal_primitives(skeletal_meshes)
+            {
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Skeletal Transparent Fringe Post-Depth-Fog Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.fog_color_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                self.draw_skeletal_transparent_fringe_post_fog(&mut rpass, skeletal_meshes);
             }
 
             // Render localized 3D proximity fog particle billboards (`fogMakePacket` `0x0016bb70`,

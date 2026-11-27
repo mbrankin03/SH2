@@ -242,11 +242,22 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             || state.loaded_viewer_model_idx != state.model_viewer.selected_model_index
             || state.loaded_viewer_anm_idx != state.model_viewer.selected_anm_index)
     {
+        let desired_viewer_quality = match state.model_viewer.texture_source {
+            sh2_debug::TextureSourceMode::Ai4kMaster => {
+                sh2_core::config::WorldTextureQuality::Ai4kMaster
+            }
+            sh2_debug::TextureSourceMode::EnhancedHd => {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd
+            }
+            sh2_debug::TextureSourceMode::VanillaPs2 => {
+                sh2_core::config::WorldTextureQuality::OriginalPs2
+            }
+        };
         let mut asset = load_viewer_entry_asset(
             &state.render_ctx,
             state.model_viewer.current_entry(),
             state.model_viewer.selected_anm_index,
-            state.loaded_texture_quality,
+            desired_viewer_quality,
         );
         if let Some(ref mut a) = asset {
             state.model_viewer.set_total_frames(a.anm.frames.len());
@@ -388,11 +399,22 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
         state.loading_screen_test = rooms::loading_screen_room::LoadingScreenTestState::default();
     }
     if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
+        let desired_viewer_quality = match state.model_viewer.texture_source {
+            sh2_debug::TextureSourceMode::Ai4kMaster => {
+                sh2_core::config::WorldTextureQuality::Ai4kMaster
+            }
+            sh2_debug::TextureSourceMode::EnhancedHd => {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd
+            }
+            sh2_debug::TextureSourceMode::VanillaPs2 => {
+                sh2_core::config::WorldTextureQuality::OriginalPs2
+            }
+        };
         let mut asset = load_viewer_entry_asset(
             &state.render_ctx,
             state.model_viewer.current_entry(),
             state.model_viewer.selected_anm_index,
-            active_tex_quality,
+            desired_viewer_quality,
         );
         if let Some(ref mut a) = asset {
             state.model_viewer.set_total_frames(a.anm.frames.len());

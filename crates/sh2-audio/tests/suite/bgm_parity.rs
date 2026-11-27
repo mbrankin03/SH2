@@ -449,3 +449,42 @@ fn test_dual_source_adx_and_aix_decoding_from_retail_and_sh2e_assets() {
         assert!(!orig_layers[0].frames.is_empty());
     }
 }
+
+#[test]
+fn test_stage4_forest_bgm_zones_and_angela_demo3_ev_bgm_control() {
+    let mut flag_bytes = [0u8; 2048];
+    let set_flag = |buf: &mut [u8; 2048], idx: usize| {
+        buf[idx >> 3] |= 1u8 << (idx & 7);
+    };
+
+    // 1. Before Angela cutscene (`!flag(36)`): Page 47 (`forest/bgm_114_b.aix`), Situation 0
+    let pre_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, false, false);
+    assert_eq!(pick_bgm_page(4, 0, &pre_flags), 47);
+    assert_eq!(eval_stage_ev_bgm_control(4, 0, &pre_flags), 0);
+
+    // Spatial zone Record #1 `(24000, 0, -70000)` activates Track 2 & Track 3 on Situation 0
+    let eval_zone1 = evaluate_sound_areas(4, Vec3::new(24_000.0, 0.0, -70_000.0), 0);
+    assert!(!eval_zone1.used_default_record);
+    assert_eq!(eval_zone1.matched_records(), &[1]);
+    assert_ne!(eval_zone1.track_fades[2], (0, 0));
+
+    // Spatial zone Record #2 `(24000, -10000, -90000)` activates Track 3 only on Situation 0
+    let eval_zone2 = evaluate_sound_areas(4, Vec3::new(24_000.0, -10_000.0, -90_000.0), 0);
+    assert!(!eval_zone2.used_default_record);
+    assert_eq!(eval_zone2.matched_records(), &[2]);
+    assert_eq!(eval_zone2.track_fades[2], (0, 0));
+    assert_ne!(eval_zone2.track_fades[3], (0, 0));
+
+    // 2. During Angela Graveyard cutscene (`demo_no == 3`, `stg_forest.c` `0x005a0260`):
+    //    `EvBgmControl` returns Situation `4`
+    let mut demo3_flags = pre_flags;
+    demo3_flags.event_mode_active = true;
+    demo3_flags.active_demo_no = Some(3);
+    assert_eq!(eval_stage_ev_bgm_control(4, 0, &demo3_flags), 4);
+
+    // 3. After Angela cutscene (`flag(36)` set): Page 3 (`forest/bgm_115.aix`), Situation 1
+    set_flag(&mut flag_bytes, 36);
+    let post_flags = BgmEventFlags::from_event_flag_bytes(&flag_bytes, false, false, false);
+    assert_eq!(pick_bgm_page(4, 0, &post_flags), 3);
+    assert_eq!(eval_stage_ev_bgm_control(4, 0, &post_flags), 1);
+}

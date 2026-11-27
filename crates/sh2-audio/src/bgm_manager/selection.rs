@@ -230,6 +230,16 @@ pub fn eval_stage_ev_bgm_control(stage_id: u32, room_id: u32, flags: &BgmEventFl
                 u32::from((flags.flag_5e4 >> 4) & 1)
             }
         }
+        // Stage 4 (`stg_forest.c` `EvBgmControl`, `sh2pc.exe` `0x005a0260..0x005a027d`):
+        // - When `DramaDemoGetNo() == 3` (`haka_agl` Angela Graveyard cutscene): returns `4`.
+        // - Otherwise: returns `(flag_5e4 >> 4) & 1` (`1` once `flag(36)` is set, `0` before).
+        4 => {
+            if flags.active_demo_no == Some(3) {
+                4
+            } else {
+                u32::from((flags.flag_5e4 >> 4) & 1)
+            }
+        }
         6 => (flags.flag_5e8 >> 21) & 1,
         7 | 8 => {
             if (flags.flag_620 & 0x1000_0000) != 0 {

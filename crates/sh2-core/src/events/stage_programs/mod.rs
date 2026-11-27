@@ -62,7 +62,10 @@ pub(crate) struct ProgTickOut {
     pub finished: bool,
     pub active_message_id: Option<i32>,
     pub sound_effects: Vec<u32>,
+    pub stop_sound_effects: Vec<u32>,
+    pub positional_sound_effects: Vec<(u32, [f32; 3])>,
     pub requested_demo: Option<u32>,
+    pub open_save_point_id: Option<u16>,
     pub walkback_delta: Option<[f32; 3]>,
     pub triggered_ending: Option<u8>,
     pub evaluated_main_ending: Option<MainEndingKind>,
@@ -180,6 +183,27 @@ pub(crate) fn dispatch_stage_program(
         }
         out.requested_demo = s3.requested_demo;
         out.walkback_delta = s3.walkback_delta;
+        return out;
+    }
+
+    // Stage 4 (`stg_forest.c` #1..=#7) uses its dedicated 1:1 runner (`sh2pc.exe` `0x0059f2b0..0x005a0804`).
+    if p.stage == 4 && (1..=7).contains(&p.prog_no) {
+        let s4 = super::runner_stage4::tick_stage4_prog(
+            p,
+            down,
+            active_message_id,
+            flags,
+            inventory,
+            overlay,
+        );
+        out.finished = s4.finished;
+        out.active_message_id = s4.active_message_id;
+        out.sound_effects = s4.sound_effects;
+        out.stop_sound_effects = s4.stop_sound_effects;
+        out.positional_sound_effects = s4.positional_sound_effects;
+        out.requested_demo = s4.requested_demo;
+        out.open_save_point_id = s4.open_save_point_id;
+        out.triggered_ending = s4.triggered_ending;
         return out;
     }
 

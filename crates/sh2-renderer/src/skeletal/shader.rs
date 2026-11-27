@@ -129,10 +129,43 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 const PS2_ALPHA_TEST_THRESHOLD: f32 = 0.5 / 255.0;
 const PS2_ALPHA_OPAQUE_THRESHOLD: f32 = 254.5 / 255.0;
 
+// Evaluates exact PS2 depth fog (`SLUS_202.28` `sh2gfw_Set_DepthFog` `0x00175df0`,
+// `sh2_Model_MakeMatrixParams` `0x001281d0`, `MakeCalcPartPacket` `0x0012a130`;
+// `sh2pc.exe` `FUN_00503800` `0x00503800` `D3DRS_FOGENABLE = 1`) at a transparent
+// fragment's own `view_z` for post-depth-fog `TransparentFringeFogged` (`pass_mode == 3u`).
+fn apply_skeletal_depth_fog(rgb: vec3<f32>, view_z: f32, env_tint_rgb: vec3<f32>) -> vec3<f32> {
+    let effective_density = clamp(fog.density * fog.fog_color.a, 0.0, 2.0);
+    if effective_density <= 1e-4 {
+        return rgb;
+    }
+    let fog_min = min(fog.depth_fog_params.z, fog.depth_fog_params.w);
+    let fog_max = max(fog.depth_fog_params.z, fog.depth_fog_params.w);
+    let span = max(1e-4, fog.fog_far - fog.fog_near);
+    var base_curve: f32;
+    if (fog.curve_type == 0u && fog.fog_near > 1e-4 && fog.fog_far > fog.fog_near + 1e-4) {
+        let persp_fa = (fog.fog_far * fog.fog_near * (fog_min - fog_max)) / span;
+        let persp_fb = (fog.fog_far * fog_max - fog.fog_near * fog_min) / span;
+        base_curve = clamp(persp_fa / max(view_z, 1e-4) + persp_fb, fog_min, fog_max);
+    } else {
+        let linear_t = clamp((view_z - fog.fog_near) / span, 0.0, 1.0);
+        if (fog.curve_type == 1u) {
+            base_curve = clamp(mix(fog_min, fog_max, 1.0 - exp(-3.0 * linear_t)), fog_min, fog_max);
+        } else if (fog.curve_type == 2u) {
+            base_curve = clamp(mix(fog_min, fog_max, 1.0 - exp(-4.0 * linear_t * linear_t)), fog_min, fog_max);
+        } else {
+            base_curve = clamp(mix(fog_min, fog_max, linear_t), fog_min, fog_max);
+        }
+    }
+    let fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
+    let coupled_fog_rgb = mix(fog.fog_color.rgb, fog.fog_color.rgb * env_tint_rgb, clamp(fog.ambient_fog_coupling, 0.0, 1.0));
+    return mix(rgb, coupled_fog_rgb, fog_factor);
+}
+
 // `pass_mode`:
 // 0u = Opaque pass (`is_transparent == false`; `sh2pc.exe` `0x00500008` `ALPHATESTENABLE = 0`)
 // 1u = Transparent hair/fringe opaque core pass (`alpha_u8 == 255`, writes depth)
 // 2u = Transparent hair/fringe translucent pass (`1 <= alpha_u8 <= 254`, reads depth)
+// 3u = Post-depth-fog transparent fringe pass (`1 <= alpha_u8 <= 254`, in-shader depth fog)
 fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // Sample diffuse texture unconditionally in uniform control flow before any early returns
     // so derivative evaluation (`textureSample`) satisfies strict WGSL uniformity rules across all backends.
@@ -271,9 +304,18 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         return vec4<f32>(clay_albedo * (studio_amb + studio_direct), out_alpha);
     }
 
-    // Material Type 1 (`SLUS_202.28` `DrawPart1` `0x12d934` / `sh2pc.exe` `0x501586`): unlit full-bright
+    let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
+    let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
+
+    // Material Type 1 (`SLUS_202.28` `DrawPart1` `0x12d934` / `MakeCalcPartPacket` `0x0012a130` /
+    // `sh2pc.exe` `0x501586` & `FUN_00503800` `0x00503800`): unlit full-bright, still subject to
+    // depth fog in `pass_mode == 3u` (`TransparentFringeFogged`).
     if mat_type == 1u {
-        return vec4<f32>(in.color.rgb * tex_color.rgb, out_alpha);
+        var unlit_rgb = in.color.rgb * tex_color.rgb;
+        if pass_mode == 3u && shade_mode == 0 {
+            unlit_rgb = apply_skeletal_depth_fog(unlit_rgb, in.view_z, env_tint_rgb);
+        }
+        return vec4<f32>(unlit_rgb, out_alpha);
     }
 
     // Exact `sh2pc.exe` `FUN_00501540` (`0x00501540` lines 1194-1199: `D3DTSS_COLOROP = D3DTOP_MODULATE [4]`,
@@ -282,9 +324,6 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // `oD0 = clamp(material.ambient * (char_global_ambient + gun_boost) + material.diffuse * (spot_diffuse + camera_fill), 0, 1)`.
     let mat_diffuse = material.diffuse_mtype.xyz * 2.0;
     let mat_ambient = material.ambient_shininess.xyz * 2.0;
-
-    let env_tint_rgb = select(vec3<f32>(1.0, 1.0, 1.0), spotlight.ambient_tint.xyz, spotlight.ambient_tint.w > 0.001);
-    let env_ambient_scale = select(1.0, spotlight.ambient_tint.w, spotlight.ambient_tint.w > 0.001);
 
     let legacy_game_diffuse_light = (mat_ambient * (base_ambient * env_ambient_scale * dark_trim_scale + gun_boost) + mat_diffuse * (spot_diffuse + camera_fill)) * env_tint_rgb;
     let model3_od0 = clamp(
@@ -377,30 +416,7 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
     // hair fragment's own `view_z` before alpha-blending over the already-fogged background, so
     // `depth_write_enabled: false` hair cards never inherit far-skybox/background depth fog.
     if pass_mode == 3u && shade_mode == 0 {
-        let effective_density = clamp(fog.density * fog.fog_color.a, 0.0, 2.0);
-        if effective_density > 1e-4 {
-            let fog_min = min(fog.depth_fog_params.z, fog.depth_fog_params.w);
-            let fog_max = max(fog.depth_fog_params.z, fog.depth_fog_params.w);
-            let span = max(1e-4, fog.fog_far - fog.fog_near);
-            var base_curve: f32;
-            if (fog.curve_type == 0u && fog.fog_near > 1e-4 && fog.fog_far > fog.fog_near + 1e-4) {
-                let persp_fa = (fog.fog_far * fog.fog_near * (fog_min - fog_max)) / span;
-                let persp_fb = (fog.fog_far * fog_max - fog.fog_near * fog_min) / span;
-                base_curve = clamp(persp_fa / max(in.view_z, 1e-4) + persp_fb, fog_min, fog_max);
-            } else {
-                let linear_t = clamp((in.view_z - fog.fog_near) / span, 0.0, 1.0);
-                if (fog.curve_type == 1u) {
-                    base_curve = clamp(mix(fog_min, fog_max, 1.0 - exp(-3.0 * linear_t)), fog_min, fog_max);
-                } else if (fog.curve_type == 2u) {
-                    base_curve = clamp(mix(fog_min, fog_max, 1.0 - exp(-4.0 * linear_t * linear_t)), fog_min, fog_max);
-                } else {
-                    base_curve = clamp(mix(fog_min, fog_max, linear_t), fog_min, fog_max);
-                }
-            }
-            let fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
-            let coupled_fog_rgb = mix(fog.fog_color.rgb, fog.fog_color.rgb * env_tint_rgb, clamp(fog.ambient_fog_coupling, 0.0, 1.0));
-            final_rgb = mix(final_rgb, coupled_fog_rgb, fog_factor);
-        }
+        final_rgb = apply_skeletal_depth_fog(final_rgb, in.view_z, env_tint_rgb);
     }
 
     return vec4<f32>(final_rgb, out_alpha);

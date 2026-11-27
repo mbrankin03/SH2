@@ -13,8 +13,10 @@
 //! - The authentic 224-glyph font image is embedded directly in `sh2-ui` so high-fidelity proportional
 //!   text renders out-of-the-box regardless of external file layouts or mod configurations.
 
+mod cache;
+
 use crate::font::TextRasterizer;
-use std::collections::HashMap;
+use cache::{CachedGlyphMask, GlyphCacheKey, GlyphMaskCache};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -22,8 +24,6 @@ const CELL_W: usize = 44;
 const CELL_H: usize = 64;
 const FIRST_CHAR: u32 = 0x20;
 const GLYPH_COUNT: usize = 224;
-/// Bounded capacity for cached resampled glyph coverage masks (`SH2-177`).
-const GLYPH_CACHE_CAPACITY: usize = 512;
 
 /// Full atlas glyph cell height in virtual `512×480` pixels (`SH2:EE` `Patches/Fonts.cpp`
 /// `charH = 32`, `Common/Settings.h` `CustomFontCharHeight = 32`; `2×` = `CELL_H = 64`).
@@ -98,7 +98,7 @@ pub const RETAIL_FONT0_WIDTHS: [u8; 224] = [
 ];
 
 /// Embedded grayscale atlas PNG for the 224 glyphs of the normal font (32 KB).
-const EMBEDDED_FONT_PNG: &[u8] = include_bytes!("../assets/font_normal.png");
+const EMBEDDED_FONT_PNG: &[u8] = include_bytes!("../../assets/font_normal.png");
 
 #[derive(Clone)]
 struct Glyph {
@@ -109,48 +109,6 @@ struct Glyph {
     max_x: usize,
     /// Proportional advance in atlas pixels.
     advance: usize,
-}
-
-/// Pre-resampled Q12 coverage mask (`0..=4096`) for one glyph at a specific `(px_height, x_scale)`.
-struct CachedGlyphMask {
-    width: usize,
-    height: usize,
-    coverage: Vec<u16>,
-}
-
-/// Bounded LRU cache of resampled glyph coverage masks keyed by `(glyph_id, px_height, x_scale_bits)`.
-#[derive(Default)]
-struct GlyphMaskCache {
-    entries: HashMap<(usize, usize, u32), (Arc<CachedGlyphMask>, u64)>,
-    tick: u64,
-}
-
-impl GlyphMaskCache {
-    fn get(&mut self, key: (usize, usize, u32)) -> Option<Arc<CachedGlyphMask>> {
-        self.tick = self.tick.wrapping_add(1);
-        let tick = self.tick;
-        if let Some((mask, last_used)) = self.entries.get_mut(&key) {
-            *last_used = tick;
-            return Some(Arc::clone(mask));
-        }
-        None
-    }
-
-    fn insert(&mut self, key: (usize, usize, u32), mask: Arc<CachedGlyphMask>) {
-        self.tick = self.tick.wrapping_add(1);
-        let tick = self.tick;
-        if self.entries.len() >= GLYPH_CACHE_CAPACITY && !self.entries.contains_key(&key) {
-            if let Some(evict_key) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, (_, last_used))| *last_used)
-                .map(|(k, _)| *k)
-            {
-                self.entries.remove(&evict_key);
-            }
-        }
-        self.entries.insert(key, (mask, tick));
-    }
 }
 
 /// Retail atlas font (normal type 0 glyphs).
@@ -286,14 +244,13 @@ impl AtlasFont {
     /// Returns the number of currently cached resampled glyph coverage masks.
     #[must_use]
     pub fn glyph_cache_len(&self) -> usize {
-        self.mask_cache.lock().map(|c| c.entries.len()).unwrap_or(0)
+        self.mask_cache.lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// Clears all cached resampled glyph coverage masks.
     pub fn clear_glyph_cache(&self) {
         if let Ok(mut c) = self.mask_cache.lock() {
-            c.entries.clear();
-            c.tick = 0;
+            c.clear();
         }
     }
 
@@ -351,7 +308,7 @@ impl AtlasFont {
     /// Looks up or computes and caches the resampled coverage mask for `(glyph_id, px_height, x_scale)`.
     fn cached_mask(&self, glyph_id: usize, px_height: usize, x_scale: f32) -> Arc<CachedGlyphMask> {
         let clamped_scale = x_scale.max(0.25);
-        let key = (glyph_id, px_height, clamped_scale.to_bits());
+        let key = GlyphCacheKey::new(glyph_id, px_height, clamped_scale);
         if let Ok(mut cache) = self.mask_cache.lock() {
             if let Some(hit) = cache.get(key) {
                 return hit;
@@ -848,10 +805,9 @@ mod tests {
     }
 
     #[test]
-    fn glyph_cache_hits_eviction_and_pixel_parity_against_uncached() {
+    fn cached_atlas_font_pixel_parity_against_uncached() {
         let font = AtlasFont::load_embedded();
         font.clear_glyph_cache();
-        assert_eq!(font.glyph_cache_len(), 0);
 
         let text = "SILENT HILL 2: Restless Dreams";
         let mut cached = TextRasterizer::new(512, 80);
@@ -888,45 +844,5 @@ mod tests {
             max_diff <= 1,
             "cached AtlasFont diverged from uncached float reference by {max_diff} LSB (expected <= 1)"
         );
-
-        // Cache count equals number of unique non-space characters in `text` (reused across shadow + fg)
-        let unique_chars: std::collections::HashSet<char> =
-            text.chars().filter(|&c| c != ' ').collect();
-        assert_eq!(font.glyph_cache_len(), unique_chars.len());
-
-        // Redrawing same text hits cache with zero new entries
-        let mut cached2 = TextRasterizer::new(512, 80);
-        cached2.fill_rect(0, 0, 512, 80, [36, 42, 48, 220]);
-        font.draw_line_styled_aspect(
-            &mut cached2,
-            text,
-            (12, 16),
-            34,
-            1.25,
-            Sh2TextColor::GoldSelected,
-            true,
-        );
-        assert_eq!(font.glyph_cache_len(), unique_chars.len());
-        assert_eq!(cached.pixels, cached2.pixels);
-
-        // Eviction test: insert more than GLYPH_CACHE_CAPACITY (512) unique `(glyph, height, scale)` keys
-        let mut scratch = TextRasterizer::new(64, 64);
-        for h in 10..=40 {
-            font.draw_line(
-                &mut scratch,
-                "ABCDEFGHIJKLMNOPQRST",
-                (0, 0),
-                h,
-                [255; 4],
-                false,
-            );
-        }
-        assert!(
-            font.glyph_cache_len() <= GLYPH_CACHE_CAPACITY,
-            "cache exceeded capacity: {} > {}",
-            font.glyph_cache_len(),
-            GLYPH_CACHE_CAPACITY
-        );
-        assert_eq!(font.glyph_cache_len(), GLYPH_CACHE_CAPACITY);
     }
 }

@@ -371,11 +371,10 @@ impl TextRasterizer {
             let src_row = &src_rgba[sy * src_stride..(sy + 1) * src_stride];
             let dst_row = &mut self.pixels[y * dst_stride..(y + 1) * dst_stride];
 
-            let mut u = u0 + ((start_x as f32 + 0.5) - x0) * du_dx;
             for x in start_x..end_x {
-                let u_clamped = u.clamp(0.0, 1.0);
-                u += du_dx;
-                let sx = ((u_clamped * src_w_f) as usize).min(src_w_max);
+                let px = x as f32 + 0.5;
+                let u = (u0 + (px - x0) * du_dx).clamp(0.0, 1.0);
+                let sx = ((u * src_w_f) as usize).min(src_w_max);
                 let s_ofs = sx * 4;
                 let raw_a = src_row[s_ofs + 3];
                 if raw_a == 0 {

@@ -382,8 +382,9 @@ fn fs_darken() -> @location(0) vec4<f32> {
                                     continue;
                                 }
                             }
-                            let end = batch.first_index + batch.num_indices;
-                            rpass.draw_indexed(batch.first_index..end, batch.base_vertex, 0..1);
+                            if let Some(index_range) = batch.index_range() {
+                                rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
+                            }
                         }
                     }
                 }
@@ -496,8 +497,9 @@ fn fs_darken() -> @location(0) vec4<f32> {
                                     continue;
                                 }
                             }
-                            let end = batch.first_index + batch.num_indices;
-                            rpass.draw_indexed(batch.first_index..end, batch.base_vertex, 0..1);
+                            if let Some(index_range) = batch.index_range() {
+                                rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
+                            }
                         }
                     }
                 }

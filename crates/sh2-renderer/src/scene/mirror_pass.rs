@@ -74,13 +74,14 @@ impl RenderContext {
                 &map.index_buffer,
             ) {
                 if map.is_batch_visible_with(batch, vis_filter) {
-                    rpass.set_pipeline(&self.mirror_pipeline.map_stencil_mask_pipeline);
-                    rpass.set_bind_group(0, &self.mirror_geometry_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, vbuf.slice(..));
-                    rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    let end = batch.first_index + batch.num_indices;
-                    rpass.draw_indexed(batch.first_index..end, batch.base_vertex, 0..1);
-                    drew_decal_mask = true;
+                    if let Some(index_range) = batch.index_range() {
+                        rpass.set_pipeline(&self.mirror_pipeline.map_stencil_mask_pipeline);
+                        rpass.set_bind_group(0, &self.mirror_geometry_bind_group, &[]);
+                        rpass.set_vertex_buffer(0, vbuf.slice(..));
+                        rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
+                        drew_decal_mask = true;
+                    }
                 }
             }
         }

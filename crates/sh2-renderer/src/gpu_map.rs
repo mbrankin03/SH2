@@ -43,6 +43,19 @@ pub struct GpuMapBatch {
     pub bounds_max: [f32; 3],
 }
 
+impl GpuMapBatch {
+    /// Returns the overflow-checked index range `first_index..first_index + num_indices` into
+    /// [`GpuMap::index_buffer`], or `None` if `first_index + num_indices` would overflow `u32`.
+    #[inline]
+    #[must_use]
+    pub const fn index_range(&self) -> Option<Range<u32>> {
+        match self.first_index.checked_add(self.num_indices) {
+            Some(end) => Some(self.first_index..end),
+            None => None,
+        }
+    }
+}
+
 /// CPU-side packed geometry produced before uploading a [`GpuMap`]'s consolidated GPU buffers.
 struct PackedMapGeometry {
     vertices: Vec<MapVertex>,
@@ -95,7 +108,12 @@ fn pack_map_geometry(map: &MapFile) -> PackedMapGeometry {
         let Ok(first_index) = u32::try_from(indices.len()) else {
             continue;
         };
-        let num_indices = batch.indices.len() as u32;
+        let Ok(num_indices) = u32::try_from(batch.indices.len()) else {
+            continue;
+        };
+        if first_index.checked_add(num_indices).is_none() {
+            continue;
+        }
 
         let gpu_bytes =
             interleaved.len() * std::mem::size_of::<MapVertex>() + batch.indices.len() * 4;
@@ -517,5 +535,28 @@ mod tests {
             .resolve_mirror_decal_batch(&spec_from_gpu)
             .expect("must resolve sorted GpuMap index");
         assert_eq!(resolved_gpu.source_batch_index, 5);
+    }
+
+    #[test]
+    fn gpu_map_batch_index_range_checks_u32_overflow() {
+        let mut batch = GpuMapBatch {
+            first_index: 12,
+            num_indices: 6,
+            base_vertex: 4,
+            source_batch_index: 0,
+            gpu_bytes: 0,
+            group: BatchGroup::Opaque,
+            is_transparent: false,
+            material_index: 0,
+            geo_id: 0,
+            part_group: 0,
+            variant_index: 0,
+            bounds_min: [0.0; 3],
+            bounds_max: [1.0; 3],
+        };
+        assert_eq!(batch.index_range(), Some(12..18));
+        batch.first_index = u32::MAX - 2;
+        batch.num_indices = 6;
+        assert_eq!(batch.index_range(), None);
     }
 }

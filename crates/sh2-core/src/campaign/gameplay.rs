@@ -22,7 +22,9 @@ use crate::world::OutdoorTileStreamer;
 use super::cutscene_handoff::{DramaDemoTrigger, AUTO_STAGE_DEMO_RULES};
 use super::io::{CampaignEffects, CampaignTickInput};
 use super::retail_events::tick_retail_stage_events;
-use super::stage_loader::{resolve_outdoor_room_id, resolve_stage_manifest};
+use super::stage_loader::{
+    resolve_outdoor_area_block, resolve_stage_manifest, room_id_matches_outdoor_block,
+};
 use super::state::{
     CampaignPhase, ConnectStep, CutawayFadeState, OverlayMenuKind, RoomLoadTarget, ScreenFadeState,
     MAIN_SCENARIO_START_STAGE, PS2_DEFAULT_FADE_SPEED, SE_GAME_OVER, WISH_SCENARIO_START_STAGE,
@@ -124,6 +126,8 @@ pub(crate) fn run_active_gameplay(
     cutaway_fade: &mut CutawayFadeState,
     play_time_secs: &mut f64,
     player_locked: &mut bool,
+    scratch_stage_items: &mut Vec<ItemListEntry>,
+    cached_stage_items_id: &mut Option<u16>,
     input: &CampaignTickInput,
     dt_sec: f32,
     effects: &mut CampaignEffects,
@@ -188,20 +192,22 @@ pub(crate) fn run_active_gameplay(
 
     // 3. Advance cutaway black fade-out/fade-in wrapper (`SLUS_202.28` `EvSubPictureDisplay`
     //    `0x001aca00` steps `0 -> 4 -> 7` on entry and `6 -> 0xb` on exit).
-    match cutaway_fade.clone() {
+    match cutaway_fade {
         CutawayFadeState::Idle => {}
-        CutawayFadeState::FadingOutToCutaway {
-            picture,
-            incar_alpha,
-        } => {
+        CutawayFadeState::FadingOutToCutaway { .. } => {
             *player_locked = true;
             if fade.is_fully_black() {
-                sim.scenario
-                    .cutaway_overlay
-                    .set_picture(Some(&picture), &sim.scenario.flags);
-                sim.scenario.cutaway_overlay.set_incar_alpha(incar_alpha);
-                fade.start_fade_in(PS2_DEFAULT_FADE_SPEED, false);
-                *cutaway_fade = CutawayFadeState::Idle;
+                if let CutawayFadeState::FadingOutToCutaway {
+                    picture,
+                    incar_alpha,
+                } = std::mem::replace(cutaway_fade, CutawayFadeState::Idle)
+                {
+                    sim.scenario
+                        .cutaway_overlay
+                        .set_picture(Some(&picture), &sim.scenario.flags);
+                    sim.scenario.cutaway_overlay.set_incar_alpha(incar_alpha);
+                    fade.start_fade_in(PS2_DEFAULT_FADE_SPEED, false);
+                }
             }
             return GameplayStepOutcome::Continue;
         }
@@ -353,7 +359,15 @@ pub(crate) fn run_active_gameplay(
             ..EventEvalInput::default()
         };
 
-        let ev_effects = tick_stage_events(event_engine, sim, stage_id, &eval_input, input);
+        let ev_effects = tick_stage_events(
+            event_engine,
+            sim,
+            stage_id,
+            scratch_stage_items,
+            cached_stage_items_id,
+            &eval_input,
+            input,
+        );
         if let Some(lock) = ev_effects.player_lock_change {
             *player_locked = lock;
         }
@@ -392,33 +406,30 @@ pub(crate) fn run_active_gameplay(
 
     // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240`) and switch active outdoor
     //    tile (`.map`, `.cld`, `.cam`) seamlessly when crossing a 20,000 mm `BlockNumber` cell.
-    let plan = outdoor_streamer.plan(
+    //    Zero-alloc fast path: only emits `outdoor_plan` when `(stage_id, gx, gz, mode, quadrant)`
+    //    or residency changed, and compares `(area, block_no)` without `format!`.
+    let player_pos_arr = sim.scenario.player_position.to_array();
+    if let Some(plan) = outdoor_streamer.plan_if_changed(
         stage_id,
         sim.scenario.player_position.x,
         sim.scenario.player_position.z,
-    );
-    if plan.area.is_some() {
-        if let Some(tile_room_id) =
-            resolve_outdoor_room_id(stage_id, sim.scenario.player_position.to_array())
-        {
-            if !sim
-                .scenario
-                .current_room
-                .eq_ignore_ascii_case(&tile_room_id)
-            {
-                let manifest = resolve_stage_manifest(stage_id, Some(&tile_room_id), true, false);
-                let _ = sim.transition_stage_with_camera(
-                    stage_id,
-                    manifest.stage_name,
-                    Some(&tile_room_id),
-                    sim.scenario.player_position,
-                    sim.scenario.player_yaw,
-                    input.prefer_sh2ee,
-                );
-                effects.load_room = Some(manifest);
-            }
-        }
+    ) {
         effects.outdoor_plan = Some(plan);
+    }
+    if let Some((area, block_no)) = resolve_outdoor_area_block(stage_id, player_pos_arr) {
+        if !room_id_matches_outdoor_block(&sim.scenario.current_room, area, block_no) {
+            let tile_room_id = format!("{}{block_no:02}", area.prefix());
+            let manifest = resolve_stage_manifest(stage_id, Some(&tile_room_id), true, false);
+            let _ = sim.transition_stage_with_camera(
+                stage_id,
+                manifest.stage_name,
+                Some(&tile_room_id),
+                sim.scenario.player_position,
+                sim.scenario.player_yaw,
+                input.prefer_sh2ee,
+            );
+            effects.load_room = Some(manifest);
+        }
     }
 
     effects.allow_gameplay_sim = !*player_locked;
@@ -429,20 +440,22 @@ fn tick_stage_events(
     event_engine: &mut EventEngine,
     sim: &mut SimulationCore,
     stage_id: u16,
+    scratch_stage_items: &mut Vec<ItemListEntry>,
+    cached_stage_items_id: &mut Option<u16>,
     eval_input: &EventEvalInput,
     input: &CampaignTickInput,
 ) -> EventEngineEffects {
     if stage_id <= 27 {
         if let Some(act1) = act1_stage_descriptor(stage_id as u8) {
-            let items: Vec<ItemListEntry> = act1
-                .item_list
-                .iter()
-                .map(|e| e.to_item_list_entry())
-                .collect();
+            if *cached_stage_items_id != Some(stage_id) {
+                scratch_stage_items.clear();
+                scratch_stage_items.extend(act1.item_list.iter().map(|e| e.to_item_list_entry()));
+                *cached_stage_items_id = Some(stage_id);
+            }
             return tick_retail_stage_events(
                 event_engine,
                 act1.event_list,
-                &items,
+                scratch_stage_items,
                 act1.ev_pos,
                 stage_id as u8,
                 eval_input,
@@ -453,15 +466,15 @@ fn tick_stage_events(
         }
     }
     if let Some(act2) = stage_table_act2(stage_id) {
-        let items: Vec<ItemListEntry> = act2
-            .retail_items
-            .iter()
-            .map(|e| e.to_ps2_clamped())
-            .collect();
+        if *cached_stage_items_id != Some(stage_id) {
+            scratch_stage_items.clear();
+            scratch_stage_items.extend(act2.retail_items.iter().map(|e| e.to_ps2_clamped()));
+            *cached_stage_items_id = Some(stage_id);
+        }
         return tick_retail_stage_events(
             event_engine,
             act2.event_list,
-            &items,
+            scratch_stage_items,
             act2.pos_list,
             stage_id as u8,
             eval_input,
@@ -630,8 +643,9 @@ mod tests {
                 };
                 let pos = match shape {
                     EvPosShape::Point { x, y, z } => [x, y, z],
-                    EvPosShape::Polyline { y, vertices } => {
-                        if let Some(&[x, z]) = vertices.first() {
+                    EvPosShape::Polyline { y, vertices, len } => {
+                        if len > 0 {
+                            let [x, z] = vertices[0];
                             [x, y, z]
                         } else {
                             continue;

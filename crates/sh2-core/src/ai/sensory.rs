@@ -24,7 +24,8 @@
 //! - **`sh_character_status.c`:** `shBattleListenHumanSound` (`0x00124b00`),
 //!   `shBattleSeeHumanLight` (`0x00124b20`).
 
-use crate::collision::raycast::intersect_segment_xz;
+use crate::collision::raycast::intersect_segment_xz_t;
+use crate::collision::CollisionWorld;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use sh2_assets::formats::cld::WallSegment;
@@ -361,9 +362,7 @@ pub fn check_hit_eyes(eye_from: Vec3, eye_to: Vec3, walls: &[WallSegment]) -> f3
         if !(w.y_top <= ray_y && ray_y <= w.y_bottom) {
             continue;
         }
-        if let Some((t, _normal)) =
-            intersect_segment_xz(eye_from.x, eye_from.z, eye_to.x, eye_to.z, w)
-        {
+        if let Some(t) = intersect_segment_xz_t(eye_from.x, eye_from.z, eye_to.x, eye_to.z, w) {
             if t > 0.0 && t < 1.0 && best_t.is_none_or(|b| t < b) {
                 best_t = Some(t);
             }
@@ -374,6 +373,13 @@ pub fn check_hit_eyes(eye_from: Vec3, eye_to: Vec3, walls: &[WallSegment]) -> f3
         Some(t) => total_dist * t,
         None => -total_dist,
     }
+}
+
+/// `SpatialGrid`-accelerated `.cld` wall line-of-sight check matching `enCheckHitEyes`
+/// (`SLUS_202.28` `0x00145540`) / `enCheckHitEyes2` (`0x00145770`).
+#[inline]
+pub fn check_hit_eyes_world(eye_from: Vec3, eye_to: Vec3, world: &CollisionWorld) -> f32 {
+    world.check_ai_los(eye_from, eye_to)
 }
 
 /// Evaluates sensory contact of an enemy observing a target (`en*CanSeePlayer` + `en*GetFeelRange`),
@@ -402,6 +408,40 @@ pub fn evaluate_sensory(
     )
 }
 
+/// Wall obstacle source for AI LOS (`enCheckHitEyes` `0x00145540`) and pathfinding (`enSetPath`).
+///
+/// Uses `SpatialGrid`-accelerated [`CollisionWorld::check_ai_los`] when a [`CollisionWorld`] is
+/// available, falling back to a flat [`WallSegment`] slice for unit tests.
+#[derive(Debug, Clone, Copy)]
+pub enum AiWallSource<'a> {
+    /// Flat wall slice (linear scan with `intersect_segment_xz_t`).
+    Slice(&'a [WallSegment]),
+    /// Full [`CollisionWorld`] using per-sector `SpatialGrid` cell traversal.
+    World(&'a CollisionWorld),
+}
+
+impl AiWallSource<'_> {
+    /// Returns `true` when there are no static, extra, or dynamic walls to test.
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        match self {
+            Self::Slice(w) => w.is_empty(),
+            Self::World(c) => {
+                c.walls.is_empty() && c.extra_walls.is_empty() && c.dynamic_walls.is_empty()
+            }
+        }
+    }
+
+    /// Evaluates `enCheckHitEyes` (`0x00145540`) against this wall source.
+    #[inline]
+    pub fn check_hit_eyes(self, eye_from: Vec3, eye_to: Vec3) -> f32 {
+        match self {
+            Self::Slice(w) => check_hit_eyes(eye_from, eye_to, w),
+            Self::World(c) => c.check_ai_los(eye_from, eye_to),
+        }
+    }
+}
+
 /// Evaluates sensory contact with full `.cld` wall LOS occlusion (`enCheckHitEyes2` `0x00145770`),
 /// 4-state `enGetWorldCondition` (`0x00141ca0`), Nurse dual attack cones (`enNSECanSeePlayer`
 /// `0x00159400`), and exact difficulty-indexed `en*GetFeelRange` hearing (no `* 1.5` run hack).
@@ -410,11 +450,38 @@ pub fn evaluate_sensory_with_los(
     profile: &SensoryProfile,
     enemy_pos: Vec3,
     enemy_yaw: f32,
-    mut alert_timer: f32,
+    alert_timer: f32,
     target: &PerceivableTarget,
     lighting: RoomLighting,
     difficulty: DifficultyLevel,
     walls: &[WallSegment],
+    dt: f32,
+) -> (SensoryNotice, f32) {
+    evaluate_sensory_with_wall_source(
+        profile,
+        enemy_pos,
+        enemy_yaw,
+        alert_timer,
+        target,
+        lighting,
+        difficulty,
+        AiWallSource::Slice(walls),
+        dt,
+    )
+}
+
+/// Evaluates sensory contact using [`AiWallSource`] (`SpatialGrid`-accelerated when backed by a
+/// [`CollisionWorld`]).
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_sensory_with_wall_source(
+    profile: &SensoryProfile,
+    enemy_pos: Vec3,
+    enemy_yaw: f32,
+    mut alert_timer: f32,
+    target: &PerceivableTarget,
+    lighting: RoomLighting,
+    difficulty: DifficultyLevel,
+    wall_source: AiWallSource<'_>,
     dt: f32,
 ) -> (SensoryNotice, f32) {
     if !target.is_alive {
@@ -442,7 +509,7 @@ pub fn evaluate_sensory_with_los(
     }
 
     let los_occluded =
-        !walls.is_empty() && check_hit_eyes(enemy_pos, target.position, walls) >= 0.0;
+        !wall_source.is_empty() && wall_source.check_hit_eyes(enemy_pos, target.position) >= 0.0;
     if los_occluded {
         // Behind a wall: only alerted if illuminated by flashlight at night (`en*CanSeePlayer`
         // `if (lVar2 >= 2 && enCheckSeeLight()) return 1`) or within auditory feel range.

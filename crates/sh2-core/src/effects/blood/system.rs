@@ -1,6 +1,6 @@
 //! `BloodEffectSystem` simulation state, Impact Queue, and Persistent Room Decals.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use glam::Vec3;
 
@@ -116,9 +116,9 @@ pub(super) struct BloodFootmark {
 
 #[derive(Debug, Clone, Default)]
 struct RoomBloodArchive {
-    stains: Vec<FloorStain>,
-    pools: Vec<ExpandingPool>,
-    footmarks: Vec<BloodFootmark>,
+    stains: VecDeque<FloorStain>,
+    pools: VecDeque<ExpandingPool>,
+    footmarks: VecDeque<BloodFootmark>,
 }
 
 /// Deterministic 60 Hz PS2/PC `Effect2` Impact Queue Blood System.
@@ -127,15 +127,18 @@ pub struct BloodEffectSystem {
     rng_state: u32,
     splash_emitters: Vec<BloodSplashEmitter>,
     pool_emitters: Vec<BloodPoolEmitter>,
-    pub(super) particles: Vec<BloodParticle>,
-    pub(super) stains: Vec<FloorStain>,
-    pub(super) pools: Vec<ExpandingPool>,
-    pub(super) footmarks: Vec<BloodFootmark>,
+    pub(super) particles: VecDeque<BloodParticle>,
+    pub(super) stains: VecDeque<FloorStain>,
+    pub(super) pools: VecDeque<ExpandingPool>,
+    pub(super) footmarks: VecDeque<BloodFootmark>,
     bloody_steps_remaining: u8,
     stick_timer_sec: f32,
     next_foot_side: u8,
     room_archives: HashMap<String, RoomBloodArchive>,
     pending_impacts: Vec<ImpactDescriptor>,
+    scratch_new_particles: Vec<ImpactDescriptor>,
+    scratch_new_pools: Vec<ImpactDescriptor>,
+    scratch_pending_drain: Vec<ImpactDescriptor>,
 }
 
 impl Default for BloodEffectSystem {
@@ -152,15 +155,18 @@ impl BloodEffectSystem {
             rng_state: 0x1999_0901,
             splash_emitters: Vec::new(),
             pool_emitters: Vec::new(),
-            particles: Vec::with_capacity(MAX_BLOOD_DROPS),
-            stains: Vec::with_capacity(MAX_BLOOD_STAINS),
-            pools: Vec::with_capacity(MAX_BLOOD_POOLS),
-            footmarks: Vec::with_capacity(MAX_BLOOD_FOOTMARKS),
+            particles: VecDeque::with_capacity(MAX_BLOOD_DROPS),
+            stains: VecDeque::with_capacity(MAX_BLOOD_STAINS),
+            pools: VecDeque::with_capacity(MAX_BLOOD_POOLS),
+            footmarks: VecDeque::with_capacity(MAX_BLOOD_FOOTMARKS),
             bloody_steps_remaining: 0,
             stick_timer_sec: 0.0,
             next_foot_side: 0,
             room_archives: HashMap::new(),
             pending_impacts: Vec::new(),
+            scratch_new_particles: Vec::new(),
+            scratch_new_pools: Vec::new(),
+            scratch_pending_drain: Vec::new(),
         }
     }
 
@@ -200,27 +206,31 @@ impl BloodEffectSystem {
         }
 
         if !prev_room.is_empty() {
-            let mut stains = std::mem::take(&mut self.stains);
-            let mut pools = std::mem::take(&mut self.pools);
-            let mut footmarks = std::mem::take(&mut self.footmarks);
-            for s in &mut stains {
-                s.coagulation = (s.coagulation + 0.35).min(1.0);
+            if self.stains.is_empty() && self.pools.is_empty() && self.footmarks.is_empty() {
+                self.room_archives.remove(prev_room);
+            } else {
+                let mut stains = std::mem::take(&mut self.stains);
+                let mut pools = std::mem::take(&mut self.pools);
+                let mut footmarks = std::mem::take(&mut self.footmarks);
+                for s in &mut stains {
+                    s.coagulation = (s.coagulation + 0.35).min(1.0);
+                }
+                for p in &mut pools {
+                    p.coagulation = (p.coagulation + 0.35).min(1.0);
+                    p.elapsed_sec = p.elapsed_sec.max(16.0);
+                }
+                for f in &mut footmarks {
+                    f.coagulation = (f.coagulation + 0.35).min(1.0);
+                }
+                self.room_archives.insert(
+                    prev_room.to_string(),
+                    RoomBloodArchive {
+                        stains,
+                        pools,
+                        footmarks,
+                    },
+                );
             }
-            for p in &mut pools {
-                p.coagulation = (p.coagulation + 0.35).min(1.0);
-                p.elapsed_sec = p.elapsed_sec.max(16.0);
-            }
-            for f in &mut footmarks {
-                f.coagulation = (f.coagulation + 0.35).min(1.0);
-            }
-            self.room_archives.insert(
-                prev_room.to_string(),
-                RoomBloodArchive {
-                    stains,
-                    pools,
-                    footmarks,
-                },
-            );
         }
 
         self.splash_emitters.clear();
@@ -294,11 +304,11 @@ impl BloodEffectSystem {
             }
             ImpactKind::BloodParticle => {
                 if self.particles.len() >= MAX_BLOOD_DROPS {
-                    self.particles.remove(0);
+                    self.particles.pop_front();
                 }
                 let quadrant = (next_lcg_u32(&mut self.rng_state) & 3) as u8;
                 let mode = desc.mode.min(1);
-                self.particles.push(BloodParticle {
+                self.particles.push_back(BloodParticle {
                     origin_mm: desc.position_mm,
                     vel_mm_s: Vec3::new(
                         desc.velocity_mm_s.x * BLOOD_01_VEL_XZ_SCALE,
@@ -315,13 +325,13 @@ impl BloodEffectSystem {
             }
             ImpactKind::FloorStain => {
                 if self.stains.len() >= MAX_BLOOD_STAINS {
-                    self.stains.remove(0);
+                    self.stains.pop_front();
                 }
                 let variant =
                     (next_lcg_u32(&mut self.rng_state) as usize) % BLOOD_00_SCALE_END_MM.len();
                 let yaw_rad = next_lcg_f32(&mut self.rng_state) * std::f32::consts::TAU
                     - std::f32::consts::PI;
-                self.stains.push(FloorStain {
+                self.stains.push_back(FloorStain {
                     position_mm: desc.position_mm,
                     yaw_rad,
                     variant,
@@ -332,7 +342,7 @@ impl BloodEffectSystem {
             }
             ImpactKind::ExpandingPool => {
                 if self.pools.len() >= MAX_BLOOD_POOLS {
-                    self.pools.remove(0);
+                    self.pools.pop_front();
                 }
                 let variant =
                     (next_lcg_u32(&mut self.rng_state) as usize) % BLOOD_02_SCALE_END_MM.len();
@@ -340,7 +350,7 @@ impl BloodEffectSystem {
                     (next_lcg_u32(&mut self.rng_state) as usize) % BLOOD_02_UV_RECTS.len();
                 let yaw_rad = next_lcg_f32(&mut self.rng_state) * std::f32::consts::TAU
                     - std::f32::consts::PI;
-                self.pools.push(ExpandingPool {
+                self.pools.push_back(ExpandingPool {
                     position_mm: desc.position_mm,
                     yaw_rad,
                     variant,
@@ -352,10 +362,10 @@ impl BloodEffectSystem {
             }
             ImpactKind::Footmark => {
                 if self.footmarks.len() >= MAX_BLOOD_FOOTMARKS {
-                    self.footmarks.remove(0);
+                    self.footmarks.pop_front();
                 }
                 let variant = (next_lcg_u32(&mut self.rng_state) & 1) as u8;
-                self.footmarks.push(BloodFootmark {
+                self.footmarks.push_back(BloodFootmark {
                     position_mm: desc.position_mm,
                     yaw_rad: desc.yaw_rad,
                     side: desc.mode & 1,
@@ -384,7 +394,7 @@ impl BloodEffectSystem {
             return;
         }
 
-        let mut new_particles = Vec::new();
+        self.scratch_new_particles.clear();
         let rng = &mut self.rng_state;
         for emitter in &mut self.splash_emitters {
             for ch in 0..2usize {
@@ -398,7 +408,7 @@ impl BloodEffectSystem {
                     } else {
                         emitter.velocity_mm_s + Vec3::new(spread_x, -250.0, spread_z)
                     };
-                    new_particles.push(ImpactDescriptor {
+                    self.scratch_new_particles.push(ImpactDescriptor {
                         kind: ImpactKind::BloodParticle,
                         position_mm: emitter.origin_mm,
                         velocity_mm_s: base_vel,
@@ -414,14 +424,14 @@ impl BloodEffectSystem {
         self.splash_emitters
             .retain(|e| e.elapsed_sec <= BLOOD_SPLASH_00_DURATION_SEC);
 
-        let mut new_pools = Vec::new();
+        self.scratch_new_pools.clear();
         for emitter in &mut self.pool_emitters {
             let times = BLOOD_POOL_00_TIME_TABLE[emitter.table_row];
             while emitter.spawned_count < 3 && emitter.elapsed_sec >= times[emitter.spawned_count] {
                 let angle = next_lcg_f32(rng) * std::f32::consts::TAU;
                 let radius =
                     BLOOD_POOL_00_MIN_OFFSET_MM + next_lcg_f32(rng) * BLOOD_POOL_00_OFFSET_RANGE_MM;
-                new_pools.push(ImpactDescriptor {
+                self.scratch_new_pools.push(ImpactDescriptor {
                     kind: ImpactKind::ExpandingPool,
                     position_mm: emitter.origin_mm
                         + Vec3::new(angle.sin() * radius, 0.0, angle.cos() * radius),
@@ -435,10 +445,12 @@ impl BloodEffectSystem {
         }
         self.pool_emitters.retain(|e| e.spawned_count < 3);
 
-        for p in new_particles {
+        for i in 0..self.scratch_new_particles.len() {
+            let p = self.scratch_new_particles[i];
             self.post_impact(p);
         }
-        for p in new_pools {
+        for i in 0..self.scratch_new_pools.len() {
+            let p = self.scratch_new_pools[i];
             self.post_impact(p);
         }
         for p in &mut self.pools {
@@ -479,8 +491,10 @@ impl BloodEffectSystem {
         }
         self.particles.retain(|p| p.active);
 
-        let pending = std::mem::take(&mut self.pending_impacts);
-        for desc in pending {
+        self.scratch_pending_drain.clear();
+        std::mem::swap(&mut self.pending_impacts, &mut self.scratch_pending_drain);
+        for i in 0..self.scratch_pending_drain.len() {
+            let desc = self.scratch_pending_drain[i];
             self.post_impact(desc);
         }
 

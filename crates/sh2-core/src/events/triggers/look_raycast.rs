@@ -126,11 +126,12 @@ pub fn event_check_look(
             }
             event_check_look_point(px, pz, player_rot_y, x, z)
         }
-        EvPosShape::Polyline { y, vertices } => {
+        EvPosShape::Polyline { y, vertices, len } => {
             if !player_height_matches_event_y(py, y) {
                 return false;
             }
-            vertices.windows(2).any(|seg| {
+            let count = usize::from(len).min(vertices.len());
+            vertices[..count].windows(2).any(|seg| {
                 let [x1, z1] = seg[0];
                 let [x2, z2] = seg[1];
                 event_check_look_line(px, pz, player_rot_y, x1, z1, x2, z2)

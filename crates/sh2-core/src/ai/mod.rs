@@ -86,6 +86,7 @@ pub struct AiSubsystem {
     scratch_twin_snapshots: Vec<(u32, TwinPartnerSnapshot)>,
     scratch_flesh_lips_info: Vec<(u32, bool, bool)>,
     scratch_mandarin_positions: Vec<(u32, Vec3)>,
+    scratch_pending_tribe_posts: Vec<(f32, u32, u32, Vec3, i32)>,
 }
 
 impl Default for AiSubsystem {
@@ -114,6 +115,7 @@ impl Default for AiSubsystem {
             scratch_twin_snapshots: Vec::with_capacity(4),
             scratch_flesh_lips_info: Vec::with_capacity(8),
             scratch_mandarin_positions: Vec::with_capacity(8),
+            scratch_pending_tribe_posts: Vec::with_capacity(8),
         }
     }
 }
@@ -261,7 +263,7 @@ impl AiSubsystem {
 
         let mut mary_swarm_spawn: Option<(Vec3, f32)> = None;
         let mut insects_despawn_all = false;
-        let mut pending_tribe_posts: Vec<(f32, u32, u32, Vec3, i32)> = Vec::new();
+        self.scratch_pending_tribe_posts.clear();
 
         let twin_snapshots = &self.scratch_twin_snapshots;
         let flesh_lips_info = &self.scratch_flesh_lips_info;
@@ -373,6 +375,7 @@ impl AiSubsystem {
                 player_spraying: self.player_spraying,
                 mary_sway_y_sample,
                 walls,
+                collision,
                 forbidden_areas: (!self.forbidden_areas.rects.is_empty())
                     .then_some(&self.forbidden_areas),
                 tribe_alert_pos,
@@ -433,17 +436,20 @@ impl AiSubsystem {
                 ActiveEnemy::LyingFigure(e)
                     if e.state == ScuState::Chase && prev_scu_state != Some(ScuState::Chase) =>
                 {
-                    pending_tribe_posts.push((4000.0, 1, 1, e.position, 120));
+                    self.scratch_pending_tribe_posts
+                        .push((4000.0, 1, 1, e.position, 120));
                 }
                 ActiveEnemy::Mannequin(e)
                     if prev_mkn_state == Some(MknState::Stay) && e.state != MknState::Stay =>
                 {
-                    pending_tribe_posts.push((1000.0, 2, 1, e.position, 2));
+                    self.scratch_pending_tribe_posts
+                        .push((1000.0, 2, 1, e.position, 2));
                 }
                 ActiveEnemy::Creeper(e)
                     if e.state == TyuState::Attack && prev_tyu_state != Some(TyuState::Attack) =>
                 {
-                    pending_tribe_posts.push((5000.0, 3, 1, e.position, 300));
+                    self.scratch_pending_tribe_posts
+                        .push((5000.0, 3, 1, e.position, 300));
                 }
                 ActiveEnemy::MaryBoss(m)
                     if m.moth_swarm_active && !has_alive_insects && mary_swarm_spawn.is_none() =>
@@ -462,7 +468,7 @@ impl AiSubsystem {
         // Decay existing tribe alert TTLs (`enExecTask` `0x001413f0` lines 272–282), then post
         // newly emitted alerts so same-frame listeners can observe them on the next tick.
         self.tribe_bus.tick();
-        for (radius, tribe_id, msg_type, pos, ttl) in pending_tribe_posts {
+        for &(radius, tribe_id, msg_type, pos, ttl) in &self.scratch_pending_tribe_posts {
             self.tribe_bus.post(radius, tribe_id, msg_type, pos, ttl);
         }
 

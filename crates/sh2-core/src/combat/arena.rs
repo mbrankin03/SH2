@@ -56,6 +56,8 @@ pub struct CombatArena {
     pub radio_enabled: bool,
     /// Reusable scratch buffer for `HumanFog` 5-ray deduplication (zero heap allocation per tick).
     scratch_spray_hit_mask: Vec<bool>,
+    /// Reusable scratch buffer for auto-aim target candidates (zero heap allocation per tick).
+    scratch_target_candidates: Vec<TargetCandidate>,
 }
 
 impl Default for CombatArena {
@@ -134,11 +136,53 @@ impl CombatArena {
             pending_enemy_sfx: None,
             radio_enabled: true,
             scratch_spray_hit_mask: Vec::with_capacity(32),
+            scratch_target_candidates: Vec::with_capacity(32),
         }
     }
 
-    fn build_target_candidates(&self) -> Vec<TargetCandidate> {
-        self.ai
+    fn fill_target_candidates(&mut self) {
+        self.scratch_target_candidates.clear();
+        for (index, e) in self.ai.enemies.iter().enumerate() {
+            self.scratch_target_candidates.push(TargetCandidate {
+                index,
+                position: e.position(),
+                is_downed: e.is_downed(),
+                is_dead: e.is_dead(),
+            });
+        }
+    }
+
+    /// Find the nearest downed enemy eligible for stomp/kick (`shBattleGetNearDeadlyTargetEnemy`,
+    /// `SLUS_202.28` `0x00124800`, `600.0` mm max distance + caller-supplied LOS predicate).
+    pub fn find_stomp_target_with_los<F>(&self, has_los: F) -> Option<usize>
+    where
+        F: FnMut(Vec3) -> bool,
+    {
+        const STACK_CAP: usize = 32;
+        if self.ai.enemies.len() <= STACK_CAP {
+            let mut buf = [TargetCandidate {
+                index: 0,
+                position: Vec3::ZERO,
+                is_downed: false,
+                is_dead: true,
+            }; STACK_CAP];
+            let count = self.ai.enemies.len();
+            for (index, (slot, e)) in buf[..count]
+                .iter_mut()
+                .zip(self.ai.enemies.iter())
+                .enumerate()
+            {
+                *slot = TargetCandidate {
+                    index,
+                    position: e.position(),
+                    is_downed: e.is_downed(),
+                    is_dead: e.is_dead(),
+                };
+            }
+            return find_near_deadly_target(self.player_position, &buf[..count], has_los);
+        }
+        let candidates: Vec<TargetCandidate> = self
+            .ai
             .enemies
             .iter()
             .enumerate()
@@ -148,16 +192,7 @@ impl CombatArena {
                 is_downed: e.is_downed(),
                 is_dead: e.is_dead(),
             })
-            .collect()
-    }
-
-    /// Find the nearest downed enemy eligible for stomp/kick (`shBattleGetNearDeadlyTargetEnemy`,
-    /// `SLUS_202.28` `0x00124800`, `600.0` mm max distance + caller-supplied LOS predicate).
-    pub fn find_stomp_target_with_los<F>(&self, has_los: F) -> Option<usize>
-    where
-        F: FnMut(Vec3) -> bool,
-    {
-        let candidates = self.build_target_candidates();
+            .collect();
         find_near_deadly_target(self.player_position, &candidates, has_los)
     }
 
@@ -176,8 +211,13 @@ impl CombatArena {
     where
         F: FnMut(Vec3) -> bool,
     {
-        let candidates = self.build_target_candidates();
-        let target = select_auto_aim_target(self.player_position, &candidates, max_range, has_los);
+        self.fill_target_candidates();
+        let target = select_auto_aim_target(
+            self.player_position,
+            &self.scratch_target_candidates,
+            max_range,
+            has_los,
+        );
         self.locked_target_idx = target;
         target
     }
@@ -192,13 +232,13 @@ impl CombatArena {
     where
         F: FnMut(Vec3) -> bool,
     {
-        let candidates = self.build_target_candidates();
+        self.fill_target_candidates();
         let next = cycle_auto_aim_target(
             self.player_position,
             self.player_yaw,
             self.locked_target_idx,
             direction,
-            &candidates,
+            &self.scratch_target_candidates,
             max_range,
             has_los,
         );

@@ -22,7 +22,6 @@ pub use capsule::{closest_point_on_segment, resolve_capsule_penetration, ThighCa
 
 use glam::{FloatExt, Quat, Vec3};
 use sh2_assets::formats::anm::{mat4_inverse, mat4_mul, quat_to_matrix};
-use std::collections::HashMap;
 
 /// Configuration parameters for a secondary physics spring-damper joint.
 #[derive(Debug, Clone, Copy)]
@@ -109,13 +108,19 @@ pub struct SecondaryJointState {
     pub angular_velocity: Vec3,
 }
 
+/// Flat joint entry pairing a bone index with its spring-damper configuration and dynamic state.
+#[derive(Debug, Clone, Copy)]
+struct SecondaryJointEntry {
+    bone_index: usize,
+    config: SecondaryJointConfig,
+    state: SecondaryJointState,
+}
+
 /// Multi-joint secondary physics solver managing real-time bone perturbations.
 #[derive(Debug, Clone)]
 pub struct SecondaryBonePhysics {
-    /// Active joint configurations keyed by skeleton bone index.
-    configs: HashMap<usize, SecondaryJointConfig>,
-    /// Simulation state keyed by skeleton bone index.
-    states: HashMap<usize, SecondaryJointState>,
+    /// Active joints stored in a flat cache-friendly `Vec` sorted ascending by `bone_index`.
+    joints: Vec<SecondaryJointEntry>,
     /// Optional analytical thigh-capsule collision specification.
     thigh_capsules: Option<ThighCapsuleSpec>,
     /// Previous character world position for velocity estimation.
@@ -138,8 +143,7 @@ impl SecondaryBonePhysics {
     /// Creates a new empty secondary physics solver.
     pub fn new() -> Self {
         Self {
-            configs: HashMap::new(),
-            states: HashMap::new(),
+            joints: Vec::new(),
             thigh_capsules: None,
             last_position: Vec3::ZERO,
             filtered_local_velocity: Vec3::ZERO,
@@ -191,8 +195,24 @@ impl SecondaryBonePhysics {
 
     /// Registers a bone index with custom spring-damper joint settings.
     pub fn register_bone(&mut self, bone_index: usize, config: SecondaryJointConfig) {
-        self.configs.insert(bone_index, config);
-        self.states.entry(bone_index).or_default();
+        match self
+            .joints
+            .binary_search_by_key(&bone_index, |j| j.bone_index)
+        {
+            Ok(idx) => {
+                self.joints[idx].config = config;
+            }
+            Err(idx) => {
+                self.joints.insert(
+                    idx,
+                    SecondaryJointEntry {
+                        bone_index,
+                        config,
+                        state: SecondaryJointState::default(),
+                    },
+                );
+            }
+        }
     }
 
     /// Advances the simulation clock by `dt` seconds given character world position and orientation.
@@ -230,8 +250,9 @@ impl SecondaryBonePhysics {
             .filtered_yaw_rate
             .lerp(raw_yaw_rate.clamp(-8.0, 8.0), yaw_alpha);
 
-        for (&bone, config) in &self.configs {
-            let state = self.states.entry(bone).or_default();
+        for joint in &mut self.joints {
+            let config = &joint.config;
+            let state = &mut joint.state;
             state.prev_deflection = state.deflection;
 
             let driving_pitch = self.filtered_local_velocity.z * config.linear_coupling;
@@ -261,7 +282,9 @@ impl SecondaryBonePhysics {
     /// and current 60 Hz simulation ticks (`alpha` in `[0.0, 1.0]`).
     pub fn apply_to_locals_interpolated(&self, locals: &mut [[[f32; 4]; 4]], alpha: f32) {
         let t = alpha.clamp(0.0, 1.0);
-        for (&bone, state) in &self.states {
+        for joint in &self.joints {
+            let bone = joint.bone_index;
+            let state = &joint.state;
             if bone >= locals.len() {
                 continue;
             }
@@ -302,10 +325,12 @@ impl SecondaryBonePhysics {
     ) {
         let t = alpha.clamp(0.0, 1.0);
         let n = pose_world.len();
-        for bone in 0..n {
-            let Some(state) = self.states.get(&bone) else {
-                continue;
-            };
+        for joint in &self.joints {
+            let bone = joint.bone_index;
+            if bone >= n {
+                break;
+            }
+            let state = &joint.state;
             if state.prev_deflection.length_squared() < 1e-6
                 && state.deflection.length_squared() < 1e-6
             {
@@ -389,8 +414,8 @@ impl SecondaryBonePhysics {
         self.filtered_local_velocity = Vec3::ZERO;
         self.last_yaw = current_yaw;
         self.filtered_yaw_rate = 0.0;
-        for state in self.states.values_mut() {
-            *state = SecondaryJointState::default();
+        for joint in &mut self.joints {
+            joint.state = SecondaryJointState::default();
         }
     }
 

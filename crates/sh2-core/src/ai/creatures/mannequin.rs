@@ -16,11 +16,12 @@
 
 use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
-use crate::ai::pathfinding::{check_path_ray, EnemyPathState, PathEnemyType, RoomForbiddenAreas};
+use crate::ai::pathfinding::{
+    check_path_ray_with_source, EnemyPathState, PathEnemyType, RoomForbiddenAreas,
+};
 use crate::ai::sensory::{
-    check_hit_eyes, evaluate_sensory_with_los, is_lit_by_flashlight, mkn_walk_speed_scale,
-    normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting, SensoryNotice,
-    SensoryProfile,
+    evaluate_sensory_with_wall_source, is_lit_by_flashlight, mkn_walk_speed_scale, normalize_angle,
+    AiWallSource, DifficultyLevel, PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -180,6 +181,30 @@ impl MannequinController {
         path_sway_sample: f32,
         dt: f32,
     ) {
+        self.update_with_wall_source(
+            target,
+            lighting,
+            difficulty,
+            AiWallSource::Slice(walls),
+            forbidden,
+            tribe_alert_pos,
+            path_sway_sample,
+            dt,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn update_with_wall_source(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        wall_source: AiWallSource<'_>,
+        forbidden: Option<&RoomForbiddenAreas>,
+        tribe_alert_pos: Option<Vec3>,
+        path_sway_sample: f32,
+        dt: f32,
+    ) {
         if self.state == MknState::Dying {
             return;
         }
@@ -211,8 +236,8 @@ impl MannequinController {
         let target_dir = dx.atan2(dz);
 
         // Flashlight beam detection for waking up from STAY (`0x4c0eb0`), gated by `.cld` wall LOS
-        let los_clear =
-            walls.is_empty() || check_hit_eyes(self.position, target.position, walls) < 0.0;
+        let los_clear = wall_source.is_empty()
+            || wall_source.check_hit_eyes(self.position, target.position) < 0.0;
         let lit_by_player = los_clear
             && is_lit_by_flashlight(
                 self.position,
@@ -224,7 +249,7 @@ impl MannequinController {
         let diff_idx = difficulty.as_index();
         let feel_range = MKN_FEEL_RANGE_MM[diff_idx];
         let rot_speed_rad_s = MKN_ROT_SPEED_SCALE[diff_idx] * MKN_ROT_BASE_RAD_PER_TICK * 60.0;
-        let (notice, alert) = evaluate_sensory_with_los(
+        let (notice, alert) = evaluate_sensory_with_wall_source(
             &self.sensory,
             self.position,
             self.yaw,
@@ -232,7 +257,7 @@ impl MannequinController {
             target,
             lighting,
             difficulty,
-            walls,
+            wall_source,
             dt,
         );
         self.alert_timer = alert;
@@ -321,7 +346,7 @@ impl MannequinController {
             MknState::Chase => {
                 // `enMKNCtrlChase` (`SLUS_202.28` `0x001551a0` lines 928-965)
                 let steer_dir =
-                    if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
+                    if !wall_source.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
                         let ticks = (dt * 60.0).round().max(1.0) as i16;
                         self.path_state.cur_angle = self.yaw;
                         self.path_state.set_path(
@@ -330,7 +355,7 @@ impl MannequinController {
                             target.position,
                             path_sway_sample,
                             ticks,
-                            |a, b| check_path_ray(a, b, 150.0, walls, forbidden),
+                            |a, b| check_path_ray_with_source(a, b, 150.0, wall_source, forbidden),
                         );
                         self.path_state.target_angle
                     } else {

@@ -348,15 +348,18 @@ impl Default for RaycastFilter {
     }
 }
 
-/// 2D Line segment intersection in $XZ$ plane.
-/// Returns parameter $t \in [0, 1]$ along line $P \to Q$, or `None`.
-pub fn intersect_segment_xz(
+/// 2D line segment intersection in XZ plane without `sqrt` or normal computation.
+///
+/// Returns parameter `t` in `[0.0, 1.0]` along `P -> Q`, or `None`. Preferred for LOS,
+/// camera clamping, and acoustic occlusion callers that only need the hit parameter `t`.
+#[inline]
+pub fn intersect_segment_xz_t(
     px: f32,
     pz: f32,
     qx: f32,
     qz: f32,
     wall: &WallSegment,
-) -> Option<(f32, [f32; 2])> {
+) -> Option<f32> {
     let rx = qx - px;
     let rz = qz - pz;
     let sx = wall.end[0] - wall.start[0];
@@ -371,14 +374,29 @@ pub fn intersect_segment_xz(
     let u = ((wall.start[0] - px) * rz - (wall.start[1] - pz) * rx) / den;
 
     if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
-        // Wall normal: perpendicular to wall segment in XZ
-        let wall_len = (sx * sx + sz * sz).sqrt().max(1e-4);
-        let nx = -sz / wall_len;
-        let nz = sx / wall_len;
-        Some((t, [nx, nz]))
+        Some(t)
     } else {
         None
     }
+}
+
+/// 2D Line segment intersection in $XZ$ plane.
+/// Returns parameter $t \in [0, 1]$ along line $P \to Q$ and unit 2D wall normal, or `None`.
+pub fn intersect_segment_xz(
+    px: f32,
+    pz: f32,
+    qx: f32,
+    qz: f32,
+    wall: &WallSegment,
+) -> Option<(f32, [f32; 2])> {
+    let t = intersect_segment_xz_t(px, pz, qx, qz, wall)?;
+    let sx = wall.end[0] - wall.start[0];
+    let sz = wall.end[1] - wall.start[1];
+    // Wall normal: perpendicular to wall segment in XZ
+    let wall_len = (sx * sx + sz * sz).sqrt().max(1e-4);
+    let nx = -sz / wall_len;
+    let nz = sx / wall_len;
+    Some((t, [nx, nz]))
 }
 
 /// Clamp camera position along a 3D ray from subject `target` to `camera_pos` (`clCheckHitEyes` / `0x00138ea0`).
@@ -405,9 +423,7 @@ where
             continue;
         }
 
-        if let Some((t, _norm)) =
-            intersect_segment_xz(target.x, target.z, camera_pos.x, camera_pos.z, w)
-        {
+        if let Some(t) = intersect_segment_xz_t(target.x, target.z, camera_pos.x, camera_pos.z, w) {
             let y_at_hit = target.y + dy * t;
             if !(w.y_top <= y_at_hit && w.y_bottom >= y_at_hit) {
                 continue;
@@ -561,6 +577,196 @@ pub fn intersect_ray_triangle_3d(origin: Vec3, target: Vec3, tri: &FloorTriangle
     }
 }
 
+/// Zero-allocation incremental accumulator shared by brute-force [`raycast_acoustic_occlusion`]
+/// and `SpatialGrid`-accelerated [`super::CollisionWorld::raycast_acoustic_occlusion`].
+pub(crate) struct AcousticOcclusionAccumulator {
+    emitter_pos: Vec3,
+    listener_head_pos: Vec3,
+    delta: Vec3,
+    ray_len: f32,
+    padded_origin: Vec3,
+    padded_target: Vec3,
+    padded_len: f32,
+    upper_y: f32,
+    lower_y: f32,
+    check_slabs: bool,
+    barrier_dists: [f32; 8],
+    barrier_weights: [f32; 8],
+    barrier_is_slab: [bool; 8],
+    barrier_count: usize,
+    closest_t: f32,
+    primary_material: u32,
+}
+
+impl AcousticOcclusionAccumulator {
+    const MAX_TRACKED_BARRIERS: usize = 8;
+    const WALL_Y_EPSILON: f32 = 20.0;
+    const ENDPOINT_T_MARGIN: f32 = 0.015;
+    const SLAB_RAY_PAD: f32 = 20.0;
+
+    #[inline]
+    pub(crate) fn new(emitter_pos: Vec3, listener_head_pos: Vec3) -> Option<Self> {
+        if !emitter_pos.is_finite() || !listener_head_pos.is_finite() {
+            return None;
+        }
+        let delta = listener_head_pos - emitter_pos;
+        let ray_len = delta.length();
+        if !ray_len.is_finite() || ray_len <= 10.0 {
+            return None;
+        }
+        let check_slabs = delta.y.abs() > 450.0;
+        let (padded_origin, padded_target, padded_len) = if check_slabs {
+            let ray_dir_unit = delta / ray_len;
+            (
+                emitter_pos - ray_dir_unit * Self::SLAB_RAY_PAD,
+                listener_head_pos + ray_dir_unit * Self::SLAB_RAY_PAD,
+                ray_len + 2.0 * Self::SLAB_RAY_PAD,
+            )
+        } else {
+            (emitter_pos, listener_head_pos, ray_len)
+        };
+        Some(Self {
+            emitter_pos,
+            listener_head_pos,
+            delta,
+            ray_len,
+            padded_origin,
+            padded_target,
+            padded_len,
+            upper_y: emitter_pos.y.min(listener_head_pos.y),
+            lower_y: emitter_pos.y.max(listener_head_pos.y),
+            check_slabs,
+            barrier_dists: [0.0; Self::MAX_TRACKED_BARRIERS],
+            barrier_weights: [0.0; Self::MAX_TRACKED_BARRIERS],
+            barrier_is_slab: [false; Self::MAX_TRACKED_BARRIERS],
+            barrier_count: 0,
+            closest_t: 1.0,
+            primary_material: 0,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn checks_slabs(&self) -> bool {
+        self.check_slabs
+    }
+
+    #[inline]
+    pub(crate) fn padded_endpoints(&self) -> (Vec3, Vec3) {
+        (self.padded_origin, self.padded_target)
+    }
+
+    #[inline]
+    pub(crate) fn test_wall(&mut self, w: &WallSegment) {
+        if w.group == 3 || is_cld_material_thru(w.material) {
+            return;
+        }
+        if let Some(t) = intersect_segment_xz_t(
+            self.emitter_pos.x,
+            self.emitter_pos.z,
+            self.listener_head_pos.x,
+            self.listener_head_pos.z,
+            w,
+        ) {
+            if !t.is_finite()
+                || !(Self::ENDPOINT_T_MARGIN..=(1.0 - Self::ENDPOINT_T_MARGIN)).contains(&t)
+            {
+                return;
+            }
+            let y_at_hit = self.emitter_pos.y + self.delta.y * t;
+            if y_at_hit < w.y_top - Self::WALL_Y_EPSILON
+                || y_at_hit > w.y_bottom + Self::WALL_Y_EPSILON
+            {
+                return;
+            }
+
+            let hit_dist = t * self.ray_len;
+            let weight = cld_material_barrier_weight(w.material);
+            if t < self.closest_t {
+                self.closest_t = t;
+                self.primary_material = w.material;
+            }
+
+            if let Some(existing_idx) = self.barrier_dists[..self.barrier_count]
+                .iter()
+                .position(|&d| (d - hit_dist).abs() < MIN_DISTINCT_BARRIER_SEPARATION_UNITS)
+            {
+                if weight > self.barrier_weights[existing_idx] {
+                    self.barrier_weights[existing_idx] = weight;
+                }
+            } else if self.barrier_count < Self::MAX_TRACKED_BARRIERS {
+                self.barrier_dists[self.barrier_count] = hit_dist;
+                self.barrier_weights[self.barrier_count] = weight;
+                self.barrier_is_slab[self.barrier_count] = false;
+                self.barrier_count += 1;
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn test_floor(&mut self, tri: &FloorTriangle) {
+        if !self.check_slabs || is_cld_material_thru(tri.material) {
+            return;
+        }
+        if let Some(t_padded) =
+            intersect_ray_triangle_3d(self.padded_origin, self.padded_target, tri)
+        {
+            if !t_padded.is_finite() {
+                return;
+            }
+            let hit_pt = self.padded_origin + (self.padded_target - self.padded_origin) * t_padded;
+            let y_at_hit = hit_pt.y;
+            if self.upper_y > y_at_hit + 25.0 || self.lower_y < y_at_hit + 350.0 {
+                return;
+            }
+
+            let unpadded_dist =
+                (t_padded * self.padded_len - Self::SLAB_RAY_PAD).clamp(0.0, self.ray_len);
+            let t = (unpadded_dist / self.ray_len).clamp(0.0, 1.0);
+            let weight = cld_material_barrier_weight(tri.material);
+            if t < self.closest_t {
+                self.closest_t = t;
+                self.primary_material = tri.material;
+            }
+
+            if let Some(existing_idx) = self.barrier_dists[..self.barrier_count]
+                .iter()
+                .position(|&d| (d - unpadded_dist).abs() < MIN_DISTINCT_BARRIER_SEPARATION_UNITS)
+            {
+                if weight > self.barrier_weights[existing_idx] {
+                    self.barrier_weights[existing_idx] = weight;
+                }
+            } else if self.barrier_count < Self::MAX_TRACKED_BARRIERS {
+                self.barrier_dists[self.barrier_count] = unpadded_dist;
+                self.barrier_weights[self.barrier_count] = weight;
+                self.barrier_is_slab[self.barrier_count] = true;
+                self.barrier_count += 1;
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn finish(self) -> AcousticOcclusionHit {
+        let mut wall_hit_count = 0u32;
+        let mut slab_hit_count = 0u32;
+        let mut barrier_density = 0.0f32;
+        for i in 0..self.barrier_count {
+            if self.barrier_is_slab[i] {
+                slab_hit_count += 1;
+            } else {
+                wall_hit_count += 1;
+            }
+            barrier_density += self.barrier_weights[i];
+        }
+        AcousticOcclusionHit {
+            wall_hit_count,
+            slab_hit_count,
+            closest_t: self.closest_t,
+            primary_material: self.primary_material,
+            barrier_density,
+        }
+    }
+}
+
 /// Casts a zero-allocation 3D line-of-sight ray from `emitter_pos` to `listener_head_pos`
 /// (in SH2 world units, `+Y` downward) against active `.cld` walls (`wldofs` `group == 1` &
 /// `cedofs` `group == 2`, matching `SLUS_202.28` `clCheckHitEyeVector` `0x00139420`) and
@@ -575,148 +781,16 @@ where
     W: Iterator<Item = &'w WallSegment>,
     F: Iterator<Item = &'f FloorTriangle>,
 {
-    if !emitter_pos.is_finite() || !listener_head_pos.is_finite() {
+    let Some(mut acc) = AcousticOcclusionAccumulator::new(emitter_pos, listener_head_pos) else {
         return AcousticOcclusionHit::clear();
-    }
-    let delta = listener_head_pos - emitter_pos;
-    let ray_len = delta.length();
-    if !ray_len.is_finite() || ray_len <= 10.0 {
-        return AcousticOcclusionHit::clear();
-    }
-
-    const MAX_TRACKED_BARRIERS: usize = 8;
-    const WALL_Y_EPSILON: f32 = 20.0;
-    const ENDPOINT_T_MARGIN: f32 = 0.015;
-    const SLAB_RAY_PAD: f32 = 20.0;
-
-    let mut barrier_dists = [0.0f32; MAX_TRACKED_BARRIERS];
-    let mut barrier_weights = [0.0f32; MAX_TRACKED_BARRIERS];
-    let mut barrier_is_slab = [false; MAX_TRACKED_BARRIERS];
-    let mut barrier_count = 0usize;
-
-    let mut closest_t = 1.0f32;
-    let mut primary_material = 0u32;
-
-    // 1. Intersect vertical `.cld` wall, door (`wldofs` `group == 1`, e.g. `material == 7`), and
-    //    upper-wall/lintel/arch (`cedofs` `group == 2`) planes.
-    //    `SLUS_202.28` `clCheckHitEyeVector` (`0x00139420` at `0x001394dc..0x0013958c`),
-    //    `clCheckHitEyesOnlyWall` (`0x00139110`), and `clCheckHitThrustGunVector` (`0x00137c70`)
-    //    test `fldofs` (`0`), `wldofs` (`1`), and `cedofs` (`2`) while skipping `swdofs` (`group == 3`,
-    //    waist-high character-walk pushback curbs/furniture tested only in `clCheckBg2Chara` `0x00133a9c`).
+    };
     for w in walls {
-        if w.group == 3 || is_cld_material_thru(w.material) {
-            continue;
-        }
-        if let Some((t, _normal)) = intersect_segment_xz(
-            emitter_pos.x,
-            emitter_pos.z,
-            listener_head_pos.x,
-            listener_head_pos.z,
-            w,
-        ) {
-            if !t.is_finite() || !(ENDPOINT_T_MARGIN..=(1.0 - ENDPOINT_T_MARGIN)).contains(&t) {
-                continue;
-            }
-            let y_at_hit = emitter_pos.y + delta.y * t;
-            if y_at_hit < w.y_top - WALL_Y_EPSILON || y_at_hit > w.y_bottom + WALL_Y_EPSILON {
-                continue;
-            }
-
-            let hit_dist = t * ray_len;
-            let weight = cld_material_barrier_weight(w.material);
-            if t < closest_t {
-                closest_t = t;
-                primary_material = w.material;
-            }
-
-            if let Some(existing_idx) = barrier_dists[..barrier_count]
-                .iter()
-                .position(|&d| (d - hit_dist).abs() < MIN_DISTINCT_BARRIER_SEPARATION_UNITS)
-            {
-                if weight > barrier_weights[existing_idx] {
-                    barrier_weights[existing_idx] = weight;
-                }
-            } else if barrier_count < MAX_TRACKED_BARRIERS {
-                barrier_dists[barrier_count] = hit_dist;
-                barrier_weights[barrier_count] = weight;
-                barrier_is_slab[barrier_count] = false;
-                barrier_count += 1;
-            }
-        }
+        acc.test_wall(w);
     }
-
-    // 2. Intersect multi-story `.cld` floor/ceiling slabs when vertical separation spans stories (`|dy| > 450`).
-    //    Extend the ray segment by `SLAB_RAY_PAD` (`20.0` SH2 units = `4 cm`) so emitters authored directly
-    //    on an upstairs floor slab (`emitter_pos.y == -1600.0`, `t ≈ 0.0`) still intersect the 2F deck cleanly,
-    //    while rejecting the lower story's own walkable floor beneath the lower endpoint's feet.
-    if delta.y.abs() > 450.0 {
-        let ray_dir_unit = delta / ray_len;
-        let padded_origin = emitter_pos - ray_dir_unit * SLAB_RAY_PAD;
-        let padded_target = listener_head_pos + ray_dir_unit * SLAB_RAY_PAD;
-        let padded_len = ray_len + 2.0 * SLAB_RAY_PAD;
-        let upper_y = emitter_pos.y.min(listener_head_pos.y);
-        let lower_y = emitter_pos.y.max(listener_head_pos.y);
-
+    if acc.checks_slabs() {
         for tri in floors {
-            // `SLUS_202.28` `clCheckHitEyesOnlyFloorThru` (`0x00139010` -> `0x00139b90`):
-            // open metal grates / wire mesh floors (`material == 9, 11, 12`, e.g. Mandarin under Labyrinth grates)
-            // are acoustically see-through (`Thru`) and must not muffle vertical sources!
-            if is_cld_material_thru(tri.material) {
-                continue;
-            }
-            if let Some(t_padded) = intersect_ray_triangle_3d(padded_origin, padded_target, tri) {
-                if !t_padded.is_finite() {
-                    continue;
-                }
-                let hit_pt = padded_origin + (padded_target - padded_origin) * t_padded;
-                let y_at_hit = hit_pt.y;
-                // Accept iff one endpoint is at or above the slab (`+Y` down: `upper_y <= y_at_hit + 25.0`)
-                // and the other endpoint lies in a story below the slab (`lower_y >= y_at_hit + 350.0`).
-                if upper_y > y_at_hit + 25.0 || lower_y < y_at_hit + 350.0 {
-                    continue;
-                }
-
-                let unpadded_dist = (t_padded * padded_len - SLAB_RAY_PAD).clamp(0.0, ray_len);
-                let t = (unpadded_dist / ray_len).clamp(0.0, 1.0);
-                let weight = cld_material_barrier_weight(tri.material);
-                if t < closest_t {
-                    closest_t = t;
-                    primary_material = tri.material;
-                }
-
-                if let Some(existing_idx) = barrier_dists[..barrier_count].iter().position(|&d| {
-                    (d - unpadded_dist).abs() < MIN_DISTINCT_BARRIER_SEPARATION_UNITS
-                }) {
-                    if weight > barrier_weights[existing_idx] {
-                        barrier_weights[existing_idx] = weight;
-                    }
-                } else if barrier_count < MAX_TRACKED_BARRIERS {
-                    barrier_dists[barrier_count] = unpadded_dist;
-                    barrier_weights[barrier_count] = weight;
-                    barrier_is_slab[barrier_count] = true;
-                    barrier_count += 1;
-                }
-            }
+            acc.test_floor(tri);
         }
     }
-
-    let mut wall_hit_count = 0u32;
-    let mut slab_hit_count = 0u32;
-    let mut barrier_density = 0.0f32;
-    for i in 0..barrier_count {
-        if barrier_is_slab[i] {
-            slab_hit_count += 1;
-        } else {
-            wall_hit_count += 1;
-        }
-        barrier_density += barrier_weights[i];
-    }
-
-    AcousticOcclusionHit {
-        wall_hit_count,
-        slab_hit_count,
-        closest_t,
-        primary_material,
-        barrier_density,
-    }
+    acc.finish()
 }

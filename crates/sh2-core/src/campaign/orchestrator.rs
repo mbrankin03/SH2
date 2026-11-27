@@ -16,7 +16,8 @@ use crate::events::stages_act1::{act1_eval_bgm_control_with_demo, act1_stage_des
 use crate::events::{is_connected_stage_pair, ClearData, Sh2Rng};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
-use crate::world::OutdoorTileStreamer;
+use crate::types::ItemListEntry;
+use crate::world::{resolve_active_room_pickups_into, OutdoorTileStreamer};
 
 use super::connect::{step_connect_pipeline, ConnectRequest, ConnectStepOutcome};
 use super::cutscene_handoff::{
@@ -63,6 +64,10 @@ pub struct CampaignOrchestrator {
     pub triggered_demos: HashSet<u32>,
     /// `true` while `EventEngine` or a cutscene locks player locomotion.
     pub player_locked: bool,
+    /// Reusable cached stage `Item_List` converted for `EventEngine::tick_standard` (zero alloc per tick).
+    scratch_stage_items: Vec<ItemListEntry>,
+    /// Stage ID currently cached in [`Self::scratch_stage_items`].
+    cached_stage_items_id: Option<u16>,
 }
 
 impl CampaignOrchestrator {
@@ -120,6 +125,8 @@ impl CampaignOrchestrator {
             active_manifest: None,
             triggered_demos: HashSet::new(),
             player_locked: true,
+            scratch_stage_items: Vec::new(),
+            cached_stage_items_id: None,
         }
     }
 
@@ -159,6 +166,8 @@ impl CampaignOrchestrator {
             active_manifest: None,
             triggered_demos: HashSet::new(),
             player_locked: true,
+            scratch_stage_items: Vec::new(),
+            cached_stage_items_id: None,
         }
     }
 
@@ -264,132 +273,74 @@ impl CampaignOrchestrator {
         input: &CampaignTickInput,
         dt_sec: f32,
     ) -> CampaignEffects {
-        self.fade.tick(dt_sec);
-        let mut effects = CampaignEffects {
-            fade_alpha: self.fade.black_alpha(),
-            ..CampaignEffects::default()
-        };
+        let mut effects = CampaignEffects::default();
+        self.step_into(sim, input, dt_sec, &mut effects);
+        effects
+    }
 
-        match self.phase.clone() {
-            CampaignPhase::Prologue {
-                scenario,
-                action_difficulty,
-                riddle_difficulty,
-                clear_data,
-                rng_seed,
-            } => {
-                self.phase = run_prologue(
-                    sim,
-                    &mut self.event_engine,
-                    &mut self.outdoor_streamer,
-                    &mut self.fade,
-                    scenario,
-                    action_difficulty,
-                    riddle_difficulty,
-                    clear_data,
-                    rng_seed,
-                );
-            }
-            CampaignPhase::RoomLoading {
-                target,
-                connect_step,
-                assets_ready,
-            } => {
-                let req = ConnectRequest {
-                    target_stage: target.stage_id,
-                    room_override: target.room_override.as_deref(),
-                    spawn_pos: target.spawn_pos,
-                    spawn_yaw: target.spawn_yaw,
-                    is_connected_stage: target.is_connected_stage,
-                    show_loading_screen: target.show_loading_screen,
-                    door_command: None,
-                    prefer_sh2ee: input.prefer_sh2ee,
-                };
-                let outcome = step_connect_pipeline(
-                    sim,
-                    &mut self.event_engine,
-                    &mut self.horror_triggers,
-                    &mut self.rng,
-                    &mut self.fade,
-                    &mut self.active_manifest,
-                    &self.triggered_demos,
-                    self.delayed_fade_in_fix,
-                    connect_step,
-                    assets_ready,
-                    target.show_loading_screen,
-                    &req,
-                    &mut effects,
-                );
-                self.finish_connect_outcome(outcome, &mut effects, |next_step, _| {
-                    CampaignPhase::RoomLoading {
-                        target,
-                        connect_step: next_step,
-                        assets_ready,
-                    }
-                });
-            }
+    /// Advances the unified campaign loop by one frame (`PlayableMain` `0x0020b3c0`), writing
+    /// per-frame side effects into caller-owned `effects` (preserving `Vec` capacities across ticks).
+    pub fn step_into(
+        &mut self,
+        sim: &mut SimulationCore,
+        input: &CampaignTickInput,
+        dt_sec: f32,
+        effects: &mut CampaignEffects,
+    ) {
+        self.fade.tick(dt_sec);
+        effects.load_room = None;
+        effects.start_drama_demo = None;
+        effects.start_fmv = None;
+        effects.show_loading_screen = None;
+        effects.hide_loading_screen = false;
+        effects.fade_alpha = self.fade.black_alpha();
+        effects.sound_effects.clear();
+        effects.positional_sounds.clear();
+        effects.bgm_stage_id = None;
+        effects.bgm_control_mask = None;
+        effects.outdoor_plan = None;
+        effects.common_message = None;
+        effects.stage_message = None;
+        effects.clear_message = false;
+        effects.return_to_title = false;
+        effects.active_room_pickups.clear();
+        effects.allow_gameplay_sim = false;
+
+        match &mut self.phase {
             CampaignPhase::ActiveGameplay => {
-                self.step_active_gameplay(sim, input, dt_sec, &mut effects);
+                self.step_active_gameplay(sim, input, dt_sec, effects);
             }
-            CampaignPhase::DoorTransition {
-                command,
-                resolved_room,
-                connect_step,
-                mut fade_out_complete,
-                assets_ready,
-                loading_screen_active,
-            } => {
-                if !fade_out_complete {
-                    if !self.fade.is_fully_black() {
-                        effects.fade_alpha = self.fade.black_alpha();
-                        return effects;
-                    }
-                    fade_out_complete = true;
+            &mut CampaignPhase::OverlayMenu(kind) => {
+                if kind.advances_game_timer() && dt_sec > 0.0 {
+                    self.play_time_secs += f64::from(dt_sec);
                 }
-                let target_stage = if command.dest_stage != 0 {
-                    command.dest_stage as u16
-                } else {
-                    sim.scenario.current_stage
-                };
-                let is_inter_stage =
-                    command.dest_stage != 0 && target_stage != sim.scenario.current_stage;
-                let req = ConnectRequest {
-                    target_stage,
-                    room_override: Some(&resolved_room),
-                    spawn_pos: command.dest_pos,
-                    spawn_yaw: command.dest_rot_y,
-                    is_connected_stage: command.is_connected_stage,
-                    show_loading_screen: is_inter_stage,
-                    door_command: Some(command),
-                    prefer_sh2ee: input.prefer_sh2ee,
-                };
-                let outcome = step_connect_pipeline(
-                    sim,
-                    &mut self.event_engine,
-                    &mut self.horror_triggers,
-                    &mut self.rng,
-                    &mut self.fade,
-                    &mut self.active_manifest,
-                    &self.triggered_demos,
-                    self.delayed_fade_in_fix,
-                    connect_step,
-                    assets_ready,
-                    loading_screen_active,
-                    &req,
-                    &mut effects,
-                );
-                self.finish_connect_outcome(outcome, &mut effects, |next_step, ls_active| {
-                    CampaignPhase::DoorTransition {
-                        command,
-                        resolved_room,
-                        connect_step: next_step,
-                        fade_out_complete,
-                        assets_ready,
-                        loading_screen_active: ls_active,
-                    }
-                });
+                if kind == super::state::OverlayMenuKind::Inventory && input.item_use_id != 0 {
+                    // `SLUS_202.28` `event_item_use` (`0x001d3840`) / `combine_item_use` (`0x001d38d0`):
+                    // using an item from Inventory returns to `ActiveGameplay` and evaluates the
+                    // queued `item_use_id` against the current stage's `Event_List`.
+                    self.phase = CampaignPhase::ActiveGameplay;
+                    self.step_active_gameplay(sim, input, dt_sec, effects);
+                } else if input.overlay_toggle == Some(kind) || input.cancel_pressed {
+                    self.phase = CampaignPhase::ActiveGameplay;
+                }
             }
-            CampaignPhase::DramaDemo {
+            CampaignPhase::GameOver => {
+                if input.confirm_terminal_exit || input.action_pressed {
+                    effects.return_to_title = true;
+                }
+            }
+            CampaignPhase::EndingCredits {
+                showing_results, ..
+            } => {
+                if input.confirm_terminal_exit || input.action_pressed {
+                    if !*showing_results {
+                        *showing_results = true;
+                    } else {
+                        effects.return_to_title = true;
+                    }
+                }
+            }
+            &mut CampaignPhase::DramaDemo {
                 demo_no,
                 post_pos,
                 post_yaw,
@@ -447,7 +398,7 @@ impl CampaignOrchestrator {
                                     completion_flag: None,
                                     chain_cursor: chain_cursor + 1,
                                 },
-                                &mut effects,
+                                effects,
                             );
                         }
                         Some(CutsceneSequenceStep::InEngineDemo { demo_no: next_demo }) => {
@@ -460,7 +411,7 @@ impl CampaignOrchestrator {
                                     restore_policy,
                                 },
                                 chain_cursor + 1,
-                                &mut effects,
+                                effects,
                             );
                         }
                         _ => {
@@ -484,107 +435,175 @@ impl CampaignOrchestrator {
                     }
                 }
             }
-            CampaignPhase::FmvPlayback {
-                movie_id,
-                post_stage,
-                post_pos,
-                post_yaw,
-                post_demo,
-                completion_flag,
-                chain_cursor,
-                exit_state,
-            } => match exit_state {
-                FmvExitState::FadingOutSkip => {
-                    if self.fade.is_fully_black() {
-                        self.complete_fmv_handoff(
-                            sim,
-                            movie_id,
-                            post_stage,
-                            post_pos,
-                            post_yaw,
-                            None,
-                            completion_flag,
-                            chain_cursor,
-                            &mut effects,
-                        );
-                    }
-                }
-                FmvExitState::Playing => {
-                    if input.cancel_pressed {
-                        // Retail `ScreenEffectFadeStart(1.2, 1)` (`SLUS_202.28` `0x0020dfc0`):
-                        // fade mid-movie skip smoothly to black before entering gameplay/stage.
-                        if self.fade.is_fully_black() {
-                            self.complete_fmv_handoff(
-                                sim,
-                                movie_id,
-                                post_stage,
-                                post_pos,
-                                post_yaw,
-                                None,
-                                completion_flag,
-                                chain_cursor,
-                                &mut effects,
-                            );
+            CampaignPhase::FmvPlayback { exit_state, .. } => {
+                let should_complete = match *exit_state {
+                    FmvExitState::FadingOutSkip => self.fade.is_fully_black(),
+                    FmvExitState::Playing => {
+                        if input.cancel_pressed {
+                            if self.fade.is_fully_black() {
+                                true
+                            } else {
+                                self.fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);
+                                *exit_state = FmvExitState::FadingOutSkip;
+                                false
+                            }
                         } else {
-                            self.fade.start_fade_out(PS2_DEFAULT_FADE_SPEED);
-                            self.phase = CampaignPhase::FmvPlayback {
-                                movie_id,
-                                post_stage,
-                                post_pos,
-                                post_yaw,
-                                post_demo,
-                                completion_flag,
-                                chain_cursor,
-                                exit_state: FmvExitState::FadingOutSkip,
-                            };
+                            input.fmv_finished
                         }
-                    } else if input.fmv_finished {
+                    }
+                };
+                if should_complete {
+                    let keep_post_demo =
+                        !input.cancel_pressed && matches!(*exit_state, FmvExitState::Playing);
+                    if let CampaignPhase::FmvPlayback {
+                        movie_id,
+                        post_stage,
+                        post_pos,
+                        post_yaw,
+                        post_demo,
+                        completion_flag,
+                        chain_cursor,
+                        ..
+                    } = std::mem::replace(&mut self.phase, CampaignPhase::ActiveGameplay)
+                    {
                         self.complete_fmv_handoff(
                             sim,
                             movie_id,
                             post_stage,
                             post_pos,
                             post_yaw,
-                            post_demo,
+                            if keep_post_demo { post_demo } else { None },
                             completion_flag,
                             chain_cursor,
-                            &mut effects,
+                            effects,
                         );
                     }
                 }
-            },
-            CampaignPhase::OverlayMenu(kind) => {
-                if kind.advances_game_timer() && dt_sec > 0.0 {
-                    self.play_time_secs += f64::from(dt_sec);
-                }
-                if kind == super::state::OverlayMenuKind::Inventory && input.item_use_id != 0 {
-                    // `SLUS_202.28` `event_item_use` (`0x001d3840`) / `combine_item_use` (`0x001d38d0`):
-                    // using an item from Inventory returns to `ActiveGameplay` and evaluates the
-                    // queued `item_use_id` against the current stage's `Event_List`.
-                    self.phase = CampaignPhase::ActiveGameplay;
-                    self.step_active_gameplay(sim, input, dt_sec, &mut effects);
-                } else if input.overlay_toggle == Some(kind) || input.cancel_pressed {
-                    self.phase = CampaignPhase::ActiveGameplay;
+            }
+            CampaignPhase::Prologue { .. } => {
+                if let CampaignPhase::Prologue {
+                    scenario,
+                    action_difficulty,
+                    riddle_difficulty,
+                    clear_data,
+                    rng_seed,
+                } = std::mem::replace(&mut self.phase, CampaignPhase::ActiveGameplay)
+                {
+                    self.phase = run_prologue(
+                        sim,
+                        &mut self.event_engine,
+                        &mut self.outdoor_streamer,
+                        &mut self.fade,
+                        scenario,
+                        action_difficulty,
+                        riddle_difficulty,
+                        clear_data,
+                        rng_seed,
+                    );
                 }
             }
-            CampaignPhase::GameOver => {
-                if input.confirm_terminal_exit || input.action_pressed {
-                    effects.return_to_title = true;
+            CampaignPhase::RoomLoading { .. } => {
+                if let CampaignPhase::RoomLoading {
+                    target,
+                    connect_step,
+                    assets_ready,
+                } = std::mem::replace(&mut self.phase, CampaignPhase::ActiveGameplay)
+                {
+                    let req = ConnectRequest {
+                        target_stage: target.stage_id,
+                        room_override: target.room_override.as_deref(),
+                        spawn_pos: target.spawn_pos,
+                        spawn_yaw: target.spawn_yaw,
+                        is_connected_stage: target.is_connected_stage,
+                        show_loading_screen: target.show_loading_screen,
+                        door_command: None,
+                        prefer_sh2ee: input.prefer_sh2ee,
+                    };
+                    let outcome = step_connect_pipeline(
+                        sim,
+                        &mut self.event_engine,
+                        &mut self.horror_triggers,
+                        &mut self.rng,
+                        &mut self.fade,
+                        &mut self.active_manifest,
+                        &self.triggered_demos,
+                        self.delayed_fade_in_fix,
+                        connect_step,
+                        assets_ready,
+                        target.show_loading_screen,
+                        &req,
+                        effects,
+                    );
+                    self.finish_connect_outcome(outcome, effects, |next_step, _| {
+                        CampaignPhase::RoomLoading {
+                            target,
+                            connect_step: next_step,
+                            assets_ready,
+                        }
+                    });
                 }
             }
-            CampaignPhase::EndingCredits {
-                ending_stage,
-                showing_results,
+            CampaignPhase::DoorTransition {
+                fade_out_complete, ..
             } => {
-                if input.confirm_terminal_exit || input.action_pressed {
-                    if !showing_results {
-                        self.phase = CampaignPhase::EndingCredits {
-                            ending_stage,
-                            showing_results: true,
-                        };
-                    } else {
-                        effects.return_to_title = true;
+                if !*fade_out_complete {
+                    if !self.fade.is_fully_black() {
+                        effects.fade_alpha = self.fade.black_alpha();
+                        return;
                     }
+                    *fade_out_complete = true;
+                }
+                if let CampaignPhase::DoorTransition {
+                    command,
+                    resolved_room,
+                    connect_step,
+                    fade_out_complete,
+                    assets_ready,
+                    loading_screen_active,
+                } = std::mem::replace(&mut self.phase, CampaignPhase::ActiveGameplay)
+                {
+                    let target_stage = if command.dest_stage != 0 {
+                        command.dest_stage as u16
+                    } else {
+                        sim.scenario.current_stage
+                    };
+                    let is_inter_stage =
+                        command.dest_stage != 0 && target_stage != sim.scenario.current_stage;
+                    let req = ConnectRequest {
+                        target_stage,
+                        room_override: Some(&resolved_room),
+                        spawn_pos: command.dest_pos,
+                        spawn_yaw: command.dest_rot_y,
+                        is_connected_stage: command.is_connected_stage,
+                        show_loading_screen: is_inter_stage,
+                        door_command: Some(command),
+                        prefer_sh2ee: input.prefer_sh2ee,
+                    };
+                    let outcome = step_connect_pipeline(
+                        sim,
+                        &mut self.event_engine,
+                        &mut self.horror_triggers,
+                        &mut self.rng,
+                        &mut self.fade,
+                        &mut self.active_manifest,
+                        &self.triggered_demos,
+                        self.delayed_fade_in_fix,
+                        connect_step,
+                        assets_ready,
+                        loading_screen_active,
+                        &req,
+                        effects,
+                    );
+                    self.finish_connect_outcome(outcome, effects, |next_step, ls_active| {
+                        CampaignPhase::DoorTransition {
+                            command,
+                            resolved_room,
+                            connect_step: next_step,
+                            fade_out_complete,
+                            assets_ready,
+                            loading_screen_active: ls_active,
+                        }
+                    });
                 }
             }
         }
@@ -600,7 +619,6 @@ impl CampaignOrchestrator {
         }
 
         effects.fade_alpha = self.fade.black_alpha();
-        effects
     }
 
     fn step_active_gameplay(
@@ -611,12 +629,13 @@ impl CampaignOrchestrator {
         effects: &mut CampaignEffects,
     ) {
         if let Some(ref manifest) = self.active_manifest {
-            effects.active_room_pickups = crate::world::resolve_active_room_pickups(
+            resolve_active_room_pickups_into(
                 &manifest.room_pickups,
                 &sim.scenario.flags,
                 sim.scenario.action_difficulty,
                 manifest.is_outdoor,
                 sim.scenario.player_position.to_array(),
+                &mut effects.active_room_pickups,
             );
         }
         let outcome = run_active_gameplay(
@@ -627,6 +646,8 @@ impl CampaignOrchestrator {
             &mut self.cutaway_fade,
             &mut self.play_time_secs,
             &mut self.player_locked,
+            &mut self.scratch_stage_items,
+            &mut self.cached_stage_items_id,
             input,
             dt_sec,
             effects,

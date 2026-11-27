@@ -85,6 +85,28 @@ pub struct CharacterLightingResult {
     pub combined_rgb: Vec3,
 }
 
+/// Inserts `cand` into a 3-slot descending top-`k` array while preserving stable tie ordering
+/// matching `Vec::sort_by(|a, b| b.strength.total_cmp(&a.strength))` (`sh2pc.exe` `0x50ce10`).
+#[inline]
+fn insert_top_character_light(
+    top: &mut [Option<SelectedCharacterLight>; MAX_CHARACTER_ACTIVE_LIGHTS],
+    cand: SelectedCharacterLight,
+) {
+    for i in 0..MAX_CHARACTER_ACTIVE_LIGHTS {
+        let should_insert = match top[i] {
+            None => true,
+            Some(existing) => cand.strength.total_cmp(&existing.strength).is_gt(),
+        };
+        if should_insert {
+            for j in (i + 1..MAX_CHARACTER_ACTIVE_LIGHTS).rev() {
+                top[j] = top[j - 1];
+            }
+            top[i] = Some(cand);
+            return;
+        }
+    }
+}
+
 /// Evaluates Team Silent's character lighting formula (`sh2pc.exe` `0x508a90`, `0x50ce10`,
 /// `0x5091c0`, `0x8a2ed8`) at `char_pos` (PS2 world mm).
 ///
@@ -100,7 +122,7 @@ pub fn evaluate_character_lighting(
     flashlight_level: f32,
     enemy_reveal_scale: f32,
 ) -> CharacterLightingResult {
-    let mut scored: Vec<SelectedCharacterLight> = Vec::with_capacity(3 + 4 + extra_lights.len());
+    let mut lights = [None; MAX_CHARACTER_ACTIVE_LIGHTS];
 
     // 1. Directional lights from DrawEnvData (+0x10..+0x6f)
     for d in &draw_env.directional_lights {
@@ -108,12 +130,15 @@ pub fn evaluate_character_lighting(
         let lum = col.x.max(col.y).max(col.z);
         if lum > 1e-4 {
             let dir = Vec3::from_array(d.direction).normalize_or(Vec3::Y);
-            scored.push(SelectedCharacterLight {
-                kind: CharacterLightKind::Parallel,
-                to_light: -dir,
-                color: col,
-                strength: lum,
-            });
+            insert_top_character_light(
+                &mut lights,
+                SelectedCharacterLight {
+                    kind: CharacterLightKind::Parallel,
+                    to_light: -dir,
+                    color: col,
+                    strength: lum,
+                },
+            );
         }
     }
 
@@ -132,28 +157,20 @@ pub fn evaluate_character_lighting(
             outer_cos: -1.0,
         };
         if let Some(sel) = score_candidate(char_pos, &candidate) {
-            scored.push(sel);
+            insert_top_character_light(&mut lights, sel);
         }
     }
 
     // 3. Dynamic flashlight / fake lights
     for cand in extra_lights {
         if let Some(sel) = score_candidate(char_pos, cand) {
-            scored.push(sel);
+            insert_top_character_light(&mut lights, sel);
         }
     }
 
-    // Select strongest lights (`0x50ce10` / `0x5091c0`)
-    scored.sort_by(|a, b| b.strength.total_cmp(&a.strength));
-
-    let mut lights = [None; MAX_CHARACTER_ACTIVE_LIGHTS];
     let mut total_direct_rgb = Vec3::ZERO;
-    for (slot, item) in lights
-        .iter_mut()
-        .zip(scored.into_iter().take(MAX_CHARACTER_ACTIVE_LIGHTS))
-    {
+    for item in lights.into_iter().flatten() {
         total_direct_rgb += item.color;
-        *slot = Some(item);
     }
 
     // Team Silent formula (`sh2pc.exe` `0x8a2ed8`):

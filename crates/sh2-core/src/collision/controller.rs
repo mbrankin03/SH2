@@ -22,7 +22,9 @@ use super::character::{
 use super::dynamic::{DynamicFloor, DynamicWall};
 use super::grid::SpatialGrid;
 use super::probes::{PLAYER_HEIGHT_RAY_DOWN_NORMAL, PLAYER_HEIGHT_RAY_UP_NORMAL};
-use super::raycast::{raycast_acoustic_occlusion, AcousticOcclusionHit, EyeRayHit};
+use super::raycast::{
+    intersect_segment_xz_t, AcousticOcclusionAccumulator, AcousticOcclusionHit, EyeRayHit,
+};
 use super::solver::{
     cl_check_column_to_bg_column_hit, cl_check_column_to_wall_hit, cl_collect_chara_all,
     cl_make_wall_hit_collect_vector, quantize_collect_vector_1_16, sh_atan2, CharaCollectEntry,
@@ -193,10 +195,18 @@ pub struct CollisionSector {
     pub floor_offset: usize,
     /// Number of triangles belonging to this sector in `CollisionWorld::floors`.
     pub floor_len: usize,
+    /// Start offset into `CollisionWorld::raw_floors`.
+    pub raw_floor_offset: usize,
+    /// Number of raw floor planes belonging to this sector in `CollisionWorld::raw_floors`.
+    pub raw_floor_len: usize,
     /// Start offset into `CollisionWorld::raw_walls`.
     pub raw_wall_offset: usize,
     /// Number of wall planes belonging to this sector in `CollisionWorld::raw_walls`.
     pub raw_wall_len: usize,
+    /// Start offset into `CollisionWorld::raw_ceilings`.
+    pub raw_ceiling_offset: usize,
+    /// Number of ceiling planes belonging to this sector in `CollisionWorld::raw_ceilings`.
+    pub raw_ceiling_len: usize,
     /// Start offset into `CollisionWorld::raw_side_walls`.
     pub raw_side_wall_offset: usize,
     /// Number of side-wall planes belonging to this sector in `CollisionWorld::raw_side_walls`.
@@ -205,6 +215,10 @@ pub struct CollisionSector {
     pub column_offset: usize,
     /// Number of static BG columns belonging to this sector in `CollisionWorld::columns`.
     pub column_len: usize,
+    /// Start offset into `CollisionWorld::walls`.
+    pub wall_offset: usize,
+    /// Number of derived 2D wall segments belonging to this sector in `CollisionWorld::walls`.
+    pub wall_len: usize,
 }
 
 /// Static and dynamic collision state representing an active map room or combined streaming sectors.
@@ -313,9 +327,12 @@ impl CollisionWorld {
         let mut merged = Self::new();
         for p in parts {
             let floor_base = merged.floors.len();
+            let raw_floor_base = merged.raw_floors.len();
             let raw_wall_base = merged.raw_walls.len();
+            let raw_ceiling_base = merged.raw_ceilings.len();
             let raw_side_wall_base = merged.raw_side_walls.len();
             let column_base = merged.columns.len();
+            let wall_base = merged.walls.len();
 
             if p.sectors.is_empty() {
                 merged.sectors.push(CollisionSector {
@@ -324,12 +341,18 @@ impl CollisionWorld {
                     grid: p.grid.clone(),
                     floor_offset: floor_base,
                     floor_len: p.floors.len(),
+                    raw_floor_offset: raw_floor_base,
+                    raw_floor_len: p.raw_floors.len(),
                     raw_wall_offset: raw_wall_base,
                     raw_wall_len: p.raw_walls.len(),
+                    raw_ceiling_offset: raw_ceiling_base,
+                    raw_ceiling_len: p.raw_ceilings.len(),
                     raw_side_wall_offset: raw_side_wall_base,
                     raw_side_wall_len: p.raw_side_walls.len(),
                     column_offset: column_base,
                     column_len: p.columns.len(),
+                    wall_offset: wall_base,
+                    wall_len: p.walls.len(),
                 });
             } else {
                 for s in &p.sectors {
@@ -339,12 +362,18 @@ impl CollisionWorld {
                         grid: s.grid.clone(),
                         floor_offset: floor_base + s.floor_offset,
                         floor_len: s.floor_len,
+                        raw_floor_offset: raw_floor_base + s.raw_floor_offset,
+                        raw_floor_len: s.raw_floor_len,
                         raw_wall_offset: raw_wall_base + s.raw_wall_offset,
                         raw_wall_len: s.raw_wall_len,
+                        raw_ceiling_offset: raw_ceiling_base + s.raw_ceiling_offset,
+                        raw_ceiling_len: s.raw_ceiling_len,
                         raw_side_wall_offset: raw_side_wall_base + s.raw_side_wall_offset,
                         raw_side_wall_len: s.raw_side_wall_len,
                         column_offset: column_base + s.column_offset,
                         column_len: s.column_len,
+                        wall_offset: wall_base + s.wall_offset,
+                        wall_len: s.wall_len,
                     });
                 }
             }
@@ -771,37 +800,36 @@ impl CollisionWorld {
             let y_bottom = current_pos.y + config.y_bottom_offset;
             let y_top = y_bottom - config.height;
             let mut earliest_hit: Option<(f32, f32, f32)> = None;
-
-            for w in self.all_walls() {
+            let mut test_wall = |w: &WallSegment| {
                 if w.group == 2 || w.y_top >= y_bottom || w.y_bottom <= y_top {
-                    continue;
+                    return;
                 }
-
-                let rx = move_dx;
-                let rz = move_dz;
-                let sx = w.end[0] - w.start[0];
-                let sz = w.end[1] - w.start[1];
-
-                let den = rx * sz - rz * sx;
-                if den.abs() < 1e-6 {
-                    continue;
-                }
-
-                let t =
-                    ((w.start[0] - current_pos.x) * sz - (w.start[1] - current_pos.z) * sx) / den;
-                let u =
-                    ((w.start[0] - current_pos.x) * rz - (w.start[1] - current_pos.z) * rx) / den;
-
-                if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
-                    let hit_x = current_pos.x + rx * t;
-                    let hit_z = current_pos.z + rz * t;
-                    match earliest_hit {
-                        None => earliest_hit = Some((t, hit_x, hit_z)),
-                        Some((prev_t, _, _)) if t < prev_t => {
-                            earliest_hit = Some((t, hit_x, hit_z));
-                        }
-                        _ => {}
+                if let Some(t) = intersect_segment_xz_t(
+                    current_pos.x,
+                    current_pos.z,
+                    desired_pos.x,
+                    desired_pos.z,
+                    w,
+                ) {
+                    if earliest_hit.is_none_or(|(prev_t, _, _)| t < prev_t) {
+                        earliest_hit =
+                            Some((t, current_pos.x + move_dx * t, current_pos.z + move_dz * t));
                     }
+                }
+            };
+            self.for_each_ray_wall_segment(
+                current_pos.x,
+                current_pos.z,
+                desired_pos.x,
+                desired_pos.z,
+                &mut test_wall,
+            );
+            for w in &self.extra_walls {
+                test_wall(w);
+            }
+            for dw in &self.dynamic_walls {
+                if dw.active {
+                    test_wall(&dw.segment);
                 }
             }
 
@@ -862,18 +890,47 @@ impl CollisionWorld {
     }
 
     /// Casts a zero-allocation 3D acoustic line-of-sight ray from `emitter_pos` to
-    /// `listener_head_pos` against active `.cld` walls, doors, and multi-story floor slabs (`SH2-84`).
+    /// `listener_head_pos` against active `.cld` walls, doors, and multi-story floor slabs (`SH2-84`),
+    /// accelerated by per-sector [`SpatialGrid`] traversal (`clGetHitSectListVECHIT` `0x00138170`).
     pub fn raycast_acoustic_occlusion(
         &self,
         emitter_pos: Vec3,
         listener_head_pos: Vec3,
     ) -> AcousticOcclusionHit {
-        raycast_acoustic_occlusion(
-            emitter_pos,
-            listener_head_pos,
-            self.all_walls(),
-            self.all_floors(),
-        )
+        let Some(mut acc) = AcousticOcclusionAccumulator::new(emitter_pos, listener_head_pos)
+        else {
+            return AcousticOcclusionHit::clear();
+        };
+
+        // 1. Static `.cld` walls via per-sector `SpatialGrid` + extra/dynamic walls
+        self.for_each_ray_wall_segment(
+            emitter_pos.x,
+            emitter_pos.z,
+            listener_head_pos.x,
+            listener_head_pos.z,
+            |w| acc.test_wall(w),
+        );
+        for w in &self.extra_walls {
+            acc.test_wall(w);
+        }
+        for dw in &self.dynamic_walls {
+            if dw.active {
+                acc.test_wall(&dw.segment);
+            }
+        }
+
+        // 2. Multi-story `.cld` floor slabs via per-sector `SpatialGrid` (using padded ray endpoints)
+        if acc.checks_slabs() {
+            let (p0, p1) = acc.padded_endpoints();
+            self.for_each_ray_floor_triangle(p0.x, p0.z, p1.x, p1.z, |tri| acc.test_floor(tri));
+            for df in &self.dynamic_floors {
+                if df.active {
+                    acc.test_floor(&df.triangle);
+                }
+            }
+        }
+
+        acc.finish()
     }
 
     /// Find safe walkable spawn point closest to `(x, z)` snapped to nearest floor centroid (`col_spawn`).

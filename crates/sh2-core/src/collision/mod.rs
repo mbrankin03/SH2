@@ -39,7 +39,8 @@ pub use controller::{
 };
 pub use dynamic::{DynamicFloor, DynamicWall};
 pub use grid::{
-    SpatialGrid, OUTDOOR_BLOCK_CULL_DIST_SQ, OUTDOOR_CELL_CULL_DIST_SQ, OUTDOOR_CELL_SIZE,
+    segment_intersects_aabb_xz, SpatialGrid, OUTDOOR_BLOCK_CULL_DIST_SQ, OUTDOOR_CELL_CULL_DIST_SQ,
+    OUTDOOR_CELL_SIZE,
 };
 pub use probes::{
     cl_collect_chara_position_y_smooth, player_check_foot_line, player_check_side_line,
@@ -54,10 +55,11 @@ pub use probes::{
 };
 pub use raycast::{
     cl_check_sub_line_to_column_plus, cl_check_sub_line_to_plane, cld_material_barrier_weight,
-    intersect_ray_triangle_3d, intersect_segment_bg_column, is_cld_material_thru,
-    listener_head_position, raycast_acoustic_occlusion, should_skip_material_for_mode,
-    AcousticOcclusionHit, EyeHitKind, EyeRayHit, EyeRayMode, RayHit, RaycastFilter,
-    JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y, MIN_DISTINCT_BARRIER_SEPARATION_UNITS,
+    intersect_ray_triangle_3d, intersect_segment_bg_column, intersect_segment_xz,
+    intersect_segment_xz_t, is_cld_material_thru, listener_head_position,
+    raycast_acoustic_occlusion, should_skip_material_for_mode, AcousticOcclusionHit, EyeHitKind,
+    EyeRayHit, EyeRayMode, RayHit, RaycastFilter, JAMES_HEAD_OFFSET_Y, MARIA_HEAD_OFFSET_Y,
+    MIN_DISTINCT_BARRIER_SEPARATION_UNITS,
 };
 pub use solver::{
     cl_add_collect_vector, cl_add_wall_collect_vector, cl_check_column_to_bg_column_hit,

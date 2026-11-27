@@ -135,29 +135,56 @@ pub struct TargetCandidate {
     pub is_dead: bool,
 }
 
-/// Build up to `MAX_TARGET_SLOTS` (`20`) living target indices sorted ascending by 3D distance
-/// from `player_pos` (`shBattleCheckTargetChara`, `SLUS_202.28` `0x00123f70`).
+/// Build up to `MAX_TARGET_SLOTS` (`20`) living target entries sorted ascending by 3D distance
+/// from `player_pos` (`shBattleCheckTargetChara`, `SLUS_202.28` `0x00123f70`) using a fixed
+/// stack buffer (zero heap allocations).
 fn sorted_living_candidates(
     player_pos: Vec3,
     candidates: &[TargetCandidate],
     max_range: f32,
-) -> Vec<(usize, TargetCandidate, f32)> {
-    let mut list: Vec<(usize, TargetCandidate, f32)> = candidates
-        .iter()
-        .copied()
-        .filter(|c| !c.is_dead)
-        .filter_map(|c| {
-            let dist = (c.position - player_pos).length();
-            if dist.is_finite() && dist <= max_range {
-                Some((c.index, c, dist))
-            } else {
-                None
+) -> ([(usize, TargetCandidate, f32); MAX_TARGET_SLOTS], usize) {
+    let dummy = (
+        0usize,
+        TargetCandidate {
+            index: 0,
+            position: Vec3::ZERO,
+            is_downed: false,
+            is_dead: true,
+        },
+        f32::INFINITY,
+    );
+    let mut list = [dummy; MAX_TARGET_SLOTS];
+    let mut count = 0usize;
+
+    for &c in candidates {
+        if c.is_dead {
+            continue;
+        }
+        let dist = (c.position - player_pos).length();
+        if !dist.is_finite() || dist > max_range {
+            continue;
+        }
+
+        // Preserve stable tie ordering matching `Vec::sort_by(|a, b| a.2.total_cmp(&b.2))`.
+        let mut insert_pos = count;
+        for (i, slot) in list[..count].iter().enumerate() {
+            if dist.total_cmp(&slot.2).is_lt() {
+                insert_pos = i;
+                break;
             }
-        })
-        .collect();
-    list.sort_by(|a, b| a.2.total_cmp(&b.2));
-    list.truncate(MAX_TARGET_SLOTS);
-    list
+        }
+        if insert_pos < MAX_TARGET_SLOTS {
+            let shift_end = count.min(MAX_TARGET_SLOTS - 1);
+            for j in (insert_pos..shift_end).rev() {
+                list[j + 1] = list[j];
+            }
+            list[insert_pos] = (c.index, c, dist);
+            if count < MAX_TARGET_SLOTS {
+                count += 1;
+            }
+        }
+    }
+    (list, count)
 }
 
 /// Select the primary auto-aim target (`shBattleGetTargetEnemy`, `SLUS_202.28` `0x00124390`).
@@ -174,10 +201,10 @@ pub fn select_auto_aim_target<F>(
 where
     F: FnMut(Vec3) -> bool,
 {
-    let sorted = sorted_living_candidates(player_pos, candidates, max_range);
+    let (sorted, count) = sorted_living_candidates(player_pos, candidates, max_range);
     let mut downed_fallback: Option<usize> = None;
 
-    for (idx, cand, _dist) in sorted {
+    for &(idx, cand, _dist) in &sorted[..count] {
         if !has_los(cand.position) {
             continue;
         }
@@ -214,8 +241,8 @@ where
         return None;
     }
 
-    let sorted = sorted_living_candidates(player_pos, candidates, max_range);
-    for (idx, cand, _dist) in sorted {
+    let (sorted, count) = sorted_living_candidates(player_pos, candidates, max_range);
+    for &(idx, cand, _dist) in &sorted[..count] {
         if current_target == Some(idx) {
             continue;
         }
@@ -271,8 +298,9 @@ pub fn find_near_deadly_target<F>(
 where
     F: FnMut(Vec3) -> bool,
 {
-    let sorted = sorted_living_candidates(player_pos, candidates, STOMP_TARGET_MAX_DIST_MM);
-    for (idx, cand, dist) in sorted {
+    let (sorted, count) =
+        sorted_living_candidates(player_pos, candidates, STOMP_TARGET_MAX_DIST_MM);
+    for &(idx, cand, dist) in &sorted[..count] {
         if cand.is_downed && dist <= STOMP_TARGET_MAX_DIST_MM && has_los(cand.position) {
             return Some(idx);
         }

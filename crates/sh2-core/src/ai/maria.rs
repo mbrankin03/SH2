@@ -27,6 +27,7 @@ use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::sensory::{normalize_angle, DifficultyLevel};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 /// Exact `mar_main_close_to` (`0x00224bd0:685`) / `MariaUpdateStatusExecPhase1` (`0x00226e40:1909`) walk/stop threshold (mm).
 pub const MARIA_WALK_DISTANCE_MM: f32 = 1000.0;
@@ -140,7 +141,8 @@ pub struct MariaCompanionController {
     pub max_fatigue_ticks: i32,
     /// Whether Maria has direct line-of-sight to James (`DAT_011b6e3c`).
     pub has_los_to_james: bool,
-    pub trail: Vec<BreadcrumbPoint>,
+    /// FIFO breadcrumb ring of James's recent positions (`O(1)` pop_front/push_back).
+    pub trail: VecDeque<BreadcrumbPoint>,
     pub distance_to_james: f32,
     /// Stop/walk threshold (`1000.0` mm, `mar_main_close_to` `0x00224bd0:685`).
     pub stop_distance: f32,
@@ -183,7 +185,7 @@ impl MariaCompanionController {
             fatigue_ticks: 0,
             max_fatigue_ticks: 600,
             has_los_to_james: true,
-            trail: Vec::with_capacity(64),
+            trail: VecDeque::with_capacity(64),
             distance_to_james: 0.0,
             stop_distance: MARIA_WALK_DISTANCE_MM,
             walk_distance: MARIA_WALK_DISTANCE_MM,
@@ -224,7 +226,7 @@ impl MariaCompanionController {
     }
 
     pub fn record_breadcrumb(&mut self, player_pos: Vec3, player_yaw: f32) {
-        if let Some(last) = self.trail.last() {
+        if let Some(last) = self.trail.back() {
             let dx = player_pos.x - last.position.x;
             let dz = player_pos.z - last.position.z;
             if dx * dx + dz * dz < 200.0 * 200.0 {
@@ -232,9 +234,9 @@ impl MariaCompanionController {
             }
         }
         if self.trail.len() >= 64 {
-            self.trail.remove(0);
+            self.trail.pop_front();
         }
-        self.trail.push(BreadcrumbPoint {
+        self.trail.push_back(BreadcrumbPoint {
             position: player_pos,
             yaw: player_yaw,
         });
@@ -379,11 +381,11 @@ impl MariaCompanionController {
 
         // Sub-state execution (`mar_sub_*` `0x00224ef0..0x00225690`)
         self.record_breadcrumb(player_pos, player_yaw);
-        let target_goal = if let Some(&first) = self.trail.first() {
+        let target_goal = if let Some(&first) = self.trail.front() {
             let tdx = first.position.x - self.position.x;
             let tdz = first.position.z - self.position.z;
             if tdx * tdx + tdz * tdz < 300.0 * 300.0 {
-                self.trail.remove(0);
+                self.trail.pop_front();
             }
             first.position
         } else {

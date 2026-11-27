@@ -95,6 +95,53 @@ pub fn room_area_dir(room_id: &str) -> String {
     }
 }
 
+/// Resolves the `(OutdoorArea, block_no)` pair for an outdoor multi-tile stage (`BgIsOut`
+/// `0x001b0cd0`) from world coordinates `pos` (PS2 mm) without heap allocation.
+///
+/// Returns `None` for indoor single-room stages or when `(gx, gz)` is outside the area's block table.
+#[inline]
+#[must_use]
+pub fn resolve_outdoor_area_block(stage_id: u16, pos: [f32; 3]) -> Option<(OutdoorArea, u16)> {
+    let area = OutdoorArea::from_stage_id(stage_id)?;
+    let (gx, gz) = OutdoorArea::world_to_grid(pos[0], pos[2]);
+    let block_no = area.block_no_at(gx, gz)?;
+    Some((area, block_no))
+}
+
+/// Compares a canonical room ID string (e.g. `"cb29"`, `"CA04"`) against `(area, block_no)`
+/// case-insensitively without allocating a temporary `String`.
+#[inline]
+#[must_use]
+pub fn room_id_matches_outdoor_block(room_id: &str, area: OutdoorArea, block_no: u16) -> bool {
+    let prefix = area.prefix().as_bytes();
+    let bytes = room_id.as_bytes();
+    if bytes.len() < prefix.len() + 1 {
+        return false;
+    }
+    if !bytes[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        return false;
+    }
+    let suffix = &bytes[prefix.len()..];
+    // Canonical outdoor room IDs use zero-padded 2+ digit block numbers (e.g. `ca04`, `cb29`).
+    if suffix.len() < 2 {
+        return false;
+    }
+    let mut parsed: u16 = 0;
+    for &b in suffix {
+        if !b.is_ascii_digit() {
+            return false;
+        }
+        let Some(next) = parsed
+            .checked_mul(10)
+            .and_then(|v| v.checked_add(u16::from(b - b'0')))
+        else {
+            return false;
+        };
+        parsed = next;
+    }
+    parsed == block_no
+}
+
 /// Resolves the exact PS2 outdoor tile room identifier (e.g. `"ca04"`, `"cb29"`) for an outdoor
 /// multi-tile stage (`BgIsOut` `0x001b0cd0`) from world coordinates `pos` (PS2 mm) using exact
 /// `SLUS_202.28` `BlockNumber` (`0x001b0ae0..0x001b0b8c`) and area block tables (`0x002b9df0`+).
@@ -102,9 +149,7 @@ pub fn room_area_dir(room_id: &str) -> String {
 /// Returns `None` for indoor single-room stages or when `(gx, gz)` is outside the area's block table.
 #[must_use]
 pub fn resolve_outdoor_room_id(stage_id: u16, pos: [f32; 3]) -> Option<String> {
-    let area = OutdoorArea::from_stage_id(stage_id)?;
-    let (gx, gz) = OutdoorArea::world_to_grid(pos[0], pos[2]);
-    let block_no = area.block_no_at(gx, gz)?;
+    let (area, block_no) = resolve_outdoor_area_block(stage_id, pos)?;
     Some(format!("{}{block_no:02}", area.prefix()))
 }
 

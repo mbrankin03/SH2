@@ -32,16 +32,17 @@ pub struct ActiveRoomPickup {
 }
 
 /// Evaluates which `Item_List` 3D pickups should be active in the current frame
-/// (`ConnectCharaWorkAdminIn` `0x001cb8c0` / `ConnectCharaWorkAdminOut` `0x001cafe0`).
-#[must_use]
-pub fn resolve_active_room_pickups(
+/// (`ConnectCharaWorkAdminIn` `0x001cb8c0` / `ConnectCharaWorkAdminOut` `0x001cafe0`),
+/// writing results into caller-owned scratch buffer `out` with zero heap allocation once warmed.
+pub fn resolve_active_room_pickups_into(
     spawns: &[CampaignPickupSpawn],
     flags: &EventFlags,
     difficulty: ActionDifficulty,
     is_outdoor: bool,
     player_pos_mm: [f32; 3],
-) -> Vec<ActiveRoomPickup> {
-    let mut out = Vec::new();
+    out: &mut Vec<ActiveRoomPickup>,
+) {
+    out.clear();
     for spawn in spawns {
         if spawn.item_kind_index == 0 {
             continue;
@@ -95,6 +96,27 @@ pub fn resolve_active_room_pickups(
             stay_state,
         });
     }
+}
+
+/// Evaluates which `Item_List` 3D pickups should be active in the current frame
+/// (`ConnectCharaWorkAdminIn` `0x001cb8c0` / `ConnectCharaWorkAdminOut` `0x001cafe0`).
+#[must_use]
+pub fn resolve_active_room_pickups(
+    spawns: &[CampaignPickupSpawn],
+    flags: &EventFlags,
+    difficulty: ActionDifficulty,
+    is_outdoor: bool,
+    player_pos_mm: [f32; 3],
+) -> Vec<ActiveRoomPickup> {
+    let mut out = Vec::new();
+    resolve_active_room_pickups_into(
+        spawns,
+        flags,
+        difficulty,
+        is_outdoor,
+        player_pos_mm,
+        &mut out,
+    );
     out
 }
 

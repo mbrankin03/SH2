@@ -422,6 +422,36 @@ impl AssetPathResolver {
         Some((resolved_path, source, room_id, rel_path))
     }
 
+    /// Resolves and parses ONLY the requested single `.cam` trigger volume file (`room_or_rel_path`)
+    /// without implicitly appending `<area>GB.cam`.
+    ///
+    /// Used by `Ps2CameraController`'s multi-slot `OutdoorCamBank` (`SH2-184`), which keeps
+    /// `<area>GB.cam` resident in Slot 0 (`SLUS_202.28` `loadBgCAM_ReplaceG` `0x00271d20` /
+    /// `sh2pc.exe` `FUN_005132c0` `0x005132c0`) separately from active per-tile `.cam` slots
+    /// (`loadBgCAM_Replace` `0x00271e10`).
+    pub fn load_single_cam_file(
+        &self,
+        room_or_rel_path: &str,
+        prefer_sh2ee: bool,
+    ) -> Result<Option<crate::formats::cam::ResolvedCamAsset>, crate::error::AssetError> {
+        let Some((resolved_path, source, room_id, relative_path)) =
+            self.resolve_cam_file(room_or_rel_path, prefer_sh2ee)
+        else {
+            return Ok(None);
+        };
+
+        let bytes = std::fs::read(&resolved_path)?;
+        let cam_file = crate::formats::cam::parse_cam(&bytes)?;
+
+        Ok(Some(crate::formats::cam::ResolvedCamAsset {
+            room_id,
+            relative_path,
+            resolved_path,
+            source,
+            cam_file,
+        }))
+    }
+
     /// Resolves and parses the `.cam` trigger volume file for `room_or_rel_path`, prioritizing
     /// SH2:EE widescreen/high-framerate overrides (`sh2e/bg/...` / `sh2e/bg2/...`) when
     /// `prefer_sh2ee` is `true` before falling back to vanilla retail (`data/bg/...` / `data/bg2/...`).

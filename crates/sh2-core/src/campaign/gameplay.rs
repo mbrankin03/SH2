@@ -411,18 +411,24 @@ pub(crate) fn run_active_gameplay(
     //    Zero-alloc fast path: only emits `outdoor_plan` when `(stage_id, gx, gz, mode, quadrant)`
     //    or residency changed, and compares `(area, block_no)` without `format!`.
     let player_pos_arr = sim.scenario.player_position.to_array();
+    let mut tile_changed = false;
+    if let Some((area, block_no)) = resolve_outdoor_area_block(stage_id, player_pos_arr) {
+        if !room_id_matches_outdoor_block(&sim.scenario.current_room, area, block_no) {
+            let tile_room_id = format!("{}{block_no:02}", area.prefix());
+            sim.scenario.set_current_room(&tile_room_id);
+            tile_changed = true;
+        }
+    }
     if let Some(plan) = outdoor_streamer.plan_if_changed(
         stage_id,
         sim.scenario.player_position.x,
         sim.scenario.player_position.z,
     ) {
+        let _ = sim.sync_outdoor_camera_plan(&plan, input.prefer_sh2ee);
         effects.outdoor_plan = Some(plan);
-    }
-    if let Some((area, block_no)) = resolve_outdoor_area_block(stage_id, player_pos_arr) {
-        if !room_id_matches_outdoor_block(&sim.scenario.current_room, area, block_no) {
-            let tile_room_id = format!("{}{block_no:02}", area.prefix());
-            let _ = sim.switch_outdoor_tile_room(&tile_room_id, input.prefer_sh2ee);
-        }
+    } else if tile_changed {
+        let active_room = sim.scenario.current_room.clone();
+        let _ = sim.switch_outdoor_tile_room(&active_room, input.prefer_sh2ee);
     }
 
     effects.allow_gameplay_sim = !*player_locked;

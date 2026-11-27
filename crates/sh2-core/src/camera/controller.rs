@@ -6,7 +6,7 @@ use sh2_assets::formats::cam::{CamFile, CamSourceKind};
 use sh2_assets::AssetPathResolver;
 
 use super::{
-    fixed_angle, kinematics, locus_door, road_priority, CameraMovementType,
+    fixed_angle, kinematics, locus_door, road_bank, road_priority, CameraMovementType,
     PS2_DEFAULT_PROJECTION_Z,
 };
 
@@ -117,8 +117,10 @@ pub struct Ps2CameraController {
     pub mv_type: CameraMovementType,
     /// Currently active road record index in `cam_file`, if any.
     pub active_road_index: Option<usize>,
-    /// Loaded `.cam` trigger volume definition file for the active room.
+    /// Loaded `.cam` trigger volume definition file for the active room (or merged outdoor global + tile bank).
     pub cam_file: Option<CamFile>,
+    /// Multi-slot resident outdoor `.cam` bank keeping `<area>GB.cam` alongside active tile `.cam`s (`SH2-184`).
+    pub road_bank: road_bank::OutdoorCamBank,
     /// Canonical lowercase room identifier of the currently loaded `.cam` file (e.g. `"er01"`, `"ob01"`, `"rr21"`).
     pub active_room_id: Option<String>,
     /// Source pack (`Sh2eeOverride` vs `VanillaRetail`) of the currently loaded `.cam` file (`SH2-50`).
@@ -179,6 +181,7 @@ impl Ps2CameraController {
             mv_type: CameraMovementType::Chase,
             active_road_index: None,
             cam_file: None,
+            road_bank: road_bank::OutdoorCamBank::default(),
             active_room_id: None,
             active_cam_source: None,
             prev_snapshot: initial,
@@ -248,6 +251,7 @@ impl Ps2CameraController {
 
     /// Load or swap the active room's `.cam` trigger volume definitions.
     pub fn set_cam_file(&mut self, cam_file: Option<CamFile>) {
+        self.road_bank.clear();
         if cam_file.is_none() {
             self.active_room_id = None;
             self.active_cam_source = None;
@@ -263,10 +267,85 @@ impl Ps2CameraController {
         room_id: Option<String>,
         source: Option<CamSourceKind>,
     ) {
+        self.road_bank.clear();
         self.cam_file = cam_file;
         self.active_room_id = room_id;
         self.active_cam_source = source;
         self.active_road_index = None;
+    }
+
+    /// Returns the resident slot origin `(CamSlotKey, local_record_idx)` of the currently active
+    /// road when managed by [`OutdoorCamBank`](road_bank::OutdoorCamBank) (`SH2-184`).
+    #[inline]
+    #[must_use]
+    pub fn active_road_origin(&self) -> Option<&(road_bank::CamSlotKey, usize)> {
+        self.active_road_index
+            .and_then(|idx| self.road_bank.origin_of(idx))
+    }
+
+    /// Ensures the outdoor area's global `<area>GB.cam` is resident in Slot 0 of `self.road_bank`
+    /// (`SLUS_202.28` `loadBgCAM_ReplaceG` `0x00271d20` / `sh2pc.exe` `FUN_005132c0` `0x005132c0`),
+    /// reusing the already-loaded buffer when `(gb_id, prefer_sh2ee)` has not changed.
+    fn ensure_global_cam_resident(
+        &mut self,
+        resolver: &AssetPathResolver,
+        gb_rel_path: &str,
+        prefer_sh2ee: bool,
+    ) {
+        let Some((gb_id, _)) = sh2_assets::formats::cam::normalize_room_cam_rel_path(gb_rel_path)
+        else {
+            return;
+        };
+        if self.road_bank.has_global(&gb_id, prefer_sh2ee) {
+            return;
+        }
+        match resolver.load_single_cam_file(gb_rel_path, prefer_sh2ee) {
+            Ok(Some(asset)) => {
+                self.road_bank
+                    .set_global_slot(Some(road_bank::LoadedCamSlot {
+                        key: road_bank::CamSlotKey::Global(asset.room_id),
+                        source: asset.source,
+                        prefer_sh2ee,
+                        cam_file: asset.cam_file,
+                    }));
+            }
+            _ => {
+                self.road_bank.set_global_slot(None);
+            }
+        }
+    }
+
+    /// Rebuilds the merged outdoor `.cam` from `road_bank` and updates `cam_file`,
+    /// `active_room_id`, and `active_cam_source` consistently across all outdoor `.cam` loaders.
+    ///
+    /// Clears `active_room_id` and `active_cam_source` to `None` whenever no `.cam` records are
+    /// resident (`merged.is_none()`).
+    fn apply_merged_road_bank(&mut self, canonical_active: Option<&str>) -> bool {
+        let merged = self.road_bank.build_merged_cam(canonical_active);
+        let has_cam = merged.is_some();
+        self.cam_file = merged;
+        if has_cam {
+            self.active_room_id = canonical_active
+                .map(std::string::ToString::to_string)
+                .or_else(|| {
+                    self.road_bank
+                        .global_cam_id()
+                        .map(std::string::ToString::to_string)
+                });
+            self.active_cam_source = canonical_active
+                .and_then(|active| {
+                    self.road_bank
+                        .tile_slots()
+                        .iter()
+                        .find(|s| s.key.id().eq_ignore_ascii_case(active))
+                        .map(|s| s.source)
+                })
+                .or_else(|| self.road_bank.global_slot().map(|s| s.source));
+        } else {
+            self.active_room_id = None;
+            self.active_cam_source = None;
+        }
+        has_cam
     }
 
     /// Automatically resolves and ingests the `.cam` trigger volume file for `room_or_rel_path`
@@ -275,6 +354,10 @@ impl Ps2CameraController {
     /// `sh2e/bg2/<area>/<room>.cam`) when `prefer_sh2ee` is `true` before falling back to
     /// vanilla retail `data/bg/...` (`SH2-50`).
     ///
+    /// For outdoor areas (`ca*`, `cb*`, `cc*`, `cd*`), populates `road_bank` with Slot 0
+    /// `<area>GB.cam` (`loadBgCAM_ReplaceG` `0x00271d20`) alongside the tile's `.cam`
+    /// (`loadBgCAM_Replace` `0x00271e10`, `SH2-184`).
+    ///
     /// Returns `true` if a valid `.cam` file was found and loaded.
     pub fn load_room_cam_with_resolver(
         &mut self,
@@ -282,17 +365,35 @@ impl Ps2CameraController {
         room_or_rel_path: &str,
         prefer_sh2ee: bool,
     ) -> bool {
-        match resolver.load_cam_for_room(room_or_rel_path, prefer_sh2ee) {
+        self.road_bank.clear();
+        self.active_road_index = None;
+
+        if let Some(gb_rel) = sh2_assets::formats::cam::global_area_cam_rel_path(room_or_rel_path) {
+            self.ensure_global_cam_resident(resolver, &gb_rel, prefer_sh2ee);
+            let mut tile_id: Option<String> = None;
+            if let Ok(Some(asset)) = resolver.load_single_cam_file(room_or_rel_path, prefer_sh2ee) {
+                tile_id = Some(asset.room_id.clone());
+                self.road_bank.upsert_tile_slot(road_bank::LoadedCamSlot {
+                    key: road_bank::CamSlotKey::Tile(asset.room_id),
+                    source: asset.source,
+                    prefer_sh2ee,
+                    cam_file: asset.cam_file,
+                });
+            }
+            return self.apply_merged_road_bank(tile_id.as_deref());
+        }
+
+        match resolver.load_single_cam_file(room_or_rel_path, prefer_sh2ee) {
             Ok(Some(asset)) => {
-                self.set_cam_file_with_metadata(
-                    Some(asset.cam_file),
-                    Some(asset.room_id),
-                    Some(asset.source),
-                );
+                self.cam_file = Some(asset.cam_file);
+                self.active_room_id = Some(asset.room_id);
+                self.active_cam_source = Some(asset.source);
                 true
             }
             _ => {
-                self.set_cam_file_with_metadata(None, None, None);
+                self.cam_file = None;
+                self.active_room_id = None;
+                self.active_cam_source = None;
                 false
             }
         }
@@ -303,6 +404,126 @@ impl Ps2CameraController {
     pub fn load_room_cam(&mut self, room_or_rel_path: &str, prefer_sh2ee: bool) -> bool {
         let resolver = AssetPathResolver::resolve();
         self.load_room_cam_with_resolver(&resolver, room_or_rel_path, prefer_sh2ee)
+    }
+
+    /// Synchronizes `road_bank` with an outdoor [`TileStreamingPlan`](crate::world::TileStreamingPlan),
+    /// keeping `plan.priority_gb_cam` (`caGB.cam` / `cbGB.cam`) resident in Slot 0 alongside every
+    /// desired tile's `.cam` (`SLUS_202.28` `loadBgCAM_ReplaceG` `0x00271d20` +
+    /// `loadBg2x2_ActivateRequestOutdoor` `0x00270590` + `loadBgCAM_vcReset` `0x00271f90`,
+    /// `sh2pc.exe` `FUN_00513260` `0x00513260`, `SH2-184`).
+    ///
+    /// Preserves camera position, velocity, snapshots, and remaps `active_road_index` by
+    /// `(CamSlotKey, local_record_idx)` so `vcSetCurNearRoadInVC_WORK` (`0x00197af0`) hysteresis
+    /// operates seamlessly across outdoor tile boundaries with zero snap cuts.
+    pub fn sync_outdoor_cam_plan_with_resolver(
+        &mut self,
+        resolver: &AssetPathResolver,
+        plan: &crate::world::TileStreamingPlan,
+        active_room_id: &str,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        let Some(area) = plan.area else {
+            return false;
+        };
+
+        let prev_origin = self.active_road_origin().cloned();
+
+        // Slot 0: keep `<area>GB.cam` resident without reloading when unchanged.
+        if let Some(gb_rel) = plan.priority_gb_cam {
+            self.ensure_global_cam_resident(resolver, gb_rel, prefer_sh2ee);
+        } else {
+            self.road_bank.set_global_slot(None);
+        }
+
+        // Slots 1..N: load any newly desired tile `.cam`s and evict tiles outside `desired_blocks`.
+        let prefix = area.prefix();
+        let mut keep_ids = Vec::with_capacity(plan.desired_blocks.len());
+        for &block_no in &plan.desired_blocks {
+            let tile_id = format!("{prefix}{block_no:02}");
+            if !self.road_bank.has_tile(&tile_id, prefer_sh2ee) {
+                if let Ok(Some(asset)) = resolver.load_single_cam_file(&tile_id, prefer_sh2ee) {
+                    self.road_bank.upsert_tile_slot(road_bank::LoadedCamSlot {
+                        key: road_bank::CamSlotKey::Tile(asset.room_id),
+                        source: asset.source,
+                        prefer_sh2ee,
+                        cam_file: asset.cam_file,
+                    });
+                }
+            }
+            keep_ids.push(tile_id);
+        }
+        self.road_bank.retain_tiles(&keep_ids);
+
+        let canonical_active =
+            sh2_assets::formats::cam::normalize_room_cam_rel_path(active_room_id)
+                .map(|(room_id, _)| room_id);
+        let has_cam = self.apply_merged_road_bank(canonical_active.as_deref());
+        // Preserve active road identity across tile swaps (`vcSetCurNearRoadInVC_WORK` `0x00197af0`).
+        self.active_road_index = self.road_bank.remap_active_road_index(prev_origin.as_ref());
+        has_cam
+    }
+
+    /// Synchronizes `road_bank` with `plan` using the default [`AssetPathResolver`] (`SH2-184`).
+    pub fn sync_outdoor_cam_plan(
+        &mut self,
+        plan: &crate::world::TileStreamingPlan,
+        active_room_id: &str,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        let resolver = AssetPathResolver::resolve();
+        self.sync_outdoor_cam_plan_with_resolver(&resolver, plan, active_room_id, prefer_sh2ee)
+    }
+
+    /// Seamlessly activates `tile_room_id` (e.g. `"ca12"`, `"cb55"`) while keeping `<area>GB.cam`
+    /// resident in Slot 0 and retaining up to `PS2_LOADBG_2X2_OUTDOOR_CAM_SLOTS` (4) recent
+    /// same-area tile `.cam` slots so the previous tile stays resident across the boundary
+    /// (`loadBgCAM_Replace` `0x00271e10` + `loadBgCAM_vcReset` `0x00271f90`, `SH2-184`).
+    ///
+    /// Never resets camera position, velocity, snapshots, or `active_road_index` when the active
+    /// road's slot remains resident.
+    pub fn switch_outdoor_tile_cam_with_resolver(
+        &mut self,
+        resolver: &AssetPathResolver,
+        tile_room_id: &str,
+        prefer_sh2ee: bool,
+    ) -> bool {
+        let Some((canonical_tile, _)) =
+            sh2_assets::formats::cam::normalize_room_cam_rel_path(tile_room_id)
+        else {
+            return false;
+        };
+
+        let prev_origin = self.active_road_origin().cloned();
+
+        if let Some(gb_rel) = sh2_assets::formats::cam::global_area_cam_rel_path(&canonical_tile) {
+            self.ensure_global_cam_resident(resolver, &gb_rel, prefer_sh2ee);
+        }
+
+        if self.road_bank.has_tile(&canonical_tile, prefer_sh2ee) {
+            self.road_bank.touch_tile(&canonical_tile);
+        } else if let Ok(Some(asset)) = resolver.load_single_cam_file(&canonical_tile, prefer_sh2ee)
+        {
+            self.road_bank.upsert_tile_slot(road_bank::LoadedCamSlot {
+                key: road_bank::CamSlotKey::Tile(asset.room_id),
+                source: asset.source,
+                prefer_sh2ee,
+                cam_file: asset.cam_file,
+            });
+        }
+        if let Some(area_prefix) = canonical_tile.get(0..2) {
+            self.road_bank
+                .retain_area_and_cap(area_prefix, road_bank::PS2_LOADBG_2X2_OUTDOOR_CAM_SLOTS);
+        }
+
+        let has_cam = self.apply_merged_road_bank(Some(&canonical_tile));
+        self.active_road_index = self.road_bank.remap_active_road_index(prev_origin.as_ref());
+        has_cam
+    }
+
+    /// Seamlessly activates `tile_room_id` using the default [`AssetPathResolver`] (`SH2-184`).
+    pub fn switch_outdoor_tile_cam(&mut self, tile_room_id: &str, prefer_sh2ee: bool) -> bool {
+        let resolver = AssetPathResolver::resolve();
+        self.switch_outdoor_tile_cam_with_resolver(&resolver, tile_room_id, prefer_sh2ee)
     }
 
     /// Clamps `pos` (PS2 world mm, Y-down) within a `_VC_ROAD_AREA` rail using PS2

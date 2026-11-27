@@ -5,7 +5,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use winit::window::Window;
 
-use crate::assets::{ActiveDramaDemoSession, CharacterAsset, MapTierAssets};
+use crate::assets::{
+    find_map_file_for_room_for_quality, load_anm_file, load_map_for_quality_from_roots,
+    ActiveDramaDemoSession, CharacterAsset, EnemyAssetCache, EnemyAssetSlot, MapTierAssets,
+};
 use crate::rooms::audio_room::AudioDebugState;
 use crate::rooms::fmv_room::ActiveFmvSession;
 use crate::rooms::horror_triggers_room::HorrorTriggersRoomState;
@@ -26,6 +29,15 @@ use sh2_debug::{
 use sh2_renderer::{FmvVideoPipeline, GpuMap, RenderContext, SurfaceBlitter};
 use sh2_ui::menu::{LaunchTarget, TestRoomKind};
 use sh2_ui::{ButtonSpriteSheet, LoadingScreen, TextRasterizer};
+
+/// Identifies which map source is currently resident in `AppState::gpu_map` so
+/// [`AppState::apply_texture_quality`] can reload ONLY the active tier on demand (`SH2-181`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActiveMapSource {
+    TestRoom(TestRoomKind),
+    StoryCheckpoint(usize),
+    Campaign,
+}
 
 pub(crate) struct AppState {
     pub window: Arc<Window>,
@@ -75,13 +87,15 @@ pub(crate) struct AppState {
     pub sim_core: SimulationCore,
     pub gamepad: GilrsGamepadPoller,
     pub gpu_map: Arc<GpuMap>,
-    pub map_hd_assets: MapTierAssets,
-    pub map_sh2e_assets: Option<MapTierAssets>,
-    pub map_vanilla_assets: Option<MapTierAssets>,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    /// Tracks which map source is currently loaded in `gpu_map` / `map_texture_bind_groups` (`SH2-181`).
+    pub active_map_source: ActiveMapSource,
+    /// Active [`sh2_core::config::WorldTextureQuality`] tier currently resident in VRAM (`SH2-181`).
+    pub loaded_texture_quality: sh2_core::config::WorldTextureQuality,
     pub character: Option<CharacterAsset>,
     pub maria: Option<CharacterAsset>,
-    pub james_anm_cache: HashMap<JamesAnmSource, AnimationFile>,
+    /// On-demand cache of James stage `.anm` files (`None` = attempted and missing on disk, `SH2-181`).
+    pub james_anm_cache: HashMap<JamesAnmSource, Option<AnimationFile>>,
     pub active_maria: bool,
     pub active_test_room: TestRoomKind,
     /// Active session launch target (`Campaign` vs `TestRoom`, `SH2-112`).
@@ -120,18 +134,8 @@ pub(crate) struct AppState {
     /// Active campaign ending credits sequence (`EndingCreditsSequence`).
     pub campaign_credits_seq: Option<sh2_ui::credits::EndingCreditsSequence>,
     pub combat_arena: sh2_core::combat::CombatArena,
-    pub enemy_scu_asset: Option<CharacterAsset>,
-    pub enemy_mkn_asset: Option<CharacterAsset>,
-    pub enemy_nse_asset: Option<CharacterAsset>,
-    pub enemy_red_asset: Option<CharacterAsset>,
-    pub enemy_pap_asset: Option<CharacterAsset>,
-    pub enemy_ike_asset: Option<CharacterAsset>,
-    pub enemy_arm_asset: Option<CharacterAsset>,
-    pub enemy_tyu_asset: Option<CharacterAsset>,
-    pub enemy_bos_asset: Option<CharacterAsset>,
-    pub enemy_xoo_asset: Option<CharacterAsset>,
-    pub enemy_oni_asset: Option<CharacterAsset>,
-    pub enemy_edi_asset: Option<CharacterAsset>,
+    /// Lazy-loaded enemy/boss models & animations evicted on stage transitions (`SH2-181`).
+    pub enemy_assets: EnemyAssetCache,
     pub key_ready_held: bool,
     pub key_attack_pressed: bool,
     pub key_attack_held: bool,
@@ -195,84 +199,56 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    /// Returns an immutable reference to a preloaded creature asset by its Bestiary ID (`1..=9`).
+    /// Lazy-loads a James stage `.anm` entry into [`Self::james_anm_cache`] on first demand
+    /// instead of loading all 15 `.anm` files eagerly at startup (`SH2-181`).
+    pub fn ensure_james_anm(&mut self, src: JamesAnmSource) -> Option<&AnimationFile> {
+        if src == JamesAnmSource::Basic {
+            return self.character.as_ref().map(|c| &c.anm);
+        }
+        if !self.james_anm_cache.contains_key(&src) {
+            let loaded = self
+                .character
+                .as_ref()
+                .and_then(|c| load_anm_file(src.rel_path(), c.model.bone_count, &c.model.parents));
+            self.james_anm_cache.insert(src, loaded);
+        }
+        self.james_anm_cache.get(&src).and_then(|opt| opt.as_ref())
+    }
+
+    /// Returns an immutable reference to a loaded creature asset by its Bestiary ID (`1..=9`).
     pub fn enemy_asset(&self, creature_id: u32) -> Option<&CharacterAsset> {
-        match creature_id {
-            1 => self.enemy_scu_asset.as_ref(),
-            2 => self.enemy_mkn_asset.as_ref(),
-            3 => self.enemy_nse_asset.as_ref(),
-            4 => self.enemy_red_asset.as_ref(),
-            5 => self.enemy_pap_asset.as_ref(),
-            6 => self.enemy_ike_asset.as_ref(),
-            7 => self.enemy_arm_asset.as_ref(),
-            8 => self.enemy_tyu_asset.as_ref(),
-            9 => self.enemy_bos_asset.as_ref(),
-            _ => None,
-        }
+        let slot = EnemyAssetSlot::from_creature_id(creature_id)?;
+        self.enemy_assets.get(slot)
     }
 
-    /// Returns a mutable reference to a preloaded creature asset by its Bestiary ID (`1..=9`).
-    pub fn enemy_asset_mut(&mut self, creature_id: u32) -> Option<&mut CharacterAsset> {
-        match creature_id {
-            1 => self.enemy_scu_asset.as_mut(),
-            2 => self.enemy_mkn_asset.as_mut(),
-            3 => self.enemy_nse_asset.as_mut(),
-            4 => self.enemy_red_asset.as_mut(),
-            5 => self.enemy_pap_asset.as_mut(),
-            6 => self.enemy_ike_asset.as_mut(),
-            7 => self.enemy_arm_asset.as_mut(),
-            8 => self.enemy_tyu_asset.as_mut(),
-            9 => self.enemy_bos_asset.as_mut(),
-            _ => None,
-        }
+    /// Ensures the creature asset for Bestiary ID (`1..=9`) is lazy-loaded at the active
+    /// texture quality tier and returns a mutable reference (`SH2-181`).
+    pub fn ensure_enemy_asset_mut(&mut self, creature_id: u32) -> Option<&mut CharacterAsset> {
+        let slot = EnemyAssetSlot::from_creature_id(creature_id)?;
+        self.enemy_assets
+            .ensure_loaded(&self.render_ctx, slot, self.loaded_texture_quality)
     }
 
-    /// Returns an immutable reference to a preloaded creature asset by [`EnemySpecies`] (`0x200..=0x20b`).
+    /// Returns an immutable reference to a loaded creature asset by [`EnemySpecies`] (`0x200..=0x20b`).
     pub fn enemy_asset_for_species(
         &self,
         species: sh2_core::ai::creatures::EnemySpecies,
         is_dark_nurse: bool,
     ) -> Option<&CharacterAsset> {
-        use sh2_core::ai::creatures::EnemySpecies;
-        match species {
-            EnemySpecies::LyingFigure => self.enemy_scu_asset.as_ref(),
-            EnemySpecies::Mannequin => self.enemy_mkn_asset.as_ref(),
-            EnemySpecies::Nurse if is_dark_nurse => self.enemy_xoo_asset.as_ref(),
-            EnemySpecies::Nurse => self.enemy_nse_asset.as_ref(),
-            EnemySpecies::PyramidHead => self.enemy_red_asset.as_ref(),
-            EnemySpecies::TwinPyramidHead => self.enemy_oni_asset.as_ref(),
-            EnemySpecies::AbstractDaddy => self.enemy_pap_asset.as_ref(),
-            EnemySpecies::FleshLips => self.enemy_ike_asset.as_ref(),
-            EnemySpecies::Mandarin => self.enemy_arm_asset.as_ref(),
-            EnemySpecies::Creeper => self.enemy_tyu_asset.as_ref(),
-            EnemySpecies::MaryBoss => self.enemy_bos_asset.as_ref(),
-            EnemySpecies::Eddie => self.enemy_edi_asset.as_ref(),
-            EnemySpecies::RoomInsect => None,
-        }
+        let slot = EnemyAssetSlot::from_species(species, is_dark_nurse)?;
+        self.enemy_assets.get(slot)
     }
 
-    /// Returns a mutable reference to a preloaded creature asset by [`EnemySpecies`] (`0x200..=0x20b`).
-    pub fn enemy_asset_for_species_mut(
+    /// Ensures the creature asset for [`EnemySpecies`] (`0x200..=0x20b`) is lazy-loaded at the
+    /// active texture quality tier and returns a mutable reference (`SH2-181`).
+    pub fn ensure_enemy_asset_for_species_mut(
         &mut self,
         species: sh2_core::ai::creatures::EnemySpecies,
         is_dark_nurse: bool,
     ) -> Option<&mut CharacterAsset> {
-        use sh2_core::ai::creatures::EnemySpecies;
-        match species {
-            EnemySpecies::LyingFigure => self.enemy_scu_asset.as_mut(),
-            EnemySpecies::Mannequin => self.enemy_mkn_asset.as_mut(),
-            EnemySpecies::Nurse if is_dark_nurse => self.enemy_xoo_asset.as_mut(),
-            EnemySpecies::Nurse => self.enemy_nse_asset.as_mut(),
-            EnemySpecies::PyramidHead => self.enemy_red_asset.as_mut(),
-            EnemySpecies::TwinPyramidHead => self.enemy_oni_asset.as_mut(),
-            EnemySpecies::AbstractDaddy => self.enemy_pap_asset.as_mut(),
-            EnemySpecies::FleshLips => self.enemy_ike_asset.as_mut(),
-            EnemySpecies::Mandarin => self.enemy_arm_asset.as_mut(),
-            EnemySpecies::Creeper => self.enemy_tyu_asset.as_mut(),
-            EnemySpecies::MaryBoss => self.enemy_bos_asset.as_mut(),
-            EnemySpecies::Eddie => self.enemy_edi_asset.as_mut(),
-            EnemySpecies::RoomInsect => None,
-        }
+        let slot = EnemyAssetSlot::from_species(species, is_dark_nurse)?;
+        self.enemy_assets
+            .ensure_loaded(&self.render_ctx, slot, self.loaded_texture_quality)
     }
 
     /// Resets the menu uniform tint to opaque white without clearing `menu_rasterizer` (`SH2-177`).
@@ -398,6 +374,7 @@ impl AppState {
         self.campaign_loaded_room = None;
         self.campaign_pending_input = CampaignTickInput::default();
         self.campaign_messages.reset();
+        self.enemy_assets.evict_all();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
         if let Some(ref mut bank) = self.audio_bank {
             bank.stop_all_spatial_handles();
@@ -567,83 +544,70 @@ impl AppState {
         self.present_inventory_overlay_in_viewport(encoder, surface_view, viewport, true);
     }
 
-    /// Synchronizes all active map geometry + texture bind groups, character, enemy, and cutscene
-    /// stage assets with the given [`sh2_core::config::WorldTextureQuality`]
-    /// (`Ai4kMaster` / `Sh2eeHd` / `OriginalPs2`).
-    ///
-    /// Swapping `gpu_map` and `map_texture_bind_groups` together from the same [`MapTierAssets`]
-    /// prevents `batch.material_index` out-of-bounds fallbacks when `sh2e/` and retail `data/`
-    /// `.map` files have different material counts (e.g. `ob01.map` 31 vs 27 materials, `SH2-121`).
+    /// Reloads ONLY the active map geometry + texture bind groups, characters, resident enemies,
+    /// and active cutscene stage assets on demand when [`sh2_core::config::WorldTextureQuality`]
+    /// changes (`Ai4kMaster` / `Sh2eeHd` / `OriginalPs2`), keeping only a single tier resident in
+    /// VRAM (`SH2-181`).
     pub fn apply_texture_quality(&mut self, quality: sh2_core::config::WorldTextureQuality) {
-        let selected_map = match quality {
-            sh2_core::config::WorldTextureQuality::Ai4kMaster => &self.map_hd_assets,
-            sh2_core::config::WorldTextureQuality::Sh2eeHd => {
-                self.map_sh2e_assets.as_ref().unwrap_or(&self.map_hd_assets)
-            }
-            sh2_core::config::WorldTextureQuality::OriginalPs2 => self
-                .map_vanilla_assets
-                .as_ref()
-                .or(self.map_sh2e_assets.as_ref())
-                .unwrap_or(&self.map_hd_assets),
-        };
-        self.gpu_map = Arc::clone(&selected_map.gpu_map);
-        self.map_texture_bind_groups = selected_map.texture_bind_groups.clone();
+        if self.loaded_texture_quality == quality {
+            return;
+        }
 
-        let sync_char = |c: &mut Option<CharacterAsset>| {
-            if let Some(asset) = c.as_mut() {
-                asset.texture_bind_groups = match quality {
-                    sh2_core::config::WorldTextureQuality::Ai4kMaster => {
-                        asset.hd_texture_bind_groups.clone()
-                    }
-                    sh2_core::config::WorldTextureQuality::Sh2eeHd => {
-                        asset.sh2e_texture_bind_groups.clone()
-                    }
-                    sh2_core::config::WorldTextureQuality::OriginalPs2 => {
-                        asset.vanilla_texture_bind_groups.clone()
-                    }
-                };
+        match self.active_map_source {
+            ActiveMapSource::TestRoom(room) => {
+                let (map, _, _, _) = find_map_file_for_room_for_quality(room, quality);
+                let assets = MapTierAssets::from_map(&self.render_ctx, map);
+                self.gpu_map = assets.gpu_map;
+                self.map_texture_bind_groups = assets.texture_bind_groups;
             }
-        };
-
-        sync_char(&mut self.character);
-        sync_char(&mut self.maria);
-        sync_char(&mut self.enemy_scu_asset);
-        sync_char(&mut self.enemy_mkn_asset);
-        sync_char(&mut self.enemy_nse_asset);
-        sync_char(&mut self.enemy_red_asset);
-        sync_char(&mut self.enemy_pap_asset);
-        sync_char(&mut self.enemy_ike_asset);
-        sync_char(&mut self.enemy_arm_asset);
-        sync_char(&mut self.enemy_tyu_asset);
-        sync_char(&mut self.enemy_bos_asset);
-        sync_char(&mut self.enemy_xoo_asset);
-        sync_char(&mut self.enemy_oni_asset);
-        sync_char(&mut self.enemy_edi_asset);
-        sync_char(&mut self.viewer_asset);
-
-        if let Some(ref mut session) = self.drama_demo_session {
-            for actor_asset in &mut session.actor_assets {
-                sync_char(actor_asset);
+            ActiveMapSource::StoryCheckpoint(cp_idx) => {
+                let cp = &crate::rooms::combat_arena::story_progression_3d::STORY_3D_CHECKPOINTS
+                    [cp_idx
+                        % crate::rooms::combat_arena::story_progression_3d::STORY_3D_CHECKPOINT_COUNT];
+                let map = load_map_for_quality_from_roots(cp.map_rel_path, cp.room_id, quality)
+                    .unwrap_or_else(|| {
+                        find_map_file_for_room_for_quality(cp.target_room, quality).0
+                    });
+                let assets = MapTierAssets::from_map(&self.render_ctx, map);
+                self.gpu_map = assets.gpu_map;
+                self.map_texture_bind_groups = assets.texture_bind_groups;
             }
-            let chosen_stage = match quality {
-                sh2_core::config::WorldTextureQuality::Ai4kMaster => {
-                    session.stage_hd_assets.as_ref()
+            ActiveMapSource::Campaign => {
+                if let Some((ref manifest, ref mut loaded_q)) = self.campaign_loaded_room {
+                    if *loaded_q != quality {
+                        if let Some(map) = load_map_for_quality_from_roots(
+                            &manifest.map_rel_path,
+                            &manifest.room_id,
+                            quality,
+                        ) {
+                            let assets = MapTierAssets::from_map(&self.render_ctx, map);
+                            self.gpu_map = assets.gpu_map;
+                            self.map_texture_bind_groups = assets.texture_bind_groups;
+                            *loaded_q = quality;
+                        }
+                    }
                 }
-                sh2_core::config::WorldTextureQuality::Sh2eeHd => session
-                    .stage_sh2e_assets
-                    .as_ref()
-                    .or(session.stage_hd_assets.as_ref()),
-                sh2_core::config::WorldTextureQuality::OriginalPs2 => session
-                    .stage_vanilla_assets
-                    .as_ref()
-                    .or(session.stage_sh2e_assets.as_ref())
-                    .or(session.stage_hd_assets.as_ref()),
-            };
-            if let Some(stage) = chosen_stage {
-                session.stage_gpu_map = Some(Arc::clone(&stage.gpu_map));
-                session.stage_texture_bind_groups = Some(stage.texture_bind_groups.clone());
             }
         }
+
+        if let Some(ref mut asset) = self.character {
+            asset.reload_textures_for_quality(&self.render_ctx, quality);
+        }
+        if let Some(ref mut asset) = self.maria {
+            asset.reload_textures_for_quality(&self.render_ctx, quality);
+        }
+        if let Some(ref mut asset) = self.viewer_asset {
+            asset.reload_textures_for_quality(&self.render_ctx, quality);
+        }
+        if let Some(ref mut asset) = self.inventory_room.item_3d_asset {
+            asset.reload_textures_for_quality(&self.render_ctx, quality);
+        }
+        self.enemy_assets.reload_textures(&self.render_ctx, quality);
+        if let Some(ref mut session) = self.drama_demo_session {
+            session.reload_for_quality(&self.render_ctx, quality);
+        }
+
+        self.loaded_texture_quality = quality;
     }
 
     /// Maps the active Campaign [`ScenarioState`] (or [`TestRoomKind`] / user stage override)

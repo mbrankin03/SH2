@@ -56,9 +56,15 @@ pub(super) fn evaluate_player_skinning(
         } else {
             None
         };
-    let has_apart_stair_anm = state
-        .james_anm_cache
-        .contains_key(&sh2_debug::JamesAnmSource::ApartStair);
+    let active_grapple_anm_src =
+        active_grapple_anm_overlay.and_then(sh2_debug::JamesAnmSource::from_rel_path);
+    if let Some(src) = active_grapple_anm_src {
+        let _ = state.ensure_james_anm(src);
+    }
+    let has_apart_stair_anm = grappling_enemy_id == Some(4)
+        && state
+            .ensure_james_anm(sh2_debug::JamesAnmSource::ApartStair)
+            .is_some();
 
     let auth_player_pos = state.sim_core.scenario.player_position;
     let auth_player_yaw = state.sim_core.scenario.player_yaw;
@@ -76,9 +82,9 @@ pub(super) fn evaluate_player_skinning(
             .animation
             .evaluate_blended_cursor_at_alpha(alpha);
 
-        let active_anm = active_grapple_anm_overlay
-            .and_then(sh2_debug::JamesAnmSource::from_rel_path)
+        let active_anm = active_grapple_anm_src
             .and_then(|src| state.james_anm_cache.get(&src))
+            .and_then(|opt| opt.as_ref())
             .unwrap_or(&c.anm);
 
         let frame_count = active_anm.frames.len();
@@ -454,7 +460,7 @@ pub(super) fn evaluate_enemy_skinning(
         (prev_cursor, cur_cursor, blend),
     )) = active_enemy_snapshot
     {
-        if let Some(ea) = state.enemy_asset_for_species_mut(enemy_species, false) {
+        if let Some(ea) = state.ensure_enemy_asset_for_species_mut(enemy_species, false) {
             let frame_count = ea.anm.frames.len();
             if frame_count > 0 {
                 let f0 = (cur_cursor.0 as usize) % frame_count;

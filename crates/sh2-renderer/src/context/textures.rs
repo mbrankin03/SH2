@@ -55,6 +55,18 @@ pub fn prepare_map_texture_cpu(
     rgba: &[u8],
     supports_bc: bool,
 ) -> PreparedGpuTexture {
+    prepare_map_texture_cpu_owned(width, height, rgba.to_vec(), supports_bc)
+}
+
+/// Owned-buffer counterpart of [`prepare_map_texture_cpu`] that moves `rgba` directly into
+/// level-0 mipmap generation without cloning a 16 MB 4K surface (`SH2-181`).
+#[must_use]
+pub fn prepare_map_texture_cpu_owned(
+    width: u32,
+    height: u32,
+    mut rgba: Vec<u8>,
+    supports_bc: bool,
+) -> PreparedGpuTexture {
     let w0 = width.max(1);
     let h0 = height.max(1);
     let expected0 = (w0 as usize) * (h0 as usize) * 4;
@@ -66,19 +78,21 @@ pub fn prepare_map_texture_cpu(
             .any(|px| px[3] < 4);
 
     if !has_cutout {
-        return prepare_mipmapped_texture_cpu(width, height, rgba, supports_bc);
+        return prepare_mipmapped_texture_cpu_owned(width, height, rgba, supports_bc);
     }
 
     let raw_mips: Vec<(u32, u32, Vec<u8>)> =
         if w0 > MAP_CUTOUT_NATIVE_MIP_FLOOR || h0 > MAP_CUTOUT_NATIVE_MIP_FLOOR {
-            generate_mipmap_chain_rgba(&rgba[..expected0], w0, h0)
+            rgba.truncate(expected0);
+            generate_mipmap_chain_rgba(rgba, w0, h0)
                 .into_iter()
                 .take_while(|&(mw, mh, _)| {
                     mw >= MAP_CUTOUT_NATIVE_MIP_FLOOR || mh >= MAP_CUTOUT_NATIVE_MIP_FLOOR
                 })
                 .collect()
         } else {
-            vec![(w0, h0, rgba[..expected0].to_vec())]
+            rgba.truncate(expected0);
+            vec![(w0, h0, rgba)]
         };
 
     let can_use_bc =
@@ -130,8 +144,21 @@ pub fn prepare_mipmapped_texture_cpu(
     rgba: &[u8],
     supports_bc: bool,
 ) -> PreparedGpuTexture {
+    prepare_mipmapped_texture_cpu_owned(width, height, rgba.to_vec(), supports_bc)
+}
+
+/// Owned-buffer counterpart of [`prepare_mipmapped_texture_cpu`] that avoids cloning `rgba` into
+/// mip level 0 (`SH2-181`).
+#[must_use]
+pub fn prepare_mipmapped_texture_cpu_owned(
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    supports_bc: bool,
+) -> PreparedGpuTexture {
     let w0 = width.max(1);
     let h0 = height.max(1);
+    let has_alpha = rgba.as_chunks::<4>().0.iter().any(|px| px[3] < 255);
     let mips = generate_mipmap_chain_rgba(rgba, w0, h0);
 
     let can_use_bc =
@@ -145,7 +172,6 @@ pub fn prepare_mipmapped_texture_cpu(
             .collect();
 
         if !valid_bc_mips.is_empty() {
-            let has_alpha = rgba.as_chunks::<4>().0.iter().any(|px| px[3] < 255);
             let (format, dxt_kind, block_bytes) = if has_alpha {
                 (wgpu::TextureFormat::Bc3RgbaUnorm, 5u8, 16u32)
             } else {

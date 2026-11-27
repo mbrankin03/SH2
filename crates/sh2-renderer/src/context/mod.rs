@@ -11,7 +11,10 @@ use std::sync::Arc;
 
 use crate::{effects, fog, pipeline, post, shadow, skeletal, water, GpuSkeletalMesh};
 
-pub use textures::{prepare_map_texture_cpu, prepare_mipmapped_texture_cpu, PreparedGpuTexture};
+pub use textures::{
+    prepare_map_texture_cpu, prepare_map_texture_cpu_owned, prepare_mipmapped_texture_cpu,
+    prepare_mipmapped_texture_cpu_owned, PreparedGpuTexture,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RendererConfig {

@@ -4,16 +4,16 @@
 //! 3D `.map` geometry, `.cld` collision triangles/walls, and `.cam` camera trigger volumes for:
 //! `er01`, `ob01`, `ap34`, `ap84`, `hp25`, `hp150`, `ps66`, `rr49`, `rr91`, `ma01`, `ca11`, and `ru73`.
 
-use std::path::PathBuf;
-
 use super::story_progression_3d::{
     Story3dCheckpointSpec, STORY_3D_CHECKPOINTS, STORY_3D_CHECKPOINT_COUNT,
 };
-use crate::assets::{find_cld_file_for_room, find_map_file_for_room, MapTierAssets};
-use crate::state::AppState;
+use crate::assets::{
+    find_cld_file_for_room, find_map_file_for_room_for_quality, load_map_for_quality_from_roots,
+    MapTierAssets,
+};
+use crate::state::{ActiveMapSource, AppState};
 use sh2_assets::formats::cam::CamFile;
 use sh2_assets::formats::cld::{parse_cld, WallSegment};
-use sh2_assets::formats::TextureLoader;
 use sh2_core::collision::CollisionWorld;
 use sh2_renderer::fog::FogUniforms;
 
@@ -28,6 +28,7 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
     // in frame.rs does not overwrite our newly loaded checkpoint `.map`/`.cld`/`.cam` on the next frame!
     state.active_test_room = cp.target_room;
     state.menu_ctrl.title_sm.selected_test_room = cp.target_room;
+    state.enemy_assets.evict_all();
 
     // Stop any locked `.dds` cutscene session when stepping checkpoints
     state.drama_demo_session = None;
@@ -36,50 +37,39 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
     }
 
     let resolver = sh2_assets::AssetPathResolver::resolve();
-    let base_roots = [
-        resolver.game_root.to_string_lossy().to_string(),
-        "Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2".to_string(),
-    ];
+    let active_tex_quality = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality;
 
-    // 1. Load retail `.map` (4K AI / SH2:EE HD overrides + SH2:EE tier + Vanilla PS2 tier), falling back
-    //    gracefully to `find_map_file_for_room(cp.target_room)` only if the retail rip is absent in CI.
-    let mut loaded_retail_map = false;
-    for base in &base_roots {
-        let loader = TextureLoader::new(
-            PathBuf::from(base).join("data"),
-            Some(PathBuf::from(base).join("sh2e")),
+    // 1. Load ONLY the active `WorldTextureQuality` tier for the retail `.map` (`SH2-181`),
+    //    falling back gracefully to `find_map_file_for_room_for_quality` if the retail rip is absent.
+    let loaded_retail_map = if let Some(map) =
+        load_map_for_quality_from_roots(cp.map_rel_path, cp.room_id, active_tex_quality)
+    {
+        let assets = MapTierAssets::from_map(&state.render_ctx, map);
+        state.gpu_map = assets.gpu_map;
+        state.map_texture_bind_groups = assets.texture_bind_groups;
+        tracing::info!(
+            "[Story Checkpoint {:02}/12] Loaded retail 3D stage '{}' ({}, tier={:?})",
+            idx + 1,
+            cp.room_display_label,
+            cp.map_rel_path,
+            active_tex_quality
         );
-        if let Ok(hd_map) = loader.load_map_with_hd_overrides(cp.map_rel_path, cp.room_id) {
-            let hd_assets = MapTierAssets::from_map(&state.render_ctx, &hd_map);
-            let sh2e_assets = loader
-                .load_sh2e_map(cp.map_rel_path, cp.room_id)
-                .ok()
-                .map(|m| MapTierAssets::from_map(&state.render_ctx, &m));
-            let van_assets = loader
-                .load_vanilla_map(cp.map_rel_path, cp.room_id)
-                .ok()
-                .map(|m| MapTierAssets::from_map(&state.render_ctx, &m));
-            state.map_hd_assets = hd_assets;
-            state.map_sh2e_assets = sh2e_assets;
-            state.map_vanilla_assets = van_assets;
-            loaded_retail_map = true;
-            tracing::info!(
-                "[Story Checkpoint {:02}/12] Loaded retail 3D stage '{}' ({}) from base={}",
-                idx + 1,
-                cp.room_display_label,
-                cp.map_rel_path,
-                base
-            );
-            break;
-        }
-    }
+        true
+    } else {
+        false
+    };
 
     if !loaded_retail_map {
-        let (fb_map, fb_pos, fb_yaw, fb_fog) = find_map_file_for_room(cp.target_room);
-        let fb_assets = MapTierAssets::from_map(&state.render_ctx, &fb_map);
-        state.map_hd_assets = fb_assets.clone();
-        state.map_sh2e_assets = Some(fb_assets.clone());
-        state.map_vanilla_assets = Some(fb_assets);
+        let (fb_map, fb_pos, fb_yaw, fb_fog) =
+            find_map_file_for_room_for_quality(cp.target_room, active_tex_quality);
+        let fb_assets = MapTierAssets::from_map(&state.render_ctx, fb_map);
+        state.gpu_map = fb_assets.gpu_map;
+        state.map_texture_bind_groups = fb_assets.texture_bind_groups;
         state.fog_uniforms = fb_fog;
         state.render_ctx.update_fog(&state.fog_uniforms);
         state.sim_core.collision = find_cld_file_for_room(cp.target_room);
@@ -121,12 +111,7 @@ pub(crate) fn load_story_checkpoint_3d_stage(state: &mut AppState, cp_idx: usize
         }
     }
 
-    let active_tex_quality = state
-        .menu_ctrl
-        .options_menu
-        .draft_config
-        .video
-        .texture_quality;
+    state.active_map_source = ActiveMapSource::StoryCheckpoint(idx);
     state.apply_texture_quality(active_tex_quality);
 }
 
@@ -321,7 +306,10 @@ mod tests {
         if !resolver.data_dir.exists() {
             return;
         }
-        let loader = TextureLoader::new(resolver.data_dir.clone(), resolver.sh2e_dir.clone());
+        let loader = sh2_assets::formats::TextureLoader::new(
+            resolver.data_dir.clone(),
+            resolver.sh2e_dir.clone(),
+        );
 
         for cp in &STORY_3D_CHECKPOINTS {
             let map = loader

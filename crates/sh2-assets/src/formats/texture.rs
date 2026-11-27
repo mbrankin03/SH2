@@ -472,7 +472,14 @@ impl TextureLoader {
                     let shared_rel = parent_dir.join(format!("{area_name}.map"));
                     if shared_rel != clean_rel {
                         if let Some(data_shared) = self.resolve_in_data(&shared_rel) {
-                            self.merge_map_textures_from_path(&data_shared, area_name, &mut map);
+                            let needed_tids = Self::referenced_material_tids(&map);
+                            if !needed_tids.is_empty() {
+                                self.merge_map_textures_from_path(
+                                    &data_shared,
+                                    Some(&needed_tids),
+                                    &mut map,
+                                );
+                            }
                         }
                     }
                 }
@@ -534,7 +541,12 @@ impl TextureLoader {
 
         // If both sh2e and vanilla data maps exist, ensure any missing or higher-res textures are merged
         if let (Some(_), Some(ref van_path)) = (&sh2e_map_path, &data_map_path) {
-            self.merge_map_textures_from_path(van_path, map_name, &mut map);
+            let filter = if map.materials.is_empty() {
+                None
+            } else {
+                Some(Self::referenced_material_tids(&map))
+            };
+            self.merge_map_textures_from_path(van_path, filter.as_ref(), &mut map);
         }
 
         // Merge shared area texture bank `<area>.map` in the same directory (e.g. `bg/ob/ob.map` for `bg/ob/ob01.map`)
@@ -610,10 +622,13 @@ impl TextureLoader {
             }
         }
 
-        // Decode 4K AI Master PNG/DDS overrides in parallel across available CPU cores.
+        // Decode 4K AI Master PNG/DDS overrides in parallel with bounded concurrency (max 4 workers)
+        // to cap transient decoded 4K RGBA8 RAM (~16 MB per 2048x2048 texture) (`SH2-181`).
+        const MAX_4K_DECODE_WORKERS: usize = 4;
         let worker_count = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
+            .min(MAX_4K_DECODE_WORKERS)
             .min(candidate_tids.len().max(1));
         let next_idx = std::sync::atomic::AtomicUsize::new(0);
         let decoded_entries: std::sync::Mutex<Vec<(u32, crate::formats::map::MapTexture)>> =
@@ -630,11 +645,6 @@ impl TextureLoader {
                     if let Some(decoded) = self.load_4k_map_texture_override(tid) {
                         let new_area = decoded.width.saturating_mul(decoded.height);
                         if new_area > 0 {
-                            let mut bgra = decoded.rgba;
-                            let (chunks, _) = bgra.as_chunks_mut::<4>();
-                            for px in chunks {
-                                px.swap(0, 2);
-                            }
                             if let Ok(mut guard) = decoded_entries.lock() {
                                 guard.push((
                                     tid,
@@ -642,8 +652,8 @@ impl TextureLoader {
                                         id: tid,
                                         width: decoded.width,
                                         height: decoded.height,
-                                        kind: 0,
-                                        data: bgra,
+                                        kind: crate::formats::map::MapTexture::KIND_RGBA8,
+                                        data: decoded.rgba,
                                     },
                                 ));
                             }
@@ -760,15 +770,28 @@ impl TextureLoader {
         }
     }
 
+    fn referenced_material_tids(
+        target_map: &crate::formats::map::MapFile,
+    ) -> std::collections::HashSet<u32> {
+        target_map
+            .materials
+            .iter()
+            .map(|m| u32::from(m.texture_id))
+            .filter(|&tid| tid != 0)
+            .collect()
+    }
+
     fn merge_map_textures_from_path(
         &self,
         path: &Path,
-        map_name: &str,
+        filter_tids: Option<&std::collections::HashSet<u32>>,
         target_map: &mut crate::formats::map::MapFile,
     ) {
         if let Ok(bytes) = fs::read(path) {
-            if let Ok(donor_map) = crate::formats::map::parse_map(&bytes, map_name) {
-                for (tid, donor_tex) in donor_map.textures {
+            if let Ok(donor_textures) =
+                crate::formats::map::parse_map_textures_only(&bytes, filter_tids)
+            {
+                for (tid, donor_tex) in donor_textures {
                     match target_map.textures.get(&tid) {
                         Some(existing)
                             if existing.width.saturating_mul(existing.height)
@@ -802,23 +825,29 @@ impl TextureLoader {
             return;
         }
 
+        let needed_tids = Self::referenced_material_tids(target_map);
+        if needed_tids.is_empty() {
+            return;
+        }
+
         if let Some(sh2e_shared) = self.resolve_in_sh2e(&shared_rel) {
-            self.merge_map_textures_from_path(&sh2e_shared, area_name, target_map);
+            self.merge_map_textures_from_path(&sh2e_shared, Some(&needed_tids), target_map);
         }
         if let Some(data_shared) = self.resolve_in_data(&shared_rel) {
-            self.merge_map_textures_from_path(&data_shared, area_name, target_map);
+            self.merge_map_textures_from_path(&data_shared, Some(&needed_tids), target_map);
         }
     }
 
     /// Loads a `.mdl` character/item model with SH2:EE high-resolution texture pack interception,
-    /// returning `(vanilla_model, optional_hd_override_model)`.
+    /// returning `(vanilla_model, optional_hd_override_model)` via `Arc` to avoid deep-cloning
+    /// `ModelFile` when a single mod or `sh2e/` override satisfies both slots (`SH2-181`).
     pub fn load_model_with_hd_overrides(
         &self,
         relative_mdl_path: impl AsRef<Path>,
     ) -> Result<
         (
-            crate::formats::mdls::ModelFile,
-            Option<crate::formats::mdls::ModelFile>,
+            std::sync::Arc<crate::formats::mdls::ModelFile>,
+            Option<std::sync::Arc<crate::formats::mdls::ModelFile>>,
         ),
         AssetError,
     > {
@@ -832,7 +861,10 @@ impl TextureLoader {
         if let Some(ref vfs) = self.mod_vfs {
             if let Some((mod_id, bytes)) = vfs.read_mod_bytes(clean_rel) {
                 match crate::formats::mdls::parse_mdl(&bytes) {
-                    Ok(mod_mdl) => return Ok((mod_mdl.clone(), Some(mod_mdl))),
+                    Ok(mod_mdl) => {
+                        let arc = std::sync::Arc::new(mod_mdl);
+                        return Ok((std::sync::Arc::clone(&arc), Some(arc)));
+                    }
                     Err(err) => {
                         tracing::warn!(
                             "[ModVfs] Mod '{}' model '{}' failed to parse ({}); falling back to vanilla",
@@ -866,21 +898,22 @@ impl TextureLoader {
         match (data_mdl_path, sh2e_mdl_path) {
             (Some(van_p), Some(hd_p)) => {
                 let van_bytes = fs::read(&van_p)?;
-                let van_mdl = crate::formats::mdls::parse_mdl(&van_bytes)?;
+                let van_mdl = std::sync::Arc::new(crate::formats::mdls::parse_mdl(&van_bytes)?);
                 let hd_mdl = fs::read(&hd_p)
                     .ok()
-                    .and_then(|b| crate::formats::mdls::parse_mdl(&b).ok());
+                    .and_then(|b| crate::formats::mdls::parse_mdl(&b).ok())
+                    .map(std::sync::Arc::new);
                 Ok((van_mdl, hd_mdl))
             }
             (Some(van_p), None) => {
                 let van_bytes = fs::read(&van_p)?;
-                let van_mdl = crate::formats::mdls::parse_mdl(&van_bytes)?;
+                let van_mdl = std::sync::Arc::new(crate::formats::mdls::parse_mdl(&van_bytes)?);
                 Ok((van_mdl, None))
             }
             (None, Some(hd_p)) => {
                 let hd_bytes = fs::read(&hd_p)?;
-                let hd_mdl = crate::formats::mdls::parse_mdl(&hd_bytes)?;
-                Ok((hd_mdl.clone(), Some(hd_mdl)))
+                let hd_mdl = std::sync::Arc::new(crate::formats::mdls::parse_mdl(&hd_bytes)?);
+                Ok((std::sync::Arc::clone(&hd_mdl), Some(hd_mdl)))
             }
             (None, None) => Err(AssetError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -989,7 +1022,7 @@ mod tests {
             "Expected mip 0 coverage near 0.35, got {cov0}"
         );
 
-        let chain = generate_mipmap_chain_rgba(&rgba, w, h);
+        let chain = generate_mipmap_chain_rgba(rgba, w, h);
         assert_eq!(chain.len(), 7); // 64, 32, 16, 8, 4, 2, 1
         let (mip1_w, mip1_h, ref mip1_data) = chain[1];
         assert_eq!((mip1_w, mip1_h), (32, 32));
@@ -1020,7 +1053,7 @@ mod tests {
             }
         }
 
-        let chain = generate_mipmap_chain_rgba(&rgba, w, h);
+        let chain = generate_mipmap_chain_rgba(rgba, w, h);
         assert_eq!(chain.len(), 7);
         for (lvl, (_, _, ref mip_data)) in chain.iter().enumerate() {
             let min_a = mip_data
@@ -1379,11 +1412,60 @@ mod tests {
             0, 0, 0, 0, // transparent black
             0, 0, 0, 0, // transparent black
         ];
-        let chain = generate_mipmap_chain_rgba(&rgba, 2, 2);
+        let chain = generate_mipmap_chain_rgba(rgba, 2, 2);
         assert_eq!(chain.len(), 2);
         let (_, _, ref mip1) = chain[1];
         assert_eq!(mip1[0], 80);
         assert_eq!(mip1[1], 140);
         assert_eq!(mip1[2], 60);
+    }
+
+    #[test]
+    fn test_merge_shared_area_textures_merges_only_referenced_material_tids() {
+        let resolver = crate::AssetPathResolver::resolve();
+        if !resolver.data_dir.join("bg/ob/ob01.map").is_file()
+            || !resolver.data_dir.join("bg/ob/ob.map").is_file()
+        {
+            return;
+        }
+        let loader = TextureLoader::new(&resolver.data_dir, resolver.sh2e_dir.as_deref());
+        let ob01 = loader
+            .load_vanilla_map("bg/ob/ob01.map", "ob01")
+            .expect("load vanilla ob01.map");
+        let referenced: std::collections::HashSet<u32> = ob01
+            .materials
+            .iter()
+            .map(|m| u32::from(m.texture_id))
+            .filter(|&tid| tid != 0)
+            .collect();
+        // Every referenced material texture must be present (including shared `ob.map` textures).
+        for &tid in &referenced {
+            assert!(
+                ob01.textures.contains_key(&tid),
+                "Expected referenced tid={tid} to be present in ob01.map after shared bank merge"
+            );
+        }
+        // Unreferenced shared-bank textures from `ob.map` must NOT be merged into `ob01.map`.
+        let raw_ob01 = crate::formats::map::parse_map(
+            &fs::read(resolver.data_dir.join("bg/ob/ob01.map")).unwrap(),
+            "ob01",
+        )
+        .unwrap();
+        let raw_ob_shared = crate::formats::map::parse_map_textures_only(
+            &fs::read(resolver.data_dir.join("bg/ob/ob.map")).unwrap(),
+            None,
+        )
+        .unwrap();
+        let unreferenced_shared: Vec<u32> = raw_ob_shared
+            .keys()
+            .copied()
+            .filter(|tid| !referenced.contains(tid) && !raw_ob01.textures.contains_key(tid))
+            .collect();
+        for tid in unreferenced_shared {
+            assert!(
+                !ob01.textures.contains_key(&tid),
+                "Unreferenced shared texture tid={tid} should not be merged into ob01.map"
+            );
+        }
     }
 }

@@ -7,14 +7,13 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 use crate::assets::{
-    find_cld_file_for_room, find_map_file_for_room, find_sh2e_map_file_for_room,
-    find_vanilla_map_file_for_room, load_anm_file, load_character_asset, load_viewer_entry_asset,
-    room_cam_id_for_test_room,
+    find_cld_file_for_room, find_map_file_for_room_for_quality, load_character_asset,
+    load_viewer_entry_asset, room_cam_id_for_test_room, EnemyAssetCache,
 };
 use crate::cli::CliArgs;
 use crate::rooms;
 use crate::rooms::fmv_room::open_fmv_session;
-use crate::state::AppState;
+use crate::state::{ActiveMapSource, AppState};
 use sh2_app::gamepad::GilrsGamepadPoller;
 use sh2_app::AppMenuController;
 use sh2_assets::formats::TextureLoader;
@@ -125,119 +124,41 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
     let initial_room = cli
         .initial_test_room
         .unwrap_or(TestRoomKind::ObservationDeck);
-    let (map_file, player_pos, player_yaw, fog_uniforms) = find_map_file_for_room(initial_room);
+    let initial_tex_quality = startup_config.video.texture_quality;
+    let (map_file, player_pos, player_yaw, fog_uniforms) =
+        find_map_file_for_room_for_quality(initial_room, initial_tex_quality);
 
-    let map_hd_assets = crate::assets::MapTierAssets::from_map(&render_ctx, &map_file);
-    let map_sh2e_assets = find_sh2e_map_file_for_room(initial_room)
-        .map(|sh2e_map| crate::assets::MapTierAssets::from_map(&render_ctx, &sh2e_map));
-    let map_vanilla_assets = find_vanilla_map_file_for_room(initial_room)
-        .map(|van_map| crate::assets::MapTierAssets::from_map(&render_ctx, &van_map));
-    let gpu_map = Arc::clone(&map_hd_assets.gpu_map);
-    let map_texture_bind_groups = map_hd_assets.texture_bind_groups.clone();
+    // Upload ONLY the active `WorldTextureQuality` tier instead of triple-parsing `.map`s and
+    // keeping Vanilla + SH2:EE + 4K all resident in VRAM simultaneously (`SH2-181`).
+    let map_assets = crate::assets::MapTierAssets::from_map(&render_ctx, map_file);
+    let gpu_map = map_assets.gpu_map;
+    let map_texture_bind_groups = map_assets.texture_bind_groups;
     let blitter = SurfaceBlitter::new(&device, surface_format);
     let blit_bind_group = blitter.create_bind_group(&device, &render_ctx.ldr_output_view);
 
-    // Load James Sunderland character model & animations (prioritizing high-fidelity 71-bone hhh_jms.mdl)
+    // Load James Sunderland character model & base animation at the single active texture tier.
+    // Stage-specific `james_anm_cache` `.anm` files are lazy-loaded on demand (`SH2-181`).
     let character = load_character_asset(
         &render_ctx,
         "James Sunderland",
         &["data/chr/jms/hhh_jms.mdl", "data/chr/jms/hll_jms.mdl"],
         &["data/chr/jms/jms_basic1.anm"],
+        initial_tex_quality,
     );
+    let james_anm_cache = std::collections::HashMap::new();
 
-    let mut james_anm_cache = std::collections::HashMap::new();
-    if let Some(ref c) = character {
-        for &src in sh2_debug::JamesAnmSource::all() {
-            if src == sh2_debug::JamesAnmSource::Basic {
-                continue;
-            }
-            if let Some(anm) = load_anm_file(src.rel_path(), c.model.bone_count, &c.model.parents) {
-                james_anm_cache.insert(src, anm);
-            }
-        }
-    }
-
-    // Load Maria character model & animations (for character switching or Born From a Wish)
+    // Load Maria character model & animations at the single active texture tier.
     let maria = load_character_asset(
         &render_ctx,
         "Maria",
         &["data/chr/mar/lll_mar.mdl", "data/chr/mar/hhh_mar.mdl"],
         &["data/chr2/mar/xmar_wpnone.anm", "data/chr/mar/lll_mar.anm"],
+        initial_tex_quality,
     );
 
-    // Preload authentic enemy models for Combat Testing Arena (SH2-13 / SH2-57)
-    let enemy_scu_asset = load_character_asset(
-        &render_ctx,
-        "Lying Figure (scu)",
-        &["data/chr/scu/scu.mdl"],
-        &["data/chr/scu/scu.anm"],
-    );
-    let enemy_mkn_asset = load_character_asset(
-        &render_ctx,
-        "Mannequin (mkn)",
-        &["data/chr/mkn/mkn.mdl"],
-        &["data/chr/mkn/mkn.anm"],
-    );
-    let enemy_nse_asset = load_character_asset(
-        &render_ctx,
-        "Bubble Head Nurse (nse)",
-        &["data/chr/nse/nse.mdl"],
-        &["data/chr/nse/nse.anm"],
-    );
-    let enemy_red_asset = load_character_asset(
-        &render_ctx,
-        "Pyramid Head (red)",
-        &["data/chr/red/red.mdl"],
-        &["data/chr/red/red.anm"],
-    );
-    let enemy_pap_asset = load_character_asset(
-        &render_ctx,
-        "Abstract Daddy (pap)",
-        &["data/chr/pap/pap.mdl"],
-        &["data/chr/pap/pap.anm"],
-    );
-    let enemy_ike_asset = load_character_asset(
-        &render_ctx,
-        "Flesh Lips (ike)",
-        &["data/chr/ike/ike.mdl"],
-        &["data/chr/ike/ike.anm"],
-    );
-    let enemy_arm_asset = load_character_asset(
-        &render_ctx,
-        "Mandarin (arm)",
-        &["data/chr/arm/arm.mdl"],
-        &["data/chr/arm/arm.anm"],
-    );
-    let enemy_tyu_asset = load_character_asset(
-        &render_ctx,
-        "Creeper (tyu)",
-        &["data/chr/tyu/tyu.mdl"],
-        &["data/chr/tyu/tyu.anm"],
-    );
-    let enemy_bos_asset = load_character_asset(
-        &render_ctx,
-        "Mary Final Boss (bos)",
-        &["data/chr/bos/bos.mdl"],
-        &["data/chr/bos/bos.anm"],
-    );
-    let enemy_xoo_asset = load_character_asset(
-        &render_ctx,
-        "Bubble Head Nurse Variant (xoo)",
-        &["data/chr/xoo/xoo.mdl"],
-        &["data/chr/xoo/xoo.anm"],
-    );
-    let enemy_oni_asset = load_character_asset(
-        &render_ctx,
-        "Pyramid Head Spear (oni)",
-        &["data/chr/oni/oni.mdl"],
-        &["data/chr/oni/oni.anm"],
-    );
-    let enemy_edi_asset = load_character_asset(
-        &render_ctx,
-        "Eddie Boss (lll_edi)",
-        &["data/chr/edi/lll_edi.mdl"],
-        &["data/chr/edi/lll_edi.anm"],
-    );
+    // Enemy models/animations are lazy-loaded on demand when a room/manifest spawns them and
+    // evicted on stage transitions (`SH2-181`).
+    let enemy_assets = EnemyAssetCache::new();
 
     let mut combat_arena = sh2_core::combat::CombatArena::new();
     // Only pre-equip the Wooden Plank inside the CombatArena test room; Campaign starts unarmed.
@@ -677,6 +598,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             &render_ctx,
             model_viewer.current_entry(),
             model_viewer.selected_anm_index,
+            initial_tex_quality,
         );
         if let Some(ref a) = asset {
             model_viewer.set_total_frames(a.anm.frames.len());
@@ -746,7 +668,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         .audio
         .enable_restored_cut_audio;
 
-    let initial_tex_quality = menu_ctrl.options_menu.draft_config.video.texture_quality;
+    let configured_tex_quality = menu_ctrl.options_menu.draft_config.video.texture_quality;
     let mut state = AppState {
         window,
         surface,
@@ -787,10 +709,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         sim_core,
         gamepad: GilrsGamepadPoller::new(),
         gpu_map,
-        map_hd_assets,
-        map_sh2e_assets,
-        map_vanilla_assets,
         map_texture_bind_groups,
+        active_map_source: ActiveMapSource::TestRoom(initial_room),
+        loaded_texture_quality: initial_tex_quality,
         character,
         maria,
         james_anm_cache,
@@ -827,18 +748,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         ingame_menus: crate::ingame_menus::InGameMenuState::default(),
         campaign_credits_seq: None,
         combat_arena,
-        enemy_scu_asset,
-        enemy_mkn_asset,
-        enemy_nse_asset,
-        enemy_red_asset,
-        enemy_pap_asset,
-        enemy_ike_asset,
-        enemy_arm_asset,
-        enemy_tyu_asset,
-        enemy_bos_asset,
-        enemy_xoo_asset,
-        enemy_oni_asset,
-        enemy_edi_asset,
+        enemy_assets,
         key_ready_held: false,
         key_attack_pressed: false,
         key_attack_held: false,
@@ -894,6 +804,6 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         sh2ee_ty3_glb: None,
         sh2ee_mon_glb: None,
     };
-    state.apply_texture_quality(initial_tex_quality);
+    state.apply_texture_quality(configured_tex_quality);
     state
 }

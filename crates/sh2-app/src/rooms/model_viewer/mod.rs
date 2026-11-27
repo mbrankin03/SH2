@@ -487,17 +487,21 @@ impl RoomController for ModelViewerRoomController {
             }
         }
 
+        let desired_viewer_quality = match state.model_viewer.texture_source {
+            TextureSourceMode::Ai4kMaster => sh2_core::config::WorldTextureQuality::Ai4kMaster,
+            TextureSourceMode::EnhancedHd => sh2_core::config::WorldTextureQuality::Sh2eeHd,
+            TextureSourceMode::VanillaPs2 => sh2_core::config::WorldTextureQuality::OriginalPs2,
+        };
+        if let Some(ref mut c) = state.viewer_asset {
+            c.reload_textures_for_quality(&state.render_ctx, desired_viewer_quality);
+        }
+
         let skeletal_draw = if let Some(ref c) = state.viewer_asset {
             if !state.skin_matrices_scratch.is_empty() {
-                let tex_slice = match state.model_viewer.texture_source {
-                    TextureSourceMode::Ai4kMaster => c.hd_texture_bind_groups.as_slice(),
-                    TextureSourceMode::EnhancedHd => c.sh2e_texture_bind_groups.as_slice(),
-                    TextureSourceMode::VanillaPs2 => c.vanilla_texture_bind_groups.as_slice(),
-                };
                 vec![(
                     &c.gpu_mesh,
                     state.skin_matrices_scratch.as_slice(),
-                    Some(tex_slice),
+                    Some(c.texture_bind_groups.as_slice()),
                 )]
             } else {
                 vec![]

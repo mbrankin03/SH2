@@ -298,7 +298,7 @@ fn sync_combat_player_animation_and_sfx(state: &mut AppState) {
             let stage_anm_available = match state.combat_arena.active_grapple_james_anm_overlay() {
                 None => true,
                 Some(rel) => sh2_debug::JamesAnmSource::from_rel_path(rel)
-                    .map(|src| state.james_anm_cache.contains_key(&src))
+                    .map(|src| state.ensure_james_anm(src).is_some())
                     .unwrap_or(false),
             };
             let struggle_clip = if stage_anm_available {

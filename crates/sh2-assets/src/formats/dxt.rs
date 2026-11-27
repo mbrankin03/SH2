@@ -126,7 +126,10 @@ pub fn decode_dxt(
 /// (such as Maria's dyed pink hair tips and strand cards). Without RGB dilation, hardware
 /// `FilterMode::Linear` sampling and bilinear upscaling interpolate between hair color and
 /// `(0, 0, 0)`, creating dark/black outlines around cutout hair strands.
-fn bleed_transparent_cutout_rgb(rgba: &mut [u8], width: usize, height: usize) {
+///
+/// Uses double-buffering (`std::mem::swap`) with sparse frontier synchronization so large 4K
+/// cutout textures avoid 4 full-buffer `copy_from_slice` passes (`SH2-181`).
+fn bleed_transparent_cutout_rgb(rgba: &mut Vec<u8>, width: usize, height: usize) {
     if width == 0 || height == 0 || rgba.len() < width * height * 4 {
         return;
     }
@@ -155,11 +158,12 @@ fn bleed_transparent_cutout_rgb(rgba: &mut [u8], width: usize, height: usize) {
         *slot = rgba[i * 4 + 3] > 0;
     }
 
-    let mut next_rgba = rgba.to_vec();
+    let mut next_rgba = rgba.clone();
     let mut next_filled = filled.clone();
+    let mut newly_filled: Vec<usize> = Vec::new();
 
-    for _pass in 0..4 {
-        let mut any_changed = false;
+    for pass in 0..4 {
+        newly_filled.clear();
         for y in 0..height {
             let y_min = y.saturating_sub(1);
             let y_max = (y + 1).min(height - 1);
@@ -201,15 +205,22 @@ fn bleed_transparent_cutout_rgb(rgba: &mut [u8], width: usize, height: usize) {
                     next_rgba[ofs + 2] = b as u8;
                     // Keep alpha == 0 so cutout discard still treats this texel as transparent
                     next_filled[idx] = true;
-                    any_changed = true;
+                    newly_filled.push(idx);
                 }
             }
         }
-        if !any_changed {
+        if newly_filled.is_empty() {
             break;
         }
-        rgba.copy_from_slice(&next_rgba);
-        filled.copy_from_slice(&next_filled);
+        std::mem::swap(rgba, &mut next_rgba);
+        std::mem::swap(&mut filled, &mut next_filled);
+        if pass < 3 {
+            for &idx in &newly_filled {
+                let ofs = idx * 4;
+                next_rgba[ofs..ofs + 4].copy_from_slice(&rgba[ofs..ofs + 4]);
+                next_filled[idx] = true;
+            }
+        }
     }
 }
 
@@ -671,5 +682,65 @@ mod tests {
         assert_eq!(bc1.len(), 8);
         let dec_bc1 = decode_dxt(&bc1, 4, 4, 1).expect("BC1 decode should succeed");
         assert_eq!(dec_bc1.len(), 4 * 4 * 4);
+    }
+
+    #[test]
+    fn test_bleed_transparent_cutout_rgb_double_buffer_matches_reference() {
+        // 12x12 image with two colored islands at opposite corners surrounded by (0,0,0,0)
+        // so all 4 dilation passes actively propagate and merge frontiers.
+        let (w, h) = (12usize, 12usize);
+        let mut initial = vec![0u8; w * h * 4];
+        let set_px = |buf: &mut [u8], x: usize, y: usize, rgba: [u8; 4]| {
+            let ofs = (y * w + x) * 4;
+            buf[ofs..ofs + 4].copy_from_slice(&rgba);
+        };
+        set_px(&mut initial, 2, 2, [240, 80, 120, 255]);
+        set_px(&mut initial, 3, 2, [200, 100, 140, 255]);
+        set_px(&mut initial, 9, 9, [40, 180, 60, 255]);
+        set_px(&mut initial, 8, 9, [60, 220, 80, 128]);
+
+        // Reference 4-pass full-copy implementation
+        let mut reference = initial.clone();
+        let mut ref_filled: Vec<bool> = (0..w * h).map(|i| reference[i * 4 + 3] > 0).collect();
+        let mut ref_next_rgba = reference.clone();
+        let mut ref_next_filled = ref_filled.clone();
+        for _ in 0..4 {
+            for y in 0..h {
+                for x in 0..w {
+                    let idx = y * w + x;
+                    if ref_filled[idx] {
+                        continue;
+                    }
+                    let (mut sr, mut sg, mut sb, mut cnt) = (0u32, 0u32, 0u32, 0u32);
+                    for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                        for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
+                            let ni = ny * w + nx;
+                            if ref_filled[ni] {
+                                sr += reference[ni * 4] as u32;
+                                sg += reference[ni * 4 + 1] as u32;
+                                sb += reference[ni * 4 + 2] as u32;
+                                cnt += 1;
+                            }
+                        }
+                    }
+                    if let (Some(r), Some(g), Some(b)) = (
+                        sr.checked_div(cnt),
+                        sg.checked_div(cnt),
+                        sb.checked_div(cnt),
+                    ) {
+                        ref_next_rgba[idx * 4] = r as u8;
+                        ref_next_rgba[idx * 4 + 1] = g as u8;
+                        ref_next_rgba[idx * 4 + 2] = b as u8;
+                        ref_next_filled[idx] = true;
+                    }
+                }
+            }
+            reference.copy_from_slice(&ref_next_rgba);
+            ref_filled.copy_from_slice(&ref_next_filled);
+        }
+
+        let mut actual = initial;
+        bleed_transparent_cutout_rgb(&mut actual, w, h);
+        assert_eq!(actual, reference);
     }
 }

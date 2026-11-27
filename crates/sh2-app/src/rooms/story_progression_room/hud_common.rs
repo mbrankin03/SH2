@@ -1,7 +1,6 @@
 //! Shared 2D text truncation, cutaway `.tex` loading, and viewport overlay compositing helpers
 //! for [`super::StoryProgressionRoomController`] (`SH2-65`).
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::state::AppState;
@@ -150,12 +149,11 @@ pub(crate) fn load_cutaway_tex(
 
 /// Ensures `pic_or_sheet` is present in `cache` and returns a reference if available.
 pub(crate) fn ensure_cutaway_cached(
-    cache: &mut HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
+    cache: &mut super::cutaway_cache::CutawayLruCache,
     pic_or_sheet: &str,
     quality: sh2_core::CutawayQuality,
 ) {
-    let key = (pic_or_sheet.to_string(), quality);
-    if cache.contains_key(&key) {
+    if cache.contains_key(pic_or_sheet, quality) {
         return;
     }
     let asset = load_cutaway_tex(pic_or_sheet, quality).unwrap_or(CutawayTextureAsset {
@@ -168,7 +166,7 @@ pub(crate) fn ensure_cutaway_cached(
         original_height: 512,
         is_sh2ee_hd: quality != sh2_core::CutawayQuality::OriginalPs2,
     });
-    cache.insert(key, asset);
+    cache.insert((pic_or_sheet.to_string(), quality), asset);
 }
 
 /// Clips an axis-aligned 2-triangle quad `[(x, y, u, v); 6]` against `[vx0..vx1, vy0..vy1]`.
@@ -220,7 +218,7 @@ pub(crate) fn clip_quad_triangles_to_viewport(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn blit_cutaway_into_rasterizer(
     rast: &mut sh2_ui::TextRasterizer,
-    cache: &mut HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
+    cache: &mut super::cutaway_cache::CutawayLruCache,
     vp_x: usize,
     vp_y: usize,
     vp_w: usize,
@@ -254,7 +252,7 @@ pub(crate) fn blit_cutaway_into_rasterizer(
     let cx1 = vx0 + fs_layout.canvas.canvas_right;
     let cy1 = vy0 + fs_layout.canvas.canvas_bottom;
 
-    if let Some(base_tex) = cache.get(&(base_pic.to_string(), quality)) {
+    if let Some(base_tex) = cache.get(base_pic, quality) {
         let (rgba, tw, th) = (
             base_tex.texture.rgba.as_slice(),
             base_tex.texture.width,
@@ -295,7 +293,7 @@ pub(crate) fn blit_cutaway_into_rasterizer(
     let draw_x = vx0 + vp_transform.offset_x;
     let draw_y = vy0 + vp_transform.offset_y;
     for quad in quads {
-        if let Some(sheet_tex) = cache.get(&(quad.sheet_name.to_string(), quality)) {
+        if let Some(sheet_tex) = cache.get(quad.sheet_name, quality) {
             let tris = quad.to_viewport_triangles(
                 draw_x,
                 draw_y,

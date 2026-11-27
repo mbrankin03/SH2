@@ -41,6 +41,13 @@ pub(crate) struct AppState {
     pub boot_logo_bgs: [Option<Arc<wgpu::BindGroup>>; 4],
     pub menu_uniform_buffer: wgpu::Buffer,
     pub title_bg_uniform_buffer: wgpu::Buffer,
+    /// Double-buffered uniform slots for the 1x1 GPU dim scrim so multiple scrims within the same
+    /// `CommandEncoder` (e.g. `ExitConfirm` backdrop + title fade) never clobber each other (`SH2-175`).
+    pub dim_scrim_uniform_buffers: [wgpu::Buffer; 2],
+    /// Pre-bound 1x1 black GPU texture + uniform buffer slots for zero-CPU dim scrims (`SH2-175`).
+    pub dim_scrim_bind_groups: [wgpu::BindGroup; 2],
+    /// Next dim scrim uniform slot (`0` or `1`) for [`Self::draw_fullscreen_dim_scrim`] (`SH2-175`).
+    pub dim_scrim_slot: usize,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
     pub inventory_rasterizer: TextRasterizer,
@@ -158,6 +165,12 @@ pub(crate) struct AppState {
     pub key_pan_down: bool,
     pub window_focused: bool,
     pub cursor_grabbed_for_camera: bool,
+    /// Last cursor visibility passed to `window.set_cursor_visible` so Wayland/X11 is only
+    /// notified on actual state transitions (`SH2-175`).
+    pub last_cursor_visible: Option<bool>,
+    /// Native-resolution CPU/GPU cutaway surface allocated on demand while a cutaway is active
+    /// and dropped (`None`) when cutaways close or rooms transition (`SH2-175`).
+    pub native_cutaway_surface: Option<crate::rooms::campaign_room::cutaway::NativeCutawaySurface>,
     pub last_menu_state_log: String,
     pub last_menu_revision: u64,
     pub active_audio_device: Option<String>,
@@ -307,6 +320,14 @@ impl AppState {
         self.sim_core.input.clear_host_keyboard_state();
     }
 
+    /// Calls `window.set_cursor_visible` only when the visibility state actually changes.
+    fn set_cursor_visible_if_changed(&mut self, visible: bool) {
+        if self.last_cursor_visible != Some(visible) {
+            self.window.set_cursor_visible(visible);
+            self.last_cursor_visible = Some(visible);
+        }
+    }
+
     /// Synchronizes Wayland/X11 relative cursor grab and cursor visibility when `OverTheShoulder`
     /// or `FirstPerson` camera mode is active in gameplay (`SH2-93`).
     pub fn sync_cursor_grab_for_camera(&mut self) {
@@ -326,7 +347,7 @@ impl AppState {
         let in_pc_menu = !self.menu_ctrl.in_game_active
             || self.menu_ctrl.pause_menu.is_open
             || self.ingame_menus.is_any_open();
-        self.window.set_cursor_visible(!want_grab && !in_pc_menu);
+        self.set_cursor_visible_if_changed(!want_grab && !in_pc_menu);
         if want_grab == self.cursor_grabbed_for_camera {
             return;
         }
@@ -340,14 +361,14 @@ impl AppState {
                 })
                 .is_ok();
             if grabbed {
-                self.window.set_cursor_visible(false);
+                self.set_cursor_visible_if_changed(false);
             }
             self.cursor_grabbed_for_camera = true;
         } else {
             let _ = self
                 .window
                 .set_cursor_grab(winit::window::CursorGrabMode::None);
-            self.window.set_cursor_visible(!in_pc_menu);
+            self.set_cursor_visible_if_changed(!in_pc_menu);
             self.cursor_grabbed_for_camera = false;
         }
     }
@@ -357,6 +378,10 @@ impl AppState {
     pub fn exit_room_to_menu(&mut self, target_phase: sh2_ui::menu::TitlePhase) {
         self.clear_held_gameplay_keys();
         self.ingame_menus.close_all();
+        self.story_progression_room.cutaway_cache.clear();
+        self.native_cutaway_surface = None;
+        self.sh2ee_ty3_glb = None;
+        self.sh2ee_mon_glb = None;
         self.campaign_orchestrator = None;
         self.campaign_loaded_room = None;
         self.campaign_pending_input = CampaignTickInput::default();
@@ -414,21 +439,34 @@ impl AppState {
     }
 
     /// Blits a full-screen semi-transparent black dim scrim (`alpha` in `0..=255`) across the
-    /// entire swapchain (edge-to-edge on 16:9, 21:9, 32:9, and 4K windows) with no 4:3 seam.
+    /// entire swapchain (edge-to-edge on 16:9, 21:9, 32:9, and 4K windows) with no 4:3 seam,
+    /// using a 1x1 black GPU texture + uniform alpha (`SH2-175`).
     pub fn draw_fullscreen_dim_scrim(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
         alpha: u8,
     ) {
-        let (chunks, _) = self.menu_rasterizer.pixels.as_chunks_mut::<4>();
-        for px in chunks {
-            *px = [0, 0, 0, alpha];
-        }
-        self.upload_hud_overlay_texture();
+        let uniforms = [
+            1.0f32,
+            1.0,
+            1.0,
+            f32::from(alpha) / 255.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+        ];
+        let slot = self.dim_scrim_slot;
+        self.dim_scrim_slot ^= 1;
+        self.render_ctx.queue.write_buffer(
+            &self.dim_scrim_uniform_buffers[slot],
+            0,
+            bytemuck::cast_slice(&uniforms),
+        );
         self.blitter.render_with_bind_group_and_load_op(
             encoder,
-            &self.menu_text_bind_group,
+            &self.dim_scrim_bind_groups[slot],
             surface_view,
             wgpu::LoadOp::Load,
         );

@@ -106,7 +106,8 @@ impl InGameMenuState {
             || self.save_load.is_some()
     }
 
-    /// Closes all single-screen in-game menus cleanly (e.g. when returning to Main Menu).
+    /// Closes all single-screen in-game menus cleanly (e.g. when returning to Main Menu)
+    /// and releases transient decoded texture caches (`SH2-175`).
     pub fn close_all(&mut self) {
         self.inventory.close();
         self.map_viewer.close();
@@ -116,6 +117,16 @@ impl InGameMenuState {
         self.options_closing_to_inventory = false;
         self.options_fade_alpha = 0.0;
         self.save_load = None;
+        self.cached_examine_tex = None;
+        self.cached_gameover_tex = None;
+        self.gameover_tex_loaded = false;
+        self.cached_savebg_tex = None;
+        self.savebg_tex_loaded = None;
+        self.cached_map_sheet = None;
+        self.cached_map_marks = None;
+        self.cached_map_cursor = None;
+        self.cached_memo_backdrop = None;
+        self.cached_memo_layer = None;
     }
 
     /// Advances active menu animations (Health ECG sweep/pulse, carousel rotation, map zoom/pan/transcription, memo dim, save/load blink).

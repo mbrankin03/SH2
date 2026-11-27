@@ -354,6 +354,44 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         contents: bytemuck::cast_slice(&initial_uniforms),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
+    let dim_scrim_uniform_buffers = std::array::from_fn(|i| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(if i == 0 {
+                "Fullscreen Dim Scrim Uniform Buffer 0"
+            } else {
+                "Fullscreen Dim Scrim Uniform Buffer 1"
+            }),
+            contents: bytemuck::cast_slice(&initial_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        })
+    });
+    let dim_scrim_texture = device.create_texture_with_data(
+        &queue,
+        &wgpu::TextureDescriptor {
+            label: Some("Fullscreen Dim Scrim 1x1 Black Texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        &[0u8, 0, 0, 255],
+    );
+    let dim_scrim_view = dim_scrim_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let dim_scrim_bind_groups = std::array::from_fn(|i| {
+        blitter.create_bind_group_with_uniform_buffer(
+            &device,
+            &dim_scrim_view,
+            &dim_scrim_uniform_buffers[i],
+        )
+    });
 
     let splash_konami_bg = tex_loader
         .load_texture_for_quality(
@@ -722,6 +760,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         boot_logo_bgs,
         menu_uniform_buffer,
         title_bg_uniform_buffer,
+        dim_scrim_uniform_buffers,
+        dim_scrim_bind_groups,
+        dim_scrim_slot: 0,
         menu_text_texture,
         menu_text_bind_group,
         inventory_rasterizer,
@@ -832,6 +873,8 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         key_pan_down: false,
         window_focused: true,
         cursor_grabbed_for_camera: false,
+        last_cursor_visible: None,
+        native_cutaway_surface: None,
         last_menu_state_log: String::new(),
         last_menu_revision: u64::MAX,
         active_audio_device: target_audio_device,

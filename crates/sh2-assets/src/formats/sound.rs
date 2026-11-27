@@ -526,6 +526,88 @@ pub fn decode_afs_entry_to_wav(
     decode_afs_slice_to_wav(slice, entry_index as u32)
 }
 
+/// Reads the raw bytes of a single `AFS\0` archive entry (`entry_index`) from a seekable reader
+/// without loading the entire archive file (e.g. `voice.afs`) into memory.
+///
+/// Validates the 8-byte `AFS\0` header, TOC table bounds, entry index, and entry byte range
+/// against the stream length before seeking directly to the entry payload.
+pub fn read_afs_entry_from_reader<R: std::io::Read + std::io::Seek>(
+    reader: &mut R,
+    entry_index: usize,
+) -> Result<Vec<u8>, AssetError> {
+    use std::io::SeekFrom;
+
+    let file_len = reader.seek(SeekFrom::End(0))?;
+    if file_len < 8 {
+        return Err(AssetError::BufferUnderflow {
+            required: 8,
+            available: file_len as usize,
+        });
+    }
+
+    reader.seek(SeekFrom::Start(0))?;
+    let mut header = [0u8; 8];
+    reader.read_exact(&mut header)?;
+    if header[0..4] != AFS_MAGIC {
+        return Err(AssetError::InvalidMagic {
+            expected: &AFS_MAGIC,
+            found: header[0..4].to_vec(),
+        });
+    }
+
+    let count = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+    let table_bytes = (count as u64)
+        .checked_mul(8)
+        .and_then(|n| n.checked_add(8))
+        .ok_or_else(|| AssetError::InvalidData(format!("AFS entry count overflow ({count})")))?;
+    if table_bytes > file_len {
+        return Err(AssetError::BufferUnderflow {
+            required: usize::try_from(table_bytes).unwrap_or(usize::MAX),
+            available: usize::try_from(file_len).unwrap_or(usize::MAX),
+        });
+    }
+
+    if entry_index >= count {
+        return Err(AssetError::InvalidData(format!(
+            "AFS entry index {entry_index} out of bounds (count = {count})"
+        )));
+    }
+
+    let toc_offset = 8u64 + (entry_index as u64) * 8;
+    reader.seek(SeekFrom::Start(toc_offset))?;
+    let mut toc_entry = [0u8; 8];
+    reader.read_exact(&mut toc_entry)?;
+    let offset = u32::from_le_bytes([toc_entry[0], toc_entry[1], toc_entry[2], toc_entry[3]]);
+    let length = u32::from_le_bytes([toc_entry[4], toc_entry[5], toc_entry[6], toc_entry[7]]);
+
+    let end = (offset as u64).checked_add(length as u64).ok_or_else(|| {
+        AssetError::InvalidData(format!(
+            "AFS entry {entry_index} range overflow (offset={offset}, length={length})"
+        ))
+    })?;
+    if end > file_len {
+        return Err(AssetError::BufferUnderflow {
+            required: usize::try_from(end).unwrap_or(usize::MAX),
+            available: usize::try_from(file_len).unwrap_or(usize::MAX),
+        });
+    }
+
+    reader.seek(SeekFrom::Start(offset as u64))?;
+    let mut payload = vec![0u8; length as usize];
+    reader.read_exact(&mut payload)?;
+    Ok(payload)
+}
+
+/// Seeks to and decodes a single audio entry (`entry_index`) from an `AFS\0` archive reader
+/// (`voice.afs`) into a [`WavEntry`] without reading the full archive into memory.
+pub fn decode_afs_entry_from_reader<R: std::io::Read + std::io::Seek>(
+    reader: &mut R,
+    entry_index: usize,
+) -> Result<WavEntry, AssetError> {
+    let payload = read_afs_entry_from_reader(reader, entry_index)?;
+    decode_afs_slice_to_wav(&payload, entry_index as u32)
+}
+
 /// Decodes a raw slice extracted from an `AFS\0` entry (either `RIFF....WAVE` or CRI ADX `0x8000`) into a [`WavEntry`].
 pub fn decode_afs_slice_to_wav(slice: &[u8], id: u32) -> Result<WavEntry, AssetError> {
     if slice.len() >= 12 && slice[0..4] == RIFF_MAGIC && slice[8..12] == WAVE_MAGIC {

@@ -867,7 +867,7 @@ impl GrappleViewerState {
             scrub_start_frame: 0,
             scrub_window_len: 25,
             anm_source_override: None,
-            cached_source_clips: generate_clips_for_source(initial_src),
+            cached_source_clips: Vec::new(),
             wireframe_overlay: false,
             skeleton_overlay: false,
         };

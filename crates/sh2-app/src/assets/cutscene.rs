@@ -166,7 +166,8 @@ pub(crate) fn open_drama_demo_session(
     })
 }
 
-/// Decodes a cutscene voice track (`voice.afs` entry `afs_index`) from disk into a [`sh2_assets::WavEntry`].
+/// Decodes a cutscene voice track (`voice.afs` entry `afs_index`) from disk into a [`sh2_assets::WavEntry`]
+/// by parsing only the `AFS\0` header/TOC and seek-reading the single requested entry (`SH2-175`).
 pub(crate) fn load_cutscene_voice_wav(afs_index: usize) -> Option<sh2_assets::WavEntry> {
     let resolver = sh2_assets::AssetPathResolver::resolve();
     let base_roots = [
@@ -180,8 +181,8 @@ pub(crate) fn load_cutscene_voice_wav(afs_index: usize) -> Option<sh2_assets::Wa
     for base in &base_roots {
         for rel in &rel_candidates {
             let p = PathBuf::from(base).join(rel);
-            if let Ok(bytes) = std::fs::read(&p) {
-                if let Ok(wav) = sh2_assets::decode_afs_entry_to_wav(&bytes, afs_index) {
+            if let Ok(mut file) = std::fs::File::open(&p) {
+                if let Ok(wav) = sh2_assets::decode_afs_entry_from_reader(&mut file, afs_index) {
                     return Some(wav);
                 }
             }

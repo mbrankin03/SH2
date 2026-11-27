@@ -212,7 +212,7 @@ pub const FOG_SPEED_COURTYARD_MEDIUM: f32 = 0.50;
 ///   - `subdiv >= 1`: `y_span = (2.0 * area) / (1 << subdiv)` (`2000.0 mm` for `caGB.fcl` `subdiv = 1`,
 ///     `875.0 mm` for `obGB.fcl` `subdiv = 4`), `local_y ∈ [-y_span, 0.0]` (above anchor in PS2 Y-down)
 ///     with a `300.0 mm` upper fade (`local_y < 300.0 - y_span`).
-/// - `sh2pc.exe` `FUN_00488a00` (`0x00488a00`, `sh2pc_00480000.c:5678, 5684, 5701-5720`):
+/// - `sh2pc.exe` `FUN_004896e0` (`0x004896e0`, `sh2pc_00480000.c:5678, 5684, 5701-5720`):
 ///   - When `floor_y_mm` is `Some(floor_y)` (`FogEnv.flags & 0x08 != 0`, e.g. `caGB.fcl` `Env[0]`):
 ///     particles below the floor (`floor_y - world_y <= 0.0`) are culled (`alpha = 0.0`), and
 ///     particles within `particle_size_mm` above `floor_y` fade linearly `(floor_y - world_y) / particle_size_mm`.

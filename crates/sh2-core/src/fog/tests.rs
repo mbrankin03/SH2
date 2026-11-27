@@ -76,14 +76,14 @@ fn forest_trail_reduces_james_fog_influence_in_elevation_band() {
 }
 
 #[test]
-fn forest_trail_ca11_particle_y_sign_and_alpha_match_cagb_fcl_and_fun_00488a00() {
+fn forest_trail_ca11_particle_y_sign_and_alpha_match_cagb_fcl_and_fun_004896e0() {
     let floor_y = 0.0;
     let area = PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM; // 2000.0 mm
     let size = CA_FOG_ENV_PARTICLE_SIZE_MM; // 400.0 mm
     let alpha_scale = f32::from(CA_FOG_ENV_ALPHA_U8) / 255.0; // 16 / 255
 
     // At floor (`local_y_sym = -100` -> `norm_y = 0.0` -> `world_y = floor_y`):
-    // `height_above_floor = 0.0` -> culled (`alpha = 0.0`) per `FUN_00488a00` (`sh2pc_00480000.c:5678`).
+    // `height_above_floor = 0.0` -> culled (`alpha = 0.0`) per `FUN_004896e0` (`sh2pc_00480000.c:5678`).
     let (wy_floor, a_floor) = evaluate_ps2_particle_y_and_alpha(
         floor_y,
         -100.0,

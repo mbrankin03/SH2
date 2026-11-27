@@ -9,7 +9,7 @@
 //! - Retail `data/bg/ca/caGB.fcl` `FogEnv[0]` (`0x1100`): `count = 400`, `area = 2000 mm`,
 //!   `size = 400 mm`, `flags = 0x08` (floor-follow), `subdiv = 1` (`y_span = 2000 mm` above floor),
 //!   `alpha = 0x10` (`16 / 255`).
-//! - `sh2pc.exe` `FUN_00486d10` (`0x00486d10`) & `FUN_00488a00` (`0x00488a00`) vertical span,
+//! - `sh2pc.exe` `FUN_00486d10` (`0x00486d10`) & `FUN_004896e0` (`0x004896e0`) vertical span,
 //!   `300 mm` upper fade, and floor-proximity fade (`400 mm`) so James's legs and the dirt trail
 //!   floor are clearly visible with subtle light-grey mist (no dark waist-level fog slab).
 

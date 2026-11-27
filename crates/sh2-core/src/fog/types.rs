@@ -178,11 +178,11 @@ pub struct RoomFogEvaluation {
     /// Vertical subdivision shift from `.fcl` `FogEnv +0x12` (`sh2pc.exe` `FUN_00486d10` `0x00486d10`:
     /// `4` on `obGB.fcl`, `1` on `caGB.fcl`/`cbGB.fcl`/`ccGB.fcl`/`fog_defset_data`).
     pub particle_subdiv: u8,
-    /// Particle alpha byte from `.fcl` `FogEnv +0x13` (`sh2pc.exe` `FUN_00488a00` `0x00488a00`:
+    /// Particle alpha byte from `.fcl` `FogEnv +0x13` (`sh2pc.exe` `FUN_004896e0` `0x004896e0`:
     /// `0x30` = `48` on `obGB.fcl`, `0x10` = `16` on `caGB.fcl`/`cbGB.fcl`/`ccGB.fcl`/`fog_defset_data`).
     pub particle_alpha_u8: u8,
     /// Whether `.fcl` `FogEnv.flags (+0x11) & 0x08 != 0` updates `floor_y = player_pos.y` per frame
-    /// (`fogMakePacket` `0x0016bb70`, `Fog/fog.c:2338-2339`, `sh2pc.exe` `FUN_00488a00` `sh2pc_00480000.c:5603-5604`),
+    /// (`fogMakePacket` `0x0016bb70`, `Fog/fog.c:2338-2339`, `sh2pc.exe` `FUN_004896e0` `sh2pc_00480000.c:5603-5604`),
     /// culling particles below the floor and fading within `particle_size_mm` above it (`caGB.fcl` `Env[0]`).
     pub particle_floor_follow: bool,
     /// Particle tint RGB modulation (`fogSetColor(0x80, 0x80, 0x80, 0x80)` in `fogInit` `0x001687d0`

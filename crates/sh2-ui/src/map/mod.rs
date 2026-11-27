@@ -25,7 +25,9 @@ pub use position::{
     chizu_should_draw_player_arrow, stage_to_default_room_id, ChzCrtBlockEntry, CHZ_CRT_BLOCK,
     CHZ_CRT_BLOCK_COUNT,
 };
-pub use render::{draw_paper_map, PaperMapPlayerState, PaperMapTextures};
+pub use render::{
+    draw_paper_map, paper_map_render_fingerprint, PaperMapPlayerState, PaperMapTextures,
+};
 pub use tables::{
     chizu_can_read_map, chizu_connect_check, chizu_connect_neighbor, chizu_possession_check,
     chizu_world_to_sheet_norm, map_spec, MapDirection, MapReadCheck, MapSheetSpec,

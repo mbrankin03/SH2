@@ -48,8 +48,8 @@ impl OptionsMenu {
         self.active_tab == OptionsTab::Debug && self.selected_index == 3
     }
 
-    /// Retrieve the title and string value of an item in the active tab.
-    pub fn item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    /// Retrieve the title and string value of an item in the active tab (`Cow::Borrowed` for static labels).
+    pub fn item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         match self.active_tab {
             OptionsTab::Root => self.root_item_display(index),
             OptionsTab::Video => self.video_item_display(index),
@@ -59,7 +59,7 @@ impl OptionsMenu {
             OptionsTab::Enhanced => self.enhanced_item_display(index),
             OptionsTab::Mods => {
                 if self.mods.is_empty() && index == 0 {
-                    Some(("Installed Mods", "None (Drop into mods/)".into()))
+                    Some(("Installed Mods", Cow::Borrowed("None (Drop into mods/)")))
                 } else {
                     None
                 }
@@ -69,13 +69,13 @@ impl OptionsMenu {
     }
 
     /// Retrieve the title (supporting dynamic mod names) and string value of an item in the active tab.
-    pub fn item_display_cow(&self, index: usize) -> Option<(Cow<'static, str>, String)> {
+    pub fn item_display_cow(&self, index: usize) -> Option<(Cow<'static, str>, Cow<'static, str>)> {
         if self.active_tab == OptionsTab::Mods && !self.mods.is_empty() {
             return self.mods.get(index).map(|m| {
                 let state = if m.enabled { "ENABLED" } else { "DISABLED" };
                 (
                     Cow::Owned(m.name.clone()),
-                    format!("{state}  Load #{}", index + 1),
+                    Cow::Owned(format!("{state}  Load #{}", index + 1)),
                 )
             });
         }
@@ -107,491 +107,504 @@ impl OptionsMenu {
     }
 
     /// 1:1 10-row SH2/SH2:EE root `O P T I O N S` layout (`Item/otn_option.c`).
-    fn root_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn root_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let g = &self.draft_config.game;
         let c = &self.draft_config.controls;
         let a = &self.draft_config.audio;
         match index {
-            0 => Some(("Game Options", String::new())),
-            1 => Some(("Advanced Options", String::new())),
-            2 => Some(("Audio Options", String::new())),
-            3 => Some(("Control Options", String::new())),
+            0 => Some(("Game Options", Cow::Borrowed(""))),
+            1 => Some(("Advanced Options", Cow::Borrowed(""))),
+            2 => Some(("Audio Options", Cow::Borrowed(""))),
+            3 => Some(("Control Options", Cow::Borrowed(""))),
             4 => Some((
                 "Control Type",
-                if c.tank_controls {
-                    "Rotational (3D)".into()
+                Cow::Borrowed(if c.tank_controls {
+                    "Rotational (3D)"
                 } else {
-                    "Directional (2D)".into()
-                },
+                    "Directional (2D)"
+                }),
             )),
             5 => Some((
                 "Vibration",
-                if c.vibration_intensity >= 0.85 {
-                    "Hard".into()
+                Cow::Borrowed(if c.vibration_intensity >= 0.85 {
+                    "Hard"
                 } else if c.vibration_intensity >= 0.45 {
-                    "Normal".into()
+                    "Normal"
                 } else if c.vibration_intensity > 0.05 {
-                    "Soft".into()
+                    "Soft"
                 } else {
-                    "Off".into()
-                },
+                    "Off"
+                }),
             )),
-            6 => Some(("Language", g.language.label().to_string())),
+            6 => Some(("Language", Cow::Borrowed(g.language.label()))),
             7 => Some((
                 "Subtitles",
-                if g.subtitles {
-                    "On".into()
-                } else {
-                    "Off".into()
-                },
+                Cow::Borrowed(if g.subtitles { "On" } else { "Off" }),
             )),
             8 => Some((
                 "Master Volume",
-                format!("{}%", (a.master_volume * 100.0).round() as i32),
+                Cow::Owned(format!("{}%", (a.master_volume * 100.0).round() as i32)),
             )),
             9 => Some((
                 "BGM Volume",
-                format!("{}%", (a.bgm_volume * 100.0).round() as i32),
+                Cow::Owned(format!("{}%", (a.bgm_volume * 100.0).round() as i32)),
             )),
             10 => Some((
                 "SFX Volume",
-                format!("{}%", (a.sfx_volume * 100.0).round() as i32),
+                Cow::Owned(format!("{}%", (a.sfx_volume * 100.0).round() as i32)),
             )),
             _ => None,
         }
     }
 
-    fn video_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn video_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let v = &self.draft_config.video;
         match index {
-            0 => Some(("Resolution", v.resolution.label().to_string())),
-            1 => Some(("Display Mode", v.display_mode.label().to_string())),
+            0 => Some(("Resolution", Cow::Borrowed(v.resolution.label()))),
+            1 => Some(("Display Mode", Cow::Borrowed(v.display_mode.label()))),
             2 => Some((
                 "V-Sync",
-                if v.vsync {
-                    "Enabled".into()
-                } else {
-                    "Disabled".into()
-                },
+                Cow::Borrowed(if v.vsync { "Enabled" } else { "Disabled" }),
             )),
-            3 => Some(("Frame Rate Cap", v.framerate_cap.label().to_string())),
-            4 => Some(("Fog Quality", v.fog_quality.label().to_string())),
-            5 => Some(("Film Grain / Noise", format!("{}%", v.grain_intensity))),
+            3 => Some(("Frame Rate Cap", Cow::Borrowed(v.framerate_cap.label()))),
+            4 => Some(("Fog Quality", Cow::Borrowed(v.fog_quality.label()))),
+            5 => Some((
+                "Film Grain / Noise",
+                Cow::Owned(format!("{}%", v.grain_intensity)),
+            )),
             6 => Some((
                 "Volumetric Lighting",
-                if v.volumetric_light {
-                    "ON".into()
-                } else {
-                    "OFF".into()
-                },
+                Cow::Borrowed(if v.volumetric_light { "ON" } else { "OFF" }),
             )),
             7 => Some((
                 "Lens Flare",
-                if v.lens_flare {
-                    "ON".into()
-                } else {
-                    "OFF".into()
-                },
+                Cow::Borrowed(if v.lens_flare { "ON" } else { "OFF" }),
             )),
             8 => Some((
                 "Depth of Field",
-                if v.depth_of_field {
-                    "ON".into()
-                } else {
-                    "OFF".into()
-                },
+                Cow::Borrowed(if v.depth_of_field { "ON" } else { "OFF" }),
             )),
             9 => Some((
                 "World & Character Textures",
-                v.texture_quality.label().to_string(),
+                Cow::Borrowed(v.texture_quality.label()),
             )),
             10 => Some((
                 "FMV Cutscene Viewer",
-                "[Press Enter / Right to Launch]".into(),
+                Cow::Borrowed("[Press Enter / Right to Launch]"),
             )),
             11 => Some((
                 "Brightness Calibration",
-                format!("Level {} (0..7)", self.draft_config.game.brightness_level),
+                Cow::Owned(format!(
+                    "Level {} (0..7)",
+                    self.draft_config.game.brightness_level
+                )),
             )),
             12 => Some((
                 "ACES Tonemapping",
-                if v.aces_tonemapping {
-                    "ON (Filmic HDR)".into()
+                Cow::Borrowed(if v.aces_tonemapping {
+                    "ON (Filmic HDR)"
                 } else {
-                    "OFF (PS2 Linear)".into()
-                },
+                    "OFF (PS2 Linear)"
+                }),
             )),
             13 => Some((
                 "Water Reflections",
-                if v.enable_water_reflections {
-                    "ON (Planar)".into()
+                Cow::Borrowed(if v.enable_water_reflections {
+                    "ON (Planar)"
                 } else {
-                    "OFF (PS2 1:1)".into()
-                },
+                    "OFF (PS2 1:1)"
+                }),
             )),
             14 => Some((
                 "Oar Water Ripples",
-                if v.enable_oar_ripples {
-                    "ON (Native)".into()
+                Cow::Borrowed(if v.enable_oar_ripples {
+                    "ON (Native)"
                 } else {
-                    "OFF (PS2 1:1)".into()
-                },
+                    "OFF (PS2 1:1)"
+                }),
             )),
-            15 => Some(("Enhanced Options", String::new())),
+            15 => Some(("Enhanced Options", Cow::Borrowed(""))),
             16 => Some((
                 "Title Screen Style",
-                if v.enable_enhanced_title_screen {
-                    "Enhanced Edition".into()
+                Cow::Borrowed(if v.enable_enhanced_title_screen {
+                    "Enhanced Edition"
                 } else {
-                    "Original (SILENT HILL 2)".into()
-                },
+                    "Original (SILENT HILL 2)"
+                }),
             )),
-            17 => Some(("Mod Manager", String::new())),
+            17 => Some(("Mod Manager", Cow::Borrowed(""))),
             18 => Some((
                 "Cutaway & Puzzle Quality",
-                v.cutaway_quality.label().to_string(),
+                Cow::Borrowed(v.cutaway_quality.label()),
             )),
             19 => Some((
                 "Cutaway Aspect Scaling",
-                v.cutaway_aspect_mode.label().to_string(),
+                Cow::Borrowed(v.cutaway_aspect_mode.label()),
             )),
-            20 => Some(("FMV Cutscene Source", v.fmv_source.label().to_string())),
+            20 => Some(("FMV Cutscene Source", Cow::Borrowed(v.fmv_source.label()))),
             _ => None,
         }
     }
 
-    fn audio_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn audio_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let a = &self.draft_config.audio;
         match index {
-            0 => Some(("Master Volume", format!("{:.0}%", a.master_volume * 100.0))),
-            1 => Some(("BGM Volume", format!("{:.0}%", a.bgm_volume * 100.0))),
-            2 => Some(("SFX Volume", format!("{:.0}%", a.sfx_volume * 100.0))),
+            0 => Some((
+                "Master Volume",
+                Cow::Owned(format!("{:.0}%", a.master_volume * 100.0)),
+            )),
+            1 => Some((
+                "BGM Volume",
+                Cow::Owned(format!("{:.0}%", a.bgm_volume * 100.0)),
+            )),
+            2 => Some((
+                "SFX Volume",
+                Cow::Owned(format!("{:.0}%", a.sfx_volume * 100.0)),
+            )),
             3 => Some((
                 "Dialogue Volume",
-                format!("{:.0}%", a.dialogue_volume * 100.0),
+                Cow::Owned(format!("{:.0}%", a.dialogue_volume * 100.0)),
             )),
             4 => Some((
                 "Output Device",
-                a.selected_output_device
-                    .clone()
-                    .unwrap_or_else(|| "Default (System)".into()),
+                match a.selected_output_device.as_ref() {
+                    Some(dev) => Cow::Owned(dev.clone()),
+                    None => Cow::Borrowed("Default (System)"),
+                },
             )),
-            5 => Some(("Speaker Config", a.speaker_config.label().to_string())),
-            6 => Some(("3D Spatial Audio", a.spatial_audio_mode.label().to_string())),
+            5 => Some(("Speaker Config", Cow::Borrowed(a.speaker_config.label()))),
+            6 => Some((
+                "3D Spatial Audio",
+                Cow::Borrowed(a.spatial_audio_mode.label()),
+            )),
             7 => Some((
                 "Wall Occlusion",
-                if a.enable_acoustic_occlusion {
-                    "ON (.cld Raycast)".into()
+                Cow::Borrowed(if a.enable_acoustic_occlusion {
+                    "ON (.cld Raycast)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             8 => Some((
                 "Mute in Background",
-                if a.mute_in_background {
-                    "YES".into()
-                } else {
-                    "NO".into()
-                },
+                Cow::Borrowed(if a.mute_in_background { "YES" } else { "NO" }),
             )),
             9 => Some((
                 "Restored Cut Audio",
-                if a.enable_restored_cut_audio {
-                    "ON (Restored)".into()
+                Cow::Borrowed(if a.enable_restored_cut_audio {
+                    "ON (Restored)"
                 } else {
-                    "OFF (Vanilla)".into()
-                },
+                    "OFF (Vanilla)"
+                }),
             )),
             10 => Some((
                 "Dynamic Room Acoustics",
-                if a.enable_dynamic_room_acoustics {
-                    "ON (.cam Reverb)".into()
+                Cow::Borrowed(if a.enable_dynamic_room_acoustics {
+                    "ON (.cam Reverb)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             11 if self.audio_pack_status.both_detected() => {
-                Some(("Audio Pack", a.audio_pack_source.label().to_string()))
+                Some(("Audio Pack", Cow::Borrowed(a.audio_pack_source.label())))
             }
             _ => None,
         }
     }
 
-    fn controls_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn controls_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let c = &self.draft_config.controls;
         match index {
             0 => Some((
                 "Movement Style",
-                if c.tank_controls {
-                    "3D Tank (Authentic)".into()
+                Cow::Borrowed(if c.tank_controls {
+                    "3D Tank (Authentic)"
                 } else {
-                    "2D Directional (Modern)".into()
-                },
+                    "2D Directional (Modern)"
+                }),
             )),
-            1 => Some(("Button Prompt Glyphs", c.glyph_style.label().to_string())),
+            1 => Some(("Button Prompt Glyphs", Cow::Borrowed(c.glyph_style.label()))),
             2 => Some((
                 "Stick Deadzone",
-                format!("{:.0}%", c.stick_deadzone * 100.0),
+                Cow::Owned(format!("{:.0}%", c.stick_deadzone * 100.0)),
             )),
-            3 => Some(("Stick Sensitivity", format!("{:.1}x", c.stick_sensitivity))),
+            3 => Some((
+                "Stick Sensitivity",
+                Cow::Owned(format!("{:.1}x", c.stick_sensitivity)),
+            )),
             4 => Some((
                 "Vibration Intensity",
-                format!("{:.0}%", c.vibration_intensity * 100.0),
+                Cow::Owned(format!("{:.0}%", c.vibration_intensity * 100.0)),
             )),
-            5 => Some(("Camera Mode", c.default_camera_mode.label().to_string())),
-            6 => Some(("R3 Camera Cycle", c.camera_cycle_preset.label().to_string())),
-            7 => Some(("OTS Shoulder", c.ots_shoulder.label().to_string())),
-            8 => Some(("Aiming Reticle", c.ots_reticle.label().to_string())),
+            5 => Some(("Camera Mode", Cow::Borrowed(c.default_camera_mode.label()))),
+            6 => Some((
+                "R3 Camera Cycle",
+                Cow::Borrowed(c.camera_cycle_preset.label()),
+            )),
+            7 => Some(("OTS Shoulder", Cow::Borrowed(c.ots_shoulder.label()))),
+            8 => Some(("Aiming Reticle", Cow::Borrowed(c.ots_reticle.label()))),
             9 => Some((
                 "First-Person FOV",
-                format!("{} deg", c.first_person_fov_deg),
+                Cow::Owned(format!("{} deg", c.first_person_fov_deg)),
             )),
             10 => Some((
                 "First-Person Sway",
-                if c.first_person_head_bob {
-                    "Subtle Sway".into()
+                Cow::Borrowed(if c.first_person_head_bob {
+                    "Subtle Sway"
                 } else {
-                    "Disabled".into()
-                },
+                    "Disabled"
+                }),
             )),
             11 => Some((
                 "Controller Config (PS2)",
-                format!("{} [Right/Enter]", c.ps2_bindings.preset.label()),
+                Cow::Owned(format!("{} [Right/Enter]", c.ps2_bindings.preset.label())),
             )),
-            12 => Some(("Combat Input Mode", c.combat_input_mode.label().to_string())),
+            12 => Some((
+                "Combat Input Mode",
+                Cow::Borrowed(c.combat_input_mode.label()),
+            )),
             13 => Some((
                 "R2 Heavy Threshold",
-                format!("{:.0}%", c.r2_heavy_pressure_threshold * 100.0),
+                Cow::Owned(format!("{:.0}%", c.r2_heavy_pressure_threshold * 100.0)),
             )),
             14 => Some((
                 "Analog Trigger Rowing",
-                if c.enable_analog_trigger_rowing {
-                    "ON (L2/R2)".into()
+                Cow::Borrowed(if c.enable_analog_trigger_rowing {
+                    "ON (L2/R2)"
                 } else {
-                    "OFF (PS2 Sticks)".into()
-                },
+                    "OFF (PS2 Sticks)"
+                }),
             )),
             15 => Some((
                 "Widescreen Rail Clearance",
-                c.widescreen_rail_clearance.label().to_string(),
+                Cow::Borrowed(c.widescreen_rail_clearance.label()),
             )),
             16 => Some((
                 "Intra-Room Camera Cuts",
-                c.intra_room_warp_policy.label().to_string(),
+                Cow::Borrowed(c.intra_room_warp_policy.label()),
             )),
             _ => None,
         }
     }
 
-    fn game_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn game_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let g = &self.draft_config.game;
         match index {
-            0 => Some(("Action Difficulty", g.action_difficulty.label().to_string())),
-            1 => Some(("Riddle Difficulty", g.riddle_difficulty.label().to_string())),
+            0 => Some((
+                "Action Difficulty",
+                Cow::Borrowed(g.action_difficulty.label()),
+            )),
+            1 => Some((
+                "Riddle Difficulty",
+                Cow::Borrowed(g.riddle_difficulty.label()),
+            )),
             2 => Some((
                 "Subtitles",
-                if g.subtitles {
-                    "ON".into()
-                } else {
-                    "OFF".into()
-                },
+                Cow::Borrowed(if g.subtitles { "ON" } else { "OFF" }),
             )),
-            3 => Some(("Language", g.language.label().to_string())),
-            4 => Some(("Bullet Multiplier", g.bullet_multiplier.label().to_string())),
+            3 => Some(("Language", Cow::Borrowed(g.language.label()))),
+            4 => Some((
+                "Bullet Multiplier",
+                Cow::Borrowed(g.bullet_multiplier.label()),
+            )),
             5 => Some((
                 "Save Anywhere",
-                if g.save_anywhere {
-                    "ENABLED (PC)".into()
+                Cow::Borrowed(if g.save_anywhere {
+                    "ENABLED (PC)"
                 } else {
-                    "DISABLED (PS2)".into()
-                },
+                    "DISABLED (PS2)"
+                }),
             )),
             6 => Some((
                 "Delayed Fade-In (SH2:EE)",
-                if g.enable_delayed_fade_in {
-                    "ON (SH2:EE)".into()
+                Cow::Borrowed(if g.enable_delayed_fade_in {
+                    "ON (SH2:EE)"
                 } else {
-                    "OFF (PS2 1:1)".into()
-                },
+                    "OFF (PS2 1:1)"
+                }),
             )),
-            7 => Some(("Test Rooms", "[Press Enter to Select]".into())),
+            7 => Some(("Test Rooms", Cow::Borrowed("[Press Enter to Select]"))),
             8 => Some((
                 "Auto Load",
-                if g.auto_load {
-                    "ON".into()
-                } else {
-                    "OFF".into()
-                },
+                Cow::Borrowed(if g.auto_load { "ON" } else { "OFF" }),
             )),
-            9 => Some(("Blood Color", g.blood_color.label().to_string())),
-            10 => Some(("View Control", g.view_control.label().to_string())),
-            11 => Some(("Retreat Turn", g.retreat_turn.label().to_string())),
-            12 => Some(("Walk/Run Control", g.walk_run_control.label().to_string())),
+            9 => Some(("Blood Color", Cow::Borrowed(g.blood_color.label()))),
+            10 => Some(("View Control", Cow::Borrowed(g.view_control.label()))),
+            11 => Some(("Retreat Turn", Cow::Borrowed(g.retreat_turn.label()))),
+            12 => Some((
+                "Walk/Run Control",
+                Cow::Borrowed(g.walk_run_control.label()),
+            )),
             _ => None,
         }
     }
 
-    fn enhanced_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn enhanced_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let v = &self.draft_config.video;
         let a = &self.draft_config.audio;
         let c = &self.draft_config.controls;
         match index {
             0 => Some((
                 "Version Preset",
-                self.draft_config
-                    .detect_enhanced_preset()
-                    .label()
-                    .to_string(),
+                Cow::Borrowed(self.draft_config.detect_enhanced_preset().label()),
             )),
-            1 => Some(("Textures", v.texture_quality.label().to_string())),
-            2 => Some(("Fog Engine", v.fog_quality.label().to_string())),
+            1 => Some(("Textures", Cow::Borrowed(v.texture_quality.label()))),
+            2 => Some(("Fog Engine", Cow::Borrowed(v.fog_quality.label()))),
             3 => Some((
                 "Volumetric Lighting",
-                if v.volumetric_light {
-                    "ON".into()
-                } else {
-                    "OFF".into()
-                },
+                Cow::Borrowed(if v.volumetric_light { "ON" } else { "OFF" }),
             )),
-            4 => Some(("Shadow Mode", v.shadow_quality.label().to_string())),
-            5 => Some(("Lighting Profile", v.lighting_profile.label().to_string())),
-            6 => Some(("3D Spatial Audio", a.spatial_audio_mode.label().to_string())),
+            4 => Some(("Shadow Mode", Cow::Borrowed(v.shadow_quality.label()))),
+            5 => Some((
+                "Lighting Profile",
+                Cow::Borrowed(v.lighting_profile.label()),
+            )),
+            6 => Some((
+                "3D Spatial Audio",
+                Cow::Borrowed(a.spatial_audio_mode.label()),
+            )),
             7 => Some((
                 "Wall Occlusion",
-                if a.enable_acoustic_occlusion {
-                    "ON (.cld Raycast)".into()
+                Cow::Borrowed(if a.enable_acoustic_occlusion {
+                    "ON (.cld Raycast)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             8 => Some((
                 "Restored Cut Audio",
-                if a.enable_restored_cut_audio {
-                    "ON (Restored)".into()
+                Cow::Borrowed(if a.enable_restored_cut_audio {
+                    "ON (Restored)"
                 } else {
-                    "OFF (Vanilla)".into()
-                },
+                    "OFF (Vanilla)"
+                }),
             )),
-            9 => Some(("Camera Mode", c.default_camera_mode.label().to_string())),
+            9 => Some(("Camera Mode", Cow::Borrowed(c.default_camera_mode.label()))),
             10 => Some((
                 "Secondary Cloth Physics",
-                if self.draft_config.game.enable_secondary_physics {
-                    "ON (Native)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_secondary_physics {
+                    "ON (Native)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             11 => Some((
                 "ACES Tonemapping",
-                if v.aces_tonemapping {
-                    "ON (Filmic HDR)".into()
+                Cow::Borrowed(if v.aces_tonemapping {
+                    "ON (Filmic HDR)"
                 } else {
-                    "OFF (PS2 Linear)".into()
-                },
+                    "OFF (PS2 Linear)"
+                }),
             )),
             12 => Some((
                 "Dynamic Room Acoustics",
-                if a.enable_dynamic_room_acoustics {
-                    "ON (.cam Reverb)".into()
+                Cow::Borrowed(if a.enable_dynamic_room_acoustics {
+                    "ON (.cam Reverb)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             13 => Some((
                 "Unlimited Save Slots",
-                if self.draft_config.game.enable_unlimited_save_slots {
-                    "ON (Native + Export)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_unlimited_save_slots {
+                    "ON (Native + Export)"
                 } else {
-                    "OFF (PS2 2x15)".into()
-                },
+                    "OFF (PS2 2x15)"
+                }),
             )),
             14 => Some((
                 "Quicksave & Autosave",
-                if self.draft_config.game.enable_quicksave_autosave {
-                    "ON (Native)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_quicksave_autosave {
+                    "ON (Native)"
                 } else {
-                    "OFF (Manual Only)".into()
-                },
+                    "OFF (Manual Only)"
+                }),
             )),
             15 => Some((
                 "Save Thumbnails",
-                if self.draft_config.game.enable_save_thumbnails {
-                    "ON (3D + Tracker)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_save_thumbnails {
+                    "ON (3D + Tracker)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             16 => Some((
                 "Free 3D Item Orbit",
-                if self.draft_config.game.enable_free_item_orbit {
-                    "ON (Orbit + Zoom)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_free_item_orbit {
+                    "ON (Orbit + Zoom)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             17 => Some((
                 "Cutscene Unequip",
-                if self.draft_config.game.enable_cutscene_unequip {
-                    "ON (Hide Weapon)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_cutscene_unequip {
+                    "ON (Hide Weapon)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             18 => Some((
                 "Foot IK (Stairs)",
-                if self.draft_config.game.enable_foot_ik {
-                    "ON (Native)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_foot_ik {
+                    "ON (Native)"
                 } else {
-                    "OFF (Original PS2)".into()
-                },
+                    "OFF (Original PS2)"
+                }),
             )),
             19 => Some((
                 "Persistent Blood Decals",
-                if self.draft_config.game.enable_persistent_blood_decals {
-                    "ON (Coagulate)".into()
+                Cow::Borrowed(if self.draft_config.game.enable_persistent_blood_decals {
+                    "ON (Coagulate)"
                 } else {
-                    "OFF (PS2 Clear)".into()
-                },
+                    "OFF (PS2 Clear)"
+                }),
             )),
             20 if self.audio_pack_status.both_detected() => {
-                Some(("Audio Pack", a.audio_pack_source.label().to_string()))
+                Some(("Audio Pack", Cow::Borrowed(a.audio_pack_source.label())))
             }
             _ => None,
         }
     }
 
-    fn debug_item_display(&self, index: usize) -> Option<(&'static str, String)> {
+    fn debug_item_display(&self, index: usize) -> Option<(&'static str, Cow<'static, str>)> {
         let d = &self.draft_config.debug;
         match index {
             0 => Some((
                 "Instant Room Cuts",
-                if d.instant_room_transitions {
-                    "ON (Fast / Skip)".into()
+                Cow::Borrowed(if d.instant_room_transitions {
+                    "ON (Fast / Skip)"
                 } else {
-                    "OFF (Authentic)".into()
-                },
+                    "OFF (Authentic)"
+                }),
             )),
             1 => Some((
                 "Min Loading Display",
-                format!("{} seconds", d.min_loading_screen_seconds),
+                Cow::Owned(format!("{} seconds", d.min_loading_screen_seconds)),
             )),
             2 => Some((
                 "Prompt To Continue",
-                if d.require_press_to_continue {
-                    "ENABLED (Press Key)".into()
+                Cow::Borrowed(if d.require_press_to_continue {
+                    "ENABLED (Press Key)"
                 } else {
-                    "AUTO (Fade In)".into()
-                },
+                    "AUTO (Fade In)"
+                }),
             )),
-            3 => Some(("Loading Screen Preview", "[Press Enter to Test]".into())),
-            4 => Some(("Test Rooms Launcher", "[Press Enter to Open]".into())),
+            3 => Some((
+                "Loading Screen Preview",
+                Cow::Borrowed("[Press Enter to Test]"),
+            )),
+            4 => Some((
+                "Test Rooms Launcher",
+                Cow::Borrowed("[Press Enter to Open]"),
+            )),
             5 => Some((
                 "Collision Wireframe",
-                if d.show_collision_wireframe {
-                    "VISIBLE".into()
+                Cow::Borrowed(if d.show_collision_wireframe {
+                    "VISIBLE"
                 } else {
-                    "HIDDEN".into()
-                },
+                    "HIDDEN"
+                }),
             )),
             _ => None,
         }

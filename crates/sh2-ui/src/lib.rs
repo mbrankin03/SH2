@@ -3,6 +3,7 @@
 pub mod atlas_font;
 pub mod button_atlas;
 pub mod credits;
+pub mod fingerprint;
 pub mod font;
 pub mod gameover;
 pub mod inventory;
@@ -25,12 +26,13 @@ pub use credits::{
     END_DOG_BIK_DURATION_SECS, END_WISH_BIK_DURATION_SECS, IN_WATER_BEDSIDE_DURATION_SECS,
     IN_WATER_CLOSING_SCROLL_DURATION_SECS, WATER_BIK_DURATION_SECS,
 };
+pub use fingerprint::UiFingerprintHasher;
 pub use font::TextRasterizer;
 pub use gameover::{draw_gameover_screen, GameOverPhase, GameOverScreen, GAMEOVER_TEX_PATH};
 pub use inventory::{
-    draw_inventory_screen, CornerButton, HealthEcgState, HealthStatus, InventoryAction,
-    InventoryFocus, InventoryPlayerSnapshot, InventoryScreen, ItemCommand, RedCrossIconState,
-    RED_CROSS_ICON_PATH,
+    draw_inventory_screen, inventory_render_fingerprint, CornerButton, HealthEcgState,
+    HealthStatus, InventoryAction, InventoryFocus, InventoryPlayerSnapshot, InventoryScreen,
+    ItemCommand, RedCrossIconState, RED_CROSS_ICON_PATH,
 };
 pub use loading::{
     FootstepPrint, FootstepSprite, LoadingPathPattern, LoadingScreen, LoadingScreenMode,
@@ -38,15 +40,16 @@ pub use loading::{
 pub use map::{
     active_markers_for_map, chizu_can_read_map, chizu_connect_check, chizu_connect_neighbor,
     chizu_current_position_check, chizu_marker_layers, chizu_possession_check, chizu_select,
-    chizu_world_to_sheet_norm, draw_paper_map, map_spec, stage_to_default_room_id,
-    ChizuDecodedMarker, ChizuPackedMarker, MapCanvasClipper, MapDescriptor, MapDirection,
-    MapPlayerMarker, MapReadCheck, MapSheetSpec, MapTranscriptionPhase, MapZoomStep,
-    PaperMapAction, PaperMapPlayerState, PaperMapTextures, PaperMapViewer, CHIZU_CURSOR_TEX_PATH,
-    CHIZU_PAPER_SE_ID,
+    chizu_world_to_sheet_norm, draw_paper_map, map_spec, paper_map_render_fingerprint,
+    stage_to_default_room_id, ChizuDecodedMarker, ChizuPackedMarker, MapCanvasClipper,
+    MapDescriptor, MapDirection, MapPlayerMarker, MapReadCheck, MapSheetSpec,
+    MapTranscriptionPhase, MapZoomStep, PaperMapAction, PaperMapPlayerState, PaperMapTextures,
+    PaperMapViewer, CHIZU_CURSOR_TEX_PATH, CHIZU_PAPER_SE_ID,
 };
 pub use memo::{
-    collected_memos, draw_memo_reader, memo_command_check, resolve_memo_textures, MemoAction,
-    MemoDisplayMode, MemoEntry, MemoPhase, MemoReader, MemoRenderContext, MemoRenderTextures,
+    collected_memos, draw_memo_reader, memo_command_check, memo_render_fingerprint,
+    resolve_memo_textures, MemoAction, MemoDisplayMode, MemoEntry, MemoPhase, MemoReader,
+    MemoRenderContext, MemoRenderTextures,
 };
 pub use menu::{
     draw_difficulty_selection, draw_scenario_selection, draw_test_rooms_screen, draw_title_screen,
@@ -60,10 +63,14 @@ pub use mes::{
     YES_NO_YES_CENTER_X,
 };
 pub use options::{
-    draw_options_screen, ModUiEntry, OptionsMenu, OptionsSoundCue, OptionsSubScreen, OptionsTab,
+    draw_options_screen, options_render_fingerprint, ModUiEntry, OptionsMenu, OptionsSoundCue,
+    OptionsSubScreen, OptionsTab,
 };
-pub use pause::{draw_pause_screen, PauseAction, PauseMenu, PauseMenuOption, PauseSubPhase};
-pub use results::{draw_results_screen, ResultsRowData, ResultsScreen};
+pub use pause::{
+    draw_pause_screen, pause_render_fingerprint, PauseAction, PauseMenu, PauseMenuOption,
+    PauseSubPhase,
+};
+pub use results::{draw_results_screen, results_render_fingerprint, ResultsRowData, ResultsScreen};
 pub use save_load::{
     draw_save_load_screen, SaveAddInfoMode, SaveLoadAction, SaveLoadConfig, SaveLoadMode,
     SaveLoadScreen, SaveLoadStep, YesNoChoice, SAVEBG2_TBN2_PATH, SAVEBG_TBN2_PATH,

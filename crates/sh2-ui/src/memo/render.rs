@@ -12,7 +12,10 @@
 //!   - Synchronized brightness `(dim_alpha * 64.0) as u8 + 0x40` (`0x80 -> 0x40`) across both
 //!     `MemoPictureBaseDraw` and `MemoPictureLayerDraw`.
 
+use std::borrow::Cow;
+
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::fingerprint::UiFingerprintHasher;
 use crate::font::TextRasterizer;
 use crate::map::MapCanvasClipper;
 use crate::memo::overlays::{apply_memo_dynamic_codes, build_memo_layer_quads, MemoLayerQuad};
@@ -51,6 +54,44 @@ pub struct MemoRenderContext<'a> {
     pub riddle: RiddleDifficulty,
 }
 
+/// Computes a deterministic 64-bit state fingerprint for [`draw_memo_reader`] (`SH2-177`).
+#[must_use]
+pub fn memo_render_fingerprint(
+    reader: &MemoReader,
+    has_mes_table: bool,
+    textures: MemoRenderTextures<'_>,
+    ctx: Option<MemoRenderContext<'_>>,
+    viewport: (usize, usize),
+) -> u64 {
+    let mut h = UiFingerprintHasher::with_tag(0x4D45_4D4F_5244_5231);
+    h.write_usize(viewport.0);
+    h.write_usize(viewport.1);
+    h.write_bool(reader.is_open);
+    h.write_u8(reader.phase as u8);
+    h.write_usize(reader.selected_index);
+    h.write_i32(reader.disp_point);
+    h.write_usize(reader.current_page);
+    h.write_f32(reader.dim_alpha);
+    h.write_f32(reader.screen_fade_alpha);
+    h.write_usize(reader.entries.len());
+    for entry in &reader.entries {
+        h.write_usize(entry.index);
+    }
+    h.write_bool(has_mes_table);
+    h.write_opt_texture(textures.backdrop_rgba);
+    h.write_opt_texture(textures.layer_rgba);
+    match ctx {
+        Some(c) => {
+            h.write_u8(1);
+            h.write_bytes(c.flags.as_bytes());
+            h.write_bytes(c.puzzle.raw());
+            h.write_u8(c.riddle as u8);
+        }
+        None => h.write_u8(0),
+    }
+    h.finish()
+}
+
 /// Renders the 1:1 PS2 / SH2:EE Memo List or Multi-Page Memo Reader onto `rasterizer`.
 pub fn draw_memo_reader(
     reader: &MemoReader,
@@ -81,15 +122,14 @@ pub fn draw_memo_reader(
 
     // 3. MemoPictureBaseDraw(brightness_ps2)
     if let Some((rgba, bw, bh)) = textures.backdrop_rgba {
-        let tris = [
-            (cl, ct, 0.0, 0.0),
-            (cl + cw, ct, 1.0, 0.0),
-            (cl + cw, ct + ch, 1.0, 1.0),
-            (cl, ct, 0.0, 0.0),
-            (cl + cw, ct + ch, 1.0, 1.0),
-            (cl, ct + ch, 0.0, 1.0),
-        ];
-        rasterizer.blit_overlay_triangles(&tris, rgba, bw, bh, brightness_mul);
+        rasterizer.blit_rgba_subrect_scaled(
+            (cl, ct, cl + cw, ct + ch),
+            (0.0, 0.0, 1.0, 1.0),
+            rgba,
+            bw,
+            bh,
+            brightness_mul,
+        );
     }
 
     let scale_x = cw / PS2_MEMO_GRID_SIZE;
@@ -155,13 +195,18 @@ pub fn draw_memo_reader(
                 let pages = MemoReader::entry_pages(entry, mes_table);
                 let page_idx = reader.current_page.min(pages.len().saturating_sub(1));
                 let raw_text = &pages[page_idx];
-                let page_text = if let Some(c) = ctx {
-                    apply_memo_dynamic_codes(entry.index, raw_text, c.puzzle, c.riddle)
+                let page_text: Cow<'_, str> = if let Some(c) = ctx {
+                    Cow::Owned(apply_memo_dynamic_codes(
+                        entry.index,
+                        raw_text,
+                        c.puzzle,
+                        c.riddle,
+                    ))
                 } else {
-                    raw_text.clone()
+                    Cow::Borrowed(raw_text.as_str())
                 };
                 draw_memo_text_page(
-                    &page_text,
+                    page_text.as_ref(),
                     cl,
                     ct,
                     cw,
@@ -268,15 +313,32 @@ fn draw_layer_quad(
     let v0 = quad.uv_px[1] / nat_h;
     let u1 = quad.uv_px[2] / nat_w;
     let v1 = quad.uv_px[3] / nat_h;
-    let tris = [
-        (v[0].0, v[0].1, u0, v0),
-        (v[1].0, v[1].1, u1, v0),
-        (v[3].0, v[3].1, u1, v1),
-        (v[0].0, v[0].1, u0, v0),
-        (v[3].0, v[3].1, u1, v1),
-        (v[2].0, v[2].1, u0, v1),
-    ];
-    rasterizer.blit_overlay_triangles(&tris, layer_rgba, lw, lh, brightness_mul);
+    let axis_aligned = (v[0].0 - v[2].0).abs() <= 1e-3
+        && (v[1].0 - v[3].0).abs() <= 1e-3
+        && (v[0].1 - v[1].1).abs() <= 1e-3
+        && (v[2].1 - v[3].1).abs() <= 1e-3
+        && v[1].0 > v[0].0
+        && v[2].1 > v[0].1;
+    if axis_aligned {
+        rasterizer.blit_rgba_subrect_scaled(
+            (v[0].0, v[0].1, v[1].0, v[2].1),
+            (u0, v0, u1, v1),
+            layer_rgba,
+            lw,
+            lh,
+            brightness_mul,
+        );
+    } else {
+        let tris = [
+            (v[0].0, v[0].1, u0, v0),
+            (v[1].0, v[1].1, u1, v0),
+            (v[3].0, v[3].1, u1, v1),
+            (v[0].0, v[0].1, u0, v0),
+            (v[3].0, v[3].1, u1, v1),
+            (v[2].0, v[2].1, u0, v1),
+        ];
+        rasterizer.blit_overlay_triangles(&tris, layer_rgba, lw, lh, brightness_mul);
+    }
 }
 
 /// Draws centered multi-line `.mes` memo page text over the dimmed backdrop (`fontMessageNum`,
@@ -293,14 +355,14 @@ fn draw_memo_text_page(
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
 ) {
-    let lines: Vec<&str> = page_text.lines().collect();
-    if lines.is_empty() {
+    let line_count = page_text.lines().count();
+    if line_count == 0 {
         return;
     }
-    let total_h = lines.len() * line_step;
+    let total_h = line_count * line_step;
     let start_y = (ct + (ch - total_h as f32).max(0.0) * 0.5).round() as usize;
     let center_x = (cl + cw * 0.5).round() as usize;
-    for (i, line) in lines.iter().enumerate() {
+    for (i, line) in page_text.lines().enumerate() {
         font.draw_line_centered(
             rasterizer,
             line,

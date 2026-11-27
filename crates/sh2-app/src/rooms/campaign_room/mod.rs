@@ -758,9 +758,15 @@ impl RoomController for CampaignRoomController {
                     riddle,
                     ruleset,
                 );
-                state.begin_hud_overlay();
-                sh2_ui::draw_results_screen(&results, font, &mut state.menu_rasterizer);
-                state.finish_hud_overlay(encoder, surface_view);
+                state.reset_hud_overlay_tint();
+                let vp = (state.menu_rasterizer.width, state.menu_rasterizer.height);
+                let fp = sh2_ui::results_render_fingerprint(&results, vp);
+                let needs_redraw = state.menu_overlay_fingerprint != Some(fp);
+                if needs_redraw {
+                    sh2_ui::draw_results_screen(&results, font, &mut state.menu_rasterizer);
+                    state.menu_overlay_fingerprint = Some(fp);
+                }
+                state.present_hud_overlay(encoder, surface_view, needs_redraw);
                 return;
             }
             CampaignPhase::EndingCredits {

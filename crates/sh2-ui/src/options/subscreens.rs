@@ -154,11 +154,21 @@ pub fn draw_brightness_subscreen(menu: &OptionsMenu, font: &AtlasFont, rast: &mu
         true,
     );
 
+    const BRIGHTNESS_LEVEL_LABELS: [&str; 8] = [
+        "Brightness Level: 0",
+        "Brightness Level: 1",
+        "Brightness Level: 2",
+        "Brightness Level: 3",
+        "Brightness Level: 4",
+        "Brightness Level: 5",
+        "Brightness Level: 6",
+        "Brightness Level: 7",
+    ];
     let lx = (x_off + 160.0 * sx).round().max(0.0) as usize;
     let ly = (420.0 * sy).round().max(0.0) as usize;
     font.draw_line_styled(
         rast,
-        &format!("Brightness Level: {}", level),
+        BRIGHTNESS_LEVEL_LABELS[(level as usize).min(7)],
         (lx, ly),
         font_sz,
         Sh2TextColor::White,
@@ -166,9 +176,9 @@ pub fn draw_brightness_subscreen(menu: &OptionsMenu, font: &AtlasFont, rast: &mu
     );
 }
 
-/// Formats a PS2 pad bitmask (`key_type1/2/3` `0x00213610..0x00213750`) into readable button tokens.
-#[must_use]
-pub fn format_ps2_button_mask(mask: u32) -> String {
+/// Formats a PS2 pad bitmask (`key_type1/2/3` `0x00213610..0x00213750`) directly into `out`
+/// with zero intermediate `Vec` allocation.
+fn format_ps2_button_mask_into(mask: u32, out: &mut String) {
     const BITS: [(u32, &str); 12] = [
         (0x8000, "SQ"),
         (0x2000, "CI"),
@@ -183,17 +193,26 @@ pub fn format_ps2_button_mask(mask: u32) -> String {
         (0x80000, "START"),
         (0x20000, "L3"),
     ];
-    let mut parts = Vec::new();
+    out.clear();
     for (bit, name) in BITS {
         if (mask & bit) != 0 {
-            parts.push(name);
+            if !out.is_empty() {
+                out.push_str(" + ");
+            }
+            out.push_str(name);
         }
     }
-    if parts.is_empty() {
-        "---".to_string()
-    } else {
-        parts.join(" + ")
+    if out.is_empty() {
+        out.push_str("---");
     }
+}
+
+/// Formats a PS2 pad bitmask (`key_type1/2/3` `0x00213610..0x00213750`) into readable button tokens.
+#[must_use]
+pub fn format_ps2_button_mask(mask: u32) -> String {
+    let mut out = String::with_capacity(24);
+    format_ps2_button_mask_into(mask, &mut out);
+    out
 }
 
 /// Ordered PS2 remappable button bits (`config_main` `0x00213a50`).
@@ -295,6 +314,7 @@ pub fn draw_controller_config_subscreen(
     }
 
     // 13 action rows (`y = 102 + row * 27`, icons/buttons at `x = 140`)
+    let mut mask_buf = String::with_capacity(24);
     for (idx, label) in Ps2ControllerBindings::ACTION_LABELS.iter().enumerate() {
         let row_num = idx + 1;
         let is_sel = menu.config_row == row_num;
@@ -309,8 +329,11 @@ pub fn draw_controller_config_subscreen(
         let py = (vy * sy).round().max(0.0) as usize;
 
         font.draw_line_styled(rast, label, (lx, py), font_sz, color, true);
-        let mask_str = format_ps2_button_mask(menu.draft_config.controls.ps2_bindings.actions[idx]);
-        font.draw_line_styled(rast, &mask_str, (bx, py), font_sz, color, true);
+        format_ps2_button_mask_into(
+            menu.draft_config.controls.ps2_bindings.actions[idx],
+            &mut mask_buf,
+        );
+        font.draw_line_styled(rast, &mask_buf, (bx, py), font_sz, color, true);
     }
 }
 

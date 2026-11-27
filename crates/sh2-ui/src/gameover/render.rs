@@ -16,7 +16,6 @@ pub fn draw_gameover_screen(
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
 ) {
-    rasterizer.clear();
     rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, 255]);
     if screen.phase == GameOverPhase::Done || screen.ps2_alpha == 0 {
         return;

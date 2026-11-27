@@ -25,7 +25,7 @@ pub mod widgets;
 
 pub use atlas::{item_icon_rect, project_carousel_slot, CarouselSlotProjection, ItemIconRect};
 pub use health_ecg::{HealthEcgState, HealthStatus, RedCrossIconState, RED_CROSS_ICON_PATH};
-pub use render::draw_inventory_screen;
+pub use render::{draw_inventory_screen, inventory_render_fingerprint};
 pub use state::InventoryScreen;
 
 /// Computes the centered 4:3 PS2 UI canvas `(origin_x, origin_y, canvas_w, canvas_h)` inside

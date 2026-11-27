@@ -53,7 +53,12 @@ pub(crate) struct AppState {
     pub inventory_rasterizer: TextRasterizer,
     pub inventory_texture: wgpu::Texture,
     pub inventory_bind_group: wgpu::BindGroup,
+    /// Last rasterized & uploaded 64-bit state fingerprint for `inventory_rasterizer` (`SH2-177`).
+    /// When the next frame's fingerprint matches, clear + rasterize + 11.06 MB `write_texture` are skipped.
+    pub inventory_overlay_fingerprint: Option<u64>,
     pub menu_rasterizer: TextRasterizer,
+    /// Last rasterized & uploaded 64-bit state fingerprint for `menu_rasterizer` (`SH2-177`).
+    pub menu_overlay_fingerprint: Option<u64>,
     pub button_sprites: Option<ButtonSpriteSheet>,
     pub audio_bank: Option<MenuAudioBank>,
     pub audio_engine: Option<AudioEngine>,
@@ -270,14 +275,21 @@ impl AppState {
         }
     }
 
-    /// Resets the menu uniform tint to opaque white and clears the software text rasterizer.
-    pub fn begin_hud_overlay(&mut self) {
+    /// Resets the menu uniform tint to opaque white without clearing `menu_rasterizer` (`SH2-177`).
+    pub fn reset_hud_overlay_tint(&self) {
         let tint = [1.0f32, 1.0, 1.0, 1.0];
         self.render_ctx.queue.write_buffer(
             &self.menu_uniform_buffer,
             0,
             bytemuck::cast_slice(&tint),
         );
+    }
+
+    /// Resets the menu uniform tint to opaque white, invalidates the cached HUD fingerprint,
+    /// and clears the software text rasterizer.
+    pub fn begin_hud_overlay(&mut self) {
+        self.reset_hud_overlay_tint();
+        self.menu_overlay_fingerprint = None;
         self.menu_rasterizer.clear();
     }
 
@@ -473,15 +485,18 @@ impl AppState {
         );
     }
 
-    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it
-    /// edge-to-edge over `surface_view` (ensuring full-window campaign fades, FMV subtitles, and
-    /// debug HUDs never leave 3D scene strips peeking out on non-16:9 maximized windows).
-    pub fn finish_hud_overlay(
+    /// Uploads (when `upload == true`) and blits the software text rasterizer buffer edge-to-edge
+    /// over `surface_view` (`SH2-177`). When `upload == false`, reuses the already-uploaded GPU
+    /// texture with zero CPU-to-GPU transfer.
+    pub fn present_hud_overlay(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
+        upload: bool,
     ) {
-        self.upload_hud_overlay_texture();
+        if upload {
+            self.upload_hud_overlay_texture();
+        }
         self.blitter.render_with_bind_group_and_load_op(
             encoder,
             &self.menu_text_bind_group,
@@ -490,33 +505,47 @@ impl AppState {
         );
     }
 
-    /// Uploads the dedicated 4:3 (`1920x1440`) PS2 UI rasterizer buffer and blits it into
-    /// `viewport` (`ps2_ui_canvas_rect`) with 1:1 square pixels and zero horizontal font squish.
-    pub fn finish_inventory_overlay_in_viewport(
+    /// Uploads the software text rasterizer buffer to the GPU overlay texture and blits it
+    /// edge-to-edge over `surface_view` (ensuring full-window campaign fades, FMV subtitles, and
+    /// debug HUDs never leave 3D scene strips peeking out on non-16:9 maximized windows).
+    pub fn finish_hud_overlay(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+    ) {
+        self.present_hud_overlay(encoder, surface_view, true);
+    }
+
+    /// Uploads (when `upload == true`) and blits the dedicated 4:3 (`1920x1440`) PS2 UI rasterizer
+    /// buffer into `viewport` (`ps2_ui_canvas_rect`) (`SH2-177`).
+    pub fn present_inventory_overlay_in_viewport(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         surface_view: &wgpu::TextureView,
         viewport: (f32, f32, f32, f32),
+        upload: bool,
     ) {
-        self.render_ctx.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.inventory_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &self.inventory_rasterizer.pixels,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * self.inventory_rasterizer.width as u32),
-                rows_per_image: Some(self.inventory_rasterizer.height as u32),
-            },
-            wgpu::Extent3d {
-                width: self.inventory_rasterizer.width as u32,
-                height: self.inventory_rasterizer.height as u32,
-                depth_or_array_layers: 1,
-            },
-        );
+        if upload {
+            self.render_ctx.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &self.inventory_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.inventory_rasterizer.pixels,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * self.inventory_rasterizer.width as u32),
+                    rows_per_image: Some(self.inventory_rasterizer.height as u32),
+                },
+                wgpu::Extent3d {
+                    width: self.inventory_rasterizer.width as u32,
+                    height: self.inventory_rasterizer.height as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         self.blitter.render_with_bind_group_in_viewport(
             encoder,
             &self.inventory_bind_group,
@@ -524,6 +553,18 @@ impl AppState {
             wgpu::LoadOp::Load,
             viewport,
         );
+    }
+
+    /// Uploads the dedicated 4:3 (`1920x1440`) PS2 UI rasterizer buffer and blits it into
+    /// `viewport` (`ps2_ui_canvas_rect`) with 1:1 square pixels and zero horizontal font squish.
+    pub fn finish_inventory_overlay_in_viewport(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        surface_view: &wgpu::TextureView,
+        viewport: (f32, f32, f32, f32),
+    ) {
+        self.inventory_overlay_fingerprint = None;
+        self.present_inventory_overlay_in_viewport(encoder, surface_view, viewport, true);
     }
 
     /// Synchronizes all active map geometry + texture bind groups, character, enemy, and cutscene

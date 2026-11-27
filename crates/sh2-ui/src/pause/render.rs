@@ -2,6 +2,7 @@
 
 use super::{PauseMenu, PauseMenuOption, PauseSubPhase};
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::fingerprint::UiFingerprintHasher;
 use crate::font::TextRasterizer;
 
 /// Retail PC `sh2pc.exe` Pause Menu 512×480 virtual coordinates (`FUN_00407300` `0x00407300`
@@ -17,6 +18,32 @@ pub const PAUSE_ITEM_PITCH_Y: f32 = 30.0;
 pub const PAUSE_QUIT_PROMPT_XY: (f32, f32) = (256.0, 232.0);
 pub const PAUSE_QUIT_YES_XY: (f32, f32) = (226.0, 266.0);
 pub const PAUSE_QUIT_NO_XY: (f32, f32) = (286.0, 266.0);
+
+/// Computes a deterministic 64-bit state fingerprint for [`draw_pause_screen_with_scrim`] (`SH2-177`).
+#[must_use]
+pub fn pause_render_fingerprint(
+    pause_menu: &PauseMenu,
+    draw_scrim: bool,
+    viewport: (usize, usize),
+) -> u64 {
+    let mut h = UiFingerprintHasher::with_tag(0x5041_5553_454D_454E);
+    h.write_usize(viewport.0);
+    h.write_usize(viewport.1);
+    h.write_bool(draw_scrim);
+    h.write_bool(pause_menu.is_open);
+    h.write_u8(pause_menu.sub_phase as u8);
+    h.write_usize(pause_menu.selected_index);
+    h.write_usize(pause_menu.quit_confirm_index);
+    h.write_bool(pause_menu.can_save);
+    match pause_menu.status_message.as_deref() {
+        Some(msg) => {
+            h.write_u8(1);
+            h.write_str(msg);
+        }
+        None => h.write_u8(0),
+    }
+    h.finish()
+}
 
 /// Renders the authentic Pause Menu overlay into `rasterizer`, scaled cleanly into a 4:3
 /// pillarboxed viewport using exact retail `sh2pc.exe` 512×448 virtual coordinates
@@ -63,12 +90,7 @@ pub fn draw_pause_screen_with_scrim(
 
     // 1. Optional semi-transparent dark backdrop scrim over paused frame (`sh2gfw_Set_PauseRetain`)
     if draw_scrim {
-        let dim_color = [0u8, 0, 0, 96];
-        for y in 0..h {
-            for x in 0..w {
-                rasterizer.blend_pixel(x, y, dim_color);
-            }
-        }
+        rasterizer.fill_rect(0, 0, w, h, [0, 0, 0, 96]);
     }
 
     // `FUN_00407300` (`0x00407300`) uses `FontSize[0]` (`20x30` in `512x480`, `x_scale = scale_x / scale_y`).

@@ -117,21 +117,18 @@ pub fn draw_subtitle_spans_ps2(
     spans: &[(u8, String)],
     retail_pc_palette: bool,
 ) {
-    let mut lines: Vec<Vec<(u8, String)>> = vec![Vec::new()];
+    let mut lines: Vec<Vec<(u8, &str)>> = vec![Vec::new()];
     for (color_idx, text) in spans {
         let mut parts = text.split('\n');
         if let Some(first) = parts.next() {
             if !first.is_empty() {
-                lines
-                    .last_mut()
-                    .unwrap()
-                    .push((*color_idx, first.to_string()));
+                lines.last_mut().unwrap().push((*color_idx, first));
             }
         }
         for part in parts {
             let mut next_line = Vec::new();
             if !part.is_empty() {
-                next_line.push((*color_idx, part.to_string()));
+                next_line.push((*color_idx, part));
             }
             lines.push(next_line);
         }
@@ -181,14 +178,14 @@ pub fn draw_subtitle_ps2(
     text: &str,
     color: [u8; 4],
 ) {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.is_empty() {
+    let line_count = text.lines().count();
+    if line_count == 0 {
         return;
     }
-    let layout = compute_ps2_subtitle_layout(rast.height, lines.len());
+    let layout = compute_ps2_subtitle_layout(rast.height, line_count);
     let center_x = rast.width / 2;
     let font = AtlasFont::shared(game_root);
-    for (i, line) in lines.iter().enumerate() {
+    for (i, line) in text.lines().enumerate() {
         let y = layout.top_y_px + i * layout.line_step_px;
         let w = font.text_width_aspect(line, layout.px_height, layout.x_scale);
         font.draw_line_gradient_aspect(
@@ -215,17 +212,17 @@ pub fn draw_subtitle(
     px_height: usize,
     color: [u8; 4],
 ) {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.is_empty() {
+    let line_count = text.lines().count();
+    if line_count == 0 {
         return;
     }
     let line_h = ((px_height as f32) * (PS2_NORMAL_FONT_HEIGHT as f32)
         / PS2_FONT_ATLAS_CELL_HEIGHT_VIRTUAL)
         .round()
         .max(1.0) as usize;
-    let top = bottom_y.saturating_sub(line_h * lines.len());
+    let top = bottom_y.saturating_sub(line_h * line_count);
     let font = AtlasFont::shared(game_root);
-    for (i, line) in lines.iter().enumerate() {
+    for (i, line) in text.lines().enumerate() {
         let y = top + i * line_h;
         let w = font.text_width_aspect(line, px_height, PS2_FONT_PIXEL_ASPECT_4X3);
         font.draw_line_gradient_aspect(

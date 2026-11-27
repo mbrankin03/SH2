@@ -164,23 +164,45 @@ impl SaveLoadScreen {
         }
     }
 
+    /// Zero-allocation iterator over entries visible on the currently selected card (`active_card`).
+    pub fn active_card_slots_iter(&self) -> impl Iterator<Item = &SaveSlotEntry> {
+        let unlimited = self.config.unlimited_slots;
+        let active_card = self.active_card;
+        self.slots
+            .iter()
+            .filter(move |s| unlimited || s.card_index == active_card)
+    }
+
+    /// Returns the `row`-th entry on the currently selected card without allocating a `Vec`.
+    #[must_use]
+    pub fn active_card_slot(&self, row: usize) -> Option<&SaveSlotEntry> {
+        if self.config.unlimited_slots {
+            self.slots.get(row)
+        } else {
+            self.active_card_slots_iter().nth(row)
+        }
+    }
+
+    /// Number of existing save entries on the currently selected card without allocating a `Vec`.
+    #[must_use]
+    pub fn active_card_slot_count(&self) -> usize {
+        if self.config.unlimited_slots {
+            self.slots.len()
+        } else {
+            self.active_card_slots_iter().count()
+        }
+    }
+
     /// Entries visible on the currently selected card (`active_card`).
     #[must_use]
     pub fn active_card_slots(&self) -> Vec<&SaveSlotEntry> {
-        if self.config.unlimited_slots {
-            self.slots.iter().collect()
-        } else {
-            self.slots
-                .iter()
-                .filter(|s| s.card_index == self.active_card)
-                .collect()
-        }
+        self.active_card_slots_iter().collect()
     }
 
     /// Total selectable rows (existing files + 1 `"New Save"` row in `Save` mode when under cap).
     #[must_use]
     pub fn total_selectable_rows(&self) -> usize {
-        let count = self.active_card_slots().len();
+        let count = self.active_card_slot_count();
         if self.mode == SaveLoadMode::Save {
             if self.config.unlimited_slots || count < PS2_MAX_FILES_PER_CARD {
                 count + 1

@@ -13,7 +13,7 @@ pub mod render;
 pub mod state;
 
 pub use render::{
-    draw_results_screen, RESULT_LABEL_X_512, RESULT_MSG_IDS, RESULT_ROW_PITCH_512,
-    RESULT_ROW_Y0_512, RESULT_VALUE_X_512,
+    draw_results_screen, results_render_fingerprint, RESULT_LABEL_X_512, RESULT_MSG_IDS,
+    RESULT_ROW_PITCH_512, RESULT_ROW_Y0_512, RESULT_VALUE_X_512,
 };
 pub use state::{ResultsRowData, ResultsScreen};

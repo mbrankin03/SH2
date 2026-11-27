@@ -2,6 +2,7 @@
 
 use super::state::ResultsScreen;
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::fingerprint::UiFingerprintHasher;
 use crate::font::TextRasterizer;
 
 /// `result_message` IDs from `SLUS_202.28` (`0x0037d1b0`).
@@ -28,14 +29,30 @@ const COLOR_LABEL_WHITE_GREY: Sh2TextColor = Sh2TextColor::Custom {
 /// PS2 `color2()` / `fontSetColor(4)` Yellow (`0x002baec0`).
 const COLOR_MAX_YELLOW: Sh2TextColor = Sh2TextColor::GoldSelected;
 
+/// Computes a deterministic 64-bit state fingerprint for [`draw_results_screen`] (`SH2-177`).
+#[must_use]
+pub fn results_render_fingerprint(screen: &ResultsScreen, viewport: (usize, usize)) -> u64 {
+    let mut h = UiFingerprintHasher::with_tag(0x5245_5355_4C54_5331);
+    h.write_usize(viewport.0);
+    h.write_usize(viewport.1);
+    h.write_u8(screen.breakdown.total_points);
+    h.write_u8(screen.ruleset as u8);
+    h.write_usize(screen.rows.len());
+    for row in &screen.rows {
+        h.write_str(row.label);
+        h.write_str(&row.value);
+        h.write_bool(row.is_max_rank);
+    }
+    h.finish()
+}
+
 /// Renders the 1:1 PS2 `ResultMain` (`0x00293e40`) 10-Star Results screen onto `rasterizer`.
 pub fn draw_results_screen(
     screen: &ResultsScreen,
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
 ) {
-    // `clear_screen()` (`0x00293d20`): pure black background.
-    rasterizer.clear();
+    // `clear_screen()` (`0x00293d20`): pure black opaque fill (overwrites every pixel directly).
     rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, 255]);
 
     // `ResultMain` (`0x00293e40`) places Big Stars at `y = 0x1b0 (432)` and Small Stars at

@@ -14,13 +14,16 @@
 //!   text renders out-of-the-box regardless of external file layouts or mod configurations.
 
 use crate::font::TextRasterizer;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 const CELL_W: usize = 44;
 const CELL_H: usize = 64;
 const FIRST_CHAR: u32 = 0x20;
 const GLYPH_COUNT: usize = 224;
+/// Bounded capacity for cached resampled glyph coverage masks (`SH2-177`).
+const GLYPH_CACHE_CAPACITY: usize = 512;
 
 /// Full atlas glyph cell height in virtual `512×480` pixels (`SH2:EE` `Patches/Fonts.cpp`
 /// `charH = 32`, `Common/Settings.h` `CustomFontCharHeight = 32`; `2×` = `CELL_H = 64`).
@@ -108,9 +111,52 @@ struct Glyph {
     advance: usize,
 }
 
+/// Pre-resampled Q12 coverage mask (`0..=4096`) for one glyph at a specific `(px_height, x_scale)`.
+struct CachedGlyphMask {
+    width: usize,
+    height: usize,
+    coverage: Vec<u16>,
+}
+
+/// Bounded LRU cache of resampled glyph coverage masks keyed by `(glyph_id, px_height, x_scale_bits)`.
+#[derive(Default)]
+struct GlyphMaskCache {
+    entries: HashMap<(usize, usize, u32), (Arc<CachedGlyphMask>, u64)>,
+    tick: u64,
+}
+
+impl GlyphMaskCache {
+    fn get(&mut self, key: (usize, usize, u32)) -> Option<Arc<CachedGlyphMask>> {
+        self.tick = self.tick.wrapping_add(1);
+        let tick = self.tick;
+        if let Some((mask, last_used)) = self.entries.get_mut(&key) {
+            *last_used = tick;
+            return Some(Arc::clone(mask));
+        }
+        None
+    }
+
+    fn insert(&mut self, key: (usize, usize, u32), mask: Arc<CachedGlyphMask>) {
+        self.tick = self.tick.wrapping_add(1);
+        let tick = self.tick;
+        if self.entries.len() >= GLYPH_CACHE_CAPACITY && !self.entries.contains_key(&key) {
+            if let Some(evict_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, last_used))| *last_used)
+                .map(|(k, _)| *k)
+            {
+                self.entries.remove(&evict_key);
+            }
+        }
+        self.entries.insert(key, (mask, tick));
+    }
+}
+
 /// Retail atlas font (normal type 0 glyphs).
 pub struct AtlasFont {
     glyphs: Vec<Glyph>,
+    mask_cache: Mutex<GlyphMaskCache>,
 }
 
 impl AtlasFont {
@@ -165,7 +211,10 @@ impl AtlasFont {
                 advance,
             });
         }
-        Some(Self { glyphs })
+        Some(Self {
+            glyphs,
+            mask_cache: Mutex::new(GlyphMaskCache::default()),
+        })
     }
 
     /// Loads and decodes an external PNG atlas such as `font000.png`.
@@ -220,14 +269,103 @@ impl AtlasFont {
         })
     }
 
-    fn glyph(&self, ch: char) -> Option<&Glyph> {
+    fn glyph_index(&self, ch: char) -> Option<usize> {
         let c = ch as u32;
         let id = if (FIRST_CHAR..FIRST_CHAR + self.glyphs.len() as u32).contains(&c) {
             (c - FIRST_CHAR) as usize
         } else {
             ('?' as u32).saturating_sub(FIRST_CHAR) as usize
         };
-        self.glyphs.get(id)
+        (id < self.glyphs.len()).then_some(id)
+    }
+
+    fn glyph(&self, ch: char) -> Option<&Glyph> {
+        self.glyph_index(ch).and_then(|id| self.glyphs.get(id))
+    }
+
+    /// Returns the number of currently cached resampled glyph coverage masks.
+    #[must_use]
+    pub fn glyph_cache_len(&self) -> usize {
+        self.mask_cache.lock().map(|c| c.entries.len()).unwrap_or(0)
+    }
+
+    /// Clears all cached resampled glyph coverage masks.
+    pub fn clear_glyph_cache(&self) {
+        if let Ok(mut c) = self.mask_cache.lock() {
+            c.entries.clear();
+            c.tick = 0;
+        }
+    }
+
+    /// Computes a quantized Q12 (`0..=4096`) coverage mask for `g` at `(px_height, x_scale)`.
+    fn rasterize_glyph_mask(g: &Glyph, px_height: usize, x_scale: f32) -> CachedGlyphMask {
+        if g.min_x > g.max_x {
+            return CachedGlyphMask {
+                width: 0,
+                height: 0,
+                coverage: Vec::new(),
+            };
+        }
+        let step_y = CELL_H as f32 / px_height as f32;
+        let step_x = step_y / x_scale.max(0.25);
+        let w = ((g.max_x - g.min_x + 1) as f32 / step_x).ceil() as usize;
+        let mut coverage = vec![0u16; w * px_height];
+        for dy in 0..px_height {
+            let sy0 = dy as f32 * step_y;
+            let sy1 = sy0 + step_y;
+            let row_ofs = dy * w;
+            for dx in 0..w {
+                let sx0 = g.min_x as f32 + dx as f32 * step_x;
+                let sx1 = sx0 + step_x;
+                let mut sum = 0.0f32;
+                let mut area = 0.0f32;
+                let mut sy = sy0.floor() as usize;
+                while (sy as f32) < sy1 && sy < CELL_H {
+                    let wy = (sy1.min(sy as f32 + 1.0) - sy0.max(sy as f32)).max(0.0);
+                    let mut sx = sx0.floor() as usize;
+                    while (sx as f32) < sx1 {
+                        let wx = (sx1.min(sx as f32 + 1.0) - sx0.max(sx as f32)).max(0.0);
+                        let a = if sx < CELL_W {
+                            g.alpha[sy * CELL_W + sx] as f32 / 255.0
+                        } else {
+                            0.0
+                        };
+                        sum += a * wx * wy;
+                        area += wx * wy;
+                        sx += 1;
+                    }
+                    sy += 1;
+                }
+                if sum > 0.0 && area > 0.0 {
+                    coverage[row_ofs + dx] = ((sum / area).clamp(0.0, 1.0) * 4096.0).round() as u16;
+                }
+            }
+        }
+        CachedGlyphMask {
+            width: w,
+            height: px_height,
+            coverage,
+        }
+    }
+
+    /// Looks up or computes and caches the resampled coverage mask for `(glyph_id, px_height, x_scale)`.
+    fn cached_mask(&self, glyph_id: usize, px_height: usize, x_scale: f32) -> Arc<CachedGlyphMask> {
+        let clamped_scale = x_scale.max(0.25);
+        let key = (glyph_id, px_height, clamped_scale.to_bits());
+        if let Ok(mut cache) = self.mask_cache.lock() {
+            if let Some(hit) = cache.get(key) {
+                return hit;
+            }
+        }
+        let mask = Arc::new(Self::rasterize_glyph_mask(
+            &self.glyphs[glyph_id],
+            px_height,
+            clamped_scale,
+        ));
+        if let Ok(mut cache) = self.mask_cache.lock() {
+            cache.insert(key, Arc::clone(&mask));
+        }
+        mask
     }
 
     /// Advance of one character in atlas pixels.
@@ -257,67 +395,115 @@ impl AtlasFont {
         adv.round() as usize
     }
 
-    fn blend(rast: &mut TextRasterizer, x: usize, y: usize, color: [u8; 4], cover: f32) {
-        if x >= rast.width || y >= rast.height || cover <= 0.0 {
+    /// Integer fixed-point alpha over-blend of `color` modulated by Q12 `cov_q12` (`0..=4096`).
+    #[inline]
+    fn blend_fixed_row(dst_row: &mut [u8], x: usize, color: [u8; 4], cov_q12: u16) {
+        const FULL_Q12_255: u32 = 4096 * 255;
+        let src_w = u32::from(cov_q12) * u32::from(color[3]);
+        if src_w == 0 {
             return;
         }
-        let a = (cover * color[3] as f32 / 255.0).clamp(0.0, 1.0);
-        let o = (y * rast.width + x) * 4;
-        let da = rast.pixels[o + 3] as f32 / 255.0;
-        let out_a = a + da * (1.0 - a);
-        if out_a <= 0.0 {
+        let o = x * 4;
+        if src_w >= FULL_Q12_255 {
+            dst_row[o] = color[0];
+            dst_row[o + 1] = color[1];
+            dst_row[o + 2] = color[2];
+            dst_row[o + 3] = 255;
             return;
         }
-        for (c, &src) in color.iter().enumerate().take(3) {
-            let d = rast.pixels[o + c] as f32;
-            let v = (src as f32 * a + d * da * (1.0 - a)) / out_a;
-            rast.pixels[o + c] = v.round().clamp(0.0, 255.0) as u8;
+        let dst_a = u32::from(dst_row[o + 3]);
+        if dst_a == 0 {
+            dst_row[o] = color[0];
+            dst_row[o + 1] = color[1];
+            dst_row[o + 2] = color[2];
+            dst_row[o + 3] = ((src_w + 2048) / 4096).min(255) as u8;
+            return;
         }
-        rast.pixels[o + 3] = (out_a * 255.0).round() as u8;
+        let dst_w = ((FULL_Q12_255 - src_w) * dst_a + 127) / 255;
+        let out_w = src_w + dst_w;
+        let src_w64 = u64::from(src_w);
+        let dst_w64 = u64::from(dst_w);
+        let out_w64 = u64::from(out_w);
+        let half_w64 = out_w64 / 2;
+        dst_row[o] = ((u64::from(color[0]) * src_w64 + u64::from(dst_row[o]) * dst_w64 + half_w64)
+            / out_w64)
+            .min(255) as u8;
+        dst_row[o + 1] =
+            ((u64::from(color[1]) * src_w64 + u64::from(dst_row[o + 1]) * dst_w64 + half_w64)
+                / out_w64)
+                .min(255) as u8;
+        dst_row[o + 2] =
+            ((u64::from(color[2]) * src_w64 + u64::from(dst_row[o + 2]) * dst_w64 + half_w64)
+                / out_w64)
+                .min(255) as u8;
+        dst_row[o + 3] = ((out_w + 2048) / 4096).min(255) as u8;
     }
 
-    fn draw_glyph(
-        g: &Glyph,
+    fn blit_cached_mask_solid(
+        mask: &CachedGlyphMask,
         rast: &mut TextRasterizer,
         x: usize,
         y: usize,
-        px_height: usize,
-        x_scale: f32,
         color: [u8; 4],
     ) {
-        if g.min_x > g.max_x {
+        if mask.width == 0 || mask.height == 0 || color[3] == 0 {
             return;
         }
-        let step_y = CELL_H as f32 / px_height as f32; // source pixels per destination Y pixel
-        let step_x = step_y / x_scale.max(0.25); // source pixels per destination X pixel
-        let w = ((g.max_x - g.min_x + 1) as f32 / step_x).ceil() as usize;
-        for dy in 0..px_height {
-            let sy0 = dy as f32 * step_y;
-            let sy1 = sy0 + step_y;
-            for dx in 0..w {
-                let sx0 = g.min_x as f32 + dx as f32 * step_x;
-                let sx1 = sx0 + step_x;
-                let mut sum = 0.0;
-                let mut area = 0.0;
-                let mut sy = sy0.floor() as usize;
-                while (sy as f32) < sy1 && sy < CELL_H {
-                    let wy = (sy1.min(sy as f32 + 1.0) - sy0.max(sy as f32)).max(0.0);
-                    let mut sx = sx0.floor() as usize;
-                    while (sx as f32) < sx1 {
-                        let wx = (sx1.min(sx as f32 + 1.0) - sx0.max(sx as f32)).max(0.0);
-                        let a = if sx < CELL_W {
-                            g.alpha[sy * CELL_W + sx] as f32 / 255.0
-                        } else {
-                            0.0
-                        };
-                        sum += a * wx * wy;
-                        area += wx * wy;
-                        sx += 1;
-                    }
-                    sy += 1;
+        let max_dy = mask.height.min(rast.height.saturating_sub(y));
+        let max_dx = mask.width.min(rast.width.saturating_sub(x));
+        if max_dy == 0 || max_dx == 0 {
+            return;
+        }
+        let stride = rast.width * 4;
+        for dy in 0..max_dy {
+            let src_row = &mask.coverage[dy * mask.width..dy * mask.width + max_dx];
+            let dst_row = &mut rast.pixels[(y + dy) * stride..(y + dy + 1) * stride];
+            for (dx, &cov) in src_row.iter().enumerate() {
+                if cov != 0 {
+                    Self::blend_fixed_row(dst_row, x + dx, color, cov);
                 }
-                if area > 0.0 {
-                    Self::blend(rast, x + dx, y + dy, color, sum / area);
+            }
+        }
+    }
+
+    fn blit_cached_mask_gradient(
+        mask: &CachedGlyphMask,
+        rast: &mut TextRasterizer,
+        x: usize,
+        y: usize,
+        top_color: [u8; 4],
+        bottom_color: [u8; 4],
+    ) {
+        if mask.width == 0 || mask.height == 0 {
+            return;
+        }
+        if top_color == bottom_color {
+            Self::blit_cached_mask_solid(mask, rast, x, y, top_color);
+            return;
+        }
+        let max_dy = mask.height.min(rast.height.saturating_sub(y));
+        let max_dx = mask.width.min(rast.width.saturating_sub(x));
+        if max_dy == 0 || max_dx == 0 {
+            return;
+        }
+        let max_row_f = (mask.height.saturating_sub(1)).max(1) as f32;
+        let stride = rast.width * 4;
+        for dy in 0..max_dy {
+            let t = (dy as f32 / max_row_f).clamp(0.0, 1.0);
+            let row_color = [
+                (top_color[0] as f32 * (1.0 - t) + bottom_color[0] as f32 * t).round() as u8,
+                (top_color[1] as f32 * (1.0 - t) + bottom_color[1] as f32 * t).round() as u8,
+                (top_color[2] as f32 * (1.0 - t) + bottom_color[2] as f32 * t).round() as u8,
+                (top_color[3] as f32 * (1.0 - t) + bottom_color[3] as f32 * t).round() as u8,
+            ];
+            if row_color[3] == 0 {
+                continue;
+            }
+            let src_row = &mask.coverage[dy * mask.width..dy * mask.width + max_dx];
+            let dst_row = &mut rast.pixels[(y + dy) * stride..(y + dy + 1) * stride];
+            for (dx, &cov) in src_row.iter().enumerate() {
+                if cov != 0 {
+                    Self::blend_fixed_row(dst_row, x + dx, row_color, cov);
                 }
             }
         }
@@ -434,7 +620,7 @@ impl AtlasFont {
         let off_x = (virtual_px_y * x_scale).round().max(1.0) as usize;
         let off_y = virtual_px_y.round().max(1.0) as usize;
 
-        // Pass 0: drop shadow (if enabled)
+        // Pass 0: drop shadow (if enabled) — populates glyph coverage mask cache
         if shadow {
             let shadow_alpha = top_color[3].max(bottom_color[3]);
             let shadow_col = [0, 0, 0, shadow_alpha];
@@ -442,14 +628,13 @@ impl AtlasFont {
             let cy = y + off_y;
             for ch in text.chars() {
                 if ch != ' ' {
-                    if let Some(g) = self.glyph(ch) {
-                        Self::draw_glyph(
-                            g,
+                    if let Some(id) = self.glyph_index(ch) {
+                        let mask = self.cached_mask(id, px_height, x_scale);
+                        Self::blit_cached_mask_solid(
+                            &mask,
                             rast,
                             cx.round() as usize,
                             cy,
-                            px_height,
-                            x_scale,
                             shadow_col,
                         );
                     }
@@ -458,83 +643,23 @@ impl AtlasFont {
             }
         }
 
-        // Pass 1: gradient text
+        // Pass 1: gradient text — reuses cached coverage masks from Pass 0
         let mut cx = x as f32;
         for ch in text.chars() {
             if ch != ' ' {
-                if let Some(g) = self.glyph(ch) {
-                    Self::draw_glyph_gradient(
-                        g,
+                if let Some(id) = self.glyph_index(ch) {
+                    let mask = self.cached_mask(id, px_height, x_scale);
+                    Self::blit_cached_mask_gradient(
+                        &mask,
                         rast,
                         cx.round() as usize,
                         y,
-                        px_height,
-                        x_scale,
                         top_color,
                         bottom_color,
                     );
                 }
             }
             cx += (self.advance(ch) as f32 * px_height as f32 / CELL_H as f32) * x_scale;
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn draw_glyph_gradient(
-        g: &Glyph,
-        rast: &mut TextRasterizer,
-        x: usize,
-        y: usize,
-        px_height: usize,
-        x_scale: f32,
-        top_color: [u8; 4],
-        bottom_color: [u8; 4],
-    ) {
-        if g.min_x > g.max_x {
-            return;
-        }
-        let step_y = CELL_H as f32 / px_height as f32; // source pixels per destination Y pixel
-        let step_x = step_y / x_scale.max(0.25); // source pixels per destination X pixel
-        let w = ((g.max_x - g.min_x + 1) as f32 / step_x).ceil() as usize;
-        let max_dy = (px_height.saturating_sub(1)).max(1) as f32;
-
-        for dy in 0..px_height {
-            let t = (dy as f32 / max_dy).clamp(0.0, 1.0);
-            let row_color = [
-                (top_color[0] as f32 * (1.0 - t) + bottom_color[0] as f32 * t).round() as u8,
-                (top_color[1] as f32 * (1.0 - t) + bottom_color[1] as f32 * t).round() as u8,
-                (top_color[2] as f32 * (1.0 - t) + bottom_color[2] as f32 * t).round() as u8,
-                (top_color[3] as f32 * (1.0 - t) + bottom_color[3] as f32 * t).round() as u8,
-            ];
-
-            let sy0 = dy as f32 * step_y;
-            let sy1 = sy0 + step_y;
-            for dx in 0..w {
-                let sx0 = g.min_x as f32 + dx as f32 * step_x;
-                let sx1 = sx0 + step_x;
-                let mut sum = 0.0;
-                let mut area = 0.0;
-                let mut sy = sy0.floor() as usize;
-                while (sy as f32) < sy1 && sy < CELL_H {
-                    let wy = (sy1.min(sy as f32 + 1.0) - sy0.max(sy as f32)).max(0.0);
-                    let mut sx = sx0.floor() as usize;
-                    while (sx as f32) < sx1 {
-                        let wx = (sx1.min(sx as f32 + 1.0) - sx0.max(sx as f32)).max(0.0);
-                        let a = if sx < CELL_W {
-                            g.alpha[sy * CELL_W + sx] as f32 / 255.0
-                        } else {
-                            0.0
-                        };
-                        sum += a * wx * wy;
-                        area += wx * wy;
-                        sx += 1;
-                    }
-                    sy += 1;
-                }
-                if area > 0.0 {
-                    Self::blend(rast, x + dx, y + dy, row_color, sum / area);
-                }
-            }
         }
     }
 }
@@ -602,5 +727,206 @@ mod tests {
             true,
         );
         assert!(r2.pixels.chunks(4).any(|p| p[3] > 0));
+    }
+
+    /// Uncached f32 reference resampling matching the pre-cache `AtlasFont` algorithm.
+    #[allow(clippy::too_many_arguments)]
+    fn reference_draw_line_gradient_uncached(
+        font: &AtlasFont,
+        rast: &mut TextRasterizer,
+        text: &str,
+        pos: (usize, usize),
+        px_height: usize,
+        x_scale: f32,
+        gradient: ([u8; 4], [u8; 4]),
+        shadow: bool,
+    ) {
+        fn blend_ref(rast: &mut TextRasterizer, x: usize, y: usize, color: [u8; 4], cover: f32) {
+            if x >= rast.width || y >= rast.height || cover <= 0.0 {
+                return;
+            }
+            let a = (cover * color[3] as f32 / 255.0).clamp(0.0, 1.0);
+            let o = (y * rast.width + x) * 4;
+            let da = rast.pixels[o + 3] as f32 / 255.0;
+            let out_a = a + da * (1.0 - a);
+            if out_a <= 0.0 {
+                return;
+            }
+            for (c, &src) in color.iter().enumerate().take(3) {
+                let d = rast.pixels[o + c] as f32;
+                let v = (src as f32 * a + d * da * (1.0 - a)) / out_a;
+                rast.pixels[o + c] = v.round().clamp(0.0, 255.0) as u8;
+            }
+            rast.pixels[o + 3] = (out_a * 255.0).round() as u8;
+        }
+
+        let (top_color, bottom_color) = gradient;
+        let (x, y) = pos;
+        let px_height = px_height.max(4);
+        let x_scale = x_scale.max(0.25);
+        let virtual_px_y = px_height as f32 / PS2_FONT_ATLAS_CELL_HEIGHT_VIRTUAL;
+        let off_x = (virtual_px_y * x_scale).round().max(1.0) as usize;
+        let off_y = virtual_px_y.round().max(1.0) as usize;
+        let step_y = CELL_H as f32 / px_height as f32;
+        let step_x = step_y / x_scale;
+
+        let draw_pass = |rast: &mut TextRasterizer,
+                         start_x: usize,
+                         start_y: usize,
+                         top_c: [u8; 4],
+                         bot_c: [u8; 4]| {
+            let max_dy = (px_height.saturating_sub(1)).max(1) as f32;
+            let mut cx = start_x as f32;
+            for ch in text.chars() {
+                if ch != ' ' {
+                    if let Some(g) = font.glyph(ch) {
+                        if g.min_x <= g.max_x {
+                            let w = ((g.max_x - g.min_x + 1) as f32 / step_x).ceil() as usize;
+                            for dy in 0..px_height {
+                                let t = (dy as f32 / max_dy).clamp(0.0, 1.0);
+                                let row_c = [
+                                    (top_c[0] as f32 * (1.0 - t) + bot_c[0] as f32 * t).round()
+                                        as u8,
+                                    (top_c[1] as f32 * (1.0 - t) + bot_c[1] as f32 * t).round()
+                                        as u8,
+                                    (top_c[2] as f32 * (1.0 - t) + bot_c[2] as f32 * t).round()
+                                        as u8,
+                                    (top_c[3] as f32 * (1.0 - t) + bot_c[3] as f32 * t).round()
+                                        as u8,
+                                ];
+                                let sy0 = dy as f32 * step_y;
+                                let sy1 = sy0 + step_y;
+                                for dx in 0..w {
+                                    let sx0 = g.min_x as f32 + dx as f32 * step_x;
+                                    let sx1 = sx0 + step_x;
+                                    let mut sum = 0.0;
+                                    let mut area = 0.0;
+                                    let mut sy = sy0.floor() as usize;
+                                    while (sy as f32) < sy1 && sy < CELL_H {
+                                        let wy = (sy1.min(sy as f32 + 1.0) - sy0.max(sy as f32))
+                                            .max(0.0);
+                                        let mut sx = sx0.floor() as usize;
+                                        while (sx as f32) < sx1 {
+                                            let wx = (sx1.min(sx as f32 + 1.0)
+                                                - sx0.max(sx as f32))
+                                            .max(0.0);
+                                            let a = if sx < CELL_W {
+                                                g.alpha[sy * CELL_W + sx] as f32 / 255.0
+                                            } else {
+                                                0.0
+                                            };
+                                            sum += a * wx * wy;
+                                            area += wx * wy;
+                                            sx += 1;
+                                        }
+                                        sy += 1;
+                                    }
+                                    if area > 0.0 {
+                                        blend_ref(
+                                            rast,
+                                            cx.round() as usize + dx,
+                                            start_y + dy,
+                                            row_c,
+                                            sum / area,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                cx += (font.advance(ch) as f32 * px_height as f32 / CELL_H as f32) * x_scale;
+            }
+        };
+
+        if shadow {
+            let shadow_a = top_color[3].max(bottom_color[3]);
+            let shadow_c = [0, 0, 0, shadow_a];
+            draw_pass(rast, x + off_x, y + off_y, shadow_c, shadow_c);
+        }
+        draw_pass(rast, x, y, top_color, bottom_color);
+    }
+
+    #[test]
+    fn glyph_cache_hits_eviction_and_pixel_parity_against_uncached() {
+        let font = AtlasFont::load_embedded();
+        font.clear_glyph_cache();
+        assert_eq!(font.glyph_cache_len(), 0);
+
+        let text = "SILENT HILL 2: Restless Dreams";
+        let mut cached = TextRasterizer::new(512, 80);
+        let mut uncached = TextRasterizer::new(512, 80);
+        // Non-transparent dark slate background to exercise full alpha compositing
+        cached.fill_rect(0, 0, 512, 80, [36, 42, 48, 220]);
+        uncached.fill_rect(0, 0, 512, 80, [36, 42, 48, 220]);
+
+        font.draw_line_styled_aspect(
+            &mut cached,
+            text,
+            (12, 16),
+            34,
+            1.25,
+            Sh2TextColor::GoldSelected,
+            true,
+        );
+        reference_draw_line_gradient_uncached(
+            &font,
+            &mut uncached,
+            text,
+            (12, 16),
+            34,
+            1.25,
+            Sh2TextColor::GoldSelected.to_gradient(),
+            true,
+        );
+
+        let mut max_diff = 0u8;
+        for (&a, &b) in cached.pixels.iter().zip(uncached.pixels.iter()) {
+            max_diff = max_diff.max(a.abs_diff(b));
+        }
+        assert!(
+            max_diff <= 1,
+            "cached AtlasFont diverged from uncached float reference by {max_diff} LSB (expected <= 1)"
+        );
+
+        // Cache count equals number of unique non-space characters in `text` (reused across shadow + fg)
+        let unique_chars: std::collections::HashSet<char> =
+            text.chars().filter(|&c| c != ' ').collect();
+        assert_eq!(font.glyph_cache_len(), unique_chars.len());
+
+        // Redrawing same text hits cache with zero new entries
+        let mut cached2 = TextRasterizer::new(512, 80);
+        cached2.fill_rect(0, 0, 512, 80, [36, 42, 48, 220]);
+        font.draw_line_styled_aspect(
+            &mut cached2,
+            text,
+            (12, 16),
+            34,
+            1.25,
+            Sh2TextColor::GoldSelected,
+            true,
+        );
+        assert_eq!(font.glyph_cache_len(), unique_chars.len());
+        assert_eq!(cached.pixels, cached2.pixels);
+
+        // Eviction test: insert more than GLYPH_CACHE_CAPACITY (512) unique `(glyph, height, scale)` keys
+        let mut scratch = TextRasterizer::new(64, 64);
+        for h in 10..=40 {
+            font.draw_line(
+                &mut scratch,
+                "ABCDEFGHIJKLMNOPQRST",
+                (0, 0),
+                h,
+                [255; 4],
+                false,
+            );
+        }
+        assert!(
+            font.glyph_cache_len() <= GLYPH_CACHE_CAPACITY,
+            "cache exceeded capacity: {} > {}",
+            font.glyph_cache_len(),
+            GLYPH_CACHE_CAPACITY
+        );
+        assert_eq!(font.glyph_cache_len(), GLYPH_CACHE_CAPACITY);
     }
 }

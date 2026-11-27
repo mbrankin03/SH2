@@ -1,6 +1,8 @@
 //! Renderer for `MC/mc_menu.c` (`mcDrawMenu`, `mcDrawBG`, `mcDrawBGWord`, `mcDrawFrame`,
 //! `mcDrawSlot`, `mcDrawPlace`, `mcDrawAddInfo`, `mcDrawStatus`).
 
+use std::fmt::Write as _;
+
 use super::state::{
     format_mc_time, mc_get_blink_alpha, save_point_location_name, SaveAddInfoMode, SaveLoadMode,
     SaveLoadScreen, SaveLoadStep, YesNoChoice, MC_VISIBLE_ROWS,
@@ -33,18 +35,20 @@ pub fn draw_save_load_screen(
     font: &AtlasFont,
     rasterizer: &mut TextRasterizer,
 ) {
-    rasterizer.clear();
-    rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, 255]);
     let c = Ps2Canvas::from_viewport(rasterizer.width, rasterizer.height);
 
     // 1. `mcDrawBG` (`0x00247310`): `savebg.tbn2` / `savebg2.tbn2` dimmed background.
+    //    When present, `blit_bg_stretched` writes opaque alpha=255 to every pixel directly,
+    //    avoiding a redundant full-screen clear/fill pass.
     if let Some((rgba, w, h)) = savebg_rgba {
         blit_bg_stretched(rasterizer, &c, rgba, w, h);
+    } else {
+        rasterizer.fill_rect(0, 0, rasterizer.width, rasterizer.height, [0, 0, 0, 255]);
     }
 
     // 2. `mcDrawBGWord` (`0x00247630`): large translucent scrolling location watermark.
-    let card_slots = screen.active_card_slots();
-    if let Some(sel) = card_slots.get(screen.cursor_row) {
+    let selected_slot = screen.active_card_slot(screen.cursor_row);
+    if let Some(sel) = selected_slot {
         let loc = save_point_location_name(sel.snapshot.save_point_name_id, &sel.snapshot.room_id);
         let big_px = ((44.0 * c.sy).round() as usize).max(20);
         let scroll_y = 166.0 - (screen.scroll_anim * 180.0 * 1.5);
@@ -194,6 +198,9 @@ pub fn draw_save_load_screen(
     let sel_alpha = (((blink + 0x20).max(0) * 255) / 128).clamp(0, 255) as u8;
     let scroll_px = screen.scroll_anim * 40.0;
 
+    let mut scratch = String::with_capacity(64);
+    let mut visible_slots = screen.active_card_slots_iter().skip(screen.scroll_top);
+
     for vis in 0..MC_VISIBLE_ROWS {
         let row_idx = screen.scroll_top + vis;
         if row_idx >= total_rows {
@@ -212,23 +219,31 @@ pub fn draw_save_load_screen(
             rasterizer.fill_rect(rx0, bar_y, rw, rh, [0x80, 0x80, 0x20, sel_alpha]);
         }
 
-        if let Some(entry) = card_slots.get(row_idx) {
-            let label = if entry.is_corrupted {
-                "Corrupted Data".to_string()
+        if let Some(entry) = visible_slots.next() {
+            let label: &str = if entry.is_corrupted {
+                "Corrupted Data"
             } else {
                 let base = save_point_location_name(
                     entry.snapshot.save_point_name_id,
                     &entry.snapshot.room_id,
                 );
                 match entry.kind {
-                    SaveSlotKind::Manual => base.to_string(),
-                    SaveSlotKind::Quicksave => format!("[QS] {base}"),
-                    SaveSlotKind::Autosave => format!("[AUTO] {base}"),
+                    SaveSlotKind::Manual => base,
+                    SaveSlotKind::Quicksave => {
+                        scratch.clear();
+                        let _ = write!(scratch, "[QS] {base}");
+                        scratch.as_str()
+                    }
+                    SaveSlotKind::Autosave => {
+                        scratch.clear();
+                        let _ = write!(scratch, "[AUTO] {base}");
+                        scratch.as_str()
+                    }
                 }
             };
             font.draw_line_styled(
                 rasterizer,
-                &label,
+                label,
                 (c.xi(44.0), c.yi(y_512 + 6.0)),
                 row_px,
                 Sh2TextColor::White,
@@ -260,12 +275,14 @@ pub fn draw_save_load_screen(
                         );
                     }
                     SaveAddInfoMode::EndingsCleared => {
-                        let count = (entry.endings_seen_mask() & 0x7f).count_ones() as usize;
-                        let stars = "*".repeat(count.min(7));
-                        let sw = font.text_width(&stars, row_px);
+                        const STARS: &str = "*******";
+                        let count =
+                            ((entry.endings_seen_mask() & 0x7f).count_ones() as usize).min(7);
+                        let stars = &STARS[..count];
+                        let sw = font.text_width(stars, row_px);
                         font.draw_line_styled(
                             rasterizer,
-                            &stars,
+                            stars,
                             (c.xi(438.0).saturating_sub(sw), c.yi(y_512 + 6.0)),
                             row_px,
                             Sh2TextColor::GoldSelected,
@@ -360,31 +377,35 @@ pub fn draw_save_load_screen(
             );
         }
         SaveLoadStep::SelectSlot | SaveLoadStep::LoadDone => {
-            if let Some(entry) = card_slots.get(screen.cursor_row) {
+            if let Some(entry) = selected_slot {
                 if !entry.is_corrupted {
                     let act = match entry.snapshot.action_difficulty {
-                        ActionDifficulty::Beginner => "Beginner",
-                        ActionDifficulty::Easy => "Easy",
-                        ActionDifficulty::Normal => "Normal",
-                        ActionDifficulty::Hard => "Hard",
+                        ActionDifficulty::Beginner => "Action: Beginner",
+                        ActionDifficulty::Easy => "Action: Easy",
+                        ActionDifficulty::Normal => "Action: Normal",
+                        ActionDifficulty::Hard => "Action: Hard",
                     };
                     let rid = match entry.snapshot.riddle_difficulty {
-                        RiddleDifficulty::Easy => "Easy",
-                        RiddleDifficulty::Normal => "Normal",
-                        RiddleDifficulty::Hard => "Hard",
-                        RiddleDifficulty::Extra => "Extra",
+                        RiddleDifficulty::Easy => "Riddle: Easy",
+                        RiddleDifficulty::Normal => "Riddle: Normal",
+                        RiddleDifficulty::Hard => "Riddle: Hard",
+                        RiddleDifficulty::Extra => "Riddle: Extra",
                     };
+                    scratch.clear();
+                    let _ = write!(scratch, "Data: {}", entry.file_index + 1);
                     font.draw_line_styled(
                         rasterizer,
-                        &format!("Data: {}", entry.file_index + 1),
+                        &scratch,
                         (c.xi(46.0), c.yi(396.0)),
                         small_px,
                         Sh2TextColor::SilverUnselected,
                         true,
                     );
+                    scratch.clear();
+                    let _ = write!(scratch, "Saves: {}", entry.snapshot.save_count);
                     font.draw_line_styled(
                         rasterizer,
-                        &format!("Saves: {}", entry.snapshot.save_count),
+                        &scratch,
                         (c.xi(266.0), c.yi(396.0)),
                         small_px,
                         Sh2TextColor::SilverUnselected,
@@ -392,7 +413,7 @@ pub fn draw_save_load_screen(
                     );
                     font.draw_line_styled(
                         rasterizer,
-                        &format!("Action: {act}"),
+                        act,
                         (c.xi(46.0), c.yi(422.0)),
                         small_px,
                         Sh2TextColor::White,
@@ -400,7 +421,7 @@ pub fn draw_save_load_screen(
                     );
                     font.draw_line_styled(
                         rasterizer,
-                        &format!("Riddle: {rid}"),
+                        rid,
                         (c.xi(266.0), c.yi(422.0)),
                         small_px,
                         Sh2TextColor::White,
@@ -444,22 +465,32 @@ fn blit_bg_stretched(
     };
     let dw = dst.width;
     let dh = dst.height;
+    let src_stride = src_w * 4;
+    let dst_stride = dw * 4;
+    if src_rgba.len() < src_h * src_stride {
+        return;
+    }
+    let du_dx = u_span / dw as f32;
+    let src_w_f = src_w as f32;
+    let src_w_max = src_w - 1;
+    let src_h_f = src_h as f32;
+    let src_h_max = src_h - 1;
     for py in 0..dh {
         let v = v0 + (py as f32 / dh as f32) * v_span;
-        let sy = ((v * src_h as f32) as usize).min(src_h - 1);
+        let sy = ((v * src_h_f) as usize).min(src_h_max);
+        let src_row = &src_rgba[sy * src_stride..(sy + 1) * src_stride];
+        let dst_row = &mut dst.pixels[py * dst_stride..(py + 1) * dst_stride];
+        let mut u = u0;
         for px in 0..dw {
-            let u = u0 + (px as f32 / dw as f32) * u_span;
-            let sx = ((u * src_w as f32) as usize).min(src_w - 1);
-            let si = (sy * src_w + sx) * 4;
-            if si + 3 >= src_rgba.len() {
-                continue;
-            }
+            let sx = ((u * src_w_f) as usize).min(src_w_max);
+            u += du_dx;
+            let si = sx * 4;
+            let di = px * 4;
             // `mcDrawBG` (`SLUS_202.28` `0x00247310`): `savebg.tbn2` drawn at PS2 GS unity `0x80`.
-            dst.blend_pixel(
-                px,
-                py,
-                [src_rgba[si], src_rgba[si + 1], src_rgba[si + 2], 255],
-            );
+            dst_row[di] = src_row[si];
+            dst_row[di + 1] = src_row[si + 1];
+            dst_row[di + 2] = src_row[si + 2];
+            dst_row[di + 3] = 255;
         }
     }
 }

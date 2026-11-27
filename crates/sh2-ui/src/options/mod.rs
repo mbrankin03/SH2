@@ -9,7 +9,7 @@ mod render;
 pub mod subscreens;
 mod tabs;
 
-pub use render::{draw_options_screen, draw_polygon};
+pub use render::{draw_options_screen, draw_polygon, options_render_fingerprint};
 pub use subscreens::{
     arrow_pulse_alpha, draw_brightness_subscreen, draw_controller_config_subscreen,
     draw_option_arrow, format_ps2_button_mask, ArrowDir, OptionsSubScreen,
@@ -685,7 +685,7 @@ mod tests {
             menu.item_display(18),
             Some((
                 "Cutaway & Puzzle Quality",
-                "SH2:EE HD (2048x2048)".to_string()
+                std::borrow::Cow::Borrowed("SH2:EE HD (2048x2048)")
             ))
         );
         menu.adjust_value(1);

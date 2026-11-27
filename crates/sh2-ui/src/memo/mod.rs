@@ -27,7 +27,9 @@ pub use overlays::{
     build_memo_layer_quads, build_safe_lock_quad, build_tablet_quads, format_memo_keypad_code,
     format_memo_wallet_codes, MemoLayerQuad, GURUGURU_POS_Q4, GURUGURU_TEX_UVS,
 };
-pub use render::{draw_memo_reader, MemoRenderContext, MemoRenderTextures};
+pub use render::{
+    draw_memo_reader, memo_render_fingerprint, MemoRenderContext, MemoRenderTextures,
+};
 
 use crate::menu::{MenuNavAction, MenuSoundCue};
 use sh2_assets::formats::mes::MessageTable;

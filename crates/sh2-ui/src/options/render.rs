@@ -6,6 +6,7 @@ use super::subscreens::{
 };
 use super::{OptionsMenu, OptionsTab};
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::fingerprint::UiFingerprintHasher;
 use crate::font::TextRasterizer;
 use sh2_core::config::volume_gain_to_ps2_level;
 
@@ -511,6 +512,74 @@ pub(crate) fn option_help_text(tab: OptionsTab, name: &str) -> &'static str {
     }
 }
 
+/// Computes a deterministic 64-bit state fingerprint for [`draw_options_screen`] (`SH2-177`).
+///
+/// Includes active tab, cursor/scroll state, active subscreen & animation phase (`anim_frame % 40`),
+/// visible option values, volume slider levels, and viewport dimensions.
+#[must_use]
+pub fn options_render_fingerprint(menu: &OptionsMenu, viewport: (usize, usize)) -> u64 {
+    let mut h = UiFingerprintHasher::with_tag(0x4F50_5449_4F4E_5331);
+    h.write_usize(viewport.0);
+    h.write_usize(viewport.1);
+    h.write_u8(menu.active_tab as u8);
+    h.write_usize(menu.selected_index);
+    h.write_usize(menu.scroll_offset);
+    h.write_bool(menu.is_dirty);
+    h.write_u8(menu.sub_screen as u8);
+    match menu.sub_screen {
+        OptionsSubScreen::BrightnessCalibration => {
+            h.write_u8(menu.draft_config.game.brightness_level);
+            h.write_u32(menu.anim_frame % 40);
+        }
+        OptionsSubScreen::ControllerConfig => {
+            h.write_usize(menu.config_row);
+            h.write_usize(menu.config_preset_col);
+            h.write_u8(menu.draft_config.controls.ps2_bindings.preset as u8);
+            for &mask in &menu.draft_config.controls.ps2_bindings.actions {
+                h.write_u32(mask);
+            }
+        }
+        OptionsSubScreen::None => {
+            h.write_bool(menu.audio_pack_status.sh2ee_lossless_present);
+            h.write_bool(menu.audio_pack_status.ps2_original_present);
+            let item_count = menu.item_count();
+            h.write_usize(item_count);
+            let max_visible_rows = if menu.active_tab == OptionsTab::Root {
+                11usize
+            } else {
+                10usize
+            };
+            let visible_start = menu.scroll_offset.min(item_count.saturating_sub(1));
+            let visible_end = (visible_start + max_visible_rows).min(item_count);
+            for idx in visible_start..visible_end {
+                if let Some((label, val)) = menu.item_display_cow(idx) {
+                    h.write_str(label.as_ref());
+                    h.write_str(val.as_ref());
+                }
+            }
+            if matches!(menu.active_tab, OptionsTab::Root | OptionsTab::Audio) {
+                h.write_u8(volume_gain_to_ps2_level(
+                    menu.draft_config.audio.master_volume,
+                ));
+                h.write_u8(volume_gain_to_ps2_level(menu.draft_config.audio.bgm_volume));
+                h.write_u8(volume_gain_to_ps2_level(menu.draft_config.audio.sfx_volume));
+                h.write_u8(volume_gain_to_ps2_level(
+                    menu.draft_config.audio.dialogue_volume,
+                ));
+            }
+            if menu.active_tab == OptionsTab::Mods {
+                h.write_usize(menu.mods.len());
+                if let Some(m) = menu.mods.get(menu.selected_index) {
+                    h.write_str(&m.version);
+                    h.write_str(&m.author);
+                    h.write_str(&m.description);
+                }
+            }
+        }
+    }
+    h.finish()
+}
+
 /// Draws the authentic options screen matching PS2 `Item/otn_option.c` (`look_board` `0x002171a0`,
 /// `option_font` `0x0021a320`, `look_cur` `0x002184e0`, `look_bgm`/`look_se` `0x002159d0`/`0x00216500`)
 /// and dispatches active PS2 subscreens (`bright_main`, `config_main`, `position_main`).
@@ -862,7 +931,7 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
     );
 }
 
-/// Reduces `base_size` down to `min_size` as needed so `text` fits within `max_width` pixels.
+/// Reduces `base_size` down to `min_size` in O(1) font-size steps so `text` fits within `max_width` pixels.
 fn fit_value_font_size(
     font: &AtlasFont,
     text: &str,
@@ -870,7 +939,19 @@ fn fit_value_font_size(
     min_size: usize,
     max_width: usize,
 ) -> usize {
-    let mut size = base_size;
+    if base_size <= min_size || font.text_width(text, base_size) <= max_width {
+        return base_size;
+    }
+    let raw_adv: usize = text.chars().map(|c| font.advance(c)).sum();
+    if raw_adv == 0 {
+        return base_size;
+    }
+    // `text_width(text, s) == ((raw_adv * s) / 64.0).round()`, so solve directly for `s` and clamp.
+    let est = (((max_width as f32 + 0.5) * 64.0) / raw_adv as f32).floor() as usize;
+    let mut size = est.clamp(min_size, base_size);
+    while size < base_size && font.text_width(text, size + 1) <= max_width {
+        size += 1;
+    }
     while size > min_size && font.text_width(text, size) > max_width {
         size -= 1;
     }

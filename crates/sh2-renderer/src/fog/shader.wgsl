@@ -75,16 +75,19 @@ fn interleaved_gradient_noise(pixel: vec2<f32>) -> f32 {
 }
 
 // Evaluate PS2 depth-fog curve (`sh2gfw_Set_DepthFog` @ 0x00175df0):
-// Hyperbolic: clamp(FA / z + FB, FogMin, FogMax); Linear: clamp((z - Near) / (Far - Near), FogMin, FogMax).
+// Hyperbolic: clamp(FA / z + FB, FogMin, FogMax); Linear/Exp curves bounded by [FogMin, FogMax].
 fn eval_depth_curve(dist_mm: f32) -> f32 {
     let fog_min = min(fog.depth_fog_params.z, fog.depth_fog_params.w);
     let fog_max = max(fog.depth_fog_params.z, fog.depth_fog_params.w);
-    let has_ps2_fafb = abs(fog.depth_fog_params.x) > 1e-4;
-    if (fog.curve_type == 0u && has_ps2_fafb) {
-        let hyp = fog.depth_fog_params.x / max(dist_mm, 1e-4) + fog.depth_fog_params.y;
+    let span = max(1e-4, fog.fog_far - fog.fog_near);
+    if (fog.curve_type == 0u && fog.fog_near > 1e-4 && fog.fog_far > fog.fog_near + 1e-4) {
+        // Exact `sh2gfw_Set_DepthFog` (`SLUS_202.28` `0x00175df0`) computed from `(fog_near, fog_far, fog_min, fog_max)`
+        // so direct uniform updates to `fog_near`/`fog_far` stay in lockstep with `FA / z + FB`.
+        let persp_fa = (fog.fog_far * fog.fog_near * (fog_min - fog_max)) / span;
+        let persp_fb = (fog.fog_far * fog_max - fog.fog_near * fog_min) / span;
+        let hyp = persp_fa / max(dist_mm, 1e-4) + persp_fb;
         return clamp(hyp, fog_min, fog_max);
     }
-    let span = max(1e-4, fog.fog_far - fog.fog_near);
     let linear_t = clamp((dist_mm - fog.fog_near) / span, 0.0, 1.0);
     if (fog.curve_type == 1u) {
         return clamp(mix(fog_min, fog_max, 1.0 - exp(-3.0 * linear_t)), fog_min, fog_max);
@@ -92,31 +95,6 @@ fn eval_depth_curve(dist_mm: f32) -> f32 {
         return clamp(mix(fog_min, fog_max, 1.0 - exp(-4.0 * linear_t * linear_t)), fog_min, fog_max);
     }
     return clamp(mix(fog_min, fog_max, linear_t), fog_min, fog_max);
-}
-
-// ModernVolumetric-only dual-layer UV-scrolling fog planes (`FogFix.cpp` / `Settings.h:183-219`);
-// never evaluated in strict 1:1 `FogQuality::ClassicPs2` mode.
-fn sample_dual_layer_planes(screen_uv: vec2<f32>, world_xz_mm: vec2<f32>, drift_t: f32) -> f32 {
-    let l1_scale_a = fog.layer1_uv_scale.xy;
-    let l1_scale_b = fog.layer1_uv_scale.zw;
-    // Continuous shearing drift along X and Y decoupled from framerate (`FogSpeedFix`)
-    let uv1_a = screen_uv * (l1_scale_a * 4.0) + vec2<f32>(drift_t * 0.028, drift_t * 0.011);
-    let uv1_b = screen_uv * (l1_scale_b * 4.0) + vec2<f32>(-drift_t * 0.019, drift_t * 0.016);
-    let n1_a = textureSampleLevel(fog_noise_tex, fog_noise_sampler, uv1_a, 0.0).r;
-    let n1_b = textureSampleLevel(fog_noise_tex, fog_noise_sampler, uv1_b, 0.0).r;
-    let layer1 = 0.5 * (n1_a + n1_b) * fog.layer_transparencies.x;
-
-    // Layer 2: world-coupled shearing noise (`fog_layer2_complexity`, `density_mult`, `density_add`)
-    let complexity = max(0.005, fog.layer2_params.x);
-    let world_uv = world_xz_mm * (complexity * 0.0025);
-    let uv2_a = world_uv + vec2<f32>(drift_t * 0.022, -drift_t * 0.014);
-    let uv2_b = world_uv * 1.65 + vec2<f32>(-drift_t * 0.013, drift_t * 0.021);
-    let n2 = 0.6 * textureSampleLevel(fog_noise_tex, fog_noise_sampler, uv2_a, 0.0).r
-           + 0.4 * textureSampleLevel(fog_noise_tex, fog_noise_sampler, uv2_b, 0.0).r;
-    let layer2_raw = clamp((n2 * fog.layer2_params.y) + (fog.layer2_params.z / 255.0) * 0.25, 0.0, 1.0);
-    let layer2 = layer2_raw * fog.layer_transparencies.y;
-
-    return clamp(layer1 + layer2 * 0.65, 0.0, 1.0);
 }
 
 // Sample the spotlight shadow depth texture at a world-space point (returns 1.0 if lit, 0.0 if occluded)
@@ -175,11 +153,14 @@ fn eval_spotlight_scatter(sample_world: vec3<f32>, ray_dir: vec3<f32>) -> vec3<f
         return vec3<f32>(0.0);
     }
 
-    // Distance attenuation calibrated for PS2 mm coordinates
-    let atten = 1.0 / (1.0 + 0.0000018 * dist * dist);
-    // Forward Mie scattering phase (g = 0.55)
-    let phase = hg_phase(dot(ray_dir, l_dir), 0.55);
-    return spotlight.color_outer.xyz * (cone * cone * atten * shadow_vis * (0.35 + phase * 1.4));
+    // Distance attenuation normalized by `DrawEnvData::flashlight_range` (`spotlight.fill_and_range.z`,
+    // `SLUS_202.28` `0x00251370` default `6000.0` mm, SH2:EE `8500.0` mm).
+    let spot_range = max(1000.0, spotlight.fill_and_range.z);
+    let norm_d = dist / spot_range;
+    let atten = 1.0 / (1.0 + norm_d * norm_d);
+    // Forward Mie scattering phase (Henyey-Greenstein g = 0.5)
+    let phase = hg_phase(dot(ray_dir, l_dir), 0.5);
+    return spotlight.color_outer.xyz * (cone * cone * atten * shadow_vis * (0.5 + phase * 3.14159265));
 }
 
 @compute @workgroup_size(16, 16)
@@ -252,62 +233,55 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let base_curve = eval_depth_curve(view_z);
         fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
     } else {
-        // ModernVolumetric dual-layer UV-scrolling noise plane contribution (non-Vanilla enhancement)
-        let plane_noise = select(0.0, sample_dual_layer_planes(uv, world_pos.xz, drift_t), outdoor_enabled);
-        // Discrete-step 3D Volumetric Raymarching (`step_count` steps)
+        // ModernVolumetric (`VideoOptions::fog_quality = ModernVolumetric`, `SH2-153`):
+        // Exact Beer-Lambert raymarching whose differential optical depth `d_tau = -ln((1 - f1)/(1 - f0))`
+        // telescopes identically to Classic PS2 `eval_depth_curve(view_z) * effective_density` when
+        // noise modulation is unity, preventing white fog-wall blowout on `ca11`/`wp01` and all rooms.
         let steps = clamp(fog.step_count, 4u, 64u);
-        let march_end = min(view_dist, fog.fog_far);
-        let march_start = min(fog.fog_near, march_end);
-        let march_len = max(0.0, march_end - march_start);
-        let step_len = march_len / f32(steps);
+        let z_end = min(view_z, fog.fog_far);
+        let z_start = min(fog.fog_near, z_end);
+        let z_span = max(0.0, z_end - z_start);
+        let dz = z_span / f32(steps);
         let jitter = interleaved_gradient_noise(vec2<f32>(pixel_coords));
+        let ray_per_z = world_dist / max(view_z, 1e-4);
 
-        var transmittance: f32 = 1.0;
-        let inv_span = 1.0 / max(1e-4, fog.fog_far - fog.fog_near);
+        // Initialize transmittance at `z_start` to match `fog_min` (`sh2gfw_Set_DepthFog`).
+        let f_start = clamp(eval_depth_curve(z_start) * effective_density, 0.0, 0.9995);
+        var transmittance: f32 = 1.0 - f_start;
+
+        // World-space UV frequency derived from `fog_layer2_complexity` (`0.055`, `FogFix.cpp:89`)
+        // and `PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM` (`2000.0` mm, `fog_defset_data +0x02`).
+        let noise_freq = max(0.005, fog.layer2_params.x) / 2000.0;
+        let wind_drift = vec2<f32>(drift_t * 0.005, -drift_t * 0.005);
 
         for (var i: u32 = 0u; i < steps; i = i + 1u) {
-            let t = march_start + (f32(i) + jitter) * step_len;
-            let sample_world = cam_pos + ray_dir * t;
+            let z0 = z_start + f32(i) * dz;
+            let z1 = z0 + dz;
+            let z_sample = z0 + jitter * dz;
+            let sample_world = cam_pos + ray_dir * (z_sample * ray_per_z);
 
-            // Local 3D animated mist density modulated by dual-layer scrolling noise
-            let sample_uv = sample_world.xz * (max(0.005, fog.layer2_params.x) * 0.0018)
-                          + vec2<f32>(drift_t * 0.025, -drift_t * 0.015);
+            // Exact Beer-Lambert differential optical depth matching Classic PS2 curve on `[z0, z1]`.
+            let f0 = clamp(eval_depth_curve(z0) * effective_density, 0.0, 0.9995);
+            let f1 = clamp(eval_depth_curve(z1) * effective_density, 0.0, 0.9995);
+            let d_tau = max(0.0, log((1.0 - f0) / max(1e-4, 1.0 - f1)));
+
+            // Mean-preserving 3D mist density modulation around 1.0 using `fog.tex` and
+            // `fog_transparency_layer2 / 255.0` (`112/255`, `FogFix.cpp` / `Settings.h:184`).
+            let sample_uv = sample_world.xz * noise_freq + wind_drift;
             let local_n = textureSampleLevel(fog_noise_tex, fog_noise_sampler, sample_uv, 0.0).r;
-            // PS2 coordinate system is Y-down (negative Y is UP into the sky).
-            // Mist stays dense near ground level and gently thins high above the camera.
-            let height_above_cam = max(0.0, cam_pos.y - sample_world.y - 600.0);
-            let height_atten = exp(-height_above_cam * 0.00010);
+            let noise_mod = select(1.0, 1.0 + (local_n - 0.5) * fog.layer_transparencies.y, outdoor_enabled);
+            let step_tau = d_tau * noise_mod;
 
-            // Match curve falloff derivative along raymarch steps
-            let norm_t = clamp((t - fog.fog_near) * inv_span, 0.0, 1.0);
-            var curve_weight = 1.0;
-            if (fog.curve_type == 1u) {
-                curve_weight = 1.35 * exp(-0.4 * norm_t);
-            } else if (fog.curve_type == 2u) {
-                curve_weight = 2.2 * norm_t;
-            }
-            let plane_mod = select(1.0, 0.72 + 0.56 * local_n, outdoor_enabled);
-            let step_sigma = effective_density * curve_weight * plane_mod * height_atten * (step_len * inv_span);
-
-            // Flashlight volumetric inscattering / shadow-tested god rays
-            // Scaled strictly by physical optical depth (`step_len * inv_span`) so close-range surfaces
-            // (e.g. inspecting James's car in First-Person) never blow out, and subtly attenuated in daylight fog.
+            // Flashlight volumetric inscattering / shadow-tested god rays weighted by physical `step_tau`.
             if (volumetric_light_enabled) {
                 let scatter = eval_spotlight_scatter(sample_world, ray_dir);
-                let optical_step = (step_len * inv_span) * effective_density * (0.45 + 0.55 * local_n);
-                let env_gain = select(0.32, 0.08, outdoor_enabled);
-                inscatter_rgb = inscatter_rgb + transmittance * scatter * optical_step * env_gain;
+                inscatter_rgb = inscatter_rgb + transmittance * scatter * step_tau;
             }
 
-            transmittance = transmittance * exp(-step_sigma * 1.45);
+            transmittance = transmittance * exp(-step_tau);
         }
 
-        // Blend raymarched volumetric extinction with exact PS2 depth curve + dual-layer planes
-        let volumetric_alpha = 1.0 - transmittance;
-        let analytical_curve = eval_depth_curve(view_dist);
-        let combined = mix(analytical_curve, volumetric_alpha, 0.65);
-        let layered = clamp(combined + plane_noise * combined * 0.35, 0.0, 1.0);
-        fog_factor = clamp(layered * effective_density, 0.0, 1.0);
+        fog_factor = clamp(1.0 - transmittance, 0.0, 1.0);
     }
 
     // Outdoor sky/horizon pixels at far depth (depth == 1.0) blend fully into mist color.

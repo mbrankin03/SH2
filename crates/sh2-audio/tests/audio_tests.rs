@@ -30,3 +30,5 @@ mod engine_hardware;
 mod occlusion_and_hrtf;
 #[path = "suite/sfx_and_footsteps.rs"]
 mod sfx_and_footsteps;
+#[path = "suite/streaming_audio.rs"]
+mod streaming_audio;

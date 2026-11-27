@@ -6,7 +6,7 @@ use winit::keyboard::KeyCode;
 
 use crate::rooms::RoomController;
 use crate::state::AppState;
-use sh2_assets::formats::bink::{decode_bink_audio_track, BinkHeader, BinkVideoStream};
+use sh2_assets::formats::bink::{BinkAudioStream, BinkHeader, BinkVideoStream};
 use sh2_audio::AudioEngine;
 use sh2_debug::{FmvCatalogEntry, FmvVideoSource, FmvViewerState, FMV_CATALOG};
 use sh2_renderer::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
@@ -21,10 +21,10 @@ pub(crate) struct ActiveFmvSession {
     #[allow(dead_code)]
     pub is_hd_source: bool,
     pub frame_accumulator_sec: f32,
-    /// Cached decoded audio (sample rate, s16le PCM) so loops/restarts can replay it.
-    pub audio: Option<(u32, Vec<u8>)>,
-    /// Cutscene paired background music (ADX/AIX decoded data, retail volume, fade) to replay on restart.
-    pub bgm_stream: Option<(sh2_assets::DecodedAdx, f32, std::time::Duration)>,
+    /// Source path and audio track index so theater loops/restarts can re-open the stream (`SH2-180`).
+    pub audio_source: Option<(PathBuf, usize)>,
+    /// Cutscene paired background music `(path, is_aix, retail_volume, fade)` to re-open on restart (`SH2-180`).
+    pub bgm_stream: Option<(PathBuf, bool, f32, std::time::Duration)>,
 }
 
 /// Locate and open a `.bik` movie stream for the requested [`FmvCatalogEntry`] and source preference.
@@ -165,8 +165,8 @@ pub(crate) fn open_fmv_session(
         indexed_frames: 600,
     };
 
-    let mut fmv_audio: Option<(u32, Vec<u8>)> = None;
-    let mut cutscene_bgm_data: Option<(sh2_assets::DecodedAdx, f32, std::time::Duration)> = None;
+    let mut fmv_audio_source: Option<(PathBuf, usize)> = None;
+    let mut cutscene_bgm_data: Option<(PathBuf, bool, f32, std::time::Duration)> = None;
     let (mut stream, is_hd_source) = if let Some((ref path, is_hd)) = chosen_path {
         match BinkVideoStream::open(path) {
             Ok(s) => {
@@ -191,21 +191,19 @@ pub(crate) fn open_fmv_session(
                         track,
                         s.header.audio_tracks.len()
                     );
-                    match decode_bink_audio_track(path, &s.header, track) {
-                        Ok(decoded) if !decoded.pcm_s16le.is_empty() => {
-                            if let Err(e) =
-                                engine.play_fmv_pcm(decoded.sample_rate, &decoded.pcm_s16le, 1.0)
-                            {
+                    match BinkAudioStream::open(path, &s.header, track) {
+                        Ok(audio_stream) if !s.header.audio_tracks.is_empty() => {
+                            if let Err(e) = engine.play_fmv_stream(audio_stream, 1.0) {
                                 tracing::warn!("[FMV Player] Audio playback warning: {:?}", e);
                             }
-                            fmv_audio = Some((decoded.sample_rate, decoded.pcm_s16le));
+                            fmv_audio_source = Some((path.clone(), track));
                         }
                         _ => {
                             engine.stop_fmv_audio(std::time::Duration::from_millis(50));
                         }
                     }
 
-                    // Handle paired cutscene BGM streaming (SH2-39 CRI ADX / AIX containers)
+                    // Handle paired cutscene BGM streaming (SH2-39 / SH2-180 CRI ADX / AIX containers)
                     if let Some(cutscene_map) =
                         sh2_audio::cutscene_bgm::find_cutscene_audio_mapping(entry.id)
                     {
@@ -226,44 +224,30 @@ pub(crate) fn open_fmv_session(
                                         }
                                     }
                                     if let Some(full_bgm_path) = resolved_bgm {
-                                        if let Ok(bytes) = std::fs::read(&full_bgm_path) {
-                                            let decoded_res = if rel_bgm.ends_with(".aix") {
-                                                sh2_assets::formats::aix::decode_aix_mixed(&bytes)
-                                            } else {
-                                                sh2_assets::decode_adx(&bytes)
-                                            };
-                                            match decoded_res {
-                                                Ok(adx) => {
-                                                    tracing::info!(
-                                                        "[FMV Player] Playing cutscene BGM '{}' (vol {:.2}, fade {:?})",
-                                                        rel_bgm,
-                                                        cutscene_map.retail_master_volume,
-                                                        cutscene_map.fade_in
-                                                    );
-                                                    if let Err(e) = engine.play_bgm_with_fade(
-                                                        &adx,
-                                                        cutscene_map.retail_master_volume,
-                                                        cutscene_map.fade_in,
-                                                    ) {
-                                                        tracing::warn!(
-                                                            "[FMV Player] BGM playback warning: {:?}",
-                                                            e
-                                                        );
-                                                    }
-                                                    cutscene_bgm_data = Some((
-                                                        adx,
-                                                        cutscene_map.retail_master_volume,
-                                                        cutscene_map.fade_in,
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "[FMV Player] Failed to decode cutscene BGM '{}': {:?}",
-                                                        rel_bgm,
-                                                        e
-                                                    );
-                                                }
-                                            }
+                                        let is_aix = rel_bgm.ends_with(".aix");
+                                        tracing::info!(
+                                            "[FMV Player] Streaming cutscene BGM '{}' (vol {:.2}, fade {:?})",
+                                            rel_bgm,
+                                            cutscene_map.retail_master_volume,
+                                            cutscene_map.fade_in
+                                        );
+                                        if let Err(e) = engine.play_bgm_file_with_fade(
+                                            &full_bgm_path,
+                                            is_aix,
+                                            cutscene_map.retail_master_volume,
+                                            cutscene_map.fade_in,
+                                        ) {
+                                            tracing::warn!(
+                                                "[FMV Player] BGM playback warning: {:?}",
+                                                e
+                                            );
+                                        } else {
+                                            cutscene_bgm_data = Some((
+                                                full_bgm_path,
+                                                is_aix,
+                                                cutscene_map.retail_master_volume,
+                                                cutscene_map.fade_in,
+                                            ));
                                         }
                                     }
                                 }
@@ -333,7 +317,7 @@ pub(crate) fn open_fmv_session(
         gpu_surface,
         is_hd_source,
         frame_accumulator_sec: 0.0,
-        audio: fmv_audio,
+        audio_source: fmv_audio_source,
         bgm_stream: cutscene_bgm_data,
     })
 }
@@ -434,11 +418,15 @@ pub(crate) fn tick_and_render_fmv_frame(
                     // Loop seamlessly on completion in theater mode
                     session.stream.restart();
                     if let Some(engine) = state.audio_engine.as_mut() {
-                        if let Some((sr, pcm)) = session.audio.as_ref() {
-                            let _ = engine.play_fmv_pcm(*sr, pcm, 1.0);
+                        if let Some((ref path, track)) = session.audio_source {
+                            if let Ok(audio_stream) =
+                                BinkAudioStream::open(path, &session.header, track)
+                            {
+                                let _ = engine.play_fmv_stream(audio_stream, 1.0);
+                            }
                         }
-                        if let Some((adx, vol, fade)) = session.bgm_stream.as_ref() {
-                            let _ = engine.play_bgm_with_fade(adx, *vol, *fade);
+                        if let Some((ref bgm_path, is_aix, vol, fade)) = session.bgm_stream {
+                            let _ = engine.play_bgm_file_with_fade(bgm_path, is_aix, vol, fade);
                         }
                     }
                     if session.stream.next_frame_ref().is_some() {

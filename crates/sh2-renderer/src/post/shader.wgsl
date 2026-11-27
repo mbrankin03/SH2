@@ -25,6 +25,7 @@ const POST_FLAG_ACES_TONEMAP: u32 = 1u;
 const POST_FLAG_PS2_LCG_NOISE: u32 = 2u;
 const POST_FLAG_FIRE_HEAT_HAZE: u32 = 4u;
 const POST_FLAG_SH2EE_NOISE: u32 = 8u;
+const POST_FLAG_FILTER_RETAIN: u32 = 16u;
 
 // PS2 `sh2gfw_SendDraw_Noise` (`0x00177f30`) & `Noise_and_FontDraw` (`0x0019ff70`) GS constants:
 // - `noise_clut` (`0x002ab5c0`): 16-entry PSMT4 CLUT with RGB = `0x00` or `0x18` (`24 / 255.0`).
@@ -64,6 +65,7 @@ const PS2_VIRTUAL_HEIGHT_PX: f32 = 448.0;
 @group(0) @binding(4) var ps2_noise_sampler: sampler;
 @group(0) @binding(5) var depth_tex: texture_depth_2d;
 @group(0) @binding(6) var<uniform> camera: CameraUniforms;
+@group(0) @binding(7) var prev_frame_in: texture_2d<f32>;
 
 // Optional ACES filmic tonemapping approximation (native-upgrade, disabled in strict Vanilla PS2 mode)
 fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
@@ -104,13 +106,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let wave_y = cos(uv_x * 31.0 + post.time * 5.2) * (1.2 * res_scale);
         sample_coords = clamp(pixel_coords + vec2<i32>(round(vec2<f32>(wave_x, wave_y))), vec2<i32>(0), max_coord);
     }
+    // 0. PS2 `sh2gfw_Filter_Retain` (`0x00179b10`, `ALPHA_1 = 0x8000000062`):
+    //    Pause-freeze retain outputs the previous displayed framebuffer directly.
+    if ((post.flags & POST_FLAG_FILTER_RETAIN) != 0u && post.frame_count > 0u) {
+        var retained = textureLoad(prev_frame_in, pixel_coords, 0).rgb;
+        if (post.fade_rgba.a > 0.001) {
+            retained = mix(retained, post.fade_rgba.rgb, clamp(post.fade_rgba.a, 0.0, 1.0));
+        }
+        textureStore(ldr_out, pixel_coords, vec4<f32>(retained, 1.0));
+        return;
+    }
+
     var hdr_color = textureLoad(hdr_in, sample_coords, 0).rgb * post.exposure;
 
     // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) Depth-of-Field:
     //     - Dual-plane `EffectMode = 8` (`sh2pc.exe` `0x005a1f30` `Toilet_Dof_Filter`): reconstructs
     //       view-space Z (`view_z`) from `depth_tex` + `camera.inv_proj`, splits foreground (`< focus`)
     //       vs background (`>= focus`) at `dof_focus_params.x`, and applies the exact 3x3 tap grid
-    //       (`grid_n = 3, step = 8`, `sh2pc.exe` `0x005a1fbe` / `SLUS_202.28` `0x001785e0`).
+    //       (`grid_n = 3, step = 8`, `-4` in 12.4 fixed-point = `-0.25 px` bias, `SLUS_202.28` `0x001785e0:878`).
     //     - Single-plane `EffectMode = 5` (closet bars / tunnel): 2x2 box at `dof_tap_offset_px`.
     if (post.dof_focus_params.x > 0.001) {
         let depth_val = textureLoad(depth_tex, sample_coords, 0);
@@ -129,10 +142,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         );
         if (local_blur > 0.001) {
             let step_px = max(post.dof_focus_params.w, 1.0) * res_scale;
+            let bias_px = PS2_SWAP_SUBPIXEL_BIAS_PX * res_scale;
             var tap_sum = vec3<f32>(0.0);
             for (var iy: i32 = -1; iy <= 1; iy = iy + 1) {
                 for (var ix: i32 = -1; ix <= 1; ix = ix + 1) {
-                    let delta = vec2<i32>(round(vec2<f32>(f32(ix), f32(iy)) * step_px));
+                    let delta = vec2<i32>(round(vec2<f32>(f32(ix), f32(iy)) * step_px + vec2<f32>(bias_px, bias_px)));
                     let tap = textureLoad(hdr_in, clamp(sample_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
                     tap_sum = tap_sum + tap;
                 }
@@ -151,7 +165,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let dy = select(oy0, oy1, iy == 1);
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(ox0, ox1, ix == 1);
-                let delta = vec2<i32>(round(vec2<f32>(dx, dy)));
+                let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
                 let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
                 tap_sum = tap_sum + tap;
             }
@@ -173,9 +187,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
                 let dx = select(go0, go1, ix == 1);
                 let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
-                let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-                let luma = max(tap.r, max(tap.g, tap.b));
-                if (luma >= post.glow_threshold) {
+                let tap_rgba = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0);
+                let tap = tap_rgba.rgb * post.exposure;
+                // PS2 GS `TEST_1` `AREF` (`ATST = 5 GEQUAL`): compare framebuffer alpha when populated
+                // (`< 0.999`), or PS2 luminance (`0.3*R + 0.6*G + 0.1*B`, `SLUS_202.28` `0x002a9540`)
+                // on opaque HDR surfaces.
+                let luma = dot(tap, vec3<f32>(0.3, 0.6, 0.1));
+                let aref_metric = select(luma, tap_rgba.a, tap_rgba.a < 0.999);
+                if (aref_metric >= post.glow_threshold) {
                     acc = acc + tap * (glow_alpha * 0.25);
                 }
             }
@@ -184,23 +203,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // 0c. PS2 `sh2gfw_Filter_Blur` (`0x00177440` / `enSetBlur` `0x00146c30` `param_2 = 0x60`):
-    //     GS `ALPHA_1 = 0x44` (`A=Cs, B=Cd, C=As, D=Cd` => `dst = mix(dst, tap, As / 128.0)`)
-    //     evaluated over the `Swap_Soft` 2x2 unit-step (`step_px = 1.0`) tap grid.
-    if (post.motion_blur_strength > 0.001) {
+    //     Temporal previous-frame feedback (`sh2gfw_GetNowDispFBP`) blended with GS `ALPHA_1 = 0x44`
+    //     (`A=Cs, B=Cd, C=As, D=Cd` => `dst = mix(dst, prev_frame, As / 128.0)`).
+    if (post.motion_blur_strength > 0.001 && post.frame_count > 0u) {
         let mb_alpha = clamp(post.motion_blur_strength, 0.0, 1.0);
-        let mo0 = -0.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
-        let mo1 = 0.5 + PS2_SWAP_SUBPIXEL_BIAS_PX;
-        var tap_sum = vec3<f32>(0.0);
-        for (var iy: i32 = 0; iy < 2; iy = iy + 1) {
-            let dy = select(mo0, mo1, iy == 1);
-            for (var ix: i32 = 0; ix < 2; ix = ix + 1) {
-                let dx = select(mo0, mo1, ix == 1);
-                let delta = vec2<i32>(round(vec2<f32>(dx, dy) * res_scale));
-                let tap = textureLoad(hdr_in, clamp(pixel_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-                tap_sum = tap_sum + tap;
-            }
-        }
-        hdr_color = mix(hdr_color, tap_sum * 0.25, mb_alpha);
+        let prev_rgb = textureLoad(prev_frame_in, pixel_coords, 0).rgb;
+        hdr_color = mix(hdr_color, prev_rgb, mb_alpha);
     }
 
     // 1. Optional ACES tonemapping (`native-upgrade`) vs strict 1:1 Vanilla PS2 linear clamp

@@ -580,9 +580,49 @@ impl OptionsMenu {
                     }
                     Some(OptionsSoundCue::CursorMove)
                 } else {
+                    // Individual button remapping on rows `1..=13` (`key_conf` `0x002137f0` / `key_conf_check` `0x00213840`)
+                    let action_idx = self.config_row - 1;
+                    let cur_mask = self.draft_config.controls.ps2_bindings.actions[action_idx];
+                    let bits = subscreens::PS2_REMAPPABLE_BUTTON_BITS;
+                    let cur_pos = bits.iter().position(|&b| (cur_mask & b) != 0).unwrap_or(0);
+                    let len = bits.len();
+                    for step in 1..=len {
+                        let next_pos = if forward {
+                            (cur_pos + step) % len
+                        } else {
+                            (cur_pos + len - (step % len)) % len
+                        };
+                        if self.remap_controller_action(bits[next_pos])
+                            == OptionsSoundCue::ValueChange
+                        {
+                            return Some(OptionsSoundCue::ValueChange);
+                        }
+                    }
                     Some(OptionsSoundCue::None)
                 }
             }
+        }
+    }
+
+    /// Remaps the currently highlighted `ControllerConfig` action row (`config_row in 1..=13`) to
+    /// `button_mask` via `key_conf` (`0x002137f0`) and `key_conf_check` (`0x00213840`).
+    pub fn remap_controller_action(&mut self, button_mask: u32) -> OptionsSoundCue {
+        if self.sub_screen != OptionsSubScreen::ControllerConfig
+            || self.config_row == 0
+            || self.config_row > 13
+        {
+            return OptionsSoundCue::None;
+        }
+        let action_idx = self.config_row - 1;
+        if subscreens::key_conf_check(
+            action_idx,
+            button_mask,
+            &mut self.draft_config.controls.ps2_bindings.actions,
+        ) {
+            self.is_dirty = self.draft_config != self.original_config;
+            OptionsSoundCue::ValueChange
+        } else {
+            OptionsSoundCue::None
         }
     }
 

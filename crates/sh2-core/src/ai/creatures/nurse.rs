@@ -19,6 +19,24 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use sh2_assets::formats::cld::WallSegment;
 
+/// Authentic `SLUS_202.28` `enNSEGetFeelRange` (`0x00159ba0`, `0x2aa720`) proximity feel ranges (mm).
+pub const NSE_FEEL_RANGE_MM: [f32; 4] = [1000.0, 1250.0, 1500.0, 1500.0];
+
+/// Authentic `SLUS_202.28` `enNSEGetAttackProbability` (`0x00159c20`, `0x2aa740`) strike probability.
+pub const NSE_ATTACK_PROBABILITY: [f32; 4] = [0.1, 0.5, 0.7, 0.9];
+
+/// Authentic `SLUS_202.28` `enNSEGetAttackSpeed` (`0x00159c70`, `0x2aa760`) attack speed multipliers.
+pub const NSE_ATTACK_SPEED_SCALE: [f32; 4] = [0.5, 0.8, 1.0, 1.1];
+
+/// Authentic `SLUS_202.28` `enNSEGetRotSpeed` (`0x00159d10`, `0x2aa780`) turn scale × `0.05235988` rad/tick.
+pub const NSE_ROT_SPEED_SCALE: [f32; 4] = [0.5, 0.8, 1.0, 1.2];
+
+/// Base rotation quantum per 60 Hz tick (`0.05235988` rad = 3°/tick, `enNSEGetRotSpeed` `0x00159d10`).
+pub const NSE_ROT_BASE_RAD_PER_TICK: f32 = 0.052_359_88;
+
+/// Authentic `SLUS_202.28` `enNSESetDownTime` (`0x00159d70`, `0x2aa798`) knockdown durations in 60 Hz ticks.
+pub const NSE_DOWN_TIME_TICKS: [i16; 4] = [600, 480, 360, 300];
+
 /// Authentic Nurse state enum (`0x4bb390`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum NseState {
@@ -45,6 +63,14 @@ pub struct NurseController {
     pub alert_timer: f32,
     pub state_timer: f32,
     pub twitch_timer: f32,
+    /// Current speed modulation ramp (`work + 0xa0`, ramped `±0.01/tick` toward `speed_target`, `enNSECtrlWander`/`Chase`).
+    pub speed_mod: f32,
+    /// Target speed modulation (`work + 0xa4`, `1.0..1.5` in `enNSECtrlWander` `0x00157bf0`).
+    pub speed_target: f32,
+    /// Deterministic roll `[0.0, 1.0)` for `enNSECtrlAttack` (`0x001583a0`) probability & lunge selection.
+    pub attack_roll: f32,
+    /// Number of consecutive combo strikes executed in the current `Attack` state (`enNSECtrlAttack` `0x001583a0`).
+    pub attack_combo_count: u8,
     /// Confuse countdown timer in 60 Hz ticks (`600 - 90 * mode`, `enNSECtrlConfuse` `SLUS 0x001589a0`).
     pub confuse_timer_ticks: f32,
     pub sub_state: u8,
@@ -103,6 +129,10 @@ impl NurseController {
             alert_timer: 0.0,
             state_timer: 0.0,
             twitch_timer: 0.0,
+            speed_mod: 1.0,
+            speed_target: 1.0,
+            attack_roll: 0.0,
+            attack_combo_count: 0,
             confuse_timer_ticks: 0.0,
             sub_state: 0,
             is_dark_variant,
@@ -194,45 +224,89 @@ impl NurseController {
         );
         self.alert_timer = alert;
 
+        let diff_idx = difficulty.as_index();
+        let feel_range = NSE_FEEL_RANGE_MM[diff_idx];
+        let rot_speed_rad_s = NSE_ROT_SPEED_SCALE[diff_idx] * NSE_ROT_BASE_RAD_PER_TICK * 60.0;
+
         match self.state {
             NseState::Wander => {
-                let odx = self.position.x - self.origin_pos.x;
-                let odz = self.position.z - self.origin_pos.z;
-                if odx * odx + odz * odz > 4000.0 * 4000.0 {
-                    self.yaw = (-odx).atan2(-odz);
-                }
-
-                // Staggered twitch advance
-                let twitch_speed = if (self.twitch_timer % 1.5) < 0.9 {
-                    480.0
-                } else {
-                    60.0 // Twitch hesitation
-                };
-                self.position.x += self.yaw.sin() * twitch_speed * dt;
-                self.position.z += self.yaw.cos() * twitch_speed * dt;
-
-                if notice != SensoryNotice::None {
-                    self.state = NseState::Precaution;
+                // `enNSECtrlWander` (`SLUS_202.28` `0x00157bf0` lines 234-312):
+                // Direct Attack if in attack/lunge range; Chase if seen; Precaution if within feel_range or sound.
+                if matches!(
+                    notice,
+                    SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
+                ) {
+                    self.state = NseState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.attack_combo_count = 0;
+                } else if notice == SensoryNotice::VisualContact {
+                    self.state = NseState::Chase;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     self.path_state.init(self.yaw);
+                } else if dist < feel_range || notice == SensoryNotice::AuditoryContact {
+                    self.state = NseState::Precaution;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
+                } else {
+                    // Speed ramp `±0.01/tick` (`enNSECtrlWander` `0x00157bf0:282-291`)
+                    let step =
+                        (self.speed_target - self.speed_mod).clamp(-0.01, 0.01) * (dt * 60.0);
+                    self.speed_mod = (self.speed_mod + step).clamp(1.0, 1.5);
+                    let walk_speed = 480.0
+                        * self.speed_mod
+                        * nse_walk_speed_scale(difficulty, self.stats.hp_rate);
+                    self.position.x += self.yaw.sin() * walk_speed * dt;
+                    self.position.z += self.yaw.cos() * walk_speed * dt;
                 }
             }
 
             NseState::Precaution => {
-                self.turn_towards(target_dir, 3.2 * dt);
-                if self.state_timer > 1.2
-                    || matches!(
-                        notice,
-                        SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
-                    )
-                {
+                // `enNSECtrlPrecaution` (`SLUS_202.28` `0x00157fd0` lines 340-368):
+                // Immediate transitions on `enNSECanSeePlayer` (`>=2` -> Attack, `1` -> Chase, `dist > feel_range` -> Wander).
+                self.turn_towards(target_dir, rot_speed_rad_s * dt);
+                if matches!(
+                    notice,
+                    SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
+                ) {
+                    self.state = NseState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.attack_combo_count = 0;
+                } else if notice == SensoryNotice::VisualContact {
                     self.state = NseState::Chase;
+                    self.sub_state = 0;
                     self.state_timer = 0.0;
                     self.path_state.init(self.yaw);
+                } else if dist > feel_range && notice == SensoryNotice::None {
+                    self.state = NseState::Wander;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
                 }
             }
 
             NseState::Chase => {
+                // `enNSECtrlChase` (`SLUS_202.28` `0x00158140` lines 394-436)
+                if matches!(
+                    notice,
+                    SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
+                ) || (walls.is_empty() && dist <= self.sensory.attack_ranges[diff_idx])
+                {
+                    self.state = NseState::Attack;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    self.attack_combo_count = 0;
+                    return;
+                }
+                if notice == SensoryNotice::None && dist > feel_range {
+                    self.state = NseState::Wander;
+                    self.sub_state = 0;
+                    self.state_timer = 0.0;
+                    return;
+                }
+
                 let steer_dir =
                     if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
                         let ticks = (dt * 60.0).round().max(1.0) as i16;
@@ -249,41 +323,80 @@ impl NurseController {
                     } else {
                         target_dir
                     };
-                self.turn_towards(steer_dir, 3.2 * dt);
+                self.turn_towards(steer_dir, rot_speed_rad_s * dt);
 
-                if matches!(
-                    notice,
-                    SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
-                ) || (walls.is_empty()
-                    && dist <= self.sensory.attack_ranges[difficulty.as_index()])
-                {
-                    self.is_lunge_attack = notice == SensoryNotice::InLungeRange;
-                    self.state = NseState::Attack;
-                    self.state_timer = 0.0;
-                    return;
-                }
-
-                // HP-scaled twitch advance (`enNSEGetWalkSpeed` `0x00159b00`)
+                // `enCalcSpeedRate` + `±0.01/tick` ramp + `enNSEGetWalkSpeed` (`0x00158140:418-431`)
+                self.speed_target = normalize_angle(target_dir - self.yaw)
+                    .cos()
+                    .clamp(0.25, 1.0);
+                let step = (self.speed_target - self.speed_mod).clamp(-0.01, 0.01) * (dt * 60.0);
+                self.speed_mod = (self.speed_mod + step).clamp(0.25, 1.0);
                 let speed_scale = nse_walk_speed_scale(difficulty, self.stats.hp_rate);
-                let twitch_speed = if (self.twitch_timer % 1.2) < 0.8 {
-                    650.0 * speed_scale
-                } else {
-                    120.0 * speed_scale
-                };
-                self.position.x += self.yaw.sin() * twitch_speed * dt;
-                self.position.z += self.yaw.cos() * twitch_speed * dt;
-
-                if notice == SensoryNotice::None && self.state_timer > 5.0 {
-                    self.state = NseState::Wander;
-                    self.state_timer = 0.0;
-                }
+                let walk_speed = 650.0 * self.speed_mod * speed_scale;
+                self.position.x += self.yaw.sin() * walk_speed * dt;
+                self.position.z += self.yaw.cos() * walk_speed * dt;
             }
 
             NseState::Attack => {
-                // Pipe swing attack duration ~1.1s
-                if self.state_timer >= 1.1 {
-                    self.state = NseState::Chase;
-                    self.state_timer = 0.0;
+                // `enNSECtrlAttack` (`SLUS_202.28` `0x001583a0` lines 457-531):
+                // - `sub_state == 0`: roll against `NSE_ATTACK_PROBABILITY[mode]` (`0x2aa740`).
+                //   If `< prob`, select close strike (`anime 3`, `is_lunge_attack = false`) vs lunge
+                //   (`anime 4`, `is_lunge_attack = true` when `InLungeRange` && (`dist > 900.0` || roll < 0.5))
+                //   -> `sub_state = 1`. Otherwise hesitation (`anime 2`) -> `sub_state = 2`.
+                // - `sub_state == 1`: active strike (`46/47` normal, `48/49` dark); tracks player on
+                //   Hard (`mode > 2`) or close strike (`!is_lunge_attack`). When swing finishes, if
+                //   player remains in attack/lunge range, loops to `sub_state = 0` for multi-hit combo!
+                // - `sub_state == 2`: hesitation wait; re-evaluates `enNSECanSeePlayer` when done.
+                let atk_speed =
+                    NSE_ATTACK_SPEED_SCALE[diff_idx] * (self.stats.hp_rate / 200.0 + 0.5);
+                let swing_duration = (1.0 / atk_speed.max(0.25)).clamp(0.55, 1.6);
+                let in_strike_range = matches!(
+                    notice,
+                    SensoryNotice::InAttackRange | SensoryNotice::InLungeRange
+                ) || (walls.is_empty()
+                    && dist <= self.sensory.attack_ranges[diff_idx]);
+
+                match self.sub_state {
+                    0 => {
+                        if self.attack_roll < NSE_ATTACK_PROBABILITY[diff_idx] {
+                            self.is_lunge_attack = notice == SensoryNotice::InLungeRange
+                                && (dist > 900.0 || self.attack_roll < 0.5);
+                            self.sub_state = 1;
+                            self.state_timer = 0.0;
+                            self.attack_combo_count = self.attack_combo_count.saturating_add(1);
+                        } else {
+                            self.sub_state = 2;
+                            self.state_timer = 0.0;
+                        }
+                    }
+                    1 => {
+                        if difficulty == DifficultyLevel::Hard || !self.is_lunge_attack {
+                            self.turn_towards(target_dir, rot_speed_rad_s * dt);
+                        }
+                        if self.state_timer >= swing_duration {
+                            if in_strike_range {
+                                // Loop back to sub_state 0 for combo continuation (`en_nse.c:503`)
+                                self.sub_state = 0;
+                                self.state_timer = 0.0;
+                            } else {
+                                self.state = NseState::Chase;
+                                self.sub_state = 0;
+                                self.state_timer = 0.0;
+                            }
+                        }
+                    }
+                    _ => {
+                        if self.state_timer >= 0.5 {
+                            if in_strike_range {
+                                self.sub_state = 0;
+                                self.state_timer = 0.0;
+                            } else {
+                                self.state = NseState::Chase;
+                                self.sub_state = 0;
+                                self.state_timer = 0.0;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -343,9 +456,16 @@ mod tests {
         let mut nurse = NurseController::new(1, Vec3::ZERO, 0.0, DifficultyLevel::Normal);
         assert_eq!(nurse.state, NseState::Wander);
 
-        let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 1000.0), 0.0, false, false);
-        nurse.update(&target, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
-        assert_eq!(nurse.state, NseState::Precaution);
+        // At 1000 mm straight ahead (`InAttackRange`), `enNSECtrlWander` (`0x00157bf0`) enters `Attack`.
+        let close = PerceivableTarget::new(Vec3::new(0.0, 0.0, 1000.0), 0.0, false, false);
+        nurse.update(&close, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
+        assert_eq!(nurse.state, NseState::Attack);
+
+        // Behind within feel range (1500 mm < 2500 mm Normal feel range) enters `Precaution`.
+        let mut nurse_alert = NurseController::new(2, Vec3::ZERO, 0.0, DifficultyLevel::Normal);
+        let behind = PerceivableTarget::new(Vec3::new(0.0, 0.0, -1500.0), 0.0, false, false);
+        nurse_alert.update(&behind, RoomLighting::Lit, DifficultyLevel::Normal, 0.1);
+        assert_eq!(nurse_alert.state, NseState::Precaution);
     }
 
     #[test]
@@ -353,9 +473,10 @@ mod tests {
         let mut nurse = NurseController::new(2, Vec3::ZERO, 0.0, DifficultyLevel::Hard);
         nurse.state = NseState::Confuse;
         nurse.sub_state = 0;
-        let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 5000.0), 0.0, false, false);
+        // Behind within Hard feel range (3000 mm) so Precaution holds after Confuse expires.
+        let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, -2000.0), 0.0, false, false);
         // Hard mode: 600 - 90*3 = 330 ticks.
-        for _ in 0..335 {
+        for _ in 0..330 {
             nurse.update(
                 &target,
                 RoomLighting::Lit,
@@ -364,5 +485,25 @@ mod tests {
             );
         }
         assert_eq!(nurse.state, NseState::Precaution);
+    }
+
+    #[test]
+    fn test_nurse_attack_combo_probability_table() {
+        // `enNSECtrlAttack` (`SLUS_202.28` `0x00158550` / `en_nse.c:481`):
+        // [Beginner=0.1, Easy=0.5, Normal=0.7, Hard=0.9]
+        assert_eq!(NSE_ATTACK_PROBABILITY, [0.1, 0.5, 0.7, 0.9]);
+        let mut nurse = NurseController::new(3, Vec3::ZERO, 0.0, DifficultyLevel::Hard);
+        nurse.state = NseState::Attack;
+        nurse.sub_state = 0;
+        nurse.attack_roll = 0.2; // < 0.9 Hard probability -> commits to attack
+        let target = PerceivableTarget::new(Vec3::new(0.0, 0.0, 900.0), 0.0, false, false);
+        nurse.update(
+            &target,
+            RoomLighting::Lit,
+            DifficultyLevel::Hard,
+            1.0 / 60.0,
+        );
+        assert_eq!(nurse.state, NseState::Attack);
+        assert!(nurse.sub_state > 0);
     }
 }

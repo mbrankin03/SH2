@@ -82,6 +82,7 @@ impl RenderContext {
                 mesh.update_bone_matrices(&self.queue, matrices);
             }
         }
+        self.prepare_skeletal_light_slots(skeletal_meshes);
 
         // Snapshot the active `.map` `geo_id` visibility filter once per frame (`EvDispControlModelExec`).
         let vis_filter = self.map_visibility_filter();
@@ -577,18 +578,48 @@ impl RenderContext {
         }
 
         if self.config.enable_post {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Post Process Compute Pass"),
-                timestamp_writes: None,
-            });
-            cpass.set_pipeline(&self.post_pipeline.pipeline);
-            let post_bind_group = if self.config.enable_fog {
-                &self.post_bind_group_fog
-            } else {
-                &self.post_bind_group_direct
-            };
-            cpass.set_bind_group(0, post_bind_group, &[]);
-            cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+            {
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Post Process Compute Pass"),
+                    timestamp_writes: None,
+                });
+                cpass.set_pipeline(&self.post_pipeline.pipeline);
+                let post_bind_group = if self.config.enable_fog {
+                    &self.post_bind_group_fog
+                } else {
+                    &self.post_bind_group_direct
+                };
+                cpass.set_bind_group(0, post_bind_group, &[]);
+                cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
+            }
+
+            // Copy finished LDR output into `prev_frame_texture` for next frame's
+            // `sh2gfw_Filter_Retain` (`0x00179b10`) / `sh2gfw_Filter_Blur` (`0x00177440`),
+            // unless `POST_FLAG_FILTER_RETAIN` pause-freeze is active.
+            if !self
+                .filter_retain_frozen
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                encoder.copy_texture_to_texture(
+                    wgpu::ImageCopyTexture {
+                        texture: &self.ldr_output_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::ImageCopyTexture {
+                        texture: &self.prev_frame_texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d {
+                        width: self.config.width.max(1),
+                        height: self.config.height.max(1),
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
     }
 

@@ -262,3 +262,54 @@ fn test_room_insect_maps_to_kind_zero_and_is_ignored_by_radio_noise() {
     assert!((out_forced_fallback.track_volumes[0] - 1.0).abs() < 1e-5);
     assert!((out_forced_fallback.track_volumes[2] - 1.0).abs() < 1e-5);
 }
+
+#[test]
+fn test_sh2pc_retail_radio_tables_threat_gating_and_geometric_decay() {
+    // Verify exact `sh2pc.exe` `FUN_0048c710` (`0x0088a0f8` / `0x0088a108`) tables:
+    assert_eq!(SH2PC_RADIO_TRACK_WEIGHTS[1], [1.0, 1.0, 0.6, 0.8]);
+    assert_eq!(
+        SH2PC_RADIO_TRACK_RADII_MM[1],
+        [12_500.0, 5_000.0, 1_250.0, 7_500.0]
+    );
+    assert_eq!(SH2PC_RADIO_TRACK_WEIGHTS[4], [0.5, 0.5, 0.5, 1.0]);
+    assert_eq!(
+        SH2PC_RADIO_TRACK_RADII_MM[4],
+        [10_000.0, 9_000.0, 8_000.0, 10_000.0]
+    );
+    // Inner deadzone `< 1.5` mm returns exact `1.0`.
+    assert_eq!(sh2pc_radio_cosine_attenuation(1.0, 12_500.0), 1.0);
+    assert_eq!(sh2pc_radio_cosine_attenuation(13_000.0, 12_500.0), 0.0);
+
+    // Single Lying Figure at 1000 mm has threat score 3 (< 9) -> track 3 stays gated at 0.0.
+    let mut radio = RadioNoiseEvaluator::default();
+    let one_scu = [RadioEnemySample {
+        kind: 1,
+        sub_type: 0,
+        position: Vec3::new(0.0, 0.0, 1000.0),
+        is_spawned_active: true,
+        is_alive: true,
+        is_downed: false,
+    }];
+    let out_one = radio.evaluate_enemies_retail_pc(
+        true,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Mat4::IDENTITY,
+        &one_scu,
+        5.0,
+    );
+    assert!(out_one.track_volumes[0] > 0.9);
+    assert_eq!(out_one.track_volumes[3], 0.0);
+
+    // Three Lying Figures within 7500 mm sum to threat score 9 (>= 9) -> track 3 opens!
+    let three_scu = [one_scu[0]; 3];
+    let out_three = radio.evaluate_enemies_retail_pc(
+        true,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Mat4::IDENTITY,
+        &three_scu,
+        5.0,
+    );
+    assert!(out_three.track_volumes[3] > 0.5);
+}

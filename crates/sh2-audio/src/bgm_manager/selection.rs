@@ -358,6 +358,10 @@ pub fn evaluate_situation_page(
     min_enemy_dist_xz: Option<f32>,
     flags: &BgmEventFlags,
 ) -> u32 {
+    // Retail `sh2pc.exe` `FUN_00516430` (`0x00516430:4757`): `game_mode == 0x0b` forces situation `15`.
+    if flags.game_mode == 0x0b {
+        return 15;
+    }
     let ev_page = eval_stage_ev_bgm_control(stage_id, room_id, flags);
     if ev_page > 3 {
         return ev_page;

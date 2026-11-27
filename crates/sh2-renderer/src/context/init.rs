@@ -66,6 +66,7 @@ impl RenderContext {
             (hdr_color_texture, hdr_color_view),
             (fog_color_texture, fog_color_view),
             (ldr_output_texture, ldr_output_view),
+            (prev_frame_texture, prev_frame_view),
         ) = Self::create_offscreen_targets(&device, config.width, config.height);
 
         let geometry_pipeline =
@@ -305,6 +306,55 @@ impl RenderContext {
             ],
         });
 
+        let mut skeletal_light_buffers = Vec::with_capacity(Self::MAX_SKELETAL_LIGHT_SLOTS);
+        let mut skeletal_light_bind_groups = Vec::with_capacity(Self::MAX_SKELETAL_LIGHT_SLOTS);
+        for slot in 0..Self::MAX_SKELETAL_LIGHT_SLOTS {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("Skeletal CharacterLightPool Slot {slot} Buffer")),
+                size: std::mem::size_of::<crate::light::SpotlightUniforms>() as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!(
+                    "Skeletal CharacterLightPool Slot {slot} Bind Group"
+                )),
+                layout: &geometry_pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffers.camera_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: buffers.pcss_shadow_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(
+                            &textures.pcss_shadow_depth_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            &textures.specular_sphere_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&textures.specular_sphere_sampler),
+                    },
+                ],
+            });
+            skeletal_light_buffers.push(buf);
+            skeletal_light_bind_groups.push(bg);
+        }
+
         let (fog_bind_group, post_bind_group_fog, post_bind_group_direct) =
             Self::create_compute_bind_groups(
                 &device,
@@ -321,6 +371,7 @@ impl RenderContext {
                 &textures.fog_noise_view,
                 &textures.fog_noise_sampler,
                 &ldr_output_view,
+                &prev_frame_view,
             );
 
         // Default 1x1 white texture for untextured geometry fallback
@@ -467,6 +518,8 @@ impl RenderContext {
             fog_color_view,
             ldr_output_texture,
             ldr_output_view,
+            prev_frame_texture,
+            prev_frame_view,
             geometry_pipeline,
             skeletal_pipeline,
             debug_line_pipeline,
@@ -537,6 +590,14 @@ impl RenderContext {
             fog_bind_group,
             post_bind_group_fog,
             post_bind_group_direct,
+            skeletal_light_buffers,
+            skeletal_light_bind_groups,
+            skeletal_light_active_slots: std::sync::atomic::AtomicUsize::new(0),
+            last_spotlight_uniforms: std::sync::Mutex::new(
+                crate::light::SpotlightUniforms::default(),
+            ),
+            gameplay_char_light_pool: std::sync::Mutex::new(None),
+            filter_retain_frozen: std::sync::atomic::AtomicBool::new(false),
             fog_particle_count: std::sync::atomic::AtomicU32::new(0),
             shadow_volume_vertex_count: std::sync::atomic::AtomicU32::new(0),
             drop_shadow_vertex_count: std::sync::atomic::AtomicU32::new(0),

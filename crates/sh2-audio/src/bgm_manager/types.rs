@@ -132,6 +132,13 @@ pub struct BgmEventFlags {
     pub ev_bgm_override: Option<u32>,
     /// Whether SH2:EE restored cut/unused audio (`MusicBoxVolume.cpp` 7th-layer Hotel 1F/2F music box attenuation) is enabled (`SH2-62`).
     pub enable_restored_cut_audio: bool,
+    /// Retail `sh2pc.exe` Bowling BGM start delay flag (`DAT_01f80bd0`, set in `SeBgmChange`
+    /// `0x00516028:4512-4515` for stage 15 when `(flag_5f0 & 0x8000_0000) == 0`, checked in
+    /// `FUN_00516430` `0x00516430:4666` before starting `pending_load_id`).
+    pub bowling_bgm_delay: bool,
+    /// Retail `sh2pc.exe` active game mode (`DAT_00932178`, checked in `FUN_00516430` `0x00516430:4757`:
+    /// `game_mode == 0x0b` forces situation page `15`).
+    pub game_mode: u8,
 }
 
 impl BgmEventFlags {
@@ -185,6 +192,8 @@ impl BgmEventFlags {
             event_mode_active,
             ev_bgm_override: None,
             enable_restored_cut_audio,
+            bowling_bgm_delay: false,
+            game_mode: 0,
         }
     }
 }

@@ -48,6 +48,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [5.0, 5.0, 5.0],
@@ -117,6 +119,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 1.4, 1.4],
@@ -186,6 +190,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 1.4, 1.4],
@@ -255,6 +261,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [7.0, 7.0, 7.0],
@@ -324,6 +332,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 0.26, 0.2],
@@ -393,6 +403,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.74, 1.7, 1.4],
@@ -462,6 +474,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 1.8, 1.8],
@@ -531,6 +545,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 5000.0,
         fog_far: 8000.0,
+        fog_max: 21.0,
+        fog_min: 255.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.2, 1.1, 1.1],
@@ -600,6 +616,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [6.0, 6.0, 6.0],
@@ -669,6 +687,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.3, 0.9, 0.3],
@@ -738,6 +758,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 8000.0,
         fog_far: 12000.0,
+        fog_max: 0.0,
+        fog_min: 255.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.2, 1.2, 1.2],
@@ -807,6 +829,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.2, 1.2, 1.2],
@@ -876,6 +900,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 0.8, 0.8],
@@ -945,6 +971,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.84, 0.82, 0.78],
@@ -1014,6 +1042,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 1.3, 1.24],
@@ -1083,6 +1113,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.2, 1.2, 1.2],
@@ -1152,6 +1184,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 1.5, 1.5],
@@ -1221,6 +1255,8 @@ pub const AP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1294,6 +1330,8 @@ pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 19000.0,
         fog_near: 10000.0,
         fog_far: 19000.0,
+        fog_max: 100.0,
+        fog_min: 220.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 2.0, 1.6],
@@ -1363,6 +1401,8 @@ pub const BW_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1436,6 +1476,8 @@ pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 18000.0,
         fog_near: 10000.0,
         fog_far: 17635.0,
+        fog_max: 21.0,
+        fog_min: 234.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1505,6 +1547,8 @@ pub const CA_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1578,6 +1622,8 @@ pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1647,6 +1693,8 @@ pub const CB_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1720,6 +1768,8 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 1675.0,
         fog_far: 5525.0,
+        fog_max: 23.0,
+        fog_min: 240.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1789,6 +1839,8 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 3000.0,
         fog_far: 7500.0,
+        fog_max: 20.0,
+        fog_min: 255.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1858,6 +1910,8 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 3000.0,
         fog_far: 7500.0,
+        fog_max: 20.0,
+        fog_min: 255.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1927,6 +1981,8 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -1996,6 +2052,8 @@ pub const CC_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -2068,6 +2126,8 @@ pub const CD_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
     clip_far: 0.0,
     fog_near: 0.0,
     fog_far: 0.0,
+    fog_max: 0.0,
+    fog_min: 0.0,
     point_lights: [
         DrawEnvPointLight {
             color: [0.0, 0.0, 0.0],
@@ -2140,6 +2200,8 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -2209,6 +2271,8 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -2278,6 +2342,8 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 2.0, 2.0],
@@ -2347,6 +2413,8 @@ pub const ER_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 2.0, 2.0],
@@ -2420,6 +2488,8 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 2.0, 1.96],
@@ -2489,6 +2559,8 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 2.0, 1.96],
@@ -2558,6 +2630,8 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 2.0, 1.96],
@@ -2627,6 +2701,8 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.9, 1.0, 0.98],
@@ -2696,6 +2772,8 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 11000.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 0.5, 0.0],
@@ -2765,6 +2843,8 @@ pub const HP_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -2837,6 +2917,8 @@ pub const OB_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
     clip_far: 34000.0,
     fog_near: 19000.0,
     fog_far: 33000.0,
+    fog_max: 40.0,
+    fog_min: 230.0,
     point_lights: [
         DrawEnvPointLight {
             color: [0.0, 0.0, 0.0],
@@ -2909,6 +2991,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.7, 0.75, 0.75],
@@ -2978,6 +3062,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.375, 0.375, 0.375],
@@ -3047,6 +3133,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.5, 0.5, 0.375],
@@ -3116,6 +3204,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 0.75],
@@ -3185,6 +3275,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 1.5],
@@ -3254,6 +3346,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 0.75],
@@ -3323,6 +3417,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -3392,6 +3488,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.375, 0.375, 0.375],
@@ -3461,6 +3559,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 0.75],
@@ -3530,6 +3630,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.5, 1.5, 1.5],
@@ -3599,6 +3701,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.5, 0.5, 0.5],
@@ -3668,6 +3772,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [4.4, 4.4, 4.4],
@@ -3737,6 +3843,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.7, 1.7, 1.6],
@@ -3806,6 +3914,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 1.7, 1.6],
@@ -3875,6 +3985,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 1.7, 1.6],
@@ -3944,6 +4056,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.36, 0.0, 0.0],
@@ -4013,6 +4127,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.8, 2.0, 1.6],
@@ -4082,6 +4198,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.8, 2.0, 1.6],
@@ -4151,6 +4269,8 @@ pub const PS_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -4223,6 +4343,8 @@ pub const QP_DRAW_ENV_DATA: &[DrawEnvData] = &[DrawEnvData {
     clip_far: 0.0,
     fog_near: 0.0,
     fog_far: 0.0,
+    fog_max: 0.0,
+    fog_min: 0.0,
     point_lights: [
         DrawEnvPointLight {
             color: [2.0, 2.0, 2.0],
@@ -4295,6 +4417,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 1.0, 2.0],
@@ -4364,6 +4488,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -4433,6 +4559,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -4502,6 +4630,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 1.6, 1.6],
@@ -4571,6 +4701,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -4640,6 +4772,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 1.0],
@@ -4709,6 +4843,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.8, 1.7, 1.4],
@@ -4778,6 +4914,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 0.0, 0.2],
@@ -4847,6 +4985,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.6, 0.6, 0.6],
@@ -4916,6 +5056,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 1.4, 1.4],
@@ -4985,6 +5127,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5054,6 +5198,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5123,6 +5269,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.8, 0.8, 0.8],
@@ -5192,6 +5340,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5261,6 +5411,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 13000.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5330,6 +5482,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 13500.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5399,6 +5553,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 1.4, 1.4],
@@ -5468,6 +5624,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5537,6 +5695,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.4, 1.4, 1.4],
@@ -5606,6 +5766,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -5675,6 +5837,8 @@ pub const RR_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -5748,6 +5912,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 10000.0,
         fog_near: 8000.0,
         fog_far: 12000.0,
+        fog_max: 30.0,
+        fog_min: 200.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 1.0],
@@ -5817,6 +5983,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 10000.0,
         fog_near: 8000.0,
         fog_far: 12000.0,
+        fog_max: 30.0,
+        fog_min: 200.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 1.0],
@@ -5886,6 +6054,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -5955,6 +6125,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 10000.0,
         fog_near: 8000.0,
         fog_far: 12000.0,
+        fog_max: 30.0,
+        fog_min: 200.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -6024,6 +6196,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.2, 1.2, 1.2],
@@ -6093,6 +6267,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 14000.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 1.6, 1.6],
@@ -6162,6 +6338,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -6231,6 +6409,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 1.6, 1.6],
@@ -6300,6 +6480,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.0, 1.0, 1.0],
@@ -6369,6 +6551,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 14000.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [1.6, 1.6, 1.6],
@@ -6438,6 +6622,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 14000.0,
         fog_near: 12000.0,
         fog_far: 18000.0,
+        fog_max: 30.0,
+        fog_min: 50.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -6507,6 +6693,8 @@ pub const RU_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],
@@ -6580,6 +6768,8 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 1.5, 1.5],
@@ -6649,6 +6839,8 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [2.0, 2.0, 2.0],
@@ -6718,6 +6910,8 @@ pub const TH_DRAW_ENV_DATA: &[DrawEnvData] = &[
         clip_far: 0.0,
         fog_near: 0.0,
         fog_far: 0.0,
+        fog_max: 0.0,
+        fog_min: 0.0,
         point_lights: [
             DrawEnvPointLight {
                 color: [0.0, 0.0, 0.0],

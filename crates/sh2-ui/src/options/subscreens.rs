@@ -196,6 +196,61 @@ pub fn format_ps2_button_mask(mask: u32) -> String {
     }
 }
 
+/// Ordered PS2 remappable button bits (`config_main` `0x00213a50`).
+pub const PS2_REMAPPABLE_BUTTON_BITS: [u32; 12] = [
+    0x8000,  // Square
+    0x2000,  // Circle
+    0x1000,  // Triangle
+    0x4000,  // Cross
+    0x0002,  // R2
+    0x0001,  // L2
+    0x0004,  // L1
+    0x0008,  // R1
+    0x10000, // Select
+    0x40000, // R3
+    0x80000, // Start
+    0x20000, // L3
+];
+
+/// Exact 1:1 port of `SLUS_202.28` `key_conf` (`Item/otn_option.c` `0x002137f0` lines 920-933):
+/// strips any button bits in `new_mask` from `other_mask`, unless `require_non_empty` is `true`
+/// and stripping would leave `other_mask == 0` (in which case those conflicting bits are instead
+/// stripped from `new_mask` so essential actions can never become unbound).
+pub fn key_conf(new_mask: &mut u32, other_mask: &mut u32, require_non_empty: bool) {
+    let inv = !(*new_mask);
+    if !require_non_empty || ((*other_mask & inv) != 0) {
+        *other_mask &= inv;
+    } else {
+        *new_mask &= !(*other_mask);
+    }
+}
+
+/// Exact 1:1 port of `SLUS_202.28` `key_conf_check` (`Item/otn_option.c` `0x00213840` lines 938-972):
+/// resolves button collisions across the 13 `Ps2ControllerBindings::actions` slots when remapping
+/// `action_idx` (`0..13`) to `new_mask`, protecting required actions (`param_3 == 1` in `otn_option.c`:
+/// Action/Confirm `0`, Cancel `1`, Ready `5`, Map `8`, Inventory `10`).
+pub fn key_conf_check(action_idx: usize, new_mask: u32, actions: &mut [u32; 13]) -> bool {
+    if action_idx >= actions.len() || new_mask == 0 {
+        return false;
+    }
+    let mut candidate = new_mask;
+    // Required non-empty action indices matching `param_3 = 1` in `key_conf_check` (`0x00213840:948,957,963`)
+    // and `config_main` (`0x00213a50:1188,1200`).
+    const REQUIRED_NON_EMPTY: [usize; 5] = [0, 1, 5, 8, 10];
+    for (idx, slot) in actions.iter_mut().enumerate() {
+        if idx == action_idx {
+            continue;
+        }
+        let req = REQUIRED_NON_EMPTY.contains(&idx);
+        key_conf(&mut candidate, slot, req);
+    }
+    if candidate == 0 {
+        return false;
+    }
+    actions[action_idx] = candidate;
+    true
+}
+
 /// Renders the PS2 Controller Config subscreen (`config_main` `0x00213a50`).
 ///
 /// Exact layout from `SLUS_202.28` `0x00213a50`:
@@ -256,5 +311,38 @@ pub fn draw_controller_config_subscreen(
         font.draw_line_styled(rast, label, (lx, py), font_sz, color, true);
         let mask_str = format_ps2_button_mask(menu.draft_config.controls.ps2_bindings.actions[idx]);
         font.draw_line_styled(rast, &mask_str, (bx, py), font_sz, color, true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_conf_and_remap_resolve_conflicts_and_protect_required_actions() {
+        // `key_conf` (`0x002137f0`): strips conflicting bit from non-required action.
+        let mut new_mask = 0x0040u32; // Cross
+        let mut other = 0x0040u32 | 0x0020u32;
+        key_conf(&mut new_mask, &mut other, false);
+        assert_eq!(new_mask, 0x0040);
+        assert_eq!(other, 0x0020);
+
+        // `key_conf` (`0x002137f0`): refuses to empty a required action (`other == new_mask`).
+        let mut req_new = 0x0040u32;
+        let mut req_other = 0x0040u32;
+        key_conf(&mut req_new, &mut req_other, true);
+        assert_eq!(req_new, 0);
+        assert_eq!(req_other, 0x0040);
+
+        // `key_conf_check` (`0x00213840`) updates an action slot cleanly when valid.
+        let mut bindings = Ps2ControllerBindings::from_preset(ControllerPreset::Type1);
+        let original = bindings.actions[10]; // Map
+        let target_bit = PS2_REMAPPABLE_BUTTON_BITS
+            .iter()
+            .copied()
+            .find(|&b| b != original && !bindings.actions.contains(&b))
+            .unwrap_or(0x0002);
+        assert!(key_conf_check(10, target_bit, &mut bindings.actions));
+        assert_eq!(bindings.actions[10], target_bit);
     }
 }

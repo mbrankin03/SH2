@@ -241,6 +241,9 @@ impl RenderContext {
     }
 
     pub fn update_spotlight(&self, uniforms: &light::SpotlightUniforms) {
+        if let Ok(mut guard) = self.last_spotlight_uniforms.lock() {
+            *guard = *uniforms;
+        }
         self.queue
             .write_buffer(&self.spotlight_buffer, 0, bytemuck::bytes_of(uniforms));
         let shadow_vp = fog::compute_spotlight_view_proj(uniforms).to_cols_array_2d();
@@ -365,19 +368,37 @@ impl RenderContext {
                 &self.fog_noise_view,
                 &self.fog_noise_sampler,
                 &self.ldr_output_view,
+                &self.prev_frame_view,
             );
         self.fog_bind_group = fog_bind_group;
         self.post_bind_group_fog = post_bind_group_fog;
         self.post_bind_group_direct = post_bind_group_direct;
     }
 
+    /// Installs or clears the active gameplay [`light::CharacterLightPool`] (`Chacter_Draw/light_n.c`
+    /// `0x001260b0..0x00127360`, `Model3UpdateLightEnv` `0x00128e00`) evaluated per skeletal mesh in
+    /// `skeletal_pass.rs`.
+    pub fn update_gameplay_character_light_pool(
+        &self,
+        pool: Option<(light::CharacterLightPool, bool, bool)>,
+    ) {
+        if let Ok(mut guard) = self.gameplay_char_light_pool.lock() {
+            *guard = pool;
+        }
+    }
+
     /// Update post-processing uniforms buffer and, when PS2 LCG film grain is active,
     /// step and upload the bit-exact `128x128` `R8Unorm` PS2 noise texture (`0x00177c50`)
     /// on the authentic 30 Hz PS2 cadence (framerate-independent at 120/240/unlimited Hz).
     pub fn update_post(&self, uniforms: &post::PostUniforms) {
+        let retain_frozen = (uniforms.flags & post::POST_FLAG_FILTER_RETAIN) != 0;
+        self.filter_retain_frozen
+            .store(retain_frozen, std::sync::atomic::Ordering::Relaxed);
         self.queue
             .write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(uniforms));
-        if (uniforms.flags & post::POST_FLAG_PS2_LCG_NOISE) != 0 && uniforms.grain_intensity > 0.001
+        if !retain_frozen
+            && (uniforms.flags & post::POST_FLAG_PS2_LCG_NOISE) != 0
+            && uniforms.grain_intensity > 0.001
         {
             self.post_pipeline
                 .step_ps2_noise_at_time(&self.queue, uniforms.time);

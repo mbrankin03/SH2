@@ -203,13 +203,13 @@ fn test_nurse_and_maria_fsm_to_skeletal_sync() {
     assert_eq!(maria.anim.state(), CreatureAnimStateKind::Idle);
     assert_eq!(maria.anim.current_clip(), MariaAnimClips::STAND);
 
-    // Player moves 1500 mm away (`1000..2000` mm, `mar_main_close_to` `0x0022a780`) -> Maria enters Walk
+    // Player moves 1500 mm away (`1000..2000` mm, `mar_main_close_to` `0x00224bd0`) -> Maria enters Walk
     maria.update(glam::Vec3::new(0.0, 0.0, 1500.0), 0.0, &[], 0.016);
     assert_eq!(maria.state, MariaState::Walk);
     assert_eq!(maria.anim.state(), CreatureAnimStateKind::Locomotion);
     assert_eq!(maria.anim.current_clip(), MariaAnimClips::WALK);
 
-    // Player runs 2500 mm away (`>= 2000` mm, `mar_main_close_to` `0x0022a780`) -> Maria enters Run
+    // Player runs 2500 mm away (`>= 2000` mm, `mar_main_close_to` `0x00224bd0`) -> Maria enters Run
     maria.update(glam::Vec3::new(0.0, 0.0, 2500.0), 0.0, &[], 0.016);
     assert_eq!(maria.state, MariaState::Run);
     assert_eq!(maria.anim.state(), CreatureAnimStateKind::Locomotion);

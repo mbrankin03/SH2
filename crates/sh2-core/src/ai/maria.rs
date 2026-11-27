@@ -480,7 +480,7 @@ impl MariaCompanionController {
     /// Apply damage to Maria (`MariaCheckDamage` `SLUS_202.28` `0x002270d0`: `0.1x` friendly fire,
     /// `mar_muteki_set` `2.0s` invulnerability).
     pub fn receive_damage(&mut self, damage: f32, is_player_friendly_fire: bool) {
-        if !self.is_present || self.state == MariaState::Dead {
+        if !self.is_present || self.state == MariaState::Dead || self.invuln_timer > 0.0 {
             return;
         }
         let effective_dmg = if is_player_friendly_fire {
@@ -571,7 +571,12 @@ mod tests {
         assert_eq!(maria.main_state, MariaMainState::Damaged);
         assert_eq!(maria.sub_state, MariaSubState::Damage);
 
-        // Fatal enemy damage
+        // Hit while `invuln_timer > 0.0` (`mar_muteki_set`) is ignored
+        maria.receive_damage(100.0, false);
+        assert_eq!(maria.health, 70.0);
+
+        // Once invulnerability expires, fatal enemy damage kills Maria
+        maria.invuln_timer = 0.0;
         maria.receive_damage(100.0, false);
         assert_eq!(maria.health, 0.0);
         assert_eq!(maria.state, MariaState::Dead);

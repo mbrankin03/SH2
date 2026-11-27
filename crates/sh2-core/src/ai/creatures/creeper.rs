@@ -335,7 +335,9 @@ impl CreeperController {
                     if self.position.y >= target.position.y {
                         self.position.y = target.position.y;
                         self.subtype = if self.subtype == 3 { 2 } else { 0 };
-                        self.sub_state = 1;
+                        // `sub_state == -1` was a lethal wall/ceiling fall -> enter dying countdown (`2`);
+                        // `sub_state == -2` was a non-lethal wall/ceiling fall -> enter stunned recovery (`1`).
+                        self.sub_state = if self.sub_state == -1 { 2 } else { 1 };
                     }
                 } else {
                     self.timer_ticks -= ticks;
@@ -391,7 +393,8 @@ impl CreeperController {
                 self.sub_state = 0;
             } else {
                 self.state = TyuState::Down;
-                self.sub_state = 2;
+                // Per `en_tyu.c`: lethal non-instant hit while on wall/ceiling falls first (`sub_state = -1`).
+                self.sub_state = if was_elevated { -1 } else { 2 };
                 self.timer_ticks = TYU_DEATH_TIMER_TICKS as f32;
             }
             return;
@@ -465,5 +468,27 @@ mod tests {
             tyu.update(&close, 1.0 / 60.0);
         }
         assert_eq!(tyu.state, TyuState::Escape);
+    }
+
+    #[test]
+    fn creeper_lethal_wall_hit_falls_before_dying_countdown() {
+        let mut tyu = CreeperController::new_with_difficulty(
+            3,
+            Vec3::new(0.0, -500.0, 0.0),
+            0.0,
+            DifficultyLevel::Normal,
+        );
+        tyu.state = TyuState::OnWall;
+        tyu.receive_damage(1000.0, 100.0, false);
+        assert_eq!(tyu.state, TyuState::Down);
+        assert_eq!(tyu.sub_state, -1);
+
+        let floor_target = PerceivableTarget::new(Vec3::ZERO, 0.0, false, false);
+        // Falls at 1500 mm/s from y = -500 to y = 0 -> lands into sub_state == 2 (dying countdown)
+        for _ in 0..30 {
+            tyu.update(&floor_target, 1.0 / 60.0);
+        }
+        assert_eq!(tyu.position.y, 0.0);
+        assert_eq!(tyu.sub_state, 2);
     }
 }

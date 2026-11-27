@@ -338,6 +338,7 @@ fn fs_darken() -> @location(0) vec4<f32> {
         vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
         volume_buffer: &wgpu::Buffer,
         volume_vertex_count: u32,
+        frustum: Option<&crate::Frustum>,
     ) {
         if volume_vertex_count == 0 {
             return;
@@ -364,18 +365,28 @@ fn fs_darken() -> @location(0) vec4<f32> {
             });
 
             if let Some(map) = gpu_map {
-                rpass.set_pipeline(&self.depth_prepass_pipeline);
-                rpass.set_bind_group(0, camera_bind_group, &[]);
-                rpass.set_bind_group(1, darken_bind_group, &[]);
-                for batch in &map.batches {
-                    if batch.group != BatchGroup::Opaque
-                        || !map.is_batch_visible_with(batch, vis_filter)
-                    {
-                        continue;
+                let opaque = map.batches_for_group(BatchGroup::Opaque);
+                if let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) {
+                    if !opaque.is_empty() {
+                        rpass.set_pipeline(&self.depth_prepass_pipeline);
+                        rpass.set_bind_group(0, camera_bind_group, &[]);
+                        rpass.set_bind_group(1, darken_bind_group, &[]);
+                        rpass.set_vertex_buffer(0, vbuf.slice(..));
+                        rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        for batch in opaque {
+                            if !map.is_batch_visible_with(batch, vis_filter) {
+                                continue;
+                            }
+                            if let Some(f) = frustum {
+                                if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
+                                    continue;
+                                }
+                            }
+                            if let Some(index_range) = batch.index_range() {
+                                rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
+                            }
+                        }
                     }
-                    rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
                 }
             }
 
@@ -442,6 +453,7 @@ fn fs_darken() -> @location(0) vec4<f32> {
         vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
         volume_buffer: &wgpu::Buffer,
         volume_vertex_count: u32,
+        frustum: Option<&crate::Frustum>,
     ) {
         if volume_vertex_count == 0 {
             return;
@@ -468,18 +480,28 @@ fn fs_darken() -> @location(0) vec4<f32> {
             });
 
             if let Some(map) = gpu_map {
-                rpass.set_pipeline(&self.depth_prepass_pipeline);
-                rpass.set_bind_group(0, camera_bind_group, &[]);
-                rpass.set_bind_group(1, darken_bind_group, &[]);
-                for batch in &map.batches {
-                    if batch.group != BatchGroup::Opaque
-                        || !map.is_batch_visible_with(batch, vis_filter)
-                    {
-                        continue;
+                let opaque = map.batches_for_group(BatchGroup::Opaque);
+                if let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) {
+                    if !opaque.is_empty() {
+                        rpass.set_pipeline(&self.depth_prepass_pipeline);
+                        rpass.set_bind_group(0, camera_bind_group, &[]);
+                        rpass.set_bind_group(1, darken_bind_group, &[]);
+                        rpass.set_vertex_buffer(0, vbuf.slice(..));
+                        rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                        for batch in opaque {
+                            if !map.is_batch_visible_with(batch, vis_filter) {
+                                continue;
+                            }
+                            if let Some(f) = frustum {
+                                if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
+                                    continue;
+                                }
+                            }
+                            if let Some(index_range) = batch.index_range() {
+                                rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
+                            }
+                        }
                     }
-                    rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
                 }
             }
 

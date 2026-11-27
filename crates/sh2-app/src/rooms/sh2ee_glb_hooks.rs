@@ -138,16 +138,40 @@ pub(crate) fn render_room_glb_replacements(state: &mut AppState, dt_sec: f32) {
     };
 
     let _preload_hint = DOG_ROOM_PRELOAD_EVENT_INDEX;
-    let mut overlays: Vec<&GlbGpuModel> = Vec::new();
+    let mut overlays: [Option<&GlbGpuModel>; 2] = [None, None];
+    let mut overlay_len = 0usize;
     if ty3_active {
         if let Some(ref ty3) = state.sh2ee_ty3_glb {
-            overlays.push(ty3);
+            overlays[overlay_len] = Some(ty3);
+            overlay_len += 1;
         }
     }
     if mon_active {
         if let Some(ref mon) = state.sh2ee_mon_glb {
-            overlays.push(mon);
+            overlays[overlay_len] = Some(mon);
+            overlay_len += 1;
         }
     }
-    state.render_ctx.render_glb_overlays(&overlays);
+    if overlay_len == 0 {
+        return;
+    }
+    let slice_storage: [&GlbGpuModel; 2];
+    let overlay_slice: &[&GlbGpuModel] = match overlays {
+        [Some(a), Some(b)] => {
+            slice_storage = [a, b];
+            &slice_storage[..2]
+        }
+        [Some(a), None] => {
+            slice_storage = [a, a];
+            &slice_storage[..1]
+        }
+        _ => return,
+    };
+    let mut encoder = state.frame_encoder.take();
+    if let Some(ref mut enc) = encoder {
+        state.render_ctx.encode_glb_overlays(enc, overlay_slice);
+    } else {
+        state.render_ctx.render_glb_overlays(overlay_slice);
+    }
+    state.frame_encoder = encoder;
 }

@@ -89,6 +89,10 @@ pub struct RenderContext {
     pub post_pipeline: post::PostProcessPipeline,
 
     pub camera_buffer: wgpu::Buffer,
+    /// Dedicated reflected camera uniform buffer for Toluca Lake water reflections (`SH2-182`).
+    pub water_camera_buffer: wgpu::Buffer,
+    /// Dedicated reflected camera uniform buffer for stenciled planar mirrors (`SH2-182`).
+    pub mirror_camera_buffer: wgpu::Buffer,
     pub spotlight_buffer: wgpu::Buffer,
     pub spotlight_shadow_buffer: wgpu::Buffer,
     pub pcss_shadow_buffer: wgpu::Buffer,
@@ -131,6 +135,10 @@ pub struct RenderContext {
     pub specular_sphere_sampler: wgpu::Sampler,
 
     pub geometry_bind_group: wgpu::BindGroup,
+    /// Geometry bind group bound to [`Self::water_camera_buffer`] for single-encoder water reflections (`SH2-182`).
+    pub water_geometry_bind_group: wgpu::BindGroup,
+    /// Geometry bind group bound to [`Self::mirror_camera_buffer`] for single-encoder mirror reflections (`SH2-182`).
+    pub mirror_geometry_bind_group: wgpu::BindGroup,
     pub spotlight_shadow_bind_group: wgpu::BindGroup,
     pub pcss_shadow_bind_group: wgpu::BindGroup,
     pub shadow_darken_bind_group: wgpu::BindGroup,
@@ -177,6 +185,7 @@ pub struct RenderContext {
     pub clear_color_rgba: std::sync::atomic::AtomicU32,
     pub(crate) lens_flare_smoother: std::sync::Mutex<effects::LensFlareSmoother>,
     pub(crate) last_shadow_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
+    pub(crate) last_pcss_view_proj: std::sync::Mutex<[[f32; 4]; 4]>,
     pub(crate) last_pcss_params: std::sync::Mutex<[f32; 4]>,
     pub(crate) last_camera_uniforms: std::sync::Mutex<pipeline::CameraUniforms>,
     pub(crate) planar_mirror: std::sync::Mutex<Option<crate::mirror::PlanarMirrorSpec>>,

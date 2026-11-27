@@ -1,5 +1,9 @@
-//! Scene render pass encoding, map batch submission, skeletal mesh passes, and compute dispatch for [`RenderContext`].
+//! Scene render pass orchestration for [`RenderContext`]: shadow depth passes, planar water &
+//! mirror reflections, main HDR geometry/skeletal/effects pass, stencil shadows, lens flares,
+//! and compute fog/post-processing dispatch.
 
+mod compute_pass;
+mod main_pass;
 mod mirror_pass;
 mod skeletal_pass;
 mod water_pass;
@@ -7,10 +11,10 @@ mod water_pass;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+use crate::frustum::Frustum;
 use crate::gpu_map::GpuMap;
 use crate::{RenderContext, SkeletalDrawItem};
-use sh2_assets::formats::map::{BatchGroup, MapFile};
-use sh2_core::events::stageparts::MapPartVisibilityFilter;
+use sh2_assets::formats::map::MapFile;
 
 impl RenderContext {
     /// Render a pre-compiled `GpuMap` room into the framebuffers and run the compute passes.
@@ -34,8 +38,26 @@ impl RenderContext {
         self.render_scene_with_debug_lines(gpu_map, map_texture_bind_groups, skeletal_meshes, &[]);
     }
 
+    /// Encodes static world level map batches and dynamic animated skeletal meshes into an
+    /// existing `CommandEncoder` without submitting (`SH2-182`).
+    pub fn encode_scene(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu_map: Option<&GpuMap>,
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
+    ) {
+        self.encode_scene_with_debug_lines(
+            encoder,
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            &[],
+        );
+    }
+
     /// Renders static world level map batches, dynamic animated skeletal meshes, and 3D debug lines
-    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass.
+    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass and submits once.
     pub fn render_scene_with_debug_lines(
         &self,
         gpu_map: Option<&GpuMap>,
@@ -48,7 +70,27 @@ impl RenderContext {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene Render Encoder"),
             });
+        self.encode_scene_with_debug_lines(
+            &mut encoder,
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            debug_lines,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
 
+    /// Encodes all 3D scene passes (spotlight & PCSS shadows, water & planar mirror reflections,
+    /// main geometry/skeletal/effects pass, stencil shadows, lens flares, fog, and post-processing)
+    /// into a single `CommandEncoder` without submitting (`SH2-182`).
+    pub fn encode_scene_with_debug_lines(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu_map: Option<&GpuMap>,
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
+        debug_lines: &[sh2_debug::DebugLineVertex],
+    ) {
         // Upload debug lines into the persistent buffer (or allocate an overflow buffer if exceeding capacity)
         let overflow_debug_line_buffer = if debug_lines.len() > Self::MAX_DEBUG_LINE_VERTICES {
             Some(
@@ -84,8 +126,11 @@ impl RenderContext {
         }
         self.prepare_skeletal_light_slots(skeletal_meshes);
 
-        // Snapshot the active `.map` `geo_id` visibility filter once per frame (`EvDispControlModelExec`).
+        // Snapshot the active `.map` `geo_id` visibility filter and main-camera frustum once per frame.
         let vis_filter = self.map_visibility_filter();
+        let main_frustum = self.last_camera_uniforms.lock().ok().and_then(|cam| {
+            Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&cam.view_proj))
+        });
 
         // 0. Spotlight Shadow Depth Passes:
         //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`)
@@ -94,28 +139,41 @@ impl RenderContext {
                 .volumetric_god_rays_enabled
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
+            let shadow_frustum = self
+                .last_shadow_view_proj
+                .lock()
+                .ok()
+                .and_then(|vp| Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&vp)));
             self.spotlight_shadow_pipeline.encode_pass(
-                &mut encoder,
+                encoder,
                 &self.shadow_depth_view,
                 &self.spotlight_shadow_bind_group,
                 gpu_map,
                 vis_filter.as_ref(),
+                shadow_frustum.as_ref(),
             );
         }
         //    0b. 2048x2048 Native PCSS spotlight shadow map (static map + animated skeletal self-shadowing, `SH2-81`)
         if self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            let pcss_frustum = self
+                .last_pcss_view_proj
+                .lock()
+                .ok()
+                .and_then(|vp| Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&vp)));
             self.pcss_shadow_pipeline.encode_pass(
-                &mut encoder,
+                encoder,
                 &self.pcss_shadow_depth_view,
                 &self.pcss_shadow_bind_group,
                 gpu_map,
                 skeletal_meshes,
                 vis_filter.as_ref(),
+                pcss_frustum.as_ref(),
             );
         }
 
         // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`)
         self.encode_water_reflection_pass(
+            encoder,
             gpu_map,
             map_texture_bind_groups,
             skeletal_meshes,
@@ -124,6 +182,7 @@ impl RenderContext {
 
         // 0d. Stenciled Planar Mirror Render Pass (`SH2-101` / `SH2-151`)
         let active_mirror = self.encode_planar_mirror_pass(
+            encoder,
             gpu_map,
             map_texture_bind_groups,
             skeletal_meshes,
@@ -140,260 +199,19 @@ impl RenderContext {
         let shadow_before_character = stencil_active
             && self.shadow_draw_order() == crate::shadow::ShadowDrawOrder::ShadowBeforeCharacter;
 
-        // 1. Geometry & Skeletal Meshes Render Pass
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Scene Geometry & Skeletal Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.hdr_color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: if active_mirror.is_some() {
-                            wgpu::LoadOp::Load
-                        } else {
-                            wgpu::LoadOp::Clear(self.room_clear_color())
-                        },
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            // 1a-0. Prime mirror-plane depth into `depth_view` ONLY inside the authentic mirror
-            //       opening before drawing opaque room geometry (`SH2-151`). This hardware depth-
-            //       rejects pre-baked duplicate reflected room geometry behind the opening while
-            //       leaving the surrounding concrete upper wall (at `X = -20064.1` in `er01.map`)
-            //       and all foreground geometry (`X > -20000.0`) completely intact, and also gives
-            //       volumetric fog the mirror-wall depth rather than the far plane.
-            if let Some(mirror_spec) = active_mirror {
-                let mut wrote_decal_depth = false;
-                if let (Some(map), Some(batch_idx)) = (gpu_map, mirror_spec.decal_batch_index) {
-                    if let Some(batch) = map.batches.get(batch_idx) {
-                        if map.is_batch_visible_with(batch, vis_filter.as_ref()) {
-                            rpass.set_pipeline(&self.mirror_pipeline.map_depth_write_pipeline);
-                            rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                            rpass.set_index_buffer(
-                                batch.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
-                            wrote_decal_depth = true;
-                        }
-                    }
-                }
-                if !wrote_decal_depth {
-                    rpass.set_pipeline(&self.mirror_pipeline.depth_write_pipeline);
-                    rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, self.mirror_pipeline.quad_vertex_buffer.slice(..));
-                    rpass.set_index_buffer(
-                        self.mirror_pipeline.quad_index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
-                    rpass.draw_indexed(0..6, 0, 0..1);
-                }
-            }
-
-            // 1a. Render static level Opaque + Alpha-Cutout batches first
-            if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    BatchGroup::Opaque,
-                    &self.geometry_pipeline.pipeline,
-                    vis_filter.as_ref(),
-                );
-            }
-
-            // 1b. Render skeletal character meshes in the main pass unless `Check_DrawOrder`
-            // requested `ShadowBeforeCharacter` (`0x001a08a0`).
-            if !shadow_before_character && !skeletal_meshes.is_empty() {
-                self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
-            }
-
-            // 1c. Render static level Coplanar Decals
-            if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    BatchGroup::Decal,
-                    &self.geometry_pipeline.decal_pipeline,
-                    vis_filter.as_ref(),
-                );
-            }
-
-            // 1c-2. Optional `glas03.tbn2` dirty mirror glass overlay when explicitly enabled.
-            if active_mirror.is_some()
-                && self
-                    .mirror_glass_overlay_enabled
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                rpass.set_pipeline(&self.mirror_pipeline.glass_overlay_pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                rpass.set_bind_group(1, &self.mirror_pipeline.glass_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.mirror_pipeline.quad_vertex_buffer.slice(..));
-                rpass.set_index_buffer(
-                    self.mirror_pipeline.quad_index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                rpass.draw_indexed(0..6, 0, 0..1);
-            }
-
-            // 1d. Render static level semi-transparent batches
-            if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    BatchGroup::Transparent,
-                    &self.geometry_pipeline.transparent_pipeline,
-                    vis_filter.as_ref(),
-                );
-            }
-
-            // 1d-1. Render Toluca Lake water surface (`SH2-80`) in Pass 1 only when the depth-fog
-            // compute pass is disabled; when `enable_fog` is true, water is rendered post-depth-fog
-            // in `dispatch_compute_passes` so it is never double-fogged (`SH2-168`).
-            if !self.config.enable_fog
-                && self
-                    .lake_water_enabled
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                self.water_pipeline.draw(&mut rpass);
-            }
-
-            // 1d-2. Render flattened PS2 `.kg1` floor drop shadows (`0x5a7c90`) when active (`SH2-81`)
-            let drop_verts = self
-                .drop_shadow_vertex_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if drop_verts > 0 {
-                let byte_len = (drop_verts as usize
-                    * std::mem::size_of::<crate::shadow::ShadowVolumeVertex>())
-                    as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.stencil_shadow_pipeline.drop_shadow_pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                rpass.set_bind_group(1, &self.shadow_darken_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.drop_shadow_buffer.slice(0..byte_len));
-                rpass.draw(0..drop_verts, 0..1);
-            }
-
-            // 1d-3. (3D proximity fog particle billboards are rendered post-depth-fog in
-            // `dispatch_compute_passes` matching `sh2pc.exe` `FUN_00486fc0` `0x00486fc0`
-            // `D3DRS_FOGENABLE = 0` so dark depth-fog `FOGCOL` never darkens bright mist sprites.)
-
-            // 1d-4. Render Hyper Spray / Lying Figure 3D mist billboards (`enEfctDrawSpray`, `SH2-81`)
-            let spray_count = self
-                .spray_mist_particle_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if spray_count > 0 {
-                let byte_len = (spray_count as usize
-                    * std::mem::size_of::<crate::effects::GpuSprayParticle>())
-                    as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.spray_mist_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.spray_mist_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.spray_mist_buffer.slice(0..byte_len));
-                rpass.draw(0..6, 0..spray_count);
-            }
-
-            // 1d-5. Render `Effect2/hh_class_dust_00.c` airborne dust motes (`SH2-98`)
-            let dust_count = self
-                .dust_particle_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if dust_count > 0 {
-                let byte_len = (dust_count as usize
-                    * std::mem::size_of::<crate::effects::GpuDustParticle>())
-                    as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.dust_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.dust_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.dust_buffer.slice(0..byte_len));
-                rpass.draw(0..6, 0..dust_count);
-            }
-
-            // 1d-6. Render `SH2-100` alpha-blended & additive 3D FX batches with per-sheet `.tbn2` bind groups
-            if let Ok(fx_batches) = self.billboard_fx_batches.lock().map(|g| g.clone()) {
-                let stride = std::mem::size_of::<crate::effects::GpuFxQuad>() as u64;
-                if !fx_batches.alpha.is_empty() {
-                    rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_alpha);
-                    for batch in &fx_batches.alpha {
-                        let byte_start = u64::from(batch.start) * stride;
-                        let byte_end = u64::from(batch.start + batch.count) * stride;
-                        rpass.set_bind_group(
-                            0,
-                            &self.billboard_fx_bind_groups[batch.slot as usize],
-                            &[],
-                        );
-                        rpass.set_vertex_buffer(
-                            0,
-                            self.billboard_fx_alpha_buffer.slice(byte_start..byte_end),
-                        );
-                        rpass.draw(0..6, 0..batch.count);
-                    }
-                }
-                if !fx_batches.additive.is_empty() {
-                    rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_additive);
-                    for batch in &fx_batches.additive {
-                        let byte_start = u64::from(batch.start) * stride;
-                        let byte_end = u64::from(batch.start + batch.count) * stride;
-                        rpass.set_bind_group(
-                            0,
-                            &self.billboard_fx_bind_groups[batch.slot as usize],
-                            &[],
-                        );
-                        rpass.set_vertex_buffer(
-                            0,
-                            self.billboard_fx_additive_buffer
-                                .slice(byte_start..byte_end),
-                        );
-                        rpass.draw(0..6, 0..batch.count);
-                    }
-                }
-            }
-
-            // 1d-7. Render `Effect2/hh_class_blood_*.c` subtractive blood pools, footprints, & sprays (`SH2-79`)
-            let blood_count = self
-                .blood_quad_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if blood_count > 0 {
-                let byte_len = (blood_count as usize
-                    * std::mem::size_of::<crate::effects::GpuBloodQuad>())
-                    as wgpu::BufferAddress;
-                let pipe = if self
-                    .blood_subtractive_mode
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    &self.blood_pipeline.subtractive_pipeline
-                } else {
-                    &self.blood_pipeline.alpha_pipeline
-                };
-                rpass.set_pipeline(pipe);
-                rpass.set_bind_group(0, &self.blood_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.blood_buffer.slice(0..byte_len));
-                rpass.draw(0..6, 0..blood_count);
-            }
-
-            // 1e. Render 3D debug lines (skeleton hierarchy, joint axes, wireframe overlay)
-            if !debug_lines.is_empty() {
-                let line_buf = overflow_debug_line_buffer
-                    .as_ref()
-                    .unwrap_or(&self.debug_line_buffer);
-                let byte_len = std::mem::size_of_val(debug_lines) as wgpu::BufferAddress;
-                rpass.set_pipeline(&self.debug_line_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                rpass.set_vertex_buffer(0, line_buf.slice(0..byte_len));
-                rpass.draw(0..(debug_lines.len() as u32), 0..1);
-            }
-        }
+        // 1. Main HDR Geometry, Skeletal, Decals, Transparent, Effects, and Debug Lines Pass
+        self.encode_main_geometry_pass(
+            encoder,
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            debug_lines,
+            overflow_debug_line_buffer.as_ref(),
+            vis_filter.as_ref(),
+            main_frustum.as_ref(),
+            active_mirror,
+            shadow_before_character,
+        );
 
         // 1.5. PS2 / SH2:EE Two-Pass Stencil Shadow Volume + 4-Pass Soft Blur (`0x001767e0`, `0x00175f90`)
         if stencil_active {
@@ -402,7 +220,7 @@ impl RenderContext {
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
                 self.stencil_shadow_pipeline.encode_soft_stencil_blur_pass(
-                    &mut encoder,
+                    encoder,
                     &self.hdr_color_view,
                     &self.stencil_depth_view,
                     &self.shadow_mask_view,
@@ -415,10 +233,11 @@ impl RenderContext {
                     vis_filter.as_ref(),
                     &self.shadow_volume_buffer,
                     stencil_verts,
+                    main_frustum.as_ref(),
                 );
             } else {
                 self.stencil_shadow_pipeline.encode_stencil_volume_pass(
-                    &mut encoder,
+                    encoder,
                     &self.hdr_color_view,
                     &self.stencil_depth_view,
                     &self.geometry_bind_group,
@@ -427,6 +246,7 @@ impl RenderContext {
                     vis_filter.as_ref(),
                     &self.shadow_volume_buffer,
                     stencil_verts,
+                    main_frustum.as_ref(),
                 );
             }
         }
@@ -487,179 +307,6 @@ impl RenderContext {
         }
 
         // 2. Volumetric Fog & Post-Processing Compute Passes
-        self.dispatch_compute_passes(&mut encoder);
-
-        self.queue.submit(std::iter::once(encoder.finish()));
-    }
-
-    /// Dispatches the Volumetric Fog and ACES Post-Processing compute passes.
-    fn dispatch_compute_passes(&self, encoder: &mut wgpu::CommandEncoder) {
-        let workgroups_x = self.config.width.div_ceil(16);
-        let workgroups_y = self.config.height.div_ceil(16);
-
-        if self.config.enable_fog {
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Volumetric Fog Compute Pass"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&self.fog_pipeline.pipeline);
-                cpass.set_bind_group(0, &self.fog_bind_group, &[]);
-                cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-            }
-
-            // Render Toluca Lake water surface (`SH2-80`) AFTER `FogComputePipeline` when depth fog
-            // is enabled so the water's own distance fog is never double-fogged by `FogComputePipeline`
-            // (which otherwise sees `depth = 1.0` because water has `depth_write_enabled: false`, `SH2-168`).
-            if self
-                .lake_water_enabled
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Toluca Lake Water Post-Depth-Fog Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.fog_color_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                self.water_pipeline.draw(&mut rpass);
-            }
-
-            // Render localized 3D proximity fog particle billboards (`fogMakePacket` `0x0016bb70`,
-            // `sh2pc.exe` `FUN_00486fc0` `0x00486fc0` `sh2pc_00480000.c:4277,4307`:
-            // `D3DRS_FOGENABLE (0x1c) = 0`) AFTER depth fog so dark `FOGCOL` never darkens them.
-            let particle_count = self
-                .fog_particle_count
-                .load(std::sync::atomic::Ordering::Relaxed);
-            if particle_count > 0 {
-                let byte_len = (particle_count as usize
-                    * std::mem::size_of::<crate::fog::GpuFogParticle>())
-                    as wgpu::BufferAddress;
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("3D Fog Particle Post-Depth-Fog Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.fog_color_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                rpass.set_pipeline(&self.fog_particle_pipeline.pipeline);
-                rpass.set_bind_group(0, &self.fog_particle_bind_group, &[]);
-                rpass.set_vertex_buffer(0, self.fog_particle_buffer.slice(0..byte_len));
-                rpass.draw(0..6, 0..particle_count);
-            }
-        }
-
-        if self.config.enable_post {
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Post Process Compute Pass"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&self.post_pipeline.pipeline);
-                let post_bind_group = if self.config.enable_fog {
-                    &self.post_bind_group_fog
-                } else {
-                    &self.post_bind_group_direct
-                };
-                cpass.set_bind_group(0, post_bind_group, &[]);
-                cpass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-            }
-
-            // Copy finished LDR output into `prev_frame_texture` for next frame's
-            // `sh2gfw_Filter_Retain` (`0x00179b10`) / `sh2gfw_Filter_Blur` (`0x00177440`),
-            // unless `POST_FLAG_FILTER_RETAIN` pause-freeze is active.
-            if !self
-                .filter_retain_frozen
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
-                encoder.copy_texture_to_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &self.ldr_output_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::ImageCopyTexture {
-                        texture: &self.prev_frame_texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::Extent3d {
-                        width: self.config.width.max(1),
-                        height: self.config.height.max(1),
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-        }
-    }
-
-    /// Helper to draw all `GpuMapBatch` items belonging to a specific [`BatchGroup`]
-    /// using the designated pipeline (`pipeline`, `decal_pipeline`, or `transparent_pipeline`).
-    pub(super) fn draw_map_batches_for_group<'a>(
-        &'a self,
-        rpass: &mut wgpu::RenderPass<'a>,
-        map: &'a GpuMap,
-        map_texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
-        target_group: BatchGroup,
-        pipeline: &'a wgpu::RenderPipeline,
-        vis_filter: Option<&MapPartVisibilityFilter>,
-    ) {
-        if !map.batches.iter().any(|b| b.group == target_group) {
-            return;
-        }
-
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-        let mut current_bg: Option<usize> = None;
-
-        for batch in &map.batches {
-            if batch.group != target_group || !map.is_batch_visible_with(batch, vis_filter) {
-                continue;
-            }
-            let bg_idx = batch.material_index;
-            let bind_group = match map_texture_bind_groups {
-                Some(groups) if bg_idx < groups.len() => &groups[bg_idx],
-                _ => &self.default_texture_bind_group,
-            };
-
-            if current_bg != Some(bg_idx) {
-                rpass.set_bind_group(1, &**bind_group, &[]);
-                current_bg = Some(bg_idx);
-            }
-
-            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-            rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
-        }
+        self.dispatch_compute_passes(encoder);
     }
 }

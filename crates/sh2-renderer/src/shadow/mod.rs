@@ -33,7 +33,9 @@ pub use pcss::{
 };
 pub use stencil::{ShadowDarkenUniforms, StencilShadowPipeline, MAX_SHADOW_VOLUME_VERTICES};
 pub use volume::{
-    extrude_kg1_stencil_volume, extrude_kg1_stencil_volume_filtered, extrude_kg2_stencil_volume,
-    flatten_kg1_drop_shadow, ShadowVolumeVertex, DEFAULT_SHADOW_EXTRUDE_DIST_MM,
-    DROP_SHADOW_FLOOR_BIAS_MM, MAX_KG1_SHADOW_CASTERS,
+    extrude_kg1_stencil_volume, extrude_kg1_stencil_volume_filtered,
+    extrude_kg1_stencil_volume_filtered_into, extrude_kg2_stencil_volume,
+    extrude_kg2_stencil_volume_into, flatten_kg1_drop_shadow, ShadowVolumeScratch,
+    ShadowVolumeVertex, DEFAULT_SHADOW_EXTRUDE_DIST_MM, DROP_SHADOW_FLOOR_BIAS_MM,
+    MAX_KG1_SHADOW_CASTERS,
 };

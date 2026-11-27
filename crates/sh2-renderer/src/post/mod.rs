@@ -116,8 +116,12 @@ pub struct PostProcessPipeline {
     /// Repeat bilinear sampler for screen-space noise tiling
     /// (`SLUS_202.28` `sh2gfw_SendDraw_Noise` `0x00177f30`, `TEX1_1 = 0x60`).
     pub ps2_noise_sampler: wgpu::Sampler,
-    /// Stateful CPU LCG generator (`DAT_002adaf0`) stepped on the 30 Hz PS2 cadence.
-    ps2_noise_gen: std::sync::Mutex<Ps2NoiseGenerator>,
+    /// Stateful CPU LCG generator (`DAT_002adaf0`) and reusable `128x128` upload scratch buffer
+    /// stepped on the 30 Hz PS2 cadence without per-frame heap allocations (`SH2-182`).
+    ps2_noise_state: std::sync::Mutex<(
+        Ps2NoiseGenerator,
+        Box<[u8; PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE]>,
+    )>,
     /// Last 30 Hz tick index (`floor(time * 30.0)`) uploaded to [`Self::ps2_noise_texture`],
     /// or `u64::MAX` before the first timed step.
     ps2_noise_last_tick: std::sync::atomic::AtomicU64,
@@ -260,17 +264,20 @@ impl PostProcessPipeline {
         });
 
         let mut gen = Ps2NoiseGenerator::new(0);
-        let initial_bytes = decode_ps2_noise_clut_128x128(&gen.generate_128x128());
+        let mut scratch = Box::new([0u8; PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE]);
+        gen.generate_128x128_clut_into(&mut scratch);
         let this = Self {
             pipeline,
             bind_group_layout,
             ps2_noise_texture,
             ps2_noise_view,
             ps2_noise_sampler,
-            ps2_noise_gen: std::sync::Mutex::new(gen),
+            ps2_noise_state: std::sync::Mutex::new((gen, scratch)),
             ps2_noise_last_tick: std::sync::atomic::AtomicU64::new(u64::MAX),
         };
-        this.upload_ps2_noise_bytes(queue, &initial_bytes);
+        if let Ok(guard) = this.ps2_noise_state.lock() {
+            this.upload_ps2_noise_bytes(queue, guard.1.as_slice());
+        }
         this
     }
 
@@ -303,21 +310,17 @@ impl PostProcessPipeline {
     }
 
     /// Advances the internal [`Ps2NoiseGenerator`] by one `128x128` frame (`0x00177c50`),
-    /// decodes through `noise_clut` (`0x002ab5c0`), uploads it to [`Self::ps2_noise_texture`],
-    /// and returns the updated LCG seed.
+    /// decodes through `noise_clut` (`0x002ab5c0`) into the reusable scratch buffer, uploads it
+    /// to [`Self::ps2_noise_texture`], and returns the updated LCG seed.
     pub fn step_ps2_noise(&self, queue: &wgpu::Queue) -> u32 {
-        let (bytes, seed) = match self.ps2_noise_gen.lock() {
-            Ok(mut gen) => {
-                let bytes = decode_ps2_noise_clut_128x128(&gen.generate_128x128());
-                (bytes, gen.seed)
-            }
-            Err(poisoned) => {
-                let mut gen = poisoned.into_inner();
-                let bytes = decode_ps2_noise_clut_128x128(&gen.generate_128x128());
-                (bytes, gen.seed)
-            }
+        let mut guard = match self.ps2_noise_state.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
         };
-        self.upload_ps2_noise_bytes(queue, &bytes);
+        let (ref mut gen, ref mut scratch) = *guard;
+        gen.generate_128x128_clut_into(scratch);
+        let seed = gen.seed;
+        self.upload_ps2_noise_bytes(queue, scratch.as_slice());
         seed
     }
 
@@ -398,5 +401,19 @@ mod tests {
         assert!(!src.contains("* 0.20"));
         assert!(!src.contains("0.015"));
         assert!(!src.contains("0.85"));
+    }
+
+    #[test]
+    fn ps2_noise_clut_into_matches_allocating_path_bit_for_bit() {
+        let mut gen_ref = Ps2NoiseGenerator::new(0x1234_5678);
+        let mut gen_fast = Ps2NoiseGenerator::new(0x1234_5678);
+        let mut scratch = Box::new([0u8; PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE]);
+
+        for _ in 0..3 {
+            let expected = decode_ps2_noise_clut_128x128(&gen_ref.generate_128x128());
+            gen_fast.generate_128x128_clut_into(&mut scratch);
+            assert_eq!(gen_ref.seed, gen_fast.seed);
+            assert_eq!(expected.as_slice(), scratch.as_slice());
+        }
     }
 }

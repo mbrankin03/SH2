@@ -131,36 +131,52 @@ impl RenderContext {
         let buffers = create_initial_buffers(&device);
         let textures = create_initial_textures(&device, &queue, config, &shadow_blur_pipeline);
 
-        let geometry_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Geometry Bind Group"),
-            layout: &geometry_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffers.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buffers.spotlight_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: buffers.pcss_shadow_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&textures.pcss_shadow_depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&textures.specular_sphere_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&textures.specular_sphere_sampler),
-                },
-            ],
-        });
+        let create_geometry_bind_group = |label: &'static str, cam_buf: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &geometry_pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: cam_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: buffers.spotlight_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: buffers.pcss_shadow_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(
+                            &textures.pcss_shadow_depth_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            &textures.specular_sphere_view,
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::Sampler(&textures.specular_sphere_sampler),
+                    },
+                ],
+            })
+        };
+        let geometry_bind_group =
+            create_geometry_bind_group("Geometry Bind Group", &buffers.camera_buffer);
+        let water_geometry_bind_group = create_geometry_bind_group(
+            "Water Reflection Geometry Bind Group",
+            &buffers.water_camera_buffer,
+        );
+        let mirror_geometry_bind_group = create_geometry_bind_group(
+            "Planar Mirror Geometry Bind Group",
+            &buffers.mirror_camera_buffer,
+        );
 
         let spotlight_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Spotlight Shadow Bind Group"),
@@ -538,6 +554,8 @@ impl RenderContext {
             blood_pipeline,
             post_pipeline,
             camera_buffer: buffers.camera_buffer,
+            water_camera_buffer: buffers.water_camera_buffer,
+            mirror_camera_buffer: buffers.mirror_camera_buffer,
             spotlight_buffer: buffers.spotlight_buffer,
             spotlight_shadow_buffer: buffers.spotlight_shadow_buffer,
             pcss_shadow_buffer: buffers.pcss_shadow_buffer,
@@ -578,6 +596,8 @@ impl RenderContext {
             specular_sphere_view: textures.specular_sphere_view,
             specular_sphere_sampler: textures.specular_sphere_sampler,
             geometry_bind_group,
+            water_geometry_bind_group,
+            mirror_geometry_bind_group,
             spotlight_shadow_bind_group,
             pcss_shadow_bind_group,
             shadow_darken_bind_group,
@@ -621,6 +641,7 @@ impl RenderContext {
             )),
             lens_flare_smoother: std::sync::Mutex::new(effects::LensFlareSmoother::default()),
             last_shadow_view_proj: std::sync::Mutex::new(buffers.initial_shadow_vp),
+            last_pcss_view_proj: std::sync::Mutex::new(buffers.initial_pcss_vp),
             last_pcss_params: std::sync::Mutex::new(buffers.initial_pcss_params),
             last_camera_uniforms: std::sync::Mutex::new(pipeline::CameraUniforms::default()),
             planar_mirror: std::sync::Mutex::new(None),

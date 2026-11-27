@@ -47,14 +47,15 @@ use sh2_core::scenario::{ScenarioKind, ScenarioState};
 use sh2_core::simulation::SimulationCore;
 
 fn retail_data_root() -> Option<PathBuf> {
-    let candidates = [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data"),
-        PathBuf::from(
-            "/home/matthewb/Documents/SH2-Port/Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data",
-        ),
-    ];
-    candidates.into_iter().find(|p| p.is_dir())
+    if let Ok(env_dir) = std::env::var("SH2_DATA_DIR") {
+        let path = PathBuf::from(env_dir);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    let workspace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2/data");
+    workspace_path.is_dir().then_some(workspace_path)
 }
 
 #[test]

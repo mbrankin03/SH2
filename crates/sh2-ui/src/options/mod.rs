@@ -777,7 +777,7 @@ mod tests {
 
         let mut menu = OptionsMenu::new(AppConfig::default());
         menu.active_tab = OptionsTab::Controls;
-        assert_eq!(menu.item_count(), 15);
+        assert_eq!(menu.item_count(), 17);
 
         // Camera Mode: ClassicPs2Rail -> OverTheShoulder -> FirstPerson
         menu.selected_index = 5;
@@ -813,6 +813,20 @@ mod tests {
         menu.selected_index = 10;
         menu.adjust_value(1);
         assert!(!menu.draft_config.controls.first_person_head_bob);
+
+        // Widescreen Rail Clearance & Intra-Room Camera Cuts (`SH2-169`)
+        menu.selected_index = 15;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.controls.widescreen_rail_clearance,
+            sh2_core::widescreen_rail::WidescreenClearanceMode::DynamicAspectScaled
+        );
+        menu.selected_index = 16;
+        menu.adjust_value(1);
+        assert_eq!(
+            menu.draft_config.controls.intra_room_warp_policy,
+            sh2_core::widescreen_rail::IntraRoomWarpOption::SmoothWarpOutOnly
+        );
     }
 
     #[test]

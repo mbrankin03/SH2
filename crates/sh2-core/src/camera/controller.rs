@@ -5,7 +5,83 @@ use glam::{Mat4, Vec3};
 use sh2_assets::formats::cam::{CamFile, CamSourceKind};
 use sh2_assets::AssetPathResolver;
 
-use super::{fixed_angle, kinematics, locus_door, road_priority, CameraMovementType};
+use super::{
+    fixed_angle, kinematics, locus_door, road_priority, CameraMovementType,
+    PS2_DEFAULT_PROJECTION_Z,
+};
+
+/// Gameplay projection focal-distance ramp state mirroring `_vcProjectionParam`
+/// (`SLUS_202.28` `0x010e5a90`, `vcSetProjectionValue` `0x0019db80` &
+/// `vcChangeProjectionValue` `0x0019dc50`, `vc_main.c:4101-4160`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectionRampState {
+    /// Active screen projection distance `scr_z` (`_VbScreenInfo`, default `448.0`).
+    pub current_scr_z: f32,
+    /// Starting `scr_z` when the current ramp was scheduled (`_DAT_010e5a94`).
+    pub start_scr_z: f32,
+    /// Target `scr_z` (`_vcProjectionParam`).
+    pub target_scr_z: f32,
+    /// Per-tick delta (`_DAT_010e5a98 = (target - start) / frames`).
+    pub step_per_tick: f32,
+    /// Ramp mode (`_DAT_010e5a9c`: `0` = idle, `1` = linear ramp, `2` = instant snap).
+    pub mode: u8,
+}
+
+impl Default for ProjectionRampState {
+    fn default() -> Self {
+        Self {
+            current_scr_z: PS2_DEFAULT_PROJECTION_Z,
+            start_scr_z: PS2_DEFAULT_PROJECTION_Z,
+            target_scr_z: PS2_DEFAULT_PROJECTION_Z,
+            step_per_tick: 0.0,
+            mode: 0,
+        }
+    }
+}
+
+impl ProjectionRampState {
+    /// Schedules a projection change (`SLUS_202.28` `vcSetProjectionValue` `0x0019db80`).
+    pub fn schedule(&mut self, scr_z: f32, frames: u16) {
+        let target = if scr_z == 0.0 {
+            PS2_DEFAULT_PROJECTION_Z
+        } else {
+            scr_z
+        };
+        self.target_scr_z = target;
+        self.start_scr_z = self.current_scr_z;
+        if frames < 2 {
+            self.step_per_tick = 0.0;
+            self.mode = 2;
+        } else {
+            self.step_per_tick = (target - self.current_scr_z) / f32::from(frames);
+            self.mode = 1;
+        }
+    }
+
+    /// Steps the active projection ramp by one tick (`SLUS_202.28` `vcChangeProjectionValue` `0x0019dc50`).
+    pub fn step(&mut self) -> f32 {
+        match self.mode {
+            2 => {
+                self.mode = 0;
+                self.current_scr_z = self.target_scr_z;
+            }
+            1 => {
+                self.current_scr_z += self.step_per_tick;
+                if self.start_scr_z < self.target_scr_z {
+                    if self.current_scr_z > self.target_scr_z {
+                        self.mode = 0;
+                        self.current_scr_z = self.target_scr_z;
+                    }
+                } else if self.current_scr_z < self.target_scr_z {
+                    self.mode = 0;
+                    self.current_scr_z = self.target_scr_z;
+                }
+            }
+            _ => {}
+        }
+        self.current_scr_z
+    }
+}
 
 /// Snapshot of camera transforms for sub-frame alpha interpolation between 60 Hz ticks.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -75,6 +151,10 @@ pub struct Ps2CameraController {
     pub on_boat: bool,
     /// `true` while the L2 / Search View button is held (`PlayerSearchVIewButtonCheck`, `VC_WORK.flags & 0x200`).
     pub search_button_pressed: bool,
+    /// Player crouch blend rate `[0.0, 1.0]` (`_DAT_01f8db68` in `sh2pc.exe` `FUN_005193a0` `0x005193a0`).
+    pub crouch_rate: f32,
+    /// Active gameplay projection focal-distance ramp (`vcSetProjectionValue` `0x0019db80` / `vcChangeProjectionValue` `0x0019dc50`).
+    pub projection_ramp: ProjectionRampState,
     /// Whether the most recent camera tick moved smoothly (`vcRetSmoothCamMvF` `0x00196360`).
     pub last_move_smooth: bool,
 }
@@ -115,6 +195,8 @@ impl Ps2CameraController {
             stage_id: 0,
             on_boat: false,
             search_button_pressed: false,
+            crouch_rate: 0.0,
+            projection_ramp: ProjectionRampState::default(),
             last_move_smooth: true,
         }
     }
@@ -276,7 +358,11 @@ impl Ps2CameraController {
             .prev_snapshot
             .target
             .lerp(self.curr_snapshot.target, alpha);
-        let up = self.prev_snapshot.up;
+        let up = self
+            .prev_snapshot
+            .up
+            .lerp(self.curr_snapshot.up, alpha)
+            .normalize_or(Vec3::new(0.0, -1.0, 0.0));
 
         Mat4::look_at_rh(eye, target, up)
     }
@@ -290,7 +376,11 @@ impl Ps2CameraController {
             .prev_snapshot
             .target
             .lerp(self.curr_snapshot.target, alpha);
-        let up = self.prev_snapshot.up;
+        let up = self
+            .prev_snapshot
+            .up
+            .lerp(self.curr_snapshot.up, alpha)
+            .normalize_or(Vec3::new(0.0, -1.0, 0.0));
 
         ps2_wvs_matrix_from_look_at(eye, target, up)
     }

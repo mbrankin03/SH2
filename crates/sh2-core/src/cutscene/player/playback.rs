@@ -231,9 +231,7 @@ impl DramaDemoPlayer {
             if !self.voice_preload_requested {
                 self.voice_preload_requested = true;
                 df_hook = DemoDeltaFrameHook::ResetDeltaFrame;
-            } else if !self.voice_started
-                && (self.scene_frame + safe_dt * CUTSCENE_NATIVE_FPS) >= stream_start_f
-            {
+            } else if !self.voice_started && self.scene_frame >= stream_start_f {
                 match buffer_state {
                     DemoVoiceBufferState::Ready | DemoVoiceBufferState::Playing => {
                         self.voice_started = true;

@@ -65,7 +65,7 @@ impl ScriptedCameraShot {
     pub fn from_event_cam_set_data(data: &EventCamSetData) -> Self {
         let projection_scr_z = if data.fov > 1.0 {
             let half_rad = (data.fov.to_radians() * 0.5).clamp(0.15, 1.35);
-            Some(224.0 / half_rad.tan())
+            Some(crate::camera::kinematics::PC_PROJECTION_HALF_HEIGHT_PX / half_rad.tan())
         } else {
             None
         };

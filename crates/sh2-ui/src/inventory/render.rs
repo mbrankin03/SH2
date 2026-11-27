@@ -24,7 +24,10 @@
 //! - **Bottom navigation row (`font_print` @ `0x001d5c50..0x001d5ca8`, `y = 0x1ac = 428`):**
 //!   `Option`, `Map`, `Memo`.
 
+use std::borrow::Cow;
+
 use crate::atlas_font::{AtlasFont, Sh2TextColor};
+use crate::fingerprint::UiFingerprintHasher;
 use crate::font::TextRasterizer;
 use crate::inventory::atlas::{item_icon_rect, project_carousel_slot};
 use crate::inventory::health_ecg::{ECG_GS_ALPHA, STATUS_SNAPSHOT_H_448, STATUS_SNAPSHOT_Y_448};
@@ -44,6 +47,114 @@ use sh2_core::{item_metadata, InventoryManager};
 
 /// Command list text X in `512x448` space (`font_print` `0x001d5e14`: `0x168 = 360`).
 const COMMAND_TEXT_X: f32 = 360.0;
+
+/// Formats a `u32` into a stack buffer with zero heap allocation.
+#[inline]
+fn fmt_u32_stack(mut val: u32, buf: &mut [u8; 16]) -> &str {
+    let mut i = buf.len();
+    if val == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    } else {
+        while val > 0 {
+            i -= 1;
+            buf[i] = b'0' + (val % 10) as u8;
+            val /= 10;
+        }
+    }
+    std::str::from_utf8(&buf[i..]).unwrap_or("0")
+}
+
+/// Computes a deterministic 64-bit state fingerprint for [`draw_inventory_screen`] (`SH2-177`).
+///
+/// Captures every field affecting rendered pixels: carousel selection & animation offset,
+/// focus zone & reticle/trail rects, command list & glow, health ECG sweep/pulse/static frame,
+/// examine overlay phase/dim/popup rect, fade scrim, player snapshot, and texture identities.
+#[must_use]
+pub fn inventory_render_fingerprint(
+    screen: &InventoryScreen,
+    inventory: &InventoryManager,
+    snapshot: &InventoryPlayerSnapshot,
+    item_atlas_rgba: Option<(&[u8], usize, usize)>,
+    examine_tex_rgba: Option<(&[u8], usize, usize)>,
+    viewport: (usize, usize),
+) -> u64 {
+    let mut h = UiFingerprintHasher::with_tag(0x494E_5645_4E54_4F52);
+    h.write_usize(viewport.0);
+    h.write_usize(viewport.1);
+    h.write_bool(screen.is_open);
+    h.write_usize(screen.owned_items.len());
+    h.write_bytes(&screen.owned_items);
+    h.write_usize(screen.selected_index);
+    match screen.focus {
+        InventoryFocus::Carousel => h.write_u8(0),
+        InventoryFocus::CommandWindow => h.write_u8(1),
+        InventoryFocus::CombineTarget => h.write_u8(2),
+        InventoryFocus::ExamineOverlay => h.write_u8(3),
+        InventoryFocus::RadioVolume => h.write_u8(4),
+        InventoryFocus::Corner(btn) => {
+            h.write_u8(5);
+            h.write_u8(btn as u8);
+        }
+    }
+    h.write_usize(screen.active_commands.len());
+    for &cmd in &screen.active_commands {
+        h.write_u8(cmd as u8);
+    }
+    h.write_usize(screen.command_index);
+    for slot in screen.combine_slots {
+        h.write_u8(slot.unwrap_or(0));
+    }
+    h.write_f32(screen.combine_fade);
+    h.write_f32(screen.selected_scale);
+    h.write_f32(screen.arrow_pulse);
+    h.write_f32(screen.arrow_fade);
+    h.write_f32(screen.tab_pulse);
+    h.write_f32(screen.command_cursor_y);
+    h.write_f32(screen.command_glow);
+    h.write_u8(screen.radio_volume);
+    h.write_f32(screen.health_ecg.sweep_x);
+    h.write_f32(screen.health_ecg.pulse_timer);
+    h.write_f32(screen.health_ecg.pulse_brightness);
+    h.write_u32(screen.health_ecg.static_frame);
+    match screen.status_toast.as_deref() {
+        Some(t) => {
+            h.write_u8(1);
+            h.write_str(t);
+        }
+        None => h.write_u8(0),
+    }
+    h.write_usize(screen.examine_page);
+    h.write_u8(screen.examine_phase as u8);
+    h.write_f32(screen.examine_rgb);
+    for v in screen.examine_popup_rect {
+        h.write_f32(v);
+    }
+    h.write_u8(screen.examine_coin_side);
+    h.write_f32(screen.carousel_anim_offset);
+    for v in screen.focus_rect {
+        h.write_f32(v);
+    }
+    for v in screen.prev_focus_rect {
+        h.write_f32(v);
+    }
+    h.write_f32(screen.screen_fade_alpha);
+    h.write_f32(snapshot.hp);
+    h.write_f32(snapshot.max_hp);
+    h.write_u8(snapshot.equipped_weapon_item_id.unwrap_or(0));
+    h.write_u32(snapshot.equipped_magazine_rounds.unwrap_or(u32::MAX));
+    h.write_bool(snapshot.flashlight_on);
+    h.write_bool(snapshot.radio_on);
+    h.write_u8(snapshot.radio_volume);
+    h.write_bool(snapshot.has_any_memo);
+    if let Some(sel_id) = screen.selected_item_id() {
+        h.write_u8(sel_id);
+        h.write_u16(inventory.count(sel_id));
+    }
+    h.write_opt_texture(item_atlas_rgba);
+    h.write_opt_texture(examine_tex_rgba);
+    h.finish()
+}
 
 /// Renders the authentic 1:1 PS2 Status & Inventory screen onto `rasterizer`.
 ///
@@ -205,15 +316,7 @@ fn draw_equipped_weapon_panel(
         let y0 = cy - sprite_h * 0.5;
         let x1 = cx + sprite_w * 0.5;
         let y1 = cy + sprite_h * 0.5;
-        let tris = [
-            (x0, y0, u0, v0),
-            (x1, y0, u1, v0),
-            (x1, y1, u1, v1),
-            (x0, y0, u0, v0),
-            (x1, y1, u1, v1),
-            (x0, y1, u0, v1),
-        ];
-        rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, 1.0);
+        rasterizer.blit_rgba_subrect_scaled((x0, y0, x1, y1), (u0, v0, u1, v1), atlas, aw, ah, 1.0);
     } else if let Some(meta) = item_metadata(weapon_id) {
         let font_sm = ((14.0 * c.sy).round() as usize).clamp(10, 22);
         font.draw_line_centered(
@@ -232,9 +335,11 @@ fn draw_equipped_weapon_panel(
         let width_512 = stock_line_width_for_count(loaded);
         let (mid_x, mid_y) = draw_stock_line(rasterizer, c, width_512, true);
         let font_sm = ((15.0 * c.sy).round() as usize).clamp(10, 24);
+        let mut num_buf = [0u8; 16];
+        let num_str = fmt_u32_stack(loaded, &mut num_buf);
         font.draw_line_centered(
             rasterizer,
-            &loaded.to_string(),
+            num_str,
             (c.xi(mid_x), c.yi(mid_y).saturating_sub(font_sm / 2)),
             font_sm,
             Sh2TextColor::White,
@@ -272,13 +377,14 @@ fn draw_command_column(
         return;
     }
 
-    let cmds = if screen.focus == InventoryFocus::CommandWindow {
-        screen.active_commands.clone()
-    } else if let Some(id) = screen.selected_item_id() {
-        screen.commands_for_item(id, inventory, snapshot)
-    } else {
-        return;
-    };
+    let cmds: Cow<'_, [crate::inventory::ItemCommand]> =
+        if screen.focus == InventoryFocus::CommandWindow {
+            Cow::Borrowed(screen.active_commands.as_slice())
+        } else if let Some(id) = screen.selected_item_id() {
+            Cow::Owned(screen.commands_for_item(id, inventory, snapshot))
+        } else {
+            return;
+        };
 
     // Exact `look_command` (`0x001d8f50`): smoothly eased Y via `move_near`, `26.0` px/row pitch,
     // full 140px Command column (`x = 90..230` centered = `346..486`), 6-layer green-teal glow.
@@ -424,21 +530,21 @@ fn draw_carousel_arc(
             let y0 = py - sprite_h * 0.5;
             let x1 = px + sprite_w * 0.5;
             let y1 = py + sprite_h * 0.5;
-            let tris = [
-                (x0, y0, u0, v0),
-                (x1, y0, u1, v0),
-                (x1, y1, u1, v1),
-                (x0, y0, u0, v0),
-                (x1, y1, u1, v1),
-                (x0, y1, u0, v1),
-            ];
-            rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, alpha);
+            rasterizer.blit_rgba_subrect_scaled(
+                (x0, y0, x1, y1),
+                (u0, v0, u1, v1),
+                atlas,
+                aw,
+                ah,
+                alpha,
+            );
         } else {
             let name = item_metadata(item_id).map(|m| m.name).unwrap_or("Item");
-            let short: String = name.chars().take(12).collect();
+            let end = name.char_indices().nth(12).map_or(name.len(), |(i, _)| i);
+            let short = &name[..end];
             font.draw_line_centered(
                 rasterizer,
-                &short,
+                short,
                 (
                     px.max(16.0) as usize,
                     (py - font_px as f32 * 0.5).max(0.0) as usize,
@@ -480,9 +586,11 @@ fn draw_carousel_arc(
                 if count > 1 || item_metadata(item_id).is_some_and(|m| m.is_stackable()) {
                     let width_512 = stock_line_width_for_count(count as u32);
                     let (mid_x, mid_y) = draw_stock_line(rasterizer, c, width_512, false);
+                    let mut count_buf = [0u8; 16];
+                    let count_str = fmt_u32_stack(count as u32, &mut count_buf);
                     font.draw_line_centered(
                         rasterizer,
-                        &count.to_string(),
+                        count_str,
                         (c.xi(mid_x), c.yi(mid_y).saturating_sub(font_px / 2)),
                         font_px,
                         Sh2TextColor::White,
@@ -629,19 +737,14 @@ fn draw_inline_examine_popup(
         screen.selected_item_id().and_then(item_icon_rect),
     ) {
         let (u0, v0, u1, v1) = rect.normalized_uv();
-        let bx0 = x0 as f32;
-        let by0 = y0 as f32;
-        let bx1 = (x0 + w) as f32;
-        let by1 = (y0 + h) as f32;
-        let tris = [
-            (bx0, by0, u0, v0),
-            (bx1, by0, u1, v0),
-            (bx1, by1, u1, v1),
-            (bx0, by0, u0, v0),
-            (bx1, by1, u1, v1),
-            (bx0, by1, u0, v1),
-        ];
-        rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, 1.0);
+        rasterizer.blit_rgba_subrect_scaled(
+            (x0 as f32, y0 as f32, (x0 + w) as f32, (y0 + h) as f32),
+            (u0, v0, u1, v1),
+            atlas,
+            aw,
+            ah,
+            1.0,
+        );
     }
 
     // `examine2_main` (`SLUS_202.28` `0x001d4040`, `otn_itemmain.c:1857-1970`, `lcolor = 45` at `0x003400c8`):
@@ -726,28 +829,35 @@ fn draw_examine_overlay(
 
         if let Some(meta) = screen.selected_item_id().and_then(item_metadata) {
             let raw_text = meta.examine_text.unwrap_or(meta.description);
-            let pages: Vec<&str> = raw_text.split('\x0c').collect();
-            let active_page = pages
-                .get(screen.examine_page.min(pages.len().saturating_sub(1)))
-                .copied()
-                .unwrap_or("");
-            let clean_lines: Vec<String> = active_page
-                .lines()
-                .take(6)
-                .map(|l| l.chars().filter(|&ch| !ch.is_control()).collect())
-                .collect();
-            if !clean_lines.is_empty() {
+            let mut active_page = "";
+            for (idx, page) in raw_text.split('\x0c').enumerate() {
+                active_page = page;
+                if idx == screen.examine_page {
+                    break;
+                }
+            }
+            let mut clean_lines: [Cow<'_, str>; 6] = std::array::from_fn(|_| Cow::Borrowed(""));
+            let mut line_count = 0usize;
+            for l in active_page.lines().take(6) {
+                clean_lines[line_count] = if l.chars().any(char::is_control) {
+                    Cow::Owned(l.chars().filter(|&ch| !ch.is_control()).collect())
+                } else {
+                    Cow::Borrowed(l)
+                };
+                line_count += 1;
+            }
+            if line_count > 0 {
                 // `MesAlign::BlockCenter` (`\l`): compute max line width, left-align lines at `(w - max_w)/2`,
                 // vertically centered (`\a` `0xFFFA`) directly over the dimmed examine image.
-                let max_w = clean_lines
+                let max_w = clean_lines[..line_count]
                     .iter()
                     .map(|l| font.text_width_aspect(l, body_px, x_scale))
                     .max()
                     .unwrap_or(0);
                 let block_x = w.saturating_sub(max_w) / 2;
-                let total_h = clean_lines.len() * line_pitch;
+                let total_h = line_count * line_pitch;
                 let block_y0 = h.saturating_sub(total_h) / 2;
-                for (i, line) in clean_lines.iter().enumerate() {
+                for (i, line) in clean_lines[..line_count].iter().enumerate() {
                     font.draw_line_styled_aspect(
                         rasterizer,
                         line,

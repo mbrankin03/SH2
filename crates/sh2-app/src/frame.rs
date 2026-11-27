@@ -475,31 +475,63 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
         // render the crisp 1920x1440 4:3 Pause/Options UI centered on top with 1:1 square pixels.
         if state.menu_ctrl.pause_menu.is_open {
             state.draw_fullscreen_dim_scrim(&mut encoder, &surface_view, 96);
-            state.inventory_rasterizer.clear();
-            let font = sh2_ui::AtlasFont::shared(None);
-
-            if state.menu_ctrl.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
-                sh2_ui::draw_options_screen(
-                    &state.menu_ctrl.options_menu,
-                    font,
-                    &mut state.inventory_rasterizer,
-                );
-            } else {
-                sh2_ui::pause::draw_pause_screen_with_scrim(
-                    &state.menu_ctrl.pause_menu,
-                    font,
-                    &mut state.inventory_rasterizer,
-                    false,
-                );
-            }
-
             let vp = state.ps2_ui_viewport();
-            if let Some((mx, my)) = state.last_cursor_pos {
-                let norm_x = (mx as f32 - vp.0) / vp.2.max(1.0);
-                let norm_y = (my as f32 - vp.1) / vp.3.max(1.0);
-                sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
+            let rast_vp = (
+                state.inventory_rasterizer.width,
+                state.inventory_rasterizer.height,
+            );
+            let mut fp_hash = sh2_ui::UiFingerprintHasher::with_tag(0x5041_5553_455F_5752);
+            let screen_fp = if state.menu_ctrl.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu
+            {
+                sh2_ui::options_render_fingerprint(&state.menu_ctrl.options_menu, rast_vp)
+            } else {
+                sh2_ui::pause_render_fingerprint(&state.menu_ctrl.pause_menu, false, rast_vp)
+            };
+            fp_hash.write_u64(screen_fp);
+            fp_hash.write_f32(vp.0);
+            fp_hash.write_f32(vp.1);
+            fp_hash.write_f32(vp.2);
+            fp_hash.write_f32(vp.3);
+            fp_hash.write_opt_cursor(state.last_cursor_pos);
+            let fp = fp_hash.finish();
+
+            let needs_redraw = state.inventory_overlay_fingerprint != Some(fp);
+            if needs_redraw {
+                state.inventory_rasterizer.clear();
+                let font = sh2_ui::AtlasFont::shared(None);
+
+                if state.menu_ctrl.pause_menu.sub_phase == PauseSubPhase::InOptionsMenu {
+                    sh2_ui::draw_options_screen(
+                        &state.menu_ctrl.options_menu,
+                        font,
+                        &mut state.inventory_rasterizer,
+                    );
+                } else {
+                    sh2_ui::pause::draw_pause_screen_with_scrim(
+                        &state.menu_ctrl.pause_menu,
+                        font,
+                        &mut state.inventory_rasterizer,
+                        false,
+                    );
+                }
+
+                if let Some((mx, my)) = state.last_cursor_pos {
+                    let norm_x = (mx as f32 - vp.0) / vp.2.max(1.0);
+                    let norm_y = (my as f32 - vp.1) / vp.3.max(1.0);
+                    sh2_ui::menu::draw_pc_mouse_cursor(
+                        &mut state.inventory_rasterizer,
+                        norm_x,
+                        norm_y,
+                    );
+                }
+                state.inventory_overlay_fingerprint = Some(fp);
             }
-            state.finish_inventory_overlay_in_viewport(&mut encoder, &surface_view, vp);
+            state.present_inventory_overlay_in_viewport(
+                &mut encoder,
+                &surface_view,
+                vp,
+                needs_redraw,
+            );
         }
     } else if state.menu_ctrl.title_sm.attract_movie_requested
         && !state.menu_ctrl.title_sm.is_fading_out
@@ -661,149 +693,222 @@ fn render_title_menu_overlay(
         if phase == TitlePhase::ExitConfirm {
             state.draw_fullscreen_dim_scrim(encoder, surface_view, 165);
         }
-        state.inventory_rasterizer.clear();
-        let font = sh2_ui::AtlasFont::shared(None);
 
-        match phase {
-            TitlePhase::TitleLogo
-            | TitlePhase::MainMenu
-            | TitlePhase::Credits
-            | TitlePhase::ExitConfirm => {
-                if has_active_title_bg
-                    && enhanced_title
-                    && matches!(phase, TitlePhase::TitleLogo | TitlePhase::MainMenu)
-                {
-                    if let Some(ref atlas) = state.button_sprites {
-                        sh2_ui::menu::draw_pulsing_title_logo_with_style(
-                            &state.menu_ctrl.title_sm,
-                            atlas,
-                            &mut state.inventory_rasterizer,
-                            (u0, v0, u1, v1),
-                            bg_vp,
-                            ui_vp,
-                            true,
-                        );
-                    }
-                }
-                sh2_ui::draw_title_screen(
-                    &state.menu_ctrl.title_sm,
-                    state.button_sprites.as_ref(),
-                    font,
-                    &mut state.inventory_rasterizer,
-                );
-            }
-            TitlePhase::ScenarioSelect => {
-                if has_active_title_bg && enhanced_title {
-                    if let Some(ref atlas) = state.button_sprites {
-                        sh2_ui::menu::draw_pulsing_title_logo_with_style(
-                            &state.menu_ctrl.title_sm,
-                            atlas,
-                            &mut state.inventory_rasterizer,
-                            (u0, v0, u1, v1),
-                            bg_vp,
-                            ui_vp,
-                            true,
-                        );
-                    }
-                }
-                sh2_ui::draw_scenario_selection(
-                    &state.menu_ctrl.title_sm,
-                    state.button_sprites.as_ref(),
-                    font,
-                    &mut state.inventory_rasterizer,
-                );
-            }
-            TitlePhase::ActionDifficultySelect | TitlePhase::RiddleDifficultySelect => {
-                if has_active_title_bg && enhanced_title {
-                    if let Some(ref atlas) = state.button_sprites {
-                        sh2_ui::menu::draw_pulsing_title_logo_with_style(
-                            &state.menu_ctrl.title_sm,
-                            atlas,
-                            &mut state.inventory_rasterizer,
-                            (u0, v0, u1, v1),
-                            bg_vp,
-                            ui_vp,
-                            true,
-                        );
-                    }
-                }
-                sh2_ui::draw_difficulty_selection(
-                    &state.menu_ctrl.title_sm,
-                    state.button_sprites.as_ref(),
-                    font,
-                    &mut state.inventory_rasterizer,
-                );
-            }
+        // Compute state fingerprint for static/low-frequency title phases so unchanged frames skip
+        // clearing, rasterizing, and uploading the 11.06 MB 1920x1440 inventory texture (`SH2-177`).
+        let rast_vp = (
+            state.inventory_rasterizer.width,
+            state.inventory_rasterizer.height,
+        );
+        let static_fp: Option<u64> = match phase {
             TitlePhase::OptionsMenu => {
-                sh2_ui::draw_options_screen(
+                let mut h = sh2_ui::UiFingerprintHasher::with_tag(0x5449_544C_454F_5054);
+                h.write_u64(sh2_ui::options_render_fingerprint(
                     &state.menu_ctrl.options_menu,
-                    font,
-                    &mut state.inventory_rasterizer,
-                );
-            }
-            TitlePhase::LoadMenu => {
-                if state.ingame_menus.save_load.is_none() {
-                    crate::ingame_menus::open_save_load(state, sh2_ui::SaveLoadMode::Load);
-                }
-                let bg = state
-                    .ingame_menus
-                    .cached_savebg_tex
-                    .as_ref()
-                    .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
-                if let Some(ref mut sl) = state.ingame_menus.save_load {
-                    sl.tick(1.0 / 60.0);
-                    sh2_ui::draw_save_load_screen(sl, bg, font, &mut state.inventory_rasterizer);
-                }
+                    rast_vp,
+                ));
+                h.write_f32(ui_vp.0);
+                h.write_f32(ui_vp.1);
+                h.write_f32(ui_vp.2);
+                h.write_f32(ui_vp.3);
+                h.write_opt_cursor(state.last_cursor_pos);
+                Some(h.finish())
             }
             TitlePhase::TestRoomsSelect => {
-                sh2_ui::draw_test_rooms_screen(
-                    &state.menu_ctrl.title_sm,
-                    font,
-                    &mut state.inventory_rasterizer,
-                );
+                let mut h = sh2_ui::UiFingerprintHasher::with_tag(0x5449_544C_4554_524D);
+                h.write_usize(rast_vp.0);
+                h.write_usize(rast_vp.1);
+                h.write_usize(state.menu_ctrl.title_sm.test_room_index);
+                h.write_f32(ui_vp.0);
+                h.write_f32(ui_vp.1);
+                h.write_f32(ui_vp.2);
+                h.write_f32(ui_vp.3);
+                h.write_opt_cursor(state.last_cursor_pos);
+                Some(h.finish())
             }
-            TitlePhase::TransitionToGame => {
-                let quality = state
-                    .menu_ctrl
-                    .options_menu
-                    .original_config
-                    .video
-                    .texture_quality;
-                let use_hd_footmark = quality != sh2_core::WorldTextureQuality::OriginalPs2;
-                let use_4k_footmark = quality == sh2_core::WorldTextureQuality::Ai4kMaster;
-                if let Some(ref mut ls) = state.loading_screen {
-                    ls.use_hd_footmark = use_hd_footmark;
-                    ls.use_4k_footmark = use_4k_footmark;
-                    ls.render(font, &mut state.inventory_rasterizer);
-                } else if !matches!(
-                    state.menu_ctrl.title_sm.launch_target,
-                    sh2_ui::menu::LaunchTarget::Campaign {
-                        is_continue: false,
-                        ..
+            TitlePhase::Credits => {
+                let mut h = sh2_ui::UiFingerprintHasher::with_tag(0x5449_544C_4543_5244);
+                h.write_usize(rast_vp.0);
+                h.write_usize(rast_vp.1);
+                h.write_f32(ui_vp.0);
+                h.write_f32(ui_vp.1);
+                h.write_f32(ui_vp.2);
+                h.write_f32(ui_vp.3);
+                h.write_opt_cursor(state.last_cursor_pos);
+                Some(h.finish())
+            }
+            TitlePhase::ExitConfirm => {
+                let mut h = sh2_ui::UiFingerprintHasher::with_tag(0x5449_544C_4545_5854);
+                h.write_usize(rast_vp.0);
+                h.write_usize(rast_vp.1);
+                h.write_usize(state.menu_ctrl.title_sm.exit_confirm_index);
+                h.write_f32(ui_vp.0);
+                h.write_f32(ui_vp.1);
+                h.write_f32(ui_vp.2);
+                h.write_f32(ui_vp.3);
+                h.write_opt_cursor(state.last_cursor_pos);
+                Some(h.finish())
+            }
+            _ => None,
+        };
+
+        let needs_redraw = match static_fp {
+            Some(fp) => state.inventory_overlay_fingerprint != Some(fp),
+            None => true,
+        };
+
+        if needs_redraw {
+            state.inventory_rasterizer.clear();
+            let font = sh2_ui::AtlasFont::shared(None);
+
+            match phase {
+                TitlePhase::TitleLogo
+                | TitlePhase::MainMenu
+                | TitlePhase::Credits
+                | TitlePhase::ExitConfirm => {
+                    if has_active_title_bg
+                        && enhanced_title
+                        && matches!(phase, TitlePhase::TitleLogo | TitlePhase::MainMenu)
+                    {
+                        if let Some(ref atlas) = state.button_sprites {
+                            sh2_ui::menu::draw_pulsing_title_logo_with_style(
+                                &state.menu_ctrl.title_sm,
+                                atlas,
+                                &mut state.inventory_rasterizer,
+                                (u0, v0, u1, v1),
+                                bg_vp,
+                                ui_vp,
+                                true,
+                            );
+                        }
                     }
-                ) {
-                    let label = state.menu_ctrl.title_sm.selected_test_room.label();
-                    let center_x = state.inventory_rasterizer.width / 2;
-                    let center_y = (state.inventory_rasterizer.height * 7) / 10;
-                    let font_sz = (state.inventory_rasterizer.height / 30).max(16);
-                    font.draw_line_centered(
+                    sh2_ui::draw_title_screen(
+                        &state.menu_ctrl.title_sm,
+                        state.button_sprites.as_ref(),
+                        font,
                         &mut state.inventory_rasterizer,
-                        &format!("LOADING STAGE: {}...", label),
-                        (center_x, center_y),
-                        font_sz,
-                        sh2_ui::Sh2TextColor::White,
-                        true,
                     );
                 }
+                TitlePhase::ScenarioSelect => {
+                    if has_active_title_bg && enhanced_title {
+                        if let Some(ref atlas) = state.button_sprites {
+                            sh2_ui::menu::draw_pulsing_title_logo_with_style(
+                                &state.menu_ctrl.title_sm,
+                                atlas,
+                                &mut state.inventory_rasterizer,
+                                (u0, v0, u1, v1),
+                                bg_vp,
+                                ui_vp,
+                                true,
+                            );
+                        }
+                    }
+                    sh2_ui::draw_scenario_selection(
+                        &state.menu_ctrl.title_sm,
+                        state.button_sprites.as_ref(),
+                        font,
+                        &mut state.inventory_rasterizer,
+                    );
+                }
+                TitlePhase::ActionDifficultySelect | TitlePhase::RiddleDifficultySelect => {
+                    if has_active_title_bg && enhanced_title {
+                        if let Some(ref atlas) = state.button_sprites {
+                            sh2_ui::menu::draw_pulsing_title_logo_with_style(
+                                &state.menu_ctrl.title_sm,
+                                atlas,
+                                &mut state.inventory_rasterizer,
+                                (u0, v0, u1, v1),
+                                bg_vp,
+                                ui_vp,
+                                true,
+                            );
+                        }
+                    }
+                    sh2_ui::draw_difficulty_selection(
+                        &state.menu_ctrl.title_sm,
+                        state.button_sprites.as_ref(),
+                        font,
+                        &mut state.inventory_rasterizer,
+                    );
+                }
+                TitlePhase::OptionsMenu => {
+                    sh2_ui::draw_options_screen(
+                        &state.menu_ctrl.options_menu,
+                        font,
+                        &mut state.inventory_rasterizer,
+                    );
+                }
+                TitlePhase::LoadMenu => {
+                    if state.ingame_menus.save_load.is_none() {
+                        crate::ingame_menus::open_save_load(state, sh2_ui::SaveLoadMode::Load);
+                    }
+                    let bg = state
+                        .ingame_menus
+                        .cached_savebg_tex
+                        .as_ref()
+                        .map(|(w, h, rgba)| (rgba.as_slice(), *w, *h));
+                    if let Some(ref mut sl) = state.ingame_menus.save_load {
+                        sl.tick(1.0 / 60.0);
+                        sh2_ui::draw_save_load_screen(
+                            sl,
+                            bg,
+                            font,
+                            &mut state.inventory_rasterizer,
+                        );
+                    }
+                }
+                TitlePhase::TestRoomsSelect => {
+                    sh2_ui::draw_test_rooms_screen(
+                        &state.menu_ctrl.title_sm,
+                        font,
+                        &mut state.inventory_rasterizer,
+                    );
+                }
+                TitlePhase::TransitionToGame => {
+                    let quality = state
+                        .menu_ctrl
+                        .options_menu
+                        .original_config
+                        .video
+                        .texture_quality;
+                    let use_hd_footmark = quality != sh2_core::WorldTextureQuality::OriginalPs2;
+                    let use_4k_footmark = quality == sh2_core::WorldTextureQuality::Ai4kMaster;
+                    if let Some(ref mut ls) = state.loading_screen {
+                        ls.use_hd_footmark = use_hd_footmark;
+                        ls.use_4k_footmark = use_4k_footmark;
+                        ls.render(font, &mut state.inventory_rasterizer);
+                    } else if !matches!(
+                        state.menu_ctrl.title_sm.launch_target,
+                        sh2_ui::menu::LaunchTarget::Campaign {
+                            is_continue: false,
+                            ..
+                        }
+                    ) {
+                        let label = state.menu_ctrl.title_sm.selected_test_room.label();
+                        let center_x = state.inventory_rasterizer.width / 2;
+                        let center_y = (state.inventory_rasterizer.height * 7) / 10;
+                        let font_sz = (state.inventory_rasterizer.height / 30).max(16);
+                        font.draw_line_centered(
+                            &mut state.inventory_rasterizer,
+                            &format!("LOADING STAGE: {}...", label),
+                            (center_x, center_y),
+                            font_sz,
+                            sh2_ui::Sh2TextColor::White,
+                            true,
+                        );
+                    }
+                }
+                _ => {}
             }
-            _ => {}
+            if let Some((mx, my)) = state.last_cursor_pos {
+                let norm_x = (mx as f32 - ui_vp.0) / ui_vp.2.max(1.0);
+                let norm_y = (my as f32 - ui_vp.1) / ui_vp.3.max(1.0);
+                sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
+            }
+            state.inventory_overlay_fingerprint = static_fp;
         }
-        if let Some((mx, my)) = state.last_cursor_pos {
-            let norm_x = (mx as f32 - ui_vp.0) / ui_vp.2.max(1.0);
-            let norm_y = (my as f32 - ui_vp.1) / ui_vp.3.max(1.0);
-            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
-        }
-        state.finish_inventory_overlay_in_viewport(encoder, surface_view, ui_vp);
+
+        state.present_inventory_overlay_in_viewport(encoder, surface_view, ui_vp, needs_redraw);
         let fade = state.menu_ctrl.title_sm.fade_alpha.clamp(0.0, 1.0);
         if fade < 0.999 && phase != TitlePhase::TransitionToGame {
             let scrim_alpha = ((1.0 - fade) * 255.0).round() as u8;

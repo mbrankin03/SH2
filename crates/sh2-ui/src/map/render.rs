@@ -10,6 +10,7 @@
 //!    from `pic/etc/carsol.tex`,
 //! 5. Pure black `SetBlackPillarBoxes` bars outside the `4:3` canvas.
 
+use crate::fingerprint::UiFingerprintHasher;
 use crate::font::TextRasterizer;
 use crate::map::markers::{active_markers_for_map, ChizuDecodedMarker};
 use crate::map::position::{chizu_arrow_yaw_offset, chizu_should_draw_player_arrow};
@@ -43,6 +44,50 @@ pub struct PaperMapTextures<'a> {
     pub cursor_rgba: Option<(&'a [u8], usize, usize)>,
 }
 
+/// Computes a deterministic 64-bit state fingerprint for [`draw_paper_map`] (`SH2-177`).
+///
+/// Captures all visible map state (active sheet, zoom/pan coordinates, transcription alpha,
+/// fade scrim, player arrow room/pos/yaw, event flags, loaded texture identities, and viewport).
+#[must_use]
+pub fn paper_map_render_fingerprint(
+    viewer: &PaperMapViewer,
+    flags: &EventFlags,
+    player: PaperMapPlayerState,
+    textures: PaperMapTextures<'_>,
+    viewport: (usize, usize),
+) -> u64 {
+    let mut h = UiFingerprintHasher::with_tag(0x5041_5045_524D_4150);
+    h.write_usize(viewport.0);
+    h.write_usize(viewport.1);
+    h.write_bool(viewer.is_open);
+    h.write_u8(viewer.current_map_id);
+    h.write_u8(viewer.selected_map_id);
+    h.write_bool(viewer.is_maria_scenario);
+    h.write_u8(viewer.zoom_step as u8);
+    h.write_f32(viewer.zoom_t);
+    h.write_f32(viewer.center_x);
+    h.write_f32(viewer.center_y);
+    h.write_u8(viewer.transcription_phase as u8);
+    match viewer.transcribing_flag_id {
+        Some(id) => {
+            h.write_u8(1);
+            h.write_u16(id);
+        }
+        None => h.write_u8(0),
+    }
+    h.write_u8(viewer.transcription_alpha);
+    h.write_f32(viewer.screen_fade_alpha);
+    h.write_usize(player.room_id);
+    h.write_f32(player.pos_ps2.0);
+    h.write_f32(player.pos_ps2.1);
+    h.write_f32(player.yaw_rad);
+    h.write_bytes(flags.as_bytes());
+    h.write_opt_texture(textures.sheet_rgba);
+    h.write_opt_texture(textures.mark_atlas_rgba);
+    h.write_opt_texture(textures.cursor_rgba);
+    h.finish()
+}
+
 /// Renders the 1:1 PS2 / SH2:EE Fullscreen Paper Map (`ChizuDisplay` `0x001c7ba0`).
 pub fn draw_paper_map(
     viewer: &PaperMapViewer,
@@ -68,15 +113,7 @@ pub fn draw_paper_map(
     let y1 = clipper.layout.canvas_bottom;
     let (u0, v0, u1, v1) = viewer.sheet_uv_rect();
     if let Some((rgba, sw, sh)) = textures.sheet_rgba {
-        let tris = [
-            (x0, y0, u0, v0),
-            (x1, y0, u1, v0),
-            (x1, y1, u1, v1),
-            (x0, y0, u0, v0),
-            (x1, y1, u1, v1),
-            (x0, y1, u0, v1),
-        ];
-        rasterizer.blit_overlay_triangles(&tris, rgba, sw, sh, 1.0);
+        rasterizer.blit_rgba_subrect_scaled((x0, y0, x1, y1), (u0, v0, u1, v1), rgba, sw, sh, 1.0);
     } else {
         let dx = x0.floor().max(0.0) as usize;
         let dy = y0.floor().max(0.0) as usize;
@@ -154,15 +191,14 @@ fn draw_atlas_marker(
         if let Some((cx0, cy0, cx1, cy1, cu0, cv0, cu1, cv1)) =
             clipper.clip_decal_quad(mx0, my0, mx1, my1, u0, v0, u1, v1)
         {
-            let tris = [
-                (cx0, cy0, cu0, cv0),
-                (cx1, cy0, cu1, cv0),
-                (cx1, cy1, cu1, cv1),
-                (cx0, cy0, cu0, cv0),
-                (cx1, cy1, cu1, cv1),
-                (cx0, cy1, cu0, cv1),
-            ];
-            rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, alpha_mul);
+            rasterizer.blit_rgba_subrect_scaled(
+                (cx0, cy0, cx1, cy1),
+                (cu0, cv0, cu1, cv1),
+                atlas,
+                aw,
+                ah,
+                alpha_mul,
+            );
         }
     }
 }
@@ -235,15 +271,14 @@ fn draw_connect_arrows(
         if let Some((cx0, cy0, cx1, cy1, cu0, cv0, cu1, cv1)) =
             clipper.clip_decal_quad(vx0, vy0, vx1, vy1, u0, v0, u1, v1)
         {
-            let tris = [
-                (cx0, cy0, cu0, cv0),
-                (cx1, cy0, cu1, cv0),
-                (cx1, cy1, cu1, cv1),
-                (cx0, cy0, cu0, cv0),
-                (cx1, cy1, cu1, cv1),
-                (cx0, cy1, cu0, cv1),
-            ];
-            rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, alpha_mul);
+            rasterizer.blit_rgba_subrect_scaled(
+                (cx0, cy0, cx1, cy1),
+                (cu0, cv0, cu1, cv1),
+                atlas,
+                aw,
+                ah,
+                alpha_mul,
+            );
         }
     }
 }

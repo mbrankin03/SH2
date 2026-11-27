@@ -207,12 +207,59 @@ impl TextRasterizer {
     }
 
     /// Fills a solid or semi-transparent axis-aligned rectangle `(x0, y0, w, h)`.
+    ///
+    /// Uses a direct row-slice fill fast path when `color[3] == 255` (opaque) and skips
+    /// work entirely when `color[3] == 0`.
     pub fn fill_rect(&mut self, x0: usize, y0: usize, w: usize, h: usize, color: [u8; 4]) {
-        let x1 = (x0 + w).min(self.width);
-        let y1 = (y0 + h).min(self.height);
+        let alpha = color[3] as u32;
+        if alpha == 0 || w == 0 || h == 0 || x0 >= self.width || y0 >= self.height {
+            return;
+        }
+        let x1 = x0.saturating_add(w).min(self.width);
+        let y1 = y0.saturating_add(h).min(self.height);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        if alpha == 255 {
+            if x0 == 0 && x1 == self.width {
+                let start = y0 * self.width * 4;
+                let end = y1 * self.width * 4;
+                for px in self.pixels[start..end].as_chunks_mut::<4>().0 {
+                    *px = color;
+                }
+            } else {
+                let row_stride = self.width * 4;
+                for y in y0..y1 {
+                    let row_start = y * row_stride + x0 * 4;
+                    let row_end = y * row_stride + x1 * 4;
+                    for px in self.pixels[row_start..row_end].as_chunks_mut::<4>().0 {
+                        *px = color;
+                    }
+                }
+            }
+            return;
+        }
+
+        let inv_alpha = 255 - alpha;
+        let row_stride = self.width * 4;
+        let src0 = color[0] as u32 * alpha;
+        let src1 = color[1] as u32 * alpha;
+        let src2 = color[2] as u32 * alpha;
         for y in y0..y1 {
-            for x in x0..x1 {
-                self.blend_pixel(x, y, color);
+            let row_start = y * row_stride + x0 * 4;
+            let row_end = y * row_stride + x1 * 4;
+            for px in self.pixels[row_start..row_end].as_chunks_mut::<4>().0 {
+                let dst_a = px[3] as u32;
+                if dst_a == 0 {
+                    *px = color;
+                } else {
+                    let dst_weight = (dst_a * inv_alpha) / 255;
+                    let out_a = (alpha + dst_weight).clamp(1, 255);
+                    px[0] = ((src0 + px[0] as u32 * dst_weight) / out_a).min(255) as u8;
+                    px[1] = ((src1 + px[1] as u32 * dst_weight) / out_a).min(255) as u8;
+                    px[2] = ((src2 + px[2] as u32 * dst_weight) / out_a).min(255) as u8;
+                    px[3] = out_a as u8;
+                }
             }
         }
     }
@@ -250,8 +297,46 @@ impl TextRasterizer {
         src_h: usize,
         alpha_mul: f32,
     ) {
-        if dst_w == 0
-            || dst_h == 0
+        if dst_w == 0 || dst_h == 0 {
+            return;
+        }
+        self.blit_rgba_subrect_scaled(
+            (
+                dst_x as f32,
+                dst_y as f32,
+                (dst_x + dst_w) as f32,
+                (dst_y + dst_h) as f32,
+            ),
+            (0.0, 0.0, 1.0, 1.0),
+            src_rgba,
+            src_w,
+            src_h,
+            alpha_mul,
+        );
+    }
+
+    /// Fast-path axis-aligned sub-rectangle RGBA8 blitter mapping normalized source UVs
+    /// `(u0, v0, u1, v1)` into destination screen rect `(dst_x0, dst_y0, dst_x1, dst_y1)`.
+    ///
+    /// Uses a direct-write fast path when `alpha_mul >= 1.0` and the sampled source pixel is
+    /// fully opaque (`alpha == 255`), avoiding per-pixel triangle barycentric evaluation.
+    /// Produces pixel-identical output to [`Self::blit_overlay_triangles`] for axis-aligned quads.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blit_rgba_subrect_scaled(
+        &mut self,
+        dst_rect: (f32, f32, f32, f32),
+        uv_rect: (f32, f32, f32, f32),
+        src_rgba: &[u8],
+        src_w: usize,
+        src_h: usize,
+        alpha_mul: f32,
+    ) {
+        let (x0, y0, x1, y1) = dst_rect;
+        let (u0, v0, u1, v1) = uv_rect;
+        let dst_w = x1 - x0;
+        let dst_h = y1 - y0;
+        if dst_w <= 1e-4
+            || dst_h <= 1e-4
             || src_w == 0
             || src_h == 0
             || src_rgba.len() < src_w * src_h * 4
@@ -259,29 +344,86 @@ impl TextRasterizer {
         {
             return;
         }
-        let a_scale = alpha_mul.clamp(0.0, 1.0);
-        let x_end = (dst_x + dst_w).min(self.width);
-        let y_end = (dst_y + dst_h).min(self.height);
 
-        for y in dst_y..y_end {
-            let v = ((y - dst_y) as f32 + 0.5) / (dst_h as f32);
-            let sy = ((v * (src_h as f32)).floor() as usize).min(src_h - 1);
-            for x in dst_x..x_end {
-                let u = ((x - dst_x) as f32 + 0.5) / (dst_w as f32);
-                let sx = ((u * (src_w as f32)).floor() as usize).min(src_w - 1);
-                let s_ofs = (sy * src_w + sx) * 4;
-                let sa = ((src_rgba[s_ofs + 3] as f32) * a_scale).round() as u8;
-                if sa > 0 {
-                    self.blend_pixel(
-                        x,
-                        y,
-                        [
-                            src_rgba[s_ofs],
-                            src_rgba[s_ofs + 1],
-                            src_rgba[s_ofs + 2],
-                            sa,
-                        ],
-                    );
+        let start_x = ((x0 - 0.5).ceil().max(0.0) as usize).min(self.width);
+        let end_x = (((x1 - 0.5).floor() + 1.0).max(0.0) as usize).min(self.width);
+        let start_y = ((y0 - 0.5).ceil().max(0.0) as usize).min(self.height);
+        let end_y = (((y1 - 0.5).floor() + 1.0).max(0.0) as usize).min(self.height);
+        if start_x >= end_x || start_y >= end_y {
+            return;
+        }
+
+        let a_scale = alpha_mul.clamp(0.0, 1.0);
+        let opaque_mul = a_scale >= 1.0 - 1e-6;
+        let du_dx = (u1 - u0) / dst_w;
+        let dv_dy = (v1 - v0) / dst_h;
+        let src_w_f = src_w as f32;
+        let src_h_f = src_h as f32;
+        let src_w_max = src_w - 1;
+        let src_h_max = src_h - 1;
+        let dst_stride = self.width * 4;
+        let src_stride = src_w * 4;
+
+        for y in start_y..end_y {
+            let py = y as f32 + 0.5;
+            let v = (v0 + (py - y0) * dv_dy).clamp(0.0, 1.0);
+            let sy = ((v * src_h_f) as usize).min(src_h_max);
+            let src_row = &src_rgba[sy * src_stride..(sy + 1) * src_stride];
+            let dst_row = &mut self.pixels[y * dst_stride..(y + 1) * dst_stride];
+
+            for x in start_x..end_x {
+                let px = x as f32 + 0.5;
+                let u = (u0 + (px - x0) * du_dx).clamp(0.0, 1.0);
+                let sx = ((u * src_w_f) as usize).min(src_w_max);
+                let s_ofs = sx * 4;
+                let raw_a = src_row[s_ofs + 3];
+                if raw_a == 0 {
+                    continue;
+                }
+                let d_ofs = x * 4;
+                if opaque_mul && raw_a == 255 {
+                    dst_row[d_ofs..d_ofs + 4].copy_from_slice(&src_row[s_ofs..s_ofs + 4]);
+                    continue;
+                }
+                let sa = if opaque_mul {
+                    raw_a
+                } else {
+                    (f32::from(raw_a) * a_scale).round() as u8
+                };
+                if sa == 0 {
+                    continue;
+                }
+                let alpha = u32::from(sa);
+                if alpha == 255 {
+                    dst_row[d_ofs] = src_row[s_ofs];
+                    dst_row[d_ofs + 1] = src_row[s_ofs + 1];
+                    dst_row[d_ofs + 2] = src_row[s_ofs + 2];
+                    dst_row[d_ofs + 3] = 255;
+                } else {
+                    let dst_a = u32::from(dst_row[d_ofs + 3]);
+                    if dst_a == 0 {
+                        dst_row[d_ofs] = src_row[s_ofs];
+                        dst_row[d_ofs + 1] = src_row[s_ofs + 1];
+                        dst_row[d_ofs + 2] = src_row[s_ofs + 2];
+                        dst_row[d_ofs + 3] = sa;
+                    } else {
+                        let inv_alpha = 255 - alpha;
+                        let dst_weight = (dst_a * inv_alpha) / 255;
+                        let out_a = (alpha + dst_weight).clamp(1, 255);
+                        dst_row[d_ofs] = ((u32::from(src_row[s_ofs]) * alpha
+                            + u32::from(dst_row[d_ofs]) * dst_weight)
+                            / out_a)
+                            .min(255) as u8;
+                        dst_row[d_ofs + 1] = ((u32::from(src_row[s_ofs + 1]) * alpha
+                            + u32::from(dst_row[d_ofs + 1]) * dst_weight)
+                            / out_a)
+                            .min(255) as u8;
+                        dst_row[d_ofs + 2] = ((u32::from(src_row[s_ofs + 2]) * alpha
+                            + u32::from(dst_row[d_ofs + 2]) * dst_weight)
+                            / out_a)
+                            .min(255) as u8;
+                        dst_row[d_ofs + 3] = out_a as u8;
+                    }
                 }
             }
         }
@@ -442,5 +584,144 @@ impl TextRasterizer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fill_rect_opaque_and_translucent_match_blend_pixel_exactly() {
+        type FillCase = ([u8; 4], (usize, usize, usize, usize), [u8; 4]);
+        let cases: &[FillCase] = &[
+            // Full-width opaque fill over colored background
+            ([10, 20, 30, 180], (0, 0, 32, 24), [0, 0, 0, 255]),
+            // Partial opaque fill
+            ([40, 80, 120, 255], (5, 3, 17, 11), [210, 140, 60, 255]),
+            // Translucent fill over transparent background
+            ([0, 0, 0, 0], (2, 4, 20, 15), [100, 180, 240, 96]),
+            // Translucent fill over existing semi-transparent pixels
+            ([50, 90, 130, 140], (4, 2, 18, 16), [220, 60, 40, 110]),
+            // Zero-alpha no-op
+            ([12, 34, 56, 200], (0, 0, 32, 24), [255, 255, 255, 0]),
+        ];
+
+        for &(bg, (x0, y0, w, h), fg) in cases {
+            let mut fast = TextRasterizer::new(32, 24);
+            let mut ref_r = TextRasterizer::new(32, 24);
+            for y in 0..24 {
+                for x in 0..32 {
+                    fast.blend_pixel(x, y, bg);
+                    ref_r.blend_pixel(x, y, bg);
+                }
+            }
+
+            fast.fill_rect(x0, y0, w, h, fg);
+            let x1 = (x0 + w).min(ref_r.width);
+            let y1 = (y0 + h).min(ref_r.height);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    ref_r.blend_pixel(x, y, fg);
+                }
+            }
+            assert_eq!(fast.pixels, ref_r.pixels);
+        }
+    }
+
+    #[test]
+    fn blit_rgba_subrect_scaled_matches_blit_overlay_triangles() {
+        let (sw, sh) = (16usize, 16usize);
+        let mut src = vec![0u8; sw * sh * 4];
+        for y in 0..sh {
+            for x in 0..sw {
+                let o = (y * sw + x) * 4;
+                src[o] = (x * 16) as u8;
+                src[o + 1] = (y * 16) as u8;
+                src[o + 2] = ((x + y) * 8) as u8;
+                src[o + 3] = if (x + y) % 3 == 0 {
+                    255
+                } else if (x + y) % 3 == 1 {
+                    160
+                } else {
+                    0
+                };
+            }
+        }
+
+        for &alpha_mul in &[1.0f32, 0.65f32] {
+            let mut fast = TextRasterizer::new(64, 48);
+            let mut ref_r = TextRasterizer::new(64, 48);
+            fast.fill_rect(0, 0, 64, 48, [24, 28, 32, 255]);
+            ref_r.fill_rect(0, 0, 64, 48, [24, 28, 32, 255]);
+
+            let (x0, y0, x1, y1) = (8.0f32, 6.0f32, 52.0f32, 42.0f32);
+            let (u0, v0, u1, v1) = (0.125f32, 0.25f32, 0.875f32, 0.9375f32);
+            fast.blit_rgba_subrect_scaled(
+                (x0, y0, x1, y1),
+                (u0, v0, u1, v1),
+                &src,
+                sw,
+                sh,
+                alpha_mul,
+            );
+
+            // Exact per-pixel axis-aligned reference (single blend per pixel, no triangle diagonal double-blend)
+            let a_scale = alpha_mul.clamp(0.0, 1.0);
+            for y in 0..48usize {
+                let py = y as f32 + 0.5;
+                if py < y0 || py > y1 {
+                    continue;
+                }
+                let v = (v0 + ((py - y0) / (y1 - y0)) * (v1 - v0)).clamp(0.0, 1.0);
+                let sy = ((v * sh as f32).floor() as usize).min(sh - 1);
+                for x in 0..64usize {
+                    let px = x as f32 + 0.5;
+                    if px < x0 || px > x1 {
+                        continue;
+                    }
+                    let u = (u0 + ((px - x0) / (x1 - x0)) * (u1 - u0)).clamp(0.0, 1.0);
+                    let sx = ((u * sw as f32).floor() as usize).min(sw - 1);
+                    let s_ofs = (sy * sw + sx) * 4;
+                    let sa = (src[s_ofs + 3] as f32 * a_scale).round() as u8;
+                    if sa > 0 {
+                        ref_r.blend_pixel(x, y, [src[s_ofs], src[s_ofs + 1], src[s_ofs + 2], sa]);
+                    }
+                }
+            }
+
+            assert_eq!(
+                fast.pixels, ref_r.pixels,
+                "blit_rgba_subrect_scaled differed from reference at alpha_mul={alpha_mul}"
+            );
+        }
+
+        // Also verify exact match against `blit_overlay_triangles` for fully opaque textures
+        let mut opaque_src = src.clone();
+        for px in opaque_src.as_chunks_mut::<4>().0 {
+            px[3] = 255;
+        }
+        let mut fast_op = TextRasterizer::new(64, 48);
+        let mut tri_op = TextRasterizer::new(64, 48);
+        let (x0, y0, x1, y1) = (8.0f32, 6.0f32, 52.0f32, 42.0f32);
+        let (u0, v0, u1, v1) = (0.125f32, 0.25f32, 0.875f32, 0.9375f32);
+        fast_op.blit_rgba_subrect_scaled(
+            (x0, y0, x1, y1),
+            (u0, v0, u1, v1),
+            &opaque_src,
+            sw,
+            sh,
+            1.0,
+        );
+        let tris = [
+            (x0, y0, u0, v0),
+            (x1, y0, u1, v0),
+            (x1, y1, u1, v1),
+            (x0, y0, u0, v0),
+            (x1, y1, u1, v1),
+            (x0, y1, u0, v1),
+        ];
+        tri_op.blit_overlay_triangles(&tris, &opaque_src, sw, sh, 1.0);
+        assert_eq!(fast_op.pixels, tri_op.pixels);
     }
 }

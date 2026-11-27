@@ -559,32 +559,49 @@ pub(crate) fn render_overlay(
         return;
     }
 
-    state.begin_hud_overlay();
     let font = AtlasFont::shared(None);
+    let menu_vp = (state.menu_rasterizer.width, state.menu_rasterizer.height);
 
     if state.ingame_menus.options_from_inventory {
         // `otn_option.c` (`0x002170c0`): solid black fullscreen backdrop + native widescreen
         // Options UI (`menu_rasterizer`) with full-viewport `1.0` s fade-in scrim.
+        state.reset_hud_overlay_tint();
         state.draw_fullscreen_dim_scrim(encoder, surface_view, 255);
-        draw_options_screen(
+        let mut h = sh2_ui::UiFingerprintHasher::with_tag(0x494E_564F_5054_3031);
+        h.write_u64(sh2_ui::options_render_fingerprint(
             &state.menu_ctrl.options_menu,
-            font,
-            &mut state.menu_rasterizer,
-        );
-        if let Some((mx, my)) = state.last_cursor_pos {
-            let norm_x = (mx as f32) / state.surface_config.width.max(1) as f32;
-            let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
-            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
+            menu_vp,
+        ));
+        h.write_f32(state.ingame_menus.options_fade_alpha);
+        h.write_u32(state.surface_config.width);
+        h.write_u32(state.surface_config.height);
+        h.write_opt_cursor(state.last_cursor_pos);
+        let fp = h.finish();
+        let needs_redraw = state.menu_overlay_fingerprint != Some(fp);
+        if needs_redraw {
+            state.menu_rasterizer.clear();
+            draw_options_screen(
+                &state.menu_ctrl.options_menu,
+                font,
+                &mut state.menu_rasterizer,
+            );
+            if let Some((mx, my)) = state.last_cursor_pos {
+                let norm_x = (mx as f32) / state.surface_config.width.max(1) as f32;
+                let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
+                sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
+            }
+            if state.ingame_menus.options_fade_alpha > 0.001 {
+                let a =
+                    (state.ingame_menus.options_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let rw = state.menu_rasterizer.width;
+                let rh = state.menu_rasterizer.height;
+                state.menu_rasterizer.fill_rect(0, 0, rw, rh, [0, 0, 0, a]);
+            }
+            state.menu_overlay_fingerprint = Some(fp);
         }
-        if state.ingame_menus.options_fade_alpha > 0.001 {
-            let a = (state.ingame_menus.options_fade_alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
-            let rw = state.menu_rasterizer.width;
-            let rh = state.menu_rasterizer.height;
-            state.menu_rasterizer.fill_rect(0, 0, rw, rh, [0, 0, 0, a]);
-        }
-        state.finish_hud_overlay(encoder, surface_view);
-        return;
+        state.present_hud_overlay(encoder, surface_view, needs_redraw);
     } else if state.ingame_menus.save_load.is_some() {
+        state.begin_hud_overlay();
         let scenario = state.menu_ctrl.title_sm.selected_scenario;
         ensure_savebg_loaded(state, scenario);
         let bg = state
@@ -600,7 +617,9 @@ pub(crate) fn render_overlay(
             let norm_y = (my as f32) / state.surface_config.height.max(1) as f32;
             sh2_ui::menu::draw_pc_mouse_cursor(&mut state.menu_rasterizer, norm_x, norm_y);
         }
+        state.finish_hud_overlay(encoder, surface_view);
     } else if state.ingame_menus.map_viewer.is_open {
+        state.reset_hud_overlay_tint();
         let cur_id = state.ingame_menus.map_viewer.current_map_id;
         let sheet = state
             .ingame_menus
@@ -628,22 +647,37 @@ pub(crate) fn render_overlay(
             [pos.x, pos.y, pos.z],
             &state.sim_core.scenario.flags,
         );
-        draw_paper_map(
+        let player_state = PaperMapPlayerState {
+            room_id,
+            pos_ps2,
+            yaw_rad: state.sim_core.scenario.player_yaw,
+        };
+        let textures = PaperMapTextures {
+            sheet_rgba: sheet,
+            mark_atlas_rgba: marks,
+            cursor_rgba: cursor,
+        };
+        let fp = sh2_ui::paper_map_render_fingerprint(
             &state.ingame_menus.map_viewer,
             &state.sim_core.scenario.flags,
-            PaperMapPlayerState {
-                room_id,
-                pos_ps2,
-                yaw_rad: state.sim_core.scenario.player_yaw,
-            },
-            PaperMapTextures {
-                sheet_rgba: sheet,
-                mark_atlas_rgba: marks,
-                cursor_rgba: cursor,
-            },
-            &mut state.menu_rasterizer,
+            player_state,
+            textures,
+            menu_vp,
         );
+        let needs_redraw = state.menu_overlay_fingerprint != Some(fp);
+        if needs_redraw {
+            draw_paper_map(
+                &state.ingame_menus.map_viewer,
+                &state.sim_core.scenario.flags,
+                player_state,
+                textures,
+                &mut state.menu_rasterizer,
+            );
+            state.menu_overlay_fingerprint = Some(fp);
+        }
+        state.present_hud_overlay(encoder, surface_view, needs_redraw);
     } else if state.ingame_menus.memo_reader.is_open {
+        state.reset_hud_overlay_tint();
         let backdrop = state
             .ingame_menus
             .cached_memo_backdrop
@@ -654,21 +688,35 @@ pub(crate) fn render_overlay(
             .cached_memo_layer
             .as_ref()
             .map(|(_, w, h, rgba)| (rgba.as_slice(), *w, *h));
-        draw_memo_reader(
+        let textures = MemoRenderTextures {
+            backdrop_rgba: backdrop,
+            layer_rgba: layer,
+        };
+        let memo_ctx = Some(MemoRenderContext {
+            flags: &state.sim_core.scenario.flags,
+            puzzle: &state.sim_core.scenario.puzzle_state,
+            riddle: state.sim_core.scenario.riddle_difficulty,
+        });
+        let fp = sh2_ui::memo_render_fingerprint(
             &state.ingame_menus.memo_reader,
-            state.ingame_menus.memo_messages.as_ref(),
-            MemoRenderTextures {
-                backdrop_rgba: backdrop,
-                layer_rgba: layer,
-            },
-            Some(MemoRenderContext {
-                flags: &state.sim_core.scenario.flags,
-                puzzle: &state.sim_core.scenario.puzzle_state,
-                riddle: state.sim_core.scenario.riddle_difficulty,
-            }),
-            font,
-            &mut state.menu_rasterizer,
+            state.ingame_menus.memo_messages.is_some(),
+            textures,
+            memo_ctx,
+            menu_vp,
         );
+        let needs_redraw = state.menu_overlay_fingerprint != Some(fp);
+        if needs_redraw {
+            draw_memo_reader(
+                &state.ingame_menus.memo_reader,
+                state.ingame_menus.memo_messages.as_ref(),
+                textures,
+                memo_ctx,
+                font,
+                &mut state.menu_rasterizer,
+            );
+            state.menu_overlay_fingerprint = Some(fp);
+        }
+        state.present_hud_overlay(encoder, surface_view, needs_redraw);
     } else if state.ingame_menus.inventory.is_open {
         let coin_side = state.ingame_menus.inventory.examine_coin_side;
         if state.ingame_menus.inventory.focus == sh2_ui::inventory::InventoryFocus::ExamineOverlay {
@@ -694,28 +742,49 @@ pub(crate) fn render_overlay(
                     .filter(|(id, side, _, _, _)| *id == sel_id && *side == coin_side)
                     .map(|(_, _, w, h, rgba)| (rgba.as_slice(), *w, *h))
             });
-        state.inventory_rasterizer.clear();
-        draw_inventory_screen(
+        let vp = sh2_ui::inventory::ps2_ui_canvas_rect(
+            state.surface_config.width as f32,
+            state.surface_config.height as f32,
+        );
+        let inv_vp = (
+            state.inventory_rasterizer.width,
+            state.inventory_rasterizer.height,
+        );
+        let mut fp_hash = sh2_ui::UiFingerprintHasher::with_tag(0x494E_565F_5752_4150);
+        fp_hash.write_u64(sh2_ui::inventory_render_fingerprint(
             &state.ingame_menus.inventory,
             &state.sim_core.scenario.inventory_mgr,
             &snapshot,
             item_atlas,
             examine_tex,
-            font,
-            &mut state.inventory_rasterizer,
-        );
-        let vp = sh2_ui::inventory::ps2_ui_canvas_rect(
-            state.surface_config.width as f32,
-            state.surface_config.height as f32,
-        );
-        if let Some((mx, my)) = state.last_cursor_pos {
-            let norm_x = (mx as f32 - vp.0) / vp.2.max(1.0);
-            let norm_y = (my as f32 - vp.1) / vp.3.max(1.0);
-            sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
-        }
-        state.finish_inventory_overlay_in_viewport(encoder, surface_view, vp);
-        return;
-    }
+            inv_vp,
+        ));
+        fp_hash.write_f32(vp.0);
+        fp_hash.write_f32(vp.1);
+        fp_hash.write_f32(vp.2);
+        fp_hash.write_f32(vp.3);
+        fp_hash.write_opt_cursor(state.last_cursor_pos);
+        let fp = fp_hash.finish();
 
-    state.finish_hud_overlay(encoder, surface_view);
+        let needs_redraw = state.inventory_overlay_fingerprint != Some(fp);
+        if needs_redraw {
+            state.inventory_rasterizer.clear();
+            draw_inventory_screen(
+                &state.ingame_menus.inventory,
+                &state.sim_core.scenario.inventory_mgr,
+                &snapshot,
+                item_atlas,
+                examine_tex,
+                font,
+                &mut state.inventory_rasterizer,
+            );
+            if let Some((mx, my)) = state.last_cursor_pos {
+                let norm_x = (mx as f32 - vp.0) / vp.2.max(1.0);
+                let norm_y = (my as f32 - vp.1) / vp.3.max(1.0);
+                sh2_ui::menu::draw_pc_mouse_cursor(&mut state.inventory_rasterizer, norm_x, norm_y);
+            }
+            state.inventory_overlay_fingerprint = Some(fp);
+        }
+        state.present_inventory_overlay_in_viewport(encoder, surface_view, vp, needs_redraw);
+    }
 }

@@ -549,15 +549,14 @@ pub fn draw_look_combine(
                 let iy0 = cy - icon_h * 0.5;
                 let ix1 = cx + icon_w * 0.5;
                 let iy1 = cy + icon_h * 0.5;
-                let tris = [
-                    (ix0, iy0, u0, v0),
-                    (ix1, iy0, u1, v0),
-                    (ix1, iy1, u1, v1),
-                    (ix0, iy0, u0, v0),
-                    (ix1, iy1, u1, v1),
-                    (ix0, iy1, u0, v1),
-                ];
-                rasterizer.blit_overlay_triangles(&tris, atlas, aw, ah, fade);
+                rasterizer.blit_rgba_subrect_scaled(
+                    (ix0, iy0, ix1, iy1),
+                    (u0, v0, u1, v1),
+                    atlas,
+                    aw,
+                    ah,
+                    fade,
+                );
             }
         }
     }

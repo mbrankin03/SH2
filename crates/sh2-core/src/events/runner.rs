@@ -75,8 +75,13 @@ pub struct StageProgramRunner {
     /// Main ending selected by `EvProgEndingJudge` (`Stage 44 #6`, `0x00576490`), if evaluated.
     evaluated_main_ending: Option<MainEndingKind>,
     /// Auto-walk displacement delta `[dx, dy, dz]` in PS2 mm requested by boundary warning
-    /// programs (`0x005a0cb0` `-500.0 mm` Z, `0x005a0de0` `-500.0 mm` X via `0x0053b3c0`).
+    /// programs (`0x005a0cb0` `-500.0 mm` Z, `0x005a0de0` `-500.0 mm` X, `0x0059d720` `+500.0 mm` X,
+    /// `0x00592550` `+500.0 mm` Z via `PlayerEventMove` `0x0053b3c0`).
     pending_walkback_delta: Option<[f32; 3]>,
+    /// Latched `PlayerEventMoveIsEnd()` (`0x00283ed0` / `0x0053b6d0`) completion signal delivered
+    /// by the campaign/simulation loop so boundary turn-back programs unlock James only after he
+    /// has finished turning around and stepping back.
+    event_move_finished: bool,
 }
 
 impl StageProgramRunner {
@@ -95,6 +100,7 @@ impl StageProgramRunner {
         self.requested_demo_post_pose = None;
         self.open_save_point_id = None;
         self.pending_walkback_delta = None;
+        self.event_move_finished = false;
     }
 
     /// Aborts any running stage program and hides any active cutaway still.
@@ -105,6 +111,7 @@ impl StageProgramRunner {
         self.positional_sound_effects.clear();
         self.open_save_point_id = None;
         self.pending_walkback_delta = None;
+        self.event_move_finished = false;
         overlay.set_picture(None, flags);
     }
 
@@ -174,9 +181,15 @@ impl StageProgramRunner {
     }
 
     /// Consumes and returns any auto-walk displacement delta `[dx, dy, dz]` in PS2 mm emitted by
-    /// boundary warning programs (`stg_ovservation.c` `0x005a0cb0` / `0x005a0de0`).
+    /// boundary warning programs (`0x005a0cb0`, `0x005a0de0`, `0x0059d720`, `0x00592550`).
     pub fn take_walkback_delta(&mut self) -> Option<[f32; 3]> {
         self.pending_walkback_delta.take()
+    }
+
+    /// Notifies the active stage program that `PlayerEventMoveIsEnd()` (`0x00283ed0` / `0x0053b6d0`)
+    /// has completed so boundary turn-back programs can unlock James (`JmsEventMode(jms, 0)`) and finish.
+    pub fn notify_event_move_finished(&mut self) {
+        self.event_move_finished = true;
     }
 
     /// Resolves the retail `sh2pc.exe` `ev_prog` function VA for `(stage, prog_no)` from
@@ -247,12 +260,14 @@ impl StageProgramRunner {
             return false;
         };
 
+        let event_move_finished = std::mem::take(&mut self.event_move_finished);
         let out = super::stage_programs::dispatch_stage_program(
             &mut p,
             down,
             held,
             dt,
             self.active_message_id,
+            event_move_finished,
             flags,
             puzzle,
             inventory,

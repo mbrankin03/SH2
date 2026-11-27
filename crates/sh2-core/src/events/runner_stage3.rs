@@ -70,6 +70,7 @@ pub(super) fn tick_stage3_prog(
     down: u32,
     dt: f32,
     active_message_id: Option<i32>,
+    event_move_finished: bool,
     flags: &mut EventFlags,
     overlay: &mut CutawayOverlayEngine,
 ) -> Stage3TickOut {
@@ -156,8 +157,9 @@ pub(super) fn tick_stage3_prog(
             _ => out.finished = true,
         },
         // Stage 3 #4 (`0x005a0cb0`): Walking toward forest stairs without map (`!flag(24)`).
-        // Locks player, shows stage message `2`, auto-walks James `-500.0 mm` along Z (`0x0062d230`),
-        // unlocks player, and sets flag `34` (`0x22`).
+        // Locks player (`0x5389c0`), stands (`0x53b160(0x65)`), shows stage message `2` (`0x4a22d0`),
+        // smoothly turns around & walks `-500.0 mm` along Z via `PlayerEventMove` (`0x53b3c0`) +
+        // `PlayerEventMoveIsEnd` (`0x53b6d0`), then unlocks player and sets flag `34` (`0x22`).
         4 => match p.step {
             0 => {
                 p.locked = true;
@@ -168,16 +170,27 @@ pub(super) fn tick_stage3_prog(
                 if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
                     out.active_message_id = None;
                     out.walkback_delta = Some([0.0, 0.0, -STG3_WALKBACK_DISTANCE_MM]);
+                    p.step = 2;
+                }
+            }
+            2 => {
+                if event_move_finished {
                     flags.set(STG3_FLAG_STAIRS_WARNED, true);
                     p.locked = false;
                     out.finished = true;
+                } else {
+                    p.locked = true;
                 }
             }
-            _ => out.finished = true,
+            _ => {
+                p.locked = false;
+                out.finished = true;
+            }
         },
         // Stage 3 #5 (`0x005a0de0`): Walking toward blocked road/tunnel.
-        // Locks player, shows stage message `0`, auto-walks James `-500.0 mm` along X (`0x0062d230`),
-        // unlocks player (does not set a completion flag).
+        // Locks player (`0x5389c0`), stands (`0x53b160(0x65)`), shows stage message `0` (`0x4a22d0`),
+        // smoothly turns around & walks `-500.0 mm` along X via `PlayerEventMove` (`0x53b3c0`) +
+        // `PlayerEventMoveIsEnd` (`0x53b6d0`), then unlocks player (does not set a completion flag).
         5 => match p.step {
             0 => {
                 p.locked = true;
@@ -189,11 +202,21 @@ pub(super) fn tick_stage3_prog(
                 if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
                     out.active_message_id = None;
                     out.walkback_delta = Some([-STG3_WALKBACK_DISTANCE_MM, 0.0, 0.0]);
-                    p.locked = false;
-                    out.finished = true;
+                    p.step = 2;
                 }
             }
-            _ => out.finished = true,
+            2 => {
+                if event_move_finished {
+                    p.locked = false;
+                    out.finished = true;
+                } else {
+                    p.locked = true;
+                }
+            }
+            _ => {
+                p.locked = false;
+                out.finished = true;
+            }
         },
         // Stage 3 #6 (`0x005a0f10`): Extra Observation Deck demo `0x5d` (`93`),
         // gated on `flag(512) && !flag(513)` (`ACT1_OBSERVATION_EVENT_LIST[11]`), sets `flag(513)`.

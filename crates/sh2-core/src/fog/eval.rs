@@ -132,6 +132,11 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_range_x_mm: range_x,
                 particle_range_z_mm: range_z,
                 particle_fixed_y_mm: Some(OB_FOG_ENV_FIXED_Y_MM),
+                particle_size_mm: OB_FOG_ENV_PARTICLE_SIZE_MM,
+                particle_subdiv: OB_FOG_ENV_SUBDIV,
+                particle_alpha_u8: OB_FOG_ENV_ALPHA_U8,
+                particle_floor_follow: false,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: false,
@@ -144,11 +149,38 @@ pub fn evaluate_room_fog_with_fixes(
             // `CC_DrawEnvData[3]` (`0x003628a0`):
             // `FOGCOL = (0x46, 0x46, 0x46)`, `fog_near = 3000.0`, `fog_far = 5500.0`,
             // `fog_min = (255 - 235) / 255`, `fog_max = (255 - 20) / 255`, hyperbolic `FA/z + FB` (`curve = 0`).
-            // Forest Trail particle count (`400`) matches retail `data/bg/ca/caGB.fcl` `FogEnv[0]` (`0x1100`).
-            let particle_count = if ctx.room_id == R_FOREST_CEMETERY_ID {
+            // Forest Trail particle environment matches retail `data/bg/ca/caGB.fcl` `FogEnv[0]` (`0x1100`):
+            // `count = 400`, `area = 2000 mm`, `size = 400 mm`, `flags = 0x08` (floor-follow),
+            // `subdiv = 1` (`y_span = 2000 mm`), `alpha = 0x10` (`16/255`), and `fogInit` (`0x001687d0`)
+            // `fogSetColor(0x80, 0x80, 0x80, 0x80)` -> `[1.0, 1.0, 1.0]` unity modulation of `fog.tex`.
+            // Town East (`cb*`) & Town West (`cc*`) match retail `data/bg/cb/cbGB.fcl` (`Env[0]` @ `0x29e4`)
+            // and `data/bg/cc/ccGB.fcl` (`Env[0]` @ `0x2984`): `count = 400`, `area = 2000 mm`,
+            // `size = 300 mm`, `y_fix = -100 mm`, `flags = 0x00`, `subdiv = 1`, `alpha = 0x10`.
+            let is_forest = ctx.room_id == R_FOREST_CEMETERY_ID;
+            let particle_count = if is_forest {
                 CA_FOG_ENV_PARTICLE_COUNT
             } else {
-                PS2_DEFAULT_FOG_PARTICLE_COUNT
+                CB_CC_FOG_ENV_PARTICLE_COUNT
+            };
+            let particle_fixed_y_mm = if is_forest {
+                None
+            } else {
+                Some(CB_CC_FOG_ENV_FIXED_Y_MM)
+            };
+            let particle_size_mm = if is_forest {
+                CA_FOG_ENV_PARTICLE_SIZE_MM
+            } else {
+                PS2_DEFAULT_FOG_PARTICLE_SIZE_MM
+            };
+            let particle_subdiv = if is_forest {
+                CA_FOG_ENV_SUBDIV
+            } else {
+                PS2_DEFAULT_FOG_ENV_SUBDIV
+            };
+            let particle_alpha_u8 = if is_forest {
+                CA_FOG_ENV_ALPHA_U8
+            } else {
+                PS2_DEFAULT_FOG_ENV_ALPHA_U8
             };
             RoomFogEvaluation {
                 fog_color: [
@@ -168,7 +200,12 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_count,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-                particle_fixed_y_mm: None,
+                particle_fixed_y_mm,
+                particle_size_mm,
+                particle_subdiv,
+                particle_alpha_u8,
+                particle_floor_follow: is_forest,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: false,
@@ -191,6 +228,11 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_fixed_y_mm: None,
+                particle_size_mm: PS2_DEFAULT_FOG_PARTICLE_SIZE_MM,
+                particle_subdiv: PS2_DEFAULT_FOG_ENV_SUBDIV,
+                particle_alpha_u8: PS2_DEFAULT_FOG_ENV_ALPHA_U8,
+                particle_floor_follow: false,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: false,
@@ -218,6 +260,11 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_fixed_y_mm: None,
+                particle_size_mm: PS2_DEFAULT_FOG_PARTICLE_SIZE_MM,
+                particle_subdiv: PS2_DEFAULT_FOG_ENV_SUBDIV,
+                particle_alpha_u8: PS2_DEFAULT_FOG_ENV_ALPHA_U8,
+                particle_floor_follow: false,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: false,
                 final_boss_upper_override: false,
@@ -270,6 +317,11 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_fixed_y_mm: None,
+                particle_size_mm: PS2_DEFAULT_FOG_PARTICLE_SIZE_MM,
+                particle_subdiv: PS2_DEFAULT_FOG_ENV_SUBDIV,
+                particle_alpha_u8: PS2_DEFAULT_FOG_ENV_ALPHA_U8,
+                particle_floor_follow: false,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: true,
                 final_boss_upper_override: sh2ee_upper_override,
@@ -297,6 +349,11 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_fixed_y_mm: None,
+                particle_size_mm: PS2_DEFAULT_FOG_PARTICLE_SIZE_MM,
+                particle_subdiv: PS2_DEFAULT_FOG_ENV_SUBDIV,
+                particle_alpha_u8: PS2_DEFAULT_FOG_ENV_ALPHA_U8,
+                particle_floor_follow: false,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: false,
                 final_boss_upper_override: false,
@@ -319,6 +376,11 @@ pub fn evaluate_room_fog_with_fixes(
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
                 particle_fixed_y_mm: None,
+                particle_size_mm: PS2_DEFAULT_FOG_PARTICLE_SIZE_MM,
+                particle_subdiv: PS2_DEFAULT_FOG_ENV_SUBDIV,
+                particle_alpha_u8: PS2_DEFAULT_FOG_ENV_ALPHA_U8,
+                particle_floor_follow: false,
+                particle_color_rgb: PS2_FOG_PARTICLE_MIST_RGB,
                 james_fog_influence_mm,
                 outdoor_layers_enabled: false,
                 final_boss_upper_override: false,

@@ -65,9 +65,142 @@ fn forest_trail_reduces_james_fog_influence_in_elevation_band() {
     assert!((outside_band.fog_max - PS2_DAYTIME_DEFAULT_FOG_MAX_NORM).abs() < 1e-6);
     assert_eq!(outside_band.curve, FogFalloffCurve::Linear);
     assert_eq!(outside_band.particle_count, CA_FOG_ENV_PARTICLE_COUNT);
+    assert_eq!(outside_band.particle_size_mm, CA_FOG_ENV_PARTICLE_SIZE_MM);
+    assert_eq!(outside_band.particle_subdiv, CA_FOG_ENV_SUBDIV);
+    assert_eq!(outside_band.particle_alpha_u8, CA_FOG_ENV_ALPHA_U8);
+    assert!(outside_band.particle_floor_follow);
+    assert_eq!(outside_band.particle_color_rgb, PS2_FOG_PARTICLE_MIST_RGB);
     assert_eq!(room_id_from_stage_code("wp01"), R_FOREST_CEMETERY_ID);
     assert_eq!(room_id_from_stage_code("ca11"), R_FOREST_CEMETERY_ID);
     assert_eq!(room_id_from_stage_code("ca14"), R_FOREST_CEMETERY_ID);
+}
+
+#[test]
+fn forest_trail_ca11_particle_y_sign_and_alpha_match_cagb_fcl_and_fun_004896e0() {
+    let floor_y = 0.0;
+    let area = PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM; // 2000.0 mm
+    let size = CA_FOG_ENV_PARTICLE_SIZE_MM; // 400.0 mm
+    let alpha_scale = f32::from(CA_FOG_ENV_ALPHA_U8) / 255.0; // 16 / 255
+
+    // At floor (`local_y_sym = -100` -> `norm_y = 0.0` -> `world_y = floor_y`):
+    // `height_above_floor = 0.0` -> culled (`alpha = 0.0`) per `FUN_004896e0` (`sh2pc_00480000.c:5678`).
+    let (wy_floor, a_floor) = evaluate_ps2_particle_y_and_alpha(
+        floor_y,
+        -100.0,
+        1.0,
+        area,
+        CA_FOG_ENV_SUBDIV,
+        CA_FOG_ENV_ALPHA_U8,
+        Some(floor_y),
+        size,
+    );
+    assert!((wy_floor - floor_y).abs() < 1e-4);
+    assert!(a_floor.abs() < 1e-6);
+
+    // 200 mm above floor in PS2 Y-down (`norm_y = 0.1` -> `local_y_sym = -80` -> `world_y = -200.0`):
+    // Halfway through `400 mm` floor fade (`200 / 400 = 0.5`) * `16 / 255`.
+    let (wy_low, a_low) = evaluate_ps2_particle_y_and_alpha(
+        floor_y,
+        -80.0,
+        1.0,
+        area,
+        CA_FOG_ENV_SUBDIV,
+        CA_FOG_ENV_ALPHA_U8,
+        Some(floor_y),
+        size,
+    );
+    assert!((wy_low - (-200.0)).abs() < 1e-4);
+    assert!((a_low - 0.5 * alpha_scale).abs() < 1e-6);
+
+    // Mid-volume (`local_y_sym = 0.0` -> `norm_y = 0.5` -> `world_y = -1000.0` = 1 m above trail):
+    // Above floor fade (`1000 > 400`) and below upper fade (`-1000 > -1700`) -> full `16 / 255`.
+    let (wy_mid, a_mid) = evaluate_ps2_particle_y_and_alpha(
+        floor_y,
+        0.0,
+        1.0,
+        area,
+        CA_FOG_ENV_SUBDIV,
+        CA_FOG_ENV_ALPHA_U8,
+        Some(floor_y),
+        size,
+    );
+    assert!((wy_mid - (-1000.0)).abs() < 1e-4);
+    assert!((a_mid - alpha_scale).abs() < 1e-6);
+
+    // Top of `subdiv = 1` band (`local_y_sym = +100` -> `world_y = -2000.0` = 2 m above trail):
+    // Faded to `0.0` by `300 mm` upper border fade (`FUN_00486d10` `sh2pc_00480000.c:4237-4239`).
+    let (wy_top, a_top) = evaluate_ps2_particle_y_and_alpha(
+        floor_y,
+        100.0,
+        1.0,
+        area,
+        CA_FOG_ENV_SUBDIV,
+        CA_FOG_ENV_ALPHA_U8,
+        Some(floor_y),
+        size,
+    );
+    assert!((wy_top - (-2000.0)).abs() < 1e-4);
+    assert!(a_top.abs() < 1e-6);
+
+    // Particle below floor (`anchor_y > floor_y`, e.g. `world_y = +100.0`) must be culled (`0.0`).
+    let (_wy_below, a_below) = evaluate_ps2_particle_y_and_alpha(
+        100.0,
+        -100.0,
+        1.0,
+        area,
+        CA_FOG_ENV_SUBDIV,
+        CA_FOG_ENV_ALPHA_U8,
+        Some(floor_y),
+        size,
+    );
+    assert!(a_below.abs() < 1e-6);
+}
+
+#[test]
+fn town_east_and_west_match_cbgb_and_ccgb_fcl_env0_and_yfix() {
+    for (stage_code, room_id) in [("cb54", R_TOWN_EAST_ID), ("cc01", R_TOWN_WEST_ID)] {
+        assert_eq!(room_id_from_stage_code(stage_code), room_id);
+        let eval = evaluate_room_fog(&RoomFogContext {
+            room_id,
+            ..Default::default()
+        });
+        assert_eq!(eval.particle_count, CB_CC_FOG_ENV_PARTICLE_COUNT);
+        assert_eq!(eval.particle_fixed_y_mm, Some(CB_CC_FOG_ENV_FIXED_Y_MM));
+        assert_eq!(eval.particle_size_mm, PS2_DEFAULT_FOG_PARTICLE_SIZE_MM);
+        assert_eq!(eval.particle_subdiv, PS2_DEFAULT_FOG_ENV_SUBDIV);
+        assert_eq!(eval.particle_alpha_u8, PS2_DEFAULT_FOG_ENV_ALPHA_U8);
+        assert!(!eval.particle_floor_follow);
+        assert_eq!(eval.particle_color_rgb, PS2_FOG_PARTICLE_MIST_RGB);
+
+        // Verify `yfix = -100.0` mm (`cbGB.fcl` @ `0x29ec`, `ccGB.fcl` @ `0x298c`):
+        // mid-volume (`local_y_sym = 0.0`) -> `world_y = -1100.0` mm, full `16/255` alpha;
+        // at `yfix` (`local_y_sym = -100.0`) -> `world_y = -100.0` mm, culled (`0.0`).
+        let (wy_mid, a_mid) = evaluate_ps2_particle_y_and_alpha(
+            CB_CC_FOG_ENV_FIXED_Y_MM,
+            0.0,
+            1.0,
+            eval.particle_range_z_mm,
+            eval.particle_subdiv,
+            eval.particle_alpha_u8,
+            eval.particle_fixed_y_mm,
+            eval.particle_size_mm,
+        );
+        assert!((wy_mid - (-1100.0)).abs() < 1e-4);
+        assert!((a_mid - (f32::from(PS2_DEFAULT_FOG_ENV_ALPHA_U8) / 255.0)).abs() < 1e-6);
+
+        let (wy_bot, a_bot) = evaluate_ps2_particle_y_and_alpha(
+            CB_CC_FOG_ENV_FIXED_Y_MM,
+            -100.0,
+            1.0,
+            eval.particle_range_z_mm,
+            eval.particle_subdiv,
+            eval.particle_alpha_u8,
+            eval.particle_fixed_y_mm,
+            eval.particle_size_mm,
+        );
+        assert!((wy_bot - CB_CC_FOG_ENV_FIXED_Y_MM).abs() < 1e-4);
+        assert!(a_bot.abs() < 1e-6);
+    }
 }
 
 #[test]

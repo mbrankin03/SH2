@@ -172,6 +172,22 @@ pub struct RoomFogEvaluation {
     /// e.g. `Some(10_000.0)` from `data/bg/ob/obGB.fcl` `+0x8c` placing Observation Deck mist
     /// 10 m below the parking lot cliff over Toluca Lake.
     pub particle_fixed_y_mm: Option<f32>,
+    /// Billboard half-size/radius in PS2 mm from `.fcl` `FogEnv +0x04` (`fogSetEnvironment` `0x00168dd0`:
+    /// `700.0` mm on `obGB.fcl`, `400.0` mm on `caGB.fcl`, `300.0` mm default `fog_defset_data +0x04`).
+    pub particle_size_mm: f32,
+    /// Vertical subdivision shift from `.fcl` `FogEnv +0x12` (`sh2pc.exe` `FUN_00486d10` `0x00486d10`:
+    /// `4` on `obGB.fcl`, `1` on `caGB.fcl`/`cbGB.fcl`/`ccGB.fcl`/`fog_defset_data`).
+    pub particle_subdiv: u8,
+    /// Particle alpha byte from `.fcl` `FogEnv +0x13` (`sh2pc.exe` `FUN_004896e0` `0x004896e0`:
+    /// `0x30` = `48` on `obGB.fcl`, `0x10` = `16` on `caGB.fcl`/`cbGB.fcl`/`ccGB.fcl`/`fog_defset_data`).
+    pub particle_alpha_u8: u8,
+    /// Whether `.fcl` `FogEnv.flags (+0x11) & 0x08 != 0` updates `floor_y = player_pos.y` per frame
+    /// (`fogMakePacket` `0x0016bb70`, `Fog/fog.c:2338-2339`, `sh2pc.exe` `FUN_004896e0` `sh2pc_00480000.c:5603-5604`),
+    /// culling particles below the floor and fading within `particle_size_mm` above it (`caGB.fcl` `Env[0]`).
+    pub particle_floor_follow: bool,
+    /// Particle tint RGB modulation (`fogSetColor(0x80, 0x80, 0x80, 0x80)` in `fogInit` `0x001687d0`
+    /// -> `[1.0, 1.0, 1.0]` unity modulation of `fog.tex` under `D3DTOP_MODULATE2X`, NOT dark `0x46` `FOGCOL`).
+    pub particle_color_rgb: [f32; 3],
     /// James radial parting influence in PS2 mm (`FogAdjustments.cpp:317-334`).
     pub james_fog_influence_mm: f32,
     /// Whether outdoor dual-layer sky/mist planes are active (`true` outdoors, `false` dark interiors).

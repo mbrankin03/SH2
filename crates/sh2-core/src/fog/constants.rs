@@ -97,8 +97,24 @@ pub const PS2_NIGHTTIME_DEFAULT_FOG_MAX_NORM: f32 = (255.0 - 100.0) / 255.0;
 /// Exact retail `data/bg/ca/caGB.fcl` default `FogEnv[0]` (`0x1100`, `fogSetAreaEnvironment` `0x0016e4a0:878`):
 /// `particle_count = 400` (`0x0190`), `area = 2000 mm` (`0x07d0`), `size = 400 mm` (`0x0190`), `alpha = 16` (`0x10`).
 pub const CA_FOG_ENV_PARTICLE_COUNT: usize = 400;
+/// Exact retail `data/bg/ca/caGB.fcl` `FogEnv[0] +0x04` (`0x1104 = 0x0190 = 400.0` mm) billboard radius/half-size.
+pub const CA_FOG_ENV_PARTICLE_SIZE_MM: f32 = 400.0;
+/// Exact retail `data/bg/ca/caGB.fcl` `FogEnv[0] +0x12` (`0x1112 = 0x01`) vertical subdivision shift (`y_span = area = 2000 mm`).
+pub const CA_FOG_ENV_SUBDIV: u8 = 1;
 /// Exact retail `data/bg/ca/caGB.fcl` `FogEnv[0] +0x13` (`0x1113 = 0x10 = 16`) `fog_alpha_param`.
 pub const CA_FOG_ENV_ALPHA_U8: u8 = 0x10;
+/// Exact retail `data/bg/cb/cbGB.fcl` (`Env[0]` @ `0x29e4`) and `data/bg/cc/ccGB.fcl` (`Env[0]` @ `0x2984`)
+/// particle count (`+0x00 = 0x0190 = 400`).
+pub const CB_CC_FOG_ENV_PARTICLE_COUNT: usize = 400;
+/// Exact retail `data/bg/cb/cbGB.fcl` (`Env[0] +0x08` @ `0x29ec`) and `data/bg/cc/ccGB.fcl`
+/// (`Env[0] +0x08` @ `0x298c`) fixed floor/anchor Y (`0xff9c = -100.0` mm, PS2 Y-down = 10 cm above street pavement),
+/// applied when `subdiv != 0` in `fogSetLocalPosV` (`SLUS_202.28` `0x0016c6d0`, `Fog/fog.c:2980-2982`)
+/// and as `floor_y` in `FUN_004896e0` (`sh2pc.exe` `0x004896e0`, `sh2pc_00480000.c:5678`) since `flags = 0x00`.
+pub const CB_CC_FOG_ENV_FIXED_Y_MM: f32 = -100.0;
+/// Exact retail `data/bg/ob/obGB.fcl` `FogEnv[0] +0x12` (`0x96 = 0x04`) vertical subdivision shift (`y_span = 14000 / 16 = 875 mm`).
+pub const OB_FOG_ENV_SUBDIV: u8 = 4;
+/// Exact retail `data/bg/ob/obGB.fcl` `FogEnv[0] +0x13` (`0x97 = 0x30 = 48`) `fog_alpha_param`.
+pub const OB_FOG_ENV_ALPHA_U8: u8 = 0x30;
 /// Exact `RU_DrawEnvData[0]` (`SLUS_202.28` `0x0036bdd0`, `room_no = 5, stage_id = 13`) fog near in mm.
 pub const RU_LOWER_FOG_NEAR_MM: f32 = 8_000.0;
 /// Exact `RU_DrawEnvData[0]` (`SLUS_202.28` `0x0036bdd0`) fog far in mm.
@@ -156,9 +172,19 @@ pub const PS2_DEFAULT_FOG_PARTICLE_COUNT: usize = 500;
 /// Default PS2 fog particle volume half-extent in mm (`fog_defset_data + 0x02` @ `0x002ab530`,
 /// `fog_asm_data1 + 0x40` @ `0x002ab440`).
 pub const PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM: f32 = 2000.0;
+/// Default PS2 fog particle billboard half-size in mm (`fog_defset_data + 0x04` @ `0x002ab530`,
+/// also `cbGB.fcl` / `ccGB.fcl` `Env[0] +0x04`).
+pub const PS2_DEFAULT_FOG_PARTICLE_SIZE_MM: f32 = 300.0;
 /// Default PS2 fog particle height band half-extent in mm (`fog_defset_data + 0x06` @ `0x002ab530`,
 /// `fog_asm_data1 + 0x10` @ `0x002ab410`).
 pub const PS2_DEFAULT_FOG_HEIGHT_BAND_MM: f32 = 100.0;
+/// Default PS2 fog particle vertical subdivision shift (`fog_defset_data + 0x12` @ `0x002ab530` = `1`).
+pub const PS2_DEFAULT_FOG_ENV_SUBDIV: u8 = 1;
+/// Default PS2 fog particle alpha byte (`fog_defset_data + 0x13` @ `0x002ab530` = `0x10 = 16`).
+pub const PS2_DEFAULT_FOG_ENV_ALPHA_U8: u8 = 0x10;
+/// Exact PS2/PC fog volume border fade width in mm (`300.0` mm, `sh2pc.exe` `FUN_00486d10`
+/// `0x00486d10`, `sh2pc_00480000.c:4218,4237-4243`, `SLUS_202.28` `fog_part_clamp` `0x0016ba50`).
+pub const PS2_FOG_BORDER_FADE_MM: f32 = 300.0;
 /// Default PS2 radial parting influence of James on nearby fog particles in mm
 /// (`JamesFogInfluence` in `FogAdjustments.cpp:331`).
 pub const PS2_DEFAULT_JAMES_FOG_INFLUENCE_MM: f32 = 200.0;
@@ -182,6 +208,83 @@ pub const FOG_SPEED_OUTDOOR_SLOW: f32 = 0.25;
 /// `FogSpeedFix` drift speed multiplier (`0.50`) for apartment courtyard and Eddie boss rooms (`FogAdjustments.cpp:299`).
 pub const FOG_SPEED_COURTYARD_MEDIUM: f32 = 0.50;
 
+/// Evaluates the exact PS2/PC 3D fog particle world-space Y (PS2 mm, Y-down) and effective
+/// normalized D3D8 `SRCALPHA` alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]`
+/// local Y, base border/sway alpha, and active `.fcl` `FogEnv` parameters.
+///
+/// Ground truth:
+/// - `SLUS_202.28` `fogSetEnvironment` (`0x00168dd0`, `Fog/fog.c:279-309`) & `fogMakePacket`
+///   (`0x0016bb70`, `Fog/fog.c:2338-2339, 2440-2455`).
+/// - `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `sh2pc_00480000.c:4172-4243`):
+///   - `subdiv == 0`: `local_y ∈ [-area, +area]` with `300.0 mm` top and bottom border fades.
+///   - `subdiv >= 1`: `y_span = (2.0 * area) / (1 << subdiv)` (`2000.0 mm` for `caGB.fcl` `subdiv = 1`,
+///     `875.0 mm` for `obGB.fcl` `subdiv = 4`), `local_y ∈ [-y_span, 0.0]` (above anchor in PS2 Y-down)
+///     with a `300.0 mm` upper fade (`local_y < 300.0 - y_span`).
+/// - `sh2pc.exe` `FUN_004896e0` (`0x004896e0`, `sh2pc_00480000.c:5678, 5684, 5701-5720`):
+///   - When `floor_y_mm` is `Some(floor_y)` (`FogEnv.flags & 0x08 != 0`, e.g. `caGB.fcl` `Env[0]`):
+///     particles below the floor (`floor_y - world_y <= 0.0`) are culled (`alpha = 0.0`), and
+///     particles within `particle_size_mm` above `floor_y` fade linearly `(floor_y - world_y) / particle_size_mm`.
+///   - Final alpha is scaled by `(0x80 * fog_alpha_u8) * 0.0078125 / 255.0 = fog_alpha_u8 / 255.0`.
+#[must_use]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_ps2_particle_y_and_alpha(
+    anchor_y_mm: f32,
+    local_y_symmetric_mm: f32,
+    base_alpha: f32,
+    area_mm: f32,
+    subdiv: u8,
+    fog_alpha_u8: u8,
+    floor_y_mm: Option<f32>,
+    particle_size_mm: f32,
+) -> (f32, f32) {
+    let norm_y =
+        ((local_y_symmetric_mm / PS2_DEFAULT_FOG_HEIGHT_BAND_MM) * 0.5 + 0.5).clamp(0.0, 1.0);
+    let (local_y, vertical_fade) = if subdiv == 0 {
+        let local_y = (norm_y * 2.0 - 1.0) * area_mm;
+        let top_fade = if local_y < PS2_FOG_BORDER_FADE_MM - area_mm {
+            ((area_mm + local_y) / PS2_FOG_BORDER_FADE_MM).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let bot_fade = if local_y > area_mm - PS2_FOG_BORDER_FADE_MM {
+            ((area_mm - local_y) / PS2_FOG_BORDER_FADE_MM).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        (local_y, top_fade * bot_fade)
+    } else {
+        let y_span = (2.0 * area_mm) / ((1u32 << (subdiv & 0x1f)) as f32);
+        let local_y = -norm_y * y_span;
+        let top_fade = if local_y < PS2_FOG_BORDER_FADE_MM - y_span {
+            ((y_span + local_y) / PS2_FOG_BORDER_FADE_MM).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        (local_y, top_fade)
+    };
+
+    let world_y = anchor_y_mm + local_y;
+    let floor_fade = if let Some(floor_y) = floor_y_mm {
+        let height_above_floor = floor_y - world_y;
+        if height_above_floor <= 0.0 {
+            0.0
+        } else if particle_size_mm > 1e-4 && height_above_floor < particle_size_mm {
+            (height_above_floor / particle_size_mm).clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+
+    let alpha_scale = f32::from(fog_alpha_u8) / 255.0;
+    (
+        world_y,
+        base_alpha * vertical_fade * floor_fade * alpha_scale,
+    )
+}
+
 /// Evaluates the exact `ob01` (`R_OBSV_DECK`) valley-mist particle world-space Y (PS2 mm) and
 /// effective alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]` local Y and base
 /// border/sway alpha.
@@ -189,7 +292,7 @@ pub const FOG_SPEED_COURTYARD_MEDIUM: f32 = 0.50;
 /// Matches `SLUS_202.28` `Fog/fogdata.c:166-171` (`0x0016cb40`: `anchor_y = +1000.0 mm`) and
 /// `sh2pc.exe` `FUN_00486d10` (`0x00486d10`, `sh2pc_00480000.c:4194-4240`): `subdiv = 4`,
 /// `area = 7000.0 mm` -> `local_y ∈ [-875.0, 0.0]` (`world_y ∈ [+125.0, +1000.0] mm`) with a
-/// `300.0 mm` upper fade (`local_y < 300.0 - 875.0`) and `obGB.fcl +0x13 = 48 / 128` alpha.
+/// `300.0 mm` upper fade (`local_y < 300.0 - 875.0`) and `obGB.fcl +0x13 = 48 / 255` alpha.
 #[must_use]
 #[inline]
 pub fn evaluate_ob01_particle_y_and_alpha(
@@ -197,16 +300,14 @@ pub fn evaluate_ob01_particle_y_and_alpha(
     local_y_symmetric_mm: f32,
     base_alpha: f32,
 ) -> (f32, f32) {
-    let norm_y =
-        ((local_y_symmetric_mm / PS2_DEFAULT_FOG_HEIGHT_BAND_MM) * 0.5 + 0.5).clamp(0.0, 1.0);
-    let local_y = -norm_y * OB_FOG_Y_SPAN_MM;
-    let top_fade = if local_y < 300.0 - OB_FOG_Y_SPAN_MM {
-        ((OB_FOG_Y_SPAN_MM + local_y) / 300.0).clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    (
-        anchor_y_mm + local_y,
-        base_alpha * top_fade * OB_FOG_ALPHA_NORM,
+    evaluate_ps2_particle_y_and_alpha(
+        anchor_y_mm,
+        local_y_symmetric_mm,
+        base_alpha,
+        OB_FOG_ENV_AREA_SIZE_MM,
+        OB_FOG_ENV_SUBDIV,
+        OB_FOG_ENV_ALPHA_U8,
+        None,
+        OB_FOG_ENV_PARTICLE_SIZE_MM,
     )
 }

@@ -10,6 +10,7 @@
 //!   - `0x533ad0`: Stamina counter: 600 frames at full HP, run 3 stamina limit, stamina recovery when standing/walking.
 //!   - `0x5567b0`: Halting deceleration ($10\text{ m/s}^2$ normal, $20\text{ m/s}^2$ post-run).
 
+pub mod event_move;
 mod states;
 mod tables;
 #[cfg(test)]
@@ -17,6 +18,16 @@ mod tests;
 
 use glam::Vec3;
 use std::f32::consts::{FRAC_PI_6, PI};
+
+pub use event_move::{
+    close_to_angle_target, EventMoveState, PlayerEventMoveController,
+    BOUNDARY_WALKBACK_DISTANCE_MM, CLOSE_TO_ANGLE_INV_DENOM, EVENT_MOVE_ANIM_RUN,
+    EVENT_MOVE_ANIM_STAND, EVENT_MOVE_ANIM_WALK, EVENT_MOVE_RUN_THRESHOLD_MM,
+    EVENT_MOVE_STOP_RADIUS_MM, EVENT_RUN_ACCEL_MPS2, EVENT_RUN_TARGET_SPEED_MPS,
+    EVENT_RUN_TURN_GAIN, EVENT_STAND_DECEL_RUN_MPS2, EVENT_STAND_DECEL_WALK_MPS2,
+    EVENT_WALK_ACCEL_MPS2, EVENT_WALK_DECEL_MPS2, EVENT_WALK_TARGET_SPEED_MPS,
+    EVENT_WALK_TURN_GAIN,
+};
 
 use tables::{get_allowed_transitions, state_bit};
 pub use tables::{

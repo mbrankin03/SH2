@@ -147,6 +147,58 @@ pub(crate) fn tick_static_prog_spec(
     }
 }
 
+/// Executes a 1:1 retail progression-blocking boundary turn-back coroutine (`0x005a0cb0`,
+/// `0x005a0de0`, `0x0059d720`, `0x00592550`):
+/// - Step `0`: `JmsEventMode(jms, 1)`, `PlayerEventAnimeSet(0x65)`, show `EvSubMessage(msg_id)`.
+/// - Step `1`: Wait for A/B dismiss -> clear message, emit `walkback_offset` to start
+///   `PlayerEventMove` (`0x00283d10` / `0x0053b3c0`), keep player locked in Step `2`.
+/// - Step `2`: Wait for `PlayerEventMoveIsEnd()` (`0x00283ed0` / `0x0053b6d0`) -> unlock player
+///   (`JmsEventMode(jms, 0)`) and finish.
+pub(crate) fn tick_boundary_walkback_prog(
+    p: &mut ProgContext,
+    down: u32,
+    msg_id: i32,
+    walkback_offset: [f32; 3],
+    clears_flag_set: bool,
+    event_move_finished: bool,
+    out: &mut ProgTickOut,
+) {
+    match p.step {
+        0 => {
+            p.locked = true;
+            if clears_flag_set {
+                p.flag_set = false;
+            }
+            out.active_message_id = Some(msg_id);
+            p.step = 1;
+            out.finished = false;
+        }
+        1 => {
+            if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
+                out.active_message_id = None;
+                out.walkback_delta = Some(walkback_offset);
+                p.step = 2;
+                out.finished = false;
+            } else {
+                out.finished = false;
+            }
+        }
+        2 => {
+            if event_move_finished {
+                p.locked = false;
+                out.finished = true;
+            } else {
+                p.locked = true;
+                out.finished = false;
+            }
+        }
+        _ => {
+            p.locked = false;
+            out.finished = true;
+        }
+    }
+}
+
 /// Dispatches a running `(p.stage, p.prog_no)` coroutine for one frame.
 ///
 /// Bespoke interactive puzzles, pushable objects, multi-floor elevators, `EvProgEndingJudge`,
@@ -159,6 +211,7 @@ pub(crate) fn dispatch_stage_program(
     held: u32,
     dt: f32,
     active_message_id: Option<i32>,
+    event_move_finished: bool,
     flags: &mut EventFlags,
     puzzle: &mut PuzzleState,
     inventory: &mut InventoryManager,
@@ -175,8 +228,15 @@ pub(crate) fn dispatch_stage_program(
 
     // Stage 3 (`stg_ovservation.c` #1..=#6) uses its dedicated 1:1 runner.
     if p.stage == 3 && (1..=6).contains(&p.prog_no) {
-        let s3 =
-            super::runner_stage3::tick_stage3_prog(p, down, dt, active_message_id, flags, overlay);
+        let s3 = super::runner_stage3::tick_stage3_prog(
+            p,
+            down,
+            dt,
+            active_message_id,
+            event_move_finished,
+            flags,
+            overlay,
+        );
         out.finished = s3.finished;
         out.active_message_id = s3.active_message_id;
         if let Some(se) = s3.sound_effect {
@@ -211,7 +271,9 @@ pub(crate) fn dispatch_stage_program(
 
     // Check bespoke interactive / puzzle / ending handlers first.
     let handled = match p.stage {
-        1 | 2 | 4 | 5 | 14 => act1_intro_town::tick_bespoke(p, down, flags, &mut out),
+        1 | 2 | 4 | 5 | 14 => {
+            act1_intro_town::tick_bespoke(p, down, event_move_finished, flags, &mut out)
+        }
         6..=13 => act1_apartments::tick_bespoke(
             p, down, held, dt, flags, puzzle, inventory, overlay, &mut out,
         ),

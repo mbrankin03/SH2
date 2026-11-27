@@ -840,13 +840,16 @@ pub const ACT1_INTRO_TOWN_SPECS: &[StaticProgSpec] = &[
     },
 ];
 
+use crate::locomotion::BOUNDARY_WALKBACK_DISTANCE_MM;
+
 use super::super::{EventFlags, ProgContext, PROG_KEY_A, PROG_KEY_B};
-use super::ProgTickOut;
+use super::{tick_boundary_walkback_prog, ProgTickOut};
 
 /// Bespoke interactive handlers for Act 1 Intro & Town stages (`Stages 1, 2, 4, 5, 14`).
 pub(super) fn tick_bespoke(
     p: &mut ProgContext,
     down: u32,
+    event_move_finished: bool,
     flags: &mut EventFlags,
     out: &mut ProgTickOut,
 ) -> bool {
@@ -904,6 +907,36 @@ pub(super) fn tick_bespoke(
                 }
                 _ => out.finished = true,
             }
+            true
+        }
+        // Stage 5 #4 (`stg_town_east.c`, `sh2pc.exe` `0x0059d720`): Blocked Town East boundary.
+        // Locks player (`0x5389c0`), stands (`0x53b160(0x65)`), shows message `30` (`0x1e`),
+        // smoothly turns around & walks `+500.0 mm` along X (`0x0062d230` via `0x53b3c0`), unlocks.
+        (5, 4) => {
+            tick_boundary_walkback_prog(
+                p,
+                down,
+                30,
+                [BOUNDARY_WALKBACK_DISTANCE_MM, 0.0, 0.0],
+                false,
+                event_move_finished,
+                out,
+            );
+            true
+        }
+        // Stage 14 #4 (`stg_town_west.c`, `sh2pc.exe` `0x00592550`): Blocked Town West boundary.
+        // Locks player (`0x5389c0`), stands (`0x53b160(0x65)`), shows message `90` (`0x5a`),
+        // smoothly turns around & walks `+500.0 mm` along Z (`0x0062d230` via `0x53b3c0`), unlocks.
+        (14, 4) => {
+            tick_boundary_walkback_prog(
+                p,
+                down,
+                90,
+                [0.0, 0.0, BOUNDARY_WALKBACK_DISTANCE_MM],
+                false,
+                event_move_finished,
+                out,
+            );
             true
         }
         _ => false,

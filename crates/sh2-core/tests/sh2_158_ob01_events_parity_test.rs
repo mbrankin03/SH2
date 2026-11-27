@@ -226,7 +226,9 @@ fn test_stage3_ev_prog_4_stairs_walkback_z_and_prog_5_road_walkback_x() {
         Some(STG3_MSG_STAIRS_NO_MAP)
     );
 
-    assert!(!state.prog_runner.tick(
+    // Dismissing message 2 emits the -500 mm Z walkback target and stays locked in Step 2
+    // until `PlayerEventMoveIsEnd()` (`0x0053b6d0`) completes (`SH2-189`).
+    assert!(state.prog_runner.tick(
         PROG_KEY_A,
         0,
         0.016,
@@ -236,11 +238,23 @@ fn test_stage3_ev_prog_4_stairs_walkback_z_and_prog_5_road_walkback_x() {
         &mut state.cutaway_overlay,
         state.riddle_difficulty,
     ));
-    assert!(!state.prog_runner.is_player_locked());
+    assert!(state.prog_runner.is_player_locked());
     assert_eq!(
         state.prog_runner.take_walkback_delta(),
         Some([0.0, 0.0, -STG3_WALKBACK_DISTANCE_MM])
     );
+    state.prog_runner.notify_event_move_finished();
+    assert!(!state.prog_runner.tick(
+        0,
+        0,
+        0.016,
+        &mut state.flags,
+        &mut state.puzzle_state,
+        &mut state.inventory_mgr,
+        &mut state.cutaway_overlay,
+        state.riddle_difficulty,
+    ));
+    assert!(!state.prog_runner.is_player_locked());
     assert!(state.flags.get(STG3_FLAG_STAIRS_WARNED));
 
     // (3, 5) `0x005a0de0`: Blocked road/tunnel -> message 0, -500 mm X walkback
@@ -261,7 +275,7 @@ fn test_stage3_ev_prog_4_stairs_walkback_z_and_prog_5_road_walkback_x() {
         Some(STG3_MSG_BLOCKED_ROAD)
     );
 
-    assert!(!state.prog_runner.tick(
+    assert!(state.prog_runner.tick(
         PROG_KEY_A,
         0,
         0.016,
@@ -271,11 +285,23 @@ fn test_stage3_ev_prog_4_stairs_walkback_z_and_prog_5_road_walkback_x() {
         &mut state.cutaway_overlay,
         state.riddle_difficulty,
     ));
-    assert!(!state.prog_runner.is_player_locked());
+    assert!(state.prog_runner.is_player_locked());
     assert_eq!(
         state.prog_runner.take_walkback_delta(),
         Some([-STG3_WALKBACK_DISTANCE_MM, 0.0, 0.0])
     );
+    state.prog_runner.notify_event_move_finished();
+    assert!(!state.prog_runner.tick(
+        0,
+        0,
+        0.016,
+        &mut state.flags,
+        &mut state.puzzle_state,
+        &mut state.inventory_mgr,
+        &mut state.cutaway_overlay,
+        state.riddle_difficulty,
+    ));
+    assert!(!state.prog_runner.is_player_locked());
 }
 
 #[test]
@@ -430,7 +456,8 @@ fn test_tenbou_handoff_pose_flags_and_1400_frame_bgm_switch() {
     assert!(sim.scenario.flags.get(TENBOU_POST_FLAG_B));
     assert_eq!(eff_done.bgm_control_mask, Some(0));
 
-    // Verify campaign gameplay applies walkback delta from (3, 4) directly to player_position
+    // Verify campaign gameplay smoothly turns James around and walks him `-500 mm` along Z
+    // via `PlayerEventMove` (`0x0053b3c0`) instead of snapping in a single frame (`SH2-189`).
     sim.scenario
         .prog_runner
         .start(3, 4, STG3_FLAG_STAIRS_WARNED as u16);
@@ -439,7 +466,22 @@ fn test_tenbou_handoff_pose_flags_and_1400_frame_bgm_switch() {
         action_pressed: true,
         ..CampaignTickInput::default()
     };
-    let _ = orch.step(&mut sim, &confirm, 1.0 / 60.0);
+    let eff_start = orch.step(&mut sim, &confirm, 1.0 / 60.0);
+    assert!(!eff_start.allow_gameplay_sim);
+    assert!(sim.event_move.is_active());
+
+    for _ in 0..180 {
+        let eff = orch.step(&mut sim, &idle, 1.0 / 60.0);
+        if eff.allow_gameplay_sim && !sim.event_move.is_active() {
+            break;
+        }
+    }
+    assert!(!sim.event_move.is_active());
+    assert!(sim.scenario.flags.get(STG3_FLAG_STAIRS_WARNED));
     let expected_z = TENBOU_POST_POS[2] - STG3_WALKBACK_DISTANCE_MM;
-    assert!((sim.scenario.player_position.z - expected_z).abs() < 1e-4);
+    assert!(
+        (sim.scenario.player_position.z - expected_z).abs() < 100.0,
+        "expected James near {expected_z} mm after PlayerEventMove, got {}",
+        sim.scenario.player_position.z
+    );
 }

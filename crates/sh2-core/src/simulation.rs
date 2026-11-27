@@ -12,7 +12,9 @@ use crate::clock::EngineClock;
 use crate::collision::{CollisionConfig, CollisionWorld, SurfaceMaterial};
 use crate::events::StageTransitionCommand;
 use crate::input::{HapticFeedback, InputManager};
-use crate::locomotion::{LocomotionOutput, LocomotionState, PlayerLocomotionController};
+use crate::locomotion::{
+    LocomotionOutput, LocomotionState, PlayerEventMoveController, PlayerLocomotionController,
+};
 use crate::modern_camera::{GameplayCameraMode, ModernCameraRig};
 use crate::room_loader::{resolve_room_id_for_stage_or_override, stage_room_descriptor};
 use crate::scenario::{ScenarioKind, ScenarioState};
@@ -48,6 +50,9 @@ pub struct SimulationCore {
     pub collision_config: CollisionConfig,
     /// Authentic 1:1 PS2/PC player locomotion and turning controller.
     pub locomotion: PlayerLocomotionController,
+    /// Authentic 1:1 PS2/PC `PlayerEventMove` (`0x00283d10` / `0x0053b3c0`) scripted auto-turn
+    /// and walk-back controller used by progression-blocking stage programs.
+    pub event_move: PlayerEventMoveController,
     /// Character skeletal animation controller.
     pub animation: CharacterAnimationController,
     /// Active character locomotion clips.
@@ -110,6 +115,7 @@ impl SimulationCore {
             collision: CollisionWorld::new(),
             collision_config: CollisionConfig::default(),
             locomotion: PlayerLocomotionController::new(),
+            event_move: PlayerEventMoveController::new(),
             animation: CharacterAnimationController::new(
                 AnimationStateKind::Idle,
                 locomotion_clips.idle,
@@ -281,11 +287,105 @@ impl SimulationCore {
     /// Immediately teleports the player to `position` and `yaw`, resetting previous-tick
     /// snapshots and flashlight sweep state so sub-frame interpolation does not smear across room cuts.
     pub fn snap_player_transform(&mut self, position: Vec3, yaw: f32) {
+        self.event_move.cancel();
         self.scenario.player_position = position;
         self.scenario.player_yaw = yaw;
         self.prev_player_position = position;
         self.prev_player_yaw = yaw;
         self.flashlight_sweep.reset(position, yaw);
+    }
+
+    /// Starts a 1:1 PS2/PC `PlayerEventMove` (`0x00283d10` / `0x0053b3c0`) auto-turn and walk-back
+    /// sequence toward `target_pos` (in PS2 mm), zeroing normal locomotion velocity so James pivots
+    /// cleanly from rest (`PlayerEventAnimeSet(0x65)`) instead of carrying prior sprint momentum.
+    pub fn start_event_move(&mut self, target_pos: Vec3) {
+        self.locomotion.speed_mps = 0.0;
+        self.locomotion.state = LocomotionState::Stand;
+        self.locomotion.direction_offset = 0.0;
+        self.event_move.start(target_pos);
+    }
+
+    /// Advances an active `PlayerEventMove` (`0x00283d10` / `0x0053b3c0`) by `dt_sec` seconds,
+    /// updating James's yaw, position (with `.cld` collision & floor sampling), locomotion
+    /// animation (`0x65` Stand / `0x68` Walk / `0x6b` Run), footsteps, flashlight sweep, and
+    /// camera. Returns `true` once `PlayerEventMoveIsEnd` (`0x00283ed0` / `0x0053b6d0`) completes.
+    pub fn step_event_move(&mut self, dt_sec: f32) -> bool {
+        if !self.event_move.is_active() {
+            return true;
+        }
+        let dt = dt_sec.max(0.0);
+        let out = self.event_move.step(
+            self.scenario.player_position,
+            &mut self.scenario.player_yaw,
+            false,
+            Vec3::new(0.0, -1.0, 0.0),
+            dt,
+        );
+
+        let desired_pos = self.scenario.player_position + out.delta_position;
+        self.scenario.player_position = self.collision.resolve_character_movement(
+            self.scenario.player_position,
+            desired_pos,
+            &self.collision_config,
+        );
+        if let Some(sample) = self.collision.sample_floor_surface(
+            self.scenario.player_position.x,
+            self.scenario.player_position.z,
+            self.scenario.player_position.y,
+            self.collision_config.max_step_up,
+            crate::collision::PLAYER_HEIGHT_RAY_DOWN_NORMAL,
+        ) {
+            self.active_floor_material = sample.surface;
+        }
+
+        // Keep `prev_player_*` synced while `allow_gameplay_sim == false` (when the fixed-step
+        // clock is paused) so `interpolated_player_pose(alpha)` renders the exact current pose
+        // smoothly on every frame without stale-alpha jitter.
+        self.prev_player_position = self.scenario.player_position;
+        self.prev_player_yaw = self.scenario.player_yaw;
+
+        self.locomotion.state = out.state;
+        self.locomotion.speed_mps = self.event_move.speed_mps();
+        self.last_locomotion = out;
+
+        if out.footstep_triggered {
+            self.footstep_triggered_since_last_poll = true;
+            self.blood_footstep_triggered = true;
+        }
+
+        if !self.animation_locked {
+            let cmd = LocomotionAnimationSync::resolve(
+                self.animation.state(),
+                &out,
+                &self.locomotion_clips,
+            );
+            self.animation.apply_locomotion_command(cmd);
+        }
+        if dt > 0.0 {
+            self.animation.update(Duration::from_secs_f32(dt));
+            self.flashlight_sweep.tick(
+                self.scenario.player_position,
+                self.scenario.player_yaw,
+                false,
+                &self.timing,
+            );
+            self.camera.tick(
+                self.scenario.player_position,
+                self.scenario.player_yaw,
+                0.0,
+                0.0,
+            );
+            if self.camera.cam_file.is_none() {
+                let eye_target = self.scenario.player_position + Vec3::new(0.0, -1200.0, 0.0);
+                let filter = crate::collision::RaycastFilter::default();
+                self.camera.curr_snapshot.eye =
+                    self.collision
+                        .clamp_camera(eye_target, self.camera.curr_snapshot.eye, &filter);
+            }
+            self.step_modern_camera_after_ps2_rail(&out);
+        }
+
+        self.event_move.is_end()
     }
 
     /// Advance real delta time and consume all ready 60 Hz simulation ticks.

@@ -249,6 +249,12 @@ pub(crate) fn run_active_gameplay(
             .cutaway_overlay
             .active_picture()
             .map(str::to_owned);
+        // Advance any active `PlayerEventMove` (`SLUS_202.28` `0x00283d10` / `sh2pc.exe`
+        // `0x0053b3c0`) before ticking `prog_runner` so `PlayerEventMoveIsEnd` (`0x0053b6d0`)
+        // unlocks James on the exact frame he completes his turn-around and stops.
+        if sim.event_move.is_active() && sim.step_event_move(dt_sec) {
+            sim.scenario.prog_runner.notify_event_move_finished();
+        }
         let (
             still_running,
             walkback_delta,
@@ -342,7 +348,15 @@ pub(crate) fn run_active_gameplay(
         }
         if let Some(delta) = walkback_delta {
             let target = sim.scenario.player_position + Vec3::from_array(delta);
-            sim.snap_player_transform(target, sim.scenario.player_yaw);
+            sim.start_event_move(target);
+            // `sh2pc.exe` `0x5a0d5d` / `0x5a0e8c` / `0x59d7cc`: Step `0x1b` falls straight
+            // through to `PlayerEventMove` (`0x53b3c0`) on the same frame the message closes.
+            if sim.step_event_move(dt_sec) {
+                sim.scenario.prog_runner.notify_event_move_finished();
+            }
+        }
+        if sim.event_move.is_active() {
+            *player_locked = true;
         }
         if let Some(demo_no) = requested_demo {
             let rule = AUTO_STAGE_DEMO_RULES.iter().find(|r| r.demo_no == demo_no);

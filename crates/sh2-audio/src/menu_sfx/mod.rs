@@ -12,10 +12,24 @@ mod spatial;
 use crate::spatial_voice::SpatialVoiceHandle;
 use crate::{AudioEngine, AudioError};
 use kira::sound::static_sound::StaticSoundHandle;
-use sh2_assets::formats::sound::WavEntry;
+use sh2_assets::formats::sound::{AfsArchiveIndex, WavEntry};
 use sh2_core::AudioPackPreference;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Maximum number of decoded `voice.afs` entries retained simultaneously in
+/// [`MenuAudioBank::voice_afs_sfx`] (`SH2-176`).
+///
+/// Covers the 8 core preloaded streamed SFX entries ([`CORE_VOICE_AFS_INDICES`]) plus up to 8
+/// recently accessed stage/cutscene entries before least-recently-used non-core entries are evicted.
+pub const VOICE_AFS_LRU_CAPACITY: usize = 16;
+
+/// Core streamed SFX indices in `voice.afs` preloaded at bank initialization and preserved across
+/// [`MenuAudioBank::clear_non_core_voice_afs_cache`] (`SH2-176`):
+/// `17` (chainsaw), `24` (`g_start`), `27` (Prison South Ritual), `35` (`save_sound`),
+/// `36` (menu transition), `38` (Prison `0x68`), `42` (Society `0x5c`), `44` (TV static).
+pub const CORE_VOICE_AFS_INDICES: [usize; 8] = [17, 24, 27, 35, 36, 38, 42, 44];
 
 /// Sound cue types for menu and gameplay interactions matching authentic PS2 / PC Silent Hill 2 IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,14 +61,18 @@ pub struct MenuAudioBank {
     pub sddata_path: Option<PathBuf>,
     /// Resolved on-disk path of the `voice.afs` streamed SFX container, if available.
     pub voice_afs_path: Option<PathBuf>,
+    /// Cached parsed directory header of `voice.afs` so on-demand lookups never re-read/re-parse the 2 KB header (`SH2-176`).
+    pub voice_afs_index: Option<AfsArchiveIndex>,
     /// Resolved `data/` directory path for on-demand extra WAV loading (`SH2-62`).
     pub data_root: Option<PathBuf>,
     /// Resolved `sh2e/` directory path for on-demand extra WAV loading (`SH2-62`).
     pub ee_root: Option<PathBuf>,
     /// All 417 RIFF WAVE entries extracted from `sddata.bin` (`0..=416`).
     pub entries: Vec<WavEntry>,
-    /// Preloaded streamed SFX entries from `voice.afs` (keyed by AFS entry index `13..=44`, plus `119` for `SCENE_45`).
-    pub voice_afs_sfx: HashMap<usize, WavEntry>,
+    /// Bounded LRU cache of decoded `voice.afs` entries (`Arc<WavEntry>` avoids cloning multi-MB PCM payloads; `SH2-176`).
+    pub voice_afs_sfx: HashMap<usize, Arc<WavEntry>>,
+    /// Recency order for [`Self::voice_afs_sfx`] (front = least recently used, back = most recently used).
+    pub(super) voice_afs_lru: VecDeque<usize>,
     /// Menu cursor move (`10000` / `sddata[293]`).
     pub cursor_move: Option<WavEntry>,
     /// Menu confirm (`10002` / `sddata[297]`).

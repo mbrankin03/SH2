@@ -227,6 +227,17 @@ pub const GLASS_SPECULAR_COS_MIN: f32 = 0.996_194;
 pub const GLASS_UV_STEP: f32 = 0.0625;
 /// Max shards per `hh_class_glass_break_phenomenon_00.c` burst (`0x32` = 50).
 pub const GLASS_MAX_SHARDS_PER_BURST: usize = 50;
+/// Maximum simultaneous glass shards retained in [`GlassBreakSystem::shards`] (`SH2-176`).
+///
+/// Equals `4 × GLASS_MAX_SHARDS_PER_BURST` (`200`), capping 4 concurrent shatter bursts well within
+/// the 600-instance global Effect2 pool at `Effect_Object_Initialize` (`0x0026a130`; note that in
+/// `SLUS_202.28` `0x00370910`, the 200-slot `0xc8` entry belongs to `class 0x0a`
+/// `HH_Class_Blood_00`, while `class 0x14`/`0x15` `Glass_Break_Phenomenon_00`/`GlassPiece_00` have
+/// `mode = 0, count = 1` in the prototype table). When full, the oldest shard is evicted FIFO
+/// matching `Instance_OldestEntry_Search` (`0x00259c00`).
+pub const MAX_GLASS_SHARDS: usize = 200;
+/// Maximum simultaneous active burst emitters retained in [`GlassBreakSystem::bursts`] (`SH2-176`).
+pub const MAX_GLASS_BURSTS: usize = 16;
 
 /// Single tumbling glass shard (`hh_class_glass_piece_00.c` `0x00258a10..0x002592e0`).
 #[derive(Debug, Clone, Copy)]
@@ -259,7 +270,19 @@ pub struct GlassBreakSystem {
 }
 
 impl GlassBreakSystem {
+    /// Clears all active burst emitters and settled/airborne glass shards on room transition
+    /// (`HH_Effect_Object_DesignateClassInstance_Clear` `0x0026a220` / `MemoryPool_AllClear` `0x00269ff0`, `SH2-176`).
+    pub fn clear(&mut self) {
+        self.bursts.clear();
+        self.shards.clear();
+    }
+
+    /// Triggers a glass-shatter burst at `origin` with initial velocity `base_vel`,
+    /// evicting the oldest burst emitter if [`MAX_GLASS_BURSTS`] is reached (`SH2-176`).
     pub fn trigger_break(&mut self, origin: Vec3, base_vel: Vec3) {
+        if self.bursts.len() >= MAX_GLASS_BURSTS {
+            self.bursts.remove(0);
+        }
         self.bursts.push(GlassBreakPhenomenon {
             origin,
             base_vel,
@@ -280,6 +303,9 @@ impl GlassBreakSystem {
                         rng.sway(-300.0, 100.0),
                         rng.sway(-200.0, 200.0),
                     );
+                if self.shards.len() >= MAX_GLASS_SHARDS {
+                    self.shards.remove(0);
+                }
                 self.shards.push(GlassShard {
                     origin: b.origin,
                     pos: b.origin,
@@ -354,6 +380,31 @@ mod tests {
         }
         assert_eq!(glass.shards.len(), GLASS_MAX_SHARDS_PER_BURST);
         assert!(glass.shards.iter().any(|s| s.pos.y > -1500.0));
+    }
+
+    #[test]
+    fn glass_break_enforces_pool_cap_and_clear_resets_state() {
+        let mut rng = FxRng::new(99);
+        let mut glass = GlassBreakSystem::default();
+        // Trigger 6 bursts (300 shards total > MAX_GLASS_SHARDS = 200)
+        for i in 0..6 {
+            glass.trigger_break(Vec3::new(i as f32 * 100.0, -1500.0, 0.0), Vec3::ZERO);
+        }
+        for _ in 0..20 {
+            glass.step(1.0 / 30.0, 0.0, &mut rng);
+            assert!(glass.shards.len() <= MAX_GLASS_SHARDS);
+        }
+        assert_eq!(glass.shards.len(), MAX_GLASS_SHARDS);
+
+        // Trigger beyond MAX_GLASS_BURSTS and confirm bursts stay bounded
+        for _ in 0..(MAX_GLASS_BURSTS + 5) {
+            glass.trigger_break(Vec3::ZERO, Vec3::ZERO);
+        }
+        assert_eq!(glass.bursts.len(), MAX_GLASS_BURSTS);
+
+        glass.clear();
+        assert!(glass.shards.is_empty());
+        assert!(glass.bursts.is_empty());
     }
 
     #[test]

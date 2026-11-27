@@ -24,7 +24,8 @@ pub use blood::{
 pub use combat_fx::{
     GlassBreakPhenomenon, GlassBreakSystem, GlassShard, ImpactSpark, ImpactSparkSystem,
     ShellCasing, ShellCasingSystem, ShellWeaponKind, SparkFlashLight, GLASS_GRAVITY_MM_S2,
-    GLASS_MAX_SHARDS_PER_BURST, GLASS_SPECULAR_COS_MIN, GLASS_UV_STEP,
+    GLASS_MAX_SHARDS_PER_BURST, GLASS_SPECULAR_COS_MIN, GLASS_UV_STEP, MAX_GLASS_BURSTS,
+    MAX_GLASS_SHARDS,
 };
 pub use fire_smoke::{
     FireEmber, FirePhenomenon, FlameClassKind, FlameEmitter, FlameInitParams, FlameParticle,
@@ -34,9 +35,9 @@ pub use fire_smoke::{
 };
 pub use water_rain::{
     RainDrop, RainDropSystem, WaterGrid2D, WaterPoolRipple, WaterPoolSystem, WaterSplashDroplet,
-    WaterSplashSystem, WaveElement, RAIN_FALL_SPEED_MM_S, RAIN_STREAK_LEN_MM,
-    WATER_POOL_MOTION_INFO, WATER_POOL_RGBA_END, WATER_POOL_RGBA_START, WATER_POOL_SCALE_END,
-    WATER_POOL_UV_GRID,
+    WaterSplashSystem, WaveElement, MAX_RAIN_DROPS, RAIN_DROPS_PER_TASK, RAIN_FALL_SPEED_MM_S,
+    RAIN_STREAK_LEN_MM, WATER_POOL_MOTION_INFO, WATER_POOL_RGBA_END, WATER_POOL_RGBA_START,
+    WATER_POOL_SCALE_END, WATER_POOL_UV_GRID,
 };
 
 /// Deterministic LCG PRNG matching Team Silent's `shRandI` / `shRandF` usage for particle spawning.

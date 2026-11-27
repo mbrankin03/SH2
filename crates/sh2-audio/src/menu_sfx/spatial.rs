@@ -16,6 +16,14 @@ use crate::spatial_voice::{SpatialVoiceHandle, SpatialVoiceInitParams};
 use crate::{AudioEngine, AudioError};
 
 impl MenuAudioBank {
+    /// Prunes completed (`PlaybackState::Stopped`) 2D/panned handles and finished 3D spatial voices
+    /// so one-shot handles never accumulate across rooms (`SH2-176`).
+    pub fn prune_stopped_spatial_handles(&mut self) {
+        self.active_spatial_handles
+            .retain(|_, h| h.state() != kira::sound::PlaybackState::Stopped);
+        self.active_spatial_voices.retain(|_, v| !v.is_finished());
+    }
+
     /// Returns `true` if a tracked 2D/panned handle for `se_id` is still playing (`!Stopped`).
     pub fn is_2d_se_playing(&self, se_id: u32) -> bool {
         self.active_spatial_handles
@@ -33,6 +41,7 @@ impl MenuAudioBank {
         volume: f32,
         stereo_pan: f32,
     ) -> Result<bool, AudioError> {
+        self.prune_stopped_spatial_handles();
         if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
             if !self.voice_afs_sfx.contains_key(&afs_idx) {
                 let _ = self.load_voice_afs_entry(afs_idx);
@@ -63,6 +72,7 @@ impl MenuAudioBank {
         volume: f32,
         stereo_pan: f32,
     ) -> Result<(), AudioError> {
+        self.prune_stopped_spatial_handles();
         if let Some(mut prev) = self.active_spatial_handles.remove(&se_id) {
             prev.stop(kira::tween::Tween {
                 duration: std::time::Duration::from_millis(25),
@@ -93,6 +103,7 @@ impl MenuAudioBank {
         source_pos: Vec3,
         collision: Option<&CollisionWorld>,
     ) -> Result<(), AudioError> {
+        self.prune_stopped_spatial_handles();
         if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
             if !self.voice_afs_sfx.contains_key(&afs_idx) {
                 let _ = self.load_voice_afs_entry(afs_idx);
@@ -164,7 +175,7 @@ impl MenuAudioBank {
         } else {
             OcclusionDspParams::unoccluded()
         };
-        self.active_spatial_voices.retain(|_, v| !v.is_finished());
+        self.prune_stopped_spatial_handles();
         if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
             engine.update_sound_spatial(
                 handle,
@@ -314,6 +325,7 @@ impl MenuAudioBank {
         base_volume: f32,
         collision: Option<&CollisionWorld>,
     ) -> Result<(SfxSpatialEval, OcclusionDspParams), AudioError> {
+        self.prune_stopped_spatial_handles();
         // Lazily populate `voice_afs_sfx` if `se_id` maps to a `voice.afs` index not yet cached
         if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
             if !self.voice_afs_sfx.contains_key(&afs_idx) {
@@ -399,7 +411,7 @@ impl MenuAudioBank {
         } else {
             OcclusionDspParams::unoccluded()
         };
-        self.active_spatial_voices.retain(|_, v| !v.is_finished());
+        self.prune_stopped_spatial_handles();
         if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
             engine.update_sound_spatial(
                 handle,
@@ -474,5 +486,89 @@ impl MenuAudioBank {
         for (_, voice) in self.active_spatial_voices.drain() {
             voice.stop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kira::manager::backend::mock::{MockBackend, MockBackendSettings};
+    use kira::manager::{AudioManager, AudioManagerSettings};
+    use kira::sound::static_sound::{StaticSoundData, StaticSoundSettings};
+    use kira::Frame;
+    use sh2_core::AudioPackPreference;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Arc;
+
+    fn empty_bank() -> MenuAudioBank {
+        MenuAudioBank {
+            loaded_source: AudioPackPreference::Auto,
+            sddata_path: None,
+            voice_afs_path: None,
+            voice_afs_index: None,
+            data_root: None,
+            ee_root: None,
+            entries: Vec::new(),
+            voice_afs_sfx: HashMap::new(),
+            voice_afs_lru: VecDeque::new(),
+            cursor_move: None,
+            confirm: None,
+            cancel: None,
+            game_start: None,
+            save_sound: None,
+            flashlight_on: None,
+            flashlight_off: None,
+            closet_bonus_audio: None,
+            machi_steps_audio: None,
+            footstep: None,
+            step_parity: false,
+            last_footstep_handle: None,
+            active_cut_audio_handle: None,
+            active_spatial_handles: HashMap::new(),
+            active_spatial_voices: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn prune_stopped_spatial_handles_removes_finished_and_keeps_playing() {
+        let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+            backend_settings: MockBackendSettings { sample_rate: 48000 },
+            ..Default::default()
+        })
+        .expect("MockBackend audio manager");
+
+        // Short 4-frame one-shot and long 48000-frame sound
+        let short_sound = StaticSoundData {
+            sample_rate: 48000,
+            frames: Arc::from(vec![Frame::ZERO; 4]),
+            settings: StaticSoundSettings::new(),
+            slice: None,
+        };
+        let long_sound = StaticSoundData {
+            sample_rate: 48000,
+            frames: Arc::from(vec![Frame::ZERO; 48000]),
+            settings: StaticSoundSettings::new(),
+            slice: None,
+        };
+
+        let short_handle = manager.play(short_sound).expect("play short");
+        let long_handle = manager.play(long_sound).expect("play long");
+
+        let mut bank = empty_bank();
+        bank.active_spatial_handles.insert(1001, short_handle);
+        bank.active_spatial_handles.insert(1002, long_handle);
+        assert_eq!(bank.active_spatial_handles.len(), 2);
+
+        // Advance MockBackend by 64 samples so the 4-frame one-shot finishes (`PlaybackState::Stopped`)
+        let backend = manager.backend_mut();
+        backend.on_start_processing();
+        for _ in 0..64 {
+            let _ = backend.process();
+        }
+
+        bank.prune_stopped_spatial_handles();
+        assert!(!bank.active_spatial_handles.contains_key(&1001));
+        assert!(bank.active_spatial_handles.contains_key(&1002));
+        assert_eq!(bank.active_spatial_handles.len(), 1);
     }
 }

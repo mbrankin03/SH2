@@ -25,6 +25,8 @@ impl AudioEngine {
         message: DialogueMessage,
         voice_id: Option<u32>,
     ) -> Result<(), AudioError> {
+        self.stop_voice(Duration::from_millis(20));
+
         let voice_track = self
             .voice_track
             .as_ref()

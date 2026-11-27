@@ -404,8 +404,10 @@ pub(crate) fn run_active_gameplay(
     sim.scenario.playing_info.item_get = sim.scenario.inventory_mgr.total_items_picked_up();
     sim.scenario.playing_info.hidden_item_get = sim.scenario.inventory_mgr.secret_items_mask();
 
-    // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240`) and switch active outdoor
-    //    tile (`.map`, `.cld`, `.cam`) seamlessly when crossing a 20,000 mm `BlockNumber` cell.
+    // 4. Plan outdoor multi-tile streaming (`LoadBgSync` `0x0020b240` / `loadBgAll_PrepareAround`
+    //    `0x002715d0`) and seamlessly update the active outdoor tile room ID + `.cam` rails when
+    //    crossing a 20,000 mm `BlockNumber` cell without firing a destructive single-tile
+    //    `effects.load_room` sync reload (`SH2-183`).
     //    Zero-alloc fast path: only emits `outdoor_plan` when `(stage_id, gx, gz, mode, quadrant)`
     //    or residency changed, and compares `(area, block_no)` without `format!`.
     let player_pos_arr = sim.scenario.player_position.to_array();
@@ -419,16 +421,7 @@ pub(crate) fn run_active_gameplay(
     if let Some((area, block_no)) = resolve_outdoor_area_block(stage_id, player_pos_arr) {
         if !room_id_matches_outdoor_block(&sim.scenario.current_room, area, block_no) {
             let tile_room_id = format!("{}{block_no:02}", area.prefix());
-            let manifest = resolve_stage_manifest(stage_id, Some(&tile_room_id), true, false);
-            let _ = sim.transition_stage_with_camera(
-                stage_id,
-                manifest.stage_name,
-                Some(&tile_room_id),
-                sim.scenario.player_position,
-                sim.scenario.player_yaw,
-                input.prefer_sh2ee,
-            );
-            effects.load_room = Some(manifest);
+            let _ = sim.switch_outdoor_tile_room(&tile_room_id, input.prefer_sh2ee);
         }
     }
 
@@ -745,5 +738,53 @@ mod tests {
             orch.phase,
             CampaignPhase::OverlayMenu(OverlayMenuKind::Inventory)
         ));
+    }
+
+    #[test]
+    fn sh2_183_outdoor_tile_crossing_emits_plan_without_destructive_load_room() {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        sim.scenario.current_stage = 4;
+        sim.scenario.current_room = "ca11".to_string();
+        // Start in `ca11` (cell (0, -1): X in [0, 20000), Z in [-20000, 0)).
+        sim.snap_player_transform(Vec3::new(10_000.0, 0.0, -10_000.0), 0.0);
+
+        let mut orch = CampaignOrchestrator::from_saved_stage(
+            4,
+            Some("ca11".to_string()),
+            [10_000.0, 0.0, -10_000.0],
+            0.0,
+            OutdoorStreamingMode::ClassicPs2LoadBg2x2,
+            false,
+        );
+        orch.phase = CampaignPhase::ActiveGameplay;
+        orch.fade = ScreenFadeState::default();
+        orch.player_locked = false;
+
+        let idle = CampaignTickInput::default();
+        let eff1 = orch.step(&mut sim, &idle, 1.0 / 60.0);
+        assert!(
+            eff1.outdoor_plan.is_some(),
+            "first outdoor gameplay tick must emit an outdoor streaming plan"
+        );
+        assert!(
+            eff1.load_room.is_none(),
+            "staying in ca11 must not trigger load_room"
+        );
+
+        // Cross the 20,000 mm tile boundary south into `ca12` (cell (0, -2): Z = -20,500 mm).
+        sim.scenario.player_position = Vec3::new(10_000.0, 0.0, -20_500.0);
+        let eff2 = orch.step(&mut sim, &idle, 1.0 / 60.0);
+        assert_eq!(
+            sim.scenario.current_room, "ca12",
+            "crossing into cell (0, -2) must seamlessly update current_room to ca12"
+        );
+        assert!(
+            eff2.load_room.is_none(),
+            "crossing an outdoor tile seam must NOT emit destructive effects.load_room"
+        );
+        let plan2 = eff2
+            .outdoor_plan
+            .expect("crossing into ca12 must emit an updated outdoor_plan");
+        assert!(plan2.desired_blocks.contains(&12));
     }
 }

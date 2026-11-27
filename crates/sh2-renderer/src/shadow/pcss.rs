@@ -373,15 +373,15 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
         }
     }
 
-    /// Encodes the unified 2048x2048 PCSS spotlight shadow depth pass for both static level
-    /// geometry and animated skeletal characters.
+    /// Encodes the unified 2048x2048 PCSS spotlight shadow depth pass across one or more static
+    /// `GpuMap` tiles and animated skeletal characters (`SH2-183`).
     #[allow(clippy::too_many_arguments)]
-    pub fn encode_pass(
+    pub fn encode_pass_multi(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         shadow_depth_view: &wgpu::TextureView,
         shadow_bind_group: &wgpu::BindGroup,
-        gpu_map: Option<&GpuMap>,
+        maps: &[crate::MapDrawItem<'_>],
         skeletal_meshes: &[SkeletalDrawItem],
         vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
         frustum: Option<&crate::Frustum>,
@@ -401,27 +401,39 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
             occlusion_query_set: None,
         });
 
-        if let Some(map) = gpu_map {
+        let mut static_bound = false;
+        for item in maps {
+            let map = item.gpu_map;
             let opaque = map.batches_for_group(BatchGroup::Opaque);
-            if let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) {
-                if !opaque.is_empty() {
-                    rpass.set_pipeline(&self.static_pipeline);
-                    rpass.set_bind_group(0, shadow_bind_group, &[]);
-                    rpass.set_vertex_buffer(0, vbuf.slice(..));
-                    rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    for batch in opaque {
-                        if !map.is_batch_visible_with(batch, vis_filter) {
-                            continue;
-                        }
-                        if let Some(f) = frustum {
-                            if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
-                                continue;
-                            }
-                        }
-                        if let Some(index_range) = batch.index_range() {
-                            rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
-                        }
+            if opaque.is_empty() {
+                continue;
+            }
+            if let Some(f) = frustum {
+                if !map.intersects_frustum(f) {
+                    continue;
+                }
+            }
+            let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) else {
+                continue;
+            };
+            if !static_bound {
+                rpass.set_pipeline(&self.static_pipeline);
+                rpass.set_bind_group(0, shadow_bind_group, &[]);
+                static_bound = true;
+            }
+            rpass.set_vertex_buffer(0, vbuf.slice(..));
+            rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            for batch in opaque {
+                if !map.is_batch_visible_with(batch, vis_filter) {
+                    continue;
+                }
+                if let Some(f) = frustum {
+                    if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
+                        continue;
                     }
+                }
+                if let Some(index_range) = batch.index_range() {
+                    rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
                 }
             }
         }
@@ -443,6 +455,37 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
                 }
             }
         }
+    }
+
+    /// Encodes the unified 2048x2048 PCSS spotlight shadow depth pass for both static level
+    /// geometry and animated skeletal characters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        shadow_depth_view: &wgpu::TextureView,
+        shadow_bind_group: &wgpu::BindGroup,
+        gpu_map: Option<&GpuMap>,
+        skeletal_meshes: &[SkeletalDrawItem],
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
+        frustum: Option<&crate::Frustum>,
+    ) {
+        let single;
+        let maps: &[crate::MapDrawItem<'_>] = if let Some(m) = gpu_map {
+            single = [crate::MapDrawItem::new(m, None)];
+            &single
+        } else {
+            &[]
+        };
+        self.encode_pass_multi(
+            encoder,
+            shadow_depth_view,
+            shadow_bind_group,
+            maps,
+            skeletal_meshes,
+            vis_filter,
+            frustum,
+        );
     }
 }
 

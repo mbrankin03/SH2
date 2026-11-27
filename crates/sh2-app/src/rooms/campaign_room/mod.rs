@@ -90,6 +90,7 @@ impl CampaignRoomController {
 
         state.campaign_orchestrator = Some(orchestrator);
         state.campaign_loaded_room = None;
+        state.outdoor_tile_pool.clear();
         state.campaign_pending_input = Default::default();
         state.campaign_messages.reset();
         state
@@ -142,7 +143,7 @@ impl CampaignRoomController {
             if u32::from(manifest.stage_id) != state.bgm_manager.stage_id {
                 state.se_pool.reset();
             }
-            loader::load_manifest_into_app_state(state, &manifest);
+            let seeded_block = loader::load_manifest_into_app_state(state, &manifest);
             state.campaign_messages.clear_active();
             state
                 .campaign_messages
@@ -152,9 +153,21 @@ impl CampaignRoomController {
                 ls.mark_completed();
             }
             if let Some(ref mut orch) = state.campaign_orchestrator {
+                if let Some((area, block_no)) = seeded_block {
+                    orch.outdoor_streamer.mark_resident_for_area(area, block_no);
+                }
                 orch.notify_room_assets_loaded();
             }
             performed_sync_load = true;
+        }
+
+        if let Some(plan) = effects.outdoor_plan {
+            let _ = state.outdoor_tile_pool.apply_plan(&plan);
+            if let Some(ref mut orch) = state.campaign_orchestrator {
+                for &evicted in &plan.evict_blocks {
+                    orch.outdoor_streamer.mark_evicted(evicted);
+                }
+            }
         }
 
         if effects.hide_loading_screen {
@@ -285,6 +298,7 @@ impl CampaignRoomController {
         if effects.return_to_title {
             state.campaign_orchestrator = None;
             state.campaign_loaded_room = None;
+            state.outdoor_tile_pool.clear();
             state.campaign_messages.reset();
             state.exit_room_to_menu(TitlePhase::MainMenu);
         }
@@ -407,7 +421,24 @@ impl RoomController for CampaignRoomController {
             .texture_quality;
         if let Some((manifest, loaded_quality)) = state.campaign_loaded_room.clone() {
             if loaded_quality != current_tex_quality {
-                loader::load_manifest_into_app_state(state, &manifest);
+                let _ = state
+                    .outdoor_tile_pool
+                    .set_texture_quality(current_tex_quality);
+                let seeded_block = loader::load_manifest_into_app_state(state, &manifest);
+                if let Some(ref mut orch) = state.campaign_orchestrator {
+                    orch.outdoor_streamer.reset();
+                    if let Some((area, block_no)) = seeded_block {
+                        orch.outdoor_streamer.mark_resident_for_area(area, block_no);
+                    }
+                }
+            }
+        }
+        if state
+            .outdoor_tile_pool
+            .set_texture_quality(current_tex_quality)
+        {
+            if let Some(ref mut orch) = state.campaign_orchestrator {
+                orch.outdoor_streamer.reset();
             }
         }
         let streaming_mode = state
@@ -513,6 +544,22 @@ impl RoomController for CampaignRoomController {
 
         let allow_sim = effects.allow_gameplay_sim;
         let performed_sync_load = Self::apply_effects(state, effects);
+
+        // Drain completed background outdoor `.map` + `.cld` tile loads (`SH2-183`).
+        const MAX_OUTDOOR_UPLOADS_PER_FRAME: usize = 2;
+        let uploaded_blocks = state
+            .outdoor_tile_pool
+            .poll_uploads(&state.render_ctx, MAX_OUTDOOR_UPLOADS_PER_FRAME);
+        if !uploaded_blocks.is_empty() {
+            if let Some(ref mut orch) = state.campaign_orchestrator {
+                for block_no in uploaded_blocks {
+                    orch.outdoor_streamer.mark_resident(block_no);
+                }
+            }
+        }
+        if let Some(merged_collision) = state.outdoor_tile_pool.take_merged_collision_if_dirty() {
+            state.sim_core.collision = merged_collision;
+        }
 
         match state.campaign_orchestrator.as_ref().map(|o| &o.phase) {
             Some(CampaignPhase::GameOver) => {

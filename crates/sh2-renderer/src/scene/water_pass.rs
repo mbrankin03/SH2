@@ -1,13 +1,10 @@
 //! Toluca Lake planar water reflection pass (`SH2-80`, unified single-encoder pass `SH2-182`).
 
-use std::sync::Arc;
-
 use sh2_assets::formats::map::BatchGroup;
 use sh2_core::events::stageparts::MapPartVisibilityFilter;
 
 use crate::frustum::Frustum;
-use crate::gpu_map::GpuMap;
-use crate::{RenderContext, SkeletalDrawItem};
+use crate::{MapDrawItem, RenderContext, SkeletalDrawItem};
 
 impl RenderContext {
     /// Encodes Pass 0c (Toluca Lake Planar Reflection Pass) into `encoder` when both
@@ -17,8 +14,7 @@ impl RenderContext {
     pub(super) fn encode_water_reflection_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        gpu_map: Option<&GpuMap>,
-        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        maps: &[MapDrawItem<'_>],
         skeletal_meshes: &[SkeletalDrawItem],
         vis_filter: Option<&MapPartVisibilityFilter>,
     ) {
@@ -95,11 +91,11 @@ impl RenderContext {
         // Negative-determinant `mirrored_reflection_view_proj` flips CCW triangles to CW,
         // requiring CW front-face (`water_reflected_pipeline`) and inverted skeletal culling
         // (matching `mirror_pass.rs`).
-        if let Some(map) = gpu_map {
+        for item in maps {
             self.draw_map_batches_for_group_with_camera(
                 &mut rpass,
-                map,
-                map_texture_bind_groups,
+                item.gpu_map,
+                item.texture_bind_groups,
                 BatchGroup::Opaque,
                 &self.geometry_pipeline.water_reflected_pipeline,
                 &self.water_geometry_bind_group,

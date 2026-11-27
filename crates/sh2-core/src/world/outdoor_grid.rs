@@ -305,6 +305,18 @@ impl OutdoorArea {
     pub fn map_rel_path(self, block_no: u16) -> String {
         format!("bg/{}/{}{:02}.map", self.prefix(), self.prefix(), block_no)
     }
+
+    /// Formats the canonical relative `.cld` path for `block_no` (e.g. `"bg/ca/ca11.cld"`).
+    #[must_use]
+    pub fn cld_rel_path(self, block_no: u16) -> String {
+        format!("bg/{}/{}{:02}.cld", self.prefix(), self.prefix(), block_no)
+    }
+
+    /// Formats the canonical relative `.cam` path for `block_no` (e.g. `"bg/ca/ca11.cam"`).
+    #[must_use]
+    pub fn cam_rel_path(self, block_no: u16) -> String {
+        format!("bg/{}/{}{:02}.cam", self.prefix(), self.prefix(), block_no)
+    }
 }
 
 /// Identifies a specific outdoor `.map` tile within an [`OutdoorArea`].
@@ -325,5 +337,17 @@ impl OutdoorTileId {
     #[must_use]
     pub fn map_rel_path(self) -> String {
         self.area.map_rel_path(self.block_no)
+    }
+
+    /// Relative `.cld` path under `data/` (e.g. `"bg/ca/ca11.cld"`).
+    #[must_use]
+    pub fn cld_rel_path(self) -> String {
+        self.area.cld_rel_path(self.block_no)
+    }
+
+    /// Relative `.cam` path under `data/` (e.g. `"bg/ca/ca11.cam"`).
+    #[must_use]
+    pub fn cam_rel_path(self) -> String {
+        self.area.cam_rel_path(self.block_no)
     }
 }

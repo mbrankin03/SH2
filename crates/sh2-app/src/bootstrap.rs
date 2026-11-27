@@ -669,6 +669,13 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         .enable_restored_cut_audio;
 
     let configured_tex_quality = menu_ctrl.options_menu.draft_config.video.texture_quality;
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let outdoor_tile_pool = sh2_renderer::GpuOutdoorTilePool::with_roots(
+        resolver.data_dir.clone(),
+        resolver.sh2e_dir.clone(),
+        initial_tex_quality,
+        render_ctx.supports_bc_compression(),
+    );
     let mut state = AppState {
         window,
         surface,
@@ -710,6 +717,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         gamepad: GilrsGamepadPoller::new(),
         gpu_map,
         map_texture_bind_groups,
+        outdoor_tile_pool,
         active_map_source: ActiveMapSource::TestRoom(initial_room),
         loaded_texture_quality: initial_tex_quality,
         character,

@@ -213,6 +213,26 @@ impl SimulationCore {
         loaded
     }
 
+    /// Seamlessly updates the active outdoor tile room ID (`ca11 -> ca12`, `cb54 -> cb55`, etc.)
+    /// and loads the tile's `.cam` rails (falling back to `<area>GB.cam` when a tile lacks its own
+    /// `.cam`) without resetting the camera pose, player transform, or stage state
+    /// (`LoadBg/loadbg_cam.c` `loadBgCAM_Replace` `0x00271e10`, `SH2-183`).
+    pub fn switch_outdoor_tile_room(&mut self, tile_room_id: &str, prefer_sh2ee: bool) -> bool {
+        self.scenario.set_current_room(tile_room_id);
+        if self
+            .camera
+            .load_room_cam(&self.scenario.current_room, prefer_sh2ee)
+        {
+            return true;
+        }
+        if let Some(area) = crate::world::OutdoorArea::from_stage_id(self.scenario.current_stage) {
+            if let Some(gb_cam) = area.global_cam_rel_path() {
+                return self.camera.load_room_cam(gb_cam, prefer_sh2ee);
+            }
+        }
+        false
+    }
+
     /// Applies an `EventExecMove` door/stage transition command (`StageTransitionCommand`),
     /// updating the active stage and room `.cam` file, snapping player coordinates, and
     /// immediately resetting the camera to the destination player pose (`SH2-50`).

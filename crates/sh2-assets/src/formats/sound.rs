@@ -1,8 +1,8 @@
-//! Safe binary parser for Silent Hill 2 Sound Effect Audio Banks (`sddata.bin`, `.sdm` / `.sdb`).
+//! Safe binary parser for Silent Hill 2 Sound Effect Audio Banks (`sddata.bin`, PS2 `.sdb`, `SOUND.DAT`, `voice.afs`).
 //!
 //! # Format Architecture & Memory Layout
 //!
-//! ### PC Audio Bank (`sddata.bin` / `.sdb` / `.sdm`)
+//! ### PC Audio Bank (`sddata.bin`)
 //! Silent Hill 2 sound effects reside in `data/sound/sddata.bin`, containing 417 standard
 //! RIFF WAVE audio files concatenated back-to-back.
 //!
@@ -16,11 +16,12 @@
 //!   - The original executable (`sh2pc.exe`) resolves sound IDs via direct byte offset tables
 //!     (table at `0x8A45A8 + 4 * id`).
 //!
-//! ### PS2 Sound Bank Structure (`.sdm` metadata header + `.sdb` sample data)
-//! - `.sdm` (Sound Metadata / header): Defines sound bank header information, program count,
-//!   sample descriptors with sample rates, loop points, and voice envelope configs.
-//! - `.sdb` (Sound Data Bank / waveforms): Holds raw PCM/ADPCM audio sample data addressed by `.sdm`.
-//!   Also parsed when provided as packed container files.
+//! ### PS2 Sound Formats (`.sdb`, `SOUND.DAT`, `.sfc`)
+//! - `.sdb` (`data/sound/snd_data/*.sdb`): 64-byte `_SOUND_DATA` spatial BGM mixing records
+//!   (`SLUS_202.28` `sndGetSoundAryByCharaPos` `0x00221540` in `sound/snd_select.c` / `sh2pc.exe` `FUN_00518b90` `0x00518b90`).
+//! - `SOUND.DAT` (`IOP/SD0712/SOUND.DAT`): Sony `libsd` / Modhsyn `IECSsreV` / `IECSdaeH` / `IECSigaV`
+//!   SPU2 16-byte ADPCM VAG sample banks.
+//! - `.sfc` (`data/sound/s_force/*.sfc`): Raw 16-bit signed LE mono PCM S-Force 3D positional audio.
 
 use super::binary::{read_f32, read_i16, read_u16, read_u32};
 use crate::error::AssetError;
@@ -30,12 +31,6 @@ pub const RIFF_MAGIC: [u8; 4] = *b"RIFF";
 
 /// Wave container format tag (`WAVE`).
 pub const WAVE_MAGIC: [u8; 4] = *b"WAVE";
-
-/// Magic identifier for SDM header banks (`SDM\0` or `SDM1`).
-pub const SDM_MAGIC: [u8; 4] = *b"SDM1";
-
-/// Magic identifier for SDB sample data banks (`SDB1`).
-pub const SDB_MAGIC: [u8; 4] = *b"SDB1";
 
 /// Magic identifier for CRI Middleware AFS archives (`AFS\0`, e.g. `sound/adx/voice/voice.afs`).
 pub const AFS_MAGIC: [u8; 4] = *b"AFS\0";
@@ -79,8 +74,8 @@ pub struct Ps2SdbSoundDataRecord {
 
 /// Parses a PS2 `.sdb` spatial BGM mixing table (`data/sound/snd_data/*.sdb`) into 64-byte [`Ps2SdbSoundDataRecord`] entries (`SH2-62`).
 ///
-/// Stops at the first terminal record where `flags < 0` (e.g. `-0x8000_0000`), matching `SeSoundDataLoad` (`0x221460` in `SLUS_202.28`)
-/// and `sndGetSoundAryByCharaPos` (`0x5187E0` in `sh2pc.exe`).
+/// Stops at the first terminal record where `flags < 0` (e.g. `-0x8000_0000`), matching `sndGetSoundAryByCharaPos`
+/// (`0x00221540` in `SLUS_202.28` `sound/snd_select.c`, `FUN_00518b90` at `0x00518b90` in `sh2pc.exe`).
 pub fn parse_ps2_sdb_sound_data(data: &[u8]) -> Result<Vec<Ps2SdbSoundDataRecord>, AssetError> {
     const RECORD_SIZE: usize = 64;
     if data.len() < RECORD_SIZE {
@@ -209,7 +204,10 @@ pub fn decode_spu2_vag_to_wav(
             break;
         }
 
-        let shift = (shift_filter & 0x0F).min(12);
+        // PS2 SPU2 hardware ADPCM spec: valid shift is `0..=12`; values `> 12` (`13..=15`)
+        // are mapped by SPU2 hardware to `9` (not clamped to `12`).
+        let raw_shift = shift_filter & 0x0F;
+        let shift = if raw_shift > 12 { 9 } else { raw_shift };
         let filter = ((shift_filter >> 4) as usize).min(4);
         let f0 = K0[filter];
         let f1 = K1[filter];
@@ -573,30 +571,7 @@ pub struct WavEntry {
     pub loop_end: u32,
 }
 
-/// Metadata header entry parsed from `.sdm` file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SdmEntryHeader {
-    /// Sound sample index.
-    pub sample_index: u32,
-    /// Audio sample rate in Hz.
-    pub sample_rate: u32,
-    /// Byte offset within `.sdb` sample payload.
-    pub data_offset: u32,
-    /// Length of audio sample data in bytes.
-    pub data_length: u32,
-    /// Audio channel count (1 = Mono, 2 = Stereo).
-    pub channels: u16,
-    /// Bit depth per sample (typically 16-bit).
-    pub bits_per_sample: u16,
-    /// Whether this sample loops.
-    pub loops: bool,
-    /// Loop start offset in samples.
-    pub loop_start: u32,
-    /// Loop end offset in samples.
-    pub loop_end: u32,
-}
-
-/// Collection of sound effect waveforms parsed from `sddata.bin` or `.sdm`/`.sdb`.
+/// Collection of sound effect waveforms parsed from `sddata.bin` or PS2 `SOUND.DAT`.
 #[derive(Debug, Clone, Default)]
 pub struct SoundBank {
     /// Audio sample entries in sequential file order.
@@ -675,104 +650,6 @@ pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
     }
 
     Ok(SoundBank { entries })
-}
-
-/// Parses a paired `.sdm` (metadata header) and `.sdb` (sample data bank) file.
-pub fn parse_sdm_sdb(sdm_data: &[u8], sdb_data: &[u8]) -> Result<SoundBank, AssetError> {
-    let headers = parse_sdm_headers(sdm_data)?;
-    let mut entries = Vec::with_capacity(headers.len());
-
-    for (idx, hdr) in headers.into_iter().enumerate() {
-        let start = hdr.data_offset as usize;
-        let end = start + hdr.data_length as usize;
-
-        let sample_bytes = if start < sdb_data.len() {
-            let actual_end = end.min(sdb_data.len());
-            sdb_data[start..actual_end].to_vec()
-        } else {
-            Vec::new()
-        };
-
-        entries.push(WavEntry {
-            id: hdr.sample_index.max(idx as u32),
-            channels: hdr.channels,
-            sample_rate: hdr.sample_rate,
-            bits_per_sample: hdr.bits_per_sample,
-            data: sample_bytes,
-            loops: hdr.loops,
-            loop_start: hdr.loop_start,
-            loop_end: hdr.loop_end,
-        });
-    }
-
-    Ok(SoundBank { entries })
-}
-
-/// Parses headers from a `.sdm` sound metadata binary file.
-///
-/// Supports either explicit `SDM1` magic headers or table-driven sample records:
-/// `[u32 count], [Entry: sample_rate(u32), offset(u32), length(u32), channels(u16), bits(u16), loop_flag(u16), pad(u16), loop_start(u32), loop_end(u32)]` (32 bytes per entry).
-pub fn parse_sdm_headers(data: &[u8]) -> Result<Vec<SdmEntryHeader>, AssetError> {
-    if data.len() < 4 {
-        return Err(AssetError::BufferUnderflow {
-            required: 4,
-            available: data.len(),
-        });
-    }
-
-    let mut p = 0usize;
-    if data[0..4] == SDM_MAGIC {
-        p += 4;
-    }
-
-    if p + 4 > data.len() {
-        return Err(AssetError::BufferUnderflow {
-            required: p + 4,
-            available: data.len(),
-        });
-    }
-
-    let count = read_u32(data, p)? as usize;
-    p += 4;
-
-    let mut headers = Vec::with_capacity(count);
-    const ENTRY_SIZE: usize = 28;
-
-    for i in 0..count {
-        if p + ENTRY_SIZE > data.len() {
-            break;
-        }
-
-        let sample_rate = read_u32(data, p)?;
-        let data_offset = read_u32(data, p + 4)?;
-        let data_length = read_u32(data, p + 8)?;
-        let channels = read_u16(data, p + 12)?;
-        let bits_per_sample = read_u16(data, p + 14)?;
-        let loop_flag = read_u16(data, p + 16)?;
-        let _pad = read_u16(data, p + 18)?;
-        let loop_start = read_u32(data, p + 20)?;
-        let loop_end = read_u32(data, p + 24)?;
-
-        headers.push(SdmEntryHeader {
-            sample_index: i as u32,
-            sample_rate,
-            data_offset,
-            data_length,
-            channels: channels.max(1),
-            bits_per_sample: if bits_per_sample == 0 {
-                16
-            } else {
-                bits_per_sample
-            },
-            loops: loop_flag != 0,
-            loop_start,
-            loop_end,
-        });
-
-        p += ENTRY_SIZE;
-    }
-
-    Ok(headers)
 }
 
 /// Extracts `(loop_start_sample, loop_end_sample)` from a RIFF WAVE `smpl` (Sampler) chunk payload (`SH2-55`).

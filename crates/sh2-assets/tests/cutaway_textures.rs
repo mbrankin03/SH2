@@ -73,7 +73,7 @@ fn test_decode_synthetic_pc_paletted_format_8_tex() {
 
 #[test]
 fn test_decode_synthetic_ps2_tex_24bpp_and_8bpp_clut() {
-    // 1. PS2 24bpp (bpp = 0x18)
+    // 1. PS2 24bpp (bpp = 0x18): RGB is already full 0..=255, only Alpha is PS2 0..=0x80 -> 0..=255
     let w: u16 = 2;
     let h: u16 = 2;
     let mut ps2_24 = vec![0u8; 0xc0 + 2 * 2 * 4];
@@ -81,14 +81,14 @@ fn test_decode_synthetic_ps2_tex_24bpp_and_8bpp_clut() {
     ps2_24[0x48..0x4a].copy_from_slice(&w.to_le_bytes());
     ps2_24[0x4a..0x4c].copy_from_slice(&h.to_le_bytes());
     ps2_24[0x4c] = 0x18;
-    // Pixel 0 in PS2 0..0x80 range: [64, 32, 128, 128] -> [128, 64, 255, 255]
-    ps2_24[0xc0..0xc4].copy_from_slice(&[64, 32, 128, 128]);
+    // Pixel 0: RGB = [64, 180, 200] preserved verbatim, Alpha = 0x80 -> 255
+    ps2_24[0xc0..0xc4].copy_from_slice(&[64, 180, 200, 0x80]);
 
     assert_eq!(probe_tex_dimensions(&ps2_24), Some((2, 2)));
     let dec24 = decode_texture_bytes(&ps2_24, Path::new("synthetic_ps2_24.tex")).unwrap();
-    assert_eq!(&dec24.rgba[0..4], &[128, 64, 255, 255]);
+    assert_eq!(&dec24.rgba[0..4], &[64, 180, 200, 255]);
 
-    // 2. PS2 8bpp GS-swizzled + CSM1 CLUT
+    // 2. PS2 8bpp GS-swizzled + CSM1 CLUT: RGB preserved verbatim, Alpha doubled
     let w8: u16 = 16;
     let h8: u16 = 16;
     let pix_len = (w8 as usize) * (h8 as usize);
@@ -100,11 +100,70 @@ fn test_decode_synthetic_ps2_tex_24bpp_and_8bpp_clut() {
     // Swizzled index 0 at (0,0) maps to byte 0 -> set index = 0
     ps2_8[0xc0] = 0;
     let clut_ofs = 0xc0 + pix_len + 0x30;
-    ps2_8[clut_ofs..clut_ofs + 4].copy_from_slice(&[50, 100, 128, 64]);
+    ps2_8[clut_ofs..clut_ofs + 4].copy_from_slice(&[50, 150, 200, 64]);
     let dec8 = decode_texture_bytes(&ps2_8, Path::new("synthetic_ps2_8.tex")).unwrap();
     assert_eq!(dec8.width, 16);
     assert_eq!(dec8.height, 16);
-    assert_eq!(&dec8.rgba[0..4], &[100, 200, 255, 128]);
+    assert_eq!(&dec8.rgba[0..4], &[50, 150, 200, 128]);
+}
+
+#[test]
+fn test_parse_texture_container_uses_per_sprite_dims_and_ds_advance() {
+    // Build a 0x19990901 container with 1 texture block (block dims 8x8, nspr = 2):
+    // - Sprite 0: per-sprite dims 4x4, BGRA8 (fmt=0x20, comp=0), exp=64 bytes, declared ds=96 bytes (32B padding/mip)
+    // - Sprite 1: per-sprite dims 2x2, BGRA8 (fmt=0x20, comp=0), ds=16 bytes
+    let mut buf = Vec::new();
+    // Container header (16B)
+    buf.extend_from_slice(&TEX_MAGIC_BYTES);
+    buf.extend_from_slice(&[0u8; 12]);
+    // Texture block header (32B): tex_id=77, block_w=8, block_h=8, nspr=2
+    let mut blk = [0u8; 32];
+    blk[0..4].copy_from_slice(&77u32.to_le_bytes());
+    blk[4..6].copy_from_slice(&8u16.to_le_bytes());
+    blk[6..8].copy_from_slice(&8u16.to_le_bytes());
+    blk[12..14].copy_from_slice(&2u16.to_le_bytes());
+    buf.extend_from_slice(&blk);
+
+    // Sprite 0 header (32B): sid=100, sw=4, sh=4, fmt=0x20, comp=0, ds=96, marker=0x9900
+    let mut spr0 = [0u8; 32];
+    spr0[0..4].copy_from_slice(&100u32.to_le_bytes());
+    spr0[8..10].copy_from_slice(&4u16.to_le_bytes());
+    spr0[10..12].copy_from_slice(&4u16.to_le_bytes());
+    spr0[12] = 0x20;
+    spr0[13] = 0;
+    spr0[16..20].copy_from_slice(&96u32.to_le_bytes());
+    spr0[30..32].copy_from_slice(&0x9900u16.to_le_bytes());
+    buf.extend_from_slice(&spr0);
+    // Sprite 0 payload: 64 bytes BGRA + 32 bytes trailing padding/mip
+    let mut pay0 = vec![0u8; 96];
+    pay0[0..4].copy_from_slice(&[10, 20, 30, 255]); // B=10, G=20, R=30, A=255
+    buf.extend_from_slice(&pay0);
+
+    // Sprite 1 header (32B): sid=101, sw=2, sh=2, fmt=0x20, comp=0, ds=16, marker=0x9900
+    let mut spr1 = [0u8; 32];
+    spr1[0..4].copy_from_slice(&101u32.to_le_bytes());
+    spr1[8..10].copy_from_slice(&2u16.to_le_bytes());
+    spr1[10..12].copy_from_slice(&2u16.to_le_bytes());
+    spr1[12] = 0x20;
+    spr1[13] = 0;
+    spr1[16..20].copy_from_slice(&16u32.to_le_bytes());
+    spr1[30..32].copy_from_slice(&0x9900u16.to_le_bytes());
+    buf.extend_from_slice(&spr1);
+    let mut pay1 = vec![0u8; 16];
+    pay1[0..4].copy_from_slice(&[40, 50, 60, 255]); // B=40, G=50, R=60, A=255
+    buf.extend_from_slice(&pay1);
+
+    let parsed = sh2_assets::parse_texture_container(&buf, 0).expect("container must parse");
+    assert_eq!(parsed.len(), 2, "must not desync past padded sprite 0");
+    assert_eq!(parsed[0].sprite_id, 100);
+    assert_eq!((parsed[0].width, parsed[0].height), (4, 4));
+    assert_eq!(parsed[0].data.len(), 96);
+    assert_eq!(&parsed[0].to_rgba().unwrap()[0..4], &[30, 20, 10, 255]);
+
+    assert_eq!(parsed[1].sprite_id, 101);
+    assert_eq!((parsed[1].width, parsed[1].height), (2, 2));
+    assert_eq!(parsed[1].data.len(), 16);
+    assert_eq!(&parsed[1].to_rgba().unwrap()[0..4], &[60, 50, 40, 255]);
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! # Ground Truth & Format Architecture
 //! Verified against:
 //! - **Primary Ground Truth**: PS2 Debug Prototype ELF (`SLUS_202.28`, DWARF compile unit `Chacter_Draw/clani.c`:
-//!   `ClaniDataHeaderCheck` at `0x1258c0`, `Calc1` at `0x125920`, `ClusterAnimeExec` at `0x125de0`).
+//!   `DataId` at `0x001258c0`, `Calc1` at `0x00125920`, `ClusterAnimeExec` at `0x00125df0`).
 //! - **Secondary Ground Truth**: Retail PC binary (`sh2pc.exe` NA v1.0: `0x506e50`, `0x506ea0`, `0x507120`)
 //!   and all 113 retail `.cls` files (346 sub-clip blocks) across `data/demo/` and `data/demo2/`.
 //!
@@ -150,7 +150,7 @@ pub struct ClsBlock {
 
 impl ClsBlock {
     /// Evaluates all cluster weights at continuous 30 FPS `motion_frame` into `out_weights`
-    /// with zero heap allocations (`ClusterAnimeExec` at `0x125de0` PS2 / `0x507120` PC).
+    /// with zero heap allocations (`ClusterAnimeExec` at `0x00125df0` PS2 / `0x507120` PC).
     pub fn evaluate_weights_into(
         &self,
         motion_frame: f32,

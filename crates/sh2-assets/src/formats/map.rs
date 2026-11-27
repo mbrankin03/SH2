@@ -279,28 +279,26 @@ impl MapBatch {
     }
 
     /// Converts parallel vertex attributes into interleaved [`MapVertex`] structs, modulating vertex
-    /// RGB by [`MapMaterial::diffuse_rgba_f32`] when `material` is untextured (`texture_id == 0`)
-    /// **and** its shader mode consumes constant `c26` ([`MapMaterial::uses_diffuse_color_constant`],
-    /// `mode & 0xff` in `{1, 2, 6}`).
+    /// RGB by [`MapMaterial::diffuse_rgba_f32`] whenever `material`'s shader mode consumes constant
+    /// `c26` ([`MapMaterial::uses_diffuse_color_constant`], `mode & 0xff` in `{1, 2, 6}`).
     ///
-    /// Verified 1:1 against `sh2pc.exe` `FUN_005b4940` (`0x005b4940`), `FUN_005b2190` (`0x005b2190`),
-    /// `FUN_005b2d40` (`0x005b2d40`), and `VS[1..8]` (`0x008ef700..0x008efb68`), where untextured
-    /// `mode 1/2/6` batches bind `NULL` (sampling white `1.0`) and modulate diffuse RGB by `c26.xyz`
-    /// (`material.color` RGB / 255.0) while preserving vertex alpha (`c26.w = 1.0`). Untextured
-    /// `mode 0/3/4/5/7` shaders ignore `c26` (many retail `.map` files store `color = 0xff000000`
-    /// on `mode 0` fullbright and `mode 4` vertex-colored batches).
-    ///
-    /// Note: Textured `mode 1/2/6` materials intentionally leave `c26` unapplied here because
-    /// `VS[5]` (`0x008ef230`) / `VS[7]` (`0x008efa10`) pair `mul r3.xyz, r3.xyzz, c26.xyzz` with
-    /// `add oD0.xyz, r3.xyzz, r3.xyzz` (2x PS2 GS overbright), whereas `sh2-renderer`'s WGSL
-    /// geometry shader does not yet implement the 2x scale; applying `0xffb2b2b2` alone would
-    /// darken 2,448+ textured retail materials by ~30%.
+    /// Verified 1:1 against `sh2pc.exe` `FUN_005b4940` (`0x005b4940`, `sh2pc_005b0000.c:2243`),
+    /// `FUN_005b2190` (`0x005b2190`), `FUN_005b2d40` (`0x005b2d40`), and `VS[1..8]`
+    /// (`0x008ef230..0x008efb68`):
+    /// - `FUN_005b4940` unconditionally uploads `material.color` (`D3DCOLOR` `0xAARRGGBB`) into `c26`
+    ///   for both textured and untextured materials (`c26.w = 1.0`, preserving vertex alpha).
+    /// - `VS[5]` (`0x008ef230`) / `VS[7]` (`0x008efa10`, `mode & 0xff` in `{1, 2, 6}`) compute
+    ///   `mul r3.xyz, r3.xyzz, c26.xyzz` + `add oD0.xyz, r3.xyzz, r3.xyzz` (`2.0 * r3`), matching
+    ///   `sh2-renderer`'s `geometry.wgsl` `VS[5]`/`VS[7]` path (`r3 * in.color.rgb` followed by
+    ///   `clamp(r3 * 2.0, 0.0, 1.0)`).
+    /// - Modes `0, 3, 4, 5, 7` (`VS[1..4, 6, 8]`) ignore `c26` (many retail `.map` files store
+    ///   `color = 0xff000000` on `mode 0` fullbright and `mode 4` vertex-colored batches).
     pub fn interleaved_vertices_for_material(
         &self,
         material: Option<&MapMaterial>,
     ) -> Vec<MapVertex> {
         let mat_rgb = material
-            .filter(|m| m.is_untextured() && m.uses_diffuse_color_constant())
+            .filter(|m| m.uses_diffuse_color_constant())
             .map(|m| {
                 let [r, g, b, _] = m.diffuse_rgba_f32();
                 [r, g, b]
@@ -612,9 +610,12 @@ fn parse_mesh_group(
                 let index_mult = data[p + 3] as usize;
                 p += 8;
 
-                let (n, prim) = match prim_type_idx {
-                    1 => (strip_len * index_mult.max(3), 3u8),
-                    _ => (strip_len * index_mult.max(1), 1u8),
+                // `sh2pc.exe` `FUN_005b4940` (`0x005b4940`, `sh2pc_005b0000.c:2256-2261`) computes
+                // `index_count = (uint)index_mult * (uint)strip_len` directly with no lower clamp.
+                let n = strip_len * index_mult;
+                let prim = match prim_type_idx {
+                    1 => 3u8,
+                    _ => 1u8,
                 };
 
                 if cursor + n <= indices.len() {
@@ -925,16 +926,15 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
                 };
 
                 let tex_data = data[p..p + length].to_vec();
-                map.textures.insert(
-                    tex_id,
-                    MapTexture {
-                        id: tex_id,
-                        width: w,
-                        height: h,
-                        kind,
-                        data: tex_data,
-                    },
-                );
+                // Preserve the first non-empty sprite (base mip / primary sprite) so multi-sprite
+                // blocks (`sprite_count > 1`) do not overwrite earlier sprites.
+                map.textures.entry(tex_id).or_insert_with(|| MapTexture {
+                    id: tex_id,
+                    width: w,
+                    height: h,
+                    kind,
+                    data: tex_data,
+                });
             }
             p += length;
         }
@@ -994,7 +994,7 @@ mod tests {
     }
 
     #[test]
-    fn test_interleaved_vertices_modulates_untextured_material_color_only() {
+    fn test_interleaved_vertices_modulates_mode_1_2_6_material_color() {
         let batch = MapBatch {
             group: BatchGroup::Opaque,
             material_index: 0,
@@ -1020,6 +1020,8 @@ mod tests {
         // Vertex alpha must be preserved (`c26.w = 1.0`).
         assert!((verts_untex[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
 
+        // `sh2pc.exe` `FUN_005b4940` (`0x005b4940:2243`) uploads `c26` unconditionally and
+        // `VS[5]`/`VS[7]` (`mode 1/2/6`) multiply lit diffuse by `c26` for textured batches too.
         let textured = MapMaterial {
             mode: 1,
             texture_id: 4654,
@@ -1028,10 +1030,113 @@ mod tests {
             specularity: 0.0,
         };
         let verts_tex = batch.interleaved_vertices_for_material(Some(&textured));
-        assert_eq!(verts_tex[0].color[0], 1.0);
-        assert_eq!(verts_tex[0].color[1], 1.0);
-        assert_eq!(verts_tex[0].color[2], 1.0);
+        assert!((verts_tex[0].color[0] - (0x80 as f32 / 255.0)).abs() < 1e-6);
+        assert!((verts_tex[0].color[1] - (0x40 as f32 / 255.0)).abs() < 1e-6);
+        assert!((verts_tex[0].color[2] - (0x20 as f32 / 255.0)).abs() < 1e-6);
         assert!((verts_tex[0].color[3] - (128.0 / 255.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parse_textures_subfile_preserves_first_non_empty_sprite() {
+        // Subfile body: 16B header + 32B block header (tex_id=500, sprite_count=2)
+        // + sprite 0 (2x2 BGRA8, len=16, blue=11) + sprite 1 (1x1 BGRA8, len=4, blue=99)
+        let mut buf = vec![0u8; 16];
+        let mut blk = [0u8; 32];
+        blk[0..4].copy_from_slice(&500u32.to_le_bytes());
+        blk[12..16].copy_from_slice(&2u32.to_le_bytes());
+        buf.extend_from_slice(&blk);
+
+        // Sprite 0: 2x2 BGRA8
+        let mut spr0 = [0u8; 32];
+        spr0[8..10].copy_from_slice(&2u16.to_le_bytes());
+        spr0[10..12].copy_from_slice(&2u16.to_le_bytes());
+        spr0[12] = 0x20;
+        spr0[13] = 0;
+        spr0[16..20].copy_from_slice(&16u32.to_le_bytes());
+        buf.extend_from_slice(&spr0);
+        buf.extend_from_slice(&[11u8; 16]);
+
+        // Sprite 1: 1x1 BGRA8 (must not overwrite sprite 0)
+        let mut spr1 = [0u8; 32];
+        spr1[8..10].copy_from_slice(&1u16.to_le_bytes());
+        spr1[10..12].copy_from_slice(&1u16.to_le_bytes());
+        spr1[12] = 0x20;
+        spr1[13] = 0;
+        spr1[16..20].copy_from_slice(&4u32.to_le_bytes());
+        buf.extend_from_slice(&spr1);
+        buf.extend_from_slice(&[99u8; 4]);
+
+        let mut map = MapFile::default();
+        parse_textures_subfile(&buf, 0, &mut map).expect("subfile must parse");
+        let tex = map.textures.get(&500).expect("tex_id 500 must exist");
+        assert_eq!((tex.width, tex.height), (2, 2));
+        assert_eq!(tex.data, vec![11u8; 16]);
+    }
+
+    #[test]
+    fn test_parse_mesh_group_index_mult_not_clamped() {
+        // Minimal mesh group with 1 mesh, 1 vertex section (3 verts, stride 0x14), 3 indices,
+        // and 1 part group with 2 parts:
+        // - part 0: prim_type_idx=1 (list), strip_len=1, index_mult=0 -> advances cursor by 0 (NOT 3)
+        // - part 1: prim_type_idx=1 (list), strip_len=1, index_mult=3 -> consumes indices[0..3]
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&1u32.to_le_bytes()); // mesh count = 1
+        buf.extend_from_slice(&8u32.to_le_bytes()); // mesh[0] offset = 8
+
+        let mesh_start = buf.len();
+        buf.resize(mesh_start + 52, 0);
+
+        // Part group header (12B): material=0, section=0, part_count=2
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes());
+        // Part 0 (8B): strip_len=1, prim_type_idx=1, index_mult=0
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.push(1);
+        buf.push(0);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        // Part 1 (8B): strip_len=1, prim_type_idx=1, index_mult=3
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.push(1);
+        buf.push(3);
+        buf.extend_from_slice(&0u32.to_le_bytes());
+
+        // Vertex section at `vtx_ofs`
+        let vtx_ofs = (buf.len() - mesh_start) as u32;
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes()); // section count = 1
+        buf.extend_from_slice(&0u32.to_le_bytes()); // sec[0] ofs = 0
+        buf.extend_from_slice(&0x14u32.to_le_bytes()); // stride = 0x14
+        buf.extend_from_slice(&(3 * 0x14u32).to_le_bytes()); // length = 3 * 0x14
+        for i in 0..3 {
+            let x = i as f32;
+            buf.extend_from_slice(&x.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+            buf.extend_from_slice(&0.0f32.to_le_bytes());
+        }
+
+        // Index buffer at `idx_ofs`: [0, 1, 2]
+        let idx_ofs = (buf.len() - mesh_start) as u32;
+        for idx in [0u16, 1, 2] {
+            buf.extend_from_slice(&idx.to_le_bytes());
+        }
+        let idx_len = 6u32;
+
+        buf[mesh_start + 32..mesh_start + 36].copy_from_slice(&vtx_ofs.to_le_bytes());
+        buf[mesh_start + 36..mesh_start + 40].copy_from_slice(&idx_ofs.to_le_bytes());
+        buf[mesh_start + 40..mesh_start + 44].copy_from_slice(&idx_len.to_le_bytes());
+        buf[mesh_start + 48..mesh_start + 52].copy_from_slice(&1u32.to_le_bytes()); // pg_count = 1
+
+        let mut map = MapFile::default();
+        parse_mesh_group(&buf, 0, BatchGroup::Opaque, &mut map).expect("mesh group must parse");
+        assert_eq!(
+            map.batches.len(),
+            1,
+            "part 0 with index_mult=0 must not advance cursor past the 3 indices needed by part 1"
+        );
+        assert_eq!(map.batches[0].indices, vec![0, 1, 2]);
     }
 
     #[test]

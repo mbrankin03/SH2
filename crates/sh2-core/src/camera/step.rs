@@ -217,6 +217,7 @@ impl Ps2CameraController {
                 chara_ang_spd_y,
                 cam_prm.max_spd_xz,
                 is_outdoor || self.stage_id == 5,
+                self.on_boat,
                 dt,
             );
             let mut v =

@@ -282,18 +282,41 @@ pub fn vc_adj_tgt_mv_vec_y_by_cur_near_road(
     tgt_mv_vec.y = desired_y - cam_tgt_pos.y;
 }
 
-/// Computes maximum per-tick horizontal displacement for `cam_tgt_pos` (`SLUS_202.28`
-/// `vcRetMaxTgtMvXzLen` `0x0019a2d0`).
+/// Computes maximum per-tick horizontal displacement for `cam_tgt_pos` (retail `sh2pc.exe`
+/// `FUN_0051af70` `0x0051af70`, `sh2pc_00510000.c:8097-8129`; prototype `SLUS_202.28`
+/// `vcRetMaxTgtMvXzLen` `0x0019a2d0`, `vc_main.c:2456-2479`).
+///
+/// Prototype-vs-retail drift:
+/// - Indoor (`!is_outdoor && stage_id != 5`): `1200.0` mm/s in both (`sh2pc.exe` `.rdata`
+///   `0x006c86f0` `0x44960000`).
+/// - Outdoor normal (`!on_boat`): retail `sh2pc.exe` uses `1980.0` mm/s (`0x006c86ec`
+///   `0x44f78000`; `SLUS_202.28` prototype used `3300.0`).
+/// - Outdoor on Toluca Lake boat (`on_boat == true`, `sh2jms->flags & 0x20000`): retail
+///   `sh2pc.exe` uses `2244.0002` mm/s (`0x006c86e8` `0x450c4001`; `SLUS_202.28` prototype
+///   used `1650.0`).
+/// - Retail `sh2pc.exe` (`0x0051afda..0x0051b000`) returns `floor_spd * dt` directly when
+///   `dyn_spd < floor_spd`, otherwise clamps `dyn_spd` to `max_spd_xz` before multiplying by `dt`.
 pub fn vc_ret_max_tgt_mv_xz_len(
     chara_mv_spd: f32,
     chara_ang_spd_y: f32,
     max_spd_xz: f32,
     is_outdoor: bool,
+    on_boat: bool,
     dt: f32,
 ) -> f32 {
     let dyn_spd = chara_mv_spd + 500.0 + (chara_ang_spd_y * 8.0).abs();
-    let floor_spd = if is_outdoor { 3300.0 } else { 1200.0 };
-    dyn_spd.max(floor_spd).min(max_spd_xz) * dt
+    let floor_spd = if !is_outdoor {
+        1200.0
+    } else if !on_boat {
+        1980.0
+    } else {
+        f32::from_bits(0x450c_4001) // 2244.0002 mm/s (`sh2pc.exe` `0x006c86e8`)
+    };
+    if dyn_spd < floor_spd {
+        floor_spd * dt
+    } else {
+        dyn_spd.min(max_spd_xz) * dt
+    }
 }
 
 /// Computes the capped horizontal + vertical move delta from `cam_tgt_pos` to `ideal_pos`

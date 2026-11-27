@@ -790,3 +790,40 @@ fn test_sh2_169_classic_yaw_classic_only_and_scripted_fov_256() {
     let shot = ScriptedCameraShot::from_event_cam_set_data(&ev_cam);
     assert!((shot.projection_scr_z.unwrap() - 256.0).abs() < 1e-3);
 }
+
+#[test]
+fn vc_ret_max_tgt_mv_xz_len_retail_floors_and_boat_override() {
+    use super::chase::vc_ret_max_tgt_mv_xz_len;
+
+    let dt = 1.0 / 60.0;
+
+    // Indoor floor: 1200.0 mm/s (`sh2pc.exe` `0x006c86f0` / `SLUS_202.28` `0x0019a2d0`),
+    // checked before `on_boat` (`!BgIsOut() && stage != 5`).
+    let indoor = vc_ret_max_tgt_mv_xz_len(0.0, 0.0, 2400.0, false, false, dt);
+    assert!((indoor - 1200.0 * dt).abs() < 1e-4);
+    let indoor_boat = vc_ret_max_tgt_mv_xz_len(0.0, 0.0, 4500.0, false, true, dt);
+    assert!((indoor_boat - 1200.0 * dt).abs() < 1e-4);
+
+    // Outdoor normal floor: retail `sh2pc.exe` `1980.0` mm/s (`0x006c86ec`, `0x44f78000`).
+    let outdoor = vc_ret_max_tgt_mv_xz_len(0.0, 0.0, 3375.0, true, false, dt);
+    assert!((outdoor - 1980.0 * dt).abs() < 1e-4);
+
+    // Outdoor on-boat floor: retail `sh2pc.exe` `2244.0002` mm/s (`0x006c86e8`, `0x450c4001`).
+    let boat_floor = f32::from_bits(0x450c_4001);
+    let on_boat = vc_ret_max_tgt_mv_xz_len(0.0, 0.0, 4500.0, true, true, dt);
+    assert!((on_boat - boat_floor * dt).abs() < 1e-4);
+    assert!(
+        on_boat > outdoor,
+        "retail sh2pc.exe boat floor (2244.0002) exceeds outdoor floor (1980.0)"
+    );
+
+    // Dynamic speed above floor clamps at `max_spd_xz` (`sh2pc.exe` `0x0051b003..0x0051b024`).
+    let dyn_unclamped = vc_ret_max_tgt_mv_xz_len(2000.0, 10.0, 4500.0, true, true, dt);
+    assert!((dyn_unclamped - 2580.0 * dt).abs() < 1e-4);
+    let dyn_clamped = vc_ret_max_tgt_mv_xz_len(4000.0, 100.0, 4500.0, true, true, dt);
+    assert!((dyn_clamped - 4500.0 * dt).abs() < 1e-4);
+
+    // Early return when `dyn_spd < floor_spd` (`sh2pc.exe` `0x0051afda..0x0051b000`).
+    let early_ret = vc_ret_max_tgt_mv_xz_len(0.0, 0.0, 1000.0, true, false, dt);
+    assert!((early_ret - 1980.0 * dt).abs() < 1e-4);
+}

@@ -450,3 +450,160 @@ fn test_retail_campaign_orchestrator_outdoor_tile_crossing_merges_cagb_and_tiles
     );
     assert!(sim.camera.active_road_index.is_some());
 }
+
+fn make_tile_slot(id: &str) -> LoadedCamSlot {
+    LoadedCamSlot {
+        key: CamSlotKey::Tile(id.to_string()),
+        source: CamSourceKind::VanillaRetail,
+        prefer_sh2ee: false,
+        cam_file: CamFile {
+            records: vec![make_road(
+                -1000.0,
+                1000.0,
+                -1000.0,
+                1000.0,
+                RoadType::Road,
+                0,
+                448.0,
+            )],
+        },
+    }
+}
+
+fn empty_test_resolver() -> AssetPathResolver {
+    AssetPathResolver {
+        game_root: std::path::PathBuf::from("/nonexistent/sh2"),
+        data_dir: std::path::PathBuf::from("/nonexistent/sh2/data"),
+        sh2e_dir: None,
+    }
+}
+
+#[test]
+fn test_outdoor_cam_active_room_id_normalization_and_empty_merged_is_none() {
+    let empty_resolver = empty_test_resolver();
+
+    let plan = crate::world::TileStreamingPlan {
+        area: Some(crate::world::OutdoorArea::Ca),
+        priority_gb_cam: Some("bg/ca/caGB.cam"),
+        desired_blocks: vec![11],
+        ..Default::default()
+    };
+
+    // 1. Pre-populated bank with `"ca11"` + `"cagb"`: `sync_outdoor_cam_plan_with_resolver`
+    //    must normalize `"bg/ca/CA11.cam"` and `"CA11"` to canonical `"ca11"`.
+    let mut ctrl = Ps2CameraController::new();
+    ctrl.road_bank.set_global_slot(Some(LoadedCamSlot {
+        key: CamSlotKey::Global("cagb".to_string()),
+        source: CamSourceKind::VanillaRetail,
+        prefer_sh2ee: false,
+        cam_file: CamFile {
+            records: vec![make_road(
+                -5000.0,
+                5000.0,
+                -5000.0,
+                5000.0,
+                RoadType::Road,
+                0,
+                448.0,
+            )],
+        },
+    }));
+    ctrl.road_bank.upsert_tile_slot(make_tile_slot("ca11"));
+
+    assert!(ctrl.sync_outdoor_cam_plan_with_resolver(
+        &empty_resolver,
+        &plan,
+        "bg/ca/CA11.cam",
+        false
+    ));
+    assert_eq!(ctrl.active_room_id.as_deref(), Some("ca11"));
+    assert_eq!(ctrl.active_cam_source, Some(CamSourceKind::VanillaRetail));
+
+    assert!(ctrl.sync_outdoor_cam_plan_with_resolver(&empty_resolver, &plan, "CA11", false));
+    assert_eq!(ctrl.active_room_id.as_deref(), Some("ca11"));
+
+    assert!(ctrl.switch_outdoor_tile_cam_with_resolver(&empty_resolver, "bg/ca/CA11.cam", false));
+    assert_eq!(ctrl.active_room_id.as_deref(), Some("ca11"));
+
+    // 2. When no `.cam` records are resident (`merged.is_none()`), all three loaders must clear
+    //    `active_room_id` and `active_cam_source` to `None` and return `false`.
+    let missing_plan = crate::world::TileStreamingPlan {
+        area: Some(crate::world::OutdoorArea::Ca),
+        priority_gb_cam: None,
+        desired_blocks: vec![99],
+        ..Default::default()
+    };
+    assert!(!ctrl.sync_outdoor_cam_plan_with_resolver(
+        &empty_resolver,
+        &missing_plan,
+        "bg/ca/CA99.cam",
+        false
+    ));
+    assert!(ctrl.cam_file.is_none());
+    assert_eq!(ctrl.active_room_id, None);
+    assert_eq!(ctrl.active_cam_source, None);
+
+    ctrl.active_room_id = Some("stale".to_string());
+    ctrl.active_cam_source = Some(CamSourceKind::VanillaRetail);
+    assert!(!ctrl.switch_outdoor_tile_cam_with_resolver(&empty_resolver, "bg/ca/CA99.cam", false));
+    assert!(ctrl.cam_file.is_none());
+    assert_eq!(ctrl.active_room_id, None);
+    assert_eq!(ctrl.active_cam_source, None);
+
+    ctrl.active_room_id = Some("stale".to_string());
+    ctrl.active_cam_source = Some(CamSourceKind::VanillaRetail);
+    assert!(!ctrl.load_room_cam_with_resolver(&empty_resolver, "bg/ca/CA99.cam", false));
+    assert!(ctrl.cam_file.is_none());
+    assert_eq!(ctrl.active_room_id, None);
+    assert_eq!(ctrl.active_cam_source, None);
+}
+
+#[test]
+fn test_outdoor_cam_bank_lru_eviction_order() {
+    let mut bank = OutdoorCamBank::default();
+    for id in ["ca11", "ca12", "ca13", "ca14"] {
+        bank.upsert_tile_slot(make_tile_slot(id));
+    }
+
+    // Re-access the oldest tile (`ca11`): LRU order becomes [ca12, ca13, ca14, ca11].
+    assert!(bank.touch_tile("ca11"));
+    assert!(!bank.touch_tile("ca99"));
+
+    // Insert `ca15` and cap to 4: `ca12` (LRU) must be evicted, while `ca11` stays resident.
+    bank.upsert_tile_slot(make_tile_slot("ca15"));
+    bank.retain_area_and_cap("ca", 4);
+    let ids: Vec<&str> = bank.tile_slots().iter().map(|s| s.key.id()).collect();
+    assert_eq!(ids, vec!["ca13", "ca14", "ca11", "ca15"]);
+
+    // Making `ca13` active via `build_merged_cam` promotes it to MRU: [ca14, ca11, ca15, ca13].
+    assert!(bank.build_merged_cam(Some("ca13")).is_some());
+    bank.upsert_tile_slot(make_tile_slot("ca16"));
+    bank.retain_area_and_cap("ca", 4);
+    let ids: Vec<&str> = bank.tile_slots().iter().map(|s| s.key.id()).collect();
+    assert_eq!(ids, vec!["ca11", "ca15", "ca13", "ca16"]);
+
+    // Upserting an already-resident tile (`ca11`) promotes it to MRU: [ca15, ca13, ca16, ca11].
+    bank.upsert_tile_slot(make_tile_slot("ca11"));
+    bank.upsert_tile_slot(make_tile_slot("ca17"));
+    bank.retain_area_and_cap("ca", 4);
+    let ids: Vec<&str> = bank.tile_slots().iter().map(|s| s.key.id()).collect();
+    assert_eq!(ids, vec!["ca13", "ca16", "ca11", "ca17"]);
+
+    // Verify `switch_outdoor_tile_cam_with_resolver` promotes a revisited tile so it survives
+    // subsequent tile switches.
+    let empty_resolver = empty_test_resolver();
+    let mut ctrl = Ps2CameraController::new();
+    ctrl.road_bank = bank;
+    // Current LRU order: [ca13, ca16, ca11, ca17]. Revisit `ca13` -> [ca16, ca11, ca17, ca13].
+    assert!(ctrl.switch_outdoor_tile_cam_with_resolver(&empty_resolver, "CA13", false));
+    assert_eq!(ctrl.active_room_id.as_deref(), Some("ca13"));
+    ctrl.road_bank.upsert_tile_slot(make_tile_slot("ca18"));
+    ctrl.road_bank.retain_area_and_cap("ca", 4);
+    let ids: Vec<&str> = ctrl
+        .road_bank
+        .tile_slots()
+        .iter()
+        .map(|s| s.key.id())
+        .collect();
+    assert_eq!(ids, vec!["ca11", "ca17", "ca13", "ca18"]);
+}

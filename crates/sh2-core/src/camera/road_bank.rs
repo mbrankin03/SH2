@@ -103,7 +103,8 @@ pub struct LoadedCamSlot {
 pub struct OutdoorCamBank {
     /// Resident area-wide `<area>GB.cam` slot (PS2 `lbCAM_Ctrl` slot 0 / PC `DAT_00ac6f18`).
     global_slot: Option<LoadedCamSlot>,
-    /// Resident per-tile `.cam` slots (PS2 `lbCAM_Ctrl` slots 1..N / PC 8-slot block table).
+    /// Resident per-tile `.cam` slots (PS2 `lbCAM_Ctrl` slots 1..N / PC 8-slot block table),
+    /// ordered from least-recently-used (`index 0`) to most-recently-used (`last`).
     tile_slots: Vec<LoadedCamSlot>,
     /// Parallel mapping from each flattened `CamFile::records` index to `(CamSlotKey, local_record_idx)`
     /// so `active_road_index` is preserved across tile swaps (matching PS2 `cur_near_road.road_p`
@@ -168,16 +169,35 @@ impl OutdoorCamBank {
         self.global_slot = slot;
     }
 
-    /// Inserts or replaces a per-tile `.cam` slot (`loadBgCAM_Replace` `0x00271e10`).
+    /// Inserts or replaces a per-tile `.cam` slot (`loadBgCAM_Replace` `0x00271e10`), marking it as
+    /// the most-recently-used tile slot.
     pub fn upsert_tile_slot(&mut self, slot: LoadedCamSlot) {
-        if let Some(existing) = self
+        if let Some(pos) = self
             .tile_slots
-            .iter_mut()
-            .find(|s| s.key.id().eq_ignore_ascii_case(slot.key.id()))
+            .iter()
+            .position(|s| s.key.id().eq_ignore_ascii_case(slot.key.id()))
         {
-            *existing = slot;
+            self.tile_slots.remove(pos);
+        }
+        self.tile_slots.push(slot);
+    }
+
+    /// Marks an already-resident tile slot as most-recently-used for LRU eviction.
+    ///
+    /// Returns `true` if `tile_id` was resident and promoted to the MRU position.
+    pub fn touch_tile(&mut self, tile_id: &str) -> bool {
+        if let Some(pos) = self
+            .tile_slots
+            .iter()
+            .position(|s| s.key.id().eq_ignore_ascii_case(tile_id))
+        {
+            if pos + 1 < self.tile_slots.len() {
+                let slot = self.tile_slots.remove(pos);
+                self.tile_slots.push(slot);
+            }
+            true
         } else {
-            self.tile_slots.push(slot);
+            false
         }
     }
 
@@ -188,7 +208,9 @@ impl OutdoorCamBank {
     }
 
     /// Retains only tile slots belonging to the 2-letter `area_prefix` (e.g. `"ca"`), evicting the
-    /// oldest non-matching entries if the count exceeds `max_slots`.
+    /// least-recently-used entries (from the front of `tile_slots`) if the count exceeds
+    /// `max_slots`. Because active/recently-accessed tiles are promoted to the back, the active
+    /// tile is never evicted for any `max_slots >= 1`.
     pub fn retain_area_and_cap(&mut self, area_prefix: &str, max_slots: usize) {
         self.tile_slots.retain(|s| {
             s.key
@@ -229,8 +251,10 @@ impl OutdoorCamBank {
         self.flat_origins.clear();
         let mut records = Vec::new();
 
-        // 1. Active tile first (highest tie-break precedence and index-0 compatibility).
+        // 1. Active tile first (highest tie-break precedence and index-0 compatibility),
+        //    also promoting it to MRU so subsequent LRU eviction never drops the active tile.
         if let Some(primary) = primary_tile_id {
+            self.touch_tile(primary);
             if let Some(slot) = self
                 .tile_slots
                 .iter()

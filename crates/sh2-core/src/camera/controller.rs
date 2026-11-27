@@ -315,6 +315,39 @@ impl Ps2CameraController {
         }
     }
 
+    /// Rebuilds the merged outdoor `.cam` from `road_bank` and updates `cam_file`,
+    /// `active_room_id`, and `active_cam_source` consistently across all outdoor `.cam` loaders.
+    ///
+    /// Clears `active_room_id` and `active_cam_source` to `None` whenever no `.cam` records are
+    /// resident (`merged.is_none()`).
+    fn apply_merged_road_bank(&mut self, canonical_active: Option<&str>) -> bool {
+        let merged = self.road_bank.build_merged_cam(canonical_active);
+        let has_cam = merged.is_some();
+        self.cam_file = merged;
+        if has_cam {
+            self.active_room_id = canonical_active
+                .map(std::string::ToString::to_string)
+                .or_else(|| {
+                    self.road_bank
+                        .global_cam_id()
+                        .map(std::string::ToString::to_string)
+                });
+            self.active_cam_source = canonical_active
+                .and_then(|active| {
+                    self.road_bank
+                        .tile_slots()
+                        .iter()
+                        .find(|s| s.key.id().eq_ignore_ascii_case(active))
+                        .map(|s| s.source)
+                })
+                .or_else(|| self.road_bank.global_slot().map(|s| s.source));
+        } else {
+            self.active_room_id = None;
+            self.active_cam_source = None;
+        }
+        has_cam
+    }
+
     /// Automatically resolves and ingests the `.cam` trigger volume file for `room_or_rel_path`
     /// (`"er01"`, `"ob01"`, `"rr21"`, `"ap01"`, `"ma61"`, or `"bg/er/er01.cam"`), prioritizing
     /// SH2:EE widescreen/high-framerate overrides (`sh2e/bg/<area>/<room>.cam` and
@@ -338,10 +371,8 @@ impl Ps2CameraController {
         if let Some(gb_rel) = sh2_assets::formats::cam::global_area_cam_rel_path(room_or_rel_path) {
             self.ensure_global_cam_resident(resolver, &gb_rel, prefer_sh2ee);
             let mut tile_id: Option<String> = None;
-            let mut source: Option<CamSourceKind> = None;
             if let Ok(Some(asset)) = resolver.load_single_cam_file(room_or_rel_path, prefer_sh2ee) {
                 tile_id = Some(asset.room_id.clone());
-                source = Some(asset.source);
                 self.road_bank.upsert_tile_slot(road_bank::LoadedCamSlot {
                     key: road_bank::CamSlotKey::Tile(asset.room_id),
                     source: asset.source,
@@ -349,17 +380,7 @@ impl Ps2CameraController {
                     cam_file: asset.cam_file,
                 });
             }
-            let merged = self.road_bank.build_merged_cam(tile_id.as_deref());
-            let has_cam = merged.is_some();
-            self.cam_file = merged;
-            self.active_room_id = tile_id.or_else(|| {
-                self.road_bank
-                    .global_cam_id()
-                    .map(std::string::ToString::to_string)
-            });
-            self.active_cam_source =
-                source.or_else(|| self.road_bank.global_slot().map(|s| s.source));
-            return has_cam;
+            return self.apply_merged_road_bank(tile_id.as_deref());
         }
 
         match resolver.load_single_cam_file(room_or_rel_path, prefer_sh2ee) {
@@ -433,18 +454,10 @@ impl Ps2CameraController {
         }
         self.road_bank.retain_tiles(&keep_ids);
 
-        let canonical_active = active_room_id.to_ascii_lowercase();
-        let merged = self.road_bank.build_merged_cam(Some(&canonical_active));
-        let has_cam = merged.is_some();
-        self.cam_file = merged;
-        self.active_room_id = Some(canonical_active.clone());
-        self.active_cam_source = self
-            .road_bank
-            .tile_slots()
-            .iter()
-            .find(|s| s.key.id().eq_ignore_ascii_case(&canonical_active))
-            .map(|s| s.source)
-            .or_else(|| self.road_bank.global_slot().map(|s| s.source));
+        let canonical_active =
+            sh2_assets::formats::cam::normalize_room_cam_rel_path(active_room_id)
+                .map(|(room_id, _)| room_id);
+        let has_cam = self.apply_merged_road_bank(canonical_active.as_deref());
         // Preserve active road identity across tile swaps (`vcSetCurNearRoadInVC_WORK` `0x00197af0`).
         self.active_road_index = self.road_bank.remap_active_road_index(prev_origin.as_ref());
         has_cam
@@ -486,32 +499,23 @@ impl Ps2CameraController {
             self.ensure_global_cam_resident(resolver, &gb_rel, prefer_sh2ee);
         }
 
-        if !self.road_bank.has_tile(&canonical_tile, prefer_sh2ee) {
-            if let Ok(Some(asset)) = resolver.load_single_cam_file(&canonical_tile, prefer_sh2ee) {
-                self.road_bank.upsert_tile_slot(road_bank::LoadedCamSlot {
-                    key: road_bank::CamSlotKey::Tile(asset.room_id),
-                    source: asset.source,
-                    prefer_sh2ee,
-                    cam_file: asset.cam_file,
-                });
-            }
+        if self.road_bank.has_tile(&canonical_tile, prefer_sh2ee) {
+            self.road_bank.touch_tile(&canonical_tile);
+        } else if let Ok(Some(asset)) = resolver.load_single_cam_file(&canonical_tile, prefer_sh2ee)
+        {
+            self.road_bank.upsert_tile_slot(road_bank::LoadedCamSlot {
+                key: road_bank::CamSlotKey::Tile(asset.room_id),
+                source: asset.source,
+                prefer_sh2ee,
+                cam_file: asset.cam_file,
+            });
         }
         if let Some(area_prefix) = canonical_tile.get(0..2) {
             self.road_bank
                 .retain_area_and_cap(area_prefix, road_bank::PS2_LOADBG_2X2_OUTDOOR_CAM_SLOTS);
         }
 
-        let merged = self.road_bank.build_merged_cam(Some(&canonical_tile));
-        let has_cam = merged.is_some();
-        self.cam_file = merged;
-        self.active_room_id = Some(canonical_tile.clone());
-        self.active_cam_source = self
-            .road_bank
-            .tile_slots()
-            .iter()
-            .find(|s| s.key.id().eq_ignore_ascii_case(&canonical_tile))
-            .map(|s| s.source)
-            .or_else(|| self.road_bank.global_slot().map(|s| s.source));
+        let has_cam = self.apply_merged_road_bank(Some(&canonical_tile));
         self.active_road_index = self.road_bank.remap_active_road_index(prev_origin.as_ref());
         has_cam
     }

@@ -12,7 +12,7 @@
 use std::collections::HashSet;
 
 use crate::config::OutdoorStreamingMode;
-use crate::world::outdoor_grid::{OutdoorArea, OutdoorTileId};
+use crate::world::outdoor_grid::{OutdoorArea, OutdoorTileId, OUTDOOR_TILE_HALF_MM};
 
 /// Exact 7 priority distance bands in PS2 mm from `loadBgAll_SetLoadRequestOutdoor2x2`
 /// (`SLUS_202.28` `0x00270e54..0x00270f54`: `0x4c5693a4`..`0x4d3aeb90`).
@@ -188,21 +188,24 @@ impl OutdoorTileStreamer {
         let (quadrant, cutoff_mask) = match self.mode {
             OutdoorStreamingMode::ClassicPs2LoadBg2x2 => {
                 let (cx, cz) = OutdoorArea::grid_cell_center_mm(player_gx, player_gz);
-                let dir_x: i8 = if player_x_mm < cx { -1 } else { 1 };
-                let dir_z: i8 = if player_z_mm < cz { -1 } else { 1 };
-                let offsets = [
-                    (player_gx, player_gz),
-                    (player_gx + i16::from(dir_x), player_gz),
-                    (player_gx, player_gz + i16::from(dir_z)),
-                    (player_gx + i16::from(dir_x), player_gz + i16::from(dir_z)),
+                let dx = player_x_mm - cx;
+                let dz = player_z_mm - cz;
+                // `SLUS_202.28` `loadBgAll_PrepareAround` (`0x002715d0`, `0x002716dc..0x002717a0`):
+                // `border_dx = 10000.0 - |player_x - cx|`, `border_dz = 10000.0 - |player_z - cz|`.
+                let dir_x: i8 = if dx >= 0.0 { 1 } else { -1 };
+                let dir_z: i8 = if dz >= 0.0 { 1 } else { -1 };
+                let border_dx = (OUTDOOR_TILE_HALF_MM - dx.abs()).max(0.0);
+                let border_dz = (OUTDOOR_TILE_HALF_MM - dz.abs()).max(0.0);
+                let border_dist_sq = [
+                    0.0,
+                    border_dx * border_dx,
+                    border_dz * border_dz,
+                    border_dx * border_dx + border_dz * border_dz,
                 ];
                 let cutoff_sq = LOADBG_PREFETCH_CUTOFF_MM * LOADBG_PREFETCH_CUTOFF_MM;
                 let mut mask = 1u8; // current cell always included
-                for (i, &(gx, gz)) in offsets.iter().enumerate().skip(1) {
-                    let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
-                    let dx = player_x_mm - tcx;
-                    let dz = player_z_mm - tcz;
-                    if dx * dx + dz * dz < cutoff_sq {
+                for (i, &d_sq) in border_dist_sq.iter().enumerate().skip(1) {
+                    if d_sq < cutoff_sq {
                         mask |= 1u8 << i;
                     }
                 }
@@ -318,6 +321,10 @@ impl OutdoorTileStreamer {
 
     /// Exact PS2 `loadBgAll_PrepareAround` (`0x002715d0`) + `loadBgAll_SetLoadRequestOutdoor2x2`
     /// (`0x00270dd0`) `2x2` quadrant selection around `(player_x_mm, player_z_mm)`.
+    ///
+    /// Computes exact PS2 tile-border distances (`border_dx = 10000.0 - |player_x - cx|`,
+    /// `border_dz = 10000.0 - |player_z - cz|`) so all 4 quadrant tiles stay within the
+    /// `17,500 mm` (`3.0625e8` mm²) prefetch cutoff (`0x00270f70`) even at the center of a tile.
     fn collect_ps2_2x2_tiles(
         area: OutdoorArea,
         player_x_mm: f32,
@@ -329,19 +336,23 @@ impl OutdoorTileStreamer {
     ) {
         let dir_x = i16::from(quadrant_dir.0);
         let dir_z = i16::from(quadrant_dir.1);
+        let (cx, cz) = OutdoorArea::grid_cell_center_mm(player_gx, player_gz);
+        let border_dx = (OUTDOOR_TILE_HALF_MM - (player_x_mm - cx).abs()).max(0.0);
+        let border_dz = (OUTDOOR_TILE_HALF_MM - (player_z_mm - cz).abs()).max(0.0);
 
         let quadrant = [
-            (player_gx, player_gz),
-            (player_gx + dir_x, player_gz),
-            (player_gx, player_gz + dir_z),
-            (player_gx + dir_x, player_gz + dir_z),
+            ((player_gx, player_gz), 0.0f32),
+            ((player_gx + dir_x, player_gz), border_dx),
+            ((player_gx, player_gz + dir_z), border_dz),
+            (
+                (player_gx + dir_x, player_gz + dir_z),
+                border_dx.hypot(border_dz),
+            ),
         ];
 
-        for (gx, gz) in quadrant {
+        for ((gx, gz), dist) in quadrant {
             if let Some(block_no) = area.block_no_at(gx, gz) {
-                let (tcx, tcz) = OutdoorArea::grid_cell_center_mm(gx, gz);
-                let dist = (player_x_mm - tcx).hypot(player_z_mm - tcz);
-                // Keep current tile unconditionally; neighbors within 17,500 mm prefetch cutoff.
+                // Keep current tile unconditionally; neighbors within 17,500 mm border cutoff.
                 if (gx == player_gx && gz == player_gz) || dist < LOADBG_PREFETCH_CUTOFF_MM {
                     let tile = OutdoorTileId {
                         area,
@@ -434,5 +445,34 @@ mod tests {
         // Nearest tile is still queued first so background streaming prioritizes the player's immediate area.
         assert_eq!(plan_whole.load_queue[0].tile.block_no, 28);
         assert!(plan_whole.evict_blocks.is_empty());
+    }
+
+    #[test]
+    fn test_ps2_2x2_border_distance_includes_neighbors_from_tile_center() {
+        // Standing at the exact center of `ca11` (cell (0, -1), center (10000, -10000))
+        // slightly toward (-X, -Z) selects quadrant: ca11 (0,-1), ca14 (-1,-1), ca12 (0,-2).
+        // `loadBgAll_PrepareAround` (`0x002715d0`) measures border distance (~10,000 mm < 17,500 mm),
+        // NOT center-to-center distance (20,000 mm), so adjacent tiles MUST be included.
+        let mut streamer = OutdoorTileStreamer::new(OutdoorStreamingMode::ClassicPs2LoadBg2x2);
+        let plan = streamer.plan(4, 9_900.0, -10_100.0);
+        assert_eq!(plan.area, Some(OutdoorArea::Ca));
+        assert_eq!(plan.priority_gb_cam, Some("bg/ca/caGB.cam"));
+        assert!(
+            plan.desired_blocks.contains(&11),
+            "current tile ca11 must be desired"
+        );
+        assert!(
+            plan.desired_blocks.contains(&12),
+            "south neighbor ca12 must be desired from ca11 center: {:?}",
+            plan.desired_blocks
+        );
+        assert!(
+            plan.desired_blocks.contains(&14),
+            "west neighbor ca14 must be desired from ca11 center: {:?}",
+            plan.desired_blocks
+        );
+        assert_eq!(plan.load_queue[0].tile.block_no, 11);
+        assert!(plan.load_queue[0].distance_mm < 1.0);
+        assert!(plan.load_queue[1].distance_mm < 10_000.0);
     }
 }

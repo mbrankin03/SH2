@@ -340,6 +340,42 @@ fn fs_darken() -> @location(0) vec4<f32> {
         volume_vertex_count: u32,
         frustum: Option<&crate::Frustum>,
     ) {
+        let single;
+        let maps: &[crate::MapDrawItem<'_>] = if let Some(m) = gpu_map {
+            single = [crate::MapDrawItem::new(m, None)];
+            &single
+        } else {
+            &[]
+        };
+        self.encode_stencil_volume_pass_multi(
+            encoder,
+            hdr_color_view,
+            stencil_depth_view,
+            camera_bind_group,
+            darken_bind_group,
+            maps,
+            vis_filter,
+            volume_buffer,
+            volume_vertex_count,
+            frustum,
+        );
+    }
+
+    /// Multi-tile variant of [`Self::encode_stencil_volume_pass`] (`SH2-183`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_stencil_volume_pass_multi(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        hdr_color_view: &wgpu::TextureView,
+        stencil_depth_view: &wgpu::TextureView,
+        camera_bind_group: &wgpu::BindGroup,
+        darken_bind_group: &wgpu::BindGroup,
+        maps: &[crate::MapDrawItem<'_>],
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
+        volume_buffer: &wgpu::Buffer,
+        volume_vertex_count: u32,
+        frustum: Option<&crate::Frustum>,
+    ) {
         if volume_vertex_count == 0 {
             return;
         }
@@ -364,31 +400,14 @@ fn fs_darken() -> @location(0) vec4<f32> {
                 occlusion_query_set: None,
             });
 
-            if let Some(map) = gpu_map {
-                let opaque = map.batches_for_group(BatchGroup::Opaque);
-                if let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) {
-                    if !opaque.is_empty() {
-                        rpass.set_pipeline(&self.depth_prepass_pipeline);
-                        rpass.set_bind_group(0, camera_bind_group, &[]);
-                        rpass.set_bind_group(1, darken_bind_group, &[]);
-                        rpass.set_vertex_buffer(0, vbuf.slice(..));
-                        rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                        for batch in opaque {
-                            if !map.is_batch_visible_with(batch, vis_filter) {
-                                continue;
-                            }
-                            if let Some(f) = frustum {
-                                if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
-                                    continue;
-                                }
-                            }
-                            if let Some(index_range) = batch.index_range() {
-                                rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
-                            }
-                        }
-                    }
-                }
-            }
+            self.encode_depth_prepass_maps(
+                &mut rpass,
+                camera_bind_group,
+                darken_bind_group,
+                maps,
+                vis_filter,
+                frustum,
+            );
 
             let byte_len =
                 (volume_vertex_count as usize * std::mem::size_of::<ShadowVolumeVertex>()) as u64;
@@ -434,6 +453,54 @@ fn fs_darken() -> @location(0) vec4<f32> {
         }
     }
 
+    fn encode_depth_prepass_maps<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        camera_bind_group: &'a wgpu::BindGroup,
+        darken_bind_group: &'a wgpu::BindGroup,
+        maps: &[crate::MapDrawItem<'a>],
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
+        frustum: Option<&crate::Frustum>,
+    ) {
+        let mut bound = false;
+        for item in maps {
+            let map = item.gpu_map;
+            let opaque = map.batches_for_group(BatchGroup::Opaque);
+            if opaque.is_empty() {
+                continue;
+            }
+            if let Some(f) = frustum {
+                if !map.intersects_frustum(f) {
+                    continue;
+                }
+            }
+            let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) else {
+                continue;
+            };
+            if !bound {
+                rpass.set_pipeline(&self.depth_prepass_pipeline);
+                rpass.set_bind_group(0, camera_bind_group, &[]);
+                rpass.set_bind_group(1, darken_bind_group, &[]);
+                bound = true;
+            }
+            rpass.set_vertex_buffer(0, vbuf.slice(..));
+            rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+            for batch in opaque {
+                if !map.is_batch_visible_with(batch, vis_filter) {
+                    continue;
+                }
+                if let Some(f) = frustum {
+                    if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
+                        continue;
+                    }
+                }
+                if let Some(index_range) = batch.index_range() {
+                    rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
+                }
+            }
+        }
+    }
+
     /// Encodes Z-fail stencil counting, extracts the binary stencil mask into `mask_view`, and
     /// executes the PS2 4-pass ping-pong soft shadow blur + dual GS composite mode
     /// (`SLUS_202.28` `shdw_shadow_filter_main` `0x001767e0`, `sh2gfw_Set_FilterData` `0x00175f90`).
@@ -450,6 +517,50 @@ fn fs_darken() -> @location(0) vec4<f32> {
         camera_bind_group: &wgpu::BindGroup,
         darken_bind_group: &wgpu::BindGroup,
         gpu_map: Option<&GpuMap>,
+        vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
+        volume_buffer: &wgpu::Buffer,
+        volume_vertex_count: u32,
+        frustum: Option<&crate::Frustum>,
+    ) {
+        let single;
+        let maps: &[crate::MapDrawItem<'_>] = if let Some(m) = gpu_map {
+            single = [crate::MapDrawItem::new(m, None)];
+            &single
+        } else {
+            &[]
+        };
+        self.encode_soft_stencil_blur_pass_multi(
+            encoder,
+            hdr_color_view,
+            stencil_depth_view,
+            mask_view,
+            mask_bind_group,
+            blur_pipeline,
+            composite_mode,
+            camera_bind_group,
+            darken_bind_group,
+            maps,
+            vis_filter,
+            volume_buffer,
+            volume_vertex_count,
+            frustum,
+        );
+    }
+
+    /// Multi-tile variant of [`Self::encode_soft_stencil_blur_pass`] (`SH2-183`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_soft_stencil_blur_pass_multi(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        hdr_color_view: &wgpu::TextureView,
+        stencil_depth_view: &wgpu::TextureView,
+        mask_view: &wgpu::TextureView,
+        mask_bind_group: &wgpu::BindGroup,
+        blur_pipeline: &super::blur::ShadowBlurPipeline,
+        composite_mode: super::blur::ShadowCompositeMode,
+        camera_bind_group: &wgpu::BindGroup,
+        darken_bind_group: &wgpu::BindGroup,
+        maps: &[crate::MapDrawItem<'_>],
         vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
         volume_buffer: &wgpu::Buffer,
         volume_vertex_count: u32,
@@ -479,31 +590,14 @@ fn fs_darken() -> @location(0) vec4<f32> {
                 occlusion_query_set: None,
             });
 
-            if let Some(map) = gpu_map {
-                let opaque = map.batches_for_group(BatchGroup::Opaque);
-                if let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) {
-                    if !opaque.is_empty() {
-                        rpass.set_pipeline(&self.depth_prepass_pipeline);
-                        rpass.set_bind_group(0, camera_bind_group, &[]);
-                        rpass.set_bind_group(1, darken_bind_group, &[]);
-                        rpass.set_vertex_buffer(0, vbuf.slice(..));
-                        rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                        for batch in opaque {
-                            if !map.is_batch_visible_with(batch, vis_filter) {
-                                continue;
-                            }
-                            if let Some(f) = frustum {
-                                if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
-                                    continue;
-                                }
-                            }
-                            if let Some(index_range) = batch.index_range() {
-                                rpass.draw_indexed(index_range, batch.base_vertex, 0..1);
-                            }
-                        }
-                    }
-                }
-            }
+            self.encode_depth_prepass_maps(
+                &mut rpass,
+                camera_bind_group,
+                darken_bind_group,
+                maps,
+                vis_filter,
+                frustum,
+            );
 
             let byte_len =
                 (volume_vertex_count as usize * std::mem::size_of::<ShadowVolumeVertex>()) as u64;

@@ -198,6 +198,10 @@ pub struct GpuMap {
     /// Optional per-frame `stageparts` display-control filter (`EvDispControlModelExec`).
     /// When `None`, all batches are rendered.
     pub visibility_filter: Option<MapPartVisibilityFilter>,
+    /// Overall axis-aligned bounding box minimum `(x, y, z)` in PS2 mm across all batches.
+    pub bounds_min: [f32; 3],
+    /// Overall axis-aligned bounding box maximum `(x, y, z)` in PS2 mm across all batches.
+    pub bounds_max: [f32; 3],
     /// Total GPU buffer footprint in bytes across all batches in this map.
     pub total_gpu_bytes: usize,
 }
@@ -260,6 +264,14 @@ impl GpuMap {
                 (None, None)
             };
 
+        let (mut bounds_min, mut bounds_max) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+        for batch in &packed.batches {
+            for axis in 0..3 {
+                bounds_min[axis] = bounds_min[axis].min(batch.bounds_min[axis]);
+                bounds_max[axis] = bounds_max[axis].max(batch.bounds_max[axis]);
+            }
+        }
+
         Self {
             vertex_buffer,
             index_buffer,
@@ -270,8 +282,20 @@ impl GpuMap {
             material_count: map.materials.len(),
             base_room_id,
             visibility_filter: None,
+            bounds_min,
+            bounds_max,
             total_gpu_bytes: packed.total_gpu_bytes,
         }
+    }
+
+    /// Whole-tile frustum intersection test against this map's union AABB (`SH2-183`).
+    #[inline]
+    #[must_use]
+    pub fn intersects_frustum(&self, frustum: &crate::Frustum) -> bool {
+        if self.batches.is_empty() || !self.bounds_min[0].is_finite() {
+            return false;
+        }
+        frustum.intersects_aabb(self.bounds_min, self.bounds_max)
     }
 
     /// Returns the contiguous slice of batches belonging to `group`.
@@ -516,6 +540,8 @@ mod tests {
             material_count: map.materials.len(),
             base_room_id: 1,
             visibility_filter: None,
+            bounds_min: [-20_000.0, -931.0, 20_350.0],
+            bounds_max: [-20_000.0, -661.0, 20_569.0],
             total_gpu_bytes: packed.total_gpu_bytes,
         };
 

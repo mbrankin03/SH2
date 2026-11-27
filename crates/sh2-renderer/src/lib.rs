@@ -31,6 +31,7 @@ pub use glb_model::{
     evaluate_glb_skin_matrices, glb_vertex_to_skeletal, GlbGpuModel, GlbGpuPrimitive, GlbGpuTexture,
 };
 pub use gpu_map::{GpuMap, GpuMapBatch};
+pub use scene::MapDrawItem;
 pub use skeletal::{
     classify_primitive_body_region, cranial_bone_mask, decode_model_textures_for_inspection,
     dilate_transparent_border_rgb, discover_pose_presets, dominant_vertex_bone,
@@ -40,4 +41,4 @@ pub use skeletal::{
     PoseVariantPreset, SkeletalBodyRegion, SkeletalMaterialUniforms, SkeletalPassStage,
     SkeletalPipeline, SkeletalVertex, SkeletonBoneUniforms, MAX_SKELETON_BONES,
 };
-pub use tile_pool::GpuOutdoorTilePool;
+pub use tile_pool::{GpuOutdoorTilePool, ResidentOutdoorTile};

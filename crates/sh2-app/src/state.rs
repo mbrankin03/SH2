@@ -88,6 +88,8 @@ pub(crate) struct AppState {
     pub gamepad: GilrsGamepadPoller,
     pub gpu_map: Arc<GpuMap>,
     pub map_texture_bind_groups: Vec<Arc<wgpu::BindGroup>>,
+    /// Multi-tile outdoor `.map` + `.cld` background streaming pool (`SH2-183`).
+    pub outdoor_tile_pool: sh2_renderer::GpuOutdoorTilePool,
     /// Tracks which map source is currently loaded in `gpu_map` / `map_texture_bind_groups` (`SH2-181`).
     pub active_map_source: ActiveMapSource,
     /// Active [`sh2_core::config::WorldTextureQuality`] tier currently resident in VRAM (`SH2-181`).

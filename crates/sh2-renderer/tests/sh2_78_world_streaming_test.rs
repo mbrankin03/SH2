@@ -163,7 +163,7 @@ fn test_retail_outdoor_tile_pool_streams_ps2_2x2_tiles_on_background_thread() {
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while pool.resident_count() < queued && Instant::now() < deadline {
-        for block_no in pool.poll_uploads(&ctx.device, 4) {
+        for block_no in pool.poll_uploads(&ctx, 4) {
             streamer.mark_resident(block_no);
         }
         std::thread::sleep(Duration::from_millis(10));

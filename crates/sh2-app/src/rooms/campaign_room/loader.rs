@@ -18,7 +18,14 @@ use sh2_ui::menu::TestRoomKind;
 
 /// Loads the GPU `.map` geometry, single active texture tier, `.cld` collision mesh,
 /// lazy-loaded enemy species, and atmospheric fog uniforms described by `manifest` into `AppState` (`SH2-181`).
-pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &RoomLoadManifest) {
+///
+/// For outdoor multi-tile stages (`manifest.is_outdoor`), seeds the initial tile into
+/// `AppState::outdoor_tile_pool` and returns its numeric `block_no` so `OutdoorTileStreamer`
+/// marks it immediately resident (`SH2-183`). For indoor stages, clears the outdoor tile pool.
+pub(crate) fn load_manifest_into_app_state(
+    state: &mut AppState,
+    manifest: &RoomLoadManifest,
+) -> Option<u16> {
     let resolver = sh2_assets::AssetPathResolver::resolve();
 
     let active_tex_quality = state
@@ -75,12 +82,36 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
     }
 
     // Load retail `.cld` collision world, falling back gracefully if absent in headless/CI builds.
-    state.sim_core.collision = resolver
+    let parsed_cld = resolver
         .resolve_file(&manifest.cld_rel_path)
         .and_then(|p| std::fs::read(&p).ok())
-        .and_then(|bytes| parse_cld(&bytes).ok())
-        .map(|cld| CollisionWorld::from_cld(&cld))
+        .and_then(|bytes| parse_cld(&bytes).ok());
+    state.sim_core.collision = parsed_cld
+        .as_ref()
+        .map(CollisionWorld::from_cld)
         .unwrap_or_else(|| find_cld_file_for_room(fallback_test_room_for_stage(manifest.stage_id)));
+
+    let seeded_outdoor_block = if manifest.is_outdoor {
+        if let Some(area) = sh2_core::world::OutdoorArea::from_stage_id(manifest.stage_id) {
+            let block_no =
+                sh2_renderer::GpuMap::parse_base_room_id_from_map_name(&manifest.room_id);
+            let tile_cld = parsed_cld.as_ref().map(CollisionWorld::from_cld);
+            state.outdoor_tile_pool.seed_tile(
+                area,
+                block_no,
+                std::sync::Arc::clone(&state.gpu_map),
+                state.map_texture_bind_groups.clone(),
+                tile_cld,
+            );
+            Some(block_no)
+        } else {
+            state.outdoor_tile_pool.clear();
+            None
+        }
+    } else {
+        state.outdoor_tile_pool.clear();
+        None
+    };
 
     state.render_ctx.update_fog(&state.fog_uniforms);
     state.active_maria = state.sim_core.scenario.character == PlayableCharacter::Maria;
@@ -132,6 +163,7 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
     state
         .blood_system
         .on_room_change(&prev_room_id, &manifest.room_id, persistent_blood);
+    seeded_outdoor_block
 }
 
 fn fallback_test_room_for_stage(stage_id: u16) -> TestRoomKind {

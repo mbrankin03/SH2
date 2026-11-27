@@ -16,6 +16,31 @@ use crate::gpu_map::GpuMap;
 use crate::{RenderContext, SkeletalDrawItem};
 use sh2_assets::formats::map::MapFile;
 
+/// Borrowed static `.map` geometry paired with its per-material diffuse texture bind groups
+/// for unified single-pass multi-tile outdoor scene rendering (`SH2-183`).
+#[derive(Clone, Copy)]
+pub struct MapDrawItem<'a> {
+    /// Compiled static level geometry for a room or outdoor tile.
+    pub gpu_map: &'a GpuMap,
+    /// Per-material diffuse texture bind groups indexed by [`crate::GpuMapBatch::material_index`].
+    pub texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
+}
+
+impl<'a> MapDrawItem<'a> {
+    /// Creates a [`MapDrawItem`] pairing `gpu_map` with optional per-material texture bind groups.
+    #[inline]
+    #[must_use]
+    pub const fn new(
+        gpu_map: &'a GpuMap,
+        texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
+    ) -> Self {
+        Self {
+            gpu_map,
+            texture_bind_groups,
+        }
+    }
+}
+
 impl RenderContext {
     /// Render a pre-compiled `GpuMap` room into the framebuffers and run the compute passes.
     pub fn render_gpu_map(&self, gpu_map: &GpuMap) {
@@ -91,6 +116,68 @@ impl RenderContext {
         skeletal_meshes: &[SkeletalDrawItem],
         debug_lines: &[sh2_debug::DebugLineVertex],
     ) {
+        let single;
+        let maps: &[MapDrawItem<'_>] = if let Some(map) = gpu_map {
+            single = [MapDrawItem::new(map, map_texture_bind_groups)];
+            &single
+        } else {
+            &[]
+        };
+        self.encode_scene_multi_map_with_debug_lines(encoder, maps, skeletal_meshes, debug_lines);
+    }
+
+    /// Renders multiple static [`GpuMap`] tiles (e.g. streamed outdoor `ca*` / `cb*` tiles) and
+    /// dynamic animated skeletal meshes in a single unified pass (`SH2-183`).
+    pub fn render_scene_multi_map(
+        &self,
+        maps: &[MapDrawItem<'_>],
+        skeletal_meshes: &[SkeletalDrawItem],
+    ) {
+        self.render_scene_multi_map_with_debug_lines(maps, skeletal_meshes, &[]);
+    }
+
+    /// Renders multiple static [`GpuMap`] tiles, dynamic animated skeletal meshes, and 3D debug
+    /// lines in a single unified pass and submits once (`SH2-183`).
+    pub fn render_scene_multi_map_with_debug_lines(
+        &self,
+        maps: &[MapDrawItem<'_>],
+        skeletal_meshes: &[SkeletalDrawItem],
+        debug_lines: &[sh2_debug::DebugLineVertex],
+    ) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Multi-Map Scene Render Encoder"),
+            });
+        self.encode_scene_multi_map_with_debug_lines(
+            &mut encoder,
+            maps,
+            skeletal_meshes,
+            debug_lines,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Encodes multiple static [`GpuMap`] tiles and dynamic animated skeletal meshes into an
+    /// existing `CommandEncoder` without submitting (`SH2-183`).
+    pub fn encode_scene_multi_map(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        maps: &[MapDrawItem<'_>],
+        skeletal_meshes: &[SkeletalDrawItem],
+    ) {
+        self.encode_scene_multi_map_with_debug_lines(encoder, maps, skeletal_meshes, &[]);
+    }
+
+    /// Encodes all 3D scene passes across multiple static [`GpuMap`] tiles (e.g. streamed outdoor
+    /// `ca*` / `cb*` tiles) into a single `CommandEncoder` with frustum culling (`SH2-183`).
+    pub fn encode_scene_multi_map_with_debug_lines(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        maps: &[MapDrawItem<'_>],
+        skeletal_meshes: &[SkeletalDrawItem],
+        debug_lines: &[sh2_debug::DebugLineVertex],
+    ) {
         // Upload debug lines into the persistent buffer (or allocate an overflow buffer if exceeding capacity)
         let overflow_debug_line_buffer = if debug_lines.len() > Self::MAX_DEBUG_LINE_VERTICES {
             Some(
@@ -144,11 +231,11 @@ impl RenderContext {
                 .lock()
                 .ok()
                 .and_then(|vp| Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&vp)));
-            self.spotlight_shadow_pipeline.encode_pass(
+            self.spotlight_shadow_pipeline.encode_pass_multi(
                 encoder,
                 &self.shadow_depth_view,
                 &self.spotlight_shadow_bind_group,
-                gpu_map,
+                maps,
                 vis_filter.as_ref(),
                 shadow_frustum.as_ref(),
             );
@@ -160,11 +247,11 @@ impl RenderContext {
                 .lock()
                 .ok()
                 .and_then(|vp| Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&vp)));
-            self.pcss_shadow_pipeline.encode_pass(
+            self.pcss_shadow_pipeline.encode_pass_multi(
                 encoder,
                 &self.pcss_shadow_depth_view,
                 &self.pcss_shadow_bind_group,
-                gpu_map,
+                maps,
                 skeletal_meshes,
                 vis_filter.as_ref(),
                 pcss_frustum.as_ref(),
@@ -172,19 +259,15 @@ impl RenderContext {
         }
 
         // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`)
-        self.encode_water_reflection_pass(
-            encoder,
-            gpu_map,
-            map_texture_bind_groups,
-            skeletal_meshes,
-            vis_filter.as_ref(),
-        );
+        self.encode_water_reflection_pass(encoder, maps, skeletal_meshes, vis_filter.as_ref());
 
-        // 0d. Stenciled Planar Mirror Render Pass (`SH2-101` / `SH2-151`)
+        // 0d. Stenciled Planar Mirror Render Pass (`SH2-101` / `SH2-151`, indoor rooms only)
+        let primary_map = maps.first().map(|m| m.gpu_map);
+        let primary_tex_bgs = maps.first().and_then(|m| m.texture_bind_groups);
         let active_mirror = self.encode_planar_mirror_pass(
             encoder,
-            gpu_map,
-            map_texture_bind_groups,
+            primary_map,
+            primary_tex_bgs,
             skeletal_meshes,
             vis_filter.as_ref(),
         );
@@ -202,8 +285,7 @@ impl RenderContext {
         // 1. Main HDR Geometry, Skeletal, Decals, Transparent, Effects, and Debug Lines Pass
         self.encode_main_geometry_pass(
             encoder,
-            gpu_map,
-            map_texture_bind_groups,
+            maps,
             skeletal_meshes,
             debug_lines,
             overflow_debug_line_buffer.as_ref(),
@@ -219,35 +301,37 @@ impl RenderContext {
                 .soft_shadow_blur_enabled
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
-                self.stencil_shadow_pipeline.encode_soft_stencil_blur_pass(
-                    encoder,
-                    &self.hdr_color_view,
-                    &self.stencil_depth_view,
-                    &self.shadow_mask_view,
-                    &self.shadow_mask_bind_group,
-                    &self.shadow_blur_pipeline,
-                    self.shadow_composite_mode(),
-                    &self.geometry_bind_group,
-                    &self.shadow_darken_bind_group,
-                    gpu_map,
-                    vis_filter.as_ref(),
-                    &self.shadow_volume_buffer,
-                    stencil_verts,
-                    main_frustum.as_ref(),
-                );
+                self.stencil_shadow_pipeline
+                    .encode_soft_stencil_blur_pass_multi(
+                        encoder,
+                        &self.hdr_color_view,
+                        &self.stencil_depth_view,
+                        &self.shadow_mask_view,
+                        &self.shadow_mask_bind_group,
+                        &self.shadow_blur_pipeline,
+                        self.shadow_composite_mode(),
+                        &self.geometry_bind_group,
+                        &self.shadow_darken_bind_group,
+                        maps,
+                        vis_filter.as_ref(),
+                        &self.shadow_volume_buffer,
+                        stencil_verts,
+                        main_frustum.as_ref(),
+                    );
             } else {
-                self.stencil_shadow_pipeline.encode_stencil_volume_pass(
-                    encoder,
-                    &self.hdr_color_view,
-                    &self.stencil_depth_view,
-                    &self.geometry_bind_group,
-                    &self.shadow_darken_bind_group,
-                    gpu_map,
-                    vis_filter.as_ref(),
-                    &self.shadow_volume_buffer,
-                    stencil_verts,
-                    main_frustum.as_ref(),
-                );
+                self.stencil_shadow_pipeline
+                    .encode_stencil_volume_pass_multi(
+                        encoder,
+                        &self.hdr_color_view,
+                        &self.stencil_depth_view,
+                        &self.geometry_bind_group,
+                        &self.shadow_darken_bind_group,
+                        maps,
+                        vis_filter.as_ref(),
+                        &self.shadow_volume_buffer,
+                        stencil_verts,
+                        main_frustum.as_ref(),
+                    );
             }
         }
 

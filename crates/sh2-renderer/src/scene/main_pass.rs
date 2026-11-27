@@ -12,13 +12,13 @@ use crate::mirror::PlanarMirrorSpec;
 use crate::{RenderContext, SkeletalDrawItem};
 
 impl RenderContext {
-    /// Encodes Pass 1 (Main HDR Geometry, Skeletal, Decals, Transparent, Effects, and Debug Lines).
+    /// Encodes Pass 1 (Main HDR Geometry, Skeletal, Decals, Transparent, Effects, and Debug Lines)
+    /// across one or more static [`crate::MapDrawItem`] tiles in a single render pass (`SH2-183`).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_main_geometry_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        gpu_map: Option<&GpuMap>,
-        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        maps: &[crate::MapDrawItem<'_>],
         skeletal_meshes: &[SkeletalDrawItem],
         debug_lines: &[sh2_debug::DebugLineVertex],
         overflow_debug_line_buffer: Option<&wgpu::Buffer>,
@@ -61,7 +61,7 @@ impl RenderContext {
         //       volumetric fog the mirror-wall depth rather than the far plane.
         if let Some(mirror_spec) = active_mirror {
             let mut wrote_decal_depth = false;
-            if let Some(map) = gpu_map {
+            if let Some(map) = maps.first().map(|m| m.gpu_map) {
                 if let (Some(batch), Some(vbuf), Some(ibuf)) = (
                     map.resolve_mirror_decal_batch(&mirror_spec),
                     &map.vertex_buffer,
@@ -91,12 +91,12 @@ impl RenderContext {
             }
         }
 
-        // 1a. Render static level Opaque + Alpha-Cutout batches first
-        if let Some(map) = gpu_map {
+        // 1a. Render static level Opaque + Alpha-Cutout batches across all resident maps first
+        for item in maps {
             self.draw_map_batches_for_group_with_camera(
                 &mut rpass,
-                map,
-                map_texture_bind_groups,
+                item.gpu_map,
+                item.texture_bind_groups,
                 BatchGroup::Opaque,
                 &self.geometry_pipeline.pipeline,
                 &self.geometry_bind_group,
@@ -111,12 +111,12 @@ impl RenderContext {
             self.draw_skeletal_meshes(&mut rpass, skeletal_meshes);
         }
 
-        // 1c. Render static level Coplanar Decals
-        if let Some(map) = gpu_map {
+        // 1c. Render static level Coplanar Decals across all resident maps
+        for item in maps {
             self.draw_map_batches_for_group_with_camera(
                 &mut rpass,
-                map,
-                map_texture_bind_groups,
+                item.gpu_map,
+                item.texture_bind_groups,
                 BatchGroup::Decal,
                 &self.geometry_pipeline.decal_pipeline,
                 &self.geometry_bind_group,
@@ -142,12 +142,12 @@ impl RenderContext {
             rpass.draw_indexed(0..6, 0, 0..1);
         }
 
-        // 1d. Render static level semi-transparent batches
-        if let Some(map) = gpu_map {
+        // 1d. Render static level semi-transparent batches across all resident maps
+        for item in maps {
             self.draw_map_batches_for_group_with_camera(
                 &mut rpass,
-                map,
-                map_texture_bind_groups,
+                item.gpu_map,
+                item.texture_bind_groups,
                 BatchGroup::Transparent,
                 &self.geometry_pipeline.transparent_pipeline,
                 &self.geometry_bind_group,
@@ -308,6 +308,11 @@ impl RenderContext {
         let batches = map.batches_for_group(target_group);
         if batches.is_empty() {
             return;
+        }
+        if let Some(f) = frustum {
+            if !map.intersects_frustum(f) {
+                return;
+            }
         }
         let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) else {
             return;

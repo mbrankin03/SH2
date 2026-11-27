@@ -212,6 +212,23 @@ pub(super) fn submit_scene_draw(
         })
         .unwrap_or((state.gpu_map.as_ref(), &state.map_texture_bind_groups));
 
+    let use_outdoor_pool = !cutscene_active
+        && state.active_map_source == crate::state::ActiveMapSource::Campaign
+        && state.outdoor_tile_pool.resident_count() > 0;
+    let mut outdoor_draw_items = Vec::new();
+    let single_map_item = [sh2_renderer::MapDrawItem::new(
+        active_gpu_map,
+        Some(active_map_tex_bgs),
+    )];
+    let scene_maps: &[sh2_renderer::MapDrawItem<'_>] = if use_outdoor_pool {
+        state
+            .outdoor_tile_pool
+            .collect_draw_items(&mut outdoor_draw_items);
+        &outdoor_draw_items
+    } else {
+        &single_map_item
+    };
+
     let planar_mirror_spec = mirror_room_id.and_then(|room_id| {
         sh2_renderer::mirror::PlanarMirrorSpec::for_room_and_gpu_map(room_id, active_gpu_map)
     });
@@ -266,34 +283,27 @@ pub(super) fn submit_scene_draw(
         }
 
         if let Some(ref mut encoder) = frame_encoder {
-            state.render_ctx.encode_scene_with_debug_lines(
+            state.render_ctx.encode_scene_multi_map_with_debug_lines(
                 encoder,
-                Some(active_gpu_map),
-                Some(active_map_tex_bgs),
+                scene_maps,
                 skeletal_draw,
                 &debug_lines,
             );
         } else {
-            state.render_ctx.render_scene_with_debug_lines(
-                Some(active_gpu_map),
-                Some(active_map_tex_bgs),
+            state.render_ctx.render_scene_multi_map_with_debug_lines(
+                scene_maps,
                 skeletal_draw,
                 &debug_lines,
             );
         }
     } else if let Some(ref mut encoder) = frame_encoder {
-        state.render_ctx.encode_scene(
-            encoder,
-            Some(active_gpu_map),
-            Some(active_map_tex_bgs),
-            skeletal_draw,
-        );
+        state
+            .render_ctx
+            .encode_scene_multi_map(encoder, scene_maps, skeletal_draw);
     } else {
-        state.render_ctx.render_scene(
-            Some(active_gpu_map),
-            Some(active_map_tex_bgs),
-            skeletal_draw,
-        );
+        state
+            .render_ctx
+            .render_scene_multi_map(scene_maps, skeletal_draw);
     }
 
     state.frame_encoder = frame_encoder;

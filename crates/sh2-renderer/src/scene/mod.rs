@@ -391,6 +391,6 @@ impl RenderContext {
         }
 
         // 2. Volumetric Fog & Post-Processing Compute Passes
-        self.dispatch_compute_passes(encoder);
+        self.dispatch_compute_passes(encoder, skeletal_meshes);
     }
 }

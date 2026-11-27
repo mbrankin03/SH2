@@ -164,6 +164,10 @@ impl RenderContext {
                         binding: 5,
                         resource: wgpu::BindingResource::Sampler(&textures.specular_sphere_sampler),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: buffers.fog_buffer.as_entire_binding(),
+                    },
                 ],
             })
         };
@@ -364,6 +368,10 @@ impl RenderContext {
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: wgpu::BindingResource::Sampler(&textures.specular_sphere_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: buffers.fog_buffer.as_entire_binding(),
                     },
                 ],
             });

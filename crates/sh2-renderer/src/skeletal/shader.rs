@@ -44,12 +44,31 @@ struct SkeletalMaterialUniforms {
     _reserved: vec4<f32>,
 };
 
+struct SkeletalFogUniforms {
+    fog_color: vec4<f32>,
+    fog_near: f32,
+    fog_far: f32,
+    density: f32,
+    time: f32,
+    step_count: u32,
+    curve_type: u32,
+    speed_mult: f32,
+    ambient_fog_coupling: f32,
+    layer1_uv_scale: vec4<f32>,
+    layer2_params: vec4<f32>,
+    layer_transparencies: vec4<f32>,
+    shadow_view_proj: mat4x4<f32>,
+    depth_fog_params: vec4<f32>,
+    screen_fog_uv: vec4<f32>,
+};
+
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;
 @group(0) @binding(1) var<uniform> spotlight: SpotlightUniforms;
 @group(0) @binding(2) var<uniform> pcss_u: PcssShadowUniforms;
 @group(0) @binding(3) var pcss_shadow_map: texture_depth_2d;
 @group(0) @binding(4) var specular_sphere_tex: texture_2d<f32>;
 @group(0) @binding(5) var specular_sphere_sampler: sampler;
+@group(0) @binding(6) var<uniform> fog: SkeletalFogUniforms;
 @group(1) @binding(0) var<uniform> skeleton: SkeletonBones;
 @group(2) @binding(0) var diffuse_texture: texture_2d<f32>;
 @group(2) @binding(1) var diffuse_sampler: sampler;
@@ -69,6 +88,7 @@ struct VertexOutput {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) view_z: f32,
 };
 
 @vertex
@@ -96,6 +116,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.normal = skinned_normal;
     out.uv = in.uv;
     out.color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    out.view_z = abs(out.clip_position.w);
     return out;
 }
 
@@ -148,7 +169,7 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         if tex_color.a < PS2_ALPHA_OPAQUE_THRESHOLD {
             discard;
         }
-    } else if pass_mode == 2u {
+    } else if pass_mode == 2u || pass_mode == 3u {
         if tex_color.a < PS2_ALPHA_TEST_THRESHOLD || tex_color.a >= PS2_ALPHA_OPAQUE_THRESHOLD {
             discard;
         }
@@ -349,6 +370,39 @@ fn shade_skeletal_fragment(in: VertexOutput, pass_mode: u32) -> vec4<f32> {
         final_rgb = final_rgb + active_spec * gloss_mask;
     }
 
+    // Post-depth-fog `TransparentFringeFogged` (`pass_mode == 3u`, `SH2-192`):
+    // Matches `SLUS_202.28` `Model3DrawVu0Parts` (`0x0012bd50`) + `SortEnvPrim` (`0x00128550`) +
+    // `sh2_Model_MakeMatrixParams` (`0x001281d0`) + `sh2gfw_Set_DepthFog` (`0x00175df0`) and
+    // `sh2pc.exe` `FUN_00503800` (`0x00503800` `D3DRS_FOGENABLE = 1`): evaluate depth fog at the
+    // hair fragment's own `view_z` before alpha-blending over the already-fogged background, so
+    // `depth_write_enabled: false` hair cards never inherit far-skybox/background depth fog.
+    if pass_mode == 3u && shade_mode == 0 {
+        let effective_density = clamp(fog.density * fog.fog_color.a, 0.0, 2.0);
+        if effective_density > 1e-4 {
+            let fog_min = min(fog.depth_fog_params.z, fog.depth_fog_params.w);
+            let fog_max = max(fog.depth_fog_params.z, fog.depth_fog_params.w);
+            let span = max(1e-4, fog.fog_far - fog.fog_near);
+            var base_curve: f32;
+            if (fog.curve_type == 0u && fog.fog_near > 1e-4 && fog.fog_far > fog.fog_near + 1e-4) {
+                let persp_fa = (fog.fog_far * fog.fog_near * (fog_min - fog_max)) / span;
+                let persp_fb = (fog.fog_far * fog_max - fog.fog_near * fog_min) / span;
+                base_curve = clamp(persp_fa / max(in.view_z, 1e-4) + persp_fb, fog_min, fog_max);
+            } else {
+                let linear_t = clamp((in.view_z - fog.fog_near) / span, 0.0, 1.0);
+                if (fog.curve_type == 1u) {
+                    base_curve = clamp(mix(fog_min, fog_max, 1.0 - exp(-3.0 * linear_t)), fog_min, fog_max);
+                } else if (fog.curve_type == 2u) {
+                    base_curve = clamp(mix(fog_min, fog_max, 1.0 - exp(-4.0 * linear_t * linear_t)), fog_min, fog_max);
+                } else {
+                    base_curve = clamp(mix(fog_min, fog_max, linear_t), fog_min, fog_max);
+                }
+            }
+            let fog_factor = clamp(base_curve * effective_density, 0.0, 1.0);
+            let coupled_fog_rgb = mix(fog.fog_color.rgb, fog.fog_color.rgb * env_tint_rgb, clamp(fog.ambient_fog_coupling, 0.0, 1.0));
+            final_rgb = mix(final_rgb, coupled_fog_rgb, fog_factor);
+        }
+    }
+
     return vec4<f32>(final_rgb, out_alpha);
 }
 
@@ -365,6 +419,11 @@ fn fs_transparent_core(in: VertexOutput) -> @location(0) vec4<f32> {
 @fragment
 fn fs_transparent_fringe(in: VertexOutput) -> @location(0) vec4<f32> {
     return shade_skeletal_fragment(in, 2u);
+}
+
+@fragment
+fn fs_transparent_fringe_fogged(in: VertexOutput) -> @location(0) vec4<f32> {
+    return shade_skeletal_fragment(in, 3u);
 }
 "#;
 

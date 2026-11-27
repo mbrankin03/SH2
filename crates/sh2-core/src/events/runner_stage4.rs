@@ -355,9 +355,9 @@ impl ForestAmbientState {
                 let raw_angle = player_yaw + PI + rng.next_f32() * 0.392_698_8 - 0.196_349_38;
                 self.rustle_angle = wrap_angle_pi(raw_angle);
                 let pos = [
-                    player_pos[0] + self.rustle_angle.sin() * STG4_RUSTLE_RADIUS_MM,
+                    player_pos[0] + self.rustle_angle.cos() * STG4_RUSTLE_RADIUS_MM,
                     player_pos[1],
-                    player_pos[2] + self.rustle_angle.cos() * STG4_RUSTLE_RADIUS_MM,
+                    player_pos[2] + self.rustle_angle.sin() * STG4_RUSTLE_RADIUS_MM,
                 ];
                 self.rustle_playing = true;
                 out.spawned_positional_se
@@ -366,15 +366,15 @@ impl ForestAmbientState {
         }
         if self.rustle_playing {
             let pos = [
-                player_pos[0] + self.rustle_angle.sin() * STG4_RUSTLE_RADIUS_MM,
+                player_pos[0] + self.rustle_angle.cos() * STG4_RUSTLE_RADIUS_MM,
                 player_pos[1],
-                player_pos[2] + self.rustle_angle.cos() * STG4_RUSTLE_RADIUS_MM,
+                player_pos[2] + self.rustle_angle.sin() * STG4_RUSTLE_RADIUS_MM,
             ];
             out.updated_positional_se
                 .push((STG4_SE_AMBIENT_RUSTLE, pos));
-            if player_speed <= STG4_RUSTLE_MIN_SPEED
-                || player_yaw >= STG4_RUSTLE_YAW_MAX_RAD
-                || player_yaw <= STG4_RUSTLE_YAW_MIN_RAD
+            if player_speed < STG4_RUSTLE_MIN_SPEED
+                || player_yaw > STG4_RUSTLE_YAW_MAX_RAD
+                || player_yaw < STG4_RUSTLE_YAW_MIN_RAD
             {
                 self.rustle_playing = false;
                 out.stopped_se.push(STG4_SE_AMBIENT_RUSTLE);
@@ -430,6 +430,7 @@ pub(super) struct Stage4TickOut {
     pub stop_sound_effects: Vec<u32>,
     pub positional_sound_effects: Vec<(u32, [f32; 3])>,
     pub requested_demo: Option<u32>,
+    pub requested_demo_post_pose: Option<([f32; 3], f32)>,
     pub open_save_point_id: Option<u16>,
     pub triggered_ending: Option<u8>,
 }
@@ -484,32 +485,41 @@ pub(super) fn tick_stage4_prog(
             _ => out.finished = true,
         },
         // Stage 4 #2 (`0x005a0570`): Angela Orosco Graveyard cutscene (`demo_no = 3`, `haka_agl`).
-        // Requests `demo_no = 3`; `CampaignOrchestrator` runs real `.dds` playback, snaps James to
-        // `STG4_JAMES_POST_DEMO3_POS` / `STG4_JAMES_DEMO3_YAW`, sets `flag(36)` & 50% `flag(37)`.
+        // Requests `demo_no = 3` WITHOUT setting `flag(36)` prematurely so `pick_bgm_page(4, ...)`
+        // stays on Page `47` (`forest/bgm_114_b.aix`) during playback; `CampaignOrchestrator` runs
+        // real `.dds` playback, snaps James to `STG4_JAMES_POST_DEMO3_POS` / `STG4_JAMES_DEMO3_YAW`,
+        // and writes `flag(36)` + 50% RNG `flag(37)` (`0x005a07a0..0x005a07fe`) on completion.
         2 => {
             p.locked = true;
+            p.flag_set = false;
             out.requested_demo = Some(STG4_ANGELA_GRAVE_DEMO_NO);
-            flags.set(STG4_FLAG_ANGELA_MET, true);
+            out.requested_demo_post_pose = Some((STG4_JAMES_POST_DEMO3_POS, STG4_JAMES_DEMO3_YAW));
             p.locked = false;
             out.finished = true;
         }
         // Stage 4 #3 (`0x0059f4a0`): `EvProgGraveSureQuiet` (`flag(36) && flag(37)`).
-        // Plays `demo_no = 4` (`haka_agl_h.dds`, voice `0xea96`) and toggles `flag(37)`.
+        // Plays `demo_no = 4` (`haka_agl_h.dds`, voice `0xea96`); on completion, snaps James to
+        // `STG4_JAMES_POST_PROG3_POS` / `STG4_JAMES_POST_PROG3_YAW` (`0x008e7700`) and re-rolls
+        // `flag(37)` via `shRand() & 1` (`0x0059f52e..0x0059f553`).
         3 => {
             p.locked = true;
             p.flag_set = false;
             out.requested_demo = Some(STG4_ANGELA_TALK_DEMO_NO);
-            flags.set(STG4_FLAG_ANGELA_TALK_VARIANT, false);
+            out.requested_demo_post_pose =
+                Some((STG4_JAMES_POST_PROG3_POS, STG4_JAMES_POST_PROG3_YAW));
             p.locked = false;
             out.finished = true;
         }
         // Stage 4 #4 (`0x0059f5c0`): `EvProgGraveLookingFor` (`flag(36) && !flag(37)`).
-        // Plays `demo_no = 4` (`haka_agl_i.dds`, voice `0xea97`) and toggles `flag(37)`.
+        // Plays `demo_no = 4` (`haka_agl_i.dds`, voice `0xea97`); on completion, snaps James to
+        // `STG4_JAMES_POST_PROG4_POS` / `STG4_JAMES_POST_PROG4_YAW` (`0x008e7748`) and re-rolls
+        // `flag(37)` via `shRand() & 1` (`0x0059f64e..0x0059f673`).
         4 => {
             p.locked = true;
             p.flag_set = false;
             out.requested_demo = Some(STG4_ANGELA_TALK_DEMO_NO);
-            flags.set(STG4_FLAG_ANGELA_TALK_VARIANT, true);
+            out.requested_demo_post_pose =
+                Some((STG4_JAMES_POST_PROG4_POS, STG4_JAMES_POST_PROG4_YAW));
             p.locked = false;
             out.finished = true;
         }

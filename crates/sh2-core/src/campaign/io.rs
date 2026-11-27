@@ -68,6 +68,8 @@ pub struct CampaignEffects {
     pub fade_alpha: f32,
     /// Non-positional 2D sound effects to trigger (`shSdCall` / `SeCall`).
     pub sound_effects: Vec<u32>,
+    /// Sound effect IDs to stop (`SeStop`, e.g. NG+ chainsaw idle loop `0x4268`).
+    pub stop_sound_effects: Vec<u32>,
     /// 3D positional sound effects to trigger (`SeCallPos`).
     pub positional_sounds: Vec<EventPositionalSound>,
     /// Stage ID for BGM manager synchronization whenever a stage load completes.

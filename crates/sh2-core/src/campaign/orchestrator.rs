@@ -295,6 +295,7 @@ impl CampaignOrchestrator {
         effects.hide_loading_screen = false;
         effects.fade_alpha = self.fade.black_alpha();
         effects.sound_effects.clear();
+        effects.stop_sound_effects.clear();
         effects.positional_sounds.clear();
         effects.bgm_stage_id = None;
         effects.bgm_control_mask = None;

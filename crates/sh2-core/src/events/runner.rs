@@ -66,6 +66,8 @@ pub struct StageProgramRunner {
     positional_sound_effects: Vec<(u32, [f32; 3])>,
     /// Cutscene demo ID requested by `p_demo`, if any.
     requested_demo: Option<u32>,
+    /// Optional post-cutscene `(pos_mm, yaw_rad)` paired with `requested_demo`.
+    requested_demo_post_pose: Option<([f32; 3], f32)>,
     /// Save point ID requested to open the Save Menu (`SavePointSet` + `mode = 9`, e.g. Stage 4 Well `2`).
     open_save_point_id: Option<u16>,
     /// Sub-scenario / main game ending bit triggered by `p_game_end`, if any.
@@ -90,6 +92,7 @@ impl StageProgramRunner {
         self.stop_sound_effects.clear();
         self.positional_sound_effects.clear();
         self.requested_demo = None;
+        self.requested_demo_post_pose = None;
         self.open_save_point_id = None;
         self.pending_walkback_delta = None;
     }
@@ -153,6 +156,11 @@ impl StageProgramRunner {
     /// Consumes and returns any cutscene demo ID requested by `p_demo`.
     pub fn take_requested_demo(&mut self) -> Option<u32> {
         self.requested_demo.take()
+    }
+
+    /// Consumes and returns any post-cutscene `(pos_mm, yaw_rad)` paired with `requested_demo`.
+    pub fn take_requested_demo_post_pose(&mut self) -> Option<([f32; 3], f32)> {
+        self.requested_demo_post_pose.take()
     }
 
     /// Consumes and returns any ending bit triggered by `p_game_end`.
@@ -261,6 +269,9 @@ impl StageProgramRunner {
             .extend(out.positional_sound_effects);
         if let Some(demo_no) = out.requested_demo {
             self.requested_demo = Some(demo_no);
+        }
+        if let Some(pose) = out.requested_demo_post_pose {
+            self.requested_demo_post_pose = Some(pose);
         }
         if let Some(save_id) = out.open_save_point_id {
             self.open_save_point_id = Some(save_id);

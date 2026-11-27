@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 use glam::Vec3;
 use sh2_assets::{decode_aix, parse_cld, parse_demo_dds, parse_mdl, parse_mes};
+use sh2_core::campaign::cutscene_handoff::apply_post_demo_stage_flags_with_rng;
 use sh2_core::campaign::{
     resolve_stage_manifest, CampaignOrchestrator, CampaignPhase, CampaignTickInput, OverlayMenuKind,
 };
@@ -35,11 +36,12 @@ use sh2_core::events::{
     STG4_CHARA_ANGELA, STG4_FLAG_AMBIENT_MUTE, STG4_FLAG_ANGELA_MET, STG4_FLAG_ANGELA_TALK_VARIANT,
     STG4_FLAG_CHAINSAW_TAKEN, STG4_FLAG_FIRST_SAVE_EXPLAINED, STG4_FLAG_LEAVE_ENDING_DONE,
     STG4_FLAG_LEAVE_ENDING_REQ, STG4_FLAG_NG_PLUS, STG4_ITEM_CHAINSAW, STG4_JAMES_DEMO3_YAW,
-    STG4_JAMES_POST_DEMO3_POS, STG4_LEAVE_ENDING_DEMO_NO, STG4_MSG_GET_CHAINSAW,
-    STG4_MSG_WELL_SAVE, STG4_SE_AMBIENT_CROW, STG4_SE_AMBIENT_PASSER, STG4_SE_AMBIENT_RUSTLE,
-    STG4_SE_CHAINSAW_IDLE, STG4_SE_CHAINSAW_PICKUP, STG4_SE_FOREST_WIND, STG4_SE_LEAVE_LETTER_A,
-    STG4_SE_LEAVE_LETTER_B, STG4_SE_SAVE_CHIME, STG4_SE_TRIAL_GATE_EXIT, STG4_WELL_PICTURE,
-    STG4_WELL_SAVE_POINT_ID, STG4_WIND_MIN_VOLUME,
+    STG4_JAMES_POST_DEMO3_POS, STG4_JAMES_POST_PROG3_POS, STG4_JAMES_POST_PROG3_YAW,
+    STG4_JAMES_POST_PROG4_POS, STG4_JAMES_POST_PROG4_YAW, STG4_LEAVE_ENDING_DEMO_NO,
+    STG4_MSG_GET_CHAINSAW, STG4_MSG_WELL_SAVE, STG4_RUSTLE_RADIUS_MM, STG4_SE_AMBIENT_CROW,
+    STG4_SE_AMBIENT_PASSER, STG4_SE_AMBIENT_RUSTLE, STG4_SE_CHAINSAW_IDLE, STG4_SE_CHAINSAW_PICKUP,
+    STG4_SE_FOREST_WIND, STG4_SE_LEAVE_LETTER_A, STG4_SE_LEAVE_LETTER_B, STG4_SE_SAVE_CHIME,
+    STG4_SE_TRIAL_GATE_EXIT, STG4_WELL_PICTURE, STG4_WELL_SAVE_POINT_ID, STG4_WIND_MIN_VOLUME,
 };
 use sh2_core::scenario::{ScenarioKind, ScenarioState};
 use sh2_core::simulation::SimulationCore;
@@ -170,7 +172,8 @@ fn test_stage4_ev_prog_2_3_4_angela_and_room_init() {
     assert_eq!(pre_angela.position_mm, STG4_ANGELA_POS_BEFORE_DEMO);
     assert!((pre_angela.yaw_rad - STG4_ANGELA_YAW).abs() < 1e-6);
 
-    // `ev_prog[2]` (`0x005a0570`): requests `demo_no = 3` and sets `flag(36)`
+    // `ev_prog[2]` (`0x005a0570`): requests `demo_no = 3` + post-pose, WITHOUT setting `flag(36)`
+    // prematurely (so `forest/bgm_114_b.aix` remains active during `haka_agl.dds` playback).
     state.prog_runner.start(4, 2, STG4_FLAG_ANGELA_MET as u16);
     assert!(!state.prog_runner.tick(
         0,
@@ -186,6 +189,18 @@ fn test_stage4_ev_prog_2_3_4_angela_and_room_init() {
         state.prog_runner.take_requested_demo(),
         Some(STG4_ANGELA_GRAVE_DEMO_NO)
     );
+    assert_eq!(
+        state.prog_runner.take_requested_demo_post_pose(),
+        Some((STG4_JAMES_POST_DEMO3_POS, STG4_JAMES_DEMO3_YAW))
+    );
+    assert!(
+        !state.flags.get(STG4_FLAG_ANGELA_MET),
+        "flag(36) must not be set until demo_no=3 completes"
+    );
+
+    // Completing `demo_no = 3` sets `flag(36)` (`0x005a07fe`) and coin-flips `flag(37)` (`0x005a07a0`)
+    let mut rng = Sh2Rng::new(0x0000_0001);
+    apply_post_demo_stage_flags_with_rng(STG4_ANGELA_GRAVE_DEMO_NO, &mut state.flags, &mut rng);
     assert!(state.flags.get(STG4_FLAG_ANGELA_MET));
 
     // `EvRoomInit` after `flag(36)`: Angela at post-demo pos, anim `0x0f3e`
@@ -193,8 +208,8 @@ fn test_stage4_ev_prog_2_3_4_angela_and_room_init() {
     assert_eq!(post_angela.anim_id, STG4_ANGELA_ANIM_AFTER_DEMO);
     assert_eq!(post_angela.position_mm, STG4_ANGELA_POS_AFTER_DEMO);
 
-    // `ev_prog[3]` (`0x0059f4a0`) & `ev_prog[4]` (`0x0059f5c0`): `demo_no = 4`, alternate `flag(37)`
-    state.flags.set(STG4_FLAG_ANGELA_TALK_VARIANT, true);
+    // `ev_prog[3]` (`0x0059f4a0`) & `ev_prog[4]` (`0x0059f5c0`): `demo_no = 4` + authentic post-poses,
+    // and completion re-rolls `flag(37)` via `shRand() & 1` (`0x0059f52e` / `0x0059f64e`).
     state.prog_runner.start(4, 3, 0);
     assert!(!state.prog_runner.tick(
         0,
@@ -210,7 +225,10 @@ fn test_stage4_ev_prog_2_3_4_angela_and_room_init() {
         state.prog_runner.take_requested_demo(),
         Some(STG4_ANGELA_TALK_DEMO_NO)
     );
-    assert!(!state.flags.get(STG4_FLAG_ANGELA_TALK_VARIANT));
+    assert_eq!(
+        state.prog_runner.take_requested_demo_post_pose(),
+        Some((STG4_JAMES_POST_PROG3_POS, STG4_JAMES_POST_PROG3_YAW))
+    );
 
     state.prog_runner.start(4, 4, 0);
     assert!(!state.prog_runner.tick(
@@ -227,7 +245,26 @@ fn test_stage4_ev_prog_2_3_4_angela_and_room_init() {
         state.prog_runner.take_requested_demo(),
         Some(STG4_ANGELA_TALK_DEMO_NO)
     );
-    assert!(state.flags.get(STG4_FLAG_ANGELA_TALK_VARIANT));
+    assert_eq!(
+        state.prog_runner.take_requested_demo_post_pose(),
+        Some((STG4_JAMES_POST_PROG4_POS, STG4_JAMES_POST_PROG4_YAW))
+    );
+
+    // Verify `shRand() & 1` re-roll on `demo_no = 4` completion produces both true & false across seeds
+    let mut saw_true = false;
+    let mut saw_false = false;
+    for _ in 0..32 {
+        apply_post_demo_stage_flags_with_rng(STG4_ANGELA_TALK_DEMO_NO, &mut state.flags, &mut rng);
+        if state.flags.get(STG4_FLAG_ANGELA_TALK_VARIANT) {
+            saw_true = true;
+        } else {
+            saw_false = true;
+        }
+    }
+    assert!(
+        saw_true && saw_false,
+        "demo_no=4 must re-roll flag(37) via RNG"
+    );
 
     // Leave Ending mode (`flag(512)`): Angela does not spawn
     state.flags.set(STG4_FLAG_LEAVE_ENDING_REQ, true);
@@ -458,7 +495,8 @@ fn test_stage4_ev_all_time_and_ev_bgm_control() {
         .iter()
         .any(|&(id, pos)| id == STG4_SE_AMBIENT_PASSER && pos[0] > 9000.0));
 
-    // Rustle `0x9c86` spawns in `x < -20000` & yaw in `(-3π/4, -π/4)`, stops when speed <= 1.2
+    // Rustle `0x9c86` spawns in `x < -20000` & yaw in `(-3π/4, -π/4)` using `cos` for X & `sin`
+    // for Z (`0x005a0050`/`0x005a0075`), and stops when `speed < 1.2` (`0x005a0120..0x005a0156`).
     ambient.rustle_timer = 0.0;
     let fx_rustle = ambient.tick_all_time(
         [-30_000.0, 0.0, 0.0],
@@ -469,10 +507,15 @@ fn test_stage4_ev_all_time_and_ev_bgm_control() {
         &flags,
         &mut rng,
     );
-    assert!(fx_rustle
+    let rustle_pos = fx_rustle
         .spawned_positional_se
         .iter()
-        .any(|&(id, _)| id == STG4_SE_AMBIENT_RUSTLE));
+        .find_map(|&(id, pos)| (id == STG4_SE_AMBIENT_RUSTLE).then_some(pos))
+        .expect("rustle SE 0x9c86 spawned");
+    let expected_x = -30_000.0 + ambient.rustle_angle.cos() * STG4_RUSTLE_RADIUS_MM;
+    let expected_z = ambient.rustle_angle.sin() * STG4_RUSTLE_RADIUS_MM;
+    assert!((rustle_pos[0] - expected_x).abs() < 1e-3);
+    assert!((rustle_pos[2] - expected_z).abs() < 1e-3);
     assert!(fx_rustle.stopped_se.is_empty());
 
     let fx_stop = ambient.tick_all_time(

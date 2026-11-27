@@ -249,7 +249,14 @@ pub(crate) fn run_active_gameplay(
             .cutaway_overlay
             .active_picture()
             .map(str::to_owned);
-        let (still_running, walkback_delta, requested_demo, open_save_point_id, ending_bit) = {
+        let (
+            still_running,
+            walkback_delta,
+            requested_demo,
+            requested_demo_post_pose,
+            open_save_point_id,
+            ending_bit,
+        ) = {
             let scen = &mut sim.scenario;
             let still_running = scen.prog_runner.tick_with_campaign(
                 down,
@@ -268,6 +275,9 @@ pub(crate) fn run_active_gameplay(
             effects
                 .sound_effects
                 .extend_from_slice(scen.prog_runner.sound_effects());
+            effects
+                .stop_sound_effects
+                .extend_from_slice(scen.prog_runner.stop_sound_effects());
             for &(se_id, pos) in scen.prog_runner.positional_sound_effects() {
                 effects
                     .positional_sounds
@@ -289,6 +299,7 @@ pub(crate) fn run_active_gameplay(
                 still_running,
                 scen.prog_runner.take_walkback_delta(),
                 scen.prog_runner.take_requested_demo(),
+                scen.prog_runner.take_requested_demo_post_pose(),
                 scen.prog_runner.take_open_save_point_id(),
                 scen.prog_runner.take_triggered_ending(),
             )
@@ -335,11 +346,8 @@ pub(crate) fn run_active_gameplay(
         }
         if let Some(demo_no) = requested_demo {
             let rule = AUTO_STAGE_DEMO_RULES.iter().find(|r| r.demo_no == demo_no);
-            let (post_pos, post_yaw) = if demo_no == crate::events::STG4_ANGELA_GRAVE_DEMO_NO {
-                (
-                    Some(crate::events::STG4_JAMES_POST_DEMO3_POS),
-                    Some(crate::events::STG4_JAMES_DEMO3_YAW),
-                )
+            let (post_pos, post_yaw) = if let Some((pos, yaw)) = requested_demo_post_pose {
+                (Some(pos), Some(yaw))
             } else {
                 (rule.and_then(|r| r.post_pos), rule.and_then(|r| r.post_yaw))
             };

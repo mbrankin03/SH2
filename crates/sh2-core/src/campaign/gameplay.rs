@@ -259,6 +259,7 @@ pub(crate) fn run_active_gameplay(
             still_running,
             walkback_delta,
             requested_demo,
+            requested_demo_id,
             requested_demo_post_pose,
             open_save_point_id,
             ending_bit,
@@ -305,6 +306,7 @@ pub(crate) fn run_active_gameplay(
                 still_running,
                 scen.prog_runner.take_walkback_delta(),
                 scen.prog_runner.take_requested_demo(),
+                scen.prog_runner.take_requested_demo_id(),
                 scen.prog_runner.take_requested_demo_post_pose(),
                 scen.prog_runner.take_open_save_point_id(),
                 scen.prog_runner.take_triggered_ending(),
@@ -376,7 +378,8 @@ pub(crate) fn run_active_gameplay(
             };
             return GameplayStepOutcome::StartDemo(DramaDemoTrigger {
                 demo_no,
-                demo_id: find_drama_demo_by_no(demo_no as u16).map(|d| d.id),
+                demo_id: requested_demo_id
+                    .or_else(|| find_drama_demo_by_no(demo_no as u16).map(|d| d.id)),
                 post_pos,
                 post_yaw,
                 restore_policy: PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
@@ -970,6 +973,82 @@ mod tests {
                 "campaign must stay in ActiveGameplay on tick {tick}, got {:?}",
                 orch.phase
             );
+        }
+    }
+
+    /// Regression test for `SH2-191` follow-up: Stage 4 post-cutscene Angela conversations
+    /// (`ev_prog[3]` `0x0059f4a0` -> `"haka_agl_h"` and `ev_prog[4]` `0x0059f5c0` -> `"haka_agl_i"`)
+    /// share `demo_no = 4` (`STG4_ANGELA_TALK_DEMO_NO`) and must emit distinct `demo_id`s, snap
+    /// James to their respective post-poses (`0x008e7700` / `0x008e7748`), and return cleanly to
+    /// `ActiveGameplay` without looping.
+    #[test]
+    fn sh2_191_stage4_angela_repeat_talk_disambiguates_haka_agl_h_and_i_without_looping() {
+        use crate::events::engine::EventExecMode;
+        use crate::events::{
+            STG4_ANGELA_TALK_DEMO_NO, STG4_FLAG_ANGELA_MET, STG4_JAMES_POST_PROG3_POS,
+            STG4_JAMES_POST_PROG3_YAW, STG4_JAMES_POST_PROG4_POS, STG4_JAMES_POST_PROG4_YAW,
+        };
+
+        for (prog_no, expected_id, expected_pos, expected_yaw) in [
+            (
+                3u8,
+                "haka_agl_h",
+                STG4_JAMES_POST_PROG3_POS,
+                STG4_JAMES_POST_PROG3_YAW,
+            ),
+            (
+                4u8,
+                "haka_agl_i",
+                STG4_JAMES_POST_PROG4_POS,
+                STG4_JAMES_POST_PROG4_YAW,
+            ),
+        ] {
+            let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+            sim.scenario.current_stage = 4;
+            sim.scenario.current_room = "ca11".to_string();
+            sim.scenario.flags.set(STG4_FLAG_ANGELA_MET, true);
+
+            let mut orch = CampaignOrchestrator::from_saved_stage(
+                4,
+                Some("ca11".to_string()),
+                expected_pos,
+                expected_yaw,
+                OutdoorStreamingMode::default(),
+                false,
+            );
+            orch.phase = CampaignPhase::ActiveGameplay;
+            orch.fade = ScreenFadeState::default();
+            orch.player_locked = false;
+
+            sim.scenario.prog_runner.start(4, prog_no, 0);
+            let idle = CampaignTickInput::default();
+            let eff_start = orch.step(&mut sim, &idle, 1.0 / 60.0);
+            let trigger = eff_start
+                .start_drama_demo
+                .unwrap_or_else(|| panic!("ev_prog[{prog_no}] must emit start_drama_demo"));
+            assert_eq!(trigger.demo_no, STG4_ANGELA_TALK_DEMO_NO);
+            assert_eq!(trigger.demo_id, Some(expected_id));
+            assert_eq!(orch.event_engine.step_state.ev_m_step, EventExecMode::Idle);
+
+            let eff_done = orch.step(
+                &mut sim,
+                &CampaignTickInput {
+                    drama_demo_finished: true,
+                    ..CampaignTickInput::default()
+                },
+                1.0 / 60.0,
+            );
+            assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+            assert!(eff_done.start_drama_demo.is_none());
+            assert_eq!(sim.scenario.player_position.to_array(), expected_pos);
+            assert!((sim.scenario.player_yaw - expected_yaw).abs() < 1e-5);
+
+            // Next idle ticks must stay in ActiveGameplay without re-triggering.
+            for _ in 0..5 {
+                let eff = orch.step(&mut sim, &idle, 1.0 / 60.0);
+                assert!(eff.start_drama_demo.is_none());
+                assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+            }
         }
     }
 }

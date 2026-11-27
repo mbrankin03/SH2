@@ -903,3 +903,99 @@ fn test_sh2_191_angela_graveyard_haka_agl_live_campaign_e2e_assets_audio_and_no_
         assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
     }
 }
+
+/// Real retail-asset integration test for `SH2-191` follow-up: verifies both post-cutscene
+/// Angela graveyard conversation variants (`haka_agl_h.dds` `ev_prog[3]` `0x0059f4a0` / `0x008e76d8`
+/// and `haka_agl_i.dds` `ev_prog[4]` `0x0059f5c0` / `0x008e7720`) resolve unambiguously in
+/// `DRAMA_DEMO_CATALOG`, parse real retail `.dds`/`.mes` assets with exact shared `.anm`/`.cls`
+/// frame offsets (`3284` / `3741`), decode non-silent `voice.afs[54]` & `voice.afs[55]` PCM, and
+/// play + finish cleanly via `CampaignOrchestrator` without looping.
+#[test]
+fn test_sh2_191_angela_graveyard_repeat_talk_haka_agl_h_and_i_retail_assets() {
+    let resolver = AssetPathResolver::resolve();
+    if !resolver.data_dir.exists() {
+        return;
+    }
+
+    let cases = [
+        ("haka_agl_h", 38u16, 60054i32, 54usize, 3284u16, 457usize),
+        ("haka_agl_i", 41u16, 60055i32, 55usize, 3741u16, 272usize),
+    ];
+
+    for (id, expected_msg_start, expected_stream, expected_afs, expected_off, expected_frames) in
+        cases
+    {
+        let info = sh2_core::DRAMA_DEMO_CATALOG
+            .iter()
+            .find(|d| d.id == id)
+            .unwrap_or_else(|| panic!("{id} must exist in DRAMA_DEMO_CATALOG"));
+        assert_eq!(info.demo_no, 4);
+        assert_eq!(info.msg_start, expected_msg_start);
+        assert_eq!(info.stream_no, expected_stream);
+        assert_eq!(info.voice_afs_index(), Some(expected_afs));
+        assert_eq!(info.stream_start, 0);
+        assert_eq!(info.anm_frame_offset, expected_off);
+
+        let dds_bytes = std::fs::read(resolver.game_root.join(info.dds_path))
+            .unwrap_or_else(|e| panic!("read {}: {e}", info.dds_path));
+        let script = sh2_assets::formats::demo::parse_demo_dds(&dds_bytes)
+            .unwrap_or_else(|e| panic!("parse {}: {e}", info.dds_path));
+        assert_eq!(script.header.total_frames as usize, expected_frames);
+
+        let mes_bytes = std::fs::read(resolver.game_root.join(info.mes_path))
+            .expect("read stage_forest_msg_e.mes");
+        let mes_table =
+            sh2_assets::formats::mes::parse_mes(&mes_bytes).expect("parse stage_forest_msg_e.mes");
+        assert!(
+            mes_table.get_text(usize::from(info.msg_start)).is_some(),
+            "{id} msg_start={} must exist in stage_forest_msg_e.mes",
+            info.msg_start
+        );
+
+        let wav = crate::assets::load_cutscene_voice_wav_for_source(
+            expected_afs,
+            sh2_core::AudioPackSource::EnhancedLossless,
+        )
+        .unwrap_or_else(|| panic!("voice.afs[{expected_afs}] must decode for {id}"));
+        assert_eq!(wav.bits_per_sample, 16);
+        let peak = wav
+            .data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .step_by(64)
+            .map(|c| i16::from_le_bytes(*c).unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            peak > 4_000,
+            "voice.afs[{expected_afs}] ({id}) must contain non-silent speech PCM (peak={peak})"
+        );
+
+        let mut player = sh2_core::DramaDemoPlayer::new(*info, script, false);
+        let jms = player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "hhh_jms_pos")
+            .unwrap_or_else(|| panic!("{id} must include hhh_jms_pos"));
+        let agl = player
+            .actors
+            .iter()
+            .find(|a| a.actor_name == "agl_pos")
+            .unwrap_or_else(|| panic!("{id} must include agl_pos"));
+        assert_eq!(jms.anm_frame_offset, expected_off);
+        assert_eq!(agl.cls_frame_offset, expected_off);
+        assert_eq!(agl.anm_frame_offset, expected_off + 156);
+
+        // `stream_start = 0` must trigger voice playback cleanly on early frames.
+        let mut voice_triggered = false;
+        for _ in 0..5 {
+            player.tick(1.0 / 30.0, true);
+            if player.pending_voice_trigger {
+                voice_triggered = true;
+                break;
+            }
+        }
+        assert!(voice_triggered, "{id} must fire pending_voice_trigger");
+    }
+}

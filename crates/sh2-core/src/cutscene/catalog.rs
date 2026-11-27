@@ -172,6 +172,21 @@ pub const SUBTITLES_HAKA_AGL: &[SubtitleWindow] = &[
     SubtitleWindow::new(27, 3207, 3282),
 ];
 
+/// `demo_no == 4` (`haka_agl_h` - Post-cutscene Angela talk `"Sure is quiet..."`,
+/// `sh2pc.exe` `ev_prog[3]` `0x0059f4a0`, `adr_msg_time` `0x008e76c8`).
+pub const SUBTITLES_HAKA_AGL_H: &[SubtitleWindow] = &[
+    SubtitleWindow::new(0, 87, 141),
+    SubtitleWindow::new(1, 141, 303),
+    SubtitleWindow::new(2, 303, 360),
+];
+
+/// `demo_no == 4` (`haka_agl_i` - Post-cutscene Angela talk `"Looking for someone"`,
+/// `sh2pc.exe` `ev_prog[4]` `0x0059f5c0`, `adr_msg_time` `0x008e7714`).
+pub const SUBTITLES_HAKA_AGL_I: &[SubtitleWindow] = &[
+    SubtitleWindow::new(0, 84, 150),
+    SubtitleWindow::new(1, 150, 195),
+];
+
 /// `demo_no == 6` (`saisho` - Radio & First Lying Figure Encounter)
 pub const SUBTITLES_FIRST_BATTLE: &[SubtitleWindow] = &[];
 
@@ -726,6 +741,46 @@ pub const DRAMA_DEMO_CATALOG: &[DramaDemoPlayInfo] = &[
         stream_no: 60053,
         stream_start: 21,
         anm_frame_offset: 0,
+        offset_x: 0.0,
+        offset_z: 0.0,
+        sequence_chain: &[],
+    },
+    // `sh2pc.exe` `ev_prog[3]` (`0x0059f4a0` `EvProgGraveSureQuiet`), `DramaDemoPlayInfo` `0x008e76d8`:
+    // `demo_no = 4`, `msg_start = 38` (`0x26`), `stream_no = 0xea96` (`60054` -> `voice.afs[54]`),
+    // `stream_start = 0.0`, shared `.anm`/`.cls` offset = `3284` (immediately after `haka_agl.dds`).
+    DramaDemoPlayInfo {
+        demo_no: 4,
+        id: "haka_agl_h",
+        title: "Graveyard: Talk to Angela — Sure is quiet (haka_agl_h)",
+        dds_path: "data/demo/haka_agl/haka_agl_h.dds",
+        stage_map_path: "bg/ca/ca11.map",
+        stage_name: "ca11",
+        mes_path: "data/etc/message/stage_forest_msg_e.mes",
+        msg_start: 38,
+        subtitle_windows: SUBTITLES_HAKA_AGL_H,
+        stream_no: 60054,
+        stream_start: 0,
+        anm_frame_offset: 3284,
+        offset_x: 0.0,
+        offset_z: 0.0,
+        sequence_chain: &[],
+    },
+    // `sh2pc.exe` `ev_prog[4]` (`0x0059f5c0` `EvProgGraveLookingFor`), `DramaDemoPlayInfo` `0x008e7720`:
+    // `demo_no = 4`, `msg_start = 41` (`0x29`), `stream_no = 0xea97` (`60055` -> `voice.afs[55]`),
+    // `stream_start = 0.0`, shared `.anm`/`.cls` offset = `3741` (`3284 + 457`).
+    DramaDemoPlayInfo {
+        demo_no: 4,
+        id: "haka_agl_i",
+        title: "Graveyard: Talk to Angela — Looking for someone (haka_agl_i)",
+        dds_path: "data/demo/haka_agl/haka_agl_i.dds",
+        stage_map_path: "bg/ca/ca11.map",
+        stage_name: "ca11",
+        mes_path: "data/etc/message/stage_forest_msg_e.mes",
+        msg_start: 41,
+        subtitle_windows: SUBTITLES_HAKA_AGL_I,
+        stream_no: 60055,
+        stream_start: 0,
+        anm_frame_offset: 3741,
         offset_x: 0.0,
         offset_z: 0.0,
         sequence_chain: &[],

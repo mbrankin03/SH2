@@ -430,6 +430,7 @@ pub(super) struct Stage4TickOut {
     pub stop_sound_effects: Vec<u32>,
     pub positional_sound_effects: Vec<(u32, [f32; 3])>,
     pub requested_demo: Option<u32>,
+    pub requested_demo_id: Option<&'static str>,
     pub requested_demo_post_pose: Option<([f32; 3], f32)>,
     pub open_save_point_id: Option<u16>,
     pub triggered_ending: Option<u8>,
@@ -493,6 +494,7 @@ pub(super) fn tick_stage4_prog(
             p.locked = true;
             p.flag_set = false;
             out.requested_demo = Some(STG4_ANGELA_GRAVE_DEMO_NO);
+            out.requested_demo_id = Some("haka_agl");
             out.requested_demo_post_pose = Some((STG4_JAMES_POST_DEMO3_POS, STG4_JAMES_DEMO3_YAW));
             p.locked = false;
             out.finished = true;
@@ -505,6 +507,7 @@ pub(super) fn tick_stage4_prog(
             p.locked = true;
             p.flag_set = false;
             out.requested_demo = Some(STG4_ANGELA_TALK_DEMO_NO);
+            out.requested_demo_id = Some("haka_agl_h");
             out.requested_demo_post_pose =
                 Some((STG4_JAMES_POST_PROG3_POS, STG4_JAMES_POST_PROG3_YAW));
             p.locked = false;
@@ -518,6 +521,7 @@ pub(super) fn tick_stage4_prog(
             p.locked = true;
             p.flag_set = false;
             out.requested_demo = Some(STG4_ANGELA_TALK_DEMO_NO);
+            out.requested_demo_id = Some("haka_agl_i");
             out.requested_demo_post_pose =
                 Some((STG4_JAMES_POST_PROG4_POS, STG4_JAMES_POST_PROG4_YAW));
             p.locked = false;

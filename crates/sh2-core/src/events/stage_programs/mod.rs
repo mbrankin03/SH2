@@ -65,6 +65,7 @@ pub(crate) struct ProgTickOut {
     pub stop_sound_effects: Vec<u32>,
     pub positional_sound_effects: Vec<(u32, [f32; 3])>,
     pub requested_demo: Option<u32>,
+    pub requested_demo_id: Option<&'static str>,
     pub requested_demo_post_pose: Option<([f32; 3], f32)>,
     pub open_save_point_id: Option<u16>,
     pub walkback_delta: Option<[f32; 3]>,
@@ -263,6 +264,7 @@ pub(crate) fn dispatch_stage_program(
         out.stop_sound_effects = s4.stop_sound_effects;
         out.positional_sound_effects = s4.positional_sound_effects;
         out.requested_demo = s4.requested_demo;
+        out.requested_demo_id = s4.requested_demo_id;
         out.requested_demo_post_pose = s4.requested_demo_post_pose;
         out.open_save_point_id = s4.open_save_point_id;
         out.triggered_ending = s4.triggered_ending;

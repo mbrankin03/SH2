@@ -349,6 +349,9 @@ impl NurseController {
                 // - `sub_state == 2`: hesitation wait; re-evaluates `enNSECanSeePlayer` when done.
                 let atk_speed =
                     NSE_ATTACK_SPEED_SCALE[diff_idx] * (self.stats.hp_rate / 200.0 + 0.5);
+                // Transitional clip-end stand-in: `enNSECtrlAttack` (`0x001583f0`) advances
+                // `sub_state == 1` on `.anm` completion (`*(short *)(work + 0x14) == -1`) once
+                // animation playback state is plumbed into `update()`.
                 let swing_duration = (1.0 / atk_speed.max(0.25)).clamp(0.55, 1.6);
                 let in_strike_range = matches!(
                     notice,
@@ -386,6 +389,9 @@ impl NurseController {
                         }
                     }
                     _ => {
+                        // Transitional clip-end stand-in (`0.5s`): `enNSECtrlAttack` (`0x001583f0`)
+                        // exits hesitation (`anime 2`) on `.anm` completion (`*(short *)(work + 0x14) == -1`)
+                        // once animation playback state is plumbed into `update()`.
                         if self.state_timer >= 0.5 {
                             if in_strike_range {
                                 self.sub_state = 0;

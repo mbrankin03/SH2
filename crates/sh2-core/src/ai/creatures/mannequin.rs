@@ -307,6 +307,9 @@ impl MannequinController {
                     self.path_state.init(self.yaw);
                 } else if dist > feel_range
                     && notice == SensoryNotice::None
+                    // Transitional clip-end stand-in (`0.5s`): `enMKNCtrlPrecaution` (`0x00155040`)
+                    // checks `.anm` completion (`*(short *)(work + 0x14) == -1`) once animation
+                    // playback state is plumbed into `update()`.
                     && self.state_timer >= 0.5
                 {
                     self.state = MknState::Wander;

@@ -333,6 +333,9 @@ impl LyingFigureController {
                 } else if notice == SensoryNotice::None
                     && tribe_alert_pos.is_none()
                     && dist > self.sensory.attack_ranges[diff_idx]
+                    // Transitional clip-end stand-in (`0.5s`): `enSCUCtrlPrecaution` (`0x00160fe0`)
+                    // checks `.anm` completion (`*(short *)(work + 0x14) == -1`) once animation
+                    // playback state is plumbed into `update()`.
                     && self.state_timer >= 0.5
                 {
                     self.state = ScuState::Wander;

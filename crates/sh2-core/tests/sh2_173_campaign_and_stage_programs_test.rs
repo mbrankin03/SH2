@@ -7,12 +7,16 @@
 
 use sh2_core::campaign::room_name::{room_name, room_name_for_stage_pos};
 use sh2_core::campaign::stage_hooks::{eval_room_init_hook, eval_stage_init_hook};
-use sh2_core::campaign::{CampaignOrchestrator, CampaignPhase, CampaignTickInput};
+use sh2_core::campaign::{
+    CampaignOrchestrator, CampaignPhase, CampaignTickInput, ConnectStep, RoomLoadTarget,
+};
 use sh2_core::config::{ActionDifficulty, OutdoorStreamingMode, RiddleDifficulty};
 use sh2_core::cutaway::CutawayOverlayEngine;
 use sh2_core::endings::{
-    EndingPointTracker, MainEndingKind, PlayingInfo, FLAG_ENDING_REBIRTH,
-    FLAG_MARY_HALLWAY_MONOLOGUE_COMPLETE, REBIRTH_RITUAL_ITEM_IDS,
+    EndingPointTracker, MainEndingKind, PlayingInfo, FLAG_ENDING_IN_WATER, FLAG_ENDING_LEAVE,
+    FLAG_ENDING_MARIA, FLAG_ENDING_REBIRTH, FLAG_HOSPITAL_ROOF_DIARY,
+    FLAG_HOSPITAL_S3_MARIA_SECOND_CHECK, FLAG_MARY_HALLWAY_MONOLOGUE_COMPLETE,
+    REBIRTH_RITUAL_ITEM_IDS,
 };
 use sh2_core::events::horror_triggers::StageEventDispatcher;
 use sh2_core::events::stage_programs::endings::DOG_ENDING_DEMO_NO;
@@ -104,6 +108,51 @@ fn connect_stage_and_room_init_hooks_match_sh2pc_disassembly() {
     assert_eq!(room_name_for_stage_pos(44, [-80_000.0, 0.0, 0.0]), 0xad);
     // - Stage 56 Wish 2F (`glb_crd = 16`, cell `0x212` -> `0xcd`)
     assert_eq!(room_name_for_stage_pos(56, [0.0, 0.0, 40_000.0]), 0xcd);
+
+    // Live `connectRoomInit` (`ConnectStep::RoomInit`) numeric room-ID resolution through
+    // `CampaignOrchestrator::step`:
+    // 1. Stage 15 Bowling at Room `0x09` (`[0, 0, -40_000]`) clears flag 15 (`connectStageInit`)
+    //    and does NOT set flag 530 (`room_id == 0x09` guard in `0x00591c00`).
+    let run_room_loading = |stage: u16, pos: [f32; 3], pre_flags: &[usize]| -> EventFlags {
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        for &f in pre_flags {
+            sim.scenario.flags.set(f, true);
+        }
+        let mut orch = CampaignOrchestrator::new_game(
+            ScenarioKind::LetterFromSilentHeaven,
+            ActionDifficulty::Normal,
+            RiddleDifficulty::Normal,
+            OutdoorStreamingMode::default(),
+            false,
+        );
+        orch.phase = CampaignPhase::RoomLoading {
+            target: RoomLoadTarget {
+                stage_id: stage,
+                room_override: None,
+                spawn_pos: pos,
+                spawn_yaw: 0.0,
+                is_connected_stage: false,
+                show_loading_screen: false,
+            },
+            connect_step: ConnectStep::StageOverlay,
+            assets_ready: true,
+        };
+        let input = CampaignTickInput::default();
+        for _ in 0..8 {
+            let _ = orch.step(&mut sim, &input, 1.0 / 60.0);
+        }
+        sim.scenario.flags
+    };
+    let bowling_09 = run_room_loading(15, [0.0, 0.0, -40_000.0], &[15]);
+    assert!(!bowling_09.get(15));
+    assert!(!bowling_09.get(530));
+    // 2. Stage 15 Bowling at Room `0x0b` (`[0, 0, 0]`) sets flag 530.
+    let bowling_0b = run_room_loading(15, [0.0, 0.0, 0.0], &[15]);
+    assert!(!bowling_0b.get(15));
+    assert!(bowling_0b.get(530));
+    // 3. Stage 34 Labyrinth W at Room `0x89` (`[0, 0, 0]`) with flag 327 sets flag 328.
+    let lab_89 = run_room_loading(34, [0.0, 0.0, 0.0], &[327]);
+    assert!(lab_89.get(328));
 }
 
 #[test]
@@ -232,6 +281,78 @@ fn ending_point_tracker_and_stage44_ending_judge_wired_end_to_end() {
     // and does NOT immediately trigger the ending (final boss & ending stage follow).
     assert!(flags.get(FLAG_ENDING_REBIRTH));
     assert_eq!(runner.take_triggered_ending(), None);
+
+    // Verify all 3 non-Rebirth `EvProgEndingJudge` flag outcomes (`618` Leave, `619` Maria, `620` In Water):
+    let run_ending_judge =
+        |pre_flags: &[usize], info_override: PlayingInfo, tracker_override: EndingPointTracker| {
+            let mut r = StageProgramRunner::new();
+            let mut f = EventFlags::new();
+            for &bit in pre_flags {
+                f.set(bit, true);
+            }
+            let mut p = PuzzleState::new();
+            let mut i = InventoryManager::new();
+            let mut o = CutawayOverlayEngine::new();
+            r.start(44, 6, 0);
+            let running = r.tick_with_campaign(
+                0,
+                0,
+                1.0 / 60.0,
+                &mut f,
+                &mut p,
+                &mut i,
+                &mut o,
+                RiddleDifficulty::Normal,
+                Some(&info_override),
+                Some(&tracker_override),
+                None,
+            );
+            assert!(!running);
+            assert_eq!(r.take_triggered_ending(), None);
+            (r.evaluated_main_ending(), f)
+        };
+
+    // Leave (`FLAG_ENDING_LEAVE` = `618`)
+    let (leave_kind, leave_flags) = run_ending_judge(
+        &[FLAG_MARY_HALLWAY_MONOLOGUE_COMPLETE],
+        PlayingInfo::default(),
+        EndingPointTracker {
+            mary_item_examine_count: 10,
+            ..EndingPointTracker::default()
+        },
+    );
+    assert_eq!(leave_kind, Some(MainEndingKind::Leave));
+    assert!(leave_flags.get(FLAG_ENDING_LEAVE));
+    assert!(!leave_flags.get(FLAG_ENDING_MARIA));
+    assert!(!leave_flags.get(FLAG_ENDING_IN_WATER));
+    assert!(!leave_flags.get(FLAG_ENDING_REBIRTH));
+
+    // Maria (`FLAG_ENDING_MARIA` = `619`)
+    let (maria_kind, maria_flags) = run_ending_judge(
+        &[FLAG_HOSPITAL_S3_MARIA_SECOND_CHECK],
+        PlayingInfo::default(),
+        EndingPointTracker {
+            maria_close_secs: 2000.0,
+            ..EndingPointTracker::default()
+        },
+    );
+    assert_eq!(maria_kind, Some(MainEndingKind::Maria));
+    assert!(maria_flags.get(FLAG_ENDING_MARIA));
+    assert!(!maria_flags.get(FLAG_ENDING_LEAVE));
+
+    // In Water (`FLAG_ENDING_IN_WATER` = `620`)
+    let (water_kind, water_flags) = run_ending_judge(
+        &[FLAG_HOSPITAL_ROOF_DIARY],
+        PlayingInfo::default(),
+        EndingPointTracker {
+            angelas_knife_examined: true,
+            low_hp_weighted_secs: 600.0,
+            ..EndingPointTracker::default()
+        },
+    );
+    assert_eq!(water_kind, Some(MainEndingKind::InWater));
+    assert!(water_flags.get(FLAG_ENDING_IN_WATER));
+    assert!(!water_flags.get(FLAG_ENDING_LEAVE));
 }
 
 #[test]
@@ -272,7 +393,21 @@ fn pushables_and_multi_floor_elevator_panel_work_through_stage_runner() {
     assert!(flags.get(FLAG_APART_CLOCK_PUSHED));
     assert_eq!(runner.sound_effects(), &[0x4a51]);
 
-    // 2. Stage 26 #2 Hospital B1 Storeroom Shelf push (`0x00588220` / `0x00588370`) sets flag 223
+    // 2. Stage 26 #2 Hospital B1 Storeroom Shelf push (`0x00588220` / `0x00588370`) sets flag 223,
+    //    while Stage 24 #2 (`0x0058aa50`) does NOT set flag 223.
+    runner.start(24, 2, 0);
+    runner.tick(
+        0,
+        0,
+        0.016,
+        &mut flags,
+        &mut puzzle,
+        &mut inv,
+        &mut overlay,
+        RiddleDifficulty::Normal,
+    );
+    assert!(!flags.get(FLAG_HOSPITAL_B1_SHELF_PUSHED));
+
     runner.start(26, 2, 0);
     runner.tick(
         0,
@@ -337,26 +472,65 @@ fn pushables_and_multi_floor_elevator_panel_work_through_stage_runner() {
     assert!(!running);
     assert!(elevator.is_none());
 
-    // 4. Stage 41 #4 Hotel Employee Elevator panel (`0x0057a674` -> `FUN_004a2a50`)
-    runner.start(41, 4, 0);
-    let running = runner.tick_with_campaign(
-        0,
-        0,
-        0.016,
-        &mut flags,
-        &mut puzzle,
-        &mut inv,
-        &mut overlay,
-        RiddleDifficulty::Normal,
-        None,
-        None,
-        Some(&mut elevator),
-    );
-    assert!(running);
-    assert_eq!(
-        elevator.as_ref().map(|e| e.kind),
-        Some(ElevatorKind::HotelEmployee)
-    );
+    // 4. All verified `sh2pc.exe` `FUN_004a2a50` MultiFloorElevatorPanel `(stage, prog_no)` entries
+    for &(stage, prog_no, expected_kind) in &[
+        (20u8, 9u8, ElevatorKind::HospitalNormal),
+        (20, 11, ElevatorKind::HospitalNormal),
+        (21, 1, ElevatorKind::HospitalNormal),
+        (25, 3, ElevatorKind::HospitalOtherworld),
+        (26, 5, ElevatorKind::HospitalOtherworld),
+        (41, 4, ElevatorKind::HotelEmployee),
+        (41, 10, ElevatorKind::HotelEmployee),
+        (43, 1, ElevatorKind::HotelEmployee),
+    ] {
+        elevator = None;
+        runner.start(stage, prog_no, 0);
+        let running = runner.tick_with_campaign(
+            0,
+            0,
+            0.016,
+            &mut flags,
+            &mut puzzle,
+            &mut inv,
+            &mut overlay,
+            RiddleDifficulty::Normal,
+            None,
+            None,
+            Some(&mut elevator),
+        );
+        assert!(
+            running,
+            "Stage {stage} #{prog_no} should keep running while elevator panel is open"
+        );
+        assert_eq!(
+            elevator.as_ref().map(|e| e.kind),
+            Some(expected_kind),
+            "Stage {stage} #{prog_no} expected {expected_kind:?}"
+        );
+    }
+
+    // Non-elevator programs (previously mis-wired) must NOT open `MultiFloorElevatorPanel`
+    for &(stage, prog_no) in &[(18u8, 2u8), (22, 2), (40, 3)] {
+        elevator = None;
+        runner.start(stage, prog_no, 0);
+        let _ = runner.tick_with_campaign(
+            0,
+            0,
+            0.016,
+            &mut flags,
+            &mut puzzle,
+            &mut inv,
+            &mut overlay,
+            RiddleDifficulty::Normal,
+            None,
+            None,
+            Some(&mut elevator),
+        );
+        assert!(
+            elevator.is_none(),
+            "Stage {stage} #{prog_no} must NOT open MultiFloorElevatorPanel"
+        );
+    }
 }
 
 #[test]

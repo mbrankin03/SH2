@@ -55,8 +55,9 @@ pub fn is_halogen_fullbright_room(room_code: &str) -> bool {
         .any(|r| r.eq_ignore_ascii_case(room_code))
 }
 
-/// Applies SH2:EE lighting fixes (`PS2FlashlightBrightness`, `CatacombsMeatRoomFix`) to a copy of
-/// [`DrawEnvData`] when `profile` enables SH2:EE fixes (`EnhancedEdition` / `NativeEnhanced`).
+/// Applies SH2:EE lighting fixes (`CemeteryLightingASM`, `PS2FlashlightBrightness`,
+/// `CatacombsMeatRoomFix`) to a copy of [`DrawEnvData`] when `profile` enables SH2:EE fixes
+/// (`EnhancedEdition` / `NativeEnhanced`).
 /// In [`LightingProfile::Ps2Authentic`], returns the unmodified PS2 `DrawEnvData` 1:1.
 #[must_use]
 pub fn apply_draw_env_fixes(
@@ -67,6 +68,16 @@ pub fn apply_draw_env_fixes(
     let mut env = *base;
     if profile == LightingProfile::Ps2Authentic {
         return env;
+    }
+
+    // `Patches/LightingPatch.cpp:33-36` (`CemeteryLightingASM`, `sh2pc.exe` `0x0047C2DB`):
+    // Remap `ca14` (`0x0001000E`) -> `ca13` (`0x0001000D`), resolving `CA_DrawEnvData[1]`
+    // (`0xFFFF`, `ambient = 0.65`, Day fog defaults) instead of `CA_DrawEnvData[0]` (`ambient = 0.9`).
+    if room_code.eq_ignore_ascii_case("ca14") {
+        let remapped_room = (cemetery_lighting_id(0x0001_000E, profile) & 0xFFFF) as u16;
+        if let Some(remapped) = crate::lighting::draw_env::lookup_draw_env("CA", remapped_room) {
+            env = *remapped;
+        }
     }
 
     // `EnhancedFlashlight.cpp:162-164`: extend 6000.0 mm flashlight reach to 8500.0 mm
@@ -538,7 +549,7 @@ mod tests {
             LightingProfile::Ps2Authentic
         ));
 
-        // LightingPatch.cpp: CemeteryLightingASM
+        // LightingPatch.cpp: CemeteryLightingASM (`ca14` remaps to `CA_DrawEnvData[1]` in Enhanced)
         assert_eq!(
             cemetery_lighting_id(0x0001_000E, LightingProfile::EnhancedEdition),
             0x0001_000D
@@ -547,6 +558,14 @@ mod tests {
             cemetery_lighting_id(0x0001_000E, LightingProfile::Ps2Authentic),
             0x0001_000E
         );
+        let ca14_raw = lookup_draw_env("CA", 14).expect("CA room 14");
+        let ca14_ps2 = apply_draw_env_fixes(ca14_raw, "ca14", LightingProfile::Ps2Authentic);
+        assert_eq!(ca14_ps2.room_no, 14);
+        assert!((ca14_ps2.ambient[0] - 0.9).abs() < 1e-4);
+        let ca14_ee = apply_draw_env_fixes(ca14_raw, "ca14", LightingProfile::EnhancedEdition);
+        assert_eq!(ca14_ee.room_no, 0xFFFF);
+        assert!((ca14_ee.ambient[0] - 0.65).abs() < 1e-4);
+        assert_eq!(ca14_ee.fog_far, 0.0);
 
         // AtticShadowFixes.cpp: R_MAN_ATTIC = 0xC7
         assert_eq!(bfaw_attic_shadow_cutoff_y_gated(0xC7, -1450.0, true), -10.0);

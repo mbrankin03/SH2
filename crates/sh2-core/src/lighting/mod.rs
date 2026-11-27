@@ -24,8 +24,10 @@ pub use darkness::{
     FLASH_LEVEL_ROOM_MID, ITEM_ID_FLASHLIGHT, PS2_FLASHLIGHT_COLOR_SCALE,
 };
 pub use draw_env::{
-    env_flash_off_level, lookup_draw_env, DrawEnvData, DrawEnvDirectionalLight, DrawEnvPointLight,
-    ENV_FLASH_OFF_POST_PICKUP, ENV_FLASH_OFF_PRE_PICKUP, FLAG_WOODSIDE_FLASHLIGHT_PICKUP,
+    env_flash_off_level, lookup_draw_env, lookup_draw_env_for_time, DrawEnvData,
+    DrawEnvDirectionalLight, DrawEnvPointLight, DRAW_ENV_ROOM_DAYTIME_WILDCARD,
+    DRAW_ENV_ROOM_WILDCARD, ENV_FLASH_OFF_POST_PICKUP, ENV_FLASH_OFF_PRE_PICKUP,
+    FLAG_WOODSIDE_FLASHLIGHT_PICKUP,
 };
 pub use draw_env_tables::{StageDrawEnvTable, ALL_STAGE_DRAW_ENV_TABLES};
 pub use dust::{

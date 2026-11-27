@@ -336,11 +336,18 @@ impl RoomController for GrappleRoomController {
         let entry = state.grapple_viewer.current_entry();
 
         // 1. Evaluate and render James Sunderland (zero per-frame heap allocation via c.skin_scratch)
+        let active_src = state.grapple_viewer.active_james_anm_source();
+        if active_src != JamesAnmSource::Basic {
+            let _ = state.ensure_james_anm(active_src);
+        }
         if let Some(ref mut c) = state.character {
-            let active_src = state.grapple_viewer.active_james_anm_source();
             let active_james_anm = match active_src {
                 JamesAnmSource::Basic => &c.anm,
-                src => state.james_anm_cache.get(&src).unwrap_or(&c.anm),
+                src => state
+                    .james_anm_cache
+                    .get(&src)
+                    .and_then(|opt| opt.as_ref())
+                    .unwrap_or(&c.anm),
             };
 
             let frame_count = active_james_anm.frames.len();
@@ -395,19 +402,20 @@ impl RoomController for GrappleRoomController {
             }
         }
 
-        // 2. Evaluate and render Creature (zero per-frame heap allocation via ea.skin_scratch)
+        // 2. Evaluate and render Creature (lazy-loaded on demand; zero per-frame heap allocation via ea.skin_scratch)
         let skeleton_overlay = state.grapple_viewer.skeleton_overlay;
         let enemy_y_offset = state.grapple_viewer.enemy_y_offset;
         let relative_z_offset = state.grapple_viewer.relative_z_offset;
         let enemy_frame_sample = state
-            .enemy_asset(entry.creature_id)
+            .ensure_enemy_asset_mut(entry.creature_id)
             .map(|ea| ea.anm.frames.len())
             .filter(|&fc| fc > 0)
             .map(|fc| state.grapple_viewer.sample_enemy_cursor(fc));
 
-        if let (Some((f0, f1, alpha)), Some(ea)) =
-            (enemy_frame_sample, state.enemy_asset_mut(entry.creature_id))
-        {
+        if let (Some((f0, f1, alpha)), Some(ea)) = (
+            enemy_frame_sample,
+            state.ensure_enemy_asset_mut(entry.creature_id),
+        ) {
             interpolate_frames_into(
                 &ea.anm.frames[f0],
                 &ea.anm.frames[f1],

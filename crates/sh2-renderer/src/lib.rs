@@ -21,8 +21,9 @@ pub mod water;
 
 pub use blitter::SurfaceBlitter;
 pub use context::{
-    prepare_map_texture_cpu, prepare_mipmapped_texture_cpu, PreparedGpuTexture, RenderContext,
-    RendererConfig, SkeletalDrawItem,
+    prepare_map_texture_cpu, prepare_map_texture_cpu_owned, prepare_mipmapped_texture_cpu,
+    prepare_mipmapped_texture_cpu_owned, PreparedGpuTexture, RenderContext, RendererConfig,
+    SkeletalDrawItem,
 };
 pub use fmv::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
 pub use frustum::Frustum;

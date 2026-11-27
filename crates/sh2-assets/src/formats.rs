@@ -69,7 +69,9 @@ pub use kg::{
     parse_kg, parse_kg1, parse_kg2, KgBoundingSphere, KgFile, KgPart, KgStrip, KgStripGeometry,
     KgTriangle, KG_NORMAL_Q15_SCALE,
 };
-pub use map::{parse_map, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture};
+pub use map::{
+    parse_map, parse_map_textures_only, BatchGroup, MapBatch, MapFile, MapMaterial, MapTexture,
+};
 pub use mdls::{
     parse_mdl, ModelClusterDelta, ModelClusterTarget, ModelFile, ModelPrimitive, ModelTexture,
     ModelVertices,

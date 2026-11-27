@@ -133,16 +133,42 @@ pub struct MapTexture {
     pub width: usize,
     /// Texture height in pixels.
     pub height: usize,
-    /// Compression kind: 0 = Uncompressed 32-bit BGRA8, 1 = DXT1 (BC1), 3 = DXT3 (BC2), 5 = DXT5 (BC3).
+    /// Compression/pixel layout kind:
+    /// - [`Self::KIND_BGRA8`] (`0`): Uncompressed 32-bit BGRA8
+    /// - [`Self::KIND_DXT1`] (`1`): DXT1 (BC1)
+    /// - [`Self::KIND_RGBA8`] (`2`): Uncompressed 32-bit RGBA8 (zero-swizzle path for 4K AI overrides)
+    /// - [`Self::KIND_DXT3`] (`3`): DXT3 (BC2)
+    /// - [`Self::KIND_DXT5`] (`5`): DXT5 (BC3)
     pub kind: u8,
     /// Raw or compressed texture payload data.
     pub data: Vec<u8>,
 }
 
 impl MapTexture {
+    /// Uncompressed 32-bit BGRA8 pixel layout (retail PC `.map` uncompressed sprite).
+    pub const KIND_BGRA8: u8 = 0;
+    /// DXT1 (BC1) 4x4 block-compressed format.
+    pub const KIND_DXT1: u8 = 1;
+    /// Uncompressed 32-bit RGBA8 pixel layout (zero-swizzle path for decoded 4K overrides, `SH2-181`).
+    pub const KIND_RGBA8: u8 = 2;
+    /// DXT3 (BC2) 4x4 block-compressed format.
+    pub const KIND_DXT3: u8 = 3;
+    /// DXT5 (BC3) 4x4 block-compressed format.
+    pub const KIND_DXT5: u8 = 5;
+
     /// Decodes the texture payload into an uncompressed RGBA8 byte buffer.
     pub fn to_rgba(&self) -> Result<Vec<u8>, AssetError> {
-        if self.kind == 0 {
+        if self.kind == Self::KIND_RGBA8 {
+            let exp_len = self.width * self.height * 4;
+            if self.data.len() < exp_len {
+                return Err(AssetError::BufferUnderflow {
+                    required: exp_len,
+                    available: self.data.len(),
+                });
+            }
+            return Ok(self.data[..exp_len].to_vec());
+        }
+        if self.kind == Self::KIND_BGRA8 {
             let exp_len = self.width * self.height * 4;
             if self.data.len() < exp_len {
                 return Err(AssetError::BufferUnderflow {
@@ -160,6 +186,54 @@ impl MapTexture {
                 dst[3] = src[3]; // A
             }
             return Ok(rgba);
+        }
+        decode_dxt(&self.data, self.width, self.height, self.kind)
+    }
+
+    /// Borrows the RGBA8 buffer directly when `kind == Self::KIND_RGBA8` (zero allocation and
+    /// zero swizzle), or decodes into an owned `Vec<u8>` for BGRA8/DXT formats (`SH2-181`).
+    pub fn to_rgba_cow(&self) -> Result<std::borrow::Cow<'_, [u8]>, AssetError> {
+        if self.kind == Self::KIND_RGBA8 {
+            let exp_len = self.width * self.height * 4;
+            if self.data.len() < exp_len {
+                return Err(AssetError::BufferUnderflow {
+                    required: exp_len,
+                    available: self.data.len(),
+                });
+            }
+            return Ok(std::borrow::Cow::Borrowed(&self.data[..exp_len]));
+        }
+        self.to_rgba().map(std::borrow::Cow::Owned)
+    }
+
+    /// Consumes this [`MapTexture`] into an owned RGBA8 buffer without extra allocation for
+    /// uncompressed RGBA8/BGRA8 payloads (`SH2-181`).
+    pub fn into_rgba(mut self) -> Result<Vec<u8>, AssetError> {
+        if self.kind == Self::KIND_RGBA8 {
+            let exp_len = self.width * self.height * 4;
+            if self.data.len() < exp_len {
+                return Err(AssetError::BufferUnderflow {
+                    required: exp_len,
+                    available: self.data.len(),
+                });
+            }
+            self.data.truncate(exp_len);
+            return Ok(self.data);
+        }
+        if self.kind == Self::KIND_BGRA8 {
+            let exp_len = self.width * self.height * 4;
+            if self.data.len() < exp_len {
+                return Err(AssetError::BufferUnderflow {
+                    required: exp_len,
+                    available: self.data.len(),
+                });
+            }
+            self.data.truncate(exp_len);
+            let (chunks, _) = self.data.as_chunks_mut::<4>();
+            for px in chunks {
+                px.swap(0, 2);
+            }
+            return Ok(self.data);
         }
         decode_dxt(&self.data, self.width, self.height, self.kind)
     }
@@ -885,8 +959,79 @@ fn collect_batch(
     }
 }
 
+/// Parses only sub-file type 2 (embedded textures) from a `.map` file, skipping all geometry
+/// sub-files (type 1) and optionally filtering to only the requested `tex_id`s (`SH2-181`).
+///
+/// Used by shared area bank merging (`<area>.map` -> `<room>.map`) and SH2:EE fallback merging
+/// so unreferenced textures and geometry buffers are never parsed or allocated.
+///
+/// # Errors
+/// Returns [`AssetError::InvalidMagic`] if the data does not begin with `0x20010510`,
+/// or [`AssetError::BufferUnderflow`] if sub-file headers exceed buffer bounds.
+pub fn parse_map_textures_only(
+    data: &[u8],
+    filter_tids: Option<&std::collections::HashSet<u32>>,
+) -> Result<HashMap<u32, MapTexture>, AssetError> {
+    if data.len() < 16 {
+        return Err(AssetError::BufferUnderflow {
+            required: 16,
+            available: data.len(),
+        });
+    }
+
+    let magic = read_u32(data, 0)?;
+    if magic != MAP_MAGIC {
+        return Err(AssetError::InvalidMagic {
+            expected: &MAP_MAGIC_BYTES,
+            found: data[0..4].to_vec(),
+        });
+    }
+
+    let sub_count = read_u32(data, 8)? as usize;
+    let mut textures = HashMap::new();
+    let mut p = 16usize;
+    for _ in 0..sub_count {
+        if p + 16 > data.len() {
+            return Err(AssetError::BufferUnderflow {
+                required: p + 16,
+                available: data.len(),
+            });
+        }
+
+        let sub_type = read_u32(data, p)?;
+        let sub_len = read_u32(data, p + 4)? as usize;
+        let body = p + 16;
+
+        if body + sub_len > data.len() {
+            return Err(AssetError::BufferUnderflow {
+                required: body + sub_len,
+                available: data.len(),
+            });
+        }
+
+        if sub_type == 2 {
+            parse_textures_subfile_into(data, body, &mut textures, filter_tids)?;
+        }
+
+        p = body + sub_len;
+    }
+
+    Ok(textures)
+}
+
 /// Parses sub-file type 2: embedded textures, headers, sprite declarations, and DXT byte streams.
-fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Result<(), AssetError> {
+fn parse_textures_subfile(data: &[u8], body: usize, map: &mut MapFile) -> Result<(), AssetError> {
+    parse_textures_subfile_into(data, body, &mut map.textures, None)
+}
+
+/// Parses sub-file type 2 into `textures`, optionally skipping payloads whose `tex_id` is not in
+/// `filter_tids` (`SH2-181`).
+fn parse_textures_subfile_into(
+    data: &[u8],
+    mut p: usize,
+    textures: &mut HashMap<u32, MapTexture>,
+    filter_tids: Option<&std::collections::HashSet<u32>>,
+) -> Result<(), AssetError> {
     p += 16;
     while data.len().saturating_sub(p) >= 16 {
         let tex_id = read_u32(data, p)?;
@@ -902,6 +1047,8 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
         let sprite_count = read_u32(data, p + 12)? as usize;
         p += 32;
 
+        let want_tex = filter_tids.is_none_or(|f| f.contains(&tex_id));
+
         for _ in 0..sprite_count {
             if data.len().saturating_sub(p) < 32 {
                 return Ok(());
@@ -914,22 +1061,22 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
             let length = read_u32(data, p + 16)? as usize;
             p += 32;
 
-            if w > 0 && h > 0 && length != 0 && p + length <= data.len() {
+            if want_tex && w > 0 && h > 0 && length != 0 && p + length <= data.len() {
                 let kind = if comp == 0 {
-                    0 // Uncompressed 32-bit BGRA8
+                    MapTexture::KIND_BGRA8 // Uncompressed 32-bit BGRA8
                 } else {
                     match fmt {
-                        0 => 1,     // BC1 / DXT1
-                        1 | 2 => 3, // BC2 / DXT3
-                        3 | 4 => 5, // BC3 / DXT5
-                        _ => 3,
+                        0 => MapTexture::KIND_DXT1,     // BC1 / DXT1
+                        1 | 2 => MapTexture::KIND_DXT3, // BC2 / DXT3
+                        3 | 4 => MapTexture::KIND_DXT5, // BC3 / DXT5
+                        _ => MapTexture::KIND_DXT3,
                     }
                 };
 
                 // Preserve the first non-empty sprite (base mip / primary sprite) so multi-sprite
                 // blocks (`sprite_count > 1`) do not overwrite earlier sprites or wastefully copy
                 // discarded payloads (`SH2-179`).
-                map.textures.entry(tex_id).or_insert_with(|| MapTexture {
+                textures.entry(tex_id).or_insert_with(|| MapTexture {
                     id: tex_id,
                     width: w,
                     height: h,
@@ -1248,5 +1395,96 @@ mod tests {
         assert_eq!(map.texture_uv_wrap_axes(4660), (false, false));
         assert_eq!(map.texture_uv_wrap_axes(3336), (true, false));
         assert_eq!(map.texture_uv_wrap_axes(1864), (false, true));
+    }
+
+    #[test]
+    fn test_map_texture_rgba8_zero_swizzle_matches_bgra8_parity() {
+        let rgba_pixels = vec![
+            10, 20, 30, 255, // px 0
+            200, 150, 100, 128, // px 1
+            0, 255, 64, 0, // px 2
+            12, 34, 56, 78, // px 3
+        ];
+        let mut bgra_pixels = rgba_pixels.clone();
+        for px in bgra_pixels.as_chunks_mut::<4>().0 {
+            px.swap(0, 2);
+        }
+
+        let rgba_tex = MapTexture {
+            id: 42,
+            width: 2,
+            height: 2,
+            kind: MapTexture::KIND_RGBA8,
+            data: rgba_pixels.clone(),
+        };
+        let bgra_tex = MapTexture {
+            id: 42,
+            width: 2,
+            height: 2,
+            kind: MapTexture::KIND_BGRA8,
+            data: bgra_pixels,
+        };
+
+        assert_eq!(rgba_tex.to_rgba().unwrap(), bgra_tex.to_rgba().unwrap());
+        assert_eq!(rgba_tex.to_rgba().unwrap(), rgba_pixels);
+        let cow = rgba_tex.to_rgba_cow().unwrap();
+        assert!(matches!(cow, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*cow, rgba_pixels.as_slice());
+        assert_eq!(rgba_tex.into_rgba().unwrap(), rgba_pixels);
+        assert_eq!(bgra_tex.into_rgba().unwrap(), rgba_pixels);
+    }
+
+    #[test]
+    fn test_parse_map_textures_only_skips_geometry_and_filters_tids() {
+        // Build a synthetic `.map` with 2 sub-files:
+        // - sub-file 0: type=1 (corrupt/dummy geometry body that would fail `parse_geometry_subfile`)
+        // - sub-file 1: type=2 (textures 100 and 200)
+        let mut tex_body = vec![0u8; 16];
+        for (tid, fill) in [(100u32, 0x11u8), (200u32, 0x22u8)] {
+            let mut blk = [0u8; 32];
+            blk[0..4].copy_from_slice(&tid.to_le_bytes());
+            blk[12..16].copy_from_slice(&1u32.to_le_bytes());
+            tex_body.extend_from_slice(&blk);
+
+            let mut spr = [0u8; 32];
+            spr[8..10].copy_from_slice(&2u16.to_le_bytes());
+            spr[10..12].copy_from_slice(&2u16.to_le_bytes());
+            spr[12] = 0x20;
+            spr[13] = 0;
+            spr[16..20].copy_from_slice(&16u32.to_le_bytes());
+            tex_body.extend_from_slice(&spr);
+            tex_body.extend_from_slice(&[fill; 16]);
+        }
+
+        let dummy_geo = vec![0xFFu8; 32];
+        let mut map_bytes = Vec::new();
+        map_bytes.extend_from_slice(&MAP_MAGIC.to_le_bytes());
+        map_bytes.extend_from_slice(&0u32.to_le_bytes());
+        map_bytes.extend_from_slice(&2u32.to_le_bytes()); // sub_count = 2
+        map_bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        // Sub-file 1 (geometry, type=1)
+        map_bytes.extend_from_slice(&1u32.to_le_bytes());
+        map_bytes.extend_from_slice(&(dummy_geo.len() as u32).to_le_bytes());
+        map_bytes.extend_from_slice(&[0u8; 8]);
+        map_bytes.extend_from_slice(&dummy_geo);
+
+        // Sub-file 2 (textures, type=2)
+        map_bytes.extend_from_slice(&2u32.to_le_bytes());
+        map_bytes.extend_from_slice(&(tex_body.len() as u32).to_le_bytes());
+        map_bytes.extend_from_slice(&[0u8; 8]);
+        map_bytes.extend_from_slice(&tex_body);
+
+        let all = parse_map_textures_only(&map_bytes, None).expect("unfiltered parse");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[&100].data, vec![0x11u8; 16]);
+        assert_eq!(all[&200].data, vec![0x22u8; 16]);
+
+        let mut filter = std::collections::HashSet::new();
+        filter.insert(200u32);
+        let filtered = parse_map_textures_only(&map_bytes, Some(&filter)).expect("filtered parse");
+        assert_eq!(filtered.len(), 1);
+        assert!(!filtered.contains_key(&100));
+        assert_eq!(filtered[&200].data, vec![0x22u8; 16]);
     }
 }

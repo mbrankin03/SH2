@@ -430,15 +430,14 @@ fn open_current_drama_demo(state: &mut AppState) {
     if let Some(ref mut eng) = state.audio_engine {
         eng.stop_voice(Duration::from_millis(30));
     }
-    state.drama_demo_session =
-        open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false);
     let q = state
         .menu_ctrl
         .options_menu
         .draft_config
         .video
         .texture_quality;
-    state.apply_texture_quality(q);
+    state.drama_demo_session =
+        open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false, q);
 }
 
 fn step_selected_drama_demo(state: &mut AppState, forward: bool, reopen_now: bool) {

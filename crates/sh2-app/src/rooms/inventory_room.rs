@@ -347,8 +347,14 @@ impl RoomController for InventoryRoomController {
 
             if let Some(meta) = item_metadata(sel_id) {
                 if let Some(mdl_path) = meta.model_path {
-                    state.inventory_room.item_3d_asset =
-                        load_character_asset(&state.render_ctx, meta.name, &[mdl_path], &[]);
+                    let quality = state.loaded_texture_quality;
+                    state.inventory_room.item_3d_asset = load_character_asset(
+                        &state.render_ctx,
+                        meta.name,
+                        &[mdl_path],
+                        &[],
+                        quality,
+                    );
                 }
                 if let Some(tex_path) = meta.inspect_texture_path {
                     let resolver = sh2_assets::AssetPathResolver::resolve();
@@ -506,7 +512,7 @@ impl RoomController for InventoryRoomController {
                 skeletal_draw.push((
                     &c.gpu_mesh,
                     state.skin_matrices_scratch.as_slice(),
-                    Some(c.hd_texture_bind_groups.as_slice()),
+                    Some(c.texture_bind_groups.as_slice()),
                 ));
             }
         }

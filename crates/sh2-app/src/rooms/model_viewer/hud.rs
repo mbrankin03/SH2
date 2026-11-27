@@ -70,7 +70,7 @@ pub(super) fn render_model_viewer_hud(
                 active_tris,
                 active_submeshes,
                 c.model.primitives.len(),
-                c.model.textures.len(),
+                c.texture_count,
                 preset_idx + 1,
                 presets.len().max(1),
                 preset_label

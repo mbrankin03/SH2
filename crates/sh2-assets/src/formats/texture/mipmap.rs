@@ -91,13 +91,14 @@ pub fn preserve_alpha_coverage_in_place(rgba: &mut [u8], target_coverage: f32, t
     }
 }
 
-/// Generates a full box-filtered RGBA8 mipmap chain from level-0 `rgba` pixels.
+/// Generates a full box-filtered RGBA8 mipmap chain from an owned level-0 `rgba` buffer (`SH2-181`).
 ///
-/// Preserves cutout alpha coverage (`ALPHA_CUTOUT_MIP_REF_THRESHOLD`) and weights RGB downsampling
-/// by alpha so transparent cutout regions neither thin out at distance nor bleed dark borders into
-/// higher mip levels when sampled with 16x anisotropic filtering.
+/// Takes ownership of `rgba` so level-0 moves directly into the chain without duplicating a
+/// 16 MB 2048x2048 surface. Preserves cutout alpha coverage (`ALPHA_CUTOUT_MIP_REF_THRESHOLD`)
+/// and weights RGB downsampling by alpha so transparent cutout regions neither thin out at
+/// distance nor bleed dark borders into higher mip levels when sampled with 16x anisotropic filtering.
 pub fn generate_mipmap_chain_rgba(
-    rgba: &[u8],
+    mut rgba: Vec<u8>,
     width: u32,
     height: u32,
 ) -> Vec<(u32, u32, Vec<u8>)> {
@@ -108,7 +109,8 @@ pub fn generate_mipmap_chain_rgba(
 
     let expected0 = (w0 as usize) * (h0 as usize) * 4;
     let mip0 = if rgba.len() >= expected0 {
-        rgba[..expected0].to_vec()
+        rgba.truncate(expected0);
+        rgba
     } else {
         vec![255u8; expected0]
     };

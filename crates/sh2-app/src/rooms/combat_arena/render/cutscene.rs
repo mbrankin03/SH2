@@ -99,8 +99,12 @@ pub(super) fn step_cutscene_player(
             });
             if let Some(next_idx) = next_catalog_idx {
                 state.selected_drama_demo_idx = next_idx;
-                state.drama_demo_session =
-                    open_drama_demo_session(&state.render_ctx, next_idx, false);
+                state.drama_demo_session = open_drama_demo_session(
+                    &state.render_ctx,
+                    next_idx,
+                    false,
+                    state.loaded_texture_quality,
+                );
                 if let Some(ref s) = state.drama_demo_session {
                     cutscene_camera_override = Some(s.player.camera);
                 }

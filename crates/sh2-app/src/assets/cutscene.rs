@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::assets::{load_character_asset, CharacterAsset, MapTierAssets};
-use sh2_assets::formats::TextureLoader;
+use crate::assets::{
+    load_character_asset, load_map_for_quality_from_roots, CharacterAsset, MapTierAssets,
+};
+use sh2_core::config::WorldTextureQuality;
 use sh2_renderer::{GpuMap, RenderContext};
 
 /// Active in-engine real-time 3D cutscene session (`DramaDemoPlayer` + loaded `.mes` table + actor models/animations + stage `.map`).
@@ -15,23 +17,47 @@ pub(crate) struct ActiveDramaDemoSession {
     pub actor_assets: Vec<Option<CharacterAsset>>,
     /// Per-actor planar mirror reflection skinning scratch buffers (`0..player.actors.len()`).
     pub actor_mirror_skin_scratch: Vec<Vec<[[f32; 4]; 4]>>,
-    /// Authentic stage `.map` geometry and textures loaded for this cutscene (`info.stage_map_path`),
-    /// paired per quality tier so `material_index` never mismatches across `data/` vs `sh2e/` (`SH2-121`).
+    /// Authentic stage `.map` geometry and textures loaded for the single active quality tier (`SH2-181`).
     pub stage_gpu_map: Option<Arc<GpuMap>>,
-    pub stage_hd_assets: Option<MapTierAssets>,
-    pub stage_sh2e_assets: Option<MapTierAssets>,
-    pub stage_vanilla_assets: Option<MapTierAssets>,
     pub stage_texture_bind_groups: Option<Vec<Arc<wgpu::BindGroup>>>,
+    /// Active [`WorldTextureQuality`] tier currently resident for this cutscene session (`SH2-181`).
+    pub loaded_quality: WorldTextureQuality,
     #[allow(dead_code)]
     pub catalog_index: usize,
 }
 
+impl ActiveDramaDemoSession {
+    /// Reloads cutscene actor textures and stage `.map` geometry/textures on demand when
+    /// `WorldTextureQuality` changes mid-cutscene (`SH2-181`).
+    pub fn reload_for_quality(&mut self, render_ctx: &RenderContext, quality: WorldTextureQuality) {
+        if self.loaded_quality == quality {
+            return;
+        }
+        for actor in self.actor_assets.iter_mut().flatten() {
+            actor.reload_textures_for_quality(render_ctx, quality);
+        }
+        let info = self.player.info;
+        if !info.stage_map_path.is_empty() {
+            if let Some(map) =
+                load_map_for_quality_from_roots(info.stage_map_path, info.stage_name, quality)
+            {
+                let assets = MapTierAssets::from_map(render_ctx, map);
+                self.stage_gpu_map = Some(assets.gpu_map);
+                self.stage_texture_bind_groups = Some(assets.texture_bind_groups);
+            }
+        }
+        self.loaded_quality = quality;
+    }
+}
+
 /// Loads a [`sh2_core::DramaDemoPlayInfo`] cutscene script (`.dds`), its stage `.mes` dialogue table,
-/// and all actor 3D models (`.mdl`), motion clips (`.anm`), and facial morph clusters (`.cls`) from disk.
+/// and all actor 3D models (`.mdl`), motion clips (`.anm`), and facial morph clusters (`.cls`) from disk
+/// for the single active `quality` tier (`SH2-181`).
 pub(crate) fn open_drama_demo_session(
     render_ctx: &RenderContext,
     catalog_index: usize,
     reduce_widescreen_fov: bool,
+    quality: WorldTextureQuality,
 ) -> Option<ActiveDramaDemoSession> {
     let catalog = sh2_core::DRAMA_DEMO_CATALOG;
     if catalog.is_empty() {
@@ -95,6 +121,7 @@ pub(crate) fn open_drama_demo_session(
                 anim_info.actor_name,
                 &mdl_candidates,
                 &anm_candidates,
+                quality,
             )
         } else {
             None
@@ -107,45 +134,24 @@ pub(crate) fn open_drama_demo_session(
     let loaded_actor_count = actor_assets.iter().filter(|a| a.is_some()).count();
 
     let mut stage_gpu_map = None;
-    let mut stage_hd_assets = None;
-    let mut stage_sh2e_assets = None;
-    let mut stage_vanilla_assets = None;
     let mut stage_texture_bind_groups = None;
     if !info.stage_map_path.is_empty() {
-        for base in &base_roots {
-            let loader = TextureLoader::new(
-                PathBuf::from(base).join("data"),
-                Some(PathBuf::from(base).join("sh2e")),
-            );
-            if let Ok(map) = loader.load_map_with_hd_overrides(info.stage_map_path, info.stage_name)
-            {
-                let hd_assets = MapTierAssets::from_map(render_ctx, &map);
-                let sh2e_assets = loader
-                    .load_sh2e_map(info.stage_map_path, info.stage_name)
-                    .ok()
-                    .map(|sh2e_map| MapTierAssets::from_map(render_ctx, &sh2e_map))
-                    .unwrap_or_else(|| hd_assets.clone());
-                let van_assets = loader
-                    .load_vanilla_map(info.stage_map_path, info.stage_name)
-                    .ok()
-                    .map(|van_map| MapTierAssets::from_map(render_ctx, &van_map))
-                    .unwrap_or_else(|| sh2e_assets.clone());
-                stage_gpu_map = Some(Arc::clone(&hd_assets.gpu_map));
-                stage_texture_bind_groups = Some(hd_assets.texture_bind_groups.clone());
-                stage_hd_assets = Some(hd_assets);
-                stage_sh2e_assets = Some(sh2e_assets);
-                stage_vanilla_assets = Some(van_assets);
-                break;
-            }
+        if let Some(map) =
+            load_map_for_quality_from_roots(info.stage_map_path, info.stage_name, quality)
+        {
+            let assets = MapTierAssets::from_map(render_ctx, map);
+            stage_gpu_map = Some(assets.gpu_map);
+            stage_texture_bind_groups = Some(assets.texture_bind_groups);
         }
     }
 
     tracing::info!(
-        "[Cutscene Player] Opened DramaDemo #{}: '{}' ({}, stage={}) -> {} frames, {}/{} actors loaded, {} lights",
+        "[Cutscene Player] Opened DramaDemo #{}: '{}' ({}, stage={}, tier={:?}) -> {} frames, {}/{} actors loaded, {} lights",
         info.demo_no,
         info.title,
         info.dds_path,
         info.stage_map_path,
+        quality,
         player.total_frames(),
         loaded_actor_count,
         player.actors.len(),
@@ -158,10 +164,8 @@ pub(crate) fn open_drama_demo_session(
         actor_assets,
         actor_mirror_skin_scratch,
         stage_gpu_map,
-        stage_hd_assets,
-        stage_sh2e_assets,
-        stage_vanilla_assets,
         stage_texture_bind_groups,
+        loaded_quality: quality,
         catalog_index: idx,
     })
 }

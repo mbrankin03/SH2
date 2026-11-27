@@ -3,14 +3,13 @@
 use std::time::Instant;
 
 use crate::assets::{
-    find_cld_file_for_room, find_map_file_for_room, find_sh2e_map_file_for_room,
-    find_vanilla_map_file_for_room, load_viewer_entry_asset, open_drama_demo_session,
-    room_cam_id_for_test_room,
+    find_cld_file_for_room, find_map_file_for_room_for_quality, load_viewer_entry_asset,
+    open_drama_demo_session, room_cam_id_for_test_room,
 };
 use crate::menu_events::apply_pending_engine_config;
 use crate::rooms;
 use crate::rooms::fmv_room::open_fmv_session;
-use crate::state::AppState;
+use crate::state::{ActiveMapSource, AppState};
 use sh2_ui::menu::{LaunchTarget, TestRoomKind, TitlePhase};
 use sh2_ui::pause::PauseSubPhase;
 
@@ -230,6 +229,17 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
         load_test_room_into_state(state, new_room);
     }
 
+    // Reload active texture tier on demand if Options changed `texture_quality` (`SH2-181`).
+    let desired_tex_quality = state
+        .menu_ctrl
+        .options_menu
+        .draft_config
+        .video
+        .texture_quality;
+    if desired_tex_quality != state.loaded_texture_quality {
+        state.apply_texture_quality(desired_tex_quality);
+    }
+
     // Hot-swap model or animation clip in Model & Texture Viewer when selection changes
     if state.menu_ctrl.in_game_active
         && state.active_test_room == TestRoomKind::ModelAndTextureViewer
@@ -237,10 +247,22 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
             || state.loaded_viewer_model_idx != state.model_viewer.selected_model_index
             || state.loaded_viewer_anm_idx != state.model_viewer.selected_anm_index)
     {
+        let desired_viewer_quality = match state.model_viewer.texture_source {
+            sh2_debug::TextureSourceMode::Ai4kMaster => {
+                sh2_core::config::WorldTextureQuality::Ai4kMaster
+            }
+            sh2_debug::TextureSourceMode::EnhancedHd => {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd
+            }
+            sh2_debug::TextureSourceMode::VanillaPs2 => {
+                sh2_core::config::WorldTextureQuality::OriginalPs2
+            }
+        };
         let mut asset = load_viewer_entry_asset(
             &state.render_ctx,
             state.model_viewer.current_entry(),
             state.model_viewer.selected_anm_index,
+            desired_viewer_quality,
         );
         if let Some(ref mut a) = asset {
             state.model_viewer.set_total_frames(a.anm.frames.len());
@@ -287,18 +309,19 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
     state.native_cutaway_surface = None;
     state.sh2ee_ty3_glb = None;
     state.sh2ee_mon_glb = None;
-    let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
-    state.map_hd_assets = crate::assets::MapTierAssets::from_map(&state.render_ctx, &new_map);
-    state.map_sh2e_assets = find_sh2e_map_file_for_room(new_room)
-        .map(|sh2e_map| crate::assets::MapTierAssets::from_map(&state.render_ctx, &sh2e_map));
-    state.map_vanilla_assets = find_vanilla_map_file_for_room(new_room)
-        .map(|van_map| crate::assets::MapTierAssets::from_map(&state.render_ctx, &van_map));
     let active_tex_quality = state
         .menu_ctrl
         .options_menu
         .draft_config
         .video
         .texture_quality;
+    let (new_map, new_pos, new_yaw, new_fog) =
+        find_map_file_for_room_for_quality(new_room, active_tex_quality);
+    let active_assets = crate::assets::MapTierAssets::from_map(&state.render_ctx, new_map);
+    state.gpu_map = active_assets.gpu_map;
+    state.map_texture_bind_groups = active_assets.texture_bind_groups;
+    state.active_map_source = ActiveMapSource::TestRoom(new_room);
+    state.enemy_assets.evict_all();
     state.apply_texture_quality(active_tex_quality);
     state.fog_uniforms = new_fog;
     state.render_ctx.update_fog(&state.fog_uniforms);
@@ -347,8 +370,8 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
         && state.story_progression_room.checkpoint_3d_idx == 0
         && !state.story_progression_room.restroom_mirror_inspected
     {
-        state.drama_demo_session = open_drama_demo_session(&state.render_ctx, 0, false);
-        state.apply_texture_quality(active_tex_quality);
+        state.drama_demo_session =
+            open_drama_demo_session(&state.render_ctx, 0, false, active_tex_quality);
     }
     if new_room == TestRoomKind::CombatArena {
         state.combat_arena = sh2_core::combat::CombatArena::new();
@@ -381,10 +404,22 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
         state.loading_screen_test = rooms::loading_screen_room::LoadingScreenTestState::default();
     }
     if new_room == TestRoomKind::ModelAndTextureViewer && state.viewer_asset.is_none() {
+        let desired_viewer_quality = match state.model_viewer.texture_source {
+            sh2_debug::TextureSourceMode::Ai4kMaster => {
+                sh2_core::config::WorldTextureQuality::Ai4kMaster
+            }
+            sh2_debug::TextureSourceMode::EnhancedHd => {
+                sh2_core::config::WorldTextureQuality::Sh2eeHd
+            }
+            sh2_debug::TextureSourceMode::VanillaPs2 => {
+                sh2_core::config::WorldTextureQuality::OriginalPs2
+            }
+        };
         let mut asset = load_viewer_entry_asset(
             &state.render_ctx,
             state.model_viewer.current_entry(),
             state.model_viewer.selected_anm_index,
+            desired_viewer_quality,
         );
         if let Some(ref mut a) = asset {
             state.model_viewer.set_total_frames(a.anm.frames.len());

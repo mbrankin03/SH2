@@ -220,15 +220,14 @@ impl CampaignRoomController {
                 .as_ref()
                 .is_some_and(|s| s.catalog_index == catalog_idx);
             if !already_preloaded {
-                state.drama_demo_session =
-                    open_drama_demo_session(&state.render_ctx, catalog_idx, false);
                 let tex_quality = state
                     .menu_ctrl
                     .options_menu
                     .draft_config
                     .video
                     .texture_quality;
-                state.apply_texture_quality(tex_quality);
+                state.drama_demo_session =
+                    open_drama_demo_session(&state.render_ctx, catalog_idx, false, tex_quality);
                 performed_sync_load = true;
             }
         }
@@ -248,16 +247,15 @@ impl CampaignRoomController {
                     .as_ref()
                     .is_some_and(|s| s.catalog_index == catalog_idx);
                 if !already_preloaded {
-                    state.selected_drama_demo_idx = catalog_idx;
-                    state.drama_demo_session =
-                        open_drama_demo_session(&state.render_ctx, catalog_idx, false);
                     let tex_quality = state
                         .menu_ctrl
                         .options_menu
                         .draft_config
                         .video
                         .texture_quality;
-                    state.apply_texture_quality(tex_quality);
+                    state.selected_drama_demo_idx = catalog_idx;
+                    state.drama_demo_session =
+                        open_drama_demo_session(&state.render_ctx, catalog_idx, false, tex_quality);
                     performed_sync_load = true;
                 }
             }

@@ -74,7 +74,7 @@ fn test_texture_loader_and_ee_fallback() {
 fn test_sh2_10_bink_movies_hd_map_overrides_and_mipmaps() {
     // 1. Always verify mipmap chain generation in headless CI
     let base_rgba = vec![200u8; 64 * 32 * 4];
-    let mips = generate_mipmap_chain_rgba(&base_rgba, 64, 32);
+    let mips = generate_mipmap_chain_rgba(base_rgba, 64, 32);
     assert_eq!(mips.len(), 7);
     assert_eq!((mips[0].0, mips[0].1), (64, 32));
     assert_eq!((mips[6].0, mips[6].1), (1, 1));

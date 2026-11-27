@@ -18,7 +18,7 @@
 //!
 //! ### PS2 Sound Formats (`.sdb`, `SOUND.DAT`, `.sfc`)
 //! - `.sdb` (`data/sound/snd_data/*.sdb`): 64-byte `_SOUND_DATA` spatial BGM mixing records
-//!   (`SLUS_202.28` `SeSoundDataLoad` `0x00221460` / `sh2pc.exe` `sndGetSoundAryByCharaPos` `0x005187e0`).
+//!   (`SLUS_202.28` `sndGetSoundAryByCharaPos` `0x00221540` in `sound/snd_select.c` / `sh2pc.exe` `FUN_00518b90` `0x00518b90`).
 //! - `SOUND.DAT` (`IOP/SD0712/SOUND.DAT`): Sony `libsd` / Modhsyn `IECSsreV` / `IECSdaeH` / `IECSigaV`
 //!   SPU2 16-byte ADPCM VAG sample banks.
 //! - `.sfc` (`data/sound/s_force/*.sfc`): Raw 16-bit signed LE mono PCM S-Force 3D positional audio.
@@ -74,8 +74,8 @@ pub struct Ps2SdbSoundDataRecord {
 
 /// Parses a PS2 `.sdb` spatial BGM mixing table (`data/sound/snd_data/*.sdb`) into 64-byte [`Ps2SdbSoundDataRecord`] entries (`SH2-62`).
 ///
-/// Stops at the first terminal record where `flags < 0` (e.g. `-0x8000_0000`), matching `SeSoundDataLoad` (`0x221460` in `SLUS_202.28`)
-/// and `sndGetSoundAryByCharaPos` (`0x5187E0` in `sh2pc.exe`).
+/// Stops at the first terminal record where `flags < 0` (e.g. `-0x8000_0000`), matching `sndGetSoundAryByCharaPos`
+/// (`0x00221540` in `SLUS_202.28` `sound/snd_select.c`, `FUN_00518b90` at `0x00518b90` in `sh2pc.exe`).
 pub fn parse_ps2_sdb_sound_data(data: &[u8]) -> Result<Vec<Ps2SdbSoundDataRecord>, AssetError> {
     const RECORD_SIZE: usize = 64;
     if data.len() < RECORD_SIZE {

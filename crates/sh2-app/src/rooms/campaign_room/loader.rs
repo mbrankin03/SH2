@@ -116,13 +116,13 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         ps2_room_id,
         sh2_core::DOG_ROOM_PRELOAD_EVENT_INDEX,
     );
-    state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
-    state.apply_texture_quality(active_tex_quality);
     let prev_room_id = state
         .campaign_loaded_room
         .as_ref()
-        .map(|(m, _)| m.room_id.as_str())
-        .unwrap_or("");
+        .map(|(m, _)| m.room_id.clone())
+        .unwrap_or_default();
+    state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
+    state.apply_texture_quality(active_tex_quality);
     let persistent_blood = state
         .menu_ctrl
         .options_menu
@@ -131,8 +131,7 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         .enable_persistent_blood_decals;
     state
         .blood_system
-        .on_room_change(prev_room_id, &manifest.room_id, persistent_blood);
-    state.campaign_loaded_room = Some((manifest.clone(), active_tex_quality));
+        .on_room_change(&prev_room_id, &manifest.room_id, persistent_blood);
 }
 
 fn fallback_test_room_for_stage(stage_id: u16) -> TestRoomKind {

@@ -47,7 +47,10 @@ pub use crate::acoustics::{
     RoomAcousticsProfile,
 };
 pub use crate::dialogue::ActiveDialogue;
-pub use crate::dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
+pub use crate::dsp_resample::{
+    adx_to_frames_48k, prepare_wav_entry_48k, wav_entry_to_frames, wav_entry_to_frames_48k,
+    PreparedSfx,
+};
 pub use crate::looping::LoopRegionSamples;
 pub use crate::ringbuffer::{AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES};
 

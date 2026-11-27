@@ -745,7 +745,7 @@ impl AudioDebugRoomController {
             let mut debug_lines = if state.audio_debug.show_sound_boxes_3d {
                 build_sound_data_debug_lines(
                     state.bgm_manager.stage_id,
-                    &state.bgm_manager.last_area_eval.matched_record_indices,
+                    state.bgm_manager.last_area_eval.matched_records(),
                     player_pos.y,
                 )
             } else {

@@ -13,17 +13,17 @@ use kira::{
 use mint::Vector3;
 use sh2_assets::WavEntry;
 
-use super::{wav_entry_to_frames_48k, AudioEngine, AudioError, LoopRegionSamples};
+use super::{prepare_wav_entry_48k, AudioEngine, AudioError, PreparedSfx};
 use crate::spatial_voice::{
     SpatialDrySoundData, SpatialVoiceControl, SpatialVoiceHandle, SpatialVoiceInitParams,
     SpatialWetSendSoundData,
 };
 
 impl AudioEngine {
-    /// Plays a 2D sound effect waveform from a parsed `WavEntry` (e.g. menu sounds, item pickups).
-    pub fn play_sfx_2d(
+    /// Plays a pre-resampled 2D sound effect via zero-copy `Arc::clone` (`SH2-179`).
+    pub fn play_prepared_sfx_2d(
         &mut self,
-        wav: &WavEntry,
+        prepared: &PreparedSfx,
         volume: f32,
     ) -> Result<StaticSoundHandle, AudioError> {
         let manager = self
@@ -35,9 +35,8 @@ impl AudioEngine {
             .as_ref()
             .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
 
-        let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
         self.output_ringbuffer
-            .push_frames(&frames[..frames.len().min(512)]);
+            .push_frames(&prepared.frames[..prepared.frames.len().min(512)]);
 
         let mut settings = StaticSoundSettings::new()
             .output_destination(sfx_track)
@@ -45,21 +44,13 @@ impl AudioEngine {
                 (volume * self.sfx_volume * self.master_volume) as f64,
             ));
 
-        if wav.loops {
-            if let Some(region) = LoopRegionSamples::from_source_samples(
-                wav.loop_start,
-                wav.loop_end,
-                wav.sample_rate,
-                sample_rate,
-                frames.len(),
-            ) {
-                settings = settings.loop_region(region.to_kira_region());
-            }
+        if let Some(region) = prepared.loop_region {
+            settings = settings.loop_region(region.to_kira_region());
         }
 
         let sound_data = StaticSoundData {
-            sample_rate,
-            frames: Arc::from(frames),
+            sample_rate: prepared.sample_rate,
+            frames: Arc::clone(&prepared.frames),
             settings,
             slice: None,
         };
@@ -69,10 +60,20 @@ impl AudioEngine {
             .map_err(|e| AudioError::PlaybackError(e.to_string()))
     }
 
-    /// Plays a 3D spatialized sound effect at a world-space position via Kira's `SpatialScene`.
-    pub fn play_sfx_3d(
+    /// Plays a 2D sound effect waveform from a parsed `WavEntry` (e.g. menu sounds, item pickups).
+    pub fn play_sfx_2d(
         &mut self,
         wav: &WavEntry,
+        volume: f32,
+    ) -> Result<StaticSoundHandle, AudioError> {
+        let prepared = prepare_wav_entry_48k(wav);
+        self.play_prepared_sfx_2d(&prepared, volume)
+    }
+
+    /// Plays a pre-resampled 3D spatialized sound effect via Kira's `SpatialScene` using zero-copy `Arc::clone` (`SH2-179`).
+    pub fn play_prepared_sfx_3d(
+        &mut self,
+        prepared: &PreparedSfx,
         position: Vec3,
         volume: f32,
     ) -> Result<StaticSoundHandle, AudioError> {
@@ -107,28 +108,74 @@ impl AudioEngine {
             )
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
-        let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
         let mut settings = StaticSoundSettings::new()
             .output_destination(&emitter)
             .volume(Volume::Amplitude(
                 (volume * self.sfx_volume * self.master_volume) as f64,
             ));
 
-        if wav.loops {
-            if let Some(region) = LoopRegionSamples::from_source_samples(
-                wav.loop_start,
-                wav.loop_end,
-                wav.sample_rate,
-                sample_rate,
-                frames.len(),
-            ) {
-                settings = settings.loop_region(region.to_kira_region());
-            }
+        if let Some(region) = prepared.loop_region {
+            settings = settings.loop_region(region.to_kira_region());
         }
 
         let sound_data = StaticSoundData {
-            sample_rate,
-            frames: Arc::from(frames),
+            sample_rate: prepared.sample_rate,
+            frames: Arc::clone(&prepared.frames),
+            settings,
+            slice: None,
+        };
+
+        manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))
+    }
+
+    /// Plays a 3D spatialized sound effect at a world-space position via Kira's `SpatialScene`.
+    pub fn play_sfx_3d(
+        &mut self,
+        wav: &WavEntry,
+        position: Vec3,
+        volume: f32,
+    ) -> Result<StaticSoundHandle, AudioError> {
+        let prepared = prepare_wav_entry_48k(wav);
+        self.play_prepared_sfx_3d(&prepared, position, volume)
+    }
+
+    /// Plays a pre-resampled sound effect on the SFX sub-track with explicit linear `volume`
+    /// (`0.0..=1.0`) and `stereo_pan` (`-1.0..=1.0`) via zero-copy `Arc::clone` (`SH2-179`).
+    pub fn play_prepared_sfx_panned(
+        &mut self,
+        prepared: &PreparedSfx,
+        volume: f32,
+        stereo_pan: f32,
+    ) -> Result<StaticSoundHandle, AudioError> {
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let sfx_track = self
+            .sfx_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
+
+        self.output_ringbuffer
+            .push_frames(&prepared.frames[..prepared.frames.len().min(512)]);
+
+        let pan_01 = ((stereo_pan.clamp(-1.0, 1.0) + 1.0) * 0.5) as f64;
+        let mut settings = StaticSoundSettings::new()
+            .output_destination(sfx_track)
+            .volume(Volume::Amplitude(
+                (volume * self.sfx_volume * self.master_volume) as f64,
+            ))
+            .panning(pan_01);
+
+        if let Some(region) = prepared.loop_region {
+            settings = settings.loop_region(region.to_kira_region());
+        }
+
+        let sound_data = StaticSoundData {
+            sample_rate: prepared.sample_rate,
+            frames: Arc::clone(&prepared.frames),
             settings,
             slice: None,
         };
@@ -146,49 +193,8 @@ impl AudioEngine {
         volume: f32,
         stereo_pan: f32,
     ) -> Result<StaticSoundHandle, AudioError> {
-        let manager = self
-            .manager
-            .as_mut()
-            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
-        let sfx_track = self
-            .sfx_track
-            .as_ref()
-            .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
-
-        let (sample_rate, frames) = wav_entry_to_frames_48k(wav);
-        self.output_ringbuffer
-            .push_frames(&frames[..frames.len().min(512)]);
-
-        let pan_01 = ((stereo_pan.clamp(-1.0, 1.0) + 1.0) * 0.5) as f64;
-        let mut settings = StaticSoundSettings::new()
-            .output_destination(sfx_track)
-            .volume(Volume::Amplitude(
-                (volume * self.sfx_volume * self.master_volume) as f64,
-            ))
-            .panning(pan_01);
-
-        if wav.loops {
-            if let Some(region) = LoopRegionSamples::from_source_samples(
-                wav.loop_start,
-                wav.loop_end,
-                wav.sample_rate,
-                sample_rate,
-                frames.len(),
-            ) {
-                settings = settings.loop_region(region.to_kira_region());
-            }
-        }
-
-        let sound_data = StaticSoundData {
-            sample_rate,
-            frames: Arc::from(frames),
-            settings,
-            slice: None,
-        };
-
-        manager
-            .play(sound_data)
-            .map_err(|e| AudioError::PlaybackError(e.to_string()))
+        let prepared = prepare_wav_entry_48k(wav);
+        self.play_prepared_sfx_panned(&prepared, volume, stereo_pan)
     }
 
     /// Updates the live volume and stereo panning of an active sound effect handle (`SePosMove` / `SePosSet`).
@@ -209,14 +215,11 @@ impl AudioEngine {
         handle.set_panning(pan_01, tween);
     }
 
-    /// Plays a 3D point-source SFX using the split dry (`.cld` wall-occluded + Binaural HRTF / Classic PS2 Stereo)
-    /// and wet corridor reverb send (`RoomAcousticsProfile`) real-time DSP pipeline (`SH2-84`).
-    ///
-    /// Note: `sfx_dry_track` and `sfx_reverb_bus` already scale output amplitude by `sfx_volume * master_volume`,
-    /// so `init.base_distance_gain` remains pure `SeCallPosDistanceF` distance gain (`[0.0, 1.0]`).
-    pub fn play_sfx_spatial_3d(
+    /// Plays a pre-resampled 3D point-source SFX using the split dry/wet real-time DSP pipeline
+    /// via zero-copy `Arc::clone` (`SH2-84`, `SH2-179`).
+    pub fn play_prepared_sfx_spatial_3d(
         &mut self,
-        wav: &WavEntry,
+        prepared: &PreparedSfx,
         mut init: SpatialVoiceInitParams,
     ) -> Result<SpatialVoiceHandle, AudioError> {
         let manager = self
@@ -234,20 +237,8 @@ impl AudioEngine {
             .ok_or_else(|| AudioError::InitError("No sfx reverb bus".into()))?
             .id();
 
-        let (sample_rate, frames_vec) = wav_entry_to_frames_48k(wav);
         self.output_ringbuffer
-            .push_frames(&frames_vec[..frames_vec.len().min(512)]);
-        let loop_region = if wav.loops {
-            LoopRegionSamples::from_source_samples(
-                wav.loop_start,
-                wav.loop_end,
-                wav.sample_rate,
-                sample_rate,
-                frames_vec.len(),
-            )
-        } else {
-            None
-        };
+            .push_frames(&prepared.frames[..prepared.frames.len().min(512)]);
 
         init.base_distance_gain = if init.base_distance_gain.is_finite() {
             init.base_distance_gain.max(0.0)
@@ -255,8 +246,7 @@ impl AudioEngine {
             0.0
         };
 
-        let frames_empty = frames_vec.is_empty();
-        let frames: Arc<[kira::Frame]> = Arc::from(frames_vec);
+        let frames_empty = prepared.frames.is_empty();
         let control = SpatialVoiceControl::new_with_flags(
             &init,
             Arc::clone(&self.binaural_hrtf_flag),
@@ -265,17 +255,17 @@ impl AudioEngine {
         );
 
         let dry_data = SpatialDrySoundData {
-            frames: Arc::clone(&frames),
-            sample_rate,
-            loop_region,
+            frames: Arc::clone(&prepared.frames),
+            sample_rate: prepared.sample_rate,
+            loop_region: prepared.loop_region,
             init,
             control: Arc::clone(&control),
             destination: dry_track_id,
         };
         let wet_data = SpatialWetSendSoundData {
-            frames,
-            sample_rate,
-            loop_region,
+            frames: Arc::clone(&prepared.frames),
+            sample_rate: prepared.sample_rate,
+            loop_region: prepared.loop_region,
             init,
             control,
             reverb_bus: reverb_bus_id,
@@ -290,6 +280,20 @@ impl AudioEngine {
         }
 
         Ok(handle)
+    }
+
+    /// Plays a 3D point-source SFX using the split dry (`.cld` wall-occluded + Binaural HRTF / Classic PS2 Stereo)
+    /// and wet corridor reverb send (`RoomAcousticsProfile`) real-time DSP pipeline (`SH2-84`).
+    ///
+    /// Note: `sfx_dry_track` and `sfx_reverb_bus` already scale output amplitude by `sfx_volume * master_volume`,
+    /// so `init.base_distance_gain` remains pure `SeCallPosDistanceF` distance gain (`[0.0, 1.0]`).
+    pub fn play_sfx_spatial_3d(
+        &mut self,
+        wav: &WavEntry,
+        init: SpatialVoiceInitParams,
+    ) -> Result<SpatialVoiceHandle, AudioError> {
+        let prepared = prepare_wav_entry_48k(wav);
+        self.play_prepared_sfx_spatial_3d(&prepared, init)
     }
 
     /// Updates a live [`SpatialVoiceHandle`] with fresh distance gain, azimuth/elevation, and `.cld` occlusion (`SH2-84`).

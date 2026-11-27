@@ -9,7 +9,19 @@ use std::sync::{Arc, Mutex};
 
 use super::{decode_texture_bytes, DecodedTexture};
 
-pub(crate) type ZipEntryIndex = HashMap<String, (u64, u64)>;
+/// Parsed Central Directory index for a `.zip` archive supporting O(1) case-insensitive
+/// and single-wrapper-folder-stripped lookups (`SH2-179`).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ZipEntryIndex {
+    /// Lowercased, `/`-normalized exact archive path -> `(local_hdr_ofs, comp_size)`.
+    pub(crate) entries_lower: HashMap<String, (u64, u64)>,
+    /// Lowercased, `/`-normalized path with a single top-level wrapper folder stripped
+    /// (e.g. `borat mod/sh2e/menu/mc/savebg.tbn2` -> `sh2e/menu/mc/savebg.tbn2`) -> `(local_hdr_ofs, comp_size)`.
+    pub(crate) wrapper_stripped_lower: HashMap<String, (u64, u64)>,
+    /// Original `/`-normalized entry names (preserving case) for mod override discovery.
+    pub(crate) original_names: Vec<String>,
+}
+
 pub(crate) type ZipIndexCache = Arc<Mutex<HashMap<PathBuf, ZipEntryIndex>>>;
 
 const MAX_ZIP_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
@@ -61,14 +73,27 @@ fn read_zip_entry_payload(
     }
 }
 
+/// Reads raw uncompressed bytes for an exact or case-insensitive `entry_path` using an already
+/// built [`ZipEntryIndex`] without re-reading the Central Directory (`SH2-179`).
+pub(crate) fn read_indexed_entry_bytes(
+    zip_path: &Path,
+    index: &ZipEntryIndex,
+    entry_path: &str,
+) -> Option<Vec<u8>> {
+    let key = entry_path.replace('\\', "/").to_ascii_lowercase();
+    let (local_hdr_ofs, comp_size) = index.entries_lower.get(&key).copied()?;
+    read_zip_entry_payload(zip_path, local_hdr_ofs, comp_size, MAX_ZIP_ENTRY_BYTES)
+}
+
 /// Reads raw uncompressed bytes for an exact or case-insensitive `entry_path` from a `ZIP_STORED`
-/// or `DEFLATE` archive, caching the parsed Central Directory index in `zip_index_cache`.
+/// or `DEFLATE` archive in O(1), caching the parsed Central Directory index in `zip_index_cache` (`SH2-179`).
+#[cfg(test)]
 pub(crate) fn read_entry_bytes_from_stored_zip(
     zip_index_cache: &ZipIndexCache,
     zip_path: &Path,
     entry_path: &str,
 ) -> Option<Vec<u8>> {
-    let normalized = entry_path.replace('\\', "/");
+    let key = entry_path.replace('\\', "/").to_ascii_lowercase();
     let cached_entry = {
         let mut guard = zip_index_cache.lock().ok()?;
         if !guard.contains_key(zip_path) {
@@ -77,12 +102,41 @@ pub(crate) fn read_entry_bytes_from_stored_zip(
             }
         }
         let index = guard.get(zip_path)?;
-        index.get(&normalized).copied().or_else(|| {
-            index
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(&normalized))
-                .map(|(_, v)| *v)
-        })
+        index.entries_lower.get(&key).copied()
+    };
+
+    let (local_hdr_ofs, comp_size) = cached_entry?;
+    read_zip_entry_payload(zip_path, local_hdr_ofs, comp_size, MAX_ZIP_ENTRY_BYTES)
+}
+
+/// Reads a mod override entry from a `.zip` archive in O(1) under a single cache lock, checking
+/// direct `sh2e/<rel>`, `data/<rel>`, `<rel>` first and then single-wrapper-folder-stripped
+/// equivalents (e.g. `<Mod Name>/sh2e/<rel>`) without scanning all entries (`SH2-179`).
+pub(crate) fn read_mod_entry_bytes_from_stored_zip(
+    zip_index_cache: &ZipIndexCache,
+    zip_path: &Path,
+    rel_str: &str,
+) -> Option<Vec<u8>> {
+    let rel_lower = rel_str.replace('\\', "/").to_ascii_lowercase();
+    let sh2e_cand = format!("sh2e/{rel_lower}");
+    let data_cand = format!("data/{rel_lower}");
+    let cached_entry = {
+        let mut guard = zip_index_cache.lock().ok()?;
+        if !guard.contains_key(zip_path) {
+            if let Some(index) = build_stored_zip_central_directory_index(zip_path) {
+                guard.insert(zip_path.to_path_buf(), index);
+            }
+        }
+        let index = guard.get(zip_path)?;
+        index
+            .entries_lower
+            .get(&sh2e_cand)
+            .or_else(|| index.entries_lower.get(&data_cand))
+            .or_else(|| index.entries_lower.get(&rel_lower))
+            .or_else(|| index.wrapper_stripped_lower.get(&sh2e_cand))
+            .or_else(|| index.wrapper_stripped_lower.get(&data_cand))
+            .or_else(|| index.wrapper_stripped_lower.get(&rel_lower))
+            .copied()
     };
 
     let (local_hdr_ofs, comp_size) = cached_entry?;
@@ -107,6 +161,9 @@ pub(super) fn read_relative_texture_from_stored_zip(
     zip_path: &Path,
     rel_no_ext: &str,
 ) -> Option<DecodedTexture> {
+    let lower = rel_no_ext.replace('\\', "/").to_ascii_lowercase();
+    let dds_key = format!("{lower}.dds");
+    let png_key = format!("{lower}.png");
     let cached_entry = {
         let mut guard = zip_index_cache.lock().ok()?;
         if !guard.contains_key(zip_path) {
@@ -115,13 +172,18 @@ pub(super) fn read_relative_texture_from_stored_zip(
             }
         }
         let index = guard.get(zip_path)?;
-        let dds_key = format!("{rel_no_ext}.dds");
-        let png_key = format!("{rel_no_ext}.png");
         index
+            .entries_lower
             .get(&dds_key)
             .copied()
             .map(|v| (dds_key, v))
-            .or_else(|| index.get(&png_key).copied().map(|v| (png_key, v)))
+            .or_else(|| {
+                index
+                    .entries_lower
+                    .get(&png_key)
+                    .copied()
+                    .map(|v| (png_key, v))
+            })
     };
 
     let (entry_name, (local_hdr_ofs, comp_size)) = cached_entry?;
@@ -180,7 +242,9 @@ pub(crate) fn build_stored_zip_central_directory_index(zip_path: &Path) -> Optio
     let mut cd_buf = vec![0u8; cd_size as usize];
     file.read_exact(&mut cd_buf).ok()?;
 
-    let mut index = HashMap::new();
+    let mut entries_lower = HashMap::new();
+    let mut wrapper_stripped_lower = HashMap::new();
+    let mut original_names = Vec::new();
     let mut pos = 0usize;
     while pos + 46 <= cd_buf.len() && &cd_buf[pos..pos + 4] == b"PK\x01\x02" {
         let compression = u16::from_le_bytes(cd_buf[pos + 10..pos + 12].try_into().ok()?);
@@ -231,13 +295,27 @@ pub(crate) fn build_stored_zip_central_directory_index(zip_path: &Path) -> Optio
                         ep += data_sz;
                     }
                 }
-                index.insert(entry_name.replace('\\', "/"), (local_hdr_ofs, comp_size));
+                let normalized = entry_name.replace('\\', "/");
+                let lower = normalized.to_ascii_lowercase();
+                if let Some((_, rest)) = lower.split_once('/') {
+                    if !rest.is_empty() {
+                        wrapper_stripped_lower
+                            .entry(rest.to_string())
+                            .or_insert((local_hdr_ofs, comp_size));
+                    }
+                }
+                entries_lower.insert(lower, (local_hdr_ofs, comp_size));
+                original_names.push(normalized);
             }
         }
         pos = next_pos;
     }
 
-    Some(index)
+    Some(ZipEntryIndex {
+        entries_lower,
+        wrapper_stripped_lower,
+        original_names,
+    })
 }
 
 #[cfg(test)]
@@ -355,5 +433,39 @@ mod tests {
         let _ = fs::remove_file(&tmp);
 
         assert!(res.is_none(), "Oversized DEFLATE payload must be rejected");
+    }
+
+    #[test]
+    fn read_mod_entry_bytes_o1_case_insensitive_and_wrapper_stripped_parity() {
+        let zip_bytes = build_deflate_zip(&[
+            ("MyMod/SH2E/pic/Title.PNG", b"WRAP_SH2E"),
+            ("MyMod/Data/pic/Title.PNG", b"WRAP_DATA"),
+            ("MyMod/pic/OnlyRoot.dds", b"WRAP_ROOT"),
+            ("a/b/pic/TooDeep.dds", b"TOO_DEEP"),
+        ]);
+        let tmp = std::env::temp_dir().join(format!(
+            "sh2_o1_mod_zip_test_{}_{:?}.zip",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        fs::write(&tmp, &zip_bytes).unwrap();
+
+        let cache: ZipIndexCache = Arc::new(Mutex::new(HashMap::new()));
+        // Case-insensitive + wrapper-stripped `sh2e/` beats `data/`
+        assert_eq!(
+            read_mod_entry_bytes_from_stored_zip(&cache, &tmp, "PIC/title.png").as_deref(),
+            Some(b"WRAP_SH2E".as_slice())
+        );
+        // Single-wrapper bare root match
+        assert_eq!(
+            read_mod_entry_bytes_from_stored_zip(&cache, &tmp, "pic/onlyroot.DDS").as_deref(),
+            Some(b"WRAP_ROOT".as_slice())
+        );
+        // Multi-level wrapper (`a/b/...`) must NOT match single-wrapper stripping
+        assert!(read_mod_entry_bytes_from_stored_zip(&cache, &tmp, "pic/toodeep.dds").is_none());
+        // Missing key returns None in O(1)
+        assert!(read_mod_entry_bytes_from_stored_zip(&cache, &tmp, "pic/missing.dds").is_none());
+
+        let _ = fs::remove_file(&tmp);
     }
 }

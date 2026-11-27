@@ -620,10 +620,8 @@ fn parse_mesh_group(
 
                 if cursor + n <= indices.len() {
                     let sub_indices = &indices[cursor..cursor + n];
-                    let tris = strip_to_list(sub_indices, prim);
-                    acc.entry((material, section))
-                        .or_default()
-                        .extend_from_slice(&tris);
+                    let target = acc.entry((material, section)).or_default();
+                    strip_to_list_into(sub_indices, prim, target);
                 }
                 cursor += n;
             }
@@ -691,7 +689,7 @@ fn parse_decals(data: &[u8], base: usize, map: &mut MapFile) -> Result<(), Asset
             for _ in 0..strip_count {
                 if cursor + strip_len <= indices.len() {
                     let sub_indices = &indices[cursor..cursor + strip_len];
-                    tris.extend_from_slice(&strip_to_list(sub_indices, 1));
+                    strip_to_list_into(sub_indices, 1, &mut tris);
                     cursor += strip_len;
                 }
             }
@@ -793,21 +791,24 @@ fn parse_vertex_sections(data: &[u8], base: usize) -> Result<Vec<VertexSection>,
     Ok(sections)
 }
 
-/// Unrolls triangle strip, triangle fan, or raw triangle lists into standard indexed triangle lists.
+/// Unrolls triangle strip, triangle fan, or raw triangle lists directly into `out` without
+/// intermediate heap allocations (`SH2-179`).
 ///
 /// - `prim == 1`: Triangle Strip (alternating winding order handled to avoid flipped normals).
 /// - `prim == 2`: Triangle Fan (anchored at first vertex index).
 /// - `prim == 3`: Triangle List (direct triplets).
-fn strip_to_list(idx: &[u32], prim: u8) -> Vec<u32> {
+fn strip_to_list_into(idx: &[u32], prim: u8, out: &mut Vec<u32>) {
     if prim == 3 {
         let len = (idx.len() / 3) * 3;
-        return idx[..len].to_vec();
+        out.extend_from_slice(&idx[..len]);
+        return;
     }
 
-    let mut out = Vec::new();
     if prim == 1 {
         // Triangle strip
-        for i in 0..idx.len().saturating_sub(2) {
+        let tri_count = idx.len().saturating_sub(2);
+        out.reserve(tri_count * 3);
+        for i in 0..tri_count {
             let a = idx[i];
             let b = idx[i + 1];
             let c = idx[i + 2];
@@ -827,14 +828,14 @@ fn strip_to_list(idx: &[u32], prim: u8) -> Vec<u32> {
         }
     } else if prim == 2 {
         // Triangle fan
+        let tri_count = idx.len().saturating_sub(2);
+        out.reserve(tri_count * 3);
         for i in 1..idx.len().saturating_sub(1) {
             out.push(idx[0]);
             out.push(idx[i]);
             out.push(idx[i + 1]);
         }
     }
-
-    out
 }
 
 /// Deduplicates vertex references and builds a [`MapBatch`] draw call for a material group.
@@ -925,15 +926,15 @@ fn parse_textures_subfile(data: &[u8], mut p: usize, map: &mut MapFile) -> Resul
                     }
                 };
 
-                let tex_data = data[p..p + length].to_vec();
                 // Preserve the first non-empty sprite (base mip / primary sprite) so multi-sprite
-                // blocks (`sprite_count > 1`) do not overwrite earlier sprites.
+                // blocks (`sprite_count > 1`) do not overwrite earlier sprites or wastefully copy
+                // discarded payloads (`SH2-179`).
                 map.textures.entry(tex_id).or_insert_with(|| MapTexture {
                     id: tex_id,
                     width: w,
                     height: h,
                     kind,
-                    data: tex_data,
+                    data: data[p..p + length].to_vec(),
                 });
             }
             p += length;

@@ -328,13 +328,15 @@ impl AssetPathResolver {
         pic_or_sheet_name: &str,
         prefer_sh2ee: bool,
     ) -> Option<PathBuf> {
-        let loader =
-            crate::formats::texture::TextureLoader::new(&self.data_dir, self.sh2e_dir.as_ref());
         let rel =
             crate::formats::texture::TextureLoader::normalize_cutaway_rel_path(pic_or_sheet_name);
-        loader
-            .resolve_path_with_preference(&rel, prefer_sh2ee)
-            .map(|(p, _)| p)
+        crate::formats::texture::resolve_path_with_preference_in_dirs(
+            &self.data_dir,
+            self.sh2e_dir.as_deref(),
+            &rel,
+            prefer_sh2ee,
+        )
+        .map(|(p, _)| p)
     }
 
     /// Resolves a sound asset file (e.g. `sound/sddata.bin`, `sound/extra/g_start.wav`, `sound/adx/...`),
@@ -405,10 +407,13 @@ impl AssetPathResolver {
     ) -> Option<(PathBuf, crate::formats::cam::CamSourceKind, String, String)> {
         let (room_id, rel_path) =
             crate::formats::cam::normalize_room_cam_rel_path(room_or_rel_path)?;
-        let loader =
-            crate::formats::texture::TextureLoader::new(&self.data_dir, self.sh2e_dir.as_ref());
         let (resolved_path, is_sh2ee) =
-            loader.resolve_path_with_preference(&rel_path, prefer_sh2ee)?;
+            crate::formats::texture::resolve_path_with_preference_in_dirs(
+                &self.data_dir,
+                self.sh2e_dir.as_deref(),
+                Path::new(&rel_path),
+                prefer_sh2ee,
+            )?;
         let source = if is_sh2ee {
             crate::formats::cam::CamSourceKind::Sh2eeOverride
         } else {

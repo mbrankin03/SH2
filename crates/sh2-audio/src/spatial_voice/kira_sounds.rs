@@ -81,8 +81,7 @@ impl Sound for SpatialDrySound {
         if dt.is_finite() && dt > 1e-7 {
             self.approx_fs = ((1.0 / dt) as f32).clamp(8_000.0, 384_000.0);
         }
-        let (dry, _wet) = self.core.process_pair(dt, &self.control);
-        dry
+        self.core.process_dry_only(dt, &self.control)
     }
 
     fn finished(&self) -> bool {

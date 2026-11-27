@@ -242,6 +242,47 @@ impl SpatialDryWetCore {
         self.hrtf.update_angles(az, el, output_sample_rate, false);
     }
 
+    /// Synthesizes only the dry direct-path [`Frame`] on the real-time callback thread,
+    /// skipping the wet reverb send `sin_cos()` computation that [`SpatialDrySound`] discards (`SH2-179`).
+    #[inline]
+    pub fn process_dry_only(&mut self, dt: f64, control: &SpatialVoiceControl) -> Frame {
+        if control.paused.load(Ordering::Relaxed) {
+            return Frame::ZERO;
+        }
+        if control.stop_requested.load(Ordering::Relaxed) {
+            let fade_step = ((dt as f32) * 50.0).clamp(0.0005, 0.25);
+            self.stop_fade_gain = (self.stop_fade_gain - fade_step).max(0.0);
+            if self.stop_fade_gain <= 1e-4 {
+                self.reader.finished = true;
+                control.dry_finished.store(true, Ordering::Relaxed);
+                return Frame::ZERO;
+            }
+        }
+        let Some(raw) = self.reader.next_frame(dt) else {
+            control.dry_finished.store(true, Ordering::Relaxed);
+            return Frame::ZERO;
+        };
+
+        let (out_fs, gain_smooth) = gain_smooth_for_dt(dt, self.reader.sample_rate);
+        let target_gain = load_f32(&control.base_distance_gain);
+        let target_pan = load_f32(&control.stereo_pan);
+
+        self.smoothed_base_gain += (target_gain - self.smoothed_base_gain) * gain_smooth;
+        self.smoothed_pan += (target_pan - self.smoothed_pan) * gain_smooth;
+
+        let base_scaled = raw * (self.smoothed_base_gain * self.stop_fade_gain);
+
+        let occluded_dry = self.occlusion_filter.process_frame(base_scaled, out_fs);
+        if control.binaural_hrtf_flag.load(Ordering::Relaxed) {
+            self.hrtf.process_frame(occluded_dry)
+        } else {
+            let pan_angle =
+                (self.smoothed_pan.clamp(-1.0, 1.0) + 1.0) * 0.5 * std::f32::consts::FRAC_PI_2;
+            let (sin_p, cos_p) = pan_angle.sin_cos();
+            Frame::new(occluded_dry.left * cos_p, occluded_dry.right * sin_p)
+        }
+    }
+
     /// Synthesizes one `(dry_frame, wet_reverb_send_frame)` pair on the real-time callback thread
     /// with strictly zero heap allocations (`SH2-49`).
     #[inline]
@@ -301,5 +342,46 @@ impl SpatialDryWetCore {
     #[inline]
     pub fn is_finished(&self) -> bool {
         self.reader.finished
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hrtf::angles_from_azimuth_elevation;
+    use crate::occlusion::OcclusionDspParams;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn process_dry_only_matches_process_pair_dry_channel_exactly() {
+        let frames: Arc<[Frame]> = Arc::from(
+            (0..256)
+                .map(|i| {
+                    let s = ((i as f32) * 0.17).sin() * 0.6;
+                    Frame::new(s, s * 0.8)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let init = SpatialVoiceInitParams {
+            base_distance_gain: 0.75,
+            stereo_pan: 0.4,
+            angles: angles_from_azimuth_elevation(0.6, 0.1),
+            occlusion: OcclusionDspParams::unoccluded(),
+        };
+
+        for hrtf_enabled in [false, true] {
+            let hrtf_flag = Arc::new(AtomicBool::new(hrtf_enabled));
+            let control = SpatialVoiceControl::new(&init, hrtf_flag);
+            let mut dry_only = SpatialDryWetCore::new(Arc::clone(&frames), 48_000, None, &init);
+            let mut dry_wet = SpatialDryWetCore::new(Arc::clone(&frames), 48_000, None, &init);
+
+            let dt = 1.0 / 48_000.0;
+            for _ in 0..256 {
+                let d_fast = dry_only.process_dry_only(dt, &control);
+                let (d_pair, _wet) = dry_wet.process_pair(dt, &control);
+                assert_eq!(d_fast.left.to_bits(), d_pair.left.to_bits());
+                assert_eq!(d_fast.right.to_bits(), d_pair.right.to_bits());
+            }
+        }
     }
 }

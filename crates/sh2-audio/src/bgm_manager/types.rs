@@ -83,16 +83,28 @@ impl Default for BgmTrackState {
 }
 
 /// Result of evaluating `_SOUND_DATA` spatial volume areas via [`super::evaluate_sound_areas`] (`sndGetSoundAryByCharaPos`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SoundAreaEvaluation {
     /// Number of matched `_SOUND_DATA` boxes (`1..=8`), or `1` when using default record `0` or situation preset.
     pub matched_box_count: usize,
-    /// Indices of matched `_SOUND_DATA` records within the stage table (empty if situation preset `>= 6`).
-    pub matched_record_indices: Vec<usize>,
+    /// Stack-allocated buffer of matched `_SOUND_DATA` record indices within the stage table
+    /// (`matched_record_indices[..matched_record_count]`; empty when situation preset `>= 6`, `SH2-179`).
+    pub matched_record_indices: [usize; MAX_MATCHED_SOUND_AREAS],
+    /// Number of valid entries in [`Self::matched_record_indices`] (`0..=MAX_MATCHED_SOUND_AREAS`).
+    pub matched_record_count: usize,
     /// Whether no area bounding box (`1..N`) matched and record `0` (stage default) was used.
     pub used_default_record: bool,
     /// Resolved highest-priority `(fade_in, fade_out)` command per track (`0` = track should be off).
     pub track_fades: [(u8, u8); BGM_MAX_TRACKS],
+}
+
+impl SoundAreaEvaluation {
+    /// Returns the active slice of matched `_SOUND_DATA` record indices (`0..=MAX_MATCHED_SOUND_AREAS`).
+    #[inline]
+    #[must_use]
+    pub fn matched_records(&self) -> &[usize] {
+        &self.matched_record_indices[..self.matched_record_count.min(MAX_MATCHED_SOUND_AREAS)]
+    }
 }
 
 /// Event/story flags consulted by `SeBgmChange` (`0x515C20`) and stage `EvBgmControl` functions.

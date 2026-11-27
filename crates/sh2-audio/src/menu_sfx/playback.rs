@@ -20,8 +20,8 @@ impl MenuAudioBank {
         index: usize,
         volume: f32,
     ) -> Result<Option<StaticSoundHandle>, AudioError> {
-        if let Some(wav) = self.get_sddata_entry(index) {
-            let handle = engine.play_sfx_2d(wav, volume)?;
+        if let Some(prepared) = self.get_or_prepare_sddata(index) {
+            let handle = engine.play_prepared_sfx_2d(&prepared, volume)?;
             Ok(Some(handle))
         } else {
             synthesize_fallback_cue(engine, SoundCueKind::Footstep)
@@ -35,8 +35,8 @@ impl MenuAudioBank {
         se_id: u32,
         volume: f32,
     ) -> Result<Option<StaticSoundHandle>, AudioError> {
-        if let Some(wav) = self.resolve_se_id(se_id) {
-            let handle = engine.play_sfx_2d(wav, volume)?;
+        if let Some(prepared) = self.resolve_prepared_se_id(se_id) {
+            let handle = engine.play_prepared_sfx_2d(&prepared, volume)?;
             Ok(Some(handle))
         } else {
             synthesize_fallback_cue(engine, SoundCueKind::Confirm)
@@ -74,8 +74,12 @@ impl MenuAudioBank {
             });
         }
 
-        if let Some(wav) = self.get_sddata_entry(chosen_idx).or(self.footstep.as_ref()) {
-            let handle = engine.play_sfx_2d(wav, volume)?;
+        if let Some(prepared) = self.get_or_prepare_sddata(chosen_idx).or_else(|| {
+            self.footstep
+                .as_ref()
+                .and_then(|s| self.prepare_source_ref(s))
+        }) {
+            let handle = engine.play_prepared_sfx_2d(&prepared, volume)?;
             self.last_footstep_handle = Some(handle);
             Ok((chosen_idx, None))
         } else {
@@ -118,8 +122,8 @@ impl MenuAudioBank {
             SoundCueKind::Footstep => self.footstep.as_ref(),
         };
 
-        if let Some(wav) = entry {
-            let handle = engine.play_sfx_2d(wav, 1.0)?;
+        if let Some(prepared) = entry.and_then(|src| self.prepare_source_ref(src)) {
+            let handle = engine.play_prepared_sfx_2d(&prepared, 1.0)?;
             Ok(Some(handle))
         } else {
             // Fallback synthetic generator if asset was unavailable
@@ -177,8 +181,8 @@ impl MenuAudioBank {
         self.stop_active_cut_audio();
 
         if let Some(sd_idx) = entry.sddata_index {
-            if let Some(wav) = self.get_sddata_entry(sd_idx).cloned() {
-                let handle = engine.play_sfx_2d(&wav, volume)?;
+            if let Some(prepared) = self.get_or_prepare_sddata(sd_idx) {
+                let handle = engine.play_prepared_sfx_2d(&prepared, volume)?;
                 self.active_cut_audio_handle = Some(handle);
                 return Ok(None);
             }

@@ -124,7 +124,8 @@ impl BgmManager {
             situation_page: 0,
             last_area_eval: SoundAreaEvaluation {
                 matched_box_count: 0,
-                matched_record_indices: Vec::new(),
+                matched_record_indices: [0; MAX_MATCHED_SOUND_AREAS],
+                matched_record_count: 0,
                 used_default_record: true,
                 track_fades: [(0, 0); BGM_MAX_TRACKS],
             },

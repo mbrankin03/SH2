@@ -7,7 +7,7 @@
 //! underneath subtitle overlays (`Patches/FmvSubtitles.cpp`).
 
 use bytemuck::{Pod, Zeroable};
-use sh2_assets::formats::bink::Yuv420Frame;
+use sh2_assets::formats::bink::{Yuv420Frame, Yuv420FrameRef};
 use wgpu::util::DeviceExt;
 
 /// Uniform parameters controlling FMV YUV420p presentation, aspect scaling, cropping, and film grain.
@@ -389,6 +389,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         queue: &wgpu::Queue,
         surface: &GpuYuvVideoSurface,
         frame: &Yuv420Frame,
+    ) {
+        self.upload_frame_ref(queue, surface, frame.as_ref());
+    }
+
+    /// Uploads a zero-copy [`Yuv420FrameRef`] directly into the `GpuYuvVideoSurface` textures (`SH2-179`).
+    pub fn upload_frame_ref(
+        &self,
+        queue: &wgpu::Queue,
+        surface: &GpuYuvVideoSurface,
+        frame: Yuv420FrameRef<'_>,
     ) {
         let w = surface.width;
         let h = surface.height;

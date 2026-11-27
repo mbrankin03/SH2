@@ -672,19 +672,88 @@ impl SoundBank {
     }
 }
 
+/// Returns `true` if `data[pos..]` begins with a `RIFF....WAVE` header.
+#[inline]
+fn is_riff_wave_at(data: &[u8], pos: usize) -> bool {
+    pos + 12 <= data.len()
+        && data[pos..pos + 4] == RIFF_MAGIC
+        && data[pos + 8..pos + 12] == WAVE_MAGIC
+}
+
+/// Computes a safe next scan offset after a `RIFF....WAVE` header at `p` (`SH2-179`).
+///
+/// 1. Fast path: if `p + 8 + riff_size` lands at EOF (within 4 trailing bytes) or directly at a
+///    subsequent `RIFF....WAVE` header (allowing up to 4 bytes for the 2-byte Konami loop flag /
+///    alignment padding), jump straight to `p + 8 + riff_size`.
+/// 2. Sub-chunk fallback: some SH2:EE `sddata.bin` entries had trailing metadata stripped without
+///    updating `riff_size` (overshooting by ~50–52 bytes). In that case, step over known RIFF
+///    sub-chunks (`fmt `, `data`, `smpl`, `fact`, `LIST`, etc.) to skip the multi-MB PCM payload
+///    in O(1) without ever overshooting the next `RIFF....WAVE` boundary.
+fn advance_past_riff_wave(data: &[u8], p: usize) -> usize {
+    let riff_size =
+        u32::from_le_bytes([data[p + 4], data[p + 5], data[p + 6], data[p + 7]]) as usize;
+    if riff_size >= 4 {
+        if let Some(cand) = 8usize.checked_add(riff_size).and_then(|s| p.checked_add(s)) {
+            if cand <= data.len() {
+                let lands_at_eof = data.len() - cand <= 4;
+                let lands_at_next_riff =
+                    (0..=4).any(|pad| is_riff_wave_at(data, cand.saturating_add(pad)));
+                if lands_at_eof || lands_at_next_riff {
+                    return cand;
+                }
+            }
+        }
+    }
+
+    // Fallback: step over valid inner sub-chunks (`fmt `, `data`, etc.) from `p + 12`
+    let mut q = p + 12;
+    while q + 8 <= data.len() {
+        if is_riff_wave_at(data, q) {
+            return q;
+        }
+        let cid = &data[q..q + 4];
+        if !matches!(
+            cid,
+            b"fmt " | b"data" | b"smpl" | b"fact" | b"cue " | b"JUNK" | b"PAD " | b"LIST"
+        ) {
+            break;
+        }
+        let clen =
+            u32::from_le_bytes([data[q + 4], data[q + 5], data[q + 6], data[q + 7]]) as usize;
+        let Some(mut next_q) = q.checked_add(8).and_then(|x| x.checked_add(clen)) else {
+            break;
+        };
+        if next_q > data.len() {
+            break;
+        }
+        if !clen.is_multiple_of(2) && next_q < data.len() && !is_riff_wave_at(data, next_q) {
+            next_q += 1;
+        }
+        q = next_q;
+        if cid == b"data" {
+            // Stop right after the PCM payload so any trailing 2-byte loop flag or immediate
+            // next `RIFF....WAVE` is inspected without overshooting.
+            return q;
+        }
+    }
+
+    q.max(p + 12)
+}
+
 /// Parses sound data from `sddata.bin`, which packs RIFF WAVE files back-to-back.
 ///
 /// In the retail PC and SH2:EE sound packs, `sddata.bin` contains 417 RIFF WAVE audio streams.
 /// Because some enhanced WAV containers append metadata chunks with differing padding lengths,
 /// robust ingestion locates each authentic `RIFF....WAVE` stream boundary.
 pub fn parse_sddata(data: &[u8]) -> Result<SoundBank, AssetError> {
-    // 1. Locate all valid RIFF WAVE stream start positions
+    // 1. Locate all valid RIFF WAVE stream start positions, stepping by validated RIFF / sub-chunk
+    // sizes instead of scanning 100+ MB of PCM payload byte-by-byte (`SH2-179`).
     let mut riff_positions = Vec::with_capacity(417);
     let mut p = 0usize;
     while p + 12 <= data.len() {
-        if data[p..p + 4] == RIFF_MAGIC && data[p + 8..p + 12] == WAVE_MAGIC {
+        if is_riff_wave_at(data, p) {
             riff_positions.push(p);
-            p += 12;
+            p = advance_past_riff_wave(data, p);
         } else {
             p += 1;
         }
@@ -829,4 +898,88 @@ fn parse_single_wav(data: &[u8], id: u32) -> Result<WavEntry, AssetError> {
         loop_start,
         loop_end,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_minimal_riff_wav(
+        sample_rate: u32,
+        pcm: &[u8],
+        riff_size_override: Option<u32>,
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(b"WAVE");
+        // fmt chunk (16 bytes)
+        body.extend_from_slice(b"fmt ");
+        body.extend_from_slice(&16u32.to_le_bytes());
+        body.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        body.extend_from_slice(&1u16.to_le_bytes()); // mono
+        body.extend_from_slice(&sample_rate.to_le_bytes());
+        body.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        body.extend_from_slice(&2u16.to_le_bytes());
+        body.extend_from_slice(&16u16.to_le_bytes());
+        // data chunk
+        body.extend_from_slice(b"data");
+        body.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+        body.extend_from_slice(pcm);
+
+        let riff_size = riff_size_override.unwrap_or(body.len() as u32);
+        let mut out = Vec::with_capacity(8 + body.len());
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&riff_size.to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn parse_sddata_chunk_stepped_handles_trailing_loop_bytes_and_malformed_size() {
+        let mut blob = Vec::new();
+        // Entry 0: normal RIFF + 2-byte Konami loop flag (`[0, 1]`)
+        blob.extend_from_slice(&build_minimal_riff_wav(16000, &[1, 2, 3, 4], None));
+        blob.extend_from_slice(&[0x00, 0x01]);
+        // Entry 1: malformed oversized riff_size -> must fall back safely without skipping entry 2
+        blob.extend_from_slice(&build_minimal_riff_wav(
+            22050,
+            &[5, 6, 7, 8],
+            Some(0x7FFF_FFFF),
+        ));
+        blob.extend_from_slice(&[0x00, 0x00]);
+        // Entry 2: normal RIFF following malformed entry
+        blob.extend_from_slice(&build_minimal_riff_wav(48000, &[9, 10, 11, 12], None));
+
+        let bank = parse_sddata(&blob).expect("parse_sddata must succeed");
+        assert_eq!(bank.entries.len(), 3);
+        assert_eq!(bank.entries[0].sample_rate, 16000);
+        assert!(bank.entries[0].loops);
+        assert_eq!(bank.entries[1].sample_rate, 22050);
+        assert!(!bank.entries[1].loops);
+        assert_eq!(bank.entries[2].sample_rate, 48000);
+        assert_eq!(bank.entries[2].data, vec![9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn parse_sddata_chunk_stepped_matches_retail_sddata_bins() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2");
+        for rel in ["data/sound/sddata.bin", "sh2e/sound/sddata.bin"] {
+            let path = root.join(rel);
+            if !path.is_file() {
+                continue;
+            }
+            let bytes = std::fs::read(&path).expect("read retail sddata.bin");
+            let bank = parse_sddata(&bytes).expect("parse retail sddata.bin");
+            assert_eq!(
+                bank.entries.len(),
+                417,
+                "{rel} must yield all 417 retail WAV entries"
+            );
+            assert!(
+                bank.entries[352].loops,
+                "{rel}[352] chainsaw idle must loop"
+            );
+            assert!(bank.entries[360].loops, "{rel}[360] radio static must loop");
+        }
+    }
 }

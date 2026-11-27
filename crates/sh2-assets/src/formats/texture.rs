@@ -23,7 +23,8 @@ pub(crate) mod zip_archive;
 
 pub use container::{decode_texture_bytes, parse_texture_container, ContainerTexture};
 pub use cutaway::{
-    probe_tex_dimensions, CutawayPackTier, CutawayTextureAsset, CutawayViewportTransform,
+    probe_tex_dimensions, probe_tex_dimensions_from_file, CutawayPackTier, CutawayTextureAsset,
+    CutawayViewportTransform,
 };
 pub use mipmap::{
     compute_alpha_coverage_rgba, generate_mipmap_chain_rgba, mip_level_count_for_size,
@@ -48,6 +49,49 @@ pub struct DecodedTexture {
     pub height: usize,
     /// Uncompressed RGBA8 pixel byte array (stride = `width * 4`).
     pub rgba: Vec<u8>,
+}
+
+/// Resolves a relative asset path across `sh2e_dir` and `data_dir` with case-insensitive
+/// component matching, without constructing a full [`TextureLoader`] or scanning 4K pack dirs (`SH2-179`).
+pub(crate) fn resolve_path_with_preference_in_dirs(
+    data_dir: &Path,
+    sh2e_dir: Option<&Path>,
+    relative_path: &Path,
+    prefer_sh2ee: bool,
+) -> Option<(PathBuf, bool)> {
+    let clean_rel = relative_path
+        .strip_prefix("data")
+        .or_else(|_| relative_path.strip_prefix("sh2e"))
+        .unwrap_or(relative_path);
+
+    let resolve_in_dir = |root: &Path| -> Option<PathBuf> {
+        let direct = root.join(clean_rel);
+        if direct.exists() {
+            return Some(direct);
+        }
+        find_case_insensitive(root, clean_rel)
+    };
+
+    if prefer_sh2ee {
+        if let Some(sh2e) = sh2e_dir {
+            if let Some(p) = resolve_in_dir(sh2e) {
+                return Some((p, true));
+            }
+        }
+        if let Some(p) = resolve_in_dir(data_dir) {
+            return Some((p, false));
+        }
+    } else {
+        if let Some(p) = resolve_in_dir(data_dir) {
+            return Some((p, false));
+        }
+        if let Some(sh2e) = sh2e_dir {
+            if let Some(p) = resolve_in_dir(sh2e) {
+                return Some((p, true));
+            }
+        }
+    }
+    None
 }
 
 /// Asset loader managing file resolution and decoding across active `mods/`, `sh2e/`, `data/`, and 4K AI Master directories.

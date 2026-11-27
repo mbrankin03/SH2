@@ -2073,7 +2073,6 @@ dependencies = [
  "bitflags 2.13.2",
  "bytemuck",
  "glam",
- "log",
  "serde",
  "serde_json",
  "sh2-assets",

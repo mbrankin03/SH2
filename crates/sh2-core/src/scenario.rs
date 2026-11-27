@@ -99,6 +99,12 @@ pub struct ScenarioState {
     pub boss_events: crate::ai::AiBossEvents,
     /// Authentic `Playing_Info` runtime telemetry (`SLUS_202.28` `0x0122b310` / `sh2pc.exe` `0x01dbbf80`).
     pub playing_info: crate::endings::PlayingInfo,
+    /// Live ending-point telemetry (`sh2pc.exe` `0x01f7adcc..0x01f7ae7b` / `EvProgEndingJudge` `0x00576490`).
+    pub ending_tracker: crate::endings::EndingPointTracker,
+    /// Active multi-floor elevator button panel (`FUN_004a2a50` `0x004a2e29`), if open.
+    pub active_elevator: Option<crate::world::MultiFloorElevatorPanel>,
+    /// Per-frame `EventMain` `sys.flag` word (`SLUS_202.28` `0x010f08a4` / `sh2pc.exe` `DAT_00932194`).
+    pub event_main_sys_flags: u32,
 }
 
 impl Default for ScenarioState {
@@ -163,6 +169,9 @@ impl ScenarioState {
                     action_difficulty: ActionDifficulty::Normal,
                     boss_events: crate::ai::AiBossEvents::default(),
                     playing_info: crate::endings::PlayingInfo::default(),
+                    ending_tracker: crate::endings::EndingPointTracker::default(),
+                    active_elevator: None,
+                    event_main_sys_flags: 0,
                 }
             }
             ScenarioKind::BornFromAWish => {
@@ -208,6 +217,9 @@ impl ScenarioState {
                     action_difficulty: ActionDifficulty::Normal,
                     boss_events: crate::ai::AiBossEvents::default(),
                     playing_info: crate::endings::PlayingInfo::default(),
+                    ending_tracker: crate::endings::EndingPointTracker::default(),
+                    active_elevator: None,
+                    event_main_sys_flags: 0,
                 }
             }
         }

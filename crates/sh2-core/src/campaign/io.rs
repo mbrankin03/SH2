@@ -42,6 +42,11 @@ pub struct CampaignTickInput {
     /// Enable SH2:EE world & event fixes (`FlashlightClockPush`, `ElevatorCursorColorFix`,
     /// `HospitalChase`, `CreatureVehicleSpawn`). `false` in strict 1:1 Vanilla PS2 mode.
     pub enable_sh2ee_world_fixes: bool,
+    /// Optional distance in PS2 mm between James and Maria when Maria is accompanying
+    /// (`flag 15`, `sh2pc.exe` `0x0048ed1e..0x0048ed8c` `EndingPointTracker::tick_maria_escort`).
+    pub maria_distance_mm: Option<f32>,
+    /// `true` when James bumped/shoved Maria on this tick (`0x0048ed72`).
+    pub maria_bumped: bool,
 }
 
 /// Pure side-effect commands emitted by [`CampaignOrchestrator::step`](super::CampaignOrchestrator::step)

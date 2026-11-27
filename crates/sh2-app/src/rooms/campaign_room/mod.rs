@@ -71,10 +71,18 @@ impl CampaignRoomController {
                 delayed_fade_in,
             )
         } else {
-            CampaignOrchestrator::new_game(
+            let clear_profile =
+                sh2_core::campaign::ClearDataProfile::load_from_dir(&state.menu_ctrl.save_dir);
+            let rng_seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| (d.as_secs() as u32) ^ d.subsec_nanos().rotate_left(13))
+                .unwrap_or(0x2001_0924);
+            CampaignOrchestrator::new_game_with_clear_data(
                 scenario,
                 action_diff,
                 riddle_diff,
+                clear_profile.clear_data,
+                rng_seed,
                 streaming_mode,
                 delayed_fade_in,
             )
@@ -693,8 +701,8 @@ impl RoomController for CampaignRoomController {
             } => {
                 let clear_profile =
                     sh2_core::campaign::ClearDataProfile::load_from_dir(&state.menu_ctrl.save_dir);
-                let action = state.menu_ctrl.title_sm.action_difficulty;
-                let riddle = state.menu_ctrl.title_sm.riddle_difficulty;
+                let action = state.sim_core.scenario.action_difficulty;
+                let riddle = state.sim_core.scenario.riddle_difficulty;
                 let preset = state
                     .menu_ctrl
                     .options_menu

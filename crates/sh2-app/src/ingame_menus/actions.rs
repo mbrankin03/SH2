@@ -199,6 +199,9 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
                 .inventory_mgr
                 .use_healing_item(item_id, hp, max_hp)
             {
+                // `sh2pc.exe` `ItemMedicineUse` (`0x0049ecf5`): record excess overheal ratio
+                // for `EvProgEndingJudge` (`0x00576490`) Leave vs In Water scoring.
+                state.sim_core.scenario.ending_tracker.overheal_ratio_sum += res.overheal_fraction;
                 state.sim_core.scenario.health = res.new_hp;
                 state.sim_core.scenario.sync_legacy_views();
                 state
@@ -209,6 +212,23 @@ pub(crate) fn apply_inventory_action(state: &mut AppState, action: InventoryActi
                     "Recovered health ({:.0}/{:.0}).",
                     res.new_hp, max_hp
                 ));
+            }
+        }
+        InventoryAction::ExamineItem(item_id) => {
+            // `sh2pc.exe` `otn_itemmain` (`0x00471ca6..0x0047219b`): examining Photo of Mary (`20`),
+            // Letter from Mary (`21`), or Angela's Knife (`24`) updates `EndingPointTracker`
+            // (and sets `Flag 630` for Angela's Knife).
+            state
+                .sim_core
+                .scenario
+                .ending_tracker
+                .record_item_examined(item_id);
+            if item_id == sh2_core::endings::ITEM_ANGELAS_KNIFE {
+                state
+                    .sim_core
+                    .scenario
+                    .flags
+                    .set(sh2_core::endings::FLAG_ANGELAS_KNIFE_EXAMINED, true);
             }
         }
         InventoryAction::EquipWeapon(item_id) => {

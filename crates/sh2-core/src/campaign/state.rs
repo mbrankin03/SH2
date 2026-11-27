@@ -7,7 +7,7 @@
 use super::cutscene_handoff::DramaDemoTrigger;
 use crate::config::{ActionDifficulty, RiddleDifficulty};
 use crate::event_camera::PostSequenceRestorePolicy;
-use crate::events::StageTransitionCommand;
+use crate::events::{ClearData, StageTransitionCommand};
 use crate::scenario::ScenarioKind;
 
 /// Default screen fade rate in alpha-per-second when `ScreenEffectFadeStart` (`SLUS_202.28`
@@ -143,6 +143,10 @@ pub enum CampaignPhase {
         action_difficulty: ActionDifficulty,
         /// Selected puzzle difficulty.
         riddle_difficulty: RiddleDifficulty,
+        /// Persistent NG+ clear data (`0x01dbbf80..0x01dbbf85`) used by `FlagInit` (`0x0048aa4c`).
+        clear_data: ClearData,
+        /// Non-hardcoded RNG seed for `FlagInit` puzzle randomization (`0x0048abcd`).
+        rng_seed: u32,
     },
     /// `PlayableMain` steps `1..=3` (`0x0020b498..0x0020b73b`): Initial or save-load `connectMain`
     /// stage/room load sequence with optional PS2 footstep loading screen (`now_loading.c`).

@@ -978,7 +978,7 @@ impl InventoryScreen {
                             self.examine_phase = ExaminePhase::InlinePopup;
                             self.focus = InventoryFocus::ExamineOverlay;
                         }
-                        (MenuSoundCue::Confirm, InventoryAction::None)
+                        (MenuSoundCue::Confirm, InventoryAction::ExamineItem(item_id))
                     }
                     ItemCommand::Combine => {
                         self.combine_first_item_id = Some(item_id);

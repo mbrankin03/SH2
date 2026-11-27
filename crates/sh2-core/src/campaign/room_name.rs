@@ -1,0 +1,350 @@
+//! Canonical 1:1 `RoomName` (`SLUS_202.28` `Event/stg_name.c` `0x001af0f0..0x001b09e0`,
+//! `sh2pc.exe` `0x00494d70`) world-coordinate -> numeric PS2/PC room ID resolver.
+//!
+//! Computes `cell = ((z / 20000.0 + 16.0) as i32) + ((x / 20000.0 + 16.0) as i32) * 0x20`
+//! and dispatches on `Stage_Data::glb_crd` (`1..=16`), matching `connectRoomInit`
+//! (`SLUS_202.28` `0x0020be10` line 47: `RoomName(_connect_pos_x, _connect_pos_z, _stage->glb_crd)`).
+
+use crate::events::stages_act1::act1_stage_descriptor;
+use crate::events::stages_act2::stage_table_act2;
+
+/// Looks up `Stage_Data::glb_crd` (`+0x24`, `1..=16`) for retail stage `stage_id` (`1..=58`).
+#[must_use]
+pub fn stage_glb_crd(stage_id: u16) -> i32 {
+    if stage_id <= 27 {
+        act1_stage_descriptor(stage_id as u8)
+            .map(|d| d.header.glb_crd)
+            .unwrap_or(0)
+    } else {
+        stage_table_act2(stage_id)
+            .map(|d| d.header.glb_crd)
+            .unwrap_or(0)
+    }
+}
+
+/// Resolves the canonical PS2/PC numeric room ID (`0..=0xd5`) for `(stage_id, pos)` using
+/// `Event/stg_name.c` `RoomName(pos[0], pos[2], stage.header.glb_crd)` (`0x001af0f0`).
+#[must_use]
+pub fn room_name_for_stage_pos(stage_id: u16, pos: [f32; 3]) -> u16 {
+    let glb_crd = stage_glb_crd(stage_id);
+    room_name(pos[0], pos[2], glb_crd)
+}
+
+/// Exact 1:1 port of `RoomName(float x, float z, int glb_crd)` (`SLUS_202.28` `0x001af0f0`).
+#[must_use]
+pub fn room_name(pos_x: f32, pos_z: f32, glb_crd: i32) -> u16 {
+    let cell = ((pos_z / 20_000.0 + 16.0) as i32) + ((pos_x / 20_000.0 + 16.0) as i32) * 0x20;
+    let c = cell as u32;
+    match glb_crd {
+        1 => 0x03,
+        2 => room_name_town_east(cell),
+        3 => 0x08,
+        4 => 0x0e,
+        5 => 0x02,
+        6 => room_name_extra(c),
+        7 => room_name_bowling(c),
+        8 => room_name_heaven(c),
+        9 => room_name_apart(c),
+        10 => room_name_hospital(c),
+        11 => room_name_delusion(c),
+        12 => room_name_hotel_face(c),
+        13 => room_name_hotel_back(c),
+        14 => room_name_last_stage(c),
+        15 => 0xbf,
+        16 => room_name_mansion(c),
+        _ => 0,
+    }
+}
+
+/// Aligns a `32x32` cell index to its even `2x2` super-cell origin (`(c & !0x21)`).
+#[inline]
+const fn align_2x2(c: u32) -> u32 {
+    c & !0x21
+}
+
+/// `RoomNameExtra` (`SLUS_202.28` `0x001af2b0`).
+const fn room_name_extra(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x1ce => 0xbe,
+        0x20e => 0x06,
+        0x1d0 => 0x01,
+        0x210 => 0x05,
+        _ => 0,
+    }
+}
+
+/// `RoomNameTownEast` (`SLUS_202.28` `0x001af350`).
+const fn room_name_town_east(c: i32) -> u16 {
+    match c {
+        0x2ab | 0x28b | 0x26b | 0x2ac | 0x28c | 0x26c => 0x07,
+        _ => 0x04,
+    }
+}
+
+/// `RoomNameBowling` (`SLUS_202.28` `0x001af3c0`).
+const fn room_name_bowling(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x1d0 => 0x0a,
+        0x20e => 0x09,
+        0x210 => 0x0b,
+        _ => 0,
+    }
+}
+
+/// `RoomNameHeaven` (`SLUS_202.28` `0x001af440`).
+const fn room_name_heaven(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x1d0 => 0x0d,
+        0x210 => 0x0c,
+        _ => 0,
+    }
+}
+
+/// `RoomNameApart` (`SLUS_202.28` `0x001af4b0`).
+const fn room_name_apart(c: u32) -> u16 {
+    match c {
+        0x16c | 0x16d | 0x18c | 0x18d => 0x11,
+        0x1aa..=0x1ad => 0x12,
+        _ => match align_2x2(c) {
+            0x28a => 0x21,
+            0x20a => 0x28,
+            0x20e => 0x27,
+            0x28e => 0x26,
+            0x28c => 0x25,
+            0x24a => 0x24,
+            0x24c => 0x23,
+            0x24e => 0x22,
+            0x2ce => 0x20,
+            0x250 => 0x1f,
+            0x214 => 0x1e,
+            0x1d4 => 0x1d,
+            0x212 => 0x1c,
+            0x210 => 0x1b,
+            0x1ce => 0x1a,
+            0x192 => 0x19,
+            0x190 => 0x18,
+            0x1d0 => 0x17,
+            0x1d2 => 0x16,
+            0x150 => 0x15,
+            0x1cc => 0x14,
+            0x1ca => 0x13,
+            0x14e => 0x10,
+            0x18e => 0x0f,
+            _ => 0,
+        },
+    }
+}
+
+/// `RoomNameHospital` (`SLUS_202.28` `0x001af7b0`).
+const fn room_name_hospital(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x202 => 0x5b,
+        0x200 => 0x5a,
+        0x204 => 0x59,
+        0x206 => 0x58,
+        0x246 => 0x57,
+        0x286 => 0x56,
+        0x248 => 0x55,
+        0x208 => 0x54,
+        0x1c6 => 0x53,
+        0x1c8 => 0x52,
+        0x186 => 0x51,
+        0x188 => 0x50,
+        0x140 => 0x4f,
+        0x142 => 0x4e,
+        0x1c4 => 0x4d,
+        0x104 => 0x4c,
+        0x102 => 0x4b,
+        0x1c2 => 0x4a,
+        0x180 => 0x49,
+        0x144 => 0x48,
+        0x184 => 0x47,
+        0x1c0 => 0x46,
+        0x252 => 0x45,
+        0x250 => 0x44,
+        0x2d4 => 0x43,
+        0x290 => 0x42,
+        0x292 => 0x41,
+        0x2d2 => 0x40,
+        0x212 => 0x3f,
+        0x214 => 0x3e,
+        0x254 => 0x3d,
+        0x194 => 0x3c,
+        0x150 => 0x3b,
+        0x110 => 0x3a,
+        0x190 => 0x39,
+        0x112 => 0x38,
+        0x192 => 0x37,
+        0x1d0 => 0x36,
+        0x1d2 => 0x35,
+        0x10c => 0x34,
+        0x1ce => 0x33,
+        0x14c => 0x32,
+        0x10a => 0x31,
+        0x10e => 0x30,
+        0x1ca => 0x2f,
+        0x18c => 0x2e,
+        0x18e => 0x2d,
+        0x1cc => 0x2c,
+        0x20e => 0x2b,
+        0x14e => 0x2a,
+        0x18a => 0x29,
+        _ => 0,
+    }
+}
+
+/// `RoomNameDelusion` (`SLUS_202.28` `0x001afcb0`).
+const fn room_name_delusion(c: u32) -> u16 {
+    match c {
+        0x1cd | 0x1ed => 0x77,
+        0x1ce | 0x1ee => 0x76,
+        0x1cf | 0x1ef => 0x75,
+        0x155 | 0x175 => 0x74,
+        0x18e => 0x71,
+        0x18d | 0x1ad => 0x70,
+        0x1cc | 0x1ec => 0x6f,
+        0x115 | 0x135 => 0x6e,
+        0x114 | 0x113 | 0x134 => 0x6d,
+        0x194 | 0x1b4 => 0x6b,
+        0x14f | 0x16e | 0x16f => 0x6a,
+        0x195 | 0x1b5 => 0x67,
+        0x154 | 0x174 => 0x66,
+        0x133 => 0x65,
+        0x18f | 0x1af => 0x64,
+        0x112 | 0x132 => 0x63,
+        0x1ae => 0x62,
+        0x1d5 | 0x1d4 => 0x61,
+        0x18c | 0x1ac => 0x60,
+        0x1d3 | 0x1d2 => 0x5e,
+        0x1f2..=0x1f5 => 0x5d,
+        _ => match align_2x2(c) {
+            0x2ca => 0x90,
+            0x28a => 0x8f,
+            0x28c => 0x8e,
+            0x28e => 0x8d,
+            0x2cc => 0x8c,
+            0x2ce => 0x8b,
+            0x212 => 0x8a,
+            0x210 => 0x89,
+            0x20a => 0x88,
+            0x20e => 0x87,
+            0x24c => 0x86,
+            0x290 => 0x85,
+            0x254 => 0x84,
+            0x24a => 0x83,
+            0x20c => 0x82,
+            0x294 => 0x81,
+            0x250 => 0x80,
+            0x2d4 => 0x7f,
+            0x24e => 0x7e,
+            0x252 => 0x7d,
+            0x2d0 => 0x7c,
+            0x292 => 0x7b,
+            0x2d2 => 0x7a,
+            0x214 => 0x79,
+            0x1ca => 0x78,
+            0x10e => 0x73,
+            0x110 => 0x72,
+            0x192 => 0x6c,
+            0x150 => 0x69,
+            0x152 => 0x68,
+            0x190 => 0x5f,
+            0x1d0 => 0x5c,
+            _ => 0,
+        },
+    }
+}
+
+/// `RoomNameHotelFace` (`SLUS_202.28` `0x001b02f0`).
+const fn room_name_hotel_face(c: u32) -> u16 {
+    match c {
+        0x133 | 0x132 => 0x96,
+        _ => match align_2x2(c) {
+            0x18c => 0xa9,
+            0x1cc => 0xa8,
+            0x14c => 0xa7,
+            0x18e => 0xa6,
+            0x1ce => 0xa5,
+            0x290 => 0xa4,
+            0x210 => 0xa3,
+            0x250 => 0xa2,
+            0x28e => 0xa1,
+            0x24e => 0xa0,
+            0x20e => 0x9f,
+            0x20a => 0x9e,
+            0x24c => 0x9d,
+            0x28c => 0x9c,
+            0x20c => 0x9b,
+            0x150 => 0x9a,
+            0x190 => 0x99,
+            0x192 => 0x98,
+            0x152 => 0x97,
+            0x1d4 => 0x95,
+            0x194 => 0x94,
+            0x1d2 => 0x93,
+            0x1d0 => 0x92,
+            0x14e => 0x91,
+            _ => 0,
+        },
+    }
+}
+
+/// `RoomNameHotelBack` (`SLUS_202.28` `0x001b0590`).
+const fn room_name_hotel_back(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x252 => 0xbb,
+        0x250 => 0xba,
+        0x18c => 0xb9,
+        0x1cc => 0xb8,
+        0x18e => 0xb7,
+        0x1ce => 0xb6,
+        0x210 => 0xb5,
+        0x24c => 0xb4,
+        0x28e => 0xb3,
+        0x24e => 0xb2,
+        0x20e => 0xb1,
+        0x20c => 0xb0,
+        0x1d2 => 0xaf,
+        0x150 => 0xae,
+        0x190 => 0xad,
+        0x1d0 => 0xac,
+        0x14e => 0xab,
+        0x14c => 0xaa,
+        _ => 0,
+    }
+}
+
+/// `RoomNameLastStage` (`SLUS_202.28` `0x001b0780`).
+const fn room_name_last_stage(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x210 => 0xbd,
+        0x1d0 => 0xbc,
+        _ => 0,
+    }
+}
+
+/// `RoomNameMansion` (`SLUS_202.28` `0x001b07f0`).
+const fn room_name_mansion(c: u32) -> u16 {
+    match align_2x2(c) {
+        0x20a => 0xd2,
+        0x24a => 0xd1,
+        0x192 => 0xd0,
+        0x252 => 0xcf,
+        0x1cc => 0xce,
+        0x212 => 0xcd,
+        0x24c => 0xcc,
+        0x214 => 0xcb,
+        0x254 => 0xca,
+        0x20c => 0xc9,
+        0x194 => 0xc8,
+        0x24e => 0xc7,
+        0x1d0 => 0xc6,
+        0x1d4 => 0xc5,
+        0x290 => 0xc4,
+        0x20e => 0xc3,
+        0x1ce => 0xc2,
+        0x250 => 0xc1,
+        0x210 => 0xc0,
+        _ => 0,
+    }
+}

@@ -15,7 +15,92 @@ use super::raycast::{
     should_skip_material_for_mode, EyeHitKind, EyeRayHit, EyeRayMode, RaycastFilter,
 };
 
+/// Borrowed view of an active collision sector (or the unsegmented world fallback) along with
+/// its [`SpatialGrid`] and ray-traversed cell list.
+struct ActiveRaySector<'a> {
+    grid: &'a SpatialGrid,
+    active_cells: Option<&'a [usize]>,
+    walls: &'a [WallSegment],
+    floors: &'a [FloorTriangle],
+    raw_walls: &'a [HitPolyPlane],
+    raw_side_walls: &'a [HitPolyPlane],
+    raw_floors: &'a [HitPolyPlane],
+    raw_ceilings: &'a [HitPolyPlane],
+    columns: &'a [HitPolyColumn],
+}
+
 impl CollisionWorld {
+    /// Internal helper: queries `grid` along XZ segment `(x0, z0) -> (x1, z1)` when indexed
+    /// geometry is present, invoking `f(Some(cells))` only if at least one cell is intersected,
+    /// or `f(None)` for unindexed fallback worlds.
+    #[inline]
+    fn visit_ray_grid<F>(grid: &SpatialGrid, x0: f32, z0: f32, x1: f32, z1: f32, f: F)
+    where
+        F: FnOnce(Option<&[usize]>),
+    {
+        if grid.has_indexed_geometry {
+            let (cells, count) = grid.query_ray_cells_array(x0, z0, x1, z1);
+            if count > 0 {
+                f(Some(&cells[..count]));
+            }
+        } else {
+            f(None);
+        }
+    }
+
+    /// Internal helper: visits each active collision sector (or the unsegmented world fallback
+    /// when `self.sectors` is empty) intersecting XZ segment `(x0, z0) -> (x1, z1)`.
+    ///
+    /// Respects per-sector `sector.disable` (or `self.disable`) and per-sector [`SpatialGrid`]
+    /// cell traversal (`clGetHitSectListVECHIT` `0x00138170`).
+    #[inline]
+    fn for_each_active_ray_sector<F>(&self, x0: f32, z0: f32, x1: f32, z1: f32, mut f: F)
+    where
+        F: FnMut(ActiveRaySector<'_>),
+    {
+        if !self.sectors.is_empty() {
+            for sector in &self.sectors {
+                if sector.disable != 0 {
+                    continue;
+                }
+                Self::visit_ray_grid(&sector.grid, x0, z0, x1, z1, |active_cells| {
+                    f(ActiveRaySector {
+                        grid: &sector.grid,
+                        active_cells,
+                        walls: &self.walls
+                            [sector.wall_offset..(sector.wall_offset + sector.wall_len)],
+                        floors: &self.floors
+                            [sector.floor_offset..(sector.floor_offset + sector.floor_len)],
+                        raw_walls: &self.raw_walls[sector.raw_wall_offset
+                            ..(sector.raw_wall_offset + sector.raw_wall_len)],
+                        raw_side_walls: &self.raw_side_walls[sector.raw_side_wall_offset
+                            ..(sector.raw_side_wall_offset + sector.raw_side_wall_len)],
+                        raw_floors: &self.raw_floors[sector.raw_floor_offset
+                            ..(sector.raw_floor_offset + sector.raw_floor_len)],
+                        raw_ceilings: &self.raw_ceilings[sector.raw_ceiling_offset
+                            ..(sector.raw_ceiling_offset + sector.raw_ceiling_len)],
+                        columns: &self.columns
+                            [sector.column_offset..(sector.column_offset + sector.column_len)],
+                    });
+                });
+            }
+        } else if self.disable == 0 {
+            Self::visit_ray_grid(&self.grid, x0, z0, x1, z1, |active_cells| {
+                f(ActiveRaySector {
+                    grid: &self.grid,
+                    active_cells,
+                    walls: &self.walls,
+                    floors: &self.floors,
+                    raw_walls: &self.raw_walls,
+                    raw_side_walls: &self.raw_side_walls,
+                    raw_floors: &self.raw_floors,
+                    raw_ceilings: &self.raw_ceilings,
+                    columns: &self.columns,
+                });
+            });
+        }
+    }
+
     /// Internal helper: visits static `.cld` [`WallSegment`]s along XZ segment `(x0, z0) -> (x1, z1)`
     /// using per-sector [`SpatialGrid`] cell traversal (`clGetHitSectListVECHIT` `0x00138170`),
     /// respecting per-sector `sector.disable` flags and falling back to full slices for manually
@@ -24,43 +109,21 @@ impl CollisionWorld {
     where
         F: FnMut(&WallSegment),
     {
-        if !self.sectors.is_empty() {
-            for sector in &self.sectors {
-                if sector.disable != 0 {
-                    continue;
-                }
-                let slice = &self.walls[sector.wall_offset..(sector.wall_offset + sector.wall_len)];
-                if sector.grid.has_indexed_geometry {
-                    let (cells, count) = sector.grid.query_ray_cells_array(x0, z0, x1, z1);
-                    for &cell in &cells[..count] {
-                        for &idx in &sector.grid.wall_segment_cells[cell] {
-                            if let Some(w) = slice.get(idx) {
-                                f(w);
-                            }
-                        }
-                    }
-                } else {
-                    for w in slice {
-                        f(w);
-                    }
-                }
-            }
-        } else if self.disable == 0 {
-            if self.grid.has_indexed_geometry {
-                let (cells, count) = self.grid.query_ray_cells_array(x0, z0, x1, z1);
-                for &cell in &cells[..count] {
-                    for &idx in &self.grid.wall_segment_cells[cell] {
-                        if let Some(w) = self.walls.get(idx) {
+        self.for_each_active_ray_sector(x0, z0, x1, z1, |sector| {
+            if let Some(cells) = sector.active_cells {
+                for &cell in cells {
+                    for &idx in &sector.grid.wall_segment_cells[cell] {
+                        if let Some(w) = sector.walls.get(idx) {
                             f(w);
                         }
                     }
                 }
             } else {
-                for w in &self.walls {
+                for w in sector.walls {
                     f(w);
                 }
             }
-        }
+        });
     }
 
     /// Internal helper: visits static `.cld` [`FloorTriangle`]s along XZ segment `(x0, z0) -> (x1, z1)`
@@ -75,44 +138,21 @@ impl CollisionWorld {
     ) where
         F: FnMut(&FloorTriangle),
     {
-        if !self.sectors.is_empty() {
-            for sector in &self.sectors {
-                if sector.disable != 0 {
-                    continue;
-                }
-                let slice =
-                    &self.floors[sector.floor_offset..(sector.floor_offset + sector.floor_len)];
-                if sector.grid.has_indexed_geometry {
-                    let (cells, count) = sector.grid.query_ray_cells_array(x0, z0, x1, z1);
-                    for &cell in &cells[..count] {
-                        for &idx in &sector.grid.floor_cells[cell] {
-                            if let Some(tri) = slice.get(idx) {
-                                f(tri);
-                            }
-                        }
-                    }
-                } else {
-                    for tri in slice {
-                        f(tri);
-                    }
-                }
-            }
-        } else if self.disable == 0 {
-            if self.grid.has_indexed_geometry {
-                let (cells, count) = self.grid.query_ray_cells_array(x0, z0, x1, z1);
-                for &cell in &cells[..count] {
-                    for &idx in &self.grid.floor_cells[cell] {
-                        if let Some(tri) = self.floors.get(idx) {
+        self.for_each_active_ray_sector(x0, z0, x1, z1, |sector| {
+            if let Some(cells) = sector.active_cells {
+                for &cell in cells {
+                    for &idx in &sector.grid.floor_cells[cell] {
+                        if let Some(tri) = sector.floors.get(idx) {
                             f(tri);
                         }
                     }
                 }
             } else {
-                for tri in &self.floors {
+                for tri in sector.floors {
                     f(tri);
                 }
             }
-        }
+        });
     }
 
     /// Internal helper: test a single `_CL_HITPOLY_PLANE` against segment `origin -> target`.
@@ -494,80 +534,19 @@ impl CollisionWorld {
         best_dist_sq: &mut f32,
         best_hit: &mut Option<EyeRayHit>,
     ) {
-        if !self.sectors.is_empty() {
-            for sector in &self.sectors {
-                if sector.disable != 0 {
-                    continue;
-                }
-                let raw_floors = &self.raw_floors
-                    [sector.raw_floor_offset..(sector.raw_floor_offset + sector.raw_floor_len)];
-                let floors =
-                    &self.floors[sector.floor_offset..(sector.floor_offset + sector.floor_len)];
-                if sector.grid.has_indexed_geometry {
-                    let (cells, count) = sector
-                        .grid
-                        .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                    if count == 0 {
-                        continue;
-                    }
-                    Self::test_sector_static_floors(
-                        origin,
-                        target,
-                        &sector.grid,
-                        Some(&cells[..count]),
-                        raw_floors,
-                        floors,
-                        mode,
-                        best_dist_sq,
-                        best_hit,
-                    );
-                } else {
-                    Self::test_sector_static_floors(
-                        origin,
-                        target,
-                        &sector.grid,
-                        None,
-                        raw_floors,
-                        floors,
-                        mode,
-                        best_dist_sq,
-                        best_hit,
-                    );
-                }
-            }
-        } else if self.disable == 0 {
-            if self.grid.has_indexed_geometry {
-                let (cells, count) = self
-                    .grid
-                    .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                if count == 0 {
-                    return;
-                }
-                Self::test_sector_static_floors(
-                    origin,
-                    target,
-                    &self.grid,
-                    Some(&cells[..count]),
-                    &self.raw_floors,
-                    &self.floors,
-                    mode,
-                    best_dist_sq,
-                    best_hit,
-                );
-            } else {
-                Self::test_sector_static_floors(
-                    origin,
-                    target,
-                    &self.grid,
-                    None,
-                    &self.raw_floors,
-                    &self.floors,
-                    mode,
-                    best_dist_sq,
-                    best_hit,
-                );
-            }
-        }
+        self.for_each_active_ray_sector(origin.x, origin.z, target.x, target.z, |sector| {
+            Self::test_sector_static_floors(
+                origin,
+                target,
+                sector.grid,
+                sector.active_cells,
+                sector.raw_floors,
+                sector.floors,
+                mode,
+                best_dist_sq,
+                best_hit,
+            );
+        });
     }
 
     /// Exact 1:1 3D `clCheckHitEyes` (`SLUS_202.28` `0x00138ea0`) with per-sector `SpatialGrid`
@@ -597,155 +576,35 @@ impl CollisionWorld {
 
         // 2. Static geometry (`fld`, `wld`, optional `swd`, `ced`, `cld` BG columns) per sector
         let include_side_walls = mode == EyeRayMode::AllNoThru;
-        if !self.sectors.is_empty() {
-            for sector in &self.sectors {
-                if sector.disable != 0 {
-                    continue;
-                }
-                let raw_floors = &self.raw_floors
-                    [sector.raw_floor_offset..(sector.raw_floor_offset + sector.raw_floor_len)];
-                let floors =
-                    &self.floors[sector.floor_offset..(sector.floor_offset + sector.floor_len)];
-                let raw_walls = &self.raw_walls
-                    [sector.raw_wall_offset..(sector.raw_wall_offset + sector.raw_wall_len)];
-                let raw_side_walls = &self.raw_side_walls[sector.raw_side_wall_offset
-                    ..(sector.raw_side_wall_offset + sector.raw_side_wall_len)];
-                let raw_ceilings = &self.raw_ceilings[sector.raw_ceiling_offset
-                    ..(sector.raw_ceiling_offset + sector.raw_ceiling_len)];
-                let columns =
-                    &self.columns[sector.column_offset..(sector.column_offset + sector.column_len)];
-                let walls = &self.walls[sector.wall_offset..(sector.wall_offset + sector.wall_len)];
-
-                if sector.grid.has_indexed_geometry {
-                    let (cells, count) = sector
-                        .grid
-                        .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                    if count == 0 {
-                        continue;
-                    }
-                    let active = Some(&cells[..count]);
-                    Self::test_sector_static_floors(
-                        origin,
-                        target,
-                        &sector.grid,
-                        active,
-                        raw_floors,
-                        floors,
-                        mode,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                    Self::test_sector_static_walls_and_columns(
-                        origin,
-                        target,
-                        &sector.grid,
-                        active,
-                        raw_walls,
-                        raw_side_walls,
-                        raw_ceilings,
-                        columns,
-                        walls,
-                        mode,
-                        mode,
-                        include_side_walls,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                } else {
-                    Self::test_sector_static_floors(
-                        origin,
-                        target,
-                        &sector.grid,
-                        None,
-                        raw_floors,
-                        floors,
-                        mode,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                    Self::test_sector_static_walls_and_columns(
-                        origin,
-                        target,
-                        &sector.grid,
-                        None,
-                        raw_walls,
-                        raw_side_walls,
-                        raw_ceilings,
-                        columns,
-                        walls,
-                        mode,
-                        mode,
-                        include_side_walls,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                }
-            }
-        } else if self.disable == 0 {
-            if self.grid.has_indexed_geometry {
-                let (cells, count) = self
-                    .grid
-                    .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                if count > 0 {
-                    let active = Some(&cells[..count]);
-                    Self::test_sector_static_floors(
-                        origin,
-                        target,
-                        &self.grid,
-                        active,
-                        &self.raw_floors,
-                        &self.floors,
-                        mode,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                    Self::test_sector_static_walls_and_columns(
-                        origin,
-                        target,
-                        &self.grid,
-                        active,
-                        &self.raw_walls,
-                        &self.raw_side_walls,
-                        &self.raw_ceilings,
-                        &self.columns,
-                        &self.walls,
-                        mode,
-                        mode,
-                        include_side_walls,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                }
-            } else {
-                Self::test_sector_static_floors(
-                    origin,
-                    target,
-                    &self.grid,
-                    None,
-                    &self.raw_floors,
-                    &self.floors,
-                    mode,
-                    &mut best_dist_sq,
-                    &mut best_hit,
-                );
-                Self::test_sector_static_walls_and_columns(
-                    origin,
-                    target,
-                    &self.grid,
-                    None,
-                    &self.raw_walls,
-                    &self.raw_side_walls,
-                    &self.raw_ceilings,
-                    &self.columns,
-                    &self.walls,
-                    mode,
-                    mode,
-                    include_side_walls,
-                    &mut best_dist_sq,
-                    &mut best_hit,
-                );
-            }
-        }
+        self.for_each_active_ray_sector(origin.x, origin.z, target.x, target.z, |sector| {
+            Self::test_sector_static_floors(
+                origin,
+                target,
+                sector.grid,
+                sector.active_cells,
+                sector.raw_floors,
+                sector.floors,
+                mode,
+                &mut best_dist_sq,
+                &mut best_hit,
+            );
+            Self::test_sector_static_walls_and_columns(
+                origin,
+                target,
+                sector.grid,
+                sector.active_cells,
+                sector.raw_walls,
+                sector.raw_side_walls,
+                sector.raw_ceilings,
+                sector.columns,
+                sector.walls,
+                mode,
+                mode,
+                include_side_walls,
+                &mut best_dist_sq,
+                &mut best_hit,
+            );
+        });
 
         // 3. Active character hit cylinders (`clCheckHitEyeVectorCharacter` `0x0013a590`)
         for c in characters {
@@ -840,102 +699,24 @@ impl CollisionWorld {
             &mut best_dist_sq,
             &mut best_hit,
         );
-        if !self.sectors.is_empty() {
-            for sector in &self.sectors {
-                if sector.disable != 0 {
-                    continue;
-                }
-                let raw_walls = &self.raw_walls
-                    [sector.raw_wall_offset..(sector.raw_wall_offset + sector.raw_wall_len)];
-                let raw_ceilings = &self.raw_ceilings[sector.raw_ceiling_offset
-                    ..(sector.raw_ceiling_offset + sector.raw_ceiling_len)];
-                let columns =
-                    &self.columns[sector.column_offset..(sector.column_offset + sector.column_len)];
-                if sector.grid.has_indexed_geometry {
-                    let (cells, count) = sector
-                        .grid
-                        .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                    if count == 0 {
-                        continue;
-                    }
-                    let active = Some(&cells[..count]);
-                    Self::test_sector_static_walls_and_columns(
-                        origin,
-                        target,
-                        &sector.grid,
-                        active,
-                        raw_walls,
-                        &[],
-                        raw_ceilings,
-                        columns,
-                        &[],
-                        EyeRayMode::NoThru,
-                        EyeRayMode::Thru,
-                        false,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                } else {
-                    Self::test_sector_static_walls_and_columns(
-                        origin,
-                        target,
-                        &sector.grid,
-                        None,
-                        raw_walls,
-                        &[],
-                        raw_ceilings,
-                        columns,
-                        &[],
-                        EyeRayMode::NoThru,
-                        EyeRayMode::Thru,
-                        false,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                }
-            }
-        } else if self.disable == 0 {
-            if self.grid.has_indexed_geometry {
-                let (cells, count) = self
-                    .grid
-                    .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                if count > 0 {
-                    Self::test_sector_static_walls_and_columns(
-                        origin,
-                        target,
-                        &self.grid,
-                        Some(&cells[..count]),
-                        &self.raw_walls,
-                        &[],
-                        &self.raw_ceilings,
-                        &self.columns,
-                        &[],
-                        EyeRayMode::NoThru,
-                        EyeRayMode::Thru,
-                        false,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                }
-            } else {
-                Self::test_sector_static_walls_and_columns(
-                    origin,
-                    target,
-                    &self.grid,
-                    None,
-                    &self.raw_walls,
-                    &[],
-                    &self.raw_ceilings,
-                    &self.columns,
-                    &[],
-                    EyeRayMode::NoThru,
-                    EyeRayMode::Thru,
-                    false,
-                    &mut best_dist_sq,
-                    &mut best_hit,
-                );
-            }
-        }
+        self.for_each_active_ray_sector(origin.x, origin.z, target.x, target.z, |sector| {
+            Self::test_sector_static_walls_and_columns(
+                origin,
+                target,
+                sector.grid,
+                sector.active_cells,
+                sector.raw_walls,
+                &[],
+                sector.raw_ceilings,
+                sector.columns,
+                &[],
+                EyeRayMode::NoThru,
+                EyeRayMode::Thru,
+                false,
+                &mut best_dist_sq,
+                &mut best_hit,
+            );
+        });
         best_hit
     }
 
@@ -958,69 +739,29 @@ impl CollisionWorld {
             &mut best_dist_sq,
             &mut best_hit,
         );
-        if !self.sectors.is_empty() {
-            for sector in &self.sectors {
-                if sector.disable != 0 {
-                    continue;
-                }
-                let raw_ceilings = &self.raw_ceilings[sector.raw_ceiling_offset
-                    ..(sector.raw_ceiling_offset + sector.raw_ceiling_len)];
-                if sector.grid.has_indexed_geometry {
-                    let (cells, count) = sector
-                        .grid
-                        .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                    if count == 0 {
-                        continue;
-                    }
-                    Self::test_eye_planes_cells(
-                        origin,
-                        target,
-                        raw_ceilings,
-                        &sector.grid.ceiling_cells,
-                        &cells[..count],
-                        EyeRayMode::Thru,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                } else {
-                    Self::test_eye_planes(
-                        origin,
-                        target,
-                        raw_ceilings,
-                        EyeRayMode::Thru,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                }
-            }
-        } else if self.disable == 0 {
-            if self.grid.has_indexed_geometry {
-                let (cells, count) = self
-                    .grid
-                    .query_ray_cells_array(origin.x, origin.z, target.x, target.z);
-                if count > 0 {
-                    Self::test_eye_planes_cells(
-                        origin,
-                        target,
-                        &self.raw_ceilings,
-                        &self.grid.ceiling_cells,
-                        &cells[..count],
-                        EyeRayMode::Thru,
-                        &mut best_dist_sq,
-                        &mut best_hit,
-                    );
-                }
+        self.for_each_active_ray_sector(origin.x, origin.z, target.x, target.z, |sector| {
+            if let Some(cells) = sector.active_cells {
+                Self::test_eye_planes_cells(
+                    origin,
+                    target,
+                    sector.raw_ceilings,
+                    &sector.grid.ceiling_cells,
+                    cells,
+                    EyeRayMode::Thru,
+                    &mut best_dist_sq,
+                    &mut best_hit,
+                );
             } else {
                 Self::test_eye_planes(
                     origin,
                     target,
-                    &self.raw_ceilings,
+                    sector.raw_ceilings,
                     EyeRayMode::Thru,
                     &mut best_dist_sq,
                     &mut best_hit,
                 );
             }
-        }
+        });
         best_hit
     }
 

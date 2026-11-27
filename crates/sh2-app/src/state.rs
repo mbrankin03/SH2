@@ -365,6 +365,7 @@ impl AppState {
         if let Some(ref mut bank) = self.audio_bank {
             bank.stop_all_spatial_handles();
             bank.stop_active_cut_audio();
+            bank.clear_non_core_voice_afs_cache();
         }
         if let Some(ref mut engine) = self.audio_engine {
             engine.stop_bgm(std::time::Duration::from_millis(120));

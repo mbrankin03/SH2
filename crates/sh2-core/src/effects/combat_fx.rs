@@ -229,10 +229,12 @@ pub const GLASS_UV_STEP: f32 = 0.0625;
 pub const GLASS_MAX_SHARDS_PER_BURST: usize = 50;
 /// Maximum simultaneous glass shards retained in [`GlassBreakSystem::shards`] (`SH2-176`).
 ///
-/// Equals `4 × GLASS_MAX_SHARDS_PER_BURST` (`200`), matching the 200-slot (`0xc8`) class pool cap
-/// in `SLUS_202.28` `0x00370910` (well within the 600-instance global Effect2 pool at
-/// `Effect_Object_Initialize` `0x0026a130`). When full, the oldest shard is evicted FIFO matching
-/// `Instance_OldestEntry_Search` (`0x00259c00`).
+/// Equals `4 × GLASS_MAX_SHARDS_PER_BURST` (`200`), capping 4 concurrent shatter bursts well within
+/// the 600-instance global Effect2 pool at `Effect_Object_Initialize` (`0x0026a130`; note that in
+/// `SLUS_202.28` `0x00370910`, the 200-slot `0xc8` entry belongs to `class 0x0a`
+/// `HH_Class_Blood_00`, while `class 0x14`/`0x15` `Glass_Break_Phenomenon_00`/`GlassPiece_00` have
+/// `mode = 0, count = 1` in the prototype table). When full, the oldest shard is evicted FIFO
+/// matching `Instance_OldestEntry_Search` (`0x00259c00`).
 pub const MAX_GLASS_SHARDS: usize = 200;
 /// Maximum simultaneous active burst emitters retained in [`GlassBreakSystem::bursts`] (`SH2-176`).
 pub const MAX_GLASS_BURSTS: usize = 16;

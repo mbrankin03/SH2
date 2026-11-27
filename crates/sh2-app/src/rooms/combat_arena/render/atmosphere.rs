@@ -194,9 +194,9 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
                 + (cam_to_player / cam_dist) * sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM;
             [projected.x, projected.y, projected.z]
         } else {
-            let anchor_y = room_eval
-                .particle_fixed_y_mm
-                .unwrap_or(player_pos.y - 520.0);
+            // Exact `SLUS_202.28` `fogSetLocalPosV` (`0x0016c6d0`, `Fog/fog.c:2976-2982`):
+            // anchor Y is `player_pos.y` (or fixed `.fcl` `y_fix` when `subdiv != 0` without floor-follow).
+            let anchor_y = room_eval.particle_fixed_y_mm.unwrap_or(player_pos.y);
             [player_pos.x, anchor_y, player_pos.z]
         };
         let player_arr = [player_pos.x, player_pos.y, player_pos.z];
@@ -212,30 +212,27 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
             player_arr,
             room_eval.james_fog_influence_mm,
         );
-        // `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) uses `fogSetColor(0x80, 0x80, 0x80, 0x80)`
-        // (unity modulation of `fog.tex` bright mist) rather than dark `0x46` `FOGCOL`.
-        let particle_rgb = if ps2_room_id == R_OBSV_DECK_ID {
-            sh2_core::fog::PS2_FOG_PARTICLE_MIST_RGB
-        } else {
-            fog_rgb
-        };
-        let radius_scale = if ps2_room_id == R_OBSV_DECK_ID {
-            sh2_core::fog::OB_FOG_ENV_PARTICLE_SIZE_MM / 300.0
-        } else {
-            1.0
-        };
+        // Exact `fogInit` (`SLUS_202.28` `0x001687d0`, `Fog/fog.c:67`) `fogSetColor(0x80, 0x80, 0x80, 0x80)`
+        // + `sh2pc.exe` `FUN_00486fc0` (`0x00486fc0`, `D3DTOP_MODULATE2X`) -> unity RGB modulation of `fog.tex`,
+        // plus `.fcl` `FogEnv` `subdiv`, `size`, `alpha`, and floor-follow (`flags & 0x08`).
+        let particle_rgb = room_eval.particle_color_rgb;
+        let radius_scale =
+            room_eval.particle_size_mm / sh2_core::fog::PS2_DEFAULT_FOG_PARTICLE_SIZE_MM;
+        let area_mm = room_eval.particle_range_z_mm;
+        let floor_y = room_eval.particle_floor_follow.then_some(player_pos.y);
         state
             .fog_particle_scratch
             .extend(state.fog_particles.particles().iter().map(|p| {
-                let (wy, alpha) = if ps2_room_id == R_OBSV_DECK_ID {
-                    sh2_core::fog::evaluate_ob01_particle_y_and_alpha(
-                        anchor[1],
-                        p.local_pos[1],
-                        p.alpha,
-                    )
-                } else {
-                    (anchor[1] + p.local_pos[1], p.alpha)
-                };
+                let (wy, alpha) = sh2_core::fog::evaluate_ps2_particle_y_and_alpha(
+                    anchor[1],
+                    p.local_pos[1],
+                    p.alpha,
+                    area_mm,
+                    room_eval.particle_subdiv,
+                    room_eval.particle_alpha_u8,
+                    floor_y,
+                    room_eval.particle_size_mm,
+                );
                 GpuFogParticle {
                     world_pos_radius: [
                         anchor[0] + p.local_pos[0],

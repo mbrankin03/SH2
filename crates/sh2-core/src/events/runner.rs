@@ -66,6 +66,9 @@ pub struct StageProgramRunner {
     positional_sound_effects: Vec<(u32, [f32; 3])>,
     /// Cutscene demo ID requested by `p_demo`, if any.
     requested_demo: Option<u32>,
+    /// Optional catalog short ID paired with `requested_demo` to disambiguate variants sharing a
+    /// retail `demo_no` (e.g. `demo_no = 4` -> `"haka_agl_h"` vs `"haka_agl_i"`).
+    requested_demo_id: Option<&'static str>,
     /// Optional post-cutscene `(pos_mm, yaw_rad)` paired with `requested_demo`.
     requested_demo_post_pose: Option<([f32; 3], f32)>,
     /// Save point ID requested to open the Save Menu (`SavePointSet` + `mode = 9`, e.g. Stage 4 Well `2`).
@@ -97,6 +100,7 @@ impl StageProgramRunner {
         self.stop_sound_effects.clear();
         self.positional_sound_effects.clear();
         self.requested_demo = None;
+        self.requested_demo_id = None;
         self.requested_demo_post_pose = None;
         self.open_save_point_id = None;
         self.pending_walkback_delta = None;
@@ -163,6 +167,11 @@ impl StageProgramRunner {
     /// Consumes and returns any cutscene demo ID requested by `p_demo`.
     pub fn take_requested_demo(&mut self) -> Option<u32> {
         self.requested_demo.take()
+    }
+
+    /// Consumes and returns any catalog short ID paired with `requested_demo`.
+    pub fn take_requested_demo_id(&mut self) -> Option<&'static str> {
+        self.requested_demo_id.take()
     }
 
     /// Consumes and returns any post-cutscene `(pos_mm, yaw_rad)` paired with `requested_demo`.
@@ -284,6 +293,9 @@ impl StageProgramRunner {
             .extend(out.positional_sound_effects);
         if let Some(demo_no) = out.requested_demo {
             self.requested_demo = Some(demo_no);
+        }
+        if let Some(demo_id) = out.requested_demo_id {
+            self.requested_demo_id = Some(demo_id);
         }
         if let Some(pose) = out.requested_demo_post_pose {
             self.requested_demo_post_pose = Some(pose);

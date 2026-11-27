@@ -259,6 +259,7 @@ pub(crate) fn run_active_gameplay(
             still_running,
             walkback_delta,
             requested_demo,
+            requested_demo_id,
             requested_demo_post_pose,
             open_save_point_id,
             ending_bit,
@@ -305,6 +306,7 @@ pub(crate) fn run_active_gameplay(
                 still_running,
                 scen.prog_runner.take_walkback_delta(),
                 scen.prog_runner.take_requested_demo(),
+                scen.prog_runner.take_requested_demo_id(),
                 scen.prog_runner.take_requested_demo_post_pose(),
                 scen.prog_runner.take_open_save_point_id(),
                 scen.prog_runner.take_triggered_ending(),
@@ -358,6 +360,15 @@ pub(crate) fn run_active_gameplay(
         if sim.event_move.is_active() {
             *player_locked = true;
         }
+        // Complete `EventExecMode::Program` (`EventMainStandard` `0x001a7b50` / `0x0048e610`)
+        // BEFORE any early return (`StartDemo`, `OpenOverlay`, `TriggerEnding`) whenever
+        // `prog_runner` finishes on the same tick; otherwise `event_engine` stays stuck in
+        // `EventExecMode::Program` (`ev_e_step = 2`) and infinitely re-triggers `ev_prog`
+        // (e.g. Stage 4 `ev_prog[2]` `0x005a0570` `haka_agl` `demo_no = 3`) on return to
+        // `ActiveGameplay` (`SH2-191`).
+        if !still_running {
+            event_engine.finish_active_program();
+        }
         if let Some(demo_no) = requested_demo {
             let rule = AUTO_STAGE_DEMO_RULES.iter().find(|r| r.demo_no == demo_no);
             let (post_pos, post_yaw) = if let Some((pos, yaw)) = requested_demo_post_pose {
@@ -367,14 +378,12 @@ pub(crate) fn run_active_gameplay(
             };
             return GameplayStepOutcome::StartDemo(DramaDemoTrigger {
                 demo_no,
-                demo_id: find_drama_demo_by_no(demo_no as u16).map(|d| d.id),
+                demo_id: requested_demo_id
+                    .or_else(|| find_drama_demo_by_no(demo_no as u16).map(|d| d.id)),
                 post_pos,
                 post_yaw,
                 restore_policy: PostSequenceRestorePolicy::ReevaluateAtPlayerPose,
             });
-        }
-        if !still_running {
-            event_engine.finish_active_program();
         }
         if open_save_point_id.is_some() {
             return GameplayStepOutcome::OpenOverlay(OverlayMenuKind::Save);
@@ -836,5 +845,210 @@ mod tests {
             .outdoor_plan
             .expect("crossing into ca12 must emit an updated outdoor_plan");
         assert!(plan2.desired_blocks.contains(&12));
+    }
+
+    /// Regression test for `SH2-191`: walking into any Stage 4 (`stg_forest.c`) Graveyard
+    /// Angela trigger polygon (`ACT1_FOREST_EVENT_LIST[12..=17]`, `0x008e6ff8`) must:
+    /// 1. Fire `ev_prog[2]` (`0x005a0570`) and transition to `CampaignPhase::DramaDemo { demo_no: 3 }`
+    ///    with `event_engine` cleanly returned to `EventExecMode::Idle`,
+    /// 2. Keep `flag(36)` unset during playback so `EvBgmControl` (`0x005a0260`) stays on
+    ///    Situation `4` (`forest/bgm_114_b.aix`),
+    /// 3. Commit `flag(36)`, snap James to `STG4_JAMES_POST_DEMO3_POS` / `STG4_JAMES_DEMO3_YAW`
+    ///    (`0x005a07b6..0x005a07c1`), and return to `ActiveGameplay` on completion,
+    /// 4. Never re-trigger `demo_no = 3` on subsequent gameplay ticks (no infinite re-trigger loop).
+    #[test]
+    fn sh2_191_stage4_angela_graveyard_cutscene_triggers_once_and_does_not_loop() {
+        use crate::events::engine::EventExecMode;
+        use crate::events::stages_act1::act1_stage_descriptor;
+        use crate::events::triggers::{decode_ev_pos_shape, EvPosShape};
+        use crate::events::{
+            STG4_ANGELA_GRAVE_DEMO_NO, STG4_FLAG_ANGELA_MET, STG4_JAMES_DEMO3_YAW,
+            STG4_JAMES_POST_DEMO3_POS,
+        };
+
+        // Decode the centroid of retail trigger `ACT1_FOREST_EVENT_LIST[12]` (`0x008e6ff8`).
+        let forest = act1_stage_descriptor(4).expect("Stage 4 Forest descriptor");
+        let entry12 = forest.event_list[12];
+        let shape12 = decode_ev_pos_shape(
+            forest.ev_pos,
+            entry12.ev_pos_offset(),
+            entry12.shape_kind().expect("valid shape kind"),
+        )
+        .expect("decode ACT1_FOREST_EVENT_LIST[12] trigger polygon");
+        let trigger_pos = match shape12 {
+            EvPosShape::Triangle { y, vertices } => [
+                (vertices[0][0] + vertices[1][0] + vertices[2][0]) / 3.0,
+                y,
+                (vertices[0][1] + vertices[1][1] + vertices[2][1]) / 3.0,
+            ],
+            EvPosShape::Quad { y, vertices } => [
+                (vertices[0][0] + vertices[1][0] + vertices[2][0] + vertices[3][0]) * 0.25,
+                y,
+                (vertices[0][1] + vertices[1][1] + vertices[2][1] + vertices[3][1]) * 0.25,
+            ],
+            other => panic!("unexpected shape for ACT1_FOREST_EVENT_LIST[12]: {other:?}"),
+        };
+
+        let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+        sim.scenario.current_stage = 4;
+        sim.scenario.current_room = "ca11".to_string();
+        sim.snap_player_transform(Vec3::from_array(trigger_pos), 0.0);
+
+        let mut orch = CampaignOrchestrator::from_saved_stage(
+            4,
+            Some("ca11".to_string()),
+            trigger_pos,
+            0.0,
+            OutdoorStreamingMode::default(),
+            false,
+        );
+        orch.phase = CampaignPhase::ActiveGameplay;
+        orch.fade = ScreenFadeState::default();
+        orch.player_locked = false;
+
+        let idle = CampaignTickInput::default();
+
+        // Tick 1: `EventCheck` matches `ACT1_FOREST_EVENT_LIST[12]` and starts `ev_prog[2]`.
+        let _ = orch.step(&mut sim, &idle, 1.0 / 60.0);
+        assert!(sim.scenario.prog_runner.is_running());
+
+        // Tick 2: `ev_prog[2]` emits `StartDemo(3)` AND `event_engine` must return to `Idle`.
+        let eff_start = orch.step(&mut sim, &idle, 1.0 / 60.0);
+        let trigger = eff_start
+            .start_drama_demo
+            .expect("ev_prog[2] must emit start_drama_demo");
+        assert_eq!(trigger.demo_no, STG4_ANGELA_GRAVE_DEMO_NO);
+        assert_eq!(trigger.demo_id, Some("haka_agl"));
+        assert_eq!(
+            orch.event_engine.step_state.ev_m_step,
+            EventExecMode::Idle,
+            "EventEngine must leave EventExecMode::Program when ev_prog[2] finishes"
+        );
+        assert!(matches!(
+            orch.phase,
+            CampaignPhase::DramaDemo {
+                demo_no: STG4_ANGELA_GRAVE_DEMO_NO,
+                ..
+            }
+        ));
+        assert!(
+            !sim.scenario.flags.get(STG4_FLAG_ANGELA_MET),
+            "flag(36) must stay unset during playback so BGM Situation 4 stays active"
+        );
+        assert_eq!(
+            eff_start.bgm_control_mask,
+            Some(4),
+            "Stage 4 EvBgmControl (0x005a0260) must return Situation 4 during demo_no = 3"
+        );
+
+        // Tick 3: Cutscene finishes -> sets `flag(36)`, snaps James to post-pose, returns to gameplay.
+        let finish_input = CampaignTickInput {
+            drama_demo_finished: true,
+            ..CampaignTickInput::default()
+        };
+        let eff_done = orch.step(&mut sim, &finish_input, 1.0 / 60.0);
+        assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+        assert!(sim.scenario.flags.get(STG4_FLAG_ANGELA_MET));
+        assert!(!orch.player_locked);
+        assert!(eff_done.start_drama_demo.is_none());
+        assert_eq!(
+            sim.scenario.player_position.to_array(),
+            STG4_JAMES_POST_DEMO3_POS
+        );
+        assert!((sim.scenario.player_yaw - STG4_JAMES_DEMO3_YAW).abs() < 1e-5);
+
+        // Subsequent gameplay ticks at post-pose AND back inside the original trigger polygon
+        // must NEVER re-trigger `demo_no = 3`.
+        for tick in 0..10 {
+            if tick == 5 {
+                sim.snap_player_transform(Vec3::from_array(trigger_pos), 0.0);
+            }
+            let eff = orch.step(&mut sim, &idle, 1.0 / 60.0);
+            assert!(
+                eff.start_drama_demo.is_none(),
+                "haka_agl re-triggered on post-cutscene tick {tick}"
+            );
+            assert!(
+                matches!(orch.phase, CampaignPhase::ActiveGameplay),
+                "campaign must stay in ActiveGameplay on tick {tick}, got {:?}",
+                orch.phase
+            );
+        }
+    }
+
+    /// Regression test for `SH2-191` follow-up: Stage 4 post-cutscene Angela conversations
+    /// (`ev_prog[3]` `0x0059f4a0` -> `"haka_agl_h"` and `ev_prog[4]` `0x0059f5c0` -> `"haka_agl_i"`)
+    /// share `demo_no = 4` (`STG4_ANGELA_TALK_DEMO_NO`) and must emit distinct `demo_id`s, snap
+    /// James to their respective post-poses (`0x008e7700` / `0x008e7748`), and return cleanly to
+    /// `ActiveGameplay` without looping.
+    #[test]
+    fn sh2_191_stage4_angela_repeat_talk_disambiguates_haka_agl_h_and_i_without_looping() {
+        use crate::events::engine::EventExecMode;
+        use crate::events::{
+            STG4_ANGELA_TALK_DEMO_NO, STG4_FLAG_ANGELA_MET, STG4_JAMES_POST_PROG3_POS,
+            STG4_JAMES_POST_PROG3_YAW, STG4_JAMES_POST_PROG4_POS, STG4_JAMES_POST_PROG4_YAW,
+        };
+
+        for (prog_no, expected_id, expected_pos, expected_yaw) in [
+            (
+                3u8,
+                "haka_agl_h",
+                STG4_JAMES_POST_PROG3_POS,
+                STG4_JAMES_POST_PROG3_YAW,
+            ),
+            (
+                4u8,
+                "haka_agl_i",
+                STG4_JAMES_POST_PROG4_POS,
+                STG4_JAMES_POST_PROG4_YAW,
+            ),
+        ] {
+            let mut sim = SimulationCore::new(ScenarioKind::LetterFromSilentHeaven);
+            sim.scenario.current_stage = 4;
+            sim.scenario.current_room = "ca11".to_string();
+            sim.scenario.flags.set(STG4_FLAG_ANGELA_MET, true);
+
+            let mut orch = CampaignOrchestrator::from_saved_stage(
+                4,
+                Some("ca11".to_string()),
+                expected_pos,
+                expected_yaw,
+                OutdoorStreamingMode::default(),
+                false,
+            );
+            orch.phase = CampaignPhase::ActiveGameplay;
+            orch.fade = ScreenFadeState::default();
+            orch.player_locked = false;
+
+            sim.scenario.prog_runner.start(4, prog_no, 0);
+            let idle = CampaignTickInput::default();
+            let eff_start = orch.step(&mut sim, &idle, 1.0 / 60.0);
+            let trigger = eff_start
+                .start_drama_demo
+                .unwrap_or_else(|| panic!("ev_prog[{prog_no}] must emit start_drama_demo"));
+            assert_eq!(trigger.demo_no, STG4_ANGELA_TALK_DEMO_NO);
+            assert_eq!(trigger.demo_id, Some(expected_id));
+            assert_eq!(orch.event_engine.step_state.ev_m_step, EventExecMode::Idle);
+
+            let eff_done = orch.step(
+                &mut sim,
+                &CampaignTickInput {
+                    drama_demo_finished: true,
+                    ..CampaignTickInput::default()
+                },
+                1.0 / 60.0,
+            );
+            assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+            assert!(eff_done.start_drama_demo.is_none());
+            assert_eq!(sim.scenario.player_position.to_array(), expected_pos);
+            assert!((sim.scenario.player_yaw - expected_yaw).abs() < 1e-5);
+
+            // Next idle ticks must stay in ActiveGameplay without re-triggering.
+            for _ in 0..5 {
+                let eff = orch.step(&mut sim, &idle, 1.0 / 60.0);
+                assert!(eff.start_drama_demo.is_none());
+                assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+            }
+        }
     }
 }

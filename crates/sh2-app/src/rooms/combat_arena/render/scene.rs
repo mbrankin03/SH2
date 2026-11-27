@@ -8,34 +8,61 @@ use sh2_core::events::stages_act1::{
 };
 use sh2_ui::menu::TestRoomKind;
 
+/// Fast FNV-1a 64-bit hash over the 2048-byte `EventFlags` bitset (`SH2-182`).
+#[inline]
+fn event_flags_fingerprint(flags: &sh2_core::EventFlags) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let (chunks, _) = flags.as_bytes().as_chunks::<8>();
+    for chunk in chunks {
+        h ^= u64::from_le_bytes(*chunk);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
 /// Syncs Act 1 `EvRoomInit` / `EvAllTimeFunc` `.map` `geo_id` display-control overrides
 /// (`Act1LifecycleSnapshot::door_overrides`, e.g. `stg_ovservation.c` `0x005a1350` hiding
 /// group `0x03` in `ob01.map` once `flag(24)` is set) to [`sh2_renderer::RenderContext`].
+///
+/// Guarded by a dirty key `(cutscene_active, stage, room_id, flags_hash)` so unchanged frames
+/// skip cloning `EventFlags`, evaluating lifecycle hooks, and reallocating filter maps (`SH2-182`).
 fn sync_map_geo_visibility_overrides(
-    state: &AppState,
+    state: &mut AppState,
     active_room_name: &str,
     cutscene_active: bool,
     player_pos: glam::Vec3,
 ) {
-    if cutscene_active {
-        state.render_ctx.set_map_visibility_filter(None);
-        return;
-    }
-
-    let act1_stage = if state.active_test_room == TestRoomKind::ObservationDeck
+    let act1_stage = if cutscene_active {
+        None
+    } else if state.active_test_room == TestRoomKind::ObservationDeck
         || active_room_name.eq_ignore_ascii_case("ob01")
     {
         Some(Act1StageId::Observation)
     } else {
         Act1StageId::from_raw(state.sim_core.scenario.current_stage as u8)
     };
+    let room_id = sh2_renderer::GpuMap::parse_base_room_id_from_map_name(active_room_name) as u8;
+    let flags_hash = if act1_stage.is_some() {
+        event_flags_fingerprint(&state.sim_core.scenario.flags)
+    } else {
+        0
+    };
+    let key = (
+        cutscene_active,
+        act1_stage.map(|s| s as u8),
+        room_id,
+        flags_hash,
+    );
+    if state.last_map_geo_vis_key == Some(key) {
+        return;
+    }
+    state.last_map_geo_vis_key = Some(key);
 
     let Some(stage) = act1_stage else {
         state.render_ctx.set_map_visibility_filter(None);
         return;
     };
 
-    let room_id = sh2_renderer::GpuMap::parse_base_room_id_from_map_name(active_room_name) as u8;
     // Clone flags so render-phase lifecycle evaluation never mutates gameplay progression state.
     let mut flags_snapshot = state.sim_core.scenario.flags.clone();
     let snap = act1_eval_alltime_and_room(
@@ -60,32 +87,50 @@ pub(super) fn submit_scene_draw(
     player_pos: glam::Vec3,
     active_enemy_snapshot: Option<EnemySkinSnapshot>,
 ) {
-    let mut skeletal_draw = Vec::new();
-    let active_room_name = state
-        .drama_demo_session
-        .as_ref()
-        .filter(|s| s.player.locks_gameplay_input())
-        .map(|s| s.player.info.stage_name)
-        .unwrap_or(state.sim_core.scenario.current_room.as_str());
-    let mirror_room_id = if state.active_test_room == TestRoomKind::RestroomStart
-        || active_room_name.eq_ignore_ascii_case("er01")
-    {
-        Some(0x01)
-    } else if active_room_name.eq_ignore_ascii_case("ap84")
-        || active_room_name.eq_ignore_ascii_case("ap88")
-    {
-        Some(0x24)
-    } else if active_room_name.eq_ignore_ascii_case("th09") {
-        Some(0xd5)
-    } else {
-        None
-    };
+    if !is_in_game {
+        return;
+    }
+
     let cutscene_active = state.drama_demo_session.as_ref().is_some_and(|s| {
         s.player.locks_gameplay_input() && s.actor_assets.iter().any(|a| a.is_some())
     });
 
+    // Update mirror spec & map geo visibility overrides BEFORE borrowing `state` for skeletal draws.
+    let (mirror_room_id, room_name_is_ob01) = {
+        let active_room_name = state
+            .drama_demo_session
+            .as_ref()
+            .filter(|s| s.player.locks_gameplay_input())
+            .map(|s| s.player.info.stage_name)
+            .unwrap_or(state.sim_core.scenario.current_room.as_str());
+        let mirror_id = if state.active_test_room == TestRoomKind::RestroomStart
+            || active_room_name.eq_ignore_ascii_case("er01")
+        {
+            Some(0x01)
+        } else if active_room_name.eq_ignore_ascii_case("ap84")
+            || active_room_name.eq_ignore_ascii_case("ap88")
+        {
+            Some(0x24)
+        } else if active_room_name.eq_ignore_ascii_case("th09") {
+            Some(0xd5)
+        } else {
+            None
+        };
+        (mirror_id, active_room_name.to_owned())
+    };
+    sync_map_geo_visibility_overrides(state, &room_name_is_ob01, cutscene_active, player_pos);
+
+    let mut frame_encoder = state.frame_encoder.take();
+
+    // Collect skeletal draw items without heap allocation on gameplay frames (stack array of 2)
+    // and with pre-sized capacity only during multi-actor cutscenes (`SH2-182`).
+    let mut gameplay_stack: [Option<sh2_renderer::SkeletalDrawItem<'_>>; 2] = [None, None];
+    let mut gameplay_len = 0usize;
+    let mut cutscene_draw: Vec<sh2_renderer::SkeletalDrawItem<'_>> = Vec::new();
+
     if cutscene_active {
         if let Some(ref session) = state.drama_demo_session {
+            cutscene_draw.reserve(session.actor_assets.len());
             for (actor, asset_opt) in session
                 .player
                 .actors
@@ -97,7 +142,7 @@ pub(super) fn submit_scene_draw(
                 }
                 if let Some(ref asset) = asset_opt {
                     if !asset.skin_scratch.is_empty() {
-                        skeletal_draw.push((
+                        cutscene_draw.push((
                             &asset.gpu_mesh,
                             asset.skin_scratch.as_slice(),
                             Some(asset.texture_bind_groups.as_slice()),
@@ -114,11 +159,12 @@ pub(super) fn submit_scene_draw(
         };
         if let Some(c) = active_char_ref {
             if !state.skin_matrices_scratch.is_empty() {
-                skeletal_draw.push((
+                gameplay_stack[gameplay_len] = Some((
                     &c.gpu_mesh,
                     state.skin_matrices_scratch.as_slice(),
                     Some(c.texture_bind_groups.as_slice()),
                 ));
+                gameplay_len += 1;
             }
         }
 
@@ -127,8 +173,8 @@ pub(super) fn submit_scene_draw(
                 .enemy_asset_for_species(enemy_species, false)
                 .or_else(|| state.enemy_asset(enemy_id))
             {
-                if !ea.skin_scratch.is_empty() {
-                    skeletal_draw.push((
+                if !ea.skin_scratch.is_empty() && gameplay_len < gameplay_stack.len() {
+                    gameplay_stack[gameplay_len] = Some((
                         &ea.gpu_mesh,
                         ea.skin_scratch.as_slice(),
                         Some(ea.texture_bind_groups.as_slice()),
@@ -138,9 +184,22 @@ pub(super) fn submit_scene_draw(
         }
     }
 
-    if !is_in_game {
-        return;
-    }
+    let gameplay_slice: [sh2_renderer::SkeletalDrawItem<'_>; 2];
+    let skeletal_draw: &[sh2_renderer::SkeletalDrawItem<'_>] = if cutscene_active {
+        &cutscene_draw
+    } else {
+        match gameplay_stack {
+            [Some(a), Some(b)] => {
+                gameplay_slice = [a, b];
+                &gameplay_slice[..2]
+            }
+            [Some(a), None] => {
+                gameplay_slice = [a, a];
+                &gameplay_slice[..1]
+            }
+            _ => &[],
+        }
+    };
 
     let (active_gpu_map, active_map_tex_bgs) = state
         .drama_demo_session
@@ -157,7 +216,6 @@ pub(super) fn submit_scene_draw(
         sh2_renderer::mirror::PlanarMirrorSpec::for_room_and_gpu_map(room_id, active_gpu_map)
     });
     state.render_ctx.set_planar_mirror(planar_mirror_spec);
-    sync_map_geo_visibility_overrides(state, active_room_name, cutscene_active, player_pos);
 
     if state.debug_collision_overlay {
         let floors_iter = state.sim_core.collision.floors.iter().map(|f| f.v);
@@ -207,18 +265,37 @@ pub(super) fn submit_scene_draw(
             debug_lines.extend(enemy_lines);
         }
 
-        state.render_ctx.render_scene_with_debug_lines(
+        if let Some(ref mut encoder) = frame_encoder {
+            state.render_ctx.encode_scene_with_debug_lines(
+                encoder,
+                Some(active_gpu_map),
+                Some(active_map_tex_bgs),
+                skeletal_draw,
+                &debug_lines,
+            );
+        } else {
+            state.render_ctx.render_scene_with_debug_lines(
+                Some(active_gpu_map),
+                Some(active_map_tex_bgs),
+                skeletal_draw,
+                &debug_lines,
+            );
+        }
+    } else if let Some(ref mut encoder) = frame_encoder {
+        state.render_ctx.encode_scene(
+            encoder,
             Some(active_gpu_map),
             Some(active_map_tex_bgs),
-            &skeletal_draw,
-            &debug_lines,
+            skeletal_draw,
         );
     } else {
         state.render_ctx.render_scene(
             Some(active_gpu_map),
             Some(active_map_tex_bgs),
-            &skeletal_draw,
+            skeletal_draw,
         );
     }
+
+    state.frame_encoder = frame_encoder;
     crate::rooms::sh2ee_glb_hooks::render_room_glb_replacements(state, 1.0 / 60.0);
 }

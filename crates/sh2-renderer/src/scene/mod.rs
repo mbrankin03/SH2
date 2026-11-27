@@ -7,6 +7,7 @@ mod water_pass;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+use crate::frustum::Frustum;
 use crate::gpu_map::GpuMap;
 use crate::{RenderContext, SkeletalDrawItem};
 use sh2_assets::formats::map::{BatchGroup, MapFile};
@@ -34,8 +35,26 @@ impl RenderContext {
         self.render_scene_with_debug_lines(gpu_map, map_texture_bind_groups, skeletal_meshes, &[]);
     }
 
+    /// Encodes static world level map batches and dynamic animated skeletal meshes into an
+    /// existing `CommandEncoder` without submitting (`SH2-182`).
+    pub fn encode_scene(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu_map: Option<&GpuMap>,
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
+    ) {
+        self.encode_scene_with_debug_lines(
+            encoder,
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            &[],
+        );
+    }
+
     /// Renders static world level map batches, dynamic animated skeletal meshes, and 3D debug lines
-    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass.
+    /// (skeleton joints, wireframe overlays, bounding boxes) in a unified pass and submits once.
     pub fn render_scene_with_debug_lines(
         &self,
         gpu_map: Option<&GpuMap>,
@@ -48,7 +67,27 @@ impl RenderContext {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Scene Render Encoder"),
             });
+        self.encode_scene_with_debug_lines(
+            &mut encoder,
+            gpu_map,
+            map_texture_bind_groups,
+            skeletal_meshes,
+            debug_lines,
+        );
+        self.queue.submit(std::iter::once(encoder.finish()));
+    }
 
+    /// Encodes all 3D scene passes (spotlight & PCSS shadows, water & planar mirror reflections,
+    /// main geometry/skeletal/effects pass, stencil shadows, lens flares, fog, and post-processing)
+    /// into a single `CommandEncoder` without submitting (`SH2-182`).
+    pub fn encode_scene_with_debug_lines(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        gpu_map: Option<&GpuMap>,
+        map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
+        skeletal_meshes: &[SkeletalDrawItem],
+        debug_lines: &[sh2_debug::DebugLineVertex],
+    ) {
         // Upload debug lines into the persistent buffer (or allocate an overflow buffer if exceeding capacity)
         let overflow_debug_line_buffer = if debug_lines.len() > Self::MAX_DEBUG_LINE_VERTICES {
             Some(
@@ -84,8 +123,11 @@ impl RenderContext {
         }
         self.prepare_skeletal_light_slots(skeletal_meshes);
 
-        // Snapshot the active `.map` `geo_id` visibility filter once per frame (`EvDispControlModelExec`).
+        // Snapshot the active `.map` `geo_id` visibility filter and main-camera frustum once per frame.
         let vis_filter = self.map_visibility_filter();
+        let main_frustum = self.last_camera_uniforms.lock().ok().and_then(|cam| {
+            Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&cam.view_proj))
+        });
 
         // 0. Spotlight Shadow Depth Passes:
         //    0a. 512x512 volumetric god-ray occlusion shadow map (`SH2-32`)
@@ -94,28 +136,41 @@ impl RenderContext {
                 .volumetric_god_rays_enabled
                 .load(std::sync::atomic::Ordering::Relaxed)
         {
+            let shadow_frustum = self
+                .last_shadow_view_proj
+                .lock()
+                .ok()
+                .and_then(|vp| Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&vp)));
             self.spotlight_shadow_pipeline.encode_pass(
-                &mut encoder,
+                encoder,
                 &self.shadow_depth_view,
                 &self.spotlight_shadow_bind_group,
                 gpu_map,
                 vis_filter.as_ref(),
+                shadow_frustum.as_ref(),
             );
         }
         //    0b. 2048x2048 Native PCSS spotlight shadow map (static map + animated skeletal self-shadowing, `SH2-81`)
         if self.pcss_enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            let pcss_frustum = self
+                .last_pcss_view_proj
+                .lock()
+                .ok()
+                .and_then(|vp| Frustum::from_view_proj(glam::Mat4::from_cols_array_2d(&vp)));
             self.pcss_shadow_pipeline.encode_pass(
-                &mut encoder,
+                encoder,
                 &self.pcss_shadow_depth_view,
                 &self.pcss_shadow_bind_group,
                 gpu_map,
                 skeletal_meshes,
                 vis_filter.as_ref(),
+                pcss_frustum.as_ref(),
             );
         }
 
         // 0c. Native-Upgrade Toluca Lake Planar Reflection Pass (`SH2-80`)
         self.encode_water_reflection_pass(
+            encoder,
             gpu_map,
             map_texture_bind_groups,
             skeletal_meshes,
@@ -124,6 +179,7 @@ impl RenderContext {
 
         // 0d. Stenciled Planar Mirror Render Pass (`SH2-101` / `SH2-151`)
         let active_mirror = self.encode_planar_mirror_pass(
+            encoder,
             gpu_map,
             map_texture_bind_groups,
             skeletal_meshes,
@@ -176,17 +232,19 @@ impl RenderContext {
             //       volumetric fog the mirror-wall depth rather than the far plane.
             if let Some(mirror_spec) = active_mirror {
                 let mut wrote_decal_depth = false;
-                if let (Some(map), Some(batch_idx)) = (gpu_map, mirror_spec.decal_batch_index) {
-                    if let Some(batch) = map.batches.get(batch_idx) {
+                if let Some(map) = gpu_map {
+                    if let (Some(batch), Some(vbuf), Some(ibuf)) = (
+                        map.resolve_mirror_decal_batch(&mirror_spec),
+                        &map.vertex_buffer,
+                        &map.index_buffer,
+                    ) {
                         if map.is_batch_visible_with(batch, vis_filter.as_ref()) {
                             rpass.set_pipeline(&self.mirror_pipeline.map_depth_write_pipeline);
                             rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
-                            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                            rpass.set_index_buffer(
-                                batch.index_buffer.slice(..),
-                                wgpu::IndexFormat::Uint32,
-                            );
-                            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
+                            rpass.set_vertex_buffer(0, vbuf.slice(..));
+                            rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                            let end = batch.first_index + batch.num_indices;
+                            rpass.draw_indexed(batch.first_index..end, batch.base_vertex, 0..1);
                             wrote_decal_depth = true;
                         }
                     }
@@ -205,13 +263,15 @@ impl RenderContext {
 
             // 1a. Render static level Opaque + Alpha-Cutout batches first
             if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
+                self.draw_map_batches_for_group_with_camera(
                     &mut rpass,
                     map,
                     map_texture_bind_groups,
                     BatchGroup::Opaque,
                     &self.geometry_pipeline.pipeline,
+                    &self.geometry_bind_group,
                     vis_filter.as_ref(),
+                    main_frustum.as_ref(),
                 );
             }
 
@@ -223,13 +283,15 @@ impl RenderContext {
 
             // 1c. Render static level Coplanar Decals
             if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
+                self.draw_map_batches_for_group_with_camera(
                     &mut rpass,
                     map,
                     map_texture_bind_groups,
                     BatchGroup::Decal,
                     &self.geometry_pipeline.decal_pipeline,
+                    &self.geometry_bind_group,
                     vis_filter.as_ref(),
+                    main_frustum.as_ref(),
                 );
             }
 
@@ -252,13 +314,15 @@ impl RenderContext {
 
             // 1d. Render static level semi-transparent batches
             if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
+                self.draw_map_batches_for_group_with_camera(
                     &mut rpass,
                     map,
                     map_texture_bind_groups,
                     BatchGroup::Transparent,
                     &self.geometry_pipeline.transparent_pipeline,
+                    &self.geometry_bind_group,
                     vis_filter.as_ref(),
+                    main_frustum.as_ref(),
                 );
             }
 
@@ -321,41 +385,43 @@ impl RenderContext {
             }
 
             // 1d-6. Render `SH2-100` alpha-blended & additive 3D FX batches with per-sheet `.tbn2` bind groups
-            if let Ok(fx_batches) = self.billboard_fx_batches.lock().map(|g| g.clone()) {
-                let stride = std::mem::size_of::<crate::effects::GpuFxQuad>() as u64;
-                if !fx_batches.alpha.is_empty() {
-                    rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_alpha);
-                    for batch in &fx_batches.alpha {
-                        let byte_start = u64::from(batch.start) * stride;
-                        let byte_end = u64::from(batch.start + batch.count) * stride;
-                        rpass.set_bind_group(
-                            0,
-                            &self.billboard_fx_bind_groups[batch.slot as usize],
-                            &[],
-                        );
-                        rpass.set_vertex_buffer(
-                            0,
-                            self.billboard_fx_alpha_buffer.slice(byte_start..byte_end),
-                        );
-                        rpass.draw(0..6, 0..batch.count);
+            if let Ok(fx_batches) = self.billboard_fx_batches.lock() {
+                if !fx_batches.alpha.is_empty() || !fx_batches.additive.is_empty() {
+                    let stride = std::mem::size_of::<crate::effects::GpuFxQuad>() as u64;
+                    if !fx_batches.alpha.is_empty() {
+                        rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_alpha);
+                        for batch in &fx_batches.alpha {
+                            let byte_start = u64::from(batch.start) * stride;
+                            let byte_end = u64::from(batch.start + batch.count) * stride;
+                            rpass.set_bind_group(
+                                0,
+                                &self.billboard_fx_bind_groups[batch.slot as usize],
+                                &[],
+                            );
+                            rpass.set_vertex_buffer(
+                                0,
+                                self.billboard_fx_alpha_buffer.slice(byte_start..byte_end),
+                            );
+                            rpass.draw(0..6, 0..batch.count);
+                        }
                     }
-                }
-                if !fx_batches.additive.is_empty() {
-                    rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_additive);
-                    for batch in &fx_batches.additive {
-                        let byte_start = u64::from(batch.start) * stride;
-                        let byte_end = u64::from(batch.start + batch.count) * stride;
-                        rpass.set_bind_group(
-                            0,
-                            &self.billboard_fx_bind_groups[batch.slot as usize],
-                            &[],
-                        );
-                        rpass.set_vertex_buffer(
-                            0,
-                            self.billboard_fx_additive_buffer
-                                .slice(byte_start..byte_end),
-                        );
-                        rpass.draw(0..6, 0..batch.count);
+                    if !fx_batches.additive.is_empty() {
+                        rpass.set_pipeline(&self.billboard_fx_pipeline.pipeline_additive);
+                        for batch in &fx_batches.additive {
+                            let byte_start = u64::from(batch.start) * stride;
+                            let byte_end = u64::from(batch.start + batch.count) * stride;
+                            rpass.set_bind_group(
+                                0,
+                                &self.billboard_fx_bind_groups[batch.slot as usize],
+                                &[],
+                            );
+                            rpass.set_vertex_buffer(
+                                0,
+                                self.billboard_fx_additive_buffer
+                                    .slice(byte_start..byte_end),
+                            );
+                            rpass.draw(0..6, 0..batch.count);
+                        }
                     }
                 }
             }
@@ -402,7 +468,7 @@ impl RenderContext {
                 .load(std::sync::atomic::Ordering::Relaxed)
             {
                 self.stencil_shadow_pipeline.encode_soft_stencil_blur_pass(
-                    &mut encoder,
+                    encoder,
                     &self.hdr_color_view,
                     &self.stencil_depth_view,
                     &self.shadow_mask_view,
@@ -415,10 +481,11 @@ impl RenderContext {
                     vis_filter.as_ref(),
                     &self.shadow_volume_buffer,
                     stencil_verts,
+                    main_frustum.as_ref(),
                 );
             } else {
                 self.stencil_shadow_pipeline.encode_stencil_volume_pass(
-                    &mut encoder,
+                    encoder,
                     &self.hdr_color_view,
                     &self.stencil_depth_view,
                     &self.geometry_bind_group,
@@ -427,6 +494,7 @@ impl RenderContext {
                     vis_filter.as_ref(),
                     &self.shadow_volume_buffer,
                     stencil_verts,
+                    main_frustum.as_ref(),
                 );
             }
         }
@@ -487,9 +555,7 @@ impl RenderContext {
         }
 
         // 2. Volumetric Fog & Post-Processing Compute Passes
-        self.dispatch_compute_passes(&mut encoder);
-
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.dispatch_compute_passes(encoder);
     }
 
     /// Dispatches the Volumetric Fog and ACES Post-Processing compute passes.
@@ -624,27 +690,43 @@ impl RenderContext {
     }
 
     /// Helper to draw all `GpuMapBatch` items belonging to a specific [`BatchGroup`]
-    /// using the designated pipeline (`pipeline`, `decal_pipeline`, or `transparent_pipeline`).
-    pub(super) fn draw_map_batches_for_group<'a>(
+    /// using the designated pipeline (`pipeline`, `decal_pipeline`, or `transparent_pipeline`),
+    /// binding [`GpuMap::vertex_buffer`] and [`GpuMap::index_buffer`] once and culling against
+    /// `frustum` (`SH2-182`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_map_batches_for_group_with_camera<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
         map: &'a GpuMap,
         map_texture_bind_groups: Option<&'a [Arc<wgpu::BindGroup>]>,
         target_group: BatchGroup,
         pipeline: &'a wgpu::RenderPipeline,
+        common_bind_group: &'a wgpu::BindGroup,
         vis_filter: Option<&MapPartVisibilityFilter>,
+        frustum: Option<&Frustum>,
     ) {
-        if !map.batches.iter().any(|b| b.group == target_group) {
+        let batches = map.batches_for_group(target_group);
+        if batches.is_empty() {
             return;
         }
+        let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) else {
+            return;
+        };
 
         rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+        rpass.set_bind_group(0, common_bind_group, &[]);
+        rpass.set_vertex_buffer(0, vbuf.slice(..));
+        rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
         let mut current_bg: Option<usize> = None;
 
-        for batch in &map.batches {
-            if batch.group != target_group || !map.is_batch_visible_with(batch, vis_filter) {
+        for batch in batches {
+            if !map.is_batch_visible_with(batch, vis_filter) {
                 continue;
+            }
+            if let Some(f) = frustum {
+                if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
+                    continue;
+                }
             }
             let bg_idx = batch.material_index;
             let bind_group = match map_texture_bind_groups {
@@ -657,9 +739,8 @@ impl RenderContext {
                 current_bg = Some(bg_idx);
             }
 
-            rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-            rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
+            let end = batch.first_index + batch.num_indices;
+            rpass.draw_indexed(batch.first_index..end, batch.base_vertex, 0..1);
         }
     }
 }

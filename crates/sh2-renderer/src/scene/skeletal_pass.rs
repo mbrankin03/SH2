@@ -132,17 +132,26 @@ impl RenderContext {
         rpass: &mut wgpu::RenderPass<'a>,
         skeletal_meshes: &'a [SkeletalDrawItem<'a>],
     ) {
-        self.draw_skeletal_meshes_with_winding(rpass, skeletal_meshes, false);
+        self.draw_skeletal_meshes_with_camera(
+            rpass,
+            skeletal_meshes,
+            &self.geometry_bind_group,
+            false,
+            true,
+        );
     }
 
-    /// Draws skeletal meshes into a `Depth32Float` render pass. When `invert_winding` is `true`
-    /// (e.g. negative-determinant `mirrored_reflection_view_proj` in `water_pass.rs`), front/back
-    /// culling is flipped (`CullFront` <-> `CullBack`) so reflected characters are not inside-out.
-    pub(super) fn draw_skeletal_meshes_with_winding<'a>(
+    /// Draws skeletal meshes into a `Depth32Float` render pass using `common_bind_group` at
+    /// bind group 0. When `invert_winding` is `true` (e.g. negative-determinant
+    /// `mirrored_reflection_view_proj` in `water_pass.rs`), front/back culling is flipped
+    /// (`CullFront` <-> `CullBack`) so reflected characters are not inside-out.
+    pub(super) fn draw_skeletal_meshes_with_camera<'a>(
         &'a self,
         rpass: &mut wgpu::RenderPass<'a>,
         skeletal_meshes: &'a [SkeletalDrawItem<'a>],
+        common_bind_group: &'a wgpu::BindGroup,
         invert_winding: bool,
+        use_per_char_light_slots: bool,
     ) {
         let stages = [
             SkeletalPassStage::Opaque,
@@ -169,17 +178,20 @@ impl RenderContext {
                 continue;
             }
 
-            let active_light_slots = self
-                .skeletal_light_active_slots
-                .load(std::sync::atomic::Ordering::Relaxed);
+            let active_light_slots = if use_per_char_light_slots {
+                self.skeletal_light_active_slots
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            } else {
+                0
+            };
             let mut active_pipeline_key: Option<(bool, bool)> = None;
-            rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+            rpass.set_bind_group(0, common_bind_group, &[]);
 
             for (i, (mesh, _matrices, texture_groups)) in skeletal_meshes.iter().enumerate() {
                 if i < active_light_slots {
                     rpass.set_bind_group(0, &self.skeletal_light_bind_groups[i], &[]);
                 } else {
-                    rpass.set_bind_group(0, &self.geometry_bind_group, &[]);
+                    rpass.set_bind_group(0, common_bind_group, &[]);
                 }
                 let is_mirror_duplicate = skeletal_meshes[..i]
                     .iter()

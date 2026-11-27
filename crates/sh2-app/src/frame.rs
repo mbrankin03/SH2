@@ -94,7 +94,12 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
         shadow_quality != sh2_core::config::ShadowQualityMode::NativePcss,
     );
 
-    // 6. Dispatch 3D scene or video pass to the active room controller (advances 60 Hz sim ticks)
+    // 6. Dispatch 3D scene or video pass into a single unified per-frame CommandEncoder (`SH2-182`)
+    state.frame_encoder = Some(state.render_ctx.device.create_command_encoder(
+        &wgpu::CommandEncoderDescriptor {
+            label: Some("Unified Frame Command Encoder"),
+        },
+    ));
     let is_attract_fmv = !is_in_game
         && state.menu_ctrl.title_sm.attract_movie_requested
         && !state.menu_ctrl.title_sm.is_fading_out;
@@ -398,12 +403,14 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
     let surface_texture = match state.surface.get_current_texture() {
         Ok(frame) => frame,
         Err(wgpu::SurfaceError::Outdated) => {
+            state.frame_encoder = None;
             state
                 .surface
                 .configure(&state.render_ctx.device, &state.surface_config);
             return;
         }
         Err(e) => {
+            state.frame_encoder = None;
             tracing::error!("Surface error: {:?}", e);
             return;
         }
@@ -412,13 +419,14 @@ fn present_to_surface(state: &mut AppState, is_in_game: bool) {
     let surface_view = surface_texture
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
-    let mut encoder =
+    let mut encoder = state.frame_encoder.take().unwrap_or_else(|| {
         state
             .render_ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Surface Present Encoder"),
-            });
+            })
+    });
 
     if is_in_game {
         // 1:1 PS2 Status/Inventory (`look_hp` @ `0x001d9660`): pure black screen with the live

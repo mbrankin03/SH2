@@ -134,32 +134,33 @@ pub(super) fn evaluate_player_skinning(
                     .draft_config
                     .game
                     .enable_sh2ee_world_fixes;
-                let mut look_candidates: Vec<sh2_core::LookTargetCandidate> = state
-                    .combat_arena
-                    .ai
-                    .enemies
-                    .iter()
-                    .map(|enemy| sh2_core::LookTargetCandidate {
-                        kind: sh2_core::LookTargetKind::Enemy,
-                        prop_kind: 0x0200,
-                        position: enemy.position(),
-                        is_combat_target: state.combat_arena.player.mode
-                            == sh2_core::CombatMode::Ready
-                            && !enemy.is_dead(),
-                        is_active: !enemy.is_dead(),
-                    })
-                    .collect();
+                state.look_candidates_scratch.clear();
+                state
+                    .look_candidates_scratch
+                    .extend(state.combat_arena.ai.enemies.iter().map(|enemy| {
+                        sh2_core::LookTargetCandidate {
+                            kind: sh2_core::LookTargetKind::Enemy,
+                            prop_kind: 0x0200,
+                            position: enemy.position(),
+                            is_combat_target: state.combat_arena.player.mode
+                                == sh2_core::CombatMode::Ready
+                                && !enemy.is_dead(),
+                            is_active: !enemy.is_dead(),
+                        }
+                    }));
                 if let Some(ref orch) = state.campaign_orchestrator {
                     if let Some(ref manifest) = orch.active_manifest {
                         for pickup in &manifest.room_pickups {
                             if !state.sim_core.scenario.flags.get(pickup.flag_id as usize) {
-                                look_candidates.push(sh2_core::LookTargetCandidate {
-                                    kind: sh2_core::LookTargetKind::ItemOrProp,
-                                    prop_kind: 0x0700,
-                                    position: glam::Vec3::from_array(pickup.position_mm),
-                                    is_combat_target: false,
-                                    is_active: true,
-                                });
+                                state
+                                    .look_candidates_scratch
+                                    .push(sh2_core::LookTargetCandidate {
+                                        kind: sh2_core::LookTargetKind::ItemOrProp,
+                                        prop_kind: 0x0700,
+                                        position: glam::Vec3::from_array(pickup.position_mm),
+                                        is_combat_target: false,
+                                        is_active: true,
+                                    });
                             }
                         }
                     }
@@ -167,7 +168,7 @@ pub(super) fn evaluate_player_skinning(
 
                 let chosen_target = sh2_core::animation::select_head_look_target(
                     auth_player_pos,
-                    &look_candidates,
+                    &state.look_candidates_scratch,
                     sh2_core::animation::DEFAULT_LOOK_SEARCH_RADIUS_MM,
                     &state.sim_core.scenario.flags,
                     enable_sh2ee_world_fixes,

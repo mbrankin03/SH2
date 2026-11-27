@@ -68,11 +68,16 @@ impl RenderContext {
     }
 
     /// Installs or clears the active stenciled planar mirror specification (`SH2-101`).
+    ///
+    /// Dirty-checked so identical per-frame calls skip redundant quad vertex uploads (`SH2-182`).
     pub fn set_planar_mirror(&self, spec: Option<crate::mirror::PlanarMirrorSpec>) {
-        if let Some(ref s) = spec {
-            self.mirror_pipeline.update_quad(&self.queue, s);
-        }
         if let Ok(mut guard) = self.planar_mirror.lock() {
+            if *guard == spec {
+                return;
+            }
+            if let Some(ref s) = spec {
+                self.mirror_pipeline.update_quad(&self.queue, s);
+            }
             *guard = spec;
         }
     }
@@ -259,6 +264,9 @@ impl RenderContext {
             *guard = shadow_vp;
         }
         let pcss_vp = shadow::compute_pcss_spotlight_view_proj(uniforms).to_cols_array_2d();
+        if let Ok(mut guard) = self.last_pcss_view_proj.lock() {
+            *guard = pcss_vp;
+        }
         let pcss_params = self
             .last_pcss_params
             .lock()

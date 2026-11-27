@@ -8,6 +8,8 @@ use super::RenderContext;
 
 pub(super) struct InitialBuffers {
     pub camera_buffer: wgpu::Buffer,
+    pub water_camera_buffer: wgpu::Buffer,
+    pub mirror_camera_buffer: wgpu::Buffer,
     pub spotlight_buffer: wgpu::Buffer,
     pub spotlight_shadow_buffer: wgpu::Buffer,
     pub pcss_shadow_buffer: wgpu::Buffer,
@@ -25,6 +27,7 @@ pub(super) struct InitialBuffers {
     pub post_buffer: wgpu::Buffer,
     pub debug_line_buffer: wgpu::Buffer,
     pub initial_shadow_vp: [[f32; 4]; 4],
+    pub initial_pcss_vp: [[f32; 4]; 4],
     pub initial_pcss_params: [f32; 4],
 }
 
@@ -32,6 +35,16 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
     let camera_uniforms = pipeline::CameraUniforms::default();
     let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Camera Uniform Buffer"),
+        contents: bytemuck::bytes_of(&camera_uniforms),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let water_camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Water Reflection Camera Uniform Buffer"),
+        contents: bytemuck::bytes_of(&camera_uniforms),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let mirror_camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Planar Mirror Camera Uniform Buffer"),
         contents: bytemuck::bytes_of(&camera_uniforms),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
@@ -54,8 +67,10 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
 
+    let initial_pcss_vp =
+        shadow::compute_pcss_spotlight_view_proj(&spotlight_uniforms).to_cols_array_2d();
     let initial_pcss_uniforms = shadow::PcssShadowUniforms {
-        light_view_proj: initial_shadow_vp,
+        light_view_proj: initial_pcss_vp,
         ..shadow::PcssShadowUniforms::default()
     };
     let pcss_shadow_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -173,6 +188,8 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
 
     InitialBuffers {
         camera_buffer,
+        water_camera_buffer,
+        mirror_camera_buffer,
         spotlight_buffer,
         spotlight_shadow_buffer,
         pcss_shadow_buffer,
@@ -190,6 +207,7 @@ pub(super) fn create_initial_buffers(device: &wgpu::Device) -> InitialBuffers {
         post_buffer,
         debug_line_buffer,
         initial_shadow_vp,
+        initial_pcss_vp,
         initial_pcss_params: initial_pcss_uniforms.params,
     }
 }

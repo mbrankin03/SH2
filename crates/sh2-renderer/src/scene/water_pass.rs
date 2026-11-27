@@ -1,18 +1,22 @@
-//! Toluca Lake planar water reflection pass (`SH2-80`).
+//! Toluca Lake planar water reflection pass (`SH2-80`, unified single-encoder pass `SH2-182`).
 
 use std::sync::Arc;
 
 use sh2_assets::formats::map::BatchGroup;
 use sh2_core::events::stageparts::MapPartVisibilityFilter;
 
+use crate::frustum::Frustum;
 use crate::gpu_map::GpuMap;
 use crate::{RenderContext, SkeletalDrawItem};
 
 impl RenderContext {
-    /// Runs Pass 0c (Toluca Lake Planar Reflection Pass) when both `lake_water_enabled` and
-    /// `water_reflection_pass_enabled` are active.
+    /// Encodes Pass 0c (Toluca Lake Planar Reflection Pass) into `encoder` when both
+    /// `lake_water_enabled` and `water_reflection_pass_enabled` are active, using the dedicated
+    /// [`Self::water_camera_buffer`] and [`Self::water_geometry_bind_group`] so the entire frame
+    /// submits in a single `CommandEncoder` (`SH2-182`).
     pub(super) fn encode_water_reflection_pass(
         &self,
+        encoder: &mut wgpu::CommandEncoder,
         gpu_map: Option<&GpuMap>,
         map_texture_bind_groups: Option<&[Arc<wgpu::BindGroup>]>,
         skeletal_meshes: &[SkeletalDrawItem],
@@ -36,6 +40,7 @@ impl RenderContext {
         );
         let main_vp = glam::Mat4::from_cols_array_2d(&main_cam.view_proj);
         let refl_vp = crate::water::mirrored_reflection_view_proj(main_vp, plane_y);
+        let refl_frustum = Frustum::from_view_proj(refl_vp);
         let refl_cam_pos = crate::water::LakeWaterPipeline::mirrored_camera_pos(
             glam::Vec3::new(
                 main_cam.cam_pos[0],
@@ -60,54 +65,56 @@ impl RenderContext {
             },
             clip_plane: [0.0; 4],
         };
-        self.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&refl_uniforms));
-        let mut refl_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Water Planar Reflection Encoder"),
-                });
-        {
-            let mut rpass = refl_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Water Planar Reflection Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.water_pipeline.reflection_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.room_clear_color()),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.water_pipeline.reflection_depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
+        self.queue.write_buffer(
+            &self.water_camera_buffer,
+            0,
+            bytemuck::bytes_of(&refl_uniforms),
+        );
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Water Planar Reflection Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.water_pipeline.reflection_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(self.room_clear_color()),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.water_pipeline.reflection_depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
                 }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            // Negative-determinant `mirrored_reflection_view_proj` flips CCW triangles to CW,
-            // requiring CW front-face (`water_reflected_pipeline`) and inverted skeletal culling
-            // (matching `mirror_pass.rs`).
-            if let Some(map) = gpu_map {
-                self.draw_map_batches_for_group(
-                    &mut rpass,
-                    map,
-                    map_texture_bind_groups,
-                    BatchGroup::Opaque,
-                    &self.geometry_pipeline.water_reflected_pipeline,
-                    vis_filter,
-                );
-            }
-            if !skeletal_meshes.is_empty() {
-                self.draw_skeletal_meshes_with_winding(&mut rpass, skeletal_meshes, true);
-            }
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        // Negative-determinant `mirrored_reflection_view_proj` flips CCW triangles to CW,
+        // requiring CW front-face (`water_reflected_pipeline`) and inverted skeletal culling
+        // (matching `mirror_pass.rs`).
+        if let Some(map) = gpu_map {
+            self.draw_map_batches_for_group_with_camera(
+                &mut rpass,
+                map,
+                map_texture_bind_groups,
+                BatchGroup::Opaque,
+                &self.geometry_pipeline.water_reflected_pipeline,
+                &self.water_geometry_bind_group,
+                vis_filter,
+                refl_frustum.as_ref(),
+            );
         }
-        self.queue.submit(Some(refl_encoder.finish()));
-        self.queue
-            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&main_cam));
+        if !skeletal_meshes.is_empty() {
+            self.draw_skeletal_meshes_with_camera(
+                &mut rpass,
+                skeletal_meshes,
+                &self.water_geometry_bind_group,
+                true,
+                false,
+            );
+        }
     }
 }

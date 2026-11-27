@@ -39,6 +39,13 @@ impl QuantizedPos {
     }
 }
 
+/// Reusable CPU scratch storage for [`extrude_kg1_stencil_volume_filtered_into`] and
+/// [`extrude_kg2_stencil_volume_into`], avoiding per-part `HashMap` allocations (`SH2-182`).
+#[derive(Default)]
+pub struct ShadowVolumeScratch {
+    edge_counts: HashMap<(QuantizedPos, QuantizedPos), (Vec3, Vec3, i32)>,
+}
+
 /// Extrudes a closed Z-fail stencil shadow volume from a character `.kg1` shadow model
 /// (`sh2pc.exe` `0x444b20` / `0x4449f0`) away from `light_pos` (PS2 world mm).
 ///
@@ -65,6 +72,30 @@ pub fn extrude_kg1_stencil_volume_filtered(
     excluded_parts: &[u16],
 ) -> Vec<ShadowVolumeVertex> {
     let mut out = Vec::new();
+    let mut scratch = ShadowVolumeScratch::default();
+    extrude_kg1_stencil_volume_filtered_into(
+        kg,
+        bone_matrices,
+        light_pos,
+        extrude_dist_mm,
+        excluded_parts,
+        &mut scratch,
+        &mut out,
+    );
+    out
+}
+
+/// Reusable-buffer variant of [`extrude_kg1_stencil_volume_filtered`], appending extruded vertices
+/// into `out` while reusing `scratch`'s silhouette edge map across all `.kg1` parts (`SH2-182`).
+pub fn extrude_kg1_stencil_volume_filtered_into(
+    kg: &KgFile,
+    bone_matrices: &[[[f32; 4]; 4]],
+    light_pos: Vec3,
+    extrude_dist_mm: f32,
+    excluded_parts: &[u16],
+    scratch: &mut ShadowVolumeScratch,
+    out: &mut Vec<ShadowVolumeVertex>,
+) {
     let dist = extrude_dist_mm.max(500.0);
 
     for part in &kg.parts {
@@ -76,10 +107,8 @@ pub fn extrude_kg1_stencil_volume_filtered(
             .get(bone_idx)
             .map(Mat4::from_cols_array_2d)
             .unwrap_or(Mat4::IDENTITY);
-        extrude_part_triangles(part, mat, light_pos, dist, &mut out);
+        extrude_part_triangles(part, mat, light_pos, dist, &mut scratch.edge_counts, out);
     }
-
-    out
 }
 
 /// Extrudes a closed Z-fail stencil shadow volume from a static room `.kg2` shadow model
@@ -92,6 +121,20 @@ pub fn extrude_kg2_stencil_volume(
     extrude_dist_mm: f32,
 ) -> Vec<ShadowVolumeVertex> {
     let mut out = Vec::new();
+    let mut scratch = ShadowVolumeScratch::default();
+    extrude_kg2_stencil_volume_into(kg, light_pos, extrude_dist_mm, &mut scratch, &mut out);
+    out
+}
+
+/// Reusable-buffer variant of [`extrude_kg2_stencil_volume`], appending extruded vertices into
+/// `out` while reusing `scratch`'s silhouette edge map across all `.kg2` parts (`SH2-182`).
+pub fn extrude_kg2_stencil_volume_into(
+    kg: &KgFile,
+    light_pos: Vec3,
+    extrude_dist_mm: f32,
+    scratch: &mut ShadowVolumeScratch,
+    out: &mut Vec<ShadowVolumeVertex>,
+) {
     let dist = extrude_dist_mm.max(500.0);
 
     for part in &kg.parts {
@@ -100,10 +143,8 @@ pub fn extrude_kg2_stencil_volume(
         } else {
             Mat4::IDENTITY
         };
-        extrude_part_triangles(part, mat, light_pos, dist, &mut out);
+        extrude_part_triangles(part, mat, light_pos, dist, &mut scratch.edge_counts, out);
     }
-
-    out
 }
 
 /// Flattens a character `.kg1` shadow model onto a horizontal floor plane `y = floor_y`
@@ -159,11 +200,12 @@ fn extrude_part_triangles(
     mat: Mat4,
     light_pos: Vec3,
     extrude_dist: f32,
+    edge_counts: &mut HashMap<(QuantizedPos, QuantizedPos), (Vec3, Vec3, i32)>,
     out: &mut Vec<ShadowVolumeVertex>,
 ) {
     // Collect light-facing triangles and count directed silhouette edges.
     // An edge (a -> b) cancelled by a neighbor's (b -> a) is interior; uncancelled edges form the silhouette!
-    let mut edge_counts: HashMap<(QuantizedPos, QuantizedPos), (Vec3, Vec3, i32)> = HashMap::new();
+    edge_counts.clear();
 
     for strip in &part.strips {
         for tri in strip.to_triangles() {
@@ -205,7 +247,7 @@ fn extrude_part_triangles(
     }
 
     // Extrude every remaining silhouette edge into a quad (2 triangles)
-    for (_, (a, b, count)) in edge_counts {
+    for &(a, b, count) in edge_counts.values() {
         if count == 0 {
             continue;
         }

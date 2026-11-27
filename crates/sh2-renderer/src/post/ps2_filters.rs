@@ -130,6 +130,38 @@ impl Ps2NoiseGenerator {
         }
         bytes
     }
+
+    /// Zero-allocation equivalent of `decode_ps2_noise_clut_128x128(&self.generate_128x128())`
+    /// writing the `128x128` CLUT-decoded `R8Unorm` noise frame directly into `out` (`SH2-182`).
+    ///
+    /// Steps the LCG the exact same `4,096 * 4 = 16,384` iterations (`0xfff` down to `0`) as
+    /// [`Self::generate_128x128`] so `self.seed` and every output byte remain bit-exact.
+    pub fn generate_128x128_clut_into(
+        &mut self,
+        out: &mut [u8; PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE],
+    ) {
+        const WORD_COUNT: usize = (PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE) / 4;
+        const PACKED_WORDS: usize = (PS2_NOISE_TEX_SIZE * PS2_NOISE_TEX_SIZE) / 8;
+        for i in (0..WORD_COUNT).rev() {
+            let u1 = self.next_u32();
+            let u2 = self.next_u32();
+            let u3 = self.next_u32();
+            let u4 = self.next_u32();
+            if i < PACKED_WORDS {
+                let le_bytes = [
+                    (u4 >> 24) as u8,
+                    (u3 >> 24) as u8,
+                    (u2 >> 24) as u8,
+                    (u1 >> 24) as u8,
+                ];
+                let base = i * 8;
+                for (j, byte) in le_bytes.into_iter().enumerate() {
+                    out[base + j * 2] = PS2_NOISE_CLUT_RGB[(byte & 0x0f) as usize];
+                    out[base + j * 2 + 1] = PS2_NOISE_CLUT_RGB[((byte >> 4) & 0x0f) as usize];
+                }
+            }
+        }
+    }
 }
 
 /// Samples a `128x128` noise texture tiled `4x4` across a `(width, height)` framebuffer

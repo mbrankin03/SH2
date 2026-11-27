@@ -375,6 +375,7 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
 
     /// Encodes the unified 2048x2048 PCSS spotlight shadow depth pass for both static level
     /// geometry and animated skeletal characters.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -383,6 +384,7 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
         gpu_map: Option<&GpuMap>,
         skeletal_meshes: &[SkeletalDrawItem],
         vis_filter: Option<&sh2_core::events::stageparts::MapPartVisibilityFilter>,
+        frustum: Option<&crate::Frustum>,
     ) {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("PCSS Spotlight Shadow Depth Pass"),
@@ -400,17 +402,26 @@ fn vs_main(in: VertexInput) -> @builtin(position) vec4<f32> {
         });
 
         if let Some(map) = gpu_map {
-            rpass.set_pipeline(&self.static_pipeline);
-            rpass.set_bind_group(0, shadow_bind_group, &[]);
-            for batch in &map.batches {
-                if batch.group != BatchGroup::Opaque
-                    || !map.is_batch_visible_with(batch, vis_filter)
-                {
-                    continue;
+            let opaque = map.batches_for_group(BatchGroup::Opaque);
+            if let (Some(vbuf), Some(ibuf)) = (&map.vertex_buffer, &map.index_buffer) {
+                if !opaque.is_empty() {
+                    rpass.set_pipeline(&self.static_pipeline);
+                    rpass.set_bind_group(0, shadow_bind_group, &[]);
+                    rpass.set_vertex_buffer(0, vbuf.slice(..));
+                    rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                    for batch in opaque {
+                        if !map.is_batch_visible_with(batch, vis_filter) {
+                            continue;
+                        }
+                        if let Some(f) = frustum {
+                            if !f.intersects_aabb(batch.bounds_min, batch.bounds_max) {
+                                continue;
+                            }
+                        }
+                        let end = batch.first_index + batch.num_indices;
+                        rpass.draw_indexed(batch.first_index..end, batch.base_vertex, 0..1);
+                    }
                 }
-                rpass.set_vertex_buffer(0, batch.vertex_buffer.slice(..));
-                rpass.set_index_buffer(batch.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                rpass.draw_indexed(0..batch.num_indices, 0, 0..1);
             }
         }
 

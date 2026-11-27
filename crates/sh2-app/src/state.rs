@@ -184,6 +184,14 @@ pub(crate) struct AppState {
     pub debug_camera_hud: bool,
     pub skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
     pub mirror_skin_matrices_scratch: Vec<[[f32; 4]; 4]>,
+    /// Reusable per-frame scratch list for head-tracking look targets (`SH2-182`).
+    pub look_candidates_scratch: Vec<sh2_core::LookTargetCandidate>,
+    /// Dirty-check key `(cutscene_active, stage_id, room_id, flags_hash)` for
+    /// `sync_map_geo_visibility_overrides` (`SH2-182`).
+    pub last_map_geo_vis_key: Option<(bool, Option<u8>, u8, u64)>,
+    /// Unified per-frame `CommandEncoder` shared between 3D scene/GLB passes and swapchain
+    /// presentation so the entire frame submits in a single `queue.submit()` (`SH2-182`).
+    pub frame_encoder: Option<wgpu::CommandEncoder>,
     pub frame_pacer: FramePacer,
     pub last_frame: Instant,
     pub frame_counter: u32,

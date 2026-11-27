@@ -411,6 +411,41 @@ impl GlbGpuModel {
 }
 
 impl RenderContext {
+    /// Encodes active optional SH2:EE `.glb` replacement models (`ty3.glb`, `mon.glb`) into an
+    /// existing `CommandEncoder` targeting the current HDR color + depth target (`SH2-182`).
+    pub fn encode_glb_overlays(&self, encoder: &mut wgpu::CommandEncoder, models: &[&GlbGpuModel]) {
+        if models.is_empty() {
+            return;
+        }
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("SH2EE GLB Overlay Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.hdr_color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        for model in models {
+            model.draw(&mut rpass, self, &self.geometry_bind_group, false);
+        }
+        for model in models {
+            model.draw(&mut rpass, self, &self.geometry_bind_group, true);
+        }
+    }
+
     /// Renders active optional SH2:EE `.glb` replacement models (`ty3.glb`, `mon.glb`) into the
     /// current HDR color + depth target (opaque pass followed by alpha-blended pass).
     pub fn render_glb_overlays(&self, models: &[&GlbGpuModel]) {
@@ -422,35 +457,7 @@ impl RenderContext {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("SH2EE GLB Overlay Encoder"),
             });
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SH2EE GLB Overlay Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.hdr_color_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            for model in models {
-                model.draw(&mut rpass, self, &self.geometry_bind_group, false);
-            }
-            for model in models {
-                model.draw(&mut rpass, self, &self.geometry_bind_group, true);
-            }
-        }
+        self.encode_glb_overlays(&mut encoder, models);
         self.queue.submit(Some(encoder.finish()));
     }
 }

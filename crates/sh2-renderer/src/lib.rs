@@ -5,6 +5,7 @@ mod context;
 pub mod effects;
 pub mod fmv;
 pub mod fog;
+pub mod frustum;
 pub mod glb_model;
 pub mod gpu_map;
 pub mod light;
@@ -24,6 +25,7 @@ pub use context::{
     RendererConfig, SkeletalDrawItem,
 };
 pub use fmv::{FmvUniforms, FmvVideoPipeline, GpuYuvVideoSurface};
+pub use frustum::Frustum;
 pub use glb_model::{
     evaluate_glb_skin_matrices, glb_vertex_to_skeletal, GlbGpuModel, GlbGpuPrimitive, GlbGpuTexture,
 };

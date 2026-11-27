@@ -275,6 +275,13 @@ impl WaterGrid2D {
 /// `ef_rain.c` `EFCTRainDropMain` (`0x0022c5b0`): `4000.0` mm/s fall speed, `100.0` mm streak.
 pub const RAIN_FALL_SPEED_MM_S: f32 = 4000.0;
 pub const RAIN_STREAK_LEN_MM: f32 = 100.0;
+/// Raindrops per PS2 rain task (`iVar4 < 0xf` in `EFCTRainDropMain` `SLUS_202.28` `0x0022c5b0`).
+pub const RAIN_DROPS_PER_TASK: usize = 15;
+/// Maximum simultaneous raindrops retained in [`RainDropSystem::drops`] (`SH2-176`).
+///
+/// Accommodates 16 PS2 rain tasks (`16 × 15 = 240`, well above `SLPM_123.45` `EFCTSetRainDrop(4)` = 60)
+/// while preventing unbounded growth across repeated spawns.
+pub const MAX_RAIN_DROPS: usize = 16 * RAIN_DROPS_PER_TASK;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RainDrop {
@@ -290,9 +297,20 @@ pub struct RainDropSystem {
 }
 
 impl RainDropSystem {
-    /// Spawns `count` raindrops around `cam_pos` (`EFCTRainDropMain` `0x0022c5b0`).
+    /// Clears all active raindrops on room/area transition (`EFCTDelRainDrop` `SLUS_202.28` `0x0022c540`, `SH2-176`).
+    pub fn clear(&mut self) {
+        self.drops.clear();
+    }
+
+    /// Spawns up to `count` raindrops around `cam_pos` (`EFCTRainDropMain` `0x0022c5b0`),
+    /// evicting oldest drops FIFO so `self.drops.len() <= MAX_RAIN_DROPS` (`SH2-176`).
     pub fn spawn_around(&mut self, cam_pos: Vec3, count: usize, rng: &mut FxRng) {
-        for _ in 0..count {
+        let to_spawn = count.min(MAX_RAIN_DROPS);
+        let overflow = (self.drops.len() + to_spawn).saturating_sub(MAX_RAIN_DROPS);
+        if overflow > 0 {
+            self.drops.drain(..overflow);
+        }
+        for _ in 0..to_spawn {
             self.drops.push(RainDrop {
                 pos: Vec3::new(
                     cam_pos.x + (rng.next_f32() - 0.5) * 2500.0,
@@ -355,5 +373,19 @@ mod tests {
         assert!((grid.buffers[1][23 + 24 * 48] - 4.6875).abs() < 1e-4);
         assert_eq!(WaterGrid2D::eval_specular(Vec3::Y, Vec3::Y, Vec3::Y), 1.0);
         assert_eq!(WaterGrid2D::eval_specular(Vec3::X, Vec3::Y, Vec3::Y), 0.0);
+    }
+
+    #[test]
+    fn rain_drop_system_enforces_pool_cap_and_clear() {
+        let mut rng = FxRng::new(42);
+        let mut rain = RainDropSystem::default();
+        rain.spawn_around(Vec3::ZERO, 100, &mut rng);
+        assert_eq!(rain.drops.len(), 100);
+
+        rain.spawn_around(Vec3::ZERO, 500, &mut rng);
+        assert_eq!(rain.drops.len(), MAX_RAIN_DROPS);
+
+        rain.clear();
+        assert!(rain.drops.is_empty());
     }
 }

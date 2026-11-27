@@ -325,6 +325,7 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
     if let Some(ref mut bank) = state.audio_bank {
         bank.stop_all_spatial_handles();
         bank.stop_active_cut_audio();
+        bank.clear_non_core_voice_afs_cache();
     }
     state.drama_demo_session = None;
     if let Some(ref mut eng) = state.audio_engine {

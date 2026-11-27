@@ -405,7 +405,7 @@ impl AiSubsystem {
                         if let Some(world) = collision {
                             let probe = m.forward_grating_probe_pos();
                             let hit = world
-                                .sample_floor_surface(probe.x, probe.y, probe.z, 1000.0, 2000.0);
+                                .sample_floor_surface(probe.x, probe.z, probe.y, 1000.0, 2000.0);
                             // `enCheckFloor` (`0x00145a80`): returns `2` for material `9` or `0xb`, `0` for none, `1` for solid.
                             ctx.mandarin_over_grating =
                                 hit.is_none_or(|h| matches!(h.raw_material & 0x0F, 9 | 11));
@@ -607,5 +607,85 @@ mod tests {
         ai.radio_evaluator.volume_level = 0;
         ai.step_radio_only(true, Vec3::ZERO, 0.016);
         assert_eq!(ai.radio_output.driver_volumes[0], 0);
+    }
+
+    #[test]
+    fn test_sh2_176_mandarin_floor_probe_passes_x_z_y_order() {
+        use crate::collision::CollisionWorld;
+        use sh2_assets::FloorTriangle;
+
+        let push_floor_quad =
+            |world: &mut CollisionWorld, cx: f32, cz: f32, y: f32, half: f32, material: u32| {
+                let p0 = [cx - half, y, cz - half];
+                let p1 = [cx + half, y, cz - half];
+                let p2 = [cx + half, y, cz + half];
+                let p3 = [cx - half, y, cz + half];
+                world.floors.push(FloorTriangle {
+                    v: [p0, p1, p2],
+                    material,
+                });
+                world.floors.push(FloorTriangle {
+                    v: [p0, p2, p3],
+                    material,
+                });
+            };
+
+        // Place Mandarin far from z == 0 (z = 5000.0, y = 0.0) facing +Z (yaw = 0.0)
+        // so swapping (y, z) would probe z = 0.0 and miss the floor at z = 5000 + forward_offset.
+        let mandarin_pos = Vec3::new(0.0, 0.0, 5000.0);
+        let player_pos = Vec3::new(0.0, 0.0, 5500.0);
+
+        // 1. Solid concrete floor (material = 1) at probe XZ -> over_grating must be false -> sub_state == 2 (not 3 attack)
+        let mut solid_world = CollisionWorld::new();
+        push_floor_quad(&mut solid_world, 0.0, 5500.0, 0.0, 1000.0, 1);
+
+        let mut ai_solid = AiSubsystem::default();
+        ai_solid.spawn_enemy(EnemySpecies::Mandarin, 1, mandarin_pos, 0.0);
+        ai_solid.update_filtered_with_collision(
+            player_pos,
+            0.0,
+            true,
+            false,
+            false,
+            None,
+            Some(&solid_world),
+            1.0 / 60.0,
+        );
+        match &ai_solid.enemies[0].controller {
+            ActiveEnemy::Mandarin(m) => {
+                assert_ne!(
+                    m.sub_state, 3,
+                    "Solid floor at probe XZ must prevent Mandarin grating attack (sub_state 3)"
+                );
+                assert_eq!(m.sub_state, 2);
+            }
+            _ => panic!("Expected Mandarin"),
+        }
+
+        // 2. Grating floor (material = 9) at the exact same probe XZ -> over_grating == true -> sub_state == 3 (attack)
+        let mut grating_world = CollisionWorld::new();
+        push_floor_quad(&mut grating_world, 0.0, 5500.0, 0.0, 1000.0, 9);
+
+        let mut ai_grating = AiSubsystem::default();
+        ai_grating.spawn_enemy(EnemySpecies::Mandarin, 2, mandarin_pos, 0.0);
+        ai_grating.update_filtered_with_collision(
+            player_pos,
+            0.0,
+            true,
+            false,
+            false,
+            None,
+            Some(&grating_world),
+            1.0 / 60.0,
+        );
+        match &ai_grating.enemies[0].controller {
+            ActiveEnemy::Mandarin(m) => {
+                assert_eq!(
+                    m.sub_state, 3,
+                    "Grating floor (material 9) at probe XZ must permit Mandarin attack (sub_state 3)"
+                );
+            }
+            _ => panic!("Expected Mandarin"),
+        }
     }
 }

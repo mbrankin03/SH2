@@ -710,3 +710,196 @@ fn test_cutaway_compositor_dirty_row_cache_matches_full_render_across_incar_alph
         }
     }
 }
+
+/// Real retail-asset integration test for `SH2-191`: verifies the full live Stage 4 Graveyard
+/// Angela cutscene (`haka_agl.dds` / `demo_no = 3`, `ev_prog[2]` `0x005a0570`) chain using
+/// retail assets on disk:
+/// - `ACT1_FOREST_EVENT_LIST[12]` (`0x008e6ff8`) triggers `CampaignPhase::DramaDemo { demo_no: 3 }`,
+/// - `DRAMA_DEMO_CATALOG` resolves `demo_no = 3` -> `"haka_agl"` (`data/demo/haka_agl/haka_agl.dds`),
+/// - `DramaDemoPlayer` parses real `haka_agl.dds` with both James (`hhh_jms_pos`) and Angela
+///   (`agl_pos`) visible and fires `pending_voice_trigger` at `stream_start = 21` (`0xea95`),
+/// - `voice.afs[53]` decodes non-silent 16-bit PCM for both `EnhancedLossless` and `Ps2Original`,
+/// - `sh2_audio::select_bgm_situation(4, ...)` selects Situation `4` (`forest/bgm_114_b.aix`)
+///   during `demo_no = 3` and Situation `1` once `flag(36)` is committed,
+/// - Natural playback completion returns to `ActiveGameplay` with `flag(36)` set and zero
+///   re-trigger loop on subsequent gameplay ticks.
+#[test]
+fn test_sh2_191_angela_graveyard_haka_agl_live_campaign_e2e_assets_audio_and_no_retrigger() {
+    let resolver = AssetPathResolver::resolve();
+    if !resolver.data_dir.exists() {
+        return;
+    }
+
+    // 1. Verify catalog entry & retail `.dds` + `.mes` + `voice.afs[53]` assets on disk.
+    let catalog_idx = sh2_core::DRAMA_DEMO_CATALOG
+        .iter()
+        .position(|d| d.demo_no == 3)
+        .expect("demo_no = 3 (haka_agl) must exist in DRAMA_DEMO_CATALOG");
+    let info = sh2_core::DRAMA_DEMO_CATALOG[catalog_idx];
+    assert_eq!(info.id, "haka_agl");
+    assert_eq!(info.stream_no, 60053);
+    assert_eq!(info.voice_afs_index(), Some(53));
+    assert_eq!(info.stream_start, 21);
+
+    let dds_bytes = std::fs::read(resolver.game_root.join(info.dds_path))
+        .expect("read retail data/demo/haka_agl/haka_agl.dds");
+    let script = sh2_assets::formats::demo::parse_demo_dds(&dds_bytes).expect("parse haka_agl.dds");
+    let mes_bytes = std::fs::read(resolver.game_root.join(info.mes_path))
+        .expect("read retail stage_forest_msg_e.mes");
+    let mes_table =
+        sh2_assets::formats::mes::parse_mes(&mes_bytes).expect("parse stage_forest_msg_e.mes");
+    assert!(
+        mes_table.get_text(usize::from(info.msg_start)).is_some(),
+        "stage_forest_msg_e.mes must contain haka_agl msg_start={}",
+        info.msg_start
+    );
+
+    for pack in [
+        sh2_core::AudioPackSource::EnhancedLossless,
+        sh2_core::AudioPackSource::Ps2Original,
+    ] {
+        let wav = crate::assets::load_cutscene_voice_wav_for_source(53, pack)
+            .unwrap_or_else(|| panic!("voice.afs[53] (0xea95) must decode for {pack:?}"));
+        assert_eq!(wav.bits_per_sample, 16);
+        assert!(
+            wav.data.len() > 100_000,
+            "voice.afs[53] ({pack:?}) must contain full cutscene dialogue PCM"
+        );
+        let peak = wav
+            .data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .step_by(64)
+            .map(|c| i16::from_le_bytes(*c).unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            peak > 4_000,
+            "voice.afs[53] ({pack:?}) must contain non-silent speech PCM (peak={peak})"
+        );
+    }
+
+    // 2. Drive live `CampaignOrchestrator` into `ACT1_FOREST_EVENT_LIST[12]` trigger polygon.
+    let forest =
+        sh2_core::events::stages_act1::act1_stage_descriptor(4).expect("Stage 4 Forest descriptor");
+    let entry12 = forest.event_list[12];
+    let shape12 = sh2_core::events::triggers::decode_ev_pos_shape(
+        forest.ev_pos,
+        entry12.ev_pos_offset(),
+        entry12.shape_kind().expect("shape kind"),
+    )
+    .expect("decode ACT1_FOREST_EVENT_LIST[12]");
+    let trigger_pos = match shape12 {
+        sh2_core::events::triggers::EvPosShape::Triangle { y, vertices } => [
+            (vertices[0][0] + vertices[1][0] + vertices[2][0]) / 3.0,
+            y,
+            (vertices[0][1] + vertices[1][1] + vertices[2][1]) / 3.0,
+        ],
+        sh2_core::events::triggers::EvPosShape::Quad { y, vertices } => [
+            (vertices[0][0] + vertices[1][0] + vertices[2][0] + vertices[3][0]) * 0.25,
+            y,
+            (vertices[0][1] + vertices[1][1] + vertices[2][1] + vertices[3][1]) * 0.25,
+        ],
+        other => panic!("unexpected shape: {other:?}"),
+    };
+
+    let mut sim = SimulationCore::new(sh2_core::ScenarioKind::LetterFromSilentHeaven);
+    sim.scenario.current_stage = 4;
+    sim.scenario.current_room = "ca11".to_string();
+    sim.snap_player_transform(glam::Vec3::from_array(trigger_pos), 0.0);
+
+    let mut orch = CampaignOrchestrator::from_saved_stage(
+        4,
+        Some("ca11".to_string()),
+        trigger_pos,
+        0.0,
+        OutdoorStreamingMode::default(),
+        false,
+    );
+    orch.phase = CampaignPhase::ActiveGameplay;
+    orch.fade = sh2_core::campaign::ScreenFadeState::default();
+    orch.player_locked = false;
+
+    let idle = CampaignTickInput::default();
+    let _ = orch.step(&mut sim, &idle, 1.0 / 60.0);
+    let eff_start = orch.step(&mut sim, &idle, 1.0 / 60.0);
+    let started = eff_start
+        .start_drama_demo
+        .expect("graveyard entry must start haka_agl");
+    assert_eq!(started.demo_no, 3);
+    assert_eq!(started.demo_id, Some("haka_agl"));
+
+    // 3. Verify `sh2_audio` BGM routing during `demo_no = 3`: Page 47 (`forest/bgm_114_b.aix`)
+    //    and Situation 4 (`EvBgmControl` `0x005a0260`).
+    let mut bgm_flags = sh2_audio::BgmEventFlags::from_event_flag_bytes(
+        sim.scenario.flags.as_bytes(),
+        false,
+        true,
+        false,
+    );
+    bgm_flags.active_demo_no = Some(3);
+    assert_eq!(sh2_audio::pick_bgm_page(4, 0, &bgm_flags), 47);
+    assert_eq!(sh2_audio::eval_stage_ev_bgm_control(4, 0, &bgm_flags), 4);
+
+    // 4. Step real `DramaDemoPlayer` for `haka_agl.dds` until voice triggers & completion.
+    let mut player = sh2_core::DramaDemoPlayer::new(info, script, false);
+    assert!(
+        player.actors.iter().any(|a| a.actor_name == "agl_pos"),
+        "haka_agl.dds must include Angela actor (agl_pos)"
+    );
+    assert!(
+        player.actors.iter().any(|a| a.actor_name == "hhh_jms_pos"),
+        "haka_agl.dds must include James actor (hhh_jms_pos)"
+    );
+    let mut voice_triggered = false;
+    for _ in 0..30 {
+        player.tick(1.0 / 30.0, true);
+        if player.pending_voice_trigger {
+            voice_triggered = true;
+            player.pending_voice_trigger = false;
+            break;
+        }
+    }
+    assert!(
+        voice_triggered,
+        "haka_agl DramaDemoPlayer must fire pending_voice_trigger at stream_start=21"
+    );
+
+    // Advance to natural EOF and hand off back to `CampaignOrchestrator`.
+    player.skip();
+    assert_eq!(player.step, sh2_core::cutscene::DramaDemoStep::Finished);
+    let eff_end = orch.step(
+        &mut sim,
+        &CampaignTickInput {
+            drama_demo_finished: true,
+            ..CampaignTickInput::default()
+        },
+        1.0 / 60.0,
+    );
+    assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+    assert!(sim
+        .scenario
+        .flags
+        .get(sh2_core::events::STG4_FLAG_ANGELA_MET));
+    assert!(eff_end.start_drama_demo.is_none());
+
+    // Post-cutscene BGM shifts to Situation 1 (`flag(36)` set, `active_demo_no = None`).
+    let post_bgm_flags = sh2_audio::BgmEventFlags::from_event_flag_bytes(
+        sim.scenario.flags.as_bytes(),
+        false,
+        false,
+        false,
+    );
+    assert_eq!(
+        sh2_audio::eval_stage_ev_bgm_control(4, 0, &post_bgm_flags),
+        1
+    );
+
+    // Confirm zero re-triggering on subsequent live gameplay ticks.
+    for _ in 0..5 {
+        let eff = orch.step(&mut sim, &idle, 1.0 / 60.0);
+        assert!(eff.start_drama_demo.is_none());
+        assert!(matches!(orch.phase, CampaignPhase::ActiveGameplay));
+    }
+}

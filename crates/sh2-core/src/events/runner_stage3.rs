@@ -160,64 +160,50 @@ pub(super) fn tick_stage3_prog(
         // Locks player (`0x5389c0`), stands (`0x53b160(0x65)`), shows stage message `2` (`0x4a22d0`),
         // smoothly turns around & walks `-500.0 mm` along Z via `PlayerEventMove` (`0x53b3c0`) +
         // `PlayerEventMoveIsEnd` (`0x53b6d0`), then unlocks player and sets flag `34` (`0x22`).
-        4 => match p.step {
-            0 => {
-                p.locked = true;
-                out.active_message_id = Some(STG3_MSG_STAIRS_NO_MAP);
-                p.step = 1;
+        4 => {
+            let was_step2 = p.step == 2;
+            let mut prog_out = super::stage_programs::ProgTickOut {
+                active_message_id: out.active_message_id,
+                ..super::stage_programs::ProgTickOut::default()
+            };
+            super::stage_programs::tick_boundary_walkback_prog(
+                p,
+                down,
+                STG3_MSG_STAIRS_NO_MAP,
+                [0.0, 0.0, -STG3_WALKBACK_DISTANCE_MM],
+                false,
+                event_move_finished,
+                &mut prog_out,
+            );
+            if was_step2 && prog_out.finished {
+                flags.set(STG3_FLAG_STAIRS_WARNED, true);
             }
-            1 => {
-                if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
-                    out.active_message_id = None;
-                    out.walkback_delta = Some([0.0, 0.0, -STG3_WALKBACK_DISTANCE_MM]);
-                    p.step = 2;
-                }
-            }
-            2 => {
-                if event_move_finished {
-                    flags.set(STG3_FLAG_STAIRS_WARNED, true);
-                    p.locked = false;
-                    out.finished = true;
-                } else {
-                    p.locked = true;
-                }
-            }
-            _ => {
-                p.locked = false;
-                out.finished = true;
-            }
-        },
+            out.finished = prog_out.finished;
+            out.active_message_id = prog_out.active_message_id;
+            out.walkback_delta = prog_out.walkback_delta;
+        }
         // Stage 3 #5 (`0x005a0de0`): Walking toward blocked road/tunnel.
         // Locks player (`0x5389c0`), stands (`0x53b160(0x65)`), shows stage message `0` (`0x4a22d0`),
         // smoothly turns around & walks `-500.0 mm` along X via `PlayerEventMove` (`0x53b3c0`) +
         // `PlayerEventMoveIsEnd` (`0x53b6d0`), then unlocks player (does not set a completion flag).
-        5 => match p.step {
-            0 => {
-                p.locked = true;
-                p.flag_set = false;
-                out.active_message_id = Some(STG3_MSG_BLOCKED_ROAD);
-                p.step = 1;
-            }
-            1 => {
-                if (down & (PROG_KEY_A | PROG_KEY_B)) != 0 {
-                    out.active_message_id = None;
-                    out.walkback_delta = Some([-STG3_WALKBACK_DISTANCE_MM, 0.0, 0.0]);
-                    p.step = 2;
-                }
-            }
-            2 => {
-                if event_move_finished {
-                    p.locked = false;
-                    out.finished = true;
-                } else {
-                    p.locked = true;
-                }
-            }
-            _ => {
-                p.locked = false;
-                out.finished = true;
-            }
-        },
+        5 => {
+            let mut prog_out = super::stage_programs::ProgTickOut {
+                active_message_id: out.active_message_id,
+                ..super::stage_programs::ProgTickOut::default()
+            };
+            super::stage_programs::tick_boundary_walkback_prog(
+                p,
+                down,
+                STG3_MSG_BLOCKED_ROAD,
+                [-STG3_WALKBACK_DISTANCE_MM, 0.0, 0.0],
+                true,
+                event_move_finished,
+                &mut prog_out,
+            );
+            out.finished = prog_out.finished;
+            out.active_message_id = prog_out.active_message_id;
+            out.walkback_delta = prog_out.walkback_delta;
+        }
         // Stage 3 #6 (`0x005a0f10`): Extra Observation Deck demo `0x5d` (`93`),
         // gated on `flag(512) && !flag(513)` (`ACT1_OBSERVATION_EVENT_LIST[11]`), sets `flag(513)`.
         6 => {

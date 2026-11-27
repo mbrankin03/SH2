@@ -129,6 +129,8 @@ pub(crate) fn load_manifest_into_app_state(state: &mut AppState, manifest: &Room
         .ai
         .spawn_from_manifest(&manifest.enemy_spawns, ai_diff);
 
+    state.story_progression_room.cutaway_cache.clear();
+    state.native_cutaway_surface = None;
     let ps2_room_id = sh2_core::fog::room_id_from_stage_code(&manifest.room_id);
     crate::rooms::sh2ee_glb_hooks::preload_room_glb_models(
         state,

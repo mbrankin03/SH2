@@ -1,7 +1,7 @@
 //! Deterministic unit, retail-asset, and headless visual preview tests for unified Campaign
 //! `.mes` event messages and 2D cutaway overlays (`SH2-157`).
 
-use std::collections::HashMap;
+use crate::rooms::story_progression_room::cutaway_cache::CutawayLruCache;
 use std::path::PathBuf;
 
 use super::cutaway::{
@@ -193,7 +193,7 @@ fn test_out_p_incar_cutaway_and_message_overlay_render() {
     assert_eq!(quads_with_map.len(), 1);
     assert_eq!(quads_with_map[0].sheet_name, "out/p_incar_map");
 
-    let mut cache: HashMap<(String, CutawayQuality), CutawayTextureAsset> = HashMap::new();
+    let mut cache = CutawayLruCache::default();
     let mut rast_with_map = TextRasterizer::new(1280, 720);
     rast_with_map.fill_rect(0, 0, 1280, 720, [0, 0, 0, 255]);
     blit_cutaway_into_rasterizer(
@@ -363,7 +363,7 @@ fn test_out_p_incar_native_1080p_pillarbox_and_widescreen_fill() {
     let quads = overlay.evaluate_frame(&flags, &puzzle, 1, 0).to_vec();
     assert_eq!(quads.len(), 1);
 
-    let mut cache: HashMap<(String, CutawayQuality), CutawayTextureAsset> = HashMap::new();
+    let mut cache = CutawayLruCache::default();
 
     // 1. Original 4:3 Pillarbox at native 1920x1080: fills 100% height (y=0..1079) inside x=240..1679,
     //    with pure black pillarboxes outside x=240..1680 and ZERO top/bottom windowboxing.
@@ -575,7 +575,7 @@ fn test_cutaway_compositor_dirty_row_cache_matches_full_render_across_incar_alph
     let mut overlay = CutawayOverlayEngine::new();
     overlay.set_picture(Some("out_p_incar"), &flags);
 
-    let mut cache: HashMap<(String, CutawayQuality), CutawayTextureAsset> = HashMap::new();
+    let mut cache = CutawayLruCache::default();
     let quality = CutawayQuality::OriginalPs2;
     let resolver = AssetPathResolver::resolve();
     if !resolver.data_dir.exists() {

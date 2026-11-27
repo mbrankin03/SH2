@@ -29,20 +29,44 @@ pub fn draw_polygon(
         .min(rast.height as i32 - 1) as usize;
 
     if let Some(fill_color) = fill {
+        const STACK_NODE_CAP: usize = 16;
         let n = points.len();
+        let mut nodes_stack = [0.0f32; STACK_NODE_CAP];
+        let mut nodes_heap = if n > STACK_NODE_CAP {
+            Vec::with_capacity(n)
+        } else {
+            Vec::new()
+        };
+
         for y in min_y..=max_y {
             let py = y as f32 + 0.5;
-            let mut nodes = Vec::new();
-            for i in 0..n {
-                let j = (i + 1) % n;
-                let (x0, y0) = (points[i].0 as f32, points[i].1 as f32);
-                let (x1, y1) = (points[j].0 as f32, points[j].1 as f32);
+            let nodes: &mut [f32] = if n <= STACK_NODE_CAP {
+                let mut count = 0usize;
+                for i in 0..n {
+                    let j = (i + 1) % n;
+                    let (x0, y0) = (points[i].0 as f32, points[i].1 as f32);
+                    let (x1, y1) = (points[j].0 as f32, points[j].1 as f32);
 
-                if (y0 < py && y1 >= py) || (y1 < py && y0 >= py) {
-                    let intersect_x = x0 + (py - y0) / (y1 - y0) * (x1 - x0);
-                    nodes.push(intersect_x);
+                    if (y0 < py && y1 >= py) || (y1 < py && y0 >= py) {
+                        nodes_stack[count] = x0 + (py - y0) / (y1 - y0) * (x1 - x0);
+                        count += 1;
+                    }
                 }
-            }
+                &mut nodes_stack[..count]
+            } else {
+                nodes_heap.clear();
+                for i in 0..n {
+                    let j = (i + 1) % n;
+                    let (x0, y0) = (points[i].0 as f32, points[i].1 as f32);
+                    let (x1, y1) = (points[j].0 as f32, points[j].1 as f32);
+
+                    if (y0 < py && y1 >= py) || (y1 < py && y0 >= py) {
+                        let intersect_x = x0 + (py - y0) / (y1 - y0) * (x1 - x0);
+                        nodes_heap.push(intersect_x);
+                    }
+                }
+                nodes_heap.as_mut_slice()
+            };
             nodes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             for chunk in nodes.chunks(2) {
                 if chunk.len() == 2 {
@@ -515,45 +539,36 @@ pub fn draw_options_screen(menu: &OptionsMenu, font: &AtlasFont, rast: &mut Text
 
     // Exact `look_board` (`0x002171a0`) chamfered panels in centered 512×448 coordinates:
     // Top panel: (-210,-165), (+210,-165), (+227,-145), (+227,+155), (-227,+155), (-227,-145)
-    let panel_pts: Vec<(i32, i32)> = [
-        (-210.0, -165.0),
-        (210.0, -165.0),
-        (227.0, -145.0),
-        (227.0, 155.0),
-        (-227.0, 155.0),
-        (-227.0, -145.0),
-    ]
-    .iter()
-    .map(|&(x, y)| to_centered(x, y))
-    .collect();
+    let panel_pts = [
+        to_centered(-210.0, -165.0),
+        to_centered(210.0, -165.0),
+        to_centered(227.0, -145.0),
+        to_centered(227.0, 155.0),
+        to_centered(-227.0, 155.0),
+        to_centered(-227.0, -145.0),
+    ];
 
     // Bottom description box: (-227,+161), (+227,+161), (+227,+185), (+210,+205), (-210,+205), (-227,+185)
-    let box_pts: Vec<(i32, i32)> = [
-        (-227.0, 161.0),
-        (227.0, 161.0),
-        (227.0, 185.0),
-        (210.0, 205.0),
-        (-210.0, 205.0),
-        (-227.0, 185.0),
-    ]
-    .iter()
-    .map(|&(x, y)| to_centered(x, y))
-    .collect();
+    let box_pts = [
+        to_centered(-227.0, 161.0),
+        to_centered(227.0, 161.0),
+        to_centered(227.0, 185.0),
+        to_centered(210.0, 205.0),
+        to_centered(-210.0, 205.0),
+        to_centered(-227.0, 185.0),
+    ];
 
     // Outer octagon border: (-212,-170), (+212,-170), (+232,-147), (+232,+187), (+212,+210), (-212,+210), (-232,+187), (-232,-147)
-    let outline_pts: Vec<(i32, i32)> = [
-        (-212.0, -170.0),
-        (212.0, -170.0),
-        (232.0, -147.0),
-        (232.0, 187.0),
-        (212.0, 210.0),
-        (-212.0, 210.0),
-        (-232.0, 187.0),
-        (-232.0, -147.0),
-    ]
-    .iter()
-    .map(|&(x, y)| to_centered(x, y))
-    .collect();
+    let outline_pts = [
+        to_centered(-212.0, -170.0),
+        to_centered(212.0, -170.0),
+        to_centered(232.0, -147.0),
+        to_centered(232.0, 187.0),
+        to_centered(212.0, 210.0),
+        to_centered(-212.0, 210.0),
+        to_centered(-232.0, 187.0),
+        to_centered(-232.0, -147.0),
+    ];
 
     // Exact `look_board` (`0x002171a0`) colors in `sh2pc.exe` D3D8:
     // - `fill: 0x20808080` -> dark charcoal `[0x20, 0x20, 0x20, 0xd8]`

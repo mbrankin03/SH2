@@ -424,15 +424,12 @@ pub(crate) fn tick_and_render_fmv_frame(
         if !state.fmv_viewer.is_paused {
             session.frame_accumulator_sec += dt_sec.min(0.1);
             let mut advanced = 0;
+            let mut decoded_any_frame = false;
             while session.frame_accumulator_sec >= frame_duration && advanced < 4 {
                 session.frame_accumulator_sec -= frame_duration;
                 advanced += 1;
-                if let Some(frame) = session.stream.next_frame() {
-                    state.fmv_pipeline.upload_frame(
-                        &state.render_ctx.queue,
-                        &session.gpu_surface,
-                        frame,
-                    );
+                if session.stream.next_frame().is_some() {
+                    decoded_any_frame = true;
                 } else if loop_on_eof {
                     // Loop seamlessly on completion in theater mode
                     session.stream.restart();
@@ -444,17 +441,22 @@ pub(crate) fn tick_and_render_fmv_frame(
                             let _ = engine.play_bgm_with_fade(adx, *vol, *fade);
                         }
                     }
-                    if let Some(frame) = session.stream.next_frame() {
-                        state.fmv_pipeline.upload_frame(
-                            &state.render_ctx.queue,
-                            &session.gpu_surface,
-                            frame,
-                        );
+                    if session.stream.next_frame().is_some() {
+                        decoded_any_frame = true;
                     }
                     break;
                 } else {
                     finished_eof = true;
                     break;
+                }
+            }
+            if decoded_any_frame && !finished_eof {
+                if let Some(frame) = session.stream.current_frame() {
+                    state.fmv_pipeline.upload_frame(
+                        &state.render_ctx.queue,
+                        &session.gpu_surface,
+                        frame,
+                    );
                 }
             }
         }

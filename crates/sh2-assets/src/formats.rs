@@ -72,11 +72,11 @@ pub use mdls::{
 };
 pub use mes::{parse_mes, DialogueMessage, MessageTable};
 pub use sound::{
-    decode_afs_entry_to_wav, decode_afs_slice_to_wav, decode_spu2_vag_to_wav, parse_afs_index,
-    parse_ps2_sdb_sound_data, parse_ps2_sfc_pcm, parse_ps2_sound_dat_bank, parse_sddata,
-    parse_wav_smpl_loop, slice_wav_time_range, AfsArchiveIndex, AfsEntry, Ps2SdbSoundDataRecord,
-    Ps2VagSampleHeader, SoundBank, WavEntry, AFS_MAGIC, PS2_VAG_HEAD_MAGIC, PS2_VAG_VAGI_MAGIC,
-    PS2_VAG_VERS_MAGIC,
+    decode_afs_entry_from_reader, decode_afs_entry_to_wav, decode_afs_slice_to_wav,
+    decode_spu2_vag_to_wav, parse_afs_index, parse_ps2_sdb_sound_data, parse_ps2_sfc_pcm,
+    parse_ps2_sound_dat_bank, parse_sddata, parse_wav_smpl_loop, read_afs_entry_from_reader,
+    slice_wav_time_range, AfsArchiveIndex, AfsEntry, Ps2SdbSoundDataRecord, Ps2VagSampleHeader,
+    SoundBank, WavEntry, AFS_MAGIC, PS2_VAG_HEAD_MAGIC, PS2_VAG_VAGI_MAGIC, PS2_VAG_VERS_MAGIC,
 };
 pub use texture::{
     compute_alpha_coverage_rgba, decode_texture_bytes, generate_mipmap_chain_rgba,

@@ -8,9 +8,7 @@
 //! SH2:EE pillarbox bars have a single source of truth — rendered at full native window resolution
 //! (up to `3840x2160`) rather than downscaled into the fixed `1280x720` debug HUD buffer.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-
+use crate::rooms::story_progression_room::cutaway_cache::CutawayLruCache;
 use crate::rooms::story_progression_room::hud_common::{
     blit_cutaway_into_rasterizer, clip_quad_triangles_to_viewport, ensure_cutaway_cached,
 };
@@ -241,7 +239,7 @@ impl CutawayCompositor {
     /// the GPU texture, or `None` when the frame is identical to the previous call.
     pub(crate) fn update(
         &mut self,
-        cache: &mut HashMap<(String, CutawayQuality), CutawayTextureAsset>,
+        cache: &mut CutawayLruCache,
         base_pic: &str,
         quality: CutawayQuality,
         aspect_mode: CutawayAspectMode,
@@ -374,7 +372,7 @@ fn collect_clipped_active_quads(
 #[allow(clippy::too_many_arguments)]
 fn composite_clipped_quads_and_bars(
     rast: &mut TextRasterizer,
-    cache: &mut HashMap<(String, CutawayQuality), CutawayTextureAsset>,
+    cache: &mut CutawayLruCache,
     quality: CutawayQuality,
     quads: &[OverlaySpriteQuad],
     clipped_quads: &[ClippedQuadEntry],
@@ -385,7 +383,7 @@ fn composite_clipped_quads_and_bars(
     for &(quad_idx, ref clipped, _) in clipped_quads {
         let quad = &quads[quad_idx];
         ensure_cutaway_cached(cache, quad.sheet_name, quality);
-        if let Some(sheet_tex) = cache.get(&(quad.sheet_name.to_string(), quality)) {
+        if let Some(sheet_tex) = cache.get(quad.sheet_name, quality) {
             rast.blit_overlay_triangles(
                 clipped,
                 &sheet_tex.texture.rgba,
@@ -413,7 +411,9 @@ fn composite_clipped_quads_and_bars(
     }
 }
 
-struct NativeCutawaySurface {
+/// Native-resolution CPU/GPU cutaway surface owned by [`AppState`] and dropped whenever no
+/// cutaway is active or on room transitions (`SH2-175`).
+pub(crate) struct NativeCutawaySurface {
     width: u32,
     height: u32,
     compositor: CutawayCompositor,
@@ -457,10 +457,6 @@ impl NativeCutawaySurface {
     }
 }
 
-thread_local! {
-    static NATIVE_CUTAWAY_SURFACE: RefCell<Option<NativeCutawaySurface>> = const { RefCell::new(None) };
-}
-
 /// Returns `true` when `sim_core.scenario.cutaway_overlay` currently has an active 2D cutaway
 /// background picture (e.g., `"out_p_incar"`).
 #[must_use]
@@ -478,7 +474,7 @@ pub(crate) fn has_active_cutaway(state: &AppState) -> bool {
 /// opaque black pillarbox backdrop (`SH2-162`).
 pub(crate) fn render_cutaway_frame_into_rasterizer(
     rast: &mut TextRasterizer,
-    cache: &mut HashMap<(String, CutawayQuality), CutawayTextureAsset>,
+    cache: &mut CutawayLruCache,
     base_pic: &str,
     quality: CutawayQuality,
     aspect_mode: CutawayAspectMode,
@@ -517,6 +513,7 @@ pub(crate) fn render_campaign_cutaway_native(
         .active_picture()
         .map(str::to_string)
     else {
+        state.native_cutaway_surface = None;
         return;
     };
 
@@ -554,56 +551,56 @@ pub(crate) fn render_campaign_cutaway_native(
         .height
         .clamp(1, MAX_NATIVE_CUTAWAY_HEIGHT);
 
-    NATIVE_CUTAWAY_SURFACE.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let needs_alloc = slot
-            .as_ref()
-            .is_none_or(|s| s.width != target_w || s.height != target_h);
-        if needs_alloc {
-            *slot = Some(NativeCutawaySurface::new(state, target_w, target_h));
-        }
-        let surface = slot.as_mut().expect("NativeCutawaySurface allocated");
-        if let Some((dirty_y0, dirty_y1)) = surface.compositor.update(
-            &mut state.story_progression_room.cutaway_cache,
-            &base_pic,
-            quality,
-            aspect_mode,
-            &quads,
-        ) {
-            let stride = 4 * surface.width as usize;
-            let dirty_h = (dirty_y1 - dirty_y0) as u32;
-            let byte_start = dirty_y0 * stride;
-            let byte_end = dirty_y1 * stride;
-            state.render_ctx.queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &surface.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: dirty_y0 as u32,
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::All,
+    let needs_alloc = state
+        .native_cutaway_surface
+        .as_ref()
+        .is_none_or(|s| s.width != target_w || s.height != target_h);
+    if needs_alloc {
+        state.native_cutaway_surface = Some(NativeCutawaySurface::new(state, target_w, target_h));
+    }
+    let Some(surface) = state.native_cutaway_surface.as_mut() else {
+        return;
+    };
+    if let Some((dirty_y0, dirty_y1)) = surface.compositor.update(
+        &mut state.story_progression_room.cutaway_cache,
+        &base_pic,
+        quality,
+        aspect_mode,
+        &quads,
+    ) {
+        let stride = 4 * surface.width as usize;
+        let dirty_h = (dirty_y1 - dirty_y0) as u32;
+        let byte_start = dirty_y0 * stride;
+        let byte_end = dirty_y1 * stride;
+        state.render_ctx.queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &surface.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: dirty_y0 as u32,
+                    z: 0,
                 },
-                &surface.compositor.rasterizer.pixels[byte_start..byte_end],
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * surface.width),
-                    rows_per_image: Some(dirty_h),
-                },
-                wgpu::Extent3d {
-                    width: surface.width,
-                    height: dirty_h,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-
-        state.blitter.render_with_bind_group_and_load_op(
-            encoder,
-            &surface.bind_group,
-            surface_view,
-            wgpu::LoadOp::Load,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &surface.compositor.rasterizer.pixels[byte_start..byte_end],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * surface.width),
+                rows_per_image: Some(dirty_h),
+            },
+            wgpu::Extent3d {
+                width: surface.width,
+                height: dirty_h,
+                depth_or_array_layers: 1,
+            },
         );
-    });
+    }
+
+    state.blitter.render_with_bind_group_and_load_op(
+        encoder,
+        &surface.bind_group,
+        surface_view,
+        wgpu::LoadOp::Load,
+    );
 }

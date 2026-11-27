@@ -795,6 +795,12 @@ impl BinkVideoStream {
         }
     }
 
+    /// Returns the most recently decoded `Yuv420Frame` without advancing the stream.
+    #[must_use]
+    pub fn current_frame(&self) -> Option<&Yuv420Frame> {
+        self.current_frame.as_ref()
+    }
+
     /// Reads the next sequential `Yuv420Frame` borrowing its internal buffers, or `None` if the stream has reached `frame_count` or EOF.
     pub fn next_frame(&mut self) -> Option<&Yuv420Frame> {
         if self.current_frame_index >= self.header.frame_count {

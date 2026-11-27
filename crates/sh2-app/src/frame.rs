@@ -134,9 +134,7 @@ pub(crate) fn redraw_frame(state: &mut AppState) {
         );
     }
 
-    // 7. Update fog flow velocity time, proximity particles, and post-processing uniforms
-    let alpha = state.sim_core.interpolation_alpha();
-    rooms::combat_arena::render::update_atmosphere_fog_uniforms(state, alpha);
+    // 7. Update post-processing uniforms (fog uniforms are updated pre-render inside `tick_and_render_combat_arena_3d`)
     rooms::combat_arena::render::update_post_process_uniforms(
         state,
         grain_intensity,
@@ -280,6 +278,10 @@ fn sync_active_room_and_viewers(state: &mut AppState) {
 /// Loads a [`TestRoomKind`]'s `.map`, `.cld`, `.cam`, GPU bind groups, and room-specific state.
 fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
     tracing::info!("Switching test environment to: {:?}", new_room);
+    state.story_progression_room.cutaway_cache.clear();
+    state.native_cutaway_surface = None;
+    state.sh2ee_ty3_glb = None;
+    state.sh2ee_mon_glb = None;
     let (new_map, new_pos, new_yaw, new_fog) = find_map_file_for_room(new_room);
     state.map_hd_assets = crate::assets::MapTierAssets::from_map(&state.render_ctx, &new_map);
     state.map_sh2e_assets = find_sh2e_map_file_for_room(new_room)

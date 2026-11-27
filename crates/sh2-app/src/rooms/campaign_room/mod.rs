@@ -796,6 +796,9 @@ impl RoomController for CampaignRoomController {
         let show_red_cross = matches!(phase_snapshot, CampaignPhase::ActiveGameplay)
             && state.ingame_menus.red_cross.alpha_u8() > 0;
         let has_cutaway = cutaway::has_active_cutaway(state);
+        if !has_cutaway {
+            state.native_cutaway_surface = None;
+        }
         let active_msg = state
             .campaign_messages
             .active_page_text()

@@ -244,6 +244,108 @@ fn test_sh2_61_dual_sddata_loop_flags_and_voice_afs_parsing() {
 }
 
 #[test]
+fn test_sh2_175_afs_seek_reader_single_entry_and_error_bounds() {
+    use std::io::Cursor;
+
+    let make_pcm_wav = |sample_rate: u32, payload: &[u8]| -> Vec<u8> {
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36u32 + payload.len() as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        wav.extend_from_slice(payload);
+        wav
+    };
+
+    let wav0 = make_pcm_wav(22050, &[0x01, 0x02, 0x03, 0x04]);
+    let wav1 = make_pcm_wav(48000, &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+
+    let off0 = 8u32 + 2 * 8; // header (8) + 2 TOC entries (16) = 24
+    let off1 = off0 + wav0.len() as u32;
+
+    let mut afs = Vec::new();
+    afs.extend_from_slice(b"AFS\0");
+    afs.extend_from_slice(&2u32.to_le_bytes());
+    afs.extend_from_slice(&off0.to_le_bytes());
+    afs.extend_from_slice(&(wav0.len() as u32).to_le_bytes());
+    afs.extend_from_slice(&off1.to_le_bytes());
+    afs.extend_from_slice(&(wav1.len() as u32).to_le_bytes());
+    afs.extend_from_slice(&wav0);
+    afs.extend_from_slice(&wav1);
+
+    // Reading entry 1 via seek-reader matches slice decoder identically
+    let mut cursor = Cursor::new(afs.as_slice());
+    let raw1 = read_afs_entry_from_reader(&mut cursor, 1).expect("read entry 1");
+    assert_eq!(raw1, wav1);
+
+    let decoded1 = decode_afs_entry_from_reader(&mut cursor, 1).expect("decode entry 1");
+    let full1 = decode_afs_entry_to_wav(&afs, 1).expect("full decode entry 1");
+    assert_eq!(decoded1.sample_rate, 48000);
+    assert_eq!(decoded1.data, full1.data);
+
+    let decoded0 = decode_afs_entry_from_reader(&mut cursor, 0).expect("decode entry 0");
+    assert_eq!(decoded0.sample_rate, 22050);
+    assert_eq!(decoded0.data, vec![0x01, 0x02, 0x03, 0x04]);
+
+    // Out-of-bounds index -> InvalidData
+    assert!(matches!(
+        read_afs_entry_from_reader(&mut cursor, 2),
+        Err(AssetError::InvalidData(_))
+    ));
+
+    // Invalid magic -> InvalidMagic
+    let mut bad_magic = Cursor::new(b"NOPE\x00\x00\x00\x00".as_slice());
+    assert!(matches!(
+        read_afs_entry_from_reader(&mut bad_magic, 0),
+        Err(AssetError::InvalidMagic { .. })
+    ));
+
+    // Truncated header -> BufferUnderflow
+    let mut short_hdr = Cursor::new(b"AFS\0\x01".as_slice());
+    assert!(matches!(
+        read_afs_entry_from_reader(&mut short_hdr, 0),
+        Err(AssetError::BufferUnderflow { .. })
+    ));
+
+    // Truncated TOC (claims 10 entries, only 8 bytes present) -> BufferUnderflow
+    let mut short_toc = Cursor::new(b"AFS\0\x0A\x00\x00\x00".as_slice());
+    assert!(matches!(
+        read_afs_entry_from_reader(&mut short_toc, 0),
+        Err(AssetError::BufferUnderflow { .. })
+    ));
+
+    // Entry byte range past EOF -> BufferUnderflow
+    let mut bad_range = Vec::new();
+    bad_range.extend_from_slice(b"AFS\0");
+    bad_range.extend_from_slice(&1u32.to_le_bytes());
+    bad_range.extend_from_slice(&16u32.to_le_bytes());
+    bad_range.extend_from_slice(&9999u32.to_le_bytes());
+    let mut bad_range_cursor = Cursor::new(bad_range.as_slice());
+    assert!(matches!(
+        read_afs_entry_from_reader(&mut bad_range_cursor, 0),
+        Err(AssetError::BufferUnderflow { .. })
+    ));
+
+    // Retail on-disk `voice.afs` seek-read parity check (when retail assets are present)
+    let data_afs = format!("{ROOT_ASSETS}/data/sound/adx/voice/voice.afs");
+    if Path::new(&data_afs).exists() {
+        let mut file = fs::File::open(&data_afs).expect("open data voice.afs");
+        let seek_wav =
+            decode_afs_entry_from_reader(&mut file, 35).expect("seek-decode data voice.afs[35]");
+        assert_eq!(seek_wav.sample_rate, 22050);
+        assert!(!seek_wav.data.is_empty());
+    }
+}
+
+#[test]
 fn test_sh2_62_ps2_prototype_sdb_sfc_vag_and_wav_slicing() {
     // 1. Test `parse_ps2_sdb_sound_data` on synthetic 64-byte `_SOUND_DATA` records + `-0x8000_0000` terminator
     let mut sdb_bytes = Vec::new();

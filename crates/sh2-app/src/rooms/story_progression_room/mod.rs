@@ -2,6 +2,7 @@
 //! Ending Point Judge, 10-Star Ranking, Secret NG+ Weapons, UFO 35-Slide Comic Theater & Mary's
 //! `.mes` Epilogue Letter Cinema (`SH2-65`).
 
+pub(crate) mod cutaway_cache;
 pub(crate) mod hud_act1;
 pub(crate) mod hud_act1_panel;
 pub(crate) mod hud_act2;
@@ -21,7 +22,8 @@ use winit::keyboard::KeyCode;
 use crate::rooms::combat_arena::CombatArenaRoomController;
 use crate::rooms::RoomController;
 use crate::state::AppState;
-use sh2_assets::{CutawayTextureAsset, DecodedTexture, TextureLoader};
+use cutaway_cache::CutawayLruCache;
+use sh2_assets::{DecodedTexture, TextureLoader};
 use sh2_audio::chainsaw_sfx::{ChainsawAudioOutput, ChainsawSoundController, ChainsawTickInput};
 use sh2_audio::{play_menu_sound, SoundCueKind};
 use sh2_core::config::{ActionDifficulty, RiddleDifficulty};
@@ -101,7 +103,7 @@ pub(crate) struct StoryProgressionRoomState {
     pub active_tab: StoryDemoTab,
     pub seed_counter: u32,
     pub rng: Sh2Rng,
-    pub cutaway_cache: HashMap<(String, sh2_core::CutawayQuality), CutawayTextureAsset>,
+    pub cutaway_cache: CutawayLruCache,
     pub prefer_sh2ee_cutaways: bool,
     pub act1_puzzle: Act1VisualPuzzle,
     pub act1_stage_idx: usize,
@@ -168,7 +170,7 @@ impl Default for StoryProgressionRoomState {
             active_tab: StoryDemoTab::Act1StagesAndRiddles,
             seed_counter: 1,
             rng: Sh2Rng::new(0x2001_0924),
-            cutaway_cache: HashMap::new(),
+            cutaway_cache: CutawayLruCache::default(),
             prefer_sh2ee_cutaways: true,
             act1_puzzle: Act1VisualPuzzle::SafeDial,
             act1_stage_idx: 10,

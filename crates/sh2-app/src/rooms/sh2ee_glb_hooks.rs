@@ -40,18 +40,26 @@ pub(crate) fn preload_room_glb_models(
         .game
         .enable_sh2ee_world_fixes;
     if !enable_fixes {
+        state.sh2ee_ty3_glb = None;
+        state.sh2ee_mon_glb = None;
         return;
     }
 
-    if room_id == R_BUG_RM_ID && state.sh2ee_ty3_glb.is_none() {
-        state.sh2ee_ty3_glb = load_glb_if_present(state, resolver, "ty3.glb", "ty3_glb");
+    if room_id == R_BUG_RM_ID {
+        if state.sh2ee_ty3_glb.is_none() {
+            state.sh2ee_ty3_glb = load_glb_if_present(state, resolver, "ty3.glb", "ty3_glb");
+        }
+    } else {
+        state.sh2ee_ty3_glb = None;
     }
 
     let has_mon = resolver.has_sh2e_model("mon.glb");
-    if DogRoomLeversState::should_preload(room_id, event_index, has_mon, enable_fixes)
-        && state.sh2ee_mon_glb.is_none()
-    {
-        state.sh2ee_mon_glb = load_glb_if_present(state, resolver, "mon.glb", "mon_glb");
+    if DogRoomLeversState::should_preload(room_id, event_index, has_mon, enable_fixes) {
+        if state.sh2ee_mon_glb.is_none() {
+            state.sh2ee_mon_glb = load_glb_if_present(state, resolver, "mon.glb", "mon_glb");
+        }
+    } else {
+        state.sh2ee_mon_glb = None;
     }
 }
 

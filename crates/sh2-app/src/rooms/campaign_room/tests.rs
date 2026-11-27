@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::cutaway::{
     compute_cutaway_draw_rect, has_baked_ps2_letterbox_bars, render_cutaway_frame_into_rasterizer,
-    PS2_CUTAWAY_LETTERBOX_HEIGHT_RATIO,
+    CutawayCompositor, PS2_CUTAWAY_LETTERBOX_HEIGHT_RATIO,
 };
 use super::messages::{
     draw_campaign_message, load_mes_table, stage_mes_rel_path, CampaignMessageSource,
@@ -566,4 +566,112 @@ fn test_campaign_stage3_action_only_triggers_car_door_within_retail_event_check_
         sim.scenario.cutaway_overlay.incar_alpha().abs() < 1e-5,
         "Second [E] press after map pickup must run ev_prog[3] (0x005a0ca0) with incar_alpha == 0.0"
     );
+}
+
+#[test]
+fn test_cutaway_compositor_dirty_row_cache_matches_full_render_across_incar_alpha_fade() {
+    let flags = EventFlags::new();
+    let puzzle = PuzzleState::default();
+    let mut overlay = CutawayOverlayEngine::new();
+    overlay.set_picture(Some("out_p_incar"), &flags);
+
+    let mut cache: HashMap<(String, CutawayQuality), CutawayTextureAsset> = HashMap::new();
+    let quality = CutawayQuality::OriginalPs2;
+    let resolver = AssetPathResolver::resolve();
+    if !resolver.data_dir.exists() {
+        // Deterministic synthetic 512x512 letterboxed cutaway + 256x256 map sprite fallback
+        // when retail assets are not mounted.
+        let mut base_rgba = vec![0u8; 512 * 512 * 4];
+        for y in 64..448 {
+            for x in 0..512 {
+                let i = (y * 512 + x) * 4;
+                base_rgba[i] = ((x * 255) / 512) as u8;
+                base_rgba[i + 1] = ((y * 255) / 512) as u8;
+                base_rgba[i + 2] = 96;
+                base_rgba[i + 3] = 255;
+            }
+        }
+        cache.insert(
+            ("out_p_incar".to_string(), quality),
+            CutawayTextureAsset {
+                texture: DecodedTexture {
+                    width: 512,
+                    height: 512,
+                    rgba: base_rgba,
+                },
+                original_width: 512,
+                original_height: 512,
+                is_sh2ee_hd: false,
+            },
+        );
+        let mut sprite_rgba = vec![0u8; 256 * 256 * 4];
+        for y in 0..256 {
+            for x in 0..256 {
+                let i = (y * 256 + x) * 4;
+                sprite_rgba[i] = 220;
+                sprite_rgba[i + 1] = 195;
+                sprite_rgba[i + 2] = 140;
+                sprite_rgba[i + 3] = 255;
+            }
+        }
+        cache.insert(
+            ("out/p_incar_map".to_string(), quality),
+            CutawayTextureAsset {
+                texture: DecodedTexture {
+                    width: 256,
+                    height: 256,
+                    rgba: sprite_rgba,
+                },
+                original_width: 256,
+                original_height: 256,
+                is_sh2ee_hd: false,
+            },
+        );
+    }
+
+    for aspect_mode in [
+        CutawayAspectMode::Fit4x3Pillarbox,
+        CutawayAspectMode::Fill16x9WidescreenCrop,
+    ] {
+        let width = 1280u32;
+        let height = 720u32;
+        let mut compositor = CutawayCompositor::new(width, height);
+        let mut reference = TextRasterizer::new(width as usize, height as usize);
+
+        for (step, &alpha) in [1.0f32, 0.5, 0.0].iter().enumerate() {
+            overlay.set_incar_alpha(alpha);
+            let quads = overlay.evaluate_frame(&flags, &puzzle, 1, 0).to_vec();
+
+            let dirty = compositor.update(&mut cache, "out_p_incar", quality, aspect_mode, &quads);
+            let (dy0, dy1) = dirty.expect("changing alpha must report a dirty row span");
+            if step == 0 {
+                assert_eq!((dy0, dy1), (0, height as usize));
+            } else {
+                assert!(
+                    dy0 < dy1 && (dy1 - dy0) < height as usize,
+                    "Expected partial dirty row band on alpha={alpha} ({aspect_mode:?}), got ({dy0}, {dy1})"
+                );
+            }
+
+            // Repeating the exact same quads must be a no-op (None).
+            assert_eq!(
+                compositor.update(&mut cache, "out_p_incar", quality, aspect_mode, &quads),
+                None,
+                "Identical frame must skip compositing and GPU upload"
+            );
+
+            render_cutaway_frame_into_rasterizer(
+                &mut reference,
+                &mut cache,
+                "out_p_incar",
+                quality,
+                aspect_mode,
+                &quads,
+            );
+            assert_eq!(
+                compositor.rasterizer.pixels, reference.pixels,
+                "Cached dirty-row cutaway pixels must be bit-identical to full render at alpha={alpha} ({aspect_mode:?})"
+            );
+        }
+    }
 }

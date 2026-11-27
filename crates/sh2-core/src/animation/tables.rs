@@ -118,8 +118,21 @@ impl JamesBasicClips {
     pub const KICK_DOWNED: AnimationClip = AnimationClip::new(682, 701, 11.25, false);
     /// Authentic PS2/PC James downed enemy weapon stomp action (`pjames_anim` aid `133` frames `702..=719`, speed `512` = `7.5 fps`).
     pub const STOMP_DOWNED: AnimationClip = AnimationClip::new(702, 719, 7.5, false);
-    /// Collapse / death fall animation (frames `256..=280`, PS2 index `112`, speed `1024` = `15.0 fps`).
-    pub const FALL: AnimationClip = AnimationClip::new(256, 280, 15.0, false);
+    /// Forward ledge drop / fall (`Clip 111`, frames `221..=245`, speed `1024` = `15.0 fps`, non-looping;
+    /// `SLUS_202.28` `pjames_anim[11]` @ `0x0038b2c4` / `sh2pc.exe` `0x237bd4 + 10*12`).
+    pub const FALL_FORWARD: AnimationClip = AnimationClip::from_ps2_speed(221, 245, 1024, false);
+    /// Backward ledge drop / collapse fall (`Clip 112`, frames `256..=280`, speed `1024` = `15.0 fps`, non-looping;
+    /// `SLUS_202.28` `pjames_anim[12]` @ `0x0038b2d0` / `sh2pc.exe` `0x237bd4 + 11*12`).
+    pub const FALL: AnimationClip = AnimationClip::from_ps2_speed(256, 280, 1024, false);
+    /// Head-on sprint wall recoil (`Clip 128`, frames `612..=629`, speed `1024` = `15.0 fps`, non-looping;
+    /// `SLUS_202.28` `pjames_anim[28]` @ `0x0038b390`, `m3_play.c:2171` `case 0x11`).
+    pub const WALL_F: AnimationClip = AnimationClip::from_ps2_speed(612, 629, 1024, false);
+    /// Strafe-left sprint wall recoil (`Clip 129`, frames `632..=649`, speed `1024` = `15.0 fps`, non-looping;
+    /// `SLUS_202.28` `pjames_anim[29]` @ `0x0038b39c`, `m3_play.c:2162` `case 0x11`).
+    pub const WALL_F_LEFT: AnimationClip = AnimationClip::from_ps2_speed(632, 649, 1024, false);
+    /// Strafe-right sprint wall recoil (`Clip 130`, frames `652..=670`, speed `1024` = `15.0 fps`, non-looping;
+    /// `SLUS_202.28` `pjames_anim[30]` @ `0x0038b3a8`, `m3_play.c:2159` `case 0x11`).
+    pub const WALL_F_RIGHT: AnimationClip = AnimationClip::from_ps2_speed(652, 670, 1024, false);
 }
 
 /// Stage-specific animation clips for James Sunderland (boss grapple sequences).
@@ -264,6 +277,10 @@ impl MariaLocomotionClips {
     pub const STRAFE_RIGHT_RUN: AnimationClip = JamesBasicClips::STRAFE_RIGHT_RUN;
     /// Left strafe run (`Clip 127`, frames `588..=611`, `30.0 fps`).
     pub const STRAFE_LEFT_RUN: AnimationClip = JamesBasicClips::STRAFE_LEFT_RUN;
+    /// Backward ledge drop / collapse fall (`Clip 112`, frames `256..=280`, `15.0 fps`, non-looping).
+    pub const FALL: AnimationClip = JamesBasicClips::FALL;
+    /// Head-on sprint wall recoil (`Clip 128`, frames `612..=629`, `15.0 fps`, non-looping).
+    pub const WALL_F: AnimationClip = JamesBasicClips::WALL_F;
 }
 
 /// Complete locomotion clip set configuration for the active playable character (`0x6ceac4`).
@@ -286,6 +303,10 @@ pub struct CharacterLocomotionClips {
     pub strafe_right_run: AnimationClip,
     pub quick_turn_left: AnimationClip,
     pub quick_turn_right: AnimationClip,
+    /// Ledge drop / fall animation (`Clip 112`, `lower_fall` `0x0021f5c0`).
+    pub fall: AnimationClip,
+    /// Head-on sprint wall recoil animation (`Clip 128`, `lower_wall_f_3d` `0x0011a170`).
+    pub wall_f: AnimationClip,
 }
 
 impl Default for CharacterLocomotionClips {
@@ -314,6 +335,8 @@ impl CharacterLocomotionClips {
         strafe_right_run: JamesBasicClips::STRAFE_RIGHT_RUN,
         quick_turn_left: JamesBasicClips::QUICK_TURN_LEFT,
         quick_turn_right: JamesBasicClips::QUICK_TURN_RIGHT,
+        fall: JamesBasicClips::FALL,
+        wall_f: JamesBasicClips::WALL_F,
     };
 
     /// Maria playable locomotion clips (`xmar_wpnone.anm`).
@@ -335,5 +358,7 @@ impl CharacterLocomotionClips {
         strafe_right_run: MariaLocomotionClips::STRAFE_RIGHT_RUN,
         quick_turn_left: MariaLocomotionClips::QUICK_TURN_LEFT,
         quick_turn_right: MariaLocomotionClips::QUICK_TURN_RIGHT,
+        fall: MariaLocomotionClips::FALL,
+        wall_f: MariaLocomotionClips::WALL_F,
     };
 }

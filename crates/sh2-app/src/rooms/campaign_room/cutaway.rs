@@ -11,10 +11,14 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::rooms::story_progression_room::hud_common::blit_cutaway_into_rasterizer;
+use crate::rooms::story_progression_room::hud_common::{
+    blit_cutaway_into_rasterizer, clip_quad_triangles_to_viewport, ensure_cutaway_cached,
+};
 use crate::state::AppState;
 use sh2_assets::{CutawayTextureAsset, CutawayViewportTransform};
-use sh2_core::{riddle_level_index, CutawayAspectMode, CutawayQuality, OverlaySpriteQuad};
+use sh2_core::{
+    riddle_level_index, CutawayAspectMode, CutawayQuality, FullscreenImageLayout, OverlaySpriteQuad,
+};
 use sh2_ui::TextRasterizer;
 
 /// Exact fullscreen black dim overlay alpha (`64 / 128 = 0.50 -> 128 / 255`) drawn over cutaway
@@ -136,24 +140,21 @@ pub(crate) fn compute_cutaway_draw_rect(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CutawayRenderKey {
+struct CutawayBaseKey {
     width: u32,
     height: u32,
     base_pic: String,
     quality: CutawayQuality,
     aspect_mode: CutawayAspectMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CutawayQuadKey {
     quad_bits: Vec<(String, u32, [u32; 16])>,
 }
 
-impl CutawayRenderKey {
-    fn from_state(
-        width: u32,
-        height: u32,
-        base_pic: &str,
-        quality: CutawayQuality,
-        aspect_mode: CutawayAspectMode,
-        quads: &[OverlaySpriteQuad],
-    ) -> Self {
+impl CutawayQuadKey {
+    fn from_quads(quads: &[OverlaySpriteQuad]) -> Self {
         let quad_bits = quads
             .iter()
             .map(|q| {
@@ -167,13 +168,247 @@ impl CutawayRenderKey {
                 (q.sheet_name.to_string(), q.alpha.to_bits(), v)
             })
             .collect();
+        Self { quad_bits }
+    }
+}
+
+#[inline]
+fn union_row_spans(a: Option<(usize, usize)>, b: Option<(usize, usize)>) -> Option<(usize, usize)> {
+    match (a, b) {
+        (Some((a0, a1)), Some((b0, b1))) => Some((a0.min(b0), a1.max(b1))),
+        (Some(span), None) | (None, Some(span)) => Some(span),
+        (None, None) => None,
+    }
+}
+
+#[inline]
+fn clipped_quad_row_span(
+    clipped: &[(f32, f32, f32, f32); 6],
+    height: usize,
+) -> Option<(usize, usize)> {
+    let min_y = clipped
+        .iter()
+        .map(|v| v.1)
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        .max(0.0) as usize;
+    let max_y = (clipped
+        .iter()
+        .map(|v| v.1)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        .max(0.0) as usize)
+        .min(height);
+    (min_y < max_y).then_some((min_y, max_y))
+}
+
+/// Two-level CPU cutaway compositor that caches the static rasterized base still + pillarbox
+/// backdrop (`base_pixels`) and only restores, composites, and uploads the dirty vertical row
+/// band when animated [`OverlaySpriteQuad`] overlays (e.g., `out/p_incar_map` alpha fade,
+/// `dls_p_manacles_on` fade, rotating clock hands) change frame-to-frame.
+pub(crate) struct CutawayCompositor {
+    pub(crate) rasterizer: TextRasterizer,
+    base_key: Option<CutawayBaseKey>,
+    base_pixels: Vec<u8>,
+    base_vp_transform: CutawayViewportTransform,
+    base_fs_layout: Option<FullscreenImageLayout>,
+    last_quad_key: Option<CutawayQuadKey>,
+    last_quad_dirty_rows: Option<(usize, usize)>,
+}
+
+impl CutawayCompositor {
+    pub(crate) fn new(width: u32, height: u32) -> Self {
         Self {
-            width,
-            height,
+            rasterizer: TextRasterizer::new(width as usize, height as usize),
+            base_key: None,
+            base_pixels: Vec::new(),
+            base_vp_transform: CutawayViewportTransform {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                draw_width: width as f32,
+                draw_height: height as f32,
+                scale_x: 1.0,
+                scale_y: 1.0,
+            },
+            base_fs_layout: None,
+            last_quad_key: None,
+            last_quad_dirty_rows: None,
+        }
+    }
+
+    /// Updates `self.rasterizer` for `(base_pic, quality, aspect_mode, quads)` and returns the
+    /// dirty vertical row band `Some((dirty_y0, dirty_y1))` that changed and must be uploaded to
+    /// the GPU texture, or `None` when the frame is identical to the previous call.
+    pub(crate) fn update(
+        &mut self,
+        cache: &mut HashMap<(String, CutawayQuality), CutawayTextureAsset>,
+        base_pic: &str,
+        quality: CutawayQuality,
+        aspect_mode: CutawayAspectMode,
+        quads: &[OverlaySpriteQuad],
+    ) -> Option<(usize, usize)> {
+        let w = self.rasterizer.width;
+        let h = self.rasterizer.height;
+        let base_key = CutawayBaseKey {
+            width: w as u32,
+            height: h as u32,
             base_pic: base_pic.to_string(),
             quality,
             aspect_mode,
-            quad_bits,
+        };
+        let quad_key = CutawayQuadKey::from_quads(quads);
+
+        if self.base_key.as_ref() != Some(&base_key) {
+            let fs_layout =
+                FullscreenImageLayout::compute(w as f32, h as f32, base_pic, aspect_mode);
+            let vp_transform = render_cutaway_frame_into_rasterizer(
+                &mut self.rasterizer,
+                cache,
+                base_pic,
+                quality,
+                aspect_mode,
+                &[],
+            );
+            self.base_pixels.resize(self.rasterizer.pixels.len(), 0);
+            self.base_pixels.copy_from_slice(&self.rasterizer.pixels);
+
+            let clipped_quads = collect_clipped_active_quads(quads, &vp_transform, &fs_layout, h);
+            let new_quad_dirty = clipped_quads
+                .iter()
+                .fold(None, |acc, &(_, _, span)| union_row_spans(acc, Some(span)));
+            composite_clipped_quads_and_bars(
+                &mut self.rasterizer,
+                cache,
+                quality,
+                quads,
+                &clipped_quads,
+                &fs_layout,
+                0,
+                h,
+            );
+
+            self.base_key = Some(base_key);
+            self.base_vp_transform = vp_transform;
+            self.base_fs_layout = Some(fs_layout);
+            self.last_quad_key = Some(quad_key);
+            self.last_quad_dirty_rows = new_quad_dirty;
+            return Some((0, h));
+        }
+
+        if self.last_quad_key.as_ref() == Some(&quad_key) {
+            return None;
+        }
+
+        let fs_layout = self
+            .base_fs_layout
+            .as_ref()
+            .expect("base_fs_layout populated when base_key matches");
+        let clipped_quads =
+            collect_clipped_active_quads(quads, &self.base_vp_transform, fs_layout, h);
+        let new_quad_dirty = clipped_quads
+            .iter()
+            .fold(None, |acc, &(_, _, span)| union_row_spans(acc, Some(span)));
+        let dirty_span = union_row_spans(self.last_quad_dirty_rows, new_quad_dirty);
+
+        self.last_quad_key = Some(quad_key);
+        self.last_quad_dirty_rows = new_quad_dirty;
+
+        let (dirty_y0, dirty_y1) = dirty_span?;
+        if dirty_y0 >= dirty_y1 {
+            return None;
+        }
+
+        let stride = w * 4;
+        let byte_start = dirty_y0 * stride;
+        let byte_end = dirty_y1 * stride;
+        self.rasterizer.pixels[byte_start..byte_end]
+            .copy_from_slice(&self.base_pixels[byte_start..byte_end]);
+
+        composite_clipped_quads_and_bars(
+            &mut self.rasterizer,
+            cache,
+            quality,
+            quads,
+            &clipped_quads,
+            fs_layout,
+            dirty_y0,
+            dirty_y1,
+        );
+
+        Some((dirty_y0, dirty_y1))
+    }
+}
+
+type ClippedQuadEntry = (usize, [(f32, f32, f32, f32); 6], (usize, usize));
+
+fn collect_clipped_active_quads(
+    quads: &[OverlaySpriteQuad],
+    vp_transform: &CutawayViewportTransform,
+    fs_layout: &FullscreenImageLayout,
+    height: usize,
+) -> Vec<ClippedQuadEntry> {
+    let cx0 = fs_layout.canvas.canvas_left;
+    let cy0 = fs_layout.canvas.canvas_top;
+    let cx1 = fs_layout.canvas.canvas_right;
+    let cy1 = fs_layout.canvas.canvas_bottom;
+    let mut out = Vec::with_capacity(quads.len());
+    for (idx, quad) in quads.iter().enumerate() {
+        if quad.alpha <= 0.0 {
+            continue;
+        }
+        let tris = quad.to_viewport_triangles(
+            vp_transform.offset_x,
+            vp_transform.offset_y,
+            vp_transform.draw_width,
+            vp_transform.draw_height,
+        );
+        if let Some(clipped) = clip_quad_triangles_to_viewport(&tris, cx0, cy0, cx1, cy1) {
+            if let Some(span) = clipped_quad_row_span(&clipped, height) {
+                out.push((idx, clipped, span));
+            }
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn composite_clipped_quads_and_bars(
+    rast: &mut TextRasterizer,
+    cache: &mut HashMap<(String, CutawayQuality), CutawayTextureAsset>,
+    quality: CutawayQuality,
+    quads: &[OverlaySpriteQuad],
+    clipped_quads: &[ClippedQuadEntry],
+    fs_layout: &FullscreenImageLayout,
+    dirty_y0: usize,
+    dirty_y1: usize,
+) {
+    for &(quad_idx, ref clipped, _) in clipped_quads {
+        let quad = &quads[quad_idx];
+        ensure_cutaway_cached(cache, quad.sheet_name, quality);
+        if let Some(sheet_tex) = cache.get(&(quad.sheet_name.to_string(), quality)) {
+            rast.blit_overlay_triangles(
+                clipped,
+                &sheet_tex.texture.rgba,
+                sheet_tex.texture.width,
+                sheet_tex.texture.height,
+                quad.alpha,
+            );
+        }
+    }
+
+    if !clipped_quads.is_empty() {
+        for bar in &fs_layout.black_bars {
+            if bar.is_non_empty() {
+                let bx = bar.x0.floor().max(0.0) as usize;
+                let by = bar.y0.floor().max(0.0) as usize;
+                let bw = bar.width().ceil() as usize;
+                let bh = bar.height().ceil() as usize;
+                let iy0 = by.max(dirty_y0);
+                let iy1 = by.saturating_add(bh).min(dirty_y1);
+                if iy0 < iy1 {
+                    rast.fill_rect(bx, iy0, bw, iy1 - iy0, [0, 0, 0, 255]);
+                }
+            }
         }
     }
 }
@@ -181,15 +416,14 @@ impl CutawayRenderKey {
 struct NativeCutawaySurface {
     width: u32,
     height: u32,
-    rasterizer: TextRasterizer,
+    compositor: CutawayCompositor,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
-    last_key: Option<CutawayRenderKey>,
 }
 
 impl NativeCutawaySurface {
     fn new(state: &AppState, width: u32, height: u32) -> Self {
-        let rasterizer = TextRasterizer::new(width as usize, height as usize);
+        let compositor = CutawayCompositor::new(width, height);
         let texture = state
             .render_ctx
             .device
@@ -216,10 +450,9 @@ impl NativeCutawaySurface {
         Self {
             width,
             height,
-            rasterizer,
+            compositor,
             texture,
             bind_group,
-            last_key: None,
         }
     }
 }
@@ -320,8 +553,6 @@ pub(crate) fn render_campaign_cutaway_native(
         .surface_config
         .height
         .clamp(1, MAX_NATIVE_CUTAWAY_HEIGHT);
-    let key =
-        CutawayRenderKey::from_state(target_w, target_h, &base_pic, quality, aspect_mode, &quads);
 
     NATIVE_CUTAWAY_SURFACE.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -332,35 +563,40 @@ pub(crate) fn render_campaign_cutaway_native(
             *slot = Some(NativeCutawaySurface::new(state, target_w, target_h));
         }
         let surface = slot.as_mut().expect("NativeCutawaySurface allocated");
-        if surface.last_key.as_ref() != Some(&key) {
-            render_cutaway_frame_into_rasterizer(
-                &mut surface.rasterizer,
-                &mut state.story_progression_room.cutaway_cache,
-                &base_pic,
-                quality,
-                aspect_mode,
-                &quads,
-            );
+        if let Some((dirty_y0, dirty_y1)) = surface.compositor.update(
+            &mut state.story_progression_room.cutaway_cache,
+            &base_pic,
+            quality,
+            aspect_mode,
+            &quads,
+        ) {
+            let stride = 4 * surface.width as usize;
+            let dirty_h = (dirty_y1 - dirty_y0) as u32;
+            let byte_start = dirty_y0 * stride;
+            let byte_end = dirty_y1 * stride;
             state.render_ctx.queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &surface.texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: dirty_y0 as u32,
+                        z: 0,
+                    },
                     aspect: wgpu::TextureAspect::All,
                 },
-                &surface.rasterizer.pixels,
+                &surface.compositor.rasterizer.pixels[byte_start..byte_end],
                 wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(4 * surface.width),
-                    rows_per_image: Some(surface.height),
+                    rows_per_image: Some(dirty_h),
                 },
                 wgpu::Extent3d {
                     width: surface.width,
-                    height: surface.height,
+                    height: dirty_h,
                     depth_or_array_layers: 1,
                 },
             );
-            surface.last_key = Some(key);
         }
 
         state.blitter.render_with_bind_group_and_load_op(

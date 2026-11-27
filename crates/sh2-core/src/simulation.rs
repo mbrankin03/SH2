@@ -315,7 +315,7 @@ impl SimulationCore {
             self.scenario.player_position.z,
             self.scenario.player_position.y,
             self.collision_config.max_step_up,
-            self.collision_config.max_step_down,
+            crate::collision::PLAYER_HEIGHT_RAY_DOWN_NORMAL,
         ) {
             self.active_floor_material = sample.surface;
         }

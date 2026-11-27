@@ -31,7 +31,6 @@ pub(crate) struct CharacterAsset {
     pub gpu_mesh: GpuSkeletalMesh,
     pub model: ModelFile,
     pub bind_locals: Vec<[[f32; 4]; 4]>,
-    pub dynamic_locals: Vec<[[f32; 4]; 4]>,
     pub pose_scratch: Vec<[[f32; 4]; 4]>,
     pub skin_scratch: Vec<[[f32; 4]; 4]>,
     pub frame_scratch_a: AnimationFrame,
@@ -787,7 +786,6 @@ pub(crate) fn load_character_asset(
         )
     };
 
-    let dynamic_locals = bind_locals.clone();
     let pose_scratch = Vec::with_capacity(model.bone_count);
     let skin_scratch = Vec::with_capacity(model.bone_count);
     let frame_scratch_a = AnimationFrame {
@@ -805,7 +803,6 @@ pub(crate) fn load_character_asset(
         gpu_mesh,
         model,
         bind_locals,
-        dynamic_locals,
         pose_scratch,
         skin_scratch,
         frame_scratch_a,

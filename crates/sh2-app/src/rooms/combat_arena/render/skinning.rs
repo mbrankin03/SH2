@@ -199,11 +199,11 @@ pub(super) fn evaluate_player_skinning(
                     );
                 }
             }
-            c.dynamic_locals.copy_from_slice(&c.bind_locals);
-            c.secondary_physics.apply_to_locals_if_enabled(
-                secondary_physics_enabled,
-                &mut c.dynamic_locals,
-                alpha,
+            evaluate_pose_into(
+                &c.model.parents,
+                &c.bind_locals,
+                &c.frame_scratch_a,
+                &mut c.pose_scratch,
             );
             let (neck_bone, head_bone) = if state.active_maria {
                 (
@@ -216,14 +216,21 @@ pub(super) fn evaluate_player_skinning(
                     sh2_core::animation::JAMES_HEAD_BONE_INDEX,
                 )
             };
-            c.head_look
-                .apply_to_locals(&mut c.dynamic_locals, neck_bone, head_bone, alpha);
-
-            evaluate_pose_into(
-                &c.model.parents,
-                &c.dynamic_locals,
-                &c.frame_scratch_a,
+            // Apply procedural neck/head look (`PlayerCheckNeckAngle` 0x00108e10 /
+            // `shCharacterAnimePartsControl` 0x00100a40) and secondary physics AFTER
+            // `evaluate_pose_into` so keyframed rotations are preserved and composed in row-major order.
+            c.head_look.apply_to_pose(
                 &mut c.pose_scratch,
+                &c.model.parents,
+                neck_bone,
+                head_bone,
+                alpha,
+            );
+            c.secondary_physics.apply_to_pose_if_enabled(
+                secondary_physics_enabled,
+                &mut c.pose_scratch,
+                &c.model.parents,
+                alpha,
             );
             let ik_dt = if is_paused {
                 0.0

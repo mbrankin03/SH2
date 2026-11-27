@@ -553,6 +553,8 @@ pub struct CharaCollectEntry {
     pub prev_pos: Vec3,
     /// Character type (`1` = player, `2` = enemy/NPC).
     pub chara_type: i32,
+    /// Freefall post-flag timer (`chara + 0x104` / `sh2pc +0xf0`) for `500.0 / fps` push clamp.
+    pub post_flag_timer: i32,
 }
 
 impl CharaCollectEntry {
@@ -571,6 +573,7 @@ impl CharaCollectEntry {
         push_vec: Vec3::ZERO,
         prev_pos: Vec3::ZERO,
         chara_type: 1,
+        post_flag_timer: 0,
     };
 }
 
@@ -611,7 +614,7 @@ fn select_axis_step(move_axis: f32, push_axis: f32) -> f32 {
 /// separation) and returns the quantized BG wall/column collect vector (`clCheckBg2Chara`).
 pub fn cl_collect_chara_all<F>(entries: &mut [CharaCollectEntry], mut bg_check: F) -> usize
 where
-    F: FnMut(&CharaCollectEntry) -> Vec3,
+    F: FnMut(&mut CharaCollectEntry) -> Vec3,
 {
     let n = entries.len();
     if n == 0 {
@@ -651,7 +654,7 @@ where
 
             // 2. First BG check (walls + side walls + static BG columns + dynamic walls)
             if entries[i].col.active {
-                let bg_push = bg_check(&entries[i]);
+                let bg_push = bg_check(&mut entries[i]);
                 entries[i].col.center_x += bg_push.x;
                 entries[i].col.center_z += bg_push.z;
             }
@@ -702,7 +705,7 @@ where
 
             // 4. Second BG check so char-char pushes cannot shove i through a wall
             if entries[i].col.active {
-                let bg_push = bg_check(&entries[i]);
+                let bg_push = bg_check(&mut entries[i]);
                 entries[i].col.center_x += bg_push.x;
                 entries[i].col.center_z += bg_push.z;
             }

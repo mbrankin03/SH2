@@ -382,6 +382,9 @@ pub struct CharacterCylinder {
     pub id: CharacterId,
     /// Character feet position `(x, y, z)` in world mm (`+Y` down).
     pub position: Vec3,
+    /// Previous-frame feet position (`chara + 0xe0`) used by `clSetCharaHitColumn` (`0x001325e0`)
+    /// to compute `move_vec = position - prev_position` inside `clCollectCharaALL` (`0x00132e20`).
+    pub prev_position: Vec3,
     /// Movement collision radius in world mm (James `175.0`, Maria `150.0`).
     pub radius: f32,
     /// Movement collision height in world mm (James `800.0`, `[-50..-850]`).
@@ -397,6 +400,10 @@ pub struct CharacterCylinder {
     /// Discrete PS2 collision push weight (`_CL_HITPOLY_COLUMN.weight` at `+0x04`).
     /// Used with `clCollectCharaALL` weight-diff table `[1.0, 0.98, 0.94, 0.90, 0.86]`.
     pub weight: i32,
+    /// Character type (`chara + 0x170`; `1` = player, `2` = enemy/NPC, `clMakeWallHitCollectVector` `0x001341a0`).
+    pub chara_type: i32,
+    /// Post-flag freefall pushback clamp counter (`chara + 0x104` / `sh2pc +0xf0`, `clMakeWallHitCollectVector` `0x001341a0`).
+    pub post_flag_timer: i32,
     pub active: bool,
 }
 
@@ -420,6 +427,7 @@ impl CharacterCylinder {
         Self {
             id,
             position,
+            prev_position: position,
             radius,
             height,
             y_bottom_offset: PLAYER_MOVE_COL_Y_BOTTOM_OFFSET,
@@ -427,6 +435,8 @@ impl CharacterCylinder {
             hit_height: height,
             mass,
             weight,
+            chara_type: 1,
+            post_flag_timer: 0,
             active: true,
         }
     }
@@ -439,11 +449,33 @@ impl CharacterCylinder {
         self
     }
 
+    /// Sets the character type (`chara + 0x170`: `1` = player, `2` = enemy/NPC).
+    #[inline]
+    pub const fn with_chara_type(mut self, chara_type: i32) -> Self {
+        self.chara_type = chara_type;
+        self
+    }
+
+    /// Sets the freefall post-flag timer (`chara + 0x104` / `sh2pc +0xf0`).
+    #[inline]
+    pub const fn with_post_flag_timer(mut self, post_flag_timer: i32) -> Self {
+        self.post_flag_timer = post_flag_timer;
+        self
+    }
+
+    /// Sets the previous-frame position (`chara + 0xe0`) for `move_vec` integration.
+    #[inline]
+    pub const fn with_prev_position(mut self, prev_position: Vec3) -> Self {
+        self.prev_position = prev_position;
+        self
+    }
+
     /// Constructs James's authentic dual-cylinder registration (`175mm / 800mm` move, `150mm / 900mm` hit).
     pub const fn james(id: CharacterId, position: Vec3) -> Self {
         Self {
             id,
             position,
+            prev_position: position,
             radius: JAMES_MOVE_RADIUS,
             height: PLAYER_MOVE_COL_HEIGHT,
             y_bottom_offset: PLAYER_MOVE_COL_Y_BOTTOM_OFFSET,
@@ -451,6 +483,8 @@ impl CharacterCylinder {
             hit_height: PLAYER_HIT_COL_HEIGHT,
             mass: 1.0,
             weight: 1,
+            chara_type: 1,
+            post_flag_timer: 0,
             active: true,
         }
     }
@@ -460,6 +494,7 @@ impl CharacterCylinder {
         Self {
             id,
             position,
+            prev_position: position,
             radius: MARIA_MOVE_RADIUS,
             height: PLAYER_MOVE_COL_HEIGHT,
             y_bottom_offset: PLAYER_MOVE_COL_Y_BOTTOM_OFFSET,
@@ -467,6 +502,8 @@ impl CharacterCylinder {
             hit_height: PLAYER_HIT_COL_HEIGHT,
             mass: 1.0,
             weight: 1,
+            chara_type: 1,
+            post_flag_timer: 0,
             active: true,
         }
     }

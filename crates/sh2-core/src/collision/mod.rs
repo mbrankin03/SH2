@@ -34,7 +34,8 @@ pub use character::{
     PLAYER_MOVE_COL_Y_BOTTOM_OFFSET, PLAYER_MOVE_COL_Y_TOP_OFFSET, PLAYER_WEAPON_COLUMN_TABLE,
 };
 pub use controller::{
-    CollisionConfig, CollisionController, CollisionWorld, FloorSample, SurfaceMaterial,
+    CollisionConfig, CollisionController, CollisionSector, CollisionWorld, FloorSample,
+    SurfaceMaterial,
 };
 pub use dynamic::{DynamicFloor, DynamicWall};
 pub use grid::{

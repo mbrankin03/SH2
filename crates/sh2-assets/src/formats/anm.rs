@@ -57,14 +57,26 @@ impl From<u8> for AnimationTrackType {
 
 /// Rotation and translation for a specific bone in an animation frame.
 ///
-/// Rotations are stored in Euler radians (scaled from original 4096 units/radian).
+/// Decoded 1:1 from `SLUS_202.28` `shExec` (`0x001002c0`, `Chacter/anime.c:180-393`) and
+/// `sh2pc.exe` `FUN_0054fdc0` (`0x0054fdc0`, `sh2pc_00540000.c:8506-8668`).
+/// Rotations are stored in Euler radians (scaled from original Q12 `1 / 4096.0` units/radian).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoneTransform {
-    /// Euler rotation angles $(R_x, R_y, R_z)$ in radians, if present.
+    /// Euler rotation angles $(R_x, R_y, R_z)$ in radians (`3x i16 / 4096.0`), if present.
     pub rotation: Option<[f32; 3]>,
-    /// Translation offset $(T_x, T_y, T_z)$ in world/parent space, if present.
+    /// Current-frame translation offset $(T_x, T_y, T_z)$ (`param_2[0x14..0x16]` in `shExec`), if present.
     pub translation: Option<[f32; 3]>,
-    /// Encoding descriptor from the frame block header.
+    /// Next-keyframe translation target $(T_x, T_y, T_z)$ (`param_2[0x28..0x2a]` in `shExec`,
+    /// populated by track types `4`, `5`, and `6` for inter-keyframe interpolation).
+    pub next_translation: Option<[f32; 3]>,
+    /// 10-byte axis-angle interpolation payload (`[axis_x, axis_y, axis_z, angle_rad]`) present in
+    /// track types `3..=6` (`shExec` `0x001002c0` lines 372-393 / `sh2pc.exe` `FUN_0054fdc0` lines 8658-8668):
+    /// `3x i16` Q15 unit axis (`* 1/32768.0`, `_vitof15`) + `i16` Q12 angle delta (`* 1/4096.0`, `_vitof12`).
+    pub axis_angle_delta: Option<[f32; 4]>,
+    /// High bit (bit 3, `nibble & 8`) of the 4-bit block header nibble (`param_2 + 0xe2` in `shExec` /
+    /// `param_1 + 0xda` in `FUN_0054fdc0`).
+    pub nibble_flag: bool,
+    /// Encoding descriptor (`nibble & 7`) from the frame block header.
     pub track_type: AnimationTrackType,
 }
 
@@ -324,7 +336,9 @@ fn parse_anm_with_stride(
         p += 4;
 
         for j in 0..8 {
-            let t = ((header >> (4 * j)) & 7) as u8;
+            let nibble = ((header >> (4 * j)) & 0xF) as u8;
+            let t = nibble & 7;
+            let nibble_flag = (nibble & 8) != 0;
             let bone_idx = ((block * 8) % per_frame) + j;
             let is_root = if bone_idx < parents.len() {
                 parents[bone_idx] == 255
@@ -332,12 +346,22 @@ fn parse_anm_with_stride(
                 false
             };
 
+            let prev_next_trans = if bone_idx < bone_count {
+                cur_frame[bone_idx]
+                    .as_ref()
+                    .and_then(|b| b.next_translation.or(b.translation))
+            } else {
+                None
+            };
+
             let mut rot: Option<[f32; 3]> = None;
             let mut trans: Option<[f32; 3]> = None;
+            let mut next_trans: Option<[f32; 3]> = None;
+            let mut axis_angle_delta: Option<[f32; 4]> = None;
 
             match t {
                 1 => {
-                    // Type 1: 3x i16 rotations
+                    // Type 1 (`shExec` 0x001002c0:239-264): 3x i16 Q12 Euler rotations
                     if p + 6 <= data.len() {
                         let rx = read_i16(data, p)? as f32 / 4096.0;
                         let ry = read_i16(data, p + 2)? as f32 / 4096.0;
@@ -347,23 +371,24 @@ fn parse_anm_with_stride(
                     }
                 }
                 2 => {
-                    // Type 2: Root translation (3x f32) or joint translation (3x f16), then 3x i16 rot
+                    // Type 2 (`shExec` 0x001002c0:196-264): Root translation (3x f32) or joint
+                    // translation (3x f16 `GetSF`), then 3x i16 Q12 Euler rotation.
                     if is_root {
                         if p + 12 <= data.len() {
                             let tx = read_f32(data, p)?;
                             let ty = read_f32(data, p + 4)?;
                             let tz = read_f32(data, p + 8)?;
                             trans = Some([tx, ty, tz]);
+                            next_trans = trans;
                             p += 12;
                         }
-                    } else {
-                        if p + 6 <= data.len() {
-                            let tx = f16_to_f32(read_u16(data, p)?);
-                            let ty = f16_to_f32(read_u16(data, p + 2)?);
-                            let tz = f16_to_f32(read_u16(data, p + 4)?);
-                            trans = Some([tx, ty, tz]);
-                            p += 6;
-                        }
+                    } else if p + 6 <= data.len() {
+                        let tx = f16_to_f32(read_u16(data, p)?);
+                        let ty = f16_to_f32(read_u16(data, p + 2)?);
+                        let tz = f16_to_f32(read_u16(data, p + 4)?);
+                        trans = Some([tx, ty, tz]);
+                        next_trans = trans;
+                        p += 6;
                     }
                     if p + 6 <= data.len() {
                         let rx = read_i16(data, p)? as f32 / 4096.0;
@@ -374,75 +399,158 @@ fn parse_anm_with_stride(
                     }
                 }
                 3 => {
-                    // Type 3: 3x i16 rotations + 10 bytes padding
-                    if p + 6 <= data.len() {
+                    // Type 3 (`shExec` 0x001002c0:265-272, 346-393 / `FUN_0054fdc0` 0x0054fdc0:8565-8668):
+                    // Promotes previous `next_trans` to `cur_trans`, then reads 6B Q12 rot + 10B axis-angle.
+                    trans = prev_next_trans;
+                    next_trans = prev_next_trans;
+                    if p + 16 <= data.len() {
                         let rx = read_i16(data, p)? as f32 / 4096.0;
                         let ry = read_i16(data, p + 2)? as f32 / 4096.0;
                         let rz = read_i16(data, p + 4)? as f32 / 4096.0;
                         rot = Some([rx, ry, rz]);
-                        p += 6 + 10;
+                        let ax = read_i16(data, p + 6)? as f32 / 32768.0;
+                        let ay = read_i16(data, p + 8)? as f32 / 32768.0;
+                        let az = read_i16(data, p + 10)? as f32 / 32768.0;
+                        let ang = read_i16(data, p + 12)? as f32 / 4096.0;
+                        axis_angle_delta = Some([ax, ay, az, ang]);
+                        p += 16;
+                    } else if p + 6 <= data.len() {
+                        let rx = read_i16(data, p)? as f32 / 4096.0;
+                        let ry = read_i16(data, p + 2)? as f32 / 4096.0;
+                        let rz = read_i16(data, p + 4)? as f32 / 4096.0;
+                        rot = Some([rx, ry, rz]);
+                        p = (p + 16).min(data.len());
                     }
                 }
-                4 | 5 => {
-                    // Types 4 & 5: Extended translation tracks with 10 bytes padding
-                    if t == 4 && is_root {
-                        if p + 12 <= data.len() {
-                            let tx = read_f32(data, p)?;
-                            let ty = read_f32(data, p + 4)?;
-                            let tz = read_f32(data, p + 8)?;
-                            trans = Some([tx, ty, tz]);
-                            p += 12;
-                        }
-                    } else if t == 5 && is_root {
+                4 => {
+                    // Type 4 (`shExec` 0x001002c0:273-278 -> LAB_001006f0:324-344 / `FUN_0054fdc0` 0x0054fdc0:8573-8578 -> 8628-8652):
+                    // Copies previous `next_trans` to `cur_trans`, then reads NEW `next_trans` via `GetSF`:
+                    // - Root (`param_2[1] == 0`): 3x f16 at 4-byte stride (`p+0, p+4, p+8`, advancing 12B).
+                    // - Non-root: 3x f16 at 2-byte stride (`p+0, p+2, p+4`, advancing 6B).
+                    // Followed by 6B Q12 Euler rot + 10B axis-angle delta (`3x i16` Q15 axis + `i16` Q12 angle + 2B pad).
+                    if is_root {
                         if p + 12 <= data.len() {
                             let tx = f16_to_f32(read_u16(data, p)?);
                             let ty = f16_to_f32(read_u16(data, p + 4)?);
                             let tz = f16_to_f32(read_u16(data, p + 8)?);
-                            trans = Some([tx, ty, tz]);
+                            next_trans = Some([tx, ty, tz]);
                             p += 12;
                         }
-                    } else {
-                        if p + 6 <= data.len() {
-                            let tx = f16_to_f32(read_u16(data, p)?);
-                            let ty = f16_to_f32(read_u16(data, p + 2)?);
-                            let tz = f16_to_f32(read_u16(data, p + 4)?);
-                            trans = Some([tx, ty, tz]);
-                            p += 6;
-                        }
+                    } else if p + 6 <= data.len() {
+                        let tx = f16_to_f32(read_u16(data, p)?);
+                        let ty = f16_to_f32(read_u16(data, p + 2)?);
+                        let tz = f16_to_f32(read_u16(data, p + 4)?);
+                        next_trans = Some([tx, ty, tz]);
+                        p += 6;
                     }
-                    if p + 6 <= data.len() {
+                    trans = prev_next_trans.or(next_trans);
+                    if p + 16 <= data.len() {
                         let rx = read_i16(data, p)? as f32 / 4096.0;
                         let ry = read_i16(data, p + 2)? as f32 / 4096.0;
                         let rz = read_i16(data, p + 4)? as f32 / 4096.0;
                         rot = Some([rx, ry, rz]);
-                        p += 6 + 10;
+                        let ax = read_i16(data, p + 6)? as f32 / 32768.0;
+                        let ay = read_i16(data, p + 8)? as f32 / 32768.0;
+                        let az = read_i16(data, p + 10)? as f32 / 32768.0;
+                        let ang = read_i16(data, p + 12)? as f32 / 4096.0;
+                        axis_angle_delta = Some([ax, ay, az, ang]);
+                        p += 16;
+                    } else if p + 6 <= data.len() {
+                        let rx = read_i16(data, p)? as f32 / 4096.0;
+                        let ry = read_i16(data, p + 2)? as f32 / 4096.0;
+                        let rz = read_i16(data, p + 4)? as f32 / 4096.0;
+                        rot = Some([rx, ry, rz]);
+                        p = (p + 16).min(data.len());
                     }
                 }
-                6 => {
-                    // Type 6: Dual translation vectors (PC 0x54FC67)
+                5 => {
+                    // Type 5 (`shExec` 0x001002c0:279-304 / `FUN_0054fdc0` 0x0054fdc0:8579-8606):
+                    // Reads `cur_trans` and mirrors it into `next_trans`:
+                    // - Root (`param_2[1] == 0`): 3x f32 (12B).
+                    // - Non-root: 3x f16 `GetSF` (6B).
+                    // Followed by 6B Q12 Euler rot + 10B axis-angle delta.
                     if is_root {
                         if p + 12 <= data.len() {
                             let tx = read_f32(data, p)?;
                             let ty = read_f32(data, p + 4)?;
                             let tz = read_f32(data, p + 8)?;
                             trans = Some([tx, ty, tz]);
-                            p += 24;
-                        }
-                    } else {
-                        if p + 6 <= data.len() {
-                            let tx = f16_to_f32(read_u16(data, p)?);
-                            let ty = f16_to_f32(read_u16(data, p + 2)?);
-                            let tz = f16_to_f32(read_u16(data, p + 4)?);
-                            trans = Some([tx, ty, tz]);
+                            next_trans = trans;
                             p += 12;
                         }
+                    } else if p + 6 <= data.len() {
+                        let tx = f16_to_f32(read_u16(data, p)?);
+                        let ty = f16_to_f32(read_u16(data, p + 2)?);
+                        let tz = f16_to_f32(read_u16(data, p + 4)?);
+                        trans = Some([tx, ty, tz]);
+                        next_trans = trans;
+                        p += 6;
                     }
-                    if p + 6 <= data.len() {
+                    if p + 16 <= data.len() {
                         let rx = read_i16(data, p)? as f32 / 4096.0;
                         let ry = read_i16(data, p + 2)? as f32 / 4096.0;
                         let rz = read_i16(data, p + 4)? as f32 / 4096.0;
                         rot = Some([rx, ry, rz]);
-                        p += 6 + 10;
+                        let ax = read_i16(data, p + 6)? as f32 / 32768.0;
+                        let ay = read_i16(data, p + 8)? as f32 / 32768.0;
+                        let az = read_i16(data, p + 10)? as f32 / 32768.0;
+                        let ang = read_i16(data, p + 12)? as f32 / 4096.0;
+                        axis_angle_delta = Some([ax, ay, az, ang]);
+                        p += 16;
+                    } else if p + 6 <= data.len() {
+                        let rx = read_i16(data, p)? as f32 / 4096.0;
+                        let ry = read_i16(data, p + 2)? as f32 / 4096.0;
+                        let rz = read_i16(data, p + 4)? as f32 / 4096.0;
+                        rot = Some([rx, ry, rz]);
+                        p = (p + 16).min(data.len());
+                    }
+                }
+                6 => {
+                    // Type 6 (`shExec` 0x001002c0:305-344 / `FUN_0054fdc0` 0x0054fdc0:8607-8653):
+                    // Dual translation track: reads `cur_trans` (3x f32 if root / 3x f16 if non-root),
+                    // then falls through to `LAB_001006f0` to read `next_trans` via `GetSF`
+                    // (3x f16 at 4B stride / 12B if root; 3x f16 at 2B stride / 6B if non-root).
+                    // Followed by 6B Q12 Euler rot + 10B axis-angle delta.
+                    if is_root {
+                        if p + 24 <= data.len() {
+                            let tx = read_f32(data, p)?;
+                            let ty = read_f32(data, p + 4)?;
+                            let tz = read_f32(data, p + 8)?;
+                            trans = Some([tx, ty, tz]);
+                            let ntx = f16_to_f32(read_u16(data, p + 12)?);
+                            let nty = f16_to_f32(read_u16(data, p + 16)?);
+                            let ntz = f16_to_f32(read_u16(data, p + 20)?);
+                            next_trans = Some([ntx, nty, ntz]);
+                            p += 24;
+                        }
+                    } else if p + 12 <= data.len() {
+                        let tx = f16_to_f32(read_u16(data, p)?);
+                        let ty = f16_to_f32(read_u16(data, p + 2)?);
+                        let tz = f16_to_f32(read_u16(data, p + 4)?);
+                        trans = Some([tx, ty, tz]);
+                        let ntx = f16_to_f32(read_u16(data, p + 6)?);
+                        let nty = f16_to_f32(read_u16(data, p + 8)?);
+                        let ntz = f16_to_f32(read_u16(data, p + 10)?);
+                        next_trans = Some([ntx, nty, ntz]);
+                        p += 12;
+                    }
+                    if p + 16 <= data.len() {
+                        let rx = read_i16(data, p)? as f32 / 4096.0;
+                        let ry = read_i16(data, p + 2)? as f32 / 4096.0;
+                        let rz = read_i16(data, p + 4)? as f32 / 4096.0;
+                        rot = Some([rx, ry, rz]);
+                        let ax = read_i16(data, p + 6)? as f32 / 32768.0;
+                        let ay = read_i16(data, p + 8)? as f32 / 32768.0;
+                        let az = read_i16(data, p + 10)? as f32 / 32768.0;
+                        let ang = read_i16(data, p + 12)? as f32 / 4096.0;
+                        axis_angle_delta = Some([ax, ay, az, ang]);
+                        p += 16;
+                    } else if p + 6 <= data.len() {
+                        let rx = read_i16(data, p)? as f32 / 4096.0;
+                        let ry = read_i16(data, p + 2)? as f32 / 4096.0;
+                        let rz = read_i16(data, p + 4)? as f32 / 4096.0;
+                        rot = Some([rx, ry, rz]);
+                        p = (p + 16).min(data.len());
                     }
                 }
                 _ => {}
@@ -455,6 +563,9 @@ fn parse_anm_with_stride(
                 cur_frame[bone_idx] = Some(BoneTransform {
                     rotation: rot.or(prev_rot),
                     translation: trans.or(prev_trans),
+                    next_translation: next_trans.or(prev_next_trans),
+                    axis_angle_delta,
+                    nibble_flag,
                     track_type: AnimationTrackType::from(t),
                 });
             }
@@ -941,6 +1052,9 @@ pub fn interpolate_frames_into(
                 out.bones.push(Some(BoneTransform {
                     rotation: rot,
                     translation: trans,
+                    next_translation: a.next_translation,
+                    axis_angle_delta: a.axis_angle_delta,
+                    nibble_flag: a.nibble_flag,
                     track_type: a.track_type,
                 }));
             }
@@ -1000,6 +1114,9 @@ pub fn interpolate_frames_hermite_into(
                 out.bones.push(Some(BoneTransform {
                     rotation: rot,
                     translation: trans,
+                    next_translation: a.next_translation,
+                    axis_angle_delta: a.axis_angle_delta,
+                    nibble_flag: a.nibble_flag,
                     track_type: a.track_type,
                 }));
             }
@@ -1055,6 +1172,9 @@ pub fn blend_frame_in_place(prev_frame: &AnimationFrame, alpha: f32, target: &mu
                 Some(BoneTransform {
                     rotation: rot,
                     translation: trans,
+                    next_translation: b.next_translation,
+                    axis_angle_delta: b.axis_angle_delta,
+                    nibble_flag: b.nibble_flag,
                     track_type: b.track_type,
                 })
             }

@@ -178,6 +178,9 @@ impl DramaDemoPlayer {
         }
         self.current_state = final_state;
         self.sync_camera_and_actors();
+        // Match `sh2pc.exe` `0x005a200e -> FUN_00478260`: clear cutscene DoF/motion-blur filter
+        // state immediately when the cutscene finishes or is skipped into gameplay.
+        self.special_fx = super::super::special_fx::SpecialFxEvaluation::default();
         self.fade_alpha = 1.0;
         self.step = DramaDemoStep::Finished;
     }

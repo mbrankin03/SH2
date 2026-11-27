@@ -89,6 +89,15 @@ fn random_val(pixel: vec2<u32>, frame: u32) -> f32 {
     return f32(hash_u32(seed)) / 4294967295.0;
 }
 
+// Reconstruct positive view-space Z (PS2 world mm) from hardware depth buffer + inverse projection.
+fn reconstruct_view_z(coords: vec2<i32>, dims: vec2<u32>) -> f32 {
+    let depth_val = textureLoad(depth_tex, coords, 0);
+    let uv_px = (vec2<f32>(coords) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
+    let clip_pos = vec4<f32>(uv_px.x * 2.0 - 1.0, (1.0 - uv_px.y) * 2.0 - 1.0, depth_val, 1.0);
+    let view_pos_h = camera.inv_proj * clip_pos;
+    return abs(view_pos_h.z / max(1e-5, abs(view_pos_h.w)));
+}
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let dims = textureDimensions(hdr_in);
@@ -120,39 +129,44 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var hdr_color = textureLoad(hdr_in, sample_coords, 0).rgb * post.exposure;
 
     // 0a. PS2 `sh2gfw_Swap_Soft` (`0x001785e0`) Depth-of-Field:
-    //     - Dual-plane `EffectMode = 8` (`sh2pc.exe` `0x005a1f30` `Toilet_Dof_Filter`): reconstructs
-    //       view-space Z (`view_z`) from `depth_tex` + `camera.inv_proj`, splits foreground (`< focus`)
-    //       vs background (`>= focus`) at `dof_focus_params.x`, and applies the exact 3x3 tap grid
-    //       (`grid_n = 3, step = 8`, `-4` in 12.4 fixed-point = `-0.25 px` bias, `SLUS_202.28` `0x001785e0:878`).
+    //     - Dual-plane `EffectMode = 8` (`sh2pc.exe` `0x005a1f30` `Toilet_Dof_Filter`, `0x005a1b50`
+    //       Z-plane alpha mask, `SLUS_202.28` `Make_Filter_Packet` `case 8` `0x0017b280`):
+    //       reconstructs view-space Z (`view_z`) from `depth_tex` + `camera.inv_proj`, splits
+    //       foreground (`< focus_mm`) vs background (`>= focus_mm`) at `dof_focus_params.x`
+    //       (`450.0` mm from `z_ndc = 0x3f49cd3e` with `er01` `z_near = 100.0`, `z_far = 7500.0`),
+    //       and applies the 3x3 tap grid (`grid_n = 3`, `step_param = 8 -> 2.0` PS2 px, `-0.25 px`
+    //       12.4 sub-pixel bias) with `TEST_1` `ATST` same-plane isolation (`Near` `GREATER` / `Far`
+    //       `LEQUAL`, `0x001785e0:822-833`) to prevent foreground/background halo bleeding.
     //     - Single-plane `EffectMode = 5` (closet bars / tunnel): 2x2 box at `dof_tap_offset_px`.
     if (post.dof_focus_params.x > 0.001) {
-        let depth_val = textureLoad(depth_tex, sample_coords, 0);
-        let uv_px = (vec2<f32>(sample_coords) + vec2<f32>(0.5, 0.5)) / max(vec2<f32>(dims), vec2<f32>(1.0, 1.0));
-        let clip_pos = vec4<f32>(uv_px.x * 2.0 - 1.0, (1.0 - uv_px.y) * 2.0 - 1.0, depth_val, 1.0);
-        let view_pos_h = camera.inv_proj * clip_pos;
-        let view_z = abs(view_pos_h.z / max(1e-5, abs(view_pos_h.w)));
-
-        // Exact `sh2pc.exe` `0x005a1b50` Z-plane split (`z_ndc = 0x3f49cd3e` -> `focus_mm = 1180.8 mm`):
-        // foreground (`view_z < focus_mm`) uses `near_strength`; background uses `far_strength`.
+        let view_z = reconstruct_view_z(sample_coords, dims);
         let focus_mm = post.dof_focus_params.x;
+        let center_is_near = view_z < focus_mm;
         let local_blur = clamp(
-            select(post.dof_focus_params.z, post.dof_focus_params.y, view_z < focus_mm),
+            select(post.dof_focus_params.z, post.dof_focus_params.y, center_is_near),
             0.0,
             1.0,
         );
         if (local_blur > 0.001) {
-            let step_px = max(post.dof_focus_params.w, 1.0) * res_scale;
+            let step_px = max(post.dof_focus_params.w, 0.25) * res_scale;
             let bias_px = PS2_SWAP_SUBPIXEL_BIAS_PX * res_scale;
             var tap_sum = vec3<f32>(0.0);
+            var tap_weight = 0.0;
             for (var iy: i32 = -1; iy <= 1; iy = iy + 1) {
                 for (var ix: i32 = -1; ix <= 1; ix = ix + 1) {
                     let delta = vec2<i32>(round(vec2<f32>(f32(ix), f32(iy)) * step_px + vec2<f32>(bias_px, bias_px)));
-                    let tap = textureLoad(hdr_in, clamp(sample_coords + delta, vec2<i32>(0), max_coord), 0).rgb * post.exposure;
-                    tap_sum = tap_sum + tap;
+                    let tap_coords = clamp(sample_coords + delta, vec2<i32>(0), max_coord);
+                    let tap_is_near = reconstruct_view_z(tap_coords, dims) < focus_mm;
+                    if (tap_is_near == center_is_near) {
+                        let tap = textureLoad(hdr_in, tap_coords, 0).rgb * post.exposure;
+                        tap_sum = tap_sum + tap;
+                        tap_weight = tap_weight + 1.0;
+                    }
                 }
             }
-            // Exact `sh2gfw_Swap_Soft` (`0x001785e0`) / `sh2pc.exe` `0x005a1fbe` 3x3 tap count (`grid_n = 3` -> 9 taps).
-            hdr_color = mix(hdr_color, tap_sum / 9.0, local_blur);
+            if (tap_weight > 0.0) {
+                hdr_color = mix(hdr_color, tap_sum / tap_weight, local_blur);
+            }
         }
     } else if (post.dof_strength > 0.001) {
         let dof_alpha = clamp(post.dof_strength, 0.0, 1.0);

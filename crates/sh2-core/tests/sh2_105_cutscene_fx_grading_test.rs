@@ -261,6 +261,70 @@ fn test_flesh_lips_and_boss_cutscene_ps2_motion_blur_and_dof_scaling() {
 }
 
 #[test]
+fn test_first_toilet_dual_plane_dof_parity_and_exit_reset() {
+    use sh2_core::cutscene::{
+        TOILET_DOF_CLIP_FAR_MM, TOILET_DOF_CLIP_NEAR_MM, TOILET_DOF_FOCUS_DIST_MM,
+        TOILET_DOF_FOCUS_Z_NDC, TOILET_DOF_STEP_PS2_PX,
+    };
+
+    // 1. Focus plane inversion from `sh2pc.exe` `0x005a1db1` (`z_ndc = 0x3f49cd3e`) + `0x0047c139`
+    //    (`z_near = 100.0`, `z_far = 7500.0`) + `0x0041acd8` (`D3DXMatrixPerspectiveFovLH`) == 450.0 mm.
+    assert_eq!(TOILET_DOF_CLIP_NEAR_MM, 100.0);
+    assert_eq!(TOILET_DOF_CLIP_FAR_MM, 7500.0);
+    assert_eq!(TOILET_DOF_FOCUS_Z_NDC.to_bits(), 0x3f49_cd3e);
+    assert!(
+        (TOILET_DOF_FOCUS_DIST_MM - 450.0).abs() < 1e-2,
+        "Expected 450.0 mm focus plane, got {TOILET_DOF_FOCUS_DIST_MM}"
+    );
+    // 2. `sh2gfw_Swap_Soft` (`0x001785e0:852`) 12.4 fixed-point step: `step_param = 8 * 4 / 16 = 2.0` px.
+    assert_eq!(TOILET_DOF_STEP_PS2_PX, 2.0);
+
+    // 3. Frame 1 (`sh2pc.exe` `0x005a1f66..0x005a1fd7`): near = 1/128, far = 48/128 = 0.375.
+    let f1 = SpecialFxEvaluation::evaluate(SpecialFxEvalInput {
+        demo_no: CS_INTRO_BATHROOM_DEMO_NO,
+        scene_frame: 1.0,
+        ..SpecialFxEvalInput::default()
+    });
+    assert!(f1.dof_active);
+    assert!((f1.dof_focus_dist_mm - 450.0).abs() < 1e-2);
+    assert_eq!(f1.dof_near_strength, 1.0 / 128.0);
+    assert_eq!(f1.dof_far_strength, 48.0 / 128.0);
+    assert_eq!(f1.dof_step_ps2_px, 2.0);
+
+    // 4. Frame 300 mid-rack: near = floor(299 * 0.15472312 + 1) = 47, far = floor((97 - 47.262) * 0.5) = 24.
+    let f300 = SpecialFxEvaluation::evaluate(SpecialFxEvalInput {
+        demo_no: CS_INTRO_BATHROOM_DEMO_NO,
+        scene_frame: 300.0,
+        ..SpecialFxEvalInput::default()
+    });
+    assert_eq!(f300.dof_near_strength, 47.0 / 128.0);
+    assert_eq!(f300.dof_far_strength, 24.0 / 128.0);
+
+    // 5. Frame 615+ (`__ftol` truncation at `0x005a1fae`/`0x005a1fcf`): near = 96/128 = 0.75, far = 0.0!
+    let f615 = SpecialFxEvaluation::evaluate(SpecialFxEvalInput {
+        demo_no: CS_INTRO_BATHROOM_DEMO_NO,
+        scene_frame: 615.0,
+        ..SpecialFxEvalInput::default()
+    });
+    assert_eq!(f615.dof_near_strength, 96.0 / 128.0);
+    assert_eq!(f615.dof_far_strength, 0.0);
+
+    // 6. Gameplay handoff (`demo_no = 0`, `er01`): DoF must be completely disabled & zeroed.
+    let gameplay = SpecialFxEvaluation::evaluate(SpecialFxEvalInput {
+        room_id: 0x01,
+        demo_no: 0,
+        scene_frame: 0.0,
+        ..SpecialFxEvalInput::default()
+    });
+    assert!(!gameplay.dof_active);
+    assert_eq!(gameplay.dof_strength, 0.0);
+    assert_eq!(gameplay.dof_focus_dist_mm, 0.0);
+    assert_eq!(gameplay.dof_near_strength, 0.0);
+    assert_eq!(gameplay.dof_far_strength, 0.0);
+    assert_eq!(gameplay.dof_step_ps2_px, 0.0);
+}
+
+#[test]
 fn test_room_312_sunset_grading_leave_maria_tree_lighting_and_final_boss_draw_distance() {
     // 1. Hotel Room 312 (`R_HTL_RM_312 = 0xA2`) before watching the VHS tape (`event_index != 0`):
     // Warm sunset tint `RGB(255, 255, 227)` + zero fog density (`RunHotelRoom312FogVolumeFix`)

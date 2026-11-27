@@ -378,7 +378,7 @@ mod tests {
             glow_strength: 0.35,
             glow_step_px: 2.0,
             fade_rgba: [1.0, 0.0, 0.0, 0.5],
-            dof_focus_params: [1180.8, 0.75, 0.004, 8.0],
+            dof_focus_params: [450.0, 0.75, 0.0, 2.0],
         };
 
         let bytes = bytemuck::bytes_of(&uniforms);

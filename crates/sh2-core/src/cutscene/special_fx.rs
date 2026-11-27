@@ -179,18 +179,30 @@ impl Default for SpecialFxEvalInput {
 }
 
 /// `first_toilet` (`CS_INTRO_BATHROOM`, `demo_no = 1`) dual-plane rack-focus DoF constants
-/// disassembled 1:1 from `sh2pc.exe` `0x005a1f30..0x005a1fe4` (`Toilet_Dof_Filter`) & `0x005a1b50`:
+/// disassembled 1:1 from `sh2pc.exe` `0x005a1f30..0x005a1fe4` (`Toilet_Dof_Filter`), `0x005a1b50`,
+/// `0x0047c139`, `0x0041acd8`, and `SLUS_202.28` `GFW/sh2_DrawEnvData.c:402,414` + `sh2gfw_Swap_Soft` (`0x001785e0`):
 /// - `0x74e368` (`0.15472312` = `95.0 / 614.0`): per-frame near-blur ramp slope (frames `1..=615`).
 /// - `0x6bce30` (`96.0` / `128.0`): maximum near-blur GS `FIX` alpha (`0.75`).
-/// - `0x74e364` (`97.0`), `0x62fe1c` (`0.5`): far-blur inverse ramp `((97.0 - near_128) * 0.5) / 128.0`.
-/// - `0x5a1e6c` (`0x3f49cd3e` = `0.788288` D3D8 Z-plane at PS2 `near = 250.0` mm -> `1180.8` mm).
-/// - `0x5a1fbe` (`0x08` = `8` px): `sh2gfw_Swap_Soft` (`0x001785e0`) `3x3` tap step in PS2 `448p` pixels.
+/// - `0x74e364` (`97.0`), `0x62fe1c` (`0.5`): far-blur inverse ramp `floor((97.0 - near_f) * 0.5) / 128.0`.
+/// - `er01` (`ER_DRAW_ENV_DATA` `room_no = 1`, `clip_near = 0.0`, `clip_far = 0.0`) defaults to
+///   `z_near = 100.0` mm (`0x42c80000`) and `z_far = 7500.0` mm (`0x45ea6000`) in both `SLUS_202.28`
+///   (`GFW/sh2_DrawEnvData.c:402,414`) and `sh2pc.exe` (`0x0047c139`). Inverting `0x005a1db1`
+///   (`z_ndc = 0x3f49cd3e = 0.788288`) through `D3DXMatrixPerspectiveFovLH` (`0x0041acd8`) yields
+///   `view_z = 100.0 / (1.0 - 0.788288 * (7400.0 / 7500.0)) = 450.0` mm.
+/// - `0x5a1fbe`/`0x5a1fda` (`step_param = 8`): `sh2gfw_Swap_Soft` (`0x001785e0:852`) scales `param_4`
+///   by `4` in PS2 GS 12.4 fixed-point (`16 == 1.0 px`), so `step_ps2_px = 8 * 4 / 16 = 2.0` PS2 `448p` px.
 pub const TOILET_DOF_RAMP_SLOPE: f32 = 0.154_723_12;
 pub const TOILET_DOF_NEAR_MAX_128: f32 = 96.0;
 pub const TOILET_DOF_FAR_COMPLEMENT_128: f32 = 97.0;
+pub const TOILET_DOF_CLIP_NEAR_MM: f32 = 100.0;
+pub const TOILET_DOF_CLIP_FAR_MM: f32 = 7500.0;
 pub const TOILET_DOF_FOCUS_Z_NDC: f32 = f32::from_bits(0x3f49_cd3e);
-pub const TOILET_DOF_FOCUS_DIST_MM: f32 = 250.0 / (1.0 - TOILET_DOF_FOCUS_Z_NDC);
-pub const TOILET_DOF_STEP_PS2_PX: f32 = 8.0;
+pub const TOILET_DOF_FOCUS_DIST_MM: f32 = TOILET_DOF_CLIP_NEAR_MM
+    / (1.0
+        - TOILET_DOF_FOCUS_Z_NDC
+            * ((TOILET_DOF_CLIP_FAR_MM - TOILET_DOF_CLIP_NEAR_MM) / TOILET_DOF_CLIP_FAR_MM));
+pub const TOILET_DOF_STEP_PARAM: f32 = 8.0;
+pub const TOILET_DOF_STEP_PS2_PX: f32 = TOILET_DOF_STEP_PARAM * 0.25;
 
 /// Evaluated PS2 Depth-of-Field (`Kari_hisyakai`) and Motion Blur (`enSetBlur`) state for a frame (`SH2-105`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -204,7 +216,7 @@ pub struct SpecialFxEvaluation {
     /// Normalized DoF / closet bar blur blend weight (`[0.0, 1.0]`) passed to `PostUniforms`.
     pub dof_strength: f32,
     /// Dual-plane DoF focus split distance in PS2 mm (`> 0.0` enables near/far `EffectMode = 8`
-    /// depth-aware rack focus, e.g. `1180.8` mm in `first_toilet` `0x005a1b50`; `0.0` = single-plane).
+    /// depth-aware rack focus, e.g. `450.0` mm in `first_toilet` `0x005a1b50` + `0x0047c139`; `0.0` = single-plane).
     pub dof_focus_dist_mm: f32,
     /// Near-plane blur strength (`view_dist < dof_focus_dist_mm`) in `0.0..=1.0` (`0x005a1fbb`).
     pub dof_near_strength: f32,
@@ -268,11 +280,16 @@ impl SpecialFxEvaluation {
             dof_step_ps2_px,
         ) = match input.demo_no {
             CS_INTRO_BATHROOM_DEMO_NO => {
-                // Exact `sh2pc.exe` `0x005a1f30` (`Toilet_Dof_Filter`, `EffectMode = 8`):
+                // Exact `sh2pc.exe` `0x005a1f30..0x005a1fd7` (`Toilet_Dof_Filter`, `EffectMode = 8`):
                 // racks focus from foreground urinal (frame 1) onto James in background (frame 615+).
-                let near_128 = ((input.scene_frame - 1.0) * TOILET_DOF_RAMP_SLOPE + 1.0)
+                // Matches `__ftol` (`0x005a1fae`, `0x005a1fcf`) integer byte truncation so `far_128`
+                // reaches exact `0` at frame 615+ (`floor((97.0 - 96.0) * 0.5) == 0`).
+                let near_f = ((input.scene_frame - 1.0) * TOILET_DOF_RAMP_SLOPE + 1.0)
                     .clamp(1.0, TOILET_DOF_NEAR_MAX_128);
-                let far_128 = ((TOILET_DOF_FAR_COMPLEMENT_128 - near_128) * 0.5).max(0.0);
+                let near_128 = near_f.floor();
+                let far_128 = ((TOILET_DOF_FAR_COMPLEMENT_128 - near_f) * 0.5)
+                    .max(0.0)
+                    .floor();
                 let near_s = (near_128 / 128.0).clamp(0.0, 1.0);
                 let far_s = (far_128 / 128.0).clamp(0.0, 1.0);
                 (

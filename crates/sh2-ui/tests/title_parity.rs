@@ -163,11 +163,14 @@ fn test_sh2_166_title_load_routes_to_load_menu_and_splash_skip_delegates() {
         MenuSoundCue, SaveAvailability,
     };
 
-    // 1. SplashIntro skip delegates to `BootSequenceState::handle_skip`:
-    //    Strict PS2 (`BootProfile::Ps2Original`, `allow_ps2_boot_skip == false`) ignores skip.
+    // 1. SplashIntro defaults to Retail PC (`sh2pc.exe` `0x00405e80`, `0x00406280`, `0x004062a0`)
+    //    and delegates skip input to `BootSequenceState::handle_skip`.
     let mut sm = TitleStateMachine::new();
     assert_eq!(sm.phase, TitlePhase::SplashIntro);
-    assert_eq!(sm.boot_sequence.profile, BootProfile::Ps2Original);
+    assert_eq!(sm.boot_sequence.profile, BootProfile::RetailPc);
+
+    //    Explicit PS2 prototype profile (`BootProfile::Ps2Original`, `allow_ps2_boot_skip == false`) ignores skip.
+    sm.boot_sequence = BootSequenceState::new(BootProfile::Ps2Original);
     assert_eq!(sm.handle_input(MenuNavAction::Confirm), MenuSoundCue::None);
     assert_eq!(sm.phase, TitlePhase::SplashIntro);
     assert_eq!(sm.boot_sequence.stage, BootLogoStage::FadeIn);

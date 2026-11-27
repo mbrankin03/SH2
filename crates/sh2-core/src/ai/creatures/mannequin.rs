@@ -16,12 +16,15 @@
 
 use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
+use crate::ai::pathfinding::{check_path_ray, EnemyPathState, PathEnemyType, RoomForbiddenAreas};
 use crate::ai::sensory::{
-    evaluate_sensory, is_lit_by_flashlight, mkn_walk_speed_scale, normalize_angle, DifficultyLevel,
-    PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
+    check_hit_eyes, evaluate_sensory_with_los, is_lit_by_flashlight, mkn_walk_speed_scale,
+    normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting, SensoryNotice,
+    SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sh2_assets::formats::cld::WallSegment;
 use std::f32::consts::PI;
 
 /// Authentic Mannequin state enum (`0x4c3790`).
@@ -66,6 +69,8 @@ pub struct MannequinController {
     pub timer_ticks: f32,
     /// Optional nearby enemy position for Hyper Spray friendly-fire in [`MknState::Confuse`] (`0x00155b20`).
     pub confuse_friendly_target: Option<Vec3>,
+    /// Obstacle-avoidance pathfinding state (`enInitPath` `0x00144aa0` / `enSetPath` `0x00144ae0`).
+    pub path_state: EnemyPathState,
     pub sensory: SensoryProfile,
     pub anim: CreatureAnimationController,
 }
@@ -127,6 +132,7 @@ impl MannequinController {
             vel_y: 0.0,
             timer_ticks: 0.0,
             confuse_friendly_target: None,
+            path_state: EnemyPathState::new(yaw),
             sensory: SensoryProfile::mannequin(),
             anim: CreatureAnimationController::new_mannequin(),
         }
@@ -137,6 +143,24 @@ impl MannequinController {
         target: &PerceivableTarget,
         lighting: RoomLighting,
         difficulty: DifficultyLevel,
+        dt: f32,
+    ) {
+        self.update_with_world(target, lighting, difficulty, &[], None, None, 0.0, dt);
+    }
+
+    /// Update Mannequin AI with `.cld` wall LOS (`enCheckHitEyes` `0x00145540`), `enSetPath`
+    /// (`0x00144ae0`), [`RoomForbiddenAreas`], and tribe alerts (`enCommunicateTribe` `0x00146e40`,
+    /// `en_mkn.c:395`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_world(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        walls: &[WallSegment],
+        forbidden: Option<&RoomForbiddenAreas>,
+        tribe_alert_pos: Option<Vec3>,
+        path_sway_sample: f32,
         dt: f32,
     ) {
         if self.state == MknState::Dying {
@@ -169,27 +193,35 @@ impl MannequinController {
         let dist = (dx * dx + dz * dz).sqrt();
         let target_dir = dx.atan2(dz);
 
-        // Flashlight beam detection for waking up from STAY (`0x4c0eb0`)
-        let lit_by_player = is_lit_by_flashlight(
-            self.position,
-            target.position,
-            target.yaw,
-            target.is_flashlight_on,
-        );
+        // Flashlight beam detection for waking up from STAY (`0x4c0eb0`), gated by `.cld` wall LOS
+        let los_clear =
+            walls.is_empty() || check_hit_eyes(self.position, target.position, walls) < 0.0;
+        let lit_by_player = los_clear
+            && is_lit_by_flashlight(
+                self.position,
+                target.position,
+                target.yaw,
+                target.is_flashlight_on,
+            );
 
         match self.state {
             MknState::Stay => {
                 // Mannequin stands completely still like a prop until:
-                // 1) Flashlight shines directly on it within 2,250 units
-                // 2) Player approaches within 900 units
-                if (lit_by_player && dist < 2250.0) || dist < 900.0 {
-                    if dist <= 1000.0 {
+                // 1) Flashlight shines directly on it within 2,250 units (unoccluded)
+                // 2) Player approaches within 900 units (unoccluded)
+                // 3) Nearby Mannequin broadcasts tribe alert (`enCommunicateTribe(2)`, `en_mkn.c:395`)
+                if (lit_by_player && dist < 2250.0)
+                    || (los_clear && dist < 900.0)
+                    || tribe_alert_pos.is_some()
+                {
+                    if los_clear && dist <= 1000.0 {
                         // Instant strike if player is immediately adjacent
                         self.state = MknState::Attack;
                     } else {
                         self.state = MknState::Precaution;
                     }
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
@@ -203,7 +235,7 @@ impl MannequinController {
                 self.position.x += self.yaw.sin() * 576.0 * dt;
                 self.position.z += self.yaw.cos() * 576.0 * dt;
 
-                let (notice, alert) = evaluate_sensory(
+                let (notice, alert) = evaluate_sensory_with_los(
                     &self.sensory,
                     self.position,
                     self.yaw,
@@ -211,13 +243,15 @@ impl MannequinController {
                     target,
                     lighting,
                     difficulty,
+                    walls,
                     dt,
                 );
                 self.alert_timer = alert;
 
-                if notice != SensoryNotice::None {
+                if notice != SensoryNotice::None || tribe_alert_pos.is_some() {
                     self.state = MknState::Precaution;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
@@ -226,11 +260,28 @@ impl MannequinController {
                 if self.state_timer > 1.0 {
                     self.state = MknState::Chase;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
             MknState::Chase => {
-                self.turn_towards(target_dir, 3.5 * dt);
+                let steer_dir =
+                    if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
+                        let ticks = (dt * 60.0).round().max(1.0) as i16;
+                        self.path_state.cur_angle = self.yaw;
+                        self.path_state.set_path(
+                            PathEnemyType::Mannequin,
+                            self.position,
+                            target.position,
+                            path_sway_sample,
+                            ticks,
+                            |a, b| check_path_ray(a, b, 150.0, walls, forbidden),
+                        );
+                        self.path_state.target_angle
+                    } else {
+                        target_dir
+                    };
+                self.turn_towards(steer_dir, 3.5 * dt);
 
                 let diff_idx = difficulty.as_index();
                 if dist <= self.sensory.attack_ranges[diff_idx] {

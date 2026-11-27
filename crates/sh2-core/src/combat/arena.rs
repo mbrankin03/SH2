@@ -13,7 +13,7 @@
 
 use super::attack_list::{get_attack_spec, AttackDispatchKind, AttackSpec};
 use super::controller::{CombatController, CombatMode};
-use super::enemy_attack::dispatch_enemy_attack;
+use super::enemy_attack::{dispatch_enemy_attack_ex, EnemyAttackGuardInput};
 use super::grapple::GrappleSession;
 use super::hitboxes::{
     generate_hyper_spray_rays, generate_shotgun_cone_rays, hyper_spray_effective_range, CombatRng,
@@ -449,13 +449,19 @@ impl CombatArena {
 
         let is_outdoor = self.ai.is_outdoor;
         let difficulty = self.ai.difficulty.as_index() as u8;
+        let guard_input = EnemyAttackGuardInput {
+            guard_triggered: self.player.last_guard_triggered,
+            guard_held: self.player.last_guard_held,
+            player_can_guard: self.player.can_guard(),
+        };
+        let rng_bits = self.rng.next_u32();
         let enemy = &mut self.ai.enemies[enemy_idx];
         let species = enemy.species();
         let e_pos = enemy.position();
         let e_yaw = enemy.yaw();
         let anim_frame = (enemy.anim().clip_time() * 30.0) as u8;
 
-        let outcome = dispatch_enemy_attack(
+        let outcome = dispatch_enemy_attack_ex(
             species,
             atk,
             &mut enemy.attack_work,
@@ -465,8 +471,10 @@ impl CombatArena {
             self.player_position,
             self.player_yaw,
             &mut self.player.guard_state,
+            guard_input,
             difficulty,
             is_outdoor,
+            rng_bits,
         );
 
         if let Some(sfx) = outcome.sfx_id {
@@ -476,7 +484,11 @@ impl CombatArena {
         if outcome.hit_player {
             if outcome.is_hug {
                 self.check_enemy_grapple_initiation(enemy_idx);
-            } else if !outcome.guarded && outcome.damage_ap > 0.0 {
+            } else if outcome.instant_kill {
+                self.player.apply_instant_kill();
+            } else if outcome.guarded {
+                self.player.apply_guard_chip_damage(outcome.damage_ap);
+            } else if outcome.damage_ap > 0.0 {
                 self.player.apply_damage(outcome.damage_ap, outcome.is_fog);
             }
         }

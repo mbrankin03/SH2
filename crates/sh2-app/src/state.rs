@@ -123,6 +123,9 @@ pub(crate) struct AppState {
     pub key_ready_held: bool,
     pub key_attack_pressed: bool,
     pub key_attack_held: bool,
+    /// Rising-edge trigger for the Run / Guard key (`ShiftLeft`/`ShiftRight`; `_DAT_0116db3c` in
+    /// `SLUS_202.28` `PlayerChectGuardSuccess` `0x001101d0`, `DAT_00932ca4` in `sh2pc.exe` `0x00534210`).
+    pub key_guard_pressed: bool,
     pub combat_enemy_idx: usize,
     pub struggle_button_press_count: u32,
     pub model_viewer: ModelViewerState,
@@ -290,7 +293,9 @@ impl AppState {
         self.key_right = false;
         self.key_run_held = false;
         self.key_ready_held = false;
+        self.key_attack_pressed = false;
         self.key_attack_held = false;
+        self.key_guard_pressed = false;
         self.key_look_up = false;
         self.key_look_down = false;
         self.key_look_left = false;

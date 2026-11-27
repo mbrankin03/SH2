@@ -15,12 +15,14 @@ use crate::ai::creatures::mary::MaryBossController;
 use crate::ai::creatures::nurse::NurseController;
 use crate::ai::creatures::pyramid_head::PyramidHeadController;
 use crate::ai::creatures::twin_pyramid_head::{TwinPartnerSnapshot, TwinPyramidHeadController};
+use crate::ai::pathfinding::RoomForbiddenAreas;
 use crate::ai::sensory::{DifficultyLevel, PerceivableTarget, RoomLighting};
 use glam::Vec3;
+use sh2_assets::formats::cld::WallSegment;
 
 /// Shared cross-entity context passed into [`ActiveEnemy::update_with_context`].
 #[derive(Debug, Clone, Copy)]
-pub struct EnemyUpdateContext {
+pub struct EnemyUpdateContext<'a> {
     pub player_radius_mm: f32,
     pub player_ammo_empty: bool,
     pub player_spraying: bool,
@@ -32,9 +34,17 @@ pub struct EnemyUpdateContext {
     pub insect_leader: Option<(InsectState, Vec3)>,
     /// Deterministic hover sway sample in `[-250.0, 250.0]` (`shSway1f(-250.0, 0.1)` `enBOSMoveExec` `0x00140df0`).
     pub mary_sway_y_sample: f32,
+    /// Active `.cld` wall segments for `enCheckHitEyes` (`0x00145540`) LOS & `enSetPath` (`0x00144ae0`).
+    pub walls: &'a [WallSegment],
+    /// Active room forbidden rectangles (`enRoomForbiddenArea` `0x00147000` / `sh2pc 0x004a84a0`).
+    pub forbidden_areas: Option<&'a RoomForbiddenAreas>,
+    /// Nearest active tribe alert position matching this enemy's tribe (`enCommunicateTribe` `0x00146e40`).
+    pub tribe_alert_pos: Option<Vec3>,
+    /// Normalized sway sample in `[-0.5, 0.5]` for `enSetPath` wall-follow lock duration (`0x00144ae0`).
+    pub path_sway_sample: f32,
 }
 
-impl Default for EnemyUpdateContext {
+impl Default for EnemyUpdateContext<'_> {
     fn default() -> Self {
         Self {
             player_radius_mm: 200.0,
@@ -47,6 +57,10 @@ impl Default for EnemyUpdateContext {
             mandarin_over_grating: true,
             insect_leader: None,
             mary_sway_y_sample: 0.0,
+            walls: &[],
+            forbidden_areas: None,
+            tribe_alert_pos: None,
+            path_sway_sample: 0.0,
         }
     }
 }
@@ -213,21 +227,56 @@ impl ActiveEnemy {
         );
     }
 
-    /// Update with full cross-entity room context (Twin PH partner, Flesh Lips counter, Mandarin siblings, Insect leader, ammo/spray).
+    /// Update with full cross-entity room context (Twin PH partner, Flesh Lips counter, Mandarin
+    /// siblings, Insect leader, ammo/spray, `.cld` walls, forbidden areas, and tribe alerts).
     pub fn update_with_context(
         &mut self,
         target: &PerceivableTarget,
         lighting: RoomLighting,
         difficulty: DifficultyLevel,
-        ctx: EnemyUpdateContext,
+        ctx: EnemyUpdateContext<'_>,
         dt: f32,
     ) {
         match self {
-            Self::LyingFigure(e) => e.update(target, lighting, difficulty, dt),
-            Self::Mannequin(e) => e.update(target, lighting, difficulty, dt),
-            Self::Nurse(e) => e.update(target, lighting, difficulty, dt),
+            Self::LyingFigure(e) => e.update_with_world(
+                target,
+                lighting,
+                difficulty,
+                ctx.walls,
+                ctx.forbidden_areas,
+                ctx.tribe_alert_pos,
+                ctx.path_sway_sample,
+                dt,
+            ),
+            Self::Mannequin(e) => e.update_with_world(
+                target,
+                lighting,
+                difficulty,
+                ctx.walls,
+                ctx.forbidden_areas,
+                ctx.tribe_alert_pos,
+                ctx.path_sway_sample,
+                dt,
+            ),
+            Self::Nurse(e) => e.update_with_world(
+                target,
+                lighting,
+                difficulty,
+                ctx.walls,
+                ctx.forbidden_areas,
+                ctx.path_sway_sample,
+                dt,
+            ),
             Self::Creeper(e) => e.update(target, dt),
-            Self::PyramidHead(e) => e.update(target, lighting, difficulty, dt),
+            Self::PyramidHead(e) => e.update_with_world(
+                target,
+                lighting,
+                difficulty,
+                ctx.walls,
+                ctx.forbidden_areas,
+                ctx.path_sway_sample,
+                dt,
+            ),
             Self::AbstractDaddy(e) => e.update(target, ctx.player_radius_mm, difficulty, dt),
             Self::FleshLips(e) => e.update(
                 target,

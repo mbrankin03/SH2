@@ -134,6 +134,12 @@ pub struct GamepadInputState {
     pub native_light_attack_pressed: bool,
     /// Zero-latency native split Heavy Attack / Two-Footed Stomp pulse (`SH2-83`).
     pub native_heavy_attack_pressed: bool,
+    /// Run / Guard button rising-edge trigger this tick (`_DAT_0116db3c` `shPadTrigger` in
+    /// `PlayerChectGuardSuccess` `0x001101d0` / `DAT_00932ca4` in `sh2pc.exe` `0x00534210`).
+    pub guard_pressed: bool,
+    /// Run / Guard button currently held (`_DAT_0116db3c` `shPadPress` in
+    /// `PlayerChectGuardSuccess` `0x001101d0` / `DAT_00932ca4` in `sh2pc.exe` `0x00534210`).
+    pub guard_held: bool,
     /// Active controller speaker cue.
     pub pending_speaker_cue: Option<ControllerSpeakerCue>,
     /// Active haptic feedback command.
@@ -178,6 +184,10 @@ pub struct GamepadSnapshot {
     pub camera_mode_cycle_pressed: bool,
     /// Over-the-Shoulder left/right shoulder swap edge-triggered press (`LeftThumb`).
     pub shoulder_swap_pressed: bool,
+    /// Run / Guard button edge-triggered press (`West`, PS2 Type 2 Square `0x8000` / `_DAT_0116db3c`).
+    pub guard_pressed: bool,
+    /// Run / Guard button currently held (`West`, PS2 Type 2 Square `0x8000` / `_DAT_0116db3c`).
+    pub guard_held: bool,
 }
 
 /// Applies symmetric radial-axis deadzone filtering with linear rescaling to `[-1.0, 1.0]`.
@@ -203,6 +213,7 @@ pub struct InputManager {
     pending_quick_turn: bool,
     pending_native_light_attack: bool,
     pending_native_heavy_attack: bool,
+    pending_guard_pressed: bool,
     pending_mouse_look: [f32; 2],
     pending_gyro_look: [f32; 2],
     host_active: bool,
@@ -230,6 +241,7 @@ impl InputManager {
             pending_quick_turn: false,
             pending_native_light_attack: false,
             pending_native_heavy_attack: false,
+            pending_guard_pressed: false,
             pending_mouse_look: [0.0; 2],
             pending_gyro_look: [0.0; 2],
             host_active: false,
@@ -359,6 +371,9 @@ impl InputManager {
         if snapshot.shoulder_swap_pressed {
             self.pending_shoulder_swap = true;
         }
+        if snapshot.guard_pressed {
+            self.pending_guard_pressed = true;
+        }
         self.gamepad_ready = snapshot.ready_weapon_pressed;
         self.host_gamepad = snapshot;
         self.host_gamepad_active = true;
@@ -377,6 +392,7 @@ impl InputManager {
             std::mem::take(&mut self.pending_native_heavy_attack);
         self.state.camera_mode_cycle_pressed = std::mem::take(&mut self.pending_camera_cycle);
         self.state.shoulder_swap_pressed = std::mem::take(&mut self.pending_shoulder_swap);
+        self.state.guard_pressed = std::mem::take(&mut self.pending_guard_pressed);
         self.state.mouse_look_delta_x = std::mem::take(&mut self.pending_mouse_look[0]);
         self.state.mouse_look_delta_y = std::mem::take(&mut self.pending_mouse_look[1]);
         self.state.gyro_look_delta_yaw = std::mem::take(&mut self.pending_gyro_look[0]);
@@ -409,6 +425,7 @@ impl InputManager {
             self.state.cancel_pressed = self.host_gamepad.cancel_pressed;
             self.state.strafe_left = self.host_gamepad.strafe_left;
             self.state.strafe_right = self.host_gamepad.strafe_right;
+            self.state.guard_held = self.host_gamepad.guard_held;
             self.state.ready_weapon_pressed =
                 self.gamepad_ready || (self.host_active && self.host_ready);
 
@@ -551,6 +568,8 @@ mod tests {
             quick_turn_pressed: true,
             camera_mode_cycle_pressed: true,
             shoulder_swap_pressed: true,
+            guard_pressed: true,
+            guard_held: true,
             ..Default::default()
         });
 
@@ -567,6 +586,8 @@ mod tests {
         assert!(mgr.state.quick_turn_pressed);
         assert!(mgr.state.camera_mode_cycle_pressed);
         assert!(mgr.state.shoulder_swap_pressed);
+        assert!(mgr.state.guard_pressed);
+        assert!(mgr.state.guard_held);
         assert_eq!(
             mgr.state.pending_speaker_cue,
             Some(ControllerSpeakerCue::FlashlightClick)
@@ -575,6 +596,7 @@ mod tests {
         // Next poll with no edge presses clears single-tick pulses
         mgr.set_host_gamepad_state(GamepadSnapshot {
             connected: true,
+            guard_held: true,
             ..Default::default()
         });
         mgr.update();
@@ -584,6 +606,8 @@ mod tests {
         assert!(!mgr.state.quick_turn_pressed);
         assert!(!mgr.state.camera_mode_cycle_pressed);
         assert!(!mgr.state.shoulder_swap_pressed);
+        assert!(!mgr.state.guard_pressed);
+        assert!(mgr.state.guard_held);
         assert_eq!(mgr.state.pending_speaker_cue, None);
     }
 }

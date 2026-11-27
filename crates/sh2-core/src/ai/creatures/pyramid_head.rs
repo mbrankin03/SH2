@@ -8,12 +8,14 @@
 //!   - Great Knife execution swings (AP 1000 - instant kill) and choke grab attacks.
 
 use crate::ai::creatures::CreatureStats;
+use crate::ai::pathfinding::{check_path_ray, EnemyPathState, PathEnemyType, RoomForbiddenAreas};
 use crate::ai::sensory::{
-    evaluate_sensory, normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting,
+    evaluate_sensory_with_los, normalize_angle, DifficultyLevel, PerceivableTarget, RoomLighting,
     SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sh2_assets::formats::cld::WallSegment;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum RedState {
@@ -83,6 +85,8 @@ pub struct PyramidHeadController {
     pub active_attack_id: Option<u16>,
     /// Set when [`RedState::Leave`] reaches `ap_boss_end_point[5]` (`_DAT_01126440 |= 0x40000`).
     pub battle_end_complete: bool,
+    /// Obstacle-avoidance pathfinding state (`enInitPath` `0x00144aa0` / `enSetPath` `0x00144ae0`).
+    pub path_state: EnemyPathState,
     pub sensory: SensoryProfile,
 }
 
@@ -137,6 +141,7 @@ impl PyramidHeadController {
             confuse_friendly_target: None,
             active_attack_id: None,
             battle_end_complete: false,
+            path_state: EnemyPathState::new(yaw),
             sensory: SensoryProfile::pyramid_head(),
         }
     }
@@ -146,6 +151,22 @@ impl PyramidHeadController {
         target: &PerceivableTarget,
         lighting: RoomLighting,
         difficulty: DifficultyLevel,
+        dt: f32,
+    ) {
+        self.update_with_world(target, lighting, difficulty, &[], None, 0.0, dt);
+    }
+
+    /// Update Pyramid Head AI with `.cld` wall LOS (`enCheckHitEyes` `0x00145540`), `enSetPath`
+    /// (`0x00144ae0`), and [`RoomForbiddenAreas`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_world(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        walls: &[WallSegment],
+        forbidden: Option<&RoomForbiddenAreas>,
+        path_sway_sample: f32,
         dt: f32,
     ) {
         self.stats.update(dt);
@@ -170,7 +191,7 @@ impl PyramidHeadController {
         let dist = (dx * dx + dz * dz).sqrt();
         let target_dir = dx.atan2(dz);
 
-        let (notice, _) = evaluate_sensory(
+        let (notice, _) = evaluate_sensory_with_los(
             &self.sensory,
             self.position,
             self.yaw,
@@ -178,6 +199,7 @@ impl PyramidHeadController {
             target,
             lighting,
             difficulty,
+            walls,
             dt,
         );
 
@@ -190,14 +212,36 @@ impl PyramidHeadController {
                 if notice != SensoryNotice::None {
                     self.state = RedState::Chase;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
             RedState::Chase => {
-                self.turn_towards(target_dir, 1.8 * dt);
+                let steer_dir =
+                    if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
+                        let ticks = (dt * 60.0).round().max(1.0) as i16;
+                        self.path_state.cur_angle = self.yaw;
+                        self.path_state.set_path(
+                            PathEnemyType::PyramidHead,
+                            self.position,
+                            target.position,
+                            path_sway_sample,
+                            ticks,
+                            |a, b| check_path_ray(a, b, 150.0, walls, forbidden),
+                        );
+                        self.path_state.target_angle
+                    } else {
+                        target_dir
+                    };
+                self.turn_towards(steer_dir, 1.8 * dt);
 
-                // Overhead execution swing reach: 1800 units
-                if dist <= 1800.0 {
+                // Overhead execution swing reach: 1800 units (cleave `0x33` in lunge cone, swing `0x32` close)
+                if dist <= 1800.0 && (walls.is_empty() || notice != SensoryNotice::None) {
+                    self.active_attack_id = Some(if notice == SensoryNotice::InLungeRange {
+                        RED_ATTACK_ID_CLEAVE_PC
+                    } else {
+                        RED_ATTACK_ID_SWING_PC
+                    });
                     self.state = RedState::Attack;
                     self.state_timer = 0.0;
                     return;

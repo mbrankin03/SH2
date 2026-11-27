@@ -19,6 +19,8 @@ pub struct HeldGamepadButtons {
     pub strafe_left: bool,
     /// Strafe right button (`RightTrigger`).
     pub strafe_right: bool,
+    /// Run / Guard button (`West`, PS2 Type 2 Square `0x8000` / `_DAT_0116db3c`).
+    pub guard_held: bool,
 }
 
 /// Translates a single `gilrs` [`EventType`] into held-button state and edge-triggered
@@ -54,6 +56,13 @@ pub fn apply_gilrs_button(
         (Button::East, _) => {
             held.cancel_pressed = pressed;
             snapshot.cancel_pressed = pressed;
+        }
+        (Button::West, _) => {
+            if pressed && !held.guard_held {
+                snapshot.guard_pressed = true;
+            }
+            held.guard_held = pressed;
+            snapshot.guard_held = pressed;
         }
         (Button::RightTrigger2, _) => {
             held.ready_weapon_pressed = pressed;
@@ -120,6 +129,7 @@ impl GilrsGamepadPoller {
             ready_weapon_pressed: self.held.ready_weapon_pressed,
             strafe_left: self.held.strafe_left,
             strafe_right: self.held.strafe_right,
+            guard_held: self.held.guard_held,
             ..Default::default()
         };
 
@@ -159,6 +169,7 @@ mod tests {
         for button in [
             Button::South,
             Button::East,
+            Button::West,
             Button::RightTrigger2,
             Button::LeftTrigger,
             Button::RightTrigger,
@@ -174,6 +185,8 @@ mod tests {
 
         assert!(snap.action_pressed);
         assert!(snap.cancel_pressed);
+        assert!(snap.guard_pressed);
+        assert!(snap.guard_held);
         assert!(snap.ready_weapon_pressed);
         assert!(snap.strafe_left);
         assert!(snap.strafe_right);
@@ -187,6 +200,7 @@ mod tests {
         for button in [
             Button::South,
             Button::East,
+            Button::West,
             Button::RightTrigger2,
             Button::LeftTrigger,
             Button::RightTrigger,
@@ -196,11 +210,13 @@ mod tests {
 
         assert!(!held.action_pressed);
         assert!(!held.cancel_pressed);
+        assert!(!held.guard_held);
         assert!(!held.ready_weapon_pressed);
         assert!(!held.strafe_left);
         assert!(!held.strafe_right);
         assert!(!snap.action_pressed);
         assert!(!snap.cancel_pressed);
+        assert!(!snap.guard_held);
         assert!(!snap.ready_weapon_pressed);
         assert!(!snap.strafe_left);
         assert!(!snap.strafe_right);

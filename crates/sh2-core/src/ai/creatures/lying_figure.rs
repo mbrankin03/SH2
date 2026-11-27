@@ -19,12 +19,14 @@
 
 use crate::ai::creatures::anim::CreatureAnimationController;
 use crate::ai::creatures::{apply_stage_hp_multipliers, CreatureStats, EnemySpecies, StagePlace};
+use crate::ai::pathfinding::{check_path_ray, EnemyPathState, PathEnemyType, RoomForbiddenAreas};
 use crate::ai::sensory::{
-    evaluate_sensory, normalize_angle, scu_walk_speed_scale, DifficultyLevel, PerceivableTarget,
-    RoomLighting, SensoryNotice, SensoryProfile,
+    evaluate_sensory_with_los, normalize_angle, scu_walk_speed_scale, DifficultyLevel,
+    PerceivableTarget, RoomLighting, SensoryNotice, SensoryProfile,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use sh2_assets::formats::cld::WallSegment;
 
 /// Authentic Lying Figure specific state enum (`enCtrlSCUSubFunc` / `0x4c6f50`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -86,6 +88,10 @@ pub struct LyingFigureController {
     pub active_ambush: Option<ScuAmbushEntry>,
     /// Confuse countdown timer in 60 Hz ticks (`600 - 90 * mode`, `enSCUCtrlConfuse` `0x00162ee0`).
     pub confuse_timer_ticks: f32,
+    /// Obstacle-avoidance pathfinding state (`enInitPath` `0x00144aa0` / `enSetPath` `0x00144ae0`).
+    pub path_state: EnemyPathState,
+    /// Last tribe alert target received via `enCommunicateTribe` (`0x00146e40`).
+    pub tribe_alert_target: Option<Vec3>,
     pub sensory: SensoryProfile,
     pub anim: CreatureAnimationController,
 }
@@ -133,17 +139,37 @@ impl LyingFigureController {
             recovery_roll: 0.5,
             active_ambush: None,
             confuse_timer_ticks: 0.0,
+            path_state: EnemyPathState::new(yaw),
+            tribe_alert_target: None,
             sensory: SensoryProfile::lying_figure(),
             anim: CreatureAnimationController::new_lying_figure(),
         }
     }
 
-    /// Update Lying Figure state machine and movement.
+    /// Update Lying Figure state machine and movement (open-arena convenience wrapper).
     pub fn update(
         &mut self,
         target: &PerceivableTarget,
         lighting: RoomLighting,
         difficulty: DifficultyLevel,
+        dt: f32,
+    ) {
+        self.update_with_world(target, lighting, difficulty, &[], None, None, 0.0, dt);
+    }
+
+    /// Update Lying Figure state machine with `.cld` wall LOS (`enCheckHitEyes` `0x00145540`),
+    /// `enSetPath` (`0x00144ae0`) obstacle avoidance, [`RoomForbiddenAreas`], and tribe alerts
+    /// (`enCommunicateTribe` `0x00146e40`, `en_scu.c:343,514,603,661`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_with_world(
+        &mut self,
+        target: &PerceivableTarget,
+        lighting: RoomLighting,
+        difficulty: DifficultyLevel,
+        walls: &[WallSegment],
+        forbidden: Option<&RoomForbiddenAreas>,
+        tribe_alert_pos: Option<Vec3>,
+        path_sway_sample: f32,
         dt: f32,
     ) {
         if self.state == ScuState::Dying {
@@ -196,8 +222,8 @@ impl LyingFigureController {
             return;
         }
 
-        // Sensory evaluation
-        let (notice, new_alert) = evaluate_sensory(
+        // Sensory evaluation with `.cld` wall LOS (`enCheckHitEyes2` `0x00145770`)
+        let (notice, new_alert) = evaluate_sensory_with_los(
             &self.sensory,
             self.position,
             self.yaw,
@@ -205,9 +231,13 @@ impl LyingFigureController {
             target,
             lighting,
             difficulty,
+            walls,
             dt,
         );
         self.alert_timer = new_alert;
+        if let Some(alert_pos) = tribe_alert_pos {
+            self.tribe_alert_target = Some(alert_pos);
+        }
 
         let dx = target.position.x - self.position.x;
         let dz = target.position.z - self.position.z;
@@ -228,25 +258,49 @@ impl LyingFigureController {
                 self.position.x += self.yaw.sin() * 402.0 * dt;
                 self.position.z += self.yaw.cos() * 402.0 * dt;
 
-                if notice == SensoryNotice::VisualContact
-                    || notice == SensoryNotice::AuditoryContact
-                {
+                if notice != SensoryNotice::None || tribe_alert_pos.is_some() {
                     self.state = ScuState::Precaution;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
             ScuState::Precaution => {
-                // Turn towards target for 1.5 seconds, then enter Chase
-                self.turn_towards(target_dir, 3.0 * dt);
+                // Turn towards target (or tribe alert source) for 1.5 seconds, then enter Chase
+                let aim_dir = if notice == SensoryNotice::None {
+                    self.tribe_alert_target.map_or(target_dir, |p| {
+                        (p.x - self.position.x).atan2(p.z - self.position.z)
+                    })
+                } else {
+                    target_dir
+                };
+                self.turn_towards(aim_dir, 3.0 * dt);
                 if self.state_timer >= 1.5 || notice == SensoryNotice::InAttackRange {
                     self.state = ScuState::Chase;
                     self.state_timer = 0.0;
+                    self.path_state.init(self.yaw);
                 }
             }
 
             ScuState::Chase => {
-                self.turn_towards(target_dir, 3.0 * dt);
+                // Obstacle-avoidance steering (`enSetPath` `0x00144ae0` / `sh2pc 0x004aadf0`)
+                let steer_dir =
+                    if !walls.is_empty() || forbidden.is_some_and(|f| !f.rects.is_empty()) {
+                        let ticks = (dt * 60.0).round().max(1.0) as i16;
+                        self.path_state.cur_angle = self.yaw;
+                        self.path_state.set_path(
+                            PathEnemyType::LyingFigure,
+                            self.position,
+                            target.position,
+                            path_sway_sample,
+                            ticks,
+                            |a, b| check_path_ray(a, b, 150.0, walls, forbidden),
+                        );
+                        self.path_state.target_angle
+                    } else {
+                        target_dir
+                    };
+                self.turn_towards(steer_dir, 3.0 * dt);
 
                 // Backward retreat if player is too close (< 750 units) on normal/hard
                 if dist < 750.0 && difficulty != DifficultyLevel::Beginner {

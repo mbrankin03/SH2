@@ -15,6 +15,24 @@ use crate::sfx_bank::{
 use crate::spatial_voice::{SpatialVoiceHandle, SpatialVoiceInitParams};
 use crate::{AudioEngine, AudioError};
 
+/// Evaluates `.cld` world occlusion only when `occlusion_enabled` is `true`, skipping per-frame
+/// raycasts in strict 1:1 Vanilla PS2 mode (`SH2-179`).
+#[inline]
+pub(crate) fn evaluate_world_occlusion_gated(
+    collision: Option<&CollisionWorld>,
+    source_pos: Vec3,
+    listener_pos: Vec3,
+    is_maria: bool,
+    occlusion_enabled: bool,
+) -> OcclusionDspParams {
+    if occlusion_enabled {
+        if let Some(world) = collision {
+            return evaluate_world_occlusion(world, source_pos, listener_pos, is_maria);
+        }
+    }
+    OcclusionDspParams::unoccluded()
+}
+
 impl MenuAudioBank {
     /// Prunes completed (`PlaybackState::Stopped`) 2D/panned handles and finished 3D spatial voices
     /// so one-shot handles never accumulate across rooms (`SH2-176`).
@@ -54,10 +72,10 @@ impl MenuAudioBank {
                 ..Default::default()
             });
         }
-        let Some(wav) = self.resolve_se_id(se_id) else {
+        let Some(prepared) = self.resolve_prepared_se_id(se_id) else {
             return Ok(false);
         };
-        let handle = engine.play_sfx_panned(wav, volume, stereo_pan)?;
+        let handle = engine.play_prepared_sfx_panned(&prepared, volume, stereo_pan)?;
         self.active_spatial_handles.insert(se_id, handle);
         Ok(true)
     }
@@ -126,10 +144,13 @@ impl MenuAudioBank {
         }
         let stereo_pan =
             (-(direction_deg as f32) / crate::sfx_bank::SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
-        let raw_occlusion = match collision {
-            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
-            None => OcclusionDspParams::unoccluded(),
-        };
+        let occlusion = evaluate_world_occlusion_gated(
+            collision,
+            source_pos,
+            listener_pos,
+            is_maria,
+            engine.acoustic_occlusion_enabled(),
+        );
         let head_pos = listener_head_position(listener_pos, is_maria);
         let angles =
             compute_listener_spherical_angles(head_pos, listener_yaw, listener_pitch, source_pos);
@@ -137,11 +158,11 @@ impl MenuAudioBank {
             base_distance_gain,
             stereo_pan,
             angles,
-            occlusion: raw_occlusion,
+            occlusion,
         };
 
-        if let Some(wav) = self.resolve_se_id(se_id) {
-            let handle = engine.play_sfx_spatial_3d(wav, init)?;
+        if let Some(prepared) = self.resolve_prepared_se_id(se_id) {
+            let handle = engine.play_prepared_sfx_spatial_3d(&prepared, init)?;
             self.active_spatial_voices.insert(se_id, handle);
         }
         Ok(())
@@ -166,20 +187,18 @@ impl MenuAudioBank {
         let base_distance_gain = ((255.0 - f32::from(attenuation_byte)) / 255.0).clamp(0.0, 1.0);
         let stereo_pan =
             (-(direction_deg as f32) / crate::sfx_bank::SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
-        let raw_occlusion = match collision {
-            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
-            None => OcclusionDspParams::unoccluded(),
-        };
-        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
-            raw_occlusion
-        } else {
-            OcclusionDspParams::unoccluded()
-        };
+        let occlusion = evaluate_world_occlusion_gated(
+            collision,
+            source_pos,
+            listener_pos,
+            is_maria,
+            engine.acoustic_occlusion_enabled(),
+        );
         self.prune_stopped_spatial_handles();
         if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
             engine.update_sound_spatial(
                 handle,
-                base_distance_gain * reported_occlusion.dry_gain_scale,
+                base_distance_gain * occlusion.dry_gain_scale,
                 stereo_pan,
             );
         }
@@ -197,7 +216,7 @@ impl MenuAudioBank {
                     base_distance_gain,
                     stereo_pan,
                     angles,
-                    occlusion: raw_occlusion,
+                    occlusion,
                 },
             );
         }
@@ -253,17 +272,15 @@ impl MenuAudioBank {
         let eval =
             compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
         let head_pos = listener_head_position(listener_pos, is_maria);
-        let raw_occlusion = match collision {
-            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
-            None => OcclusionDspParams::unoccluded(),
-        };
-        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
-            raw_occlusion
-        } else {
-            OcclusionDspParams::unoccluded()
-        };
+        let occlusion = evaluate_world_occlusion_gated(
+            collision,
+            source_pos,
+            listener_pos,
+            is_maria,
+            engine.acoustic_occlusion_enabled(),
+        );
         if eval.effective_gain <= 0.001 {
-            return Ok((eval, reported_occlusion, None));
+            return Ok((eval, occlusion, None));
         }
 
         let angles =
@@ -272,15 +289,15 @@ impl MenuAudioBank {
             base_distance_gain: eval.effective_gain,
             stereo_pan: eval.stereo_pan,
             angles,
-            occlusion: raw_occlusion,
+            occlusion,
         };
 
-        if let Some(wav) = self.resolve_se_id(se_id) {
-            let handle = engine.play_sfx_spatial_3d(wav, init)?;
-            Ok((eval, reported_occlusion, Some(handle)))
+        if let Some(prepared) = self.resolve_prepared_se_id(se_id) {
+            let handle = engine.play_prepared_sfx_spatial_3d(&prepared, init)?;
+            Ok((eval, occlusion, Some(handle)))
         } else {
             let _ = synthesize_fallback_cue(engine, SoundCueKind::Footstep)?;
-            Ok((eval, reported_occlusion, None))
+            Ok((eval, occlusion, None))
         }
     }
 
@@ -402,20 +419,18 @@ impl MenuAudioBank {
     ) -> (SfxSpatialEval, OcclusionDspParams) {
         let eval =
             compute_se_call_pos_distance_f(listener_pos, listener_yaw, source_pos, base_volume);
-        let raw_occlusion = match collision {
-            Some(world) => evaluate_world_occlusion(world, source_pos, listener_pos, is_maria),
-            None => OcclusionDspParams::unoccluded(),
-        };
-        let reported_occlusion = if engine.acoustic_occlusion_enabled() {
-            raw_occlusion
-        } else {
-            OcclusionDspParams::unoccluded()
-        };
+        let occlusion = evaluate_world_occlusion_gated(
+            collision,
+            source_pos,
+            listener_pos,
+            is_maria,
+            engine.acoustic_occlusion_enabled(),
+        );
         self.prune_stopped_spatial_handles();
         if let Some(handle) = self.active_spatial_handles.get_mut(&se_id) {
             engine.update_sound_spatial(
                 handle,
-                eval.effective_gain * reported_occlusion.dry_gain_scale,
+                eval.effective_gain * occlusion.dry_gain_scale,
                 eval.stereo_pan,
             );
         }
@@ -433,11 +448,11 @@ impl MenuAudioBank {
                     base_distance_gain: eval.effective_gain,
                     stereo_pan: eval.stereo_pan,
                     angles,
-                    occlusion: raw_occlusion,
+                    occlusion,
                 },
             );
         }
-        (eval, reported_occlusion)
+        (eval, occlusion)
     }
 
     /// Pauses or resumes all tracked 3D spatial sound handles (e.g. when opening/closing the Pause Menu) (`SH2-84`).
@@ -509,6 +524,7 @@ mod tests {
             data_root: None,
             ee_root: None,
             entries: Vec::new(),
+            prepared_sddata: Vec::new(),
             voice_afs_sfx: HashMap::new(),
             voice_afs_lru: VecDeque::new(),
             cursor_move: None,
@@ -570,5 +586,22 @@ mod tests {
         assert!(!bank.active_spatial_handles.contains_key(&1001));
         assert!(bank.active_spatial_handles.contains_key(&1002));
         assert_eq!(bank.active_spatial_handles.len(), 1);
+    }
+
+    #[test]
+    fn evaluate_world_occlusion_gated_skips_raycast_in_vanilla_ps2_mode() {
+        let world = CollisionWorld::create_synthetic_room(6000.0, 6000.0, 2000.0, 600.0, 600.0);
+        let listener = Vec3::new(0.0, 0.0, -1500.0);
+        let source = Vec3::new(0.0, -400.0, 1500.0);
+
+        // Vanilla PS2 mode (`occlusion_enabled = false`) skips raycasting and returns unoccluded params.
+        let vanilla = evaluate_world_occlusion_gated(Some(&world), source, listener, false, false);
+        assert_eq!(vanilla, OcclusionDspParams::unoccluded());
+
+        // Enhanced occlusion mode (`occlusion_enabled = true`) raycasts the `.cld` pillar and attenuates.
+        let enhanced = evaluate_world_occlusion_gated(Some(&world), source, listener, false, true);
+        assert!(enhanced.occluded);
+        assert!(enhanced.dry_cutoff_hz < OcclusionDspParams::unoccluded().dry_cutoff_hz);
+        assert!(enhanced.dry_gain_scale < 1.0);
     }
 }

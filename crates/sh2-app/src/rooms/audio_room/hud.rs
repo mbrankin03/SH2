@@ -132,10 +132,7 @@ fn render_header_and_stage_status(
     let matched_str = if mgr.last_area_eval.used_default_record {
         "Fallback Record #0 (Outside Boxes)".to_string()
     } else {
-        format!(
-            "Matched Boxes: {:?}",
-            mgr.last_area_eval.matched_record_indices
-        )
+        format!("Matched Boxes: {:?}", mgr.last_area_eval.matched_records())
     };
 
     state.menu_rasterizer.draw_text(

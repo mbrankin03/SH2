@@ -201,8 +201,7 @@ impl TextureLoader {
             if let Some(texture) = self.load_4k_relative_texture_override(&rel) {
                 let (original_width, original_height) = self
                     .resolve_in_data(&rel)
-                    .and_then(|vp| fs::read(vp).ok())
-                    .and_then(|vb| probe_tex_dimensions(&vb))
+                    .and_then(probe_tex_dimensions_from_file)
                     .unwrap_or((
                         (texture.width as u32 / 8).max(1),
                         (texture.height as u32 / 8).max(1),
@@ -243,8 +242,7 @@ impl TextureLoader {
                         let texture = decode_texture_bytes(&bytes, &cand_img)?;
                         let (original_width, original_height) = self
                             .resolve_in_data(&rel)
-                            .and_then(|vp| fs::read(vp).ok())
-                            .and_then(|vb| probe_tex_dimensions(&vb))
+                            .and_then(probe_tex_dimensions_from_file)
                             .unwrap_or((
                                 (texture.width as u32 / 8).max(1),
                                 (texture.height as u32 / 8).max(1),
@@ -277,12 +275,8 @@ impl TextureLoader {
         // texels (e.g. 256x256 or 512x512) normalize accurately even when an HD 4x or 4K AI sheet is active.
         let (original_width, original_height) = if is_sh2ee_hd {
             if let Some(van_path) = self.resolve_in_data(&rel) {
-                if let Ok(van_bytes) = fs::read(&van_path) {
-                    probe_tex_dimensions(&van_bytes)
-                        .unwrap_or((base_texture.width as u32, base_texture.height as u32))
-                } else {
-                    (base_texture.width as u32, base_texture.height as u32)
-                }
+                probe_tex_dimensions_from_file(&van_path)
+                    .unwrap_or((base_texture.width as u32, base_texture.height as u32))
             } else {
                 (
                     (base_texture.width as u32 / 4).max(1),
@@ -307,6 +301,24 @@ impl TextureLoader {
             texture,
         })
     }
+}
+
+/// Probes the pixel dimensions `(width, height)` of a PC or PS2 `.tex` file on disk by reading
+/// at most the first `0x50` (80) header bytes instead of loading the entire texture payload (`SH2-179`).
+pub fn probe_tex_dimensions_from_file(path: impl AsRef<Path>) -> Option<(u32, u32)> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).ok()?;
+    let mut buf = [0u8; 0x50];
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        }
+    }
+    probe_tex_dimensions(&buf[..filled])
 }
 
 /// Probes the pixel dimensions `(width, height)` of a PC or PS2 `.tex` header without full decoding.
@@ -439,5 +451,48 @@ pub(super) fn decode_ps2_tex(bytes: &[u8]) -> Result<DecodedTexture, AssetError>
             height: h,
             rgba,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_tex_dimensions_from_file_reads_80_byte_header_parity() {
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "sh2_179_probe_tex_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::create_dir_all(&tmp_dir);
+
+        // PC `.tex` (`TEX_MAGIC` at 0x00, width at 0x38, height at 0x3A) with large trailing payload
+        let mut pc_tex = vec![0u8; 4096];
+        pc_tex[0..4].copy_from_slice(&TEX_MAGIC.to_le_bytes());
+        pc_tex[0x38..0x3A].copy_from_slice(&512u16.to_le_bytes());
+        pc_tex[0x3A..0x3C].copy_from_slice(&256u16.to_le_bytes());
+        let pc_path = tmp_dir.join("pc_sample.tex");
+        fs::write(&pc_path, &pc_tex).unwrap();
+        assert_eq!(
+            probe_tex_dimensions_from_file(&pc_path),
+            probe_tex_dimensions(&pc_tex)
+        );
+        assert_eq!(probe_tex_dimensions_from_file(&pc_path), Some((512, 256)));
+
+        // PS2 `.tex` (`0xa7a7a7a7` at 0x0C, width at 0x48, height at 0x4A) with large trailing payload
+        let mut ps2_tex = vec![0u8; 4096];
+        ps2_tex[0x0C..0x10].copy_from_slice(b"\xa7\xa7\xa7\xa7");
+        ps2_tex[0x48..0x4A].copy_from_slice(&640u16.to_le_bytes());
+        ps2_tex[0x4A..0x4C].copy_from_slice(&480u16.to_le_bytes());
+        let ps2_path = tmp_dir.join("ps2_sample.tex");
+        fs::write(&ps2_path, &ps2_tex).unwrap();
+        assert_eq!(
+            probe_tex_dimensions_from_file(&ps2_path),
+            probe_tex_dimensions(&ps2_tex)
+        );
+        assert_eq!(probe_tex_dimensions_from_file(&ps2_path), Some((640, 480)));
+
+        let _ = fs::remove_dir_all(&tmp_dir);
     }
 }

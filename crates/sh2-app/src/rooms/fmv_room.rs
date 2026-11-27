@@ -322,8 +322,8 @@ pub(crate) fn open_fmv_session(
     let gpu_surface = fmv_pipeline.create_video_surface(device, header.width, header.height);
 
     // Decode and upload initial frame 0 immediately so the first render pass shows video
-    if let Some(first_frame) = stream.next_frame() {
-        fmv_pipeline.upload_frame(queue, &gpu_surface, first_frame);
+    if let Some(first_frame) = stream.next_frame_ref() {
+        fmv_pipeline.upload_frame_ref(queue, &gpu_surface, first_frame);
     }
 
     Some(ActiveFmvSession {
@@ -428,7 +428,7 @@ pub(crate) fn tick_and_render_fmv_frame(
             while session.frame_accumulator_sec >= frame_duration && advanced < 4 {
                 session.frame_accumulator_sec -= frame_duration;
                 advanced += 1;
-                if session.stream.next_frame().is_some() {
+                if session.stream.next_frame_ref().is_some() {
                     decoded_any_frame = true;
                 } else if loop_on_eof {
                     // Loop seamlessly on completion in theater mode
@@ -441,7 +441,7 @@ pub(crate) fn tick_and_render_fmv_frame(
                             let _ = engine.play_bgm_with_fade(adx, *vol, *fade);
                         }
                     }
-                    if session.stream.next_frame().is_some() {
+                    if session.stream.next_frame_ref().is_some() {
                         decoded_any_frame = true;
                     }
                     break;
@@ -451,8 +451,8 @@ pub(crate) fn tick_and_render_fmv_frame(
                 }
             }
             if decoded_any_frame && !finished_eof {
-                if let Some(frame) = session.stream.current_frame() {
-                    state.fmv_pipeline.upload_frame(
+                if let Some(frame) = session.stream.current_frame_ref() {
+                    state.fmv_pipeline.upload_frame_ref(
                         &state.render_ctx.queue,
                         &session.gpu_surface,
                         frame,

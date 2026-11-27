@@ -1,11 +1,47 @@
 //! Sample conversion, Catmull-Rom cubic upsampling, Butterworth anti-imaging filtering,
 //! and sample-accurate loop-boundary crossfade preparation (`SH2-55`).
 
+use std::sync::Arc;
+
 use crate::looping::{
     apply_loop_boundary_crossfade, LoopRegionSamples, DEFAULT_LOOP_CROSSFADE_SAMPLES_48K,
 };
 use kira::Frame;
 use sh2_assets::{DecodedAdx, WavEntry};
+
+/// Pre-resampled 48 kHz stereo PCM buffer ready for zero-copy `Arc::clone` SFX playback (`SH2-179`).
+#[derive(Debug, Clone)]
+pub struct PreparedSfx {
+    /// Target playback sample rate in Hz (typically `48_000`).
+    pub sample_rate: u32,
+    /// Shared stereo PCM frames (`Arc::clone` on each trigger avoids per-play resampling/allocation).
+    pub frames: Arc<[Frame]>,
+    /// Precomputed sample-accurate loop region in `frames` coordinates, if the waveform loops.
+    pub loop_region: Option<LoopRegionSamples>,
+}
+
+/// Converts and upsamples a [`WavEntry`] to 48 kHz stereo [`Frame`]s once and packages it into a
+/// reusable [`PreparedSfx`] (`Arc<[Frame]>`) with precomputed loop-region bounds (`SH2-179`).
+pub fn prepare_wav_entry_48k(wav: &WavEntry) -> PreparedSfx {
+    let (sample_rate, frames_vec) = wav_entry_to_frames_48k(wav);
+    let src_rate = wav.sample_rate.max(8000);
+    let loop_region = if wav.loops {
+        LoopRegionSamples::from_source_samples(
+            wav.loop_start,
+            wav.loop_end,
+            src_rate,
+            sample_rate,
+            frames_vec.len(),
+        )
+    } else {
+        None
+    };
+    PreparedSfx {
+        sample_rate,
+        frames: Arc::from(frames_vec),
+        loop_region,
+    }
+}
 
 /// Converts uncompressed 16-bit PCM bytes from a `WavEntry` into Kira `Frame` samples.
 pub fn wav_entry_to_frames(wav: &WavEntry) -> Vec<Frame> {

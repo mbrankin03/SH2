@@ -117,7 +117,8 @@ pub fn evaluate_sound_areas_with_restoration(
         }
         return SoundAreaEvaluation {
             matched_box_count: 1,
-            matched_record_indices: Vec::new(),
+            matched_record_indices: [0; MAX_MATCHED_SOUND_AREAS],
+            matched_record_count: 0,
             used_default_record: false,
             track_fades,
         };
@@ -131,7 +132,8 @@ pub fn evaluate_sound_areas_with_restoration(
     if records.is_empty() {
         return SoundAreaEvaluation {
             matched_box_count: 0,
-            matched_record_indices: Vec::new(),
+            matched_record_indices: [0; MAX_MATCHED_SOUND_AREAS],
+            matched_record_count: 0,
             used_default_record: true,
             track_fades: [(0, 0); BGM_MAX_TRACKS],
         };
@@ -141,7 +143,8 @@ pub fn evaluate_sound_areas_with_restoration(
     let py = player_pos.y;
     let pz = player_pos.z;
 
-    let mut matched_indices = Vec::new();
+    let mut matched_indices = [0usize; MAX_MATCHED_SOUND_AREAS];
+    let mut matched_count = 0usize;
     for (idx, rec) in records.iter().enumerate().skip(1) {
         if rec.flags < 0 {
             break;
@@ -153,18 +156,19 @@ pub fn evaluate_sound_areas_with_restoration(
         let y_ok = py >= y_low && py <= y_high;
 
         if x_ok && z_ok && y_ok {
-            matched_indices.push(idx);
-            if matched_indices.len() >= MAX_MATCHED_SOUND_AREAS {
+            matched_indices[matched_count] = idx;
+            matched_count += 1;
+            if matched_count >= MAX_MATCHED_SOUND_AREAS {
                 break;
             }
         }
     }
 
-    let used_default_record = matched_indices.is_empty();
+    let used_default_record = matched_count == 0;
     let eval_indices: &[usize] = if used_default_record {
         &[0]
     } else {
-        &matched_indices
+        &matched_indices[..matched_count]
     };
 
     let mut resolved = [(0u8, 0u8); BGM_MAX_TRACKS];
@@ -203,6 +207,7 @@ pub fn evaluate_sound_areas_with_restoration(
     SoundAreaEvaluation {
         matched_box_count: eval_indices.len(),
         matched_record_indices: matched_indices,
+        matched_record_count: matched_count,
         used_default_record,
         track_fades: resolved,
     }

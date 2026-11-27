@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::formats::texture::zip_archive::{
-    build_stored_zip_central_directory_index, read_entry_bytes_from_stored_zip, ZipIndexCache,
+    build_stored_zip_central_directory_index, read_indexed_entry_bytes,
+    read_mod_entry_bytes_from_stored_zip, ZipIndexCache,
 };
 
 /// Optional `mod.json` metadata manifest placed at the root of a mod folder or `.zip` archive.
@@ -303,16 +304,18 @@ pub fn discover_mods(mods_dir: &Path, saved_entries: &[(String, bool, i32)]) -> 
             let Some(id) = path.file_stem().and_then(|n| n.to_str()).map(String::from) else {
                 continue;
             };
-            let cache: ZipIndexCache = Arc::new(Mutex::new(HashMap::new()));
-            let mut metadata = read_entry_bytes_from_stored_zip(&cache, &path, "mod.json")
+            let index = build_stored_zip_central_directory_index(&path);
+            let mut metadata = index
+                .as_ref()
+                .and_then(|idx| read_indexed_entry_bytes(&path, idx, "mod.json"))
                 .and_then(|b: Vec<u8>| serde_json::from_slice::<ModMetadata>(&b).ok())
                 .unwrap_or_default();
             if metadata.name.is_empty() {
                 metadata.name = id.clone();
             }
             let mut overrides = Vec::new();
-            if let Some(index) = build_stored_zip_central_directory_index(&path) {
-                for key in index.keys() {
+            if let Some(ref index) = index {
+                for key in &index.original_names {
                     if key.eq_ignore_ascii_case("mod.json") || key.ends_with('/') {
                         continue;
                     }
@@ -348,47 +351,7 @@ fn read_mod_zip_entry(
     zip_path: &Path,
     rel_str: &str,
 ) -> Option<Vec<u8>> {
-    let sh2e_cand = format!("sh2e/{rel_str}");
-    let data_cand = format!("data/{rel_str}");
-    for direct in [&sh2e_cand, &data_cand, &rel_str.to_string()] {
-        if let Some(bytes) = read_entry_bytes_from_stored_zip(zip_index_cache, zip_path, direct) {
-            return Some(bytes);
-        }
-    }
-
-    // Support NexusMods-style `.zip` archives with a single top-level wrapper folder, e.g.
-    // `<Mod Name>/sh2e/menu/mc/savebg.tbn2` or `<Mod Name>/data/chr/jms/hhh_jms.mdl`.
-    let matched_key = {
-        let mut guard = zip_index_cache.lock().ok()?;
-        if !guard.contains_key(zip_path) {
-            if let Some(index) = build_stored_zip_central_directory_index(zip_path) {
-                guard.insert(zip_path.to_path_buf(), index);
-            }
-        }
-        let index = guard.get(zip_path)?;
-        let sh2e_suffix = format!("/{sh2e_cand}");
-        let data_suffix = format!("/{data_cand}");
-        let bare_suffix = format!("/{rel_str}");
-        let find_suffix = |suf: &str| -> Option<String> {
-            index
-                .keys()
-                .find(|k| {
-                    let norm = k.replace('\\', "/");
-                    let lower = norm.to_ascii_lowercase();
-                    let suf_lower = suf.to_ascii_lowercase();
-                    lower.ends_with(&suf_lower)
-                        && lower[..lower.len() - suf_lower.len()]
-                            .chars()
-                            .all(|c| c != '/')
-                })
-                .cloned()
-        };
-        find_suffix(&sh2e_suffix)
-            .or_else(|| find_suffix(&data_suffix))
-            .or_else(|| find_suffix(&bare_suffix))
-    }?;
-
-    read_entry_bytes_from_stored_zip(zip_index_cache, zip_path, &matched_key)
+    read_mod_entry_bytes_from_stored_zip(zip_index_cache, zip_path, rel_str)
 }
 
 fn resolve_mod_dir_candidates(root: &Path, rel: &Path) -> Option<PathBuf> {

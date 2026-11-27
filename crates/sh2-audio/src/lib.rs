@@ -63,7 +63,10 @@ pub use cutscene_bgm::{
     CUTSCENE_AUDIO_MAP,
 };
 pub use dialogue::ActiveDialogue;
-pub use dsp_resample::{adx_to_frames_48k, wav_entry_to_frames, wav_entry_to_frames_48k};
+pub use dsp_resample::{
+    adx_to_frames_48k, prepare_wav_entry_48k, wav_entry_to_frames, wav_entry_to_frames_48k,
+    PreparedSfx,
+};
 pub use engine::{
     radio_driver_to_volume_pan, AudioEngine, AudioError, RADIO_STATIC_SDDATA_INDICES,
 };
@@ -76,7 +79,7 @@ pub use looping::{
     apply_loop_boundary_crossfade, measure_loop_boundary_step_delta, LoopRegionSamples,
     DEFAULT_LOOP_CROSSFADE_SAMPLES_48K,
 };
-pub use menu_sfx::{play_menu_sound, MenuAudioBank, SoundCueKind};
+pub use menu_sfx::{play_menu_sound, MenuAudioBank, SfxSourceRef, SoundCueKind};
 pub use occlusion::{
     db_to_linear, evaluate_controller_occlusion, evaluate_occlusion_dsp, evaluate_world_occlusion,
     OcclusionDspParams, OcclusionFilterState, OCCLUDED_MAX_ATTENUATION_DB, OCCLUDED_MAX_CUTOFF_HZ,

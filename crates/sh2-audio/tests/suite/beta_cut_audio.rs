@@ -213,7 +213,7 @@ fn test_sh2_62_music_box_volume_7th_layer_restoration_and_voice_afs_catalog() {
     // 3. Verify `evaluate_sound_areas_with_restoration` on Stage 40 (Hotel 1F) and Stage 41 (Hotel 2F)
     let hall_1f_pos = glam::Vec3::new(-60000.0, -500.0, 20000.0);
     let eval_40_vanilla = evaluate_sound_areas_with_restoration(40, hall_1f_pos, 4, false);
-    assert!(eval_40_vanilla.matched_record_indices.contains(&6));
+    assert!(eval_40_vanilla.matched_records().contains(&6));
     assert_eq!(eval_40_vanilla.track_fades[4], (1, 1)); // Vanilla: loud Track 4 active in 1F hallway
     assert_eq!(eval_40_vanilla.track_fades[6], (0, 0)); // Vanilla: Track 6 silent
 
@@ -229,13 +229,13 @@ fn test_sh2_62_music_box_volume_7th_layer_restoration_and_voice_afs_catalog() {
         (rec19.z0 + rec19.z2) * 0.5,
     );
     let eval_40_lobby = evaluate_sound_areas_with_restoration(40, lobby_1f_pos, 4, true);
-    assert!(eval_40_lobby.matched_record_indices.contains(&19));
+    assert!(eval_40_lobby.matched_records().contains(&19));
     assert_eq!(eval_40_lobby.track_fades[4], (1, 1)); // Full-volume Track 4 remains active in the 1F Lobby
 
     // Stage 41 Record 3 (2F hallway connected to lobby): `x in [57600, 62000], z in [-20600, -19400], y in [-1800, 50]`
     let hall_2f_pos = glam::Vec3::new(60000.0, -500.0, -20000.0);
     let eval_41_vanilla = evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, false);
-    assert!(eval_41_vanilla.matched_record_indices.contains(&3));
+    assert!(eval_41_vanilla.matched_records().contains(&3));
     assert_eq!(eval_41_vanilla.track_fades[6], (0, 0)); // Vanilla: silent in 2F hallway
 
     let eval_41_restored = evaluate_sound_areas_with_restoration(41, hall_2f_pos, 4, true);

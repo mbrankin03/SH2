@@ -410,6 +410,24 @@ pub fn parse_bink_file_header(path: impl AsRef<Path>) -> Result<BinkHeader, Asse
     parse_bink_header(&buf)
 }
 
+/// Borrowed zero-copy view of a planar YUV420p (`I420`) video frame backed directly by
+/// [`BinkVideoStream`]'s internal decode buffer (`SH2-179`).
+#[derive(Debug, Clone, Copy)]
+pub struct Yuv420FrameRef<'a> {
+    /// Video frame width in pixels.
+    pub width: u32,
+    /// Video frame height in pixels.
+    pub height: u32,
+    /// Zero-based sequential frame index.
+    pub frame_index: u32,
+    /// Luma (`Y`) plane bytes (`width * height`).
+    pub y_plane: &'a [u8],
+    /// Blue-difference chroma (`U` / `Cb`) plane bytes (`(width / 2) * (height / 2)`).
+    pub u_plane: &'a [u8],
+    /// Red-difference chroma (`V` / `Cr`) plane bytes (`(width / 2) * (height / 2)`).
+    pub v_plane: &'a [u8],
+}
+
 /// Planar YUV420p (`I420`) video frame ready for direct upload to 3 single-channel `R8Unorm` GPU textures.
 #[derive(Debug, Clone)]
 pub struct Yuv420Frame {
@@ -428,6 +446,20 @@ pub struct Yuv420Frame {
 }
 
 impl Yuv420Frame {
+    /// Borrows this owned frame as a zero-copy [`Yuv420FrameRef`] (`SH2-179`).
+    #[inline]
+    #[must_use]
+    pub fn as_ref(&self) -> Yuv420FrameRef<'_> {
+        Yuv420FrameRef {
+            width: self.width,
+            height: self.height,
+            frame_index: self.frame_index,
+            y_plane: &self.y_plane,
+            u_plane: &self.u_plane,
+            v_plane: &self.v_plane,
+        }
+    }
+
     /// Constructs a frame by taking ownership of pre-allocated plane buffers.
     pub fn new_reused(
         width: u32,
@@ -679,6 +711,7 @@ pub struct BinkVideoStream {
     reader_thread: Option<JoinHandle<()>>,
     has_decoder: bool,
     scratch_buf: Vec<u8>,
+    scratch_frame_index: Option<u32>,
     current_frame: Option<Yuv420Frame>,
 }
 
@@ -697,6 +730,7 @@ impl BinkVideoStream {
             reader_thread: None,
             has_decoder: false,
             scratch_buf: Vec::new(),
+            scratch_frame_index: None,
             current_frame: None,
         };
         stream.spawn_decoder(0.0);
@@ -715,6 +749,7 @@ impl BinkVideoStream {
             reader_thread: None,
             has_decoder: false,
             scratch_buf: Vec::new(),
+            scratch_frame_index: None,
             current_frame: None,
         }
     }
@@ -795,6 +830,74 @@ impl BinkVideoStream {
         }
     }
 
+    /// Returns the most recently decoded frame as a zero-copy [`Yuv420FrameRef`] borrowing
+    /// directly from `scratch_buf` (avoiding copying 12.4 MB/frame at 4K) or the synthetic fallback (`SH2-179`).
+    #[must_use]
+    pub fn current_frame_ref(&self) -> Option<Yuv420FrameRef<'_>> {
+        if let Some(frame_idx) = self.scratch_frame_index {
+            let w = self.header.width;
+            let h = self.header.height;
+            let y_len = (w as usize) * (h as usize);
+            let cw = (w as usize).div_ceil(2);
+            let ch = (h as usize).div_ceil(2);
+            let uv_len = cw * ch;
+            let total_len = y_len + 2 * uv_len;
+            if self.scratch_buf.len() >= total_len {
+                return Some(Yuv420FrameRef {
+                    width: w,
+                    height: h,
+                    frame_index: frame_idx,
+                    y_plane: &self.scratch_buf[0..y_len],
+                    u_plane: &self.scratch_buf[y_len..y_len + uv_len],
+                    v_plane: &self.scratch_buf[y_len + uv_len..total_len],
+                });
+            }
+        }
+        self.current_frame.as_ref().map(Yuv420Frame::as_ref)
+    }
+
+    /// Advances the stream and returns a zero-copy [`Yuv420FrameRef`] borrowing directly from
+    /// `scratch_buf` without copying the decoded planes into a secondary `Yuv420Frame` (`SH2-179`).
+    pub fn next_frame_ref(&mut self) -> Option<Yuv420FrameRef<'_>> {
+        if self.current_frame_index >= self.header.frame_count {
+            self.scratch_frame_index = None;
+            self.current_frame = None;
+            return None;
+        }
+
+        let w = self.header.width;
+        let h = self.header.height;
+        let total_len = Yuv420Frame::expected_byte_len(w, h);
+
+        if self.has_decoder {
+            let decoded_buf = self.frame_rx.as_ref().and_then(|rx| rx.recv().ok());
+            if let Some(buf) = decoded_buf {
+                let frame_idx = self.current_frame_index;
+                self.current_frame_index += 1;
+
+                let old_buf = std::mem::replace(&mut self.scratch_buf, buf);
+                if old_buf.len() == total_len {
+                    if let Some(ref tx) = self.recycle_tx {
+                        let _ = tx.try_send(old_buf);
+                    }
+                }
+                self.scratch_frame_index = Some(frame_idx);
+                return self.current_frame_ref();
+            }
+
+            self.kill_decoder();
+            self.scratch_frame_index = None;
+            self.current_frame = None;
+            return None;
+        }
+
+        let frame_idx = self.current_frame_index;
+        self.current_frame_index += 1;
+        self.scratch_frame_index = None;
+        self.current_frame = Some(Yuv420Frame::generate_synthetic_test_frame(w, h, frame_idx));
+        self.current_frame_ref()
+    }
+
     /// Returns the most recently decoded `Yuv420Frame` without advancing the stream.
     #[must_use]
     pub fn current_frame(&self) -> Option<&Yuv420Frame> {
@@ -828,6 +931,7 @@ impl BinkVideoStream {
                         let _ = tx.try_send(old_buf);
                     }
                 }
+                self.scratch_frame_index = Some(frame_idx);
 
                 // Update current_frame in-place or construct it using pre-reserved plane buffers
                 if let Some(ref mut frame) = self.current_frame {
@@ -895,6 +999,7 @@ impl BinkVideoStream {
     /// Restarts the video stream from frame 0.
     pub fn restart(&mut self) {
         self.current_frame_index = 0;
+        self.scratch_frame_index = None;
         self.spawn_decoder(0.0);
     }
 
@@ -904,6 +1009,7 @@ impl BinkVideoStream {
         let target_frame = ((clamped * self.header.fps()).floor() as u32)
             .min(self.header.frame_count.saturating_sub(1));
         self.current_frame_index = target_frame;
+        self.scratch_frame_index = None;
         self.spawn_decoder(clamped);
     }
 }
@@ -1833,6 +1939,56 @@ duration=20.120000
         assert_eq!(hdr.audio_tracks.len(), 1);
         assert_eq!(hdr.audio_tracks[0].sample_rate, 48000);
         assert_eq!(hdr.audio_tracks[0].channels, 2);
+    }
+
+    #[test]
+    fn test_bink_yuv420_frame_ref_zero_copy_synthetic_and_retail() {
+        let synth_hdr = BinkHeader {
+            magic: *b"BIKi",
+            file_size: 64 * 64 * 3,
+            frame_count: 3,
+            largest_frame_size: 4096,
+            width: 64,
+            height: 64,
+            fps_num: 30,
+            fps_den: 1,
+            video_flags: 0,
+            audio_tracks: Vec::new(),
+            indexed_frames: 3,
+        };
+        let mut synth = BinkVideoStream::new_synthetic(synth_hdr);
+        let f0 = synth.next_frame_ref().expect("synthetic frame 0");
+        assert_eq!((f0.width, f0.height, f0.frame_index), (64, 64, 0));
+        assert_eq!(f0.y_plane.len(), 64 * 64);
+        assert_eq!(f0.u_plane.len(), 32 * 32);
+        assert_eq!(f0.v_plane.len(), 32 * 32);
+        let cur = synth.current_frame_ref().expect("current_frame_ref");
+        assert_eq!(cur.frame_index, 0);
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2");
+        let vanilla_toilet = root.join("data/movie/toilet.bik");
+        if vanilla_toilet.exists() {
+            let mut stream = BinkVideoStream::open(&vanilla_toilet)
+                .expect("Failed to open data/movie/toilet.bik");
+            let w = stream.header.width as usize;
+            let h = stream.header.height as usize;
+            let cw = w.div_ceil(2);
+            let ch = h.div_ceil(2);
+            let y_ptr = {
+                let frame_ref = stream
+                    .next_frame_ref()
+                    .expect("first frame_ref from retail toilet.bik");
+                assert_eq!(frame_ref.frame_index, 0);
+                assert_eq!(frame_ref.y_plane.len(), w * h);
+                assert_eq!(frame_ref.u_plane.len(), cw * ch);
+                assert_eq!(frame_ref.v_plane.len(), cw * ch);
+                frame_ref.y_plane.as_ptr()
+            };
+            // Zero-copy guarantee: Y plane points directly into `scratch_buf`, and `current_frame` is never allocated.
+            assert!(std::ptr::eq(y_ptr, stream.scratch_buf.as_ptr()));
+            assert!(stream.current_frame.is_none());
+        }
     }
 
     #[test]

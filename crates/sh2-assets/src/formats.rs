@@ -33,7 +33,7 @@ pub use anm::{
 pub use bink::{
     active_subtitle_for_frame, decode_bink_audio_pcm, fmv_subtitles_for_movie,
     parse_bink_file_header, parse_bink_header, BinkAudioTrack, BinkHeader, BinkVideoStream,
-    DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, BINK_MAGICS,
+    DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, Yuv420FrameRef, BINK_MAGICS,
 };
 pub use cam::{
     global_area_cam_rel_path, normalize_room_cam_rel_path, parse_cam, AreaSizeType, CamFile,
@@ -81,7 +81,7 @@ pub use sound::{
 pub use texture::{
     compute_alpha_coverage_rgba, decode_texture_bytes, generate_mipmap_chain_rgba,
     mip_level_count_for_size, parse_texture_container, preserve_alpha_coverage_in_place,
-    probe_tex_dimensions, ContainerTexture, CutawayPackTier, CutawayTextureAsset,
-    CutawayViewportTransform, DecodedTexture, TextureLoader, ALPHA_CUTOUT_MIP_REF_THRESHOLD,
-    TEX_MAGIC, TEX_MAGIC_BYTES,
+    probe_tex_dimensions, probe_tex_dimensions_from_file, ContainerTexture, CutawayPackTier,
+    CutawayTextureAsset, CutawayViewportTransform, DecodedTexture, TextureLoader,
+    ALPHA_CUTOUT_MIP_REF_THRESHOLD, TEX_MAGIC, TEX_MAGIC_BYTES,
 };

@@ -9,6 +9,7 @@ mod loader;
 mod playback;
 mod spatial;
 
+use crate::dsp_resample::PreparedSfx;
 use crate::spatial_voice::SpatialVoiceHandle;
 use crate::{AudioEngine, AudioError};
 use kira::sound::static_sound::StaticSoundHandle;
@@ -16,7 +17,34 @@ use sh2_assets::formats::sound::{AfsArchiveIndex, WavEntry};
 use sh2_core::AudioPackPreference;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// Lightweight reference to a sound effect payload inside [`MenuAudioBank`] that avoids cloning
+/// `WavEntry` PCM buffers at bank initialization (`SH2-179`).
+#[derive(Debug, Clone)]
+pub enum SfxSourceRef {
+    /// Zero-based index into [`MenuAudioBank::entries`] (`sddata.bin`).
+    SddataIndex(usize),
+    /// Zero-based index into [`MenuAudioBank::voice_afs_sfx`] (`voice.afs`).
+    VoiceAfsIndex(usize),
+    /// Standalone WAV override loaded from `sh2e/sound/extra/*.wav`, paired with a lazy 48 kHz cache slot.
+    ExtraWav {
+        /// Decoded standalone WAV entry.
+        wav: Arc<WavEntry>,
+        /// Lazily prepared 48 kHz `Arc<[Frame]>` buffer for zero-copy replay.
+        prepared: Arc<OnceLock<PreparedSfx>>,
+    },
+}
+
+impl SfxSourceRef {
+    /// Wraps a standalone `WavEntry` (e.g. from `sh2e/sound/extra/*.wav`) with a lazy 48 kHz cache slot.
+    pub fn extra_wav(wav: WavEntry) -> Self {
+        Self::ExtraWav {
+            wav: Arc::new(wav),
+            prepared: Arc::new(OnceLock::new()),
+        }
+    }
+}
 
 /// Maximum number of decoded `voice.afs` entries retained simultaneously in
 /// [`MenuAudioBank::voice_afs_sfx`] (`SH2-176`).
@@ -69,30 +97,32 @@ pub struct MenuAudioBank {
     pub ee_root: Option<PathBuf>,
     /// All 417 RIFF WAVE entries extracted from `sddata.bin` (`0..=416`).
     pub entries: Vec<WavEntry>,
+    /// Lazy per-index cache of prepared 48 kHz `Arc<[Frame]>` buffers for [`Self::entries`] (`SH2-179`).
+    pub(super) prepared_sddata: Vec<OnceLock<PreparedSfx>>,
     /// Bounded LRU cache of decoded `voice.afs` entries (`Arc<WavEntry>` avoids cloning multi-MB PCM payloads; `SH2-176`).
     pub voice_afs_sfx: HashMap<usize, Arc<WavEntry>>,
     /// Recency order for [`Self::voice_afs_sfx`] (front = least recently used, back = most recently used).
     pub(super) voice_afs_lru: VecDeque<usize>,
     /// Menu cursor move (`10000` / `sddata[293]`).
-    pub cursor_move: Option<WavEntry>,
+    pub cursor_move: Option<SfxSourceRef>,
     /// Menu confirm (`10002` / `sddata[297]`).
-    pub confirm: Option<WavEntry>,
+    pub confirm: Option<SfxSourceRef>,
     /// Menu cancel (`10003` / `sddata[291]`).
-    pub cancel: Option<WavEntry>,
+    pub cancel: Option<SfxSourceRef>,
     /// Game start transition (`15002` / `g_start.wav` or `voice.afs[24]`).
-    pub game_start: Option<WavEntry>,
+    pub game_start: Option<SfxSourceRef>,
     /// Save point chime (`10051` / `save_sound.wav` or `voice.afs[35]`).
-    pub save_sound: Option<WavEntry>,
+    pub save_sound: Option<SfxSourceRef>,
     /// Flashlight turn on (`sh2e/sound/extra/flashlight_on.wav` or `sddata[296]`).
-    pub flashlight_on: Option<WavEntry>,
+    pub flashlight_on: Option<SfxSourceRef>,
     /// Flashlight turn off (`sh2e/sound/extra/flashlight_off.wav` or `sddata[292]`).
-    pub flashlight_off: Option<WavEntry>,
+    pub flashlight_off: Option<SfxSourceRef>,
     /// Restored Apartment Closet cutscene bonus audio (`sh2e/sound/extra/sankaku_toujyou_2.wav`) (`SH2-62`).
     pub closet_bonus_audio: Option<WavEntry>,
     /// Restored Lying Figure street footsteps (`sh2e/sound/extra/machi.wav`) (`SH2-62`).
     pub machi_steps_audio: Option<WavEntry>,
     /// Default footstep (`sddata[147]` / `11001`).
-    pub footstep: Option<WavEntry>,
+    pub footstep: Option<SfxSourceRef>,
     /// Alternating left/right footstep parity toggle so consecutive steps alternate between `(left, right)` samples.
     pub step_parity: bool,
     /// Active footstep sound handle (`0x518270`: repeating a footstep stops the previous footstep tail so steps never stack).

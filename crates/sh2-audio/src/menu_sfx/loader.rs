@@ -5,14 +5,15 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use sh2_assets::formats::sound::{
     decode_afs_slice_to_wav, parse_afs_index, parse_sddata, WavEntry,
 };
 use sh2_core::AudioPackPreference;
 
-use super::{MenuAudioBank, CORE_VOICE_AFS_INDICES, VOICE_AFS_LRU_CAPACITY};
+use super::{MenuAudioBank, SfxSourceRef, CORE_VOICE_AFS_INDICES, VOICE_AFS_LRU_CAPACITY};
+use crate::dsp_resample::{prepare_wav_entry_48k, PreparedSfx};
 use crate::sfx_bank::{resolve_se_id_to_sddata_index, resolve_se_id_to_voice_afs_index};
 
 impl MenuAudioBank {
@@ -38,6 +39,7 @@ impl MenuAudioBank {
             data_root: Some(data_root.to_path_buf()),
             ee_root: ee_root.map(|p| p.to_path_buf()),
             entries: Vec::new(),
+            prepared_sddata: Vec::new(),
             voice_afs_sfx: HashMap::new(),
             voice_afs_lru: VecDeque::new(),
             cursor_move: None,
@@ -80,12 +82,14 @@ impl MenuAudioBank {
                 if let Ok(bytes) = std::fs::read(&candidate) {
                     if let Ok(bank) = parse_sddata(&bytes) {
                         if bank.entries.len() > 297 {
-                            sfx_bank.footstep = Some(bank.entries[147].clone());
-                            sfx_bank.cancel = Some(bank.entries[291].clone());
-                            sfx_bank.flashlight_off = Some(bank.entries[292].clone());
-                            sfx_bank.cursor_move = Some(bank.entries[293].clone());
-                            sfx_bank.flashlight_on = Some(bank.entries[296].clone());
-                            sfx_bank.confirm = Some(bank.entries[297].clone());
+                            sfx_bank.footstep = Some(SfxSourceRef::SddataIndex(147));
+                            sfx_bank.cancel = Some(SfxSourceRef::SddataIndex(291));
+                            sfx_bank.flashlight_off = Some(SfxSourceRef::SddataIndex(292));
+                            sfx_bank.cursor_move = Some(SfxSourceRef::SddataIndex(293));
+                            sfx_bank.flashlight_on = Some(SfxSourceRef::SddataIndex(296));
+                            sfx_bank.confirm = Some(SfxSourceRef::SddataIndex(297));
+                            sfx_bank.prepared_sddata =
+                                (0..bank.entries.len()).map(|_| OnceLock::new()).collect();
                             sfx_bank.entries = bank.entries;
                             sfx_bank.sddata_path = Some(candidate.clone());
                             tracing::info!(
@@ -144,13 +148,15 @@ impl MenuAudioBank {
                                 }
                             }
                             sfx_bank.voice_afs_index = Some(afs_idx);
-                            if sfx_bank.game_start.is_none() {
-                                sfx_bank.game_start =
-                                    sfx_bank.voice_afs_sfx.get(&24).map(|w| (**w).clone());
+                            if sfx_bank.game_start.is_none()
+                                && sfx_bank.voice_afs_sfx.contains_key(&24)
+                            {
+                                sfx_bank.game_start = Some(SfxSourceRef::VoiceAfsIndex(24));
                             }
-                            if sfx_bank.save_sound.is_none() {
-                                sfx_bank.save_sound =
-                                    sfx_bank.voice_afs_sfx.get(&35).map(|w| (**w).clone());
+                            if sfx_bank.save_sound.is_none()
+                                && sfx_bank.voice_afs_sfx.contains_key(&35)
+                            {
+                                sfx_bank.save_sound = Some(SfxSourceRef::VoiceAfsIndex(35));
                             }
                             break;
                         }
@@ -160,28 +166,28 @@ impl MenuAudioBank {
         }
 
         // 3. Load SH2:EE standalone extra WAV overrides (`sh2e/sound/extra/*.wav`) when preferring SH2:EE (or as fallback)
-        Self::load_extra_wav_override(
+        Self::load_extra_source_ref_override(
             data_root,
             ee_root,
             prefer_ee,
             "sound/extra/g_start.wav",
             &mut sfx_bank.game_start,
         );
-        Self::load_extra_wav_override(
+        Self::load_extra_source_ref_override(
             data_root,
             ee_root,
             prefer_ee,
             "sound/extra/save_sound.wav",
             &mut sfx_bank.save_sound,
         );
-        Self::load_extra_wav_override(
+        Self::load_extra_source_ref_override(
             data_root,
             ee_root,
             prefer_ee,
             "sound/extra/flashlight_on.wav",
             &mut sfx_bank.flashlight_on,
         );
-        Self::load_extra_wav_override(
+        Self::load_extra_source_ref_override(
             data_root,
             ee_root,
             prefer_ee,
@@ -204,6 +210,23 @@ impl MenuAudioBank {
         );
 
         sfx_bank
+    }
+
+    pub(super) fn load_extra_source_ref_override(
+        data_root: &Path,
+        ee_root: Option<&Path>,
+        prefer_ee: bool,
+        rel_path: &str,
+        slot: &mut Option<SfxSourceRef>,
+    ) {
+        if !prefer_ee && slot.is_some() {
+            return;
+        }
+        let mut wav_slot = None;
+        Self::load_extra_wav_override(data_root, ee_root, prefer_ee, rel_path, &mut wav_slot);
+        if let Some(entry) = wav_slot {
+            *slot = Some(SfxSourceRef::extra_wav(entry));
+        }
     }
 
     pub(super) fn load_extra_wav_override(
@@ -256,7 +279,11 @@ impl MenuAudioBank {
     pub fn primary_sample_rate(&self) -> u32 {
         self.entries
             .first()
-            .or(self.cursor_move.as_ref())
+            .or_else(|| {
+                self.cursor_move
+                    .as_ref()
+                    .and_then(|src| self.resolve_source_ref(src))
+            })
             .map(|e| e.sample_rate)
             .unwrap_or(0)
     }
@@ -267,22 +294,68 @@ impl MenuAudioBank {
         self.entries.get(index)
     }
 
+    /// Resolves a [`SfxSourceRef`] to its backing [`WavEntry`] without cloning PCM bytes (`SH2-179`).
+    #[inline]
+    pub fn resolve_source_ref<'a>(&'a self, src: &'a SfxSourceRef) -> Option<&'a WavEntry> {
+        match src {
+            SfxSourceRef::SddataIndex(idx) => self.get_sddata_entry(*idx),
+            SfxSourceRef::VoiceAfsIndex(idx) => self.voice_afs_sfx.get(idx).map(Arc::as_ref),
+            SfxSourceRef::ExtraWav { wav, .. } => Some(wav.as_ref()),
+        }
+    }
+
+    /// Lazily prepares and caches a 48 kHz [`PreparedSfx`] (`Arc<[Frame]>`) for `sddata.bin[index]`,
+    /// returning a zero-copy `Arc::clone` on all subsequent triggers (`SH2-179`).
+    pub fn get_or_prepare_sddata(&self, index: usize) -> Option<PreparedSfx> {
+        let wav = self.entries.get(index)?;
+        if let Some(cell) = self.prepared_sddata.get(index) {
+            return Some(cell.get_or_init(|| prepare_wav_entry_48k(wav)).clone());
+        }
+        Some(prepare_wav_entry_48k(wav))
+    }
+
+    /// Lazily prepares a 48 kHz [`PreparedSfx`] from a [`SfxSourceRef`], hitting the per-index cache
+    /// for `sddata.bin` and standalone extra WAV overrides (`SH2-179`).
+    pub fn prepare_source_ref(&self, src: &SfxSourceRef) -> Option<PreparedSfx> {
+        match src {
+            SfxSourceRef::SddataIndex(idx) => self.get_or_prepare_sddata(*idx),
+            SfxSourceRef::VoiceAfsIndex(idx) => self
+                .voice_afs_sfx
+                .get(idx)
+                .map(|wav| prepare_wav_entry_48k(wav)),
+            SfxSourceRef::ExtraWav { wav, prepared } => {
+                Some(prepared.get_or_init(|| prepare_wav_entry_48k(wav)).clone())
+            }
+        }
+    }
+
     /// Resolves any game `se_id` (`u32`, either from the 666-entry `0x8A1ED8` `sddata.bin` table or the 32-entry `0x8A1E58` `voice.afs` table).
     pub fn resolve_se_id(&self, se_id: u32) -> Option<&WavEntry> {
         match se_id {
             10000 => self
                 .cursor_move
                 .as_ref()
+                .and_then(|s| self.resolve_source_ref(s))
                 .or_else(|| self.get_sddata_entry(293)),
-            10002 => self.confirm.as_ref().or_else(|| self.get_sddata_entry(297)),
-            10003 => self.cancel.as_ref().or_else(|| self.get_sddata_entry(291)),
+            10002 => self
+                .confirm
+                .as_ref()
+                .and_then(|s| self.resolve_source_ref(s))
+                .or_else(|| self.get_sddata_entry(297)),
+            10003 => self
+                .cancel
+                .as_ref()
+                .and_then(|s| self.resolve_source_ref(s))
+                .or_else(|| self.get_sddata_entry(291)),
             10051 => self
                 .save_sound
                 .as_ref()
+                .and_then(|s| self.resolve_source_ref(s))
                 .or_else(|| self.voice_afs_sfx.get(&35).map(Arc::as_ref)),
             15002 => self
                 .game_start
                 .as_ref()
+                .and_then(|s| self.resolve_source_ref(s))
                 .or_else(|| self.voice_afs_sfx.get(&24).map(Arc::as_ref)),
             _ => {
                 if let Some(sd_idx) = resolve_se_id_to_sddata_index(se_id) {
@@ -293,6 +366,59 @@ impl MenuAudioBank {
                 if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
                     if let Some(wav) = self.voice_afs_sfx.get(&afs_idx) {
                         return Some(wav.as_ref());
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Resolves any game `se_id` into a lazily cached 48 kHz [`PreparedSfx`] (`Arc<[Frame]>`) for
+    /// zero-copy playback (`SH2-179`).
+    pub fn resolve_prepared_se_id(&self, se_id: u32) -> Option<PreparedSfx> {
+        match se_id {
+            10000 => self
+                .cursor_move
+                .as_ref()
+                .and_then(|s| self.prepare_source_ref(s))
+                .or_else(|| self.get_or_prepare_sddata(293)),
+            10002 => self
+                .confirm
+                .as_ref()
+                .and_then(|s| self.prepare_source_ref(s))
+                .or_else(|| self.get_or_prepare_sddata(297)),
+            10003 => self
+                .cancel
+                .as_ref()
+                .and_then(|s| self.prepare_source_ref(s))
+                .or_else(|| self.get_or_prepare_sddata(291)),
+            10051 => self
+                .save_sound
+                .as_ref()
+                .and_then(|s| self.prepare_source_ref(s))
+                .or_else(|| {
+                    self.voice_afs_sfx
+                        .get(&35)
+                        .map(|w| prepare_wav_entry_48k(w))
+                }),
+            15002 => self
+                .game_start
+                .as_ref()
+                .and_then(|s| self.prepare_source_ref(s))
+                .or_else(|| {
+                    self.voice_afs_sfx
+                        .get(&24)
+                        .map(|w| prepare_wav_entry_48k(w))
+                }),
+            _ => {
+                if let Some(sd_idx) = resolve_se_id_to_sddata_index(se_id) {
+                    if let Some(prepared) = self.get_or_prepare_sddata(sd_idx) {
+                        return Some(prepared);
+                    }
+                }
+                if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
+                    if let Some(wav) = self.voice_afs_sfx.get(&afs_idx) {
+                        return Some(prepare_wav_entry_48k(wav));
                     }
                 }
                 None
@@ -408,6 +534,7 @@ mod tests {
             data_root: None,
             ee_root: None,
             entries: Vec::new(),
+            prepared_sddata: Vec::new(),
             voice_afs_sfx: HashMap::new(),
             voice_afs_lru: VecDeque::new(),
             cursor_move: None,
@@ -471,5 +598,30 @@ mod tests {
         for &core_idx in &CORE_VOICE_AFS_INDICES {
             assert!(bank.voice_afs_sfx.contains_key(&core_idx));
         }
+    }
+
+    #[test]
+    fn prepared_sddata_cache_reuses_arc_and_menu_cues_use_index_refs() {
+        let mut bank = empty_bank();
+        bank.entries = (0..300).map(|i| dummy_wav(i as u32)).collect();
+        bank.prepared_sddata = (0..bank.entries.len()).map(|_| OnceLock::new()).collect();
+        bank.cursor_move = Some(SfxSourceRef::SddataIndex(293));
+        bank.flashlight_on = Some(SfxSourceRef::extra_wav(dummy_wav(900)));
+
+        // Repeated sddata lookups return the exact same Arc<[Frame]> allocation (zero resampling/copy).
+        let p1 = bank
+            .get_or_prepare_sddata(293)
+            .expect("prepared sddata[293]");
+        let p2 = bank
+            .resolve_prepared_se_id(10000)
+            .expect("prepared se_id 10000 -> sddata[293]");
+        assert_eq!(p1.sample_rate, 48_000);
+        assert!(Arc::ptr_eq(&p1.frames, &p2.frames));
+
+        // Standalone ExtraWav override also caches and reuses its prepared Arc<[Frame]>.
+        let fl_ref = bank.flashlight_on.as_ref().expect("flashlight_on");
+        let fl1 = bank.prepare_source_ref(fl_ref).expect("fl1");
+        let fl2 = bank.prepare_source_ref(fl_ref).expect("fl2");
+        assert!(Arc::ptr_eq(&fl1.frames, &fl2.frames));
     }
 }

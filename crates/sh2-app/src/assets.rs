@@ -133,6 +133,21 @@ pub(crate) fn load_map_for_quality_from_roots(
     None
 }
 
+/// Builds [`sh2_renderer::fog::FogUniforms`] strictly from `sh2_core::fog::evaluate_room_fog`
+/// (`SetupDrawEnvData` `0x00251370` / `sh2pc.exe` `sh2pc_00470000.c:9133-9196`) in default
+/// `ClassicPs2` mode so no uncited hardcoded fog constants exist in `assets.rs` (`SH2-153`).
+fn fog_uniforms_for_room_id(room_id: u32) -> sh2_renderer::fog::FogUniforms {
+    let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
+        room_id,
+        ..Default::default()
+    });
+    sh2_renderer::fog::FogUniforms::from_room_evaluation(
+        &eval,
+        sh2_core::config::FogQuality::ClassicPs2,
+        false,
+    )
+}
+
 /// Loads ONLY the active `quality` tier `.map` geometry/textures plus spawn pose and fog uniforms
 /// for `room` (`SH2-181`).
 pub(crate) fn find_map_file_for_room_for_quality(
@@ -141,35 +156,16 @@ pub(crate) fn find_map_file_for_room_for_quality(
 ) -> (MapFile, glam::Vec3, f32, sh2_renderer::fog::FogUniforms) {
     match room {
         TestRoomKind::ObservationDeck | TestRoomKind::AudioDebugRoom => {
+            let fog = fog_uniforms_for_room_id(sh2_core::fog::R_OBSV_DECK_ID);
             if let Some(map) = load_map_for_quality_from_roots("bg/ob/ob01.map", "ob01", quality) {
                 tracing::info!(
                     "Loaded authentic Observation Deck level geometry (ob01.map, tier={:?})",
                     quality
                 );
-                // Toluca Lake vista outdoor fog parameters calibrated for full ob01 draw distance
-                let eval = sh2_core::fog::evaluate_room_fog(&sh2_core::fog::RoomFogContext {
-                    room_id: sh2_core::fog::R_OBSV_DECK_ID,
-                    ..Default::default()
-                });
-                let fog = sh2_renderer::fog::FogUniforms::from_room_evaluation(
-                    &eval,
-                    sh2_core::config::FogQuality::ClassicPs2,
-                    false,
-                );
                 // Authentic parking lot overlook coordinates: X: 0.0, Y: -100.0, Z: -5000.0
                 return (map, glam::Vec3::new(0.0, -100.0, -5000.0), 0.0, fog);
             }
             tracing::warn!("Failed to load ob01.map; using synthetic fog runway fallback");
-            let fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.65, 0.68, 0.72, 1.0],
-                fog_near: 2000.0,
-                fog_far: 25000.0,
-                density: 0.80,
-                step_count: 32,
-                curve_type: 1,
-                speed_mult: sh2_core::fog::FOG_SPEED_OUTDOOR_SLOW,
-                ..Default::default()
-            };
             (
                 create_synthetic_fog_runway_geometry(),
                 glam::Vec3::new(0.0, -100.0, 0.0),
@@ -178,22 +174,12 @@ pub(crate) fn find_map_file_for_room_for_quality(
             )
         }
         TestRoomKind::RestroomStart => {
+            let fog = fog_uniforms_for_room_id(sh2_core::fog::R_RESTROOM_START_ID);
             if let Some(map) = load_map_for_quality_from_roots("bg/er/er01.map", "er01", quality) {
                 tracing::info!(
                     "Loaded authentic Opening Restroom level geometry (er01.map, tier={:?})",
                     quality
                 );
-                let mut fog = sh2_renderer::fog::FogUniforms {
-                    fog_color: [0.12, 0.13, 0.14, 1.0], // Dim authentic restroom lighting
-                    fog_near: 800.0,
-                    fog_far: 5000.0,
-                    density: 0.30,
-                    step_count: 24,
-                    curve_type: 0,
-                    speed_mult: 1.0,
-                    ..Default::default()
-                };
-                fog.layer2_params[3] = 0.0;
                 // Authentic PS2 stage 2 (er01) post-prologue mirror spawn coordinates:
                 // James stands at the sink: X: -19606.6, Y: 0.0 (floor), Z: 20429.55, Facing: -PI/2 (-1.5707964 rad, West towards mirror)
                 return (
@@ -204,17 +190,6 @@ pub(crate) fn find_map_file_for_room_for_quality(
                 );
             }
             tracing::warn!("Failed to load er01.map; using fallback room geometry");
-            let mut fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.12, 0.13, 0.14, 1.0],
-                fog_near: 800.0,
-                fog_far: 5000.0,
-                density: 0.30,
-                step_count: 24,
-                curve_type: 0,
-                speed_mult: 1.0,
-                ..Default::default()
-            };
-            fog.layer2_params[3] = 0.0;
             (
                 create_fallback_room_geometry(),
                 glam::Vec3::new(0.0, -800.0, 2000.0),
@@ -223,38 +198,18 @@ pub(crate) fn find_map_file_for_room_for_quality(
             )
         }
         TestRoomKind::HotelBoilerRoom => {
+            // `RR_DrawEnvData` (`room_no = 21`, `SLUS_202.28` `0x00369520`): Nighttime `SetupDrawEnvData` defaults.
+            let fog = fog_uniforms_for_room_id(0);
             if let Some(map) = load_map_for_quality_from_roots("bg/rr/rr21.map", "rr21", quality) {
                 tracing::info!(
                     "Loaded authentic Lakeview Hotel Boiler Room level geometry (rr21.map, tier={:?})",
                     quality
                 );
-                let mut fog = sh2_renderer::fog::FogUniforms {
-                    fog_color: [0.08, 0.09, 0.11, 1.0], // Dark basement boiler tone
-                    fog_near: 800.0,
-                    fog_far: 6000.0,
-                    density: 0.35,
-                    step_count: 24,
-                    curve_type: 0,
-                    speed_mult: 1.0,
-                    ..Default::default()
-                };
-                fog.layer2_params[3] = 0.0;
                 // Authentic rr21 hotel boiler room entrance coordinates (open doorway corridor, outside boiler collision hulls):
                 // Floor Y = 0.0, X = -100850.0, Z = -59400.0, facing North-East into the room (yaw = 2.0 rad)
                 return (map, glam::Vec3::new(-100850.0, 0.0, -59400.0), 2.0, fog);
             }
             tracing::warn!("Failed to load rr21.map; using fallback room geometry");
-            let mut fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.08, 0.09, 0.11, 1.0],
-                fog_near: 800.0,
-                fog_far: 6000.0,
-                density: 0.35,
-                step_count: 24,
-                curve_type: 0,
-                speed_mult: 1.0,
-                ..Default::default()
-            };
-            fog.layer2_params[3] = 0.0;
             (
                 create_fallback_room_geometry(),
                 glam::Vec3::new(0.0, -800.0, 2000.0),
@@ -264,16 +219,7 @@ pub(crate) fn find_map_file_for_room_for_quality(
         }
         TestRoomKind::SyntheticFogRunway => {
             tracing::info!("Generated Synthetic Fog Runway with calibrated distance markers.");
-            let fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.60, 0.64, 0.70, 1.0],
-                fog_near: 2000.0,
-                fog_far: 30000.0,
-                density: 0.85,
-                step_count: 32,
-                curve_type: 1, // Exponential
-                speed_mult: sh2_core::fog::FOG_SPEED_OUTDOOR_SLOW,
-                ..Default::default()
-            };
+            let fog = fog_uniforms_for_room_id(sh2_core::fog::R_FOREST_CEMETERY_ID);
             (
                 create_synthetic_fog_runway_geometry(),
                 glam::Vec3::new(0.0, -100.0, 0.0),
@@ -283,17 +229,7 @@ pub(crate) fn find_map_file_for_room_for_quality(
         }
         TestRoomKind::FallbackSandbox => {
             tracing::info!("Generated built-in Fallback Sandbox room.");
-            let mut fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.08, 0.09, 0.11, 1.0],
-                fog_near: 800.0,
-                fog_far: 6000.0,
-                density: 0.35,
-                step_count: 24,
-                curve_type: 0,
-                speed_mult: 1.0,
-                ..Default::default()
-            };
-            fog.layer2_params[3] = 0.0;
+            let fog = fog_uniforms_for_room_id(0);
             (
                 create_fallback_room_geometry(),
                 glam::Vec3::new(0.0, -800.0, 2000.0),
@@ -308,17 +244,8 @@ pub(crate) fn find_map_file_for_room_for_quality(
         | TestRoomKind::InventoryAndItemsRoom
         | TestRoomKind::PuzzleAndCutawayRoom
         | TestRoomKind::StoryStagesAndEndingsRoom => {
-            let mut fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.06, 0.07, 0.08, 1.0],
-                fog_near: 5000.0,
-                fog_far: 30000.0,
-                density: 0.05, // Clean neutral inspection visibility
-                step_count: 16,
-                curve_type: 0,
-                speed_mult: 0.0,
-                ..Default::default()
-            };
-            fog.layer2_params[3] = 0.0;
+            // Non-fogged inspection sandbox (`density = 0.0`, matching `R_RESTROOM_START_ID`).
+            let fog = fog_uniforms_for_room_id(sh2_core::fog::R_RESTROOM_START_ID);
             (
                 create_model_viewer_pedestal_geometry(),
                 glam::Vec3::new(0.0, 0.0, 0.0),
@@ -331,17 +258,7 @@ pub(crate) fn find_map_file_for_room_for_quality(
                 "Generated Combat / Horror Testing Arena Stage ({:?}).",
                 room
             );
-            let mut fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.12, 0.13, 0.16, 1.0],
-                fog_near: 2500.0,
-                fog_far: 20000.0,
-                density: 0.12,
-                step_count: 24,
-                curve_type: 0,
-                speed_mult: 1.0,
-                ..Default::default()
-            };
-            fog.layer2_params[3] = 0.0;
+            let fog = fog_uniforms_for_room_id(sh2_core::fog::R_RESTROOM_START_ID);
             (
                 create_fallback_room_geometry(),
                 // Spawn James at Z = -1500.0, facing North (0.0 rad) directly looking toward the enemies (Z = 1200..2000)
@@ -354,17 +271,7 @@ pub(crate) fn find_map_file_for_room_for_quality(
             tracing::info!(
                 "Generated 8-Material Surface Footstep & 3D SFX Attenuation Test Room (SH2-61)."
             );
-            let mut fog = sh2_renderer::fog::FogUniforms {
-                fog_color: [0.09, 0.10, 0.13, 1.0],
-                fog_near: 4500.0,
-                fog_far: 26000.0,
-                density: 0.08,
-                step_count: 20,
-                curve_type: 0,
-                speed_mult: 0.5,
-                ..Default::default()
-            };
-            fog.layer2_params[3] = 0.0;
+            let fog = fog_uniforms_for_room_id(sh2_core::fog::R_RESTROOM_START_ID);
             (
                 create_surface_sfx_test_room_geometry(),
                 // Spawn James on Pad 0 (Concrete, X = -4300, Z = -3200) facing East (+X) across the 8 material pads

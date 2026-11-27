@@ -120,9 +120,13 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     if effective_fog.layer2_params[3] > 0.5 && effective_fog.density > 0.0 {
         // `obGB.fcl +0x13` (`0x97`) sets `fog_alpha_param = 0x30` (`48`, `Fog/fog.c:305`) on `ob01`
         // so foreground shadows (restroom doorway, puddles) stay deep & unlifted (`(128*48)>>9 = 12/128`);
+        // `caGB.fcl +0x1113` (`Env[0] +0x13`, `fogSetAreaEnvironment` `0x0016e4a0:878`) sets `0x10` (`16`)
+        // on the Forest Trail (`ca*`/`wp01`), avoiding 8x over-bright fullscreen mist blowout (`SH2-153`);
         // other outdoor rooms use `layer_transparencies[0] * 255.0` (`128`, `FogFix.cpp`).
         let fog_alpha_param = if ps2_room_id == R_OBSV_DECK_ID {
             0x30u8
+        } else if ps2_room_id == sh2_core::fog::R_FOREST_CEMETERY_ID {
+            sh2_core::fog::CA_FOG_ENV_ALPHA_U8
         } else {
             (effective_fog.layer_transparencies[0] * 255.0)
                 .round()

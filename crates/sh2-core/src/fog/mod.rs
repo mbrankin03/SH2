@@ -56,12 +56,60 @@ pub const PS2_FOG_PARTICLE_MIST_RGB: [f32; 3] = [1.0, 1.0, 1.0];
 /// `fog_work.local_pos.y` (`0x00581484`) in `fogSetLocalPosV` (`SLUS_202.28` `0x0016c7c8..0x0016c7e4`).
 pub const OB_FOG_ENV_FIXED_Y_MM: f32 = 10_000.0;
 /// Exact PS2 daytime default GS `FOGCOL` RGB byte (`0x46` = `70` / `255.0` ≈ `0.2745`) written by
-/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251804..0x00251838`) when `sh2gfw_Get_NightOrDay() == 0`
-/// and `DrawEnvData +0x9c == 0.0f` (as in `OB_DrawEnvData` `0x00362e70` / `sh2pc.exe` `0x3f5530`).
+/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251804..0x00251838`, `sh2pc.exe` `sh2pc_00470000.c:9147-9152`)
+/// when `sh2gfw_Get_NightOrDay() == 0` and `DrawEnvData +0x9c == 0.0f` (as in `OB_DrawEnvData` `0x00362e70`,
+/// `CA_DrawEnvData[1]` `0x00361d00`, `CB_DrawEnvData[0]` `0x00361ef0`, `ER_DrawEnvData[2]` `0x00363440`).
 pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_U8: u8 = 0x46;
 /// Normalized `[0.0..=1.0]` channel value of [`PS2_DAYTIME_DEFAULT_FOG_COLOR_U8`] (`70.0 / 255.0`).
 pub const PS2_DAYTIME_DEFAULT_FOG_COLOR_F32: f32 =
     (PS2_DAYTIME_DEFAULT_FOG_COLOR_U8 as f32) / 255.0;
+/// Exact PS2/PC daytime default fog near distance in mm (`0x453b8000 = 3000.0f`) written by
+/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251370:348`, `sh2pc.exe` `sh2pc_00470000.c:9142`) when
+/// `DrawEnvData.fog_far (+0xa0) == 0.0` (e.g. `CA_DrawEnvData[1]` `0x00361d00` Forest Trail `ca11`).
+pub const PS2_DAYTIME_DEFAULT_FOG_NEAR_MM: f32 = 3_000.0;
+/// Exact PS2/PC daytime default fog far distance in mm (`0x45abe000 = 5500.0f`) written by
+/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251370:347`, `sh2pc.exe` `sh2pc_00470000.c:9141`) when
+/// `DrawEnvData.fog_far (+0xa0) == 0.0`.
+pub const PS2_DAYTIME_DEFAULT_FOG_FAR_MM: f32 = 5_500.0;
+/// Exact PS2/PC daytime default normalized minimum depth-fog blend factor (`1.0 - 235.0 / 255.0 = 20.0 / 255.0`)
+/// from `SetupDrawEnvData` (`0x436b0000 = 235.0` at `SLUS_202.28` `0x00251370:350`, `sh2pc.exe` `sh2pc_00470000.c:9144`).
+pub const PS2_DAYTIME_DEFAULT_FOG_MIN_NORM: f32 = (255.0 - 235.0) / 255.0;
+/// Exact PS2/PC daytime default normalized maximum depth-fog blend factor (`1.0 - 20.0 / 255.0 = 235.0 / 255.0`)
+/// from `SetupDrawEnvData` (`0x41a00000 = 20.0` at `SLUS_202.28` `0x00251370:349`, `sh2pc.exe` `sh2pc_00470000.c:9143`).
+pub const PS2_DAYTIME_DEFAULT_FOG_MAX_NORM: f32 = (255.0 - 20.0) / 255.0;
+/// Exact PS2/PC nighttime default fog near distance in mm (`0x453b8000 = 3000.0f`) written by
+/// `SetupDrawEnvData` (`SLUS_202.28` `0x00251370:376`, `sh2pc.exe` `sh2pc_00470000.c:9177`).
+pub const PS2_NIGHTTIME_DEFAULT_FOG_NEAR_MM: f32 = 3_000.0;
+/// Exact PS2 nighttime default fog far distance in mm (`8000.0f`) written by `SetupDrawEnvData`
+/// (`SLUS_202.28` `0x00251370:375`; note `sh2pc.exe` `sh2pc_00470000.c:9176` drifted to `0x45ea6000 = 7500.0f`).
+pub const PS2_NIGHTTIME_DEFAULT_FOG_FAR_MM: f32 = 8_000.0;
+/// Exact PS2/PC nighttime default normalized minimum depth-fog blend factor (`1.0 - 255.0 / 255.0 = 0.0`)
+/// from `SetupDrawEnvData` (`0x437f0000 = 255.0` at `SLUS_202.28` `0x00251370:378`, `sh2pc.exe` `sh2pc_00470000.c:9179`).
+pub const PS2_NIGHTTIME_DEFAULT_FOG_MIN_NORM: f32 = 0.0;
+/// Exact PS2 nighttime default normalized maximum depth-fog blend factor (`1.0 - 100.0 / 255.0 = 155.0 / 255.0`)
+/// from `SetupDrawEnvData` (`0x42c80000 = 100.0` at `SLUS_202.28` `0x00251370:377`; `sh2pc.exe` `sh2pc_00470000.c:9178` drifted to `0.0` -> `1.0`).
+pub const PS2_NIGHTTIME_DEFAULT_FOG_MAX_NORM: f32 = (255.0 - 100.0) / 255.0;
+/// Exact retail `data/bg/ca/caGB.fcl` default `FogEnv[0]` (`0x1100`, `fogSetAreaEnvironment` `0x0016e4a0:878`):
+/// `particle_count = 400` (`0x0190`), `area = 2000 mm` (`0x07d0`), `size = 400 mm` (`0x0190`), `alpha = 16` (`0x10`).
+pub const CA_FOG_ENV_PARTICLE_COUNT: usize = 400;
+/// Exact retail `data/bg/ca/caGB.fcl` `FogEnv[0] +0x13` (`0x1113 = 0x10 = 16`) `fog_alpha_param`.
+pub const CA_FOG_ENV_ALPHA_U8: u8 = 0x10;
+/// Exact `RU_DrawEnvData[0]` (`SLUS_202.28` `0x0036bdd0`, `room_no = 5, stage_id = 13`) fog near/far/min/max.
+pub const RU_LOWER_FOG_NEAR_MM: f32 = 8_000.0;
+/// Exact `RU_DrawEnvData[0]` (`SLUS_202.28` `0x0036bdd0`) fog far in mm.
+pub const RU_LOWER_FOG_FAR_MM: f32 = 12_000.0;
+/// Exact `RU_DrawEnvData[0]` (`SLUS_202.28` `0x0036bdd0`, `+0xac = 200.0`) normalized fog min (`55/255`).
+pub const RU_LOWER_FOG_MIN_NORM: f32 = (255.0 - 200.0) / 255.0;
+/// Exact `RU_DrawEnvData[0]` (`SLUS_202.28` `0x0036bdd0`, `+0xa8 = 30.0`) normalized fog max (`225/255`).
+pub const RU_LOWER_FOG_MAX_NORM: f32 = (255.0 - 30.0) / 255.0;
+/// Exact `RU_DrawEnvData[10]` (`SLUS_202.28` `0x0036d130`, `room_no = 73`, `ru73` Final Boss) fog near in mm.
+pub const RU73_FOG_NEAR_MM: f32 = 12_000.0;
+/// Exact `RU_DrawEnvData[10]` (`SLUS_202.28` `0x0036d130`, `room_no = 73`) fog far in mm.
+pub const RU73_FOG_FAR_MM: f32 = 18_000.0;
+/// Exact `RU_DrawEnvData[10]` (`SLUS_202.28` `0x0036d130`, `+0xac = 50.0`) normalized fog min (`205/255`).
+pub const RU73_FOG_MIN_NORM: f32 = (255.0 - 50.0) / 255.0;
+/// Exact `RU_DrawEnvData[10]` (`SLUS_202.28` `0x0036d130`, `+0xa8 = 30.0`) normalized fog max (`225/255`).
+pub const RU73_FOG_MAX_NORM: f32 = (255.0 - 30.0) / 255.0;
 /// Exact `OB_DrawEnvData` (`SLUS_202.28` `0x00362e70` / `sh2pc.exe` `0x3f5530`, `+0xac = 230.0`)
 /// normalized minimum depth-fog blend factor (`1.0 - 230.0 / 255.0 = 25.0 / 255.0`), verified in
 /// `sh2pc.exe` `FUN_00458c20(_DAT_00942c3c * 0.003921569)` (`sh2pc_00470000.c:7921`).
@@ -304,16 +352,19 @@ pub fn ps2_depth_fog_linear_coeffs(
 /// Room ID for Opening Restroom (`er01.map`, `RoomNameJms() == 1` in `PlayerSetReverseMode` `0x0024c190` line 198).
 pub const R_RESTROOM_START_ID: u32 = 0x01;
 
-/// Maps a lowercase stage/map code (e.g. `"ob01"`, `"ca11"`, `"ru73"`) to its canonical PS2/PC `room_id`.
+/// Maps a lowercase stage/map code (e.g. `"ob01"`, `"ca11"`, `"wp01"`, `"ru73"`) to its canonical PS2/PC `room_id`.
 #[must_use]
 pub fn room_id_from_stage_code(stage_code: &str) -> u32 {
     let lower = stage_code.to_ascii_lowercase();
     match lower.as_str() {
         "er01" => R_RESTROOM_START_ID,
         "ob01" => R_OBSV_DECK_ID,
-        "ca11" | "ca12" | "ca13" => R_FOREST_CEMETERY_ID,
+        "wp01" => R_FOREST_CEMETERY_ID,
+        s if s.starts_with("ca") => R_FOREST_CEMETERY_ID,
         "tw01" | "tw02" => R_TOWN_EAST_ID,
+        s if s.starts_with("cb") => R_TOWN_EAST_ID,
         "tw11" | "tw12" => R_TOWN_WEST_ID,
+        s if s.starts_with("cc") => R_TOWN_WEST_ID,
         "ap07" => R_APT_E_COURTYARD_ID,
         "ap18" => crate::world::ROOM_APT_E_RM_208 as u32,
         "ap28" | "bc209" => R_APT_W_RM_208_209_ID,
@@ -500,55 +551,80 @@ pub fn evaluate_room_fog_with_fixes(
                 final_boss_upper_override: false,
             }
         }
-        R_FOREST_CEMETERY_ID | R_TOWN_EAST_ID | R_TOWN_WEST_ID => RoomFogEvaluation {
-            fog_color: [0.62, 0.66, 0.70, 1.0],
-            fog_near_mm: 1800.0,
-            fog_far_mm: 26000.0,
-            fog_min: 0.0,
-            fog_max: 1.0,
-            density: 1.0,
-            curve: FogFalloffCurve::Exponential,
-            speed_mult,
-            layers: base_layers,
-            particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
-            particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_fixed_y_mm: None,
-            james_fog_influence_mm,
-            outdoor_layers_enabled: true,
-            final_boss_upper_override: false,
-        },
-        R_APT_E_COURTYARD_ID => RoomFogEvaluation {
-            fog_color: [0.35, 0.37, 0.40, 1.0],
-            fog_near_mm: 1600.0,
-            fog_far_mm: 18000.0,
-            fog_min: 0.0,
-            fog_max: 1.0,
-            density: 0.9,
-            curve: FogFalloffCurve::Exponential,
-            speed_mult,
-            layers: base_layers,
-            particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT / 2,
-            particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_fixed_y_mm: None,
-            james_fog_influence_mm,
-            outdoor_layers_enabled: true,
-            final_boss_upper_override: false,
-        },
+        R_FOREST_CEMETERY_ID | R_TOWN_EAST_ID | R_TOWN_WEST_ID => {
+            // Exact PS2/PC `SetupDrawEnvData` Daytime defaults (`SLUS_202.28` `0x00251370:344-362`,
+            // `sh2pc.exe` `sh2pc_00470000.c:9133-9154`) for `CA_DrawEnvData[1]` (`0x00361d00` /
+            // `sh2pc.exe` `0x3f43c0`, Forest Trail `ca11`), `CB_DrawEnvData[0]` (`0x00361ef0`), and
+            // `CC_DrawEnvData[3]` (`0x003628a0`):
+            // `FOGCOL = (0x46, 0x46, 0x46)`, `fog_near = 3000.0`, `fog_far = 5500.0`,
+            // `fog_min = (255 - 235) / 255`, `fog_max = (255 - 20) / 255`, hyperbolic `FA/z + FB` (`curve = 0`).
+            // Forest Trail particle count (`400`) matches retail `data/bg/ca/caGB.fcl` `FogEnv[0]` (`0x1100`).
+            let particle_count = if ctx.room_id == R_FOREST_CEMETERY_ID {
+                CA_FOG_ENV_PARTICLE_COUNT
+            } else {
+                PS2_DEFAULT_FOG_PARTICLE_COUNT
+            };
+            RoomFogEvaluation {
+                fog_color: [
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    1.0,
+                ],
+                fog_near_mm: PS2_DAYTIME_DEFAULT_FOG_NEAR_MM,
+                fog_far_mm: PS2_DAYTIME_DEFAULT_FOG_FAR_MM,
+                fog_min: PS2_DAYTIME_DEFAULT_FOG_MIN_NORM,
+                fog_max: PS2_DAYTIME_DEFAULT_FOG_MAX_NORM,
+                density: 1.0,
+                curve: FogFalloffCurve::Linear,
+                speed_mult,
+                layers: base_layers,
+                particle_count,
+                particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_fixed_y_mm: None,
+                james_fog_influence_mm,
+                outdoor_layers_enabled: true,
+                final_boss_upper_override: false,
+            }
+        }
+        R_APT_E_COURTYARD_ID => {
+            // Exact `AP_DrawEnvData` (`SLUS_202.28` `0x003641d0`: `dark = 1`, `fog_far = 0.0`, `flag9c = 0.0`)
+            // Nighttime `SetupDrawEnvData` defaults (`0x00251370:373-390`).
+            RoomFogEvaluation {
+                fog_color: [0.0, 0.0, 0.0, 1.0],
+                fog_near_mm: PS2_NIGHTTIME_DEFAULT_FOG_NEAR_MM,
+                fog_far_mm: PS2_NIGHTTIME_DEFAULT_FOG_FAR_MM,
+                fog_min: PS2_NIGHTTIME_DEFAULT_FOG_MIN_NORM,
+                fog_max: PS2_NIGHTTIME_DEFAULT_FOG_MAX_NORM,
+                density: 1.0,
+                curve: FogFalloffCurve::Linear,
+                speed_mult,
+                layers: base_layers,
+                particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
+                particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_fixed_y_mm: None,
+                james_fog_influence_mm,
+                outdoor_layers_enabled: true,
+                final_boss_upper_override: false,
+            }
+        }
         R_APT_W_RM_208_209_ID => {
+            // `AP_DrawEnvData` Nighttime defaults (`0x00251370:373-390`) + SH2:EE `FogAdjustments.cpp:38-39`
+            // flashlight near-plane shift (`3000.0` -> `4200.0`).
             let fog_near_mm = if enable_sh2ee_world_fixes && ctx.flashlight_on {
                 BLUE_CREEK_FLASHLIGHT_FOG_NEAR_MM
             } else {
                 BLUE_CREEK_ORIGINAL_FOG_NEAR_MM
             };
             RoomFogEvaluation {
-                fog_color: [0.09, 0.10, 0.12, 1.0],
+                fog_color: [0.0, 0.0, 0.0, 1.0],
                 fog_near_mm,
-                fog_far_mm: 11000.0,
-                fog_min: 0.0,
-                fog_max: 1.0,
-                density: 0.9,
+                fog_far_mm: PS2_NIGHTTIME_DEFAULT_FOG_FAR_MM,
+                fog_min: PS2_NIGHTTIME_DEFAULT_FOG_MIN_NORM,
+                fog_max: PS2_NIGHTTIME_DEFAULT_FOG_MAX_NORM,
+                density: 1.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
                 layers: base_layers,
@@ -562,19 +638,45 @@ pub fn evaluate_room_fog_with_fixes(
             }
         }
         R_FINAL_BOSS_RM_ID => {
+            // `RU_DrawEnvData[10]` (`0x0036d130`, `room_no = 73`, `12000..18000`) for upper scaffolding
+            // (`camera_pos_y < -15750.0`, `FogAdjustments.cpp:40,76-125`) vs `RU_DrawEnvData[0]` (`0x0036bdd0`,
+            // `8000..12000`) for lower arena.
             let upper = ctx.camera_pos_y_mm < FINAL_BOSS_CAMERA_Y_THRESHOLD_MM;
             RoomFogEvaluation {
                 fog_color: if upper {
-                    [0.34, 0.36, 0.40, 1.0]
+                    [
+                        PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                        PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                        PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                        1.0,
+                    ]
                 } else {
-                    [0.24, 0.26, 0.30, 1.0]
+                    [0.0, 0.0, 0.0, 1.0]
                 },
-                fog_near_mm: 2500.0,
-                fog_far_mm: if upper { 30000.0 } else { 28000.0 },
-                fog_min: 0.0,
-                fog_max: 1.0,
-                density: if upper { 0.85 } else { 0.95 },
-                curve: FogFalloffCurve::Exponential,
+                fog_near_mm: if upper {
+                    RU73_FOG_NEAR_MM
+                } else {
+                    RU_LOWER_FOG_NEAR_MM
+                },
+                fog_far_mm: if upper {
+                    RU73_FOG_FAR_MM
+                } else {
+                    RU_LOWER_FOG_FAR_MM
+                },
+                fog_min: if upper {
+                    RU73_FOG_MIN_NORM
+                } else {
+                    RU_LOWER_FOG_MIN_NORM
+                },
+                fog_max: if upper {
+                    RU73_FOG_MAX_NORM
+                } else {
+                    RU_LOWER_FOG_MAX_NORM
+                },
+                // `FogAdjustments.cpp:100-125` (`FinalAreaBoss2ASM`): pushes `0` to `D3DRS_FOGENABLE`
+                // (`density = 0.0`) on upper scaffolding (`camera_pos_y < -15750.0`), `1` (`1.0`) below.
+                density: if upper { 0.0 } else { 1.0 },
+                curve: FogFalloffCurve::Linear,
                 speed_mult,
                 layers: base_layers,
                 particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
@@ -586,42 +688,55 @@ pub fn evaluate_room_fog_with_fixes(
                 final_boss_upper_override: upper,
             }
         }
-        R_RESTROOM_START_ID | R_HTL_RM_312_ID => RoomFogEvaluation {
-            fog_color: [0.22, 0.21, 0.18, 1.0],
-            fog_near_mm: 2000.0,
-            fog_far_mm: 14000.0,
-            fog_min: 0.0,
-            fog_max: 1.0,
-            density: 0.0,
-            curve: FogFalloffCurve::Linear,
-            speed_mult: 1.0,
-            layers: base_layers,
-            particle_count: 0,
-            particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_fixed_y_mm: None,
-            james_fog_influence_mm,
-            outdoor_layers_enabled: false,
-            final_boss_upper_override: false,
-        },
-        _ => RoomFogEvaluation {
-            fog_color: [0.10, 0.11, 0.13, 1.0],
-            fog_near_mm: 1200.0,
-            fog_far_mm: 9000.0,
-            fog_min: 0.0,
-            fog_max: 1.0,
-            density: 0.85,
-            curve: FogFalloffCurve::Linear,
-            speed_mult,
-            layers: base_layers,
-            particle_count: 0,
-            particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
-            particle_fixed_y_mm: None,
-            james_fog_influence_mm,
-            outdoor_layers_enabled: false,
-            final_boss_upper_override: false,
-        },
+        R_RESTROOM_START_ID | R_HTL_RM_312_ID => {
+            // `ER_DrawEnvData[2]` (`SLUS_202.28` `0x00363440`, `room_no = 1`, `dark = 0`, `fog_far = 0.0`)
+            // Daytime `SetupDrawEnvData` defaults with indoor non-fogged `density = 0.0`.
+            RoomFogEvaluation {
+                fog_color: [
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                    1.0,
+                ],
+                fog_near_mm: PS2_DAYTIME_DEFAULT_FOG_NEAR_MM,
+                fog_far_mm: PS2_DAYTIME_DEFAULT_FOG_FAR_MM,
+                fog_min: PS2_DAYTIME_DEFAULT_FOG_MIN_NORM,
+                fog_max: PS2_DAYTIME_DEFAULT_FOG_MAX_NORM,
+                density: 0.0,
+                curve: FogFalloffCurve::Linear,
+                speed_mult: 1.0,
+                layers: base_layers,
+                particle_count: 0,
+                particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_fixed_y_mm: None,
+                james_fog_influence_mm,
+                outdoor_layers_enabled: false,
+                final_boss_upper_override: false,
+            }
+        }
+        _ => {
+            // Default indoor nighttime rooms (`RR_DrawEnvData`, `AP_DrawEnvData`, `HP_DrawEnvData`,
+            // `PS_DrawEnvData`): exact `SetupDrawEnvData` Nighttime defaults (`SLUS_202.28` `0x00251370:373-390`).
+            RoomFogEvaluation {
+                fog_color: [0.0, 0.0, 0.0, 1.0],
+                fog_near_mm: PS2_NIGHTTIME_DEFAULT_FOG_NEAR_MM,
+                fog_far_mm: PS2_NIGHTTIME_DEFAULT_FOG_FAR_MM,
+                fog_min: PS2_NIGHTTIME_DEFAULT_FOG_MIN_NORM,
+                fog_max: PS2_NIGHTTIME_DEFAULT_FOG_MAX_NORM,
+                density: 1.0,
+                curve: FogFalloffCurve::Linear,
+                speed_mult,
+                layers: base_layers,
+                particle_count: 0,
+                particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_range_z_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
+                particle_fixed_y_mm: None,
+                james_fog_influence_mm,
+                outdoor_layers_enabled: false,
+                final_boss_upper_override: false,
+            }
+        }
     }
 }
 
@@ -706,6 +821,57 @@ mod tests {
             inside_band.james_fog_influence_mm,
             PS2_FOREST_TRAIL_JAMES_FOG_INFLUENCE_MM
         );
+        // Exact `CA_DrawEnvData[1]` (`0x00361d00`) + `SetupDrawEnvData` Daytime defaults (`0x00251370:344-362`)
+        assert_eq!(
+            outside_band.fog_color,
+            [
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                1.0,
+            ]
+        );
+        assert_eq!(outside_band.fog_near_mm, PS2_DAYTIME_DEFAULT_FOG_NEAR_MM);
+        assert_eq!(outside_band.fog_far_mm, PS2_DAYTIME_DEFAULT_FOG_FAR_MM);
+        assert!((outside_band.fog_min - PS2_DAYTIME_DEFAULT_FOG_MIN_NORM).abs() < 1e-6);
+        assert!((outside_band.fog_max - PS2_DAYTIME_DEFAULT_FOG_MAX_NORM).abs() < 1e-6);
+        assert_eq!(outside_band.curve, FogFalloffCurve::Linear);
+        assert_eq!(outside_band.particle_count, CA_FOG_ENV_PARTICLE_COUNT);
+        assert_eq!(room_id_from_stage_code("wp01"), R_FOREST_CEMETERY_ID);
+        assert_eq!(room_id_from_stage_code("ca11"), R_FOREST_CEMETERY_ID);
+        assert_eq!(room_id_from_stage_code("ca14"), R_FOREST_CEMETERY_ID);
+    }
+
+    #[test]
+    fn restroom_and_default_indoor_rooms_match_setup_draw_env_data() {
+        let er = evaluate_room_fog(&RoomFogContext {
+            room_id: R_RESTROOM_START_ID,
+            ..Default::default()
+        });
+        assert_eq!(er.density, 0.0);
+        assert!(!er.outdoor_layers_enabled);
+        assert_eq!(er.fog_near_mm, PS2_DAYTIME_DEFAULT_FOG_NEAR_MM);
+        assert_eq!(er.fog_far_mm, PS2_DAYTIME_DEFAULT_FOG_FAR_MM);
+        assert_eq!(
+            er.fog_color,
+            [
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                PS2_DAYTIME_DEFAULT_FOG_COLOR_F32,
+                1.0,
+            ]
+        );
+
+        let indoor_night = evaluate_room_fog(&RoomFogContext {
+            room_id: 0,
+            ..Default::default()
+        });
+        assert_eq!(indoor_night.fog_color, [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(indoor_night.fog_near_mm, PS2_NIGHTTIME_DEFAULT_FOG_NEAR_MM);
+        assert_eq!(indoor_night.fog_far_mm, PS2_NIGHTTIME_DEFAULT_FOG_FAR_MM);
+        assert!((indoor_night.fog_min - PS2_NIGHTTIME_DEFAULT_FOG_MIN_NORM).abs() < 1e-6);
+        assert!((indoor_night.fog_max - PS2_NIGHTTIME_DEFAULT_FOG_MAX_NORM).abs() < 1e-6);
+        assert!(!indoor_night.outdoor_layers_enabled);
     }
 
     #[test]

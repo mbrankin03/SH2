@@ -1,4 +1,4 @@
-//! Cutscene session loader (`ActiveDramaDemoSession`, `open_drama_demo_session`, `load_cutscene_voice_wav`) (`SH2-63`).
+//! Cutscene session loader (`ActiveDramaDemoSession`, `open_drama_demo_session`, `load_cutscene_voice_wav_for_source`) (`SH2-63`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -234,10 +234,4 @@ pub(crate) fn load_cutscene_voice_wav_for_source(
         resolver.game_root.display()
     );
     None
-}
-
-/// Decodes a cutscene voice track (`voice.afs` entry `afs_index`) preferring SH2:EE lossless audio.
-#[allow(dead_code)]
-pub(crate) fn load_cutscene_voice_wav(afs_index: usize) -> Option<sh2_assets::WavEntry> {
-    load_cutscene_voice_wav_for_source(afs_index, sh2_core::AudioPackSource::EnhancedLossless)
 }

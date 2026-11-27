@@ -20,12 +20,12 @@ use sh2_ui::menu::TestRoomKind;
 /// lazy-loaded enemy species, and atmospheric fog uniforms described by `manifest` into `AppState` (`SH2-181`).
 ///
 /// For outdoor multi-tile stages (`manifest.is_outdoor`), seeds the initial tile into
-/// `AppState::outdoor_tile_pool` and returns its numeric `block_no` so `OutdoorTileStreamer`
-/// marks it immediately resident (`SH2-183`). For indoor stages, clears the outdoor tile pool.
+/// `AppState::outdoor_tile_pool` and returns `(area, block_no)` so `OutdoorTileStreamer`
+/// marks it immediately resident for that area (`SH2-183`). For indoor stages, clears the outdoor tile pool.
 pub(crate) fn load_manifest_into_app_state(
     state: &mut AppState,
     manifest: &RoomLoadManifest,
-) -> Option<u16> {
+) -> Option<(sh2_core::world::OutdoorArea, u16)> {
     let resolver = sh2_assets::AssetPathResolver::resolve();
 
     let active_tex_quality = state
@@ -103,7 +103,7 @@ pub(crate) fn load_manifest_into_app_state(
                 state.map_texture_bind_groups.clone(),
                 tile_cld,
             );
-            Some(block_no)
+            Some((area, block_no))
         } else {
             state.outdoor_tile_pool.clear();
             None

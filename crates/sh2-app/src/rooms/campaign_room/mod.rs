@@ -153,8 +153,8 @@ impl CampaignRoomController {
                 ls.mark_completed();
             }
             if let Some(ref mut orch) = state.campaign_orchestrator {
-                if let Some(block_no) = seeded_block {
-                    orch.outdoor_streamer.mark_resident(block_no);
+                if let Some((area, block_no)) = seeded_block {
+                    orch.outdoor_streamer.mark_resident_for_area(area, block_no);
                 }
                 orch.notify_room_assets_loaded();
             }
@@ -427,8 +427,8 @@ impl RoomController for CampaignRoomController {
                 let seeded_block = loader::load_manifest_into_app_state(state, &manifest);
                 if let Some(ref mut orch) = state.campaign_orchestrator {
                     orch.outdoor_streamer.reset();
-                    if let Some(block_no) = seeded_block {
-                        orch.outdoor_streamer.mark_resident(block_no);
+                    if let Some((area, block_no)) = seeded_block {
+                        orch.outdoor_streamer.mark_resident_for_area(area, block_no);
                     }
                 }
             }

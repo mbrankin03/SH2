@@ -291,10 +291,13 @@ impl GpuOutdoorTilePool {
             let Ok(done) = self.result_rx.try_recv() else {
                 break;
             };
-            self.in_flight.remove(&(done.area, done.block_no));
+            // Check generation and active area BEFORE removing from `in_flight` so a stale
+            // generation-N completion can never delete a live generation-(N+1) `in_flight`
+            // entry, and stale completions do not consume `max_uploads_per_frame` budget.
             if done.generation != self.generation || self.active_area != Some(done.area) {
                 continue;
             }
+            self.in_flight.remove(&(done.area, done.block_no));
             if let Some(map) = done.map {
                 let gpu_map = Arc::new(GpuMap::from_map_with_room_id(
                     &render_ctx.device,
@@ -494,5 +497,75 @@ impl Drop for GpuOutdoorTilePool {
         for handle in self.workers.drain(..) {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RendererConfig;
+
+    #[test]
+    fn stale_generation_result_preserves_live_in_flight_and_upload_budget() {
+        let Some(ctx) = RenderContext::new_headless(RendererConfig::default()) else {
+            return;
+        };
+
+        let (result_tx, result_rx) = mpsc::channel::<LoadedTile>();
+        let mut pool = GpuOutdoorTilePool {
+            data_dir: PathBuf::new(),
+            sh2e_dir: None,
+            texture_quality: WorldTextureQuality::OriginalPs2,
+            supports_bc: false,
+            generation: 2,
+            active_area: Some(OutdoorArea::Ca),
+            resident: HashMap::new(),
+            in_flight: HashSet::from([(OutdoorArea::Ca, 11), (OutdoorArea::Ca, 12)]),
+            collision_dirty: false,
+            job_tx: None,
+            result_rx,
+            workers: Vec::new(),
+        };
+
+        // Enqueue 3 stale generation-1 completions for (Ca, 11) followed by 1 live generation-2
+        // completion for (Ca, 12) with an empty MapFile.
+        for _ in 0..3 {
+            result_tx
+                .send(LoadedTile {
+                    generation: 1,
+                    area: OutdoorArea::Ca,
+                    block_no: 11,
+                    map: None,
+                    prepared_textures: Vec::new(),
+                    collision: None,
+                })
+                .unwrap();
+        }
+        result_tx
+            .send(LoadedTile {
+                generation: 2,
+                area: OutdoorArea::Ca,
+                block_no: 12,
+                map: Some(MapFile {
+                    name: "ca12".to_string(),
+                    batches: Vec::new(),
+                    materials: Vec::new(),
+                    textures: HashMap::new(),
+                }),
+                prepared_textures: Vec::new(),
+                collision: None,
+            })
+            .unwrap();
+
+        // With max_uploads_per_frame = 1, all 3 stale results must be drained without consuming
+        // upload budget, live (Ca, 11) must remain in_flight, and live (Ca, 12) must upload.
+        let uploaded = pool.poll_uploads(&ctx, 1);
+        assert_eq!(uploaded, vec![12]);
+        assert!(
+            pool.in_flight.contains(&(OutdoorArea::Ca, 11)),
+            "stale generation-1 completion must not remove live generation-2 in_flight entry"
+        );
+        assert!(!pool.in_flight.contains(&(OutdoorArea::Ca, 12)));
+        assert!(pool.get(12).is_some());
     }
 }

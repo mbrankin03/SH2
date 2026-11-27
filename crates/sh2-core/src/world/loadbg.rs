@@ -122,6 +122,21 @@ impl OutdoorTileStreamer {
         }
     }
 
+    /// Seeds `block_no` as resident for `area` (e.g. when synchronously loading the initial
+    /// outdoor entry tile `ca11` or `cb54` before the first `plan_ref` tick), initializing
+    /// `active_area` so the first `plan_ref` preserves residency instead of clearing
+    /// `resident_blocks` and leaking the seeded tile (`SH2-183`).
+    pub fn mark_resident_for_area(&mut self, area: OutdoorArea, block_no: u16) {
+        if self.active_area != Some(area) {
+            self.active_area = Some(area);
+            self.resident_blocks.clear();
+            self.last_plan_key = None;
+        }
+        if self.resident_blocks.insert(block_no) {
+            self.last_plan_key = None;
+        }
+    }
+
     /// Marks `block_no` as evicted from GPU memory.
     pub fn mark_evicted(&mut self, block_no: u16) {
         if self.resident_blocks.remove(&block_no) {
@@ -474,5 +489,29 @@ mod tests {
         assert_eq!(plan.load_queue[0].tile.block_no, 11);
         assert!(plan.load_queue[0].distance_mm < 1.0);
         assert!(plan.load_queue[1].distance_mm < 10_000.0);
+    }
+
+    #[test]
+    fn test_mark_resident_for_area_prevents_requeue_and_enables_eviction() {
+        let mut streamer = OutdoorTileStreamer::new(OutdoorStreamingMode::ClassicPs2LoadBg2x2);
+        // Simulate synchronous entry-tile seeding of `ca11` before any `plan()` call
+        // (when `active_area` is still `None`).
+        streamer.mark_resident_for_area(OutdoorArea::Ca, 11);
+
+        // First plan in `ca11` must NOT re-queue `11` because it is already resident.
+        let plan1 = streamer.plan(4, 5_000.0, -15_000.0);
+        assert!(plan1.desired_blocks.contains(&11));
+        assert!(
+            !plan1.load_queue.iter().any(|r| r.tile.block_no == 11),
+            "seeded entry tile ca11 must not be re-queued"
+        );
+
+        // Walking far down the trail into Graveyard (`ca20`, cell (-4, -1)) must evict `11`.
+        let plan2 = streamer.plan(4, -75_000.0, -15_000.0);
+        assert!(
+            plan2.evict_blocks.contains(&11),
+            "seeded entry tile ca11 must be evicted when leaving its 2x2 quadrant, got {:?}",
+            plan2.evict_blocks
+        );
     }
 }

@@ -799,6 +799,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         key_ready_held: false,
         key_attack_pressed: false,
         key_attack_held: false,
+        key_guard_pressed: false,
         combat_enemy_idx: 0,
         struggle_button_press_count: 0,
         model_viewer,

@@ -164,12 +164,36 @@ fn update_listener_acoustics_and_footsteps(state: &mut AppState) {
     }
 }
 
+/// Resolves physical Run / Guard rising-edge (`shPadTrigger`) and held (`shPadPress`) inputs
+/// from desktop keyboard (`ShiftLeft`/`ShiftRight`) and gamepad (`Button::West`, PS2 Type 2
+/// Square `0x8000`) matching `_DAT_0116db3c` in `SLUS_202.28` `PlayerChectGuardSuccess`
+/// (`0x001101d0`) and `DAT_00932ca4` in `sh2pc.exe` `FUN_00534210` (`0x00534210`).
+#[inline]
+fn resolve_guard_inputs(
+    key_guard_pressed: bool,
+    key_run_held: bool,
+    gamepad_guard_pressed: bool,
+    gamepad_guard_held: bool,
+) -> (bool, bool) {
+    (
+        key_guard_pressed || gamepad_guard_pressed,
+        key_run_held || gamepad_guard_held,
+    )
+}
+
 fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
     let tick_dt = 1.0 / 60.0;
     let ready_held = state.key_ready_held || state.sim_core.input.state.ready_weapon_pressed;
     let atk_held = state.key_attack_held || state.sim_core.input.state.action_pressed;
     let mut atk_pressed = state.key_attack_pressed || state.sim_core.input.state.action_pressed;
     state.key_attack_pressed = false;
+    let (mut guard_pressed, guard_held) = resolve_guard_inputs(
+        state.key_guard_pressed,
+        state.key_run_held,
+        state.sim_core.input.state.guard_pressed,
+        state.sim_core.input.state.guard_held,
+    );
+    state.key_guard_pressed = false;
     let mut struggle_presses = state.struggle_button_press_count;
     state.struggle_button_press_count = 0;
 
@@ -218,7 +242,8 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             attack_pressure,
             native_light_pressed: state.sim_core.input.state.native_light_attack_pressed,
             native_heavy_pressed: state.sim_core.input.state.native_heavy_attack_pressed,
-            ..Default::default()
+            guard_pressed,
+            guard_held,
         };
 
         let prev_enemy_states: Vec<(f32, bool)> = state
@@ -257,6 +282,7 @@ fn step_combat_arena_ticks(state: &mut AppState, ticks_processed: u32) {
             }
         }
         atk_pressed = false;
+        guard_pressed = false;
 
         state.sim_core.scenario.player_position = state.combat_arena.player_position;
         if state.combat_arena.player.mode == sh2_core::combat::CombatMode::Held {
@@ -445,4 +471,31 @@ fn step_se_pool_manager(
         .se_pool
         .tick_3d(&listener, &finished_channels, &mut actions);
     crate::audio_dispatch::dispatch_se_pool_actions(state, &actions);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_guard_inputs;
+
+    #[test]
+    fn test_resolve_guard_inputs_merges_keyboard_and_gamepad() {
+        assert_eq!(
+            resolve_guard_inputs(false, false, false, false),
+            (false, false)
+        );
+        // Keyboard Shift rising edge + held (`_DAT_0116db3c` / `DAT_00932ca4`).
+        assert_eq!(resolve_guard_inputs(true, true, false, false), (true, true));
+        // Held on subsequent tick without a new rising edge.
+        assert_eq!(
+            resolve_guard_inputs(false, true, false, false),
+            (false, true)
+        );
+        // Gamepad `Button::West` (PS2 Type 2 Square `0x8000`) rising edge + held.
+        assert_eq!(resolve_guard_inputs(false, false, true, true), (true, true));
+        // Gamepad held only.
+        assert_eq!(
+            resolve_guard_inputs(false, false, false, true),
+            (false, true)
+        );
+    }
 }

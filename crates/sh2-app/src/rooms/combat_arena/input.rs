@@ -68,6 +68,11 @@ pub(super) fn handle_combat_arena_key_input(
         KeyCode::KeyJ => state.key_look_left = pressed,
         KeyCode::KeyL => state.key_look_right = pressed,
         KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+            // Authentic Run / Guard binding (`_DAT_0116db3c` in `SLUS_202.28` `PlayerChectGuardSuccess`
+            // `0x001101d0`; `DAT_00932ca4` in `sh2pc.exe` `0x00534210`).
+            if pressed && !state.key_run_held {
+                state.key_guard_pressed = true;
+            }
             state.key_run_held = pressed;
             state.sim_core.input.state.is_running = pressed;
         }

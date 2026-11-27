@@ -907,6 +907,7 @@ impl BinkVideoStream {
     /// Reads the next sequential `Yuv420Frame` borrowing its internal buffers, or `None` if the stream has reached `frame_count` or EOF.
     pub fn next_frame(&mut self) -> Option<&Yuv420Frame> {
         if self.current_frame_index >= self.header.frame_count {
+            self.scratch_frame_index = None;
             self.current_frame = None;
             return None;
         }
@@ -984,12 +985,14 @@ impl BinkVideoStream {
             // Real ffmpeg stream reached EOF: clean up and signal completion without
             // falling through to CPU-heavy synthetic test-pattern generation.
             self.kill_decoder();
+            self.scratch_frame_index = None;
             self.current_frame = None;
             return None;
         }
 
         let frame_idx = self.current_frame_index;
         self.current_frame_index += 1;
+        self.scratch_frame_index = None;
 
         // Deterministic synthetic test pattern fallback when ffmpeg is unavailable or in headless CI
         self.current_frame = Some(Yuv420Frame::generate_synthetic_test_frame(w, h, frame_idx));

@@ -726,7 +726,7 @@ fn advance_past_riff_wave(data: &[u8], p: usize) -> usize {
         if next_q > data.len() {
             break;
         }
-        if !next_q.is_multiple_of(2) && next_q < data.len() && !is_riff_wave_at(data, next_q) {
+        if !clen.is_multiple_of(2) && next_q < data.len() && !is_riff_wave_at(data, next_q) {
             next_q += 1;
         }
         q = next_q;

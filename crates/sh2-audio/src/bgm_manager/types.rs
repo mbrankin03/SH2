@@ -103,7 +103,7 @@ impl SoundAreaEvaluation {
     #[inline]
     #[must_use]
     pub fn matched_records(&self) -> &[usize] {
-        &self.matched_record_indices[..self.matched_record_count]
+        &self.matched_record_indices[..self.matched_record_count.min(MAX_MATCHED_SOUND_AREAS)]
     }
 }
 

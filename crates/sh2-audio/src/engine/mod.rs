@@ -53,6 +53,7 @@ pub use crate::dsp_resample::{
 };
 pub use crate::looping::LoopRegionSamples;
 pub use crate::ringbuffer::{AudioRingBuffer, DEFAULT_RINGBUFFER_FRAMES};
+use crate::streaming::{StreamingBgmHandle, StreamingFmvHandle};
 
 /// Error type for audio playback and management.
 #[derive(Error, Debug)]
@@ -102,8 +103,10 @@ pub struct AudioEngine {
 
     pub(super) active_bgm_handle: Option<StaticSoundHandle>,
     pub(super) active_bgm_layers: Vec<StaticSoundHandle>,
+    pub(super) active_bgm_stream: Option<StreamingBgmHandle>,
     pub(super) active_radio_tracks: [Option<StaticSoundHandle>; 4],
     pub(super) active_fmv_handle: Option<StaticSoundHandle>,
+    pub(super) active_fmv_stream: Option<StreamingFmvHandle>,
     pub(super) active_voice_handle: Option<StaticSoundHandle>,
     pub(super) active_dialogue: Option<ActiveDialogue>,
 
@@ -221,8 +224,10 @@ impl AudioEngine {
             output_ringbuffer: Arc::new(AudioRingBuffer::with_capacity(DEFAULT_RINGBUFFER_FRAMES)),
             active_bgm_handle: None,
             active_bgm_layers: Vec::new(),
+            active_bgm_stream: None,
             active_radio_tracks: [None, None, None, None],
             active_fmv_handle: None,
+            active_fmv_stream: None,
             active_voice_handle: None,
             active_dialogue: None,
             master_volume: DEFAULT_MASTER_VOL,

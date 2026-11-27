@@ -1,12 +1,13 @@
 //! BGM stream resolution, ADX/AIX decoding, playback start, and debug HUD telemetry.
 
-use sh2_assets::{decode_adx, decode_aix, DecodedAdx};
+use sh2_assets::{decode_adx, decode_aix, AdxStreamDecoder, AixStreamDecoder, DecodedAdx};
 use sh2_core::AudioPackSource;
 use std::path::{Path, PathBuf};
 
 use crate::bgm_data::find_bgm_file_by_load_id;
 use crate::cutscene_bgm::resolve_bgm_stream_path_for_source;
 use crate::engine::{AudioEngine, AudioError};
+use crate::streaming::StreamingBgmSource;
 
 use super::types::BGM_MAX_TRACKS;
 use super::BgmManager;
@@ -43,27 +44,28 @@ impl BgmManager {
             return Ok(());
         };
 
-        let bytes = std::fs::read(&full_path).map_err(|e| {
-            AudioError::AssetError(format!(
-                "Failed to read BGM file {}: {e}",
-                full_path.display()
-            ))
-        })?;
-
-        let layers: Vec<DecodedAdx> = if file_entry.is_adx {
-            let decoded = decode_adx(&bytes).map_err(|e| {
-                AudioError::AssetError(format!("Failed to decode ADX {}: {e}", full_path.display()))
+        // Open the `.adx` or `.aix` file incrementally (`SH2-180`): reads only the container
+        // header (~64 B for ADX, ~6 KiB for AIX) instead of materializing 300+ MiB of PCM in RAM.
+        let (source, layer_count, sample_rate) = if file_entry.is_adx {
+            let dec = AdxStreamDecoder::open(&full_path).map_err(|e| {
+                AudioError::AssetError(format!("Failed to open ADX {}: {e}", full_path.display()))
             })?;
-            vec![decoded]
+            let sr = dec.header().sample_rate;
+            (StreamingBgmSource::Adx(Box::new(dec)), 1usize, sr)
         } else {
-            decode_aix(&bytes).map_err(|e| {
-                AudioError::AssetError(format!("Failed to decode AIX {}: {e}", full_path.display()))
-            })?
+            let mut dec = AixStreamDecoder::open(&full_path).map_err(|e| {
+                AudioError::AssetError(format!("Failed to open AIX {}: {e}", full_path.display()))
+            })?;
+            // AIX streams in Silent Hill 2 loop seamlessly from end-of-stream back to sample 0.
+            dec.set_looping(true);
+            let count = dec.layer_count();
+            let sr = dec.sample_rate();
+            (StreamingBgmSource::Aix(dec), count, sr)
         };
 
         self.loaded_full_path = Some(full_path);
-        self.loaded_layer_count = layers.len();
-        self.loaded_sample_rate = layers.first().map(|l| l.header.sample_rate).unwrap_or(0);
+        self.loaded_layer_count = layer_count;
+        self.loaded_sample_rate = sample_rate;
 
         if let Some(eng) = engine {
             let mut initial_gains = [0.0f32; BGM_MAX_TRACKS];
@@ -75,9 +77,8 @@ impl BgmManager {
                 };
                 *gain = track_vol * self.file_master_volume * self.global_bgm_fade;
             }
-            // AIX streams in Silent Hill 2 loop seamlessly from end-of-stream back to sample 0
-            let loop_whole_stream = !file_entry.is_adx;
-            eng.play_bgm_layers(&layers, &initial_gains[..layers.len()], loop_whole_stream)?;
+            let clamped_layers = layer_count.min(BGM_MAX_TRACKS);
+            eng.play_bgm_stream(source, &initial_gains[..clamped_layers])?;
         }
 
         Ok(())

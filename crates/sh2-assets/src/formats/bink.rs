@@ -598,6 +598,159 @@ impl Yuv420Frame {
     }
 }
 
+/// Streaming 16-bit stereo PCM audio decoder for `.bik` / `.mp4` cutscenes backed by `ffmpeg` (`SH2-180`).
+///
+/// Reads stereo `s16le` chunks incrementally from `ffmpeg` stdout instead of buffering the entire
+/// cutscene soundtrack in memory, and guarantees child process kill + reap on [`Drop`].
+pub struct BinkAudioStream {
+    sample_rate: u32,
+    child: Option<Child>,
+    stdout: Option<std::process::ChildStdout>,
+    byte_buf: Vec<u8>,
+    eof: bool,
+}
+
+impl BinkAudioStream {
+    /// Opens an incremental `ffmpeg` PCM audio stream for `track` (0-based) of a `.bik` or `.mp4` file.
+    ///
+    /// If the container reports `0` audio tracks, returns an immediately-finished empty stream
+    /// without spawning a child process.
+    pub fn open(
+        path: impl AsRef<Path>,
+        header: &BinkHeader,
+        track: usize,
+    ) -> Result<Self, AssetError> {
+        let track = track.min(header.audio_tracks.len().saturating_sub(1));
+        let map_arg = format!("0:a:{track}?");
+        let sample_rate = header
+            .audio_tracks
+            .get(track)
+            .or_else(|| header.audio_tracks.first())
+            .map(|t| t.sample_rate.max(44100))
+            .unwrap_or(48000);
+
+        if header.audio_tracks.is_empty() {
+            return Ok(Self {
+                sample_rate,
+                child: None,
+                stdout: None,
+                byte_buf: Vec::new(),
+                eof: true,
+            });
+        }
+
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-i",
+                &path.as_ref().to_string_lossy(),
+                "-vn",
+                "-map",
+                &map_arg,
+                "-f",
+                "s16le",
+                "-ac",
+                "2",
+                "-ar",
+                &sample_rate.to_string(),
+                "-",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| AssetError::InvalidData(format!("Failed to spawn ffmpeg audio: {e}")))?;
+
+        let stdout = child.stdout.take();
+        if stdout.is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AssetError::InvalidData(
+                "ffmpeg audio process did not expose stdout pipe".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            sample_rate,
+            child: Some(child),
+            stdout,
+            byte_buf: Vec::with_capacity(4096 * 4),
+            eof: false,
+        })
+    }
+
+    /// Returns the decoded output sample rate in Hz (typically `48000` or `44100`).
+    #[inline]
+    #[must_use]
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Reads up to `out.len()` normalized stereo `(left, right)` PCM frames from `ffmpeg` stdout.
+    ///
+    /// Returns `0` when the stream reaches EOF or encounters a read error, automatically reaping
+    /// the child process.
+    pub fn read_frames(&mut self, out: &mut [(f32, f32)]) -> usize {
+        if self.eof || out.is_empty() {
+            return 0;
+        }
+        let Some(ref mut stdout) = self.stdout else {
+            self.eof = true;
+            return 0;
+        };
+
+        let target_bytes = out.len() * 4;
+        self.byte_buf.resize(target_bytes, 0);
+        let mut filled = 0usize;
+        while filled < target_bytes {
+            match stdout.read(&mut self.byte_buf[filled..target_bytes]) {
+                Ok(0) => {
+                    self.eof = true;
+                    break;
+                }
+                Ok(n) => filled += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    self.eof = true;
+                    break;
+                }
+            }
+        }
+
+        let frames = filled / 4;
+        for (i, slot) in out.iter_mut().enumerate().take(frames) {
+            let base = i * 4;
+            let l =
+                i16::from_le_bytes([self.byte_buf[base], self.byte_buf[base + 1]]) as f32 / 32768.0;
+            let r = i16::from_le_bytes([self.byte_buf[base + 2], self.byte_buf[base + 3]]) as f32
+                / 32768.0;
+            *slot = (l, r);
+        }
+
+        if self.eof {
+            self.close();
+        }
+        frames
+    }
+
+    /// Terminates and reaps the underlying `ffmpeg` child process immediately.
+    pub fn close(&mut self) {
+        self.eof = true;
+        self.stdout = None;
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+impl Drop for BinkAudioStream {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 /// Decoded stereo PCM audio stream extracted from a `.bik` cutscene for synchronized Kira playback.
 #[derive(Debug, Clone)]
 pub struct DecodedFmvAudio {

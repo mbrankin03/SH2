@@ -460,3 +460,309 @@ fn test_sh2_62_ps2_prototype_sdb_sfc_vag_and_wav_slicing() {
     assert_eq!(sliced.data.len(), 600);
     assert_eq!(sliced.sample_rate, 100);
 }
+
+fn build_synthetic_adx_v3(
+    channels: u8,
+    sample_rate: u32,
+    total_samples: u32,
+    loop_range: Option<(u32, u32)>,
+    seed: u8,
+) -> Vec<u8> {
+    let cofs: u16 = 0x2C; // data_offset = 0x30 (48 bytes), enough for v3 loop fields at 0x18..0x28
+    let data_offset = cofs as usize + 4;
+    let num_packets = (total_samples as usize).div_ceil(ADX_SAMPLES_PER_BLOCK);
+    let mut buf = vec![0u8; data_offset + num_packets * ADX_BLOCK_BYTES * channels as usize];
+
+    buf[0..2].copy_from_slice(&0x8000u16.to_be_bytes());
+    buf[2..4].copy_from_slice(&cofs.to_be_bytes());
+    buf[4] = 3; // standard ADPCM
+    buf[5] = ADX_BLOCK_BYTES as u8;
+    buf[6] = 4; // 4-bit nibbles
+    buf[7] = channels;
+    buf[8..12].copy_from_slice(&sample_rate.to_be_bytes());
+    buf[12..16].copy_from_slice(&total_samples.to_be_bytes());
+    buf[16..18].copy_from_slice(&500u16.to_be_bytes());
+    buf[18] = 3; // ADX v3
+
+    if let Some((loop_start, loop_end)) = loop_range {
+        buf[24..28].copy_from_slice(&1u32.to_be_bytes());
+        buf[28..32].copy_from_slice(&loop_start.to_be_bytes());
+        buf[36..40].copy_from_slice(&loop_end.to_be_bytes());
+    }
+
+    for pkt in 0..num_packets {
+        for ch in 0..channels as usize {
+            let ofs = data_offset + (pkt * channels as usize + ch) * ADX_BLOCK_BYTES;
+            let scale: i16 = 120 + ((pkt as i16 + ch as i16 * 17) * 9);
+            buf[ofs..ofs + 2].copy_from_slice(&scale.to_be_bytes());
+            for b in 0..16 {
+                let hi = (seed
+                    .wrapping_add(pkt as u8 * 3)
+                    .wrapping_add(ch as u8 * 5)
+                    .wrapping_add(b as u8))
+                    & 0x0F;
+                let lo = (seed.wrapping_add(pkt as u8 * 7).wrapping_add(b as u8 * 2)) & 0x0F;
+                buf[ofs + 2 + b] = (hi << 4) | lo;
+            }
+        }
+    }
+
+    buf
+}
+
+fn build_synthetic_aix(layer_adx: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    // AIXF header chunk (16 bytes total -> next_offset = 8)
+    out.extend_from_slice(b"AIXF");
+    out.extend_from_slice(&8u32.to_be_bytes());
+    out.extend_from_slice(&[0u8; 8]);
+
+    // Interleave each layer in 48-byte header chunks, then 72-byte data chunks.
+    let layer_count = layer_adx.len() as u8;
+    let mut offsets = vec![0usize; layer_adx.len()];
+    let chunk_sizes = [48usize, 72usize];
+    let mut pass = 0usize;
+    loop {
+        let mut any_left = false;
+        let step = chunk_sizes[pass.min(1)];
+        for (ch, adx) in layer_adx.iter().enumerate() {
+            if offsets[ch] < adx.len() {
+                let end = (offsets[ch] + step).min(adx.len());
+                let payload = &adx[offsets[ch]..end];
+                offsets[ch] = end;
+                any_left = true;
+
+                let next_offset = (8 + payload.len()) as u32;
+                out.extend_from_slice(b"AIXP");
+                out.extend_from_slice(&next_offset.to_be_bytes());
+                out.push(ch as u8);
+                out.push(layer_count);
+                out.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+                out.extend_from_slice(&0u32.to_be_bytes());
+                out.extend_from_slice(payload);
+            }
+        }
+        pass += 1;
+        if !any_left {
+            break;
+        }
+    }
+
+    // AIXE end marker
+    out.extend_from_slice(b"AIXE");
+    out.extend_from_slice(&0u32.to_be_bytes());
+    out
+}
+
+#[test]
+fn test_sh2_180_adx_stream_decoder_bit_exact_and_loop_wrap() {
+    use std::io::Cursor;
+
+    // 1. Synthetic stereo ADX with non-block-aligned loop points (40..100 out of 128 samples)
+    let raw = build_synthetic_adx_v3(2, 48_000, 128, Some((40, 100)), 0x25);
+    let reference = decode_adx(&raw).expect("reference decode_adx");
+    assert_eq!(reference.frames.len(), 128);
+
+    // Non-looping stream decode must match `decode_adx` bit-for-bit across odd chunk sizes
+    let mut dec = AdxStreamDecoder::new(Cursor::new(raw.as_slice())).expect("new decoder");
+    dec.set_looping(false);
+    let mut streamed = Vec::new();
+    let mut chunk = [(0.0f32, 0.0f32); 19];
+    loop {
+        let n = dec.read_frames(&mut chunk).expect("read_frames");
+        if n == 0 {
+            break;
+        }
+        streamed.extend_from_slice(&chunk[..n]);
+    }
+    assert_eq!(streamed.len(), reference.frames.len());
+    for (i, (&s, &r)) in streamed.iter().zip(reference.frames.iter()).enumerate() {
+        assert_eq!(
+            (s.0.to_bits(), s.1.to_bits()),
+            (r.0.to_bits(), r.1.to_bits()),
+            "ADX sample mismatch at frame {i}"
+        );
+    }
+
+    // Looping stream decode must wrap seamlessly at sample 100 -> 40 with bit-exact parity
+    let mut loop_dec = AdxStreamDecoder::new(Cursor::new(raw.as_slice())).expect("loop decoder");
+    let mut looped = vec![(0.0f32, 0.0f32); 220]; // 0..100 + 40..100 + 40..100
+    let n = loop_dec.read_frames(&mut looped).expect("read looped");
+    assert_eq!(n, 220);
+    for i in 0..100 {
+        assert_eq!(looped[i].0.to_bits(), reference.frames[i].0.to_bits());
+        assert_eq!(looped[i].1.to_bits(), reference.frames[i].1.to_bits());
+    }
+    for j in 0..60 {
+        // First loop iteration: samples 100..160 == reference[40..100]
+        assert_eq!(
+            looped[100 + j].0.to_bits(),
+            reference.frames[40 + j].0.to_bits(),
+            "Loop pass 1 left mismatch at +{j}"
+        );
+        assert_eq!(
+            looped[100 + j].1.to_bits(),
+            reference.frames[40 + j].1.to_bits(),
+            "Loop pass 1 right mismatch at +{j}"
+        );
+        // Second loop iteration: samples 160..220 == reference[40..100]
+        assert_eq!(
+            looped[160 + j].0.to_bits(),
+            reference.frames[40 + j].0.to_bits(),
+            "Loop pass 2 left mismatch at +{j}"
+        );
+    }
+
+    // 2. Retail `.adx` bit-exact streaming parity (when retail assets are present)
+    let adx_path = format!("{ROOT_ASSETS}/sh2e/sound/adx/apart/bgm_001.adx");
+    if Path::new(&adx_path).exists() {
+        let mut stream_dec = AdxStreamDecoder::open(&adx_path).expect("open bgm_001.adx");
+        stream_dec.set_looping(false);
+        let mut streamed_head = vec![(0.0f32, 0.0f32); 4096];
+        let got = stream_dec
+            .read_frames(&mut streamed_head)
+            .expect("read retail adx head");
+        assert_eq!(got, 4096);
+
+        let full_bytes = fs::read(&adx_path).expect("read bgm_001.adx");
+        let hdr = parse_adx_header(&full_bytes).expect("parse header");
+        let packets_needed = 4096 / ADX_SAMPLES_PER_BLOCK;
+        let slice_len = hdr.data_offset + packets_needed * ADX_BLOCK_BYTES * hdr.channels as usize;
+        let mut trunc = full_bytes[..slice_len].to_vec();
+        trunc[12..16].copy_from_slice(&4096u32.to_be_bytes());
+        let ref_head = decode_adx(&trunc).expect("decode truncated retail adx");
+        assert_eq!(ref_head.frames.len(), 4096);
+        for i in 0..4096 {
+            assert_eq!(
+                streamed_head[i].0.to_bits(),
+                ref_head.frames[i].0.to_bits(),
+                "Retail ADX left mismatch at {i}"
+            );
+            assert_eq!(
+                streamed_head[i].1.to_bits(),
+                ref_head.frames[i].1.to_bits(),
+                "Retail ADX right mismatch at {i}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_sh2_180_aix_stream_decoder_lockstep_and_loop_wrap() {
+    use std::io::Cursor;
+
+    // 1. Synthetic 3-layer AIX container
+    let l0 = build_synthetic_adx_v3(2, 48_000, 96, None, 0x11);
+    let l1 = build_synthetic_adx_v3(2, 48_000, 96, None, 0x37);
+    let l2 = build_synthetic_adx_v3(2, 48_000, 96, None, 0x63);
+    let aix_bytes = build_synthetic_aix(&[l0, l1, l2]);
+
+    let ref_layers = decode_aix(&aix_bytes).expect("reference decode_aix");
+    assert_eq!(ref_layers.len(), 3);
+    assert_eq!(ref_layers[0].frames.len(), 96);
+
+    // Stream 2.5 full loop iterations (240 frames) and verify all 3 layers stay bit-exact in lockstep
+    let mut aix_dec =
+        AixStreamDecoder::new(Cursor::new(aix_bytes.as_slice())).expect("new aix dec");
+    assert_eq!(aix_dec.layer_count(), 3);
+    assert_eq!(aix_dec.sample_rate(), 48_000);
+    aix_dec.set_looping(true);
+
+    let mut out_layers = vec![Vec::new(); 3];
+    let mut collected = vec![Vec::new(); 3];
+    while collected[0].len() < 240 {
+        let want = (240 - collected[0].len()).min(37);
+        let got = aix_dec
+            .read_synchronized_frames(&mut out_layers, want)
+            .expect("read_synchronized_frames");
+        assert_eq!(got, want);
+        for k in 0..3 {
+            assert_eq!(out_layers[k].len(), got);
+            collected[k].extend_from_slice(&out_layers[k]);
+        }
+    }
+
+    for (k, layer_collected) in collected.iter().enumerate() {
+        for (i, sample) in layer_collected.iter().enumerate().take(240) {
+            let ref_idx = i % 96;
+            assert_eq!(
+                sample.0.to_bits(),
+                ref_layers[k].frames[ref_idx].0.to_bits(),
+                "AIX layer {k} left mismatch at {i}"
+            );
+            assert_eq!(
+                sample.1.to_bits(),
+                ref_layers[k].frames[ref_idx].1.to_bits(),
+                "AIX layer {k} right mismatch at {i}"
+            );
+        }
+    }
+
+    // 2. Retail `.aix` streaming parity check (when retail assets are present)
+    let aix_path = format!("{ROOT_ASSETS}/data/sound/adx/apart/bgm_118.aix");
+    if Path::new(&aix_path).exists() {
+        let mut dec = AixStreamDecoder::open(&aix_path).expect("open bgm_118.aix");
+        assert_eq!(dec.layer_count(), 5);
+        assert_eq!(dec.sample_rate(), 24_000);
+        let mut out = vec![Vec::new(); 5];
+        let n = dec
+            .read_synchronized_frames(&mut out, 2048)
+            .expect("read retail aix frames");
+        assert_eq!(n, 2048);
+        for layer in &out {
+            assert_eq!(layer.len(), 2048);
+        }
+
+        let full_bytes = fs::read(&aix_path).expect("read bgm_118.aix");
+        let full_decoded = decode_aix(&full_bytes).expect("decode_aix bgm_118.aix");
+        for k in 0..5 {
+            for i in 0..2048 {
+                assert_eq!(
+                    out[k][i].0.to_bits(),
+                    full_decoded[k].frames[i].0.to_bits(),
+                    "Retail AIX layer {k} left mismatch at {i}"
+                );
+                assert_eq!(
+                    out[k][i].1.to_bits(),
+                    full_decoded[k].frames[i].1.to_bits(),
+                    "Retail AIX layer {k} right mismatch at {i}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_sh2_180_bink_audio_stream_eof_and_cleanup() {
+    let empty_hdr = BinkHeader {
+        magic: *b"BIKi",
+        file_size: 1024,
+        frame_count: 10,
+        largest_frame_size: 128,
+        width: 640,
+        height: 480,
+        fps_num: 30,
+        fps_den: 1,
+        video_flags: 0,
+        audio_tracks: Vec::new(),
+        indexed_frames: 10,
+    };
+    let mut empty_stream =
+        BinkAudioStream::open("nonexistent.bik", &empty_hdr, 0).expect("empty track stream");
+    let mut buf = [(0.0f32, 0.0f32); 64];
+    assert_eq!(empty_stream.read_frames(&mut buf), 0);
+
+    // If retail `toilet.bik` is present, verify incremental audio streaming and clean Drop reaping.
+    let bik_path = format!("{ROOT_ASSETS}/data/movie/toilet.bik");
+    if Path::new(&bik_path).exists() {
+        let hdr = parse_bink_file_header(&bik_path).expect("parse toilet.bik header");
+        if !hdr.audio_tracks.is_empty() {
+            let mut stream = BinkAudioStream::open(&bik_path, &hdr, 0).expect("open bink audio");
+            let mut chunk = vec![(0.0f32, 0.0f32); 1024];
+            let n = stream.read_frames(&mut chunk);
+            assert!(n > 0, "Expected non-zero streamed frames from toilet.bik");
+            // Drop terminates and reaps `ffmpeg` cleanly.
+            drop(stream);
+        }
+    }
+}

@@ -24,14 +24,10 @@ fn test_ps2_low_rate_upsampling_and_warm_lowpass_filter() {
     let sr = 22050u32;
     let n = 2205usize; // 0.1s
     let mut frames = Vec::with_capacity(n);
-    let mut pcm_i16 = Vec::with_capacity(n * 2);
     for i in 0..n {
         let t = i as f32 / sr as f32;
         let hf = (t * 9500.0 * 2.0 * std::f32::consts::PI).sin() * 0.8;
         frames.push((hf, hf));
-        let s = (hf * 32767.0) as i16;
-        pcm_i16.push(s);
-        pcm_i16.push(s);
     }
     let harsh_adx = DecodedAdx {
         header: AdxHeader {
@@ -45,7 +41,6 @@ fn test_ps2_low_rate_upsampling_and_warm_lowpass_filter() {
             loop_start_sample: 0,
             loop_end_sample: 0,
         },
-        pcm_i16,
         frames,
     };
     let (adx_rate, adx_frames) = sh2_audio::engine::adx_to_frames_48k(&harsh_adx);

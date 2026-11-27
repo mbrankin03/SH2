@@ -19,8 +19,12 @@ pub mod mes;
 pub mod sound;
 pub mod texture;
 
-pub use adx::{decode_adx, parse_adx_header, AdxHeader, DecodedAdx};
-pub use aix::{decode_aix, decode_aix_mixed, demux_aix};
+pub use adx::{
+    decode_adx, decode_adx_channel_block, decode_adx_to_pcm_i16_le, parse_adx_header,
+    AdxChannelState, AdxFilterCoeffs, AdxHeader, AdxStreamDecoder, DecodedAdx, ADX_BLOCK_BYTES,
+    ADX_MAX_CHANNELS, ADX_SAMPLES_PER_BLOCK,
+};
+pub use aix::{decode_aix, decode_aix_mixed, demux_aix, AixStreamDecoder};
 pub use anm::{
     blend_frame_in_place, compute_bind_locals, compute_skin_matrices,
     compute_skin_matrices_with_inv, compute_skin_matrices_with_inv_into, euler_to_matrix,
@@ -32,8 +36,8 @@ pub use anm::{
 };
 pub use bink::{
     active_subtitle_for_frame, decode_bink_audio_pcm, fmv_subtitles_for_movie,
-    parse_bink_file_header, parse_bink_header, BinkAudioTrack, BinkHeader, BinkVideoStream,
-    DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, Yuv420FrameRef, BINK_MAGICS,
+    parse_bink_file_header, parse_bink_header, BinkAudioStream, BinkAudioTrack, BinkHeader,
+    BinkVideoStream, DecodedFmvAudio, FmvSubtitleCue, Yuv420Frame, Yuv420FrameRef, BINK_MAGICS,
 };
 pub use cam::{
     global_area_cam_rel_path, normalize_room_cam_rel_path, parse_cam, AreaSizeType, CamFile,

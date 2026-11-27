@@ -1,5 +1,6 @@
 //! Single-stream ADX, multi-layer AIX interactive BGM, and `.bik` FMV PCM playback methods on [`AudioEngine`].
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +12,9 @@ use kira::{
     tween::{Easing, Tween},
     Volume,
 };
-use sh2_assets::{DecodedAdx, WavEntry};
+use sh2_assets::{AdxStreamDecoder, AixStreamDecoder, BinkAudioStream, DecodedAdx, WavEntry};
+
+use crate::streaming::{StreamingBgmSoundData, StreamingBgmSource, StreamingFmvSoundData};
 
 use super::{adx_to_frames_48k, wav_entry_to_frames, AudioEngine, AudioError, LoopRegionSamples};
 
@@ -153,9 +156,102 @@ impl AudioEngine {
         Ok(())
     }
 
+    /// Starts sample-accurate streaming playback of an incremental ADX or multi-layer AIX source
+    /// without materializing the full PCM buffer in RAM (`SH2-180`).
+    pub fn play_bgm_stream(
+        &mut self,
+        source: StreamingBgmSource,
+        initial_gains: &[f32],
+    ) -> Result<(), AudioError> {
+        self.stop_bgm(Duration::from_millis(40));
+
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let bgm_track_id = self
+            .bgm_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No bgm track".into()))?
+            .id();
+
+        let sound_data = StreamingBgmSoundData {
+            source,
+            initial_gains: initial_gains.to_vec(),
+            initial_master_gain: 1.0,
+            target_master_gain: 1.0,
+            fade_in: Duration::ZERO,
+            destination: bgm_track_id,
+        };
+
+        let handle = manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+        self.active_bgm_stream = Some(handle);
+        Ok(())
+    }
+
+    /// Streams an `.adx` or `.aix` BGM file directly from disk with master volume scaling and
+    /// optional fade-in (`SH2-180`).
+    pub fn play_bgm_file_with_fade(
+        &mut self,
+        path: &Path,
+        is_aix: bool,
+        master_volume_factor: f32,
+        fade_in: Duration,
+    ) -> Result<(), AudioError> {
+        self.stop_bgm(Duration::from_millis(50));
+
+        let (source, initial_gains) = if is_aix {
+            let dec = AixStreamDecoder::open(path).map_err(|e| {
+                AudioError::AssetError(format!("Failed to open AIX {}: {e}", path.display()))
+            })?;
+            let count = dec.layer_count().max(1);
+            let weight = 1.0 / (count as f32).sqrt();
+            (StreamingBgmSource::Aix(dec), vec![weight; count])
+        } else {
+            let dec = AdxStreamDecoder::open(path).map_err(|e| {
+                AudioError::AssetError(format!("Failed to open ADX {}: {e}", path.display()))
+            })?;
+            (StreamingBgmSource::Adx(Box::new(dec)), vec![1.0])
+        };
+
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let bgm_track_id = self
+            .bgm_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No bgm track".into()))?
+            .id();
+
+        let target_vol = (master_volume_factor * self.bgm_volume * self.master_volume).max(0.0);
+        let initial_master = if fade_in.is_zero() { target_vol } else { 0.0 };
+
+        let sound_data = StreamingBgmSoundData {
+            source,
+            initial_gains,
+            initial_master_gain: initial_master,
+            target_master_gain: target_vol,
+            fade_in,
+            destination: bgm_track_id,
+        };
+
+        let handle = manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+        self.active_bgm_stream = Some(handle);
+        Ok(())
+    }
+
     /// Updates the linear amplitude gain (`0.0..=1.0`, relative to the BGM sub-track) of a single
     /// active BGM layer (`layer_idx` in `0..active_bgm_layer_count()`).
     pub fn set_bgm_layer_gain(&mut self, layer_idx: usize, gain: f32, fade_duration: Duration) {
+        if let Some(ref stream_handle) = self.active_bgm_stream {
+            stream_handle.set_layer_gain(layer_idx, gain.max(0.0), fade_duration);
+            return;
+        }
         let tween = Tween {
             duration: fade_duration,
             easing: Easing::Linear,
@@ -172,6 +268,11 @@ impl AudioEngine {
 
     /// Returns the number of currently active multi-layer BGM tracks.
     pub fn active_bgm_layer_count(&self) -> usize {
+        if let Some(ref stream_handle) = self.active_bgm_stream {
+            if !stream_handle.is_finished() {
+                return stream_handle.layer_count();
+            }
+        }
         if !self.active_bgm_layers.is_empty() {
             self.active_bgm_layers.len()
         } else if self.active_bgm_handle.is_some() {
@@ -183,11 +284,26 @@ impl AudioEngine {
 
     /// Returns whether background music is currently actively playing.
     pub fn is_bgm_playing(&self) -> bool {
-        self.active_bgm_handle.is_some() || !self.active_bgm_layers.is_empty()
+        self.active_bgm_stream
+            .as_ref()
+            .is_some_and(|h| !h.is_finished())
+            || self.active_bgm_handle.is_some()
+            || !self.active_bgm_layers.is_empty()
     }
 
-    /// Stops currently playing background music (both single-stream ADX and multi-layer AIX) with a fade out.
+    /// Returns whether FMV cutscene audio is currently actively playing.
+    pub fn is_fmv_audio_playing(&self) -> bool {
+        self.active_fmv_stream
+            .as_ref()
+            .is_some_and(|h| !h.is_finished())
+            || self.active_fmv_handle.is_some()
+    }
+
+    /// Stops currently playing background music (streaming or static) with a fade out.
     pub fn stop_bgm(&mut self, fade_out: Duration) {
+        if let Some(stream_handle) = self.active_bgm_stream.take() {
+            stream_handle.stop(fade_out);
+        }
         let tween = Tween {
             duration: fade_out,
             easing: Easing::Linear,
@@ -201,8 +317,11 @@ impl AudioEngine {
         }
     }
 
-    /// Stops currently playing FMV cutscene audio stream.
+    /// Stops currently playing FMV cutscene audio stream (streaming or static).
     pub fn stop_fmv_audio(&mut self, fade_out: Duration) {
+        if let Some(stream_handle) = self.active_fmv_stream.take() {
+            stream_handle.stop(fade_out);
+        }
         if let Some(mut handle) = self.active_fmv_handle.take() {
             handle.stop(Tween {
                 duration: fade_out,
@@ -212,6 +331,37 @@ impl AudioEngine {
         }
     }
 
+    /// Streams FMV cutscene audio directly from a [`BinkAudioStream`] (`ffmpeg` stdout) via a
+    /// bounded lock-free ringbuffer without materializing the full PCM track in RAM (`SH2-180`).
+    pub fn play_fmv_stream(
+        &mut self,
+        stream: BinkAudioStream,
+        volume: f32,
+    ) -> Result<(), AudioError> {
+        self.stop_fmv_audio(Duration::from_millis(50));
+
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let fmv_track_id = self
+            .fmv_track
+            .as_ref()
+            .or(self.bgm_track.as_ref())
+            .ok_or_else(|| AudioError::InitError("No fmv/bgm track".into()))?
+            .id();
+
+        let effective_vol = (volume * self.bgm_volume * self.master_volume).max(0.0);
+        let sound_data =
+            StreamingFmvSoundData::from_bink_stream(stream, effective_vol, fmv_track_id);
+
+        let handle = manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))?;
+        self.active_fmv_stream = Some(handle);
+        Ok(())
+    }
+
     /// Plays decoded 16-bit signed little-endian stereo PCM audio for an FMV cutscene on the dedicated FMV track.
     pub fn play_fmv_pcm(
         &mut self,
@@ -219,6 +369,8 @@ impl AudioEngine {
         pcm_s16le: &[u8],
         volume: f32,
     ) -> Result<(), AudioError> {
+        self.stop_fmv_audio(Duration::from_millis(50));
+
         let manager = self
             .manager
             .as_mut()
@@ -228,14 +380,6 @@ impl AudioEngine {
             .as_ref()
             .or(self.bgm_track.as_ref())
             .ok_or_else(|| AudioError::InitError("No fmv/bgm track".into()))?;
-
-        if let Some(mut old_handle) = self.active_fmv_handle.take() {
-            old_handle.stop(Tween {
-                duration: Duration::from_millis(50),
-                easing: Easing::Linear,
-                ..Default::default()
-            });
-        }
 
         let wav = WavEntry {
             id: 0,
@@ -270,6 +414,12 @@ impl AudioEngine {
 
     /// Pauses or resumes active FMV / BGM audio playback.
     pub fn set_bgm_paused(&mut self, paused: bool) {
+        if let Some(ref stream_handle) = self.active_bgm_stream {
+            stream_handle.set_paused(paused);
+        }
+        if let Some(ref fmv_stream) = self.active_fmv_stream {
+            fmv_stream.set_paused(paused);
+        }
         let tween = Tween {
             duration: Duration::from_millis(40),
             easing: Easing::Linear,

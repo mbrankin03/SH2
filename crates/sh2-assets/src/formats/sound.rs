@@ -614,21 +614,17 @@ pub fn decode_afs_slice_to_wav(slice: &[u8], id: u32) -> Result<WavEntry, AssetE
         return parse_single_wav(slice, id);
     }
 
-    let adx = super::adx::decode_adx(slice)?;
-    let mut pcm_bytes = Vec::with_capacity(adx.pcm_i16.len() * 2);
-    for sample in &adx.pcm_i16 {
-        pcm_bytes.extend_from_slice(&sample.to_le_bytes());
-    }
+    let (header, pcm_bytes) = super::adx::decode_adx_to_pcm_i16_le(slice)?;
 
     Ok(WavEntry {
         id,
-        channels: adx.header.channels,
-        sample_rate: adx.header.sample_rate,
+        channels: header.channels,
+        sample_rate: header.sample_rate,
         bits_per_sample: 16,
         data: pcm_bytes,
-        loops: adx.header.has_loop,
-        loop_start: adx.header.loop_start_sample,
-        loop_end: adx.header.loop_end_sample,
+        loops: header.has_loop,
+        loop_start: header.loop_start_sample,
+        loop_end: header.loop_end_sample,
     })
 }
 

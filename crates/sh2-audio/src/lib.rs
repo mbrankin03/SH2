@@ -19,6 +19,7 @@ pub mod ringbuffer;
 pub mod se_manager;
 pub mod sfx_bank;
 pub mod spatial_voice;
+pub mod streaming;
 
 pub use acoustics::{
     evaluate_room_acoustics, evaluate_room_acoustics_for_pos,
@@ -109,4 +110,9 @@ pub use sfx_bank::{
 pub use spatial_voice::{
     SpatialDrySoundData, SpatialDryWetCore, SpatialVoiceControl, SpatialVoiceHandle,
     SpatialVoiceInitParams, SpatialWetSendCore, SpatialWetSendSoundData,
+};
+pub use streaming::{
+    StreamingBgmControl, StreamingBgmHandle, StreamingBgmSoundData, StreamingBgmSource,
+    StreamingFmvControl, StreamingFmvHandle, StreamingFmvSoundData, StreamingResampler48k,
+    BGM_STREAM_RINGBUFFER_FRAMES, FMV_STREAM_RINGBUFFER_FRAMES,
 };

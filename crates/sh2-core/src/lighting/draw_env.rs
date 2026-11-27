@@ -156,23 +156,61 @@ pub const fn env_flash_off_level(has_flashlight: bool, flag_625_set: bool) -> f3
     }
 }
 
+/// Stage-wide Daytime wildcard `room_no` (`0xFFFE` / `65534`, packed `0xFFFFFFFE`) used by
+/// `CB_DrawEnvData` (`0x00361ef0`) and `CC_DrawEnvData` (`0x003622d0`) in `SLUS_202.28`
+/// `Set_DrawEnvData` (`0x00251060`, `GFW/sh2_DrawEnvData.c:220-231`) and `sh2pc.exe`
+/// `FUN_0047c2d0` (`0x0047c2d0`, `sh2pc_00470000.c:9270-9298`).
+pub const DRAW_ENV_ROOM_DAYTIME_WILDCARD: u16 = 0xFFFE;
+
+/// Stage-wide default / Nighttime wildcard `room_no` (`0xFFFF` / `65535`, packed `0xFFFFFFFF`)
+/// in `SLUS_202.28` `Set_DrawEnvData` (`0x00251060`) and `sh2pc.exe` `FUN_0047c2d0` (`0x0047c2d0`).
+pub const DRAW_ENV_ROOM_WILDCARD: u16 = 0xFFFF;
+
 /// Looks up the matching [`DrawEnvData`] entry for a 2-letter PS2 stage code (e.g. `"OB"`, `"ER"`,
-/// `"AP"`, `"HP"`, `"PS"`, `"RR"`) and optional room index (`SLUS_202.28` `Set_DrawEnvData` @ `0x00251060`).
+/// `"CA"`, `"CB"`, `"AP"`, `"HP"`, `"PS"`, `"RR"`), room index, and daytime/nighttime state
+/// (`SLUS_202.28` `Set_DrawEnvData` @ `0x00251060`, `sh2pc.exe` `FUN_0047c2d0` @ `0x0047c2d0`).
 ///
-/// Matches exact `room_no == room_index` first, then falls back to the stage-wide wildcard
-/// (`room_no == 0xFFFF`) or the first entry in that stage table.
+/// - For Town East (`"CB"`, `uVar3 == 2`) and Town West (`"CC"`, `uVar3 == 3`):
+///   - Daytime (`!is_night`, `(_DAT_0112644c >> 0x1b & 1) == 0` / `(DAT_01f7a9fc & 0x8000000) == 0`):
+///     matches the first `room_no == 0xFFFE` (`0xFFFFFFFE`) entry (`ambient = 0.65`, `shadow_darkness = 0`).
+///   - Nighttime (`is_night`): matches `room_no == 0xFFFF` (`0xFFFFFFFF`) (`ambient = 0.15`, `shadow_darkness = 1`).
+/// - For all other stages (including `"CA"` Forest Trail): matches exact `room_no == room_index`
+///   (excluding `0xFFFE`/`0xFFFF`), then falls back to `room_no == 0xFFFF` or entry `0`.
 #[must_use]
-pub fn lookup_draw_env(stage_code: &str, room_index: u16) -> Option<&'static DrawEnvData> {
+pub fn lookup_draw_env_for_time(
+    stage_code: &str,
+    room_index: u16,
+    is_night: bool,
+) -> Option<&'static DrawEnvData> {
     let table = ALL_STAGE_DRAW_ENV_TABLES
         .iter()
         .find(|t| t.stage_code.eq_ignore_ascii_case(stage_code))?;
 
-    // 1. Exact room_no match (excluding 0xFFFF wildcard)
-    if let Some(exact) = table
-        .entries
-        .iter()
-        .find(|e| e.room_no != 0xFFFF && e.room_no == room_index)
-    {
+    // `SLUS_202.28` `Set_DrawEnvData` (`0x00251060:220-231`) & `sh2pc.exe` `FUN_0047c2d0`
+    // (`0x0047c2d0:9270-9298`): `CB` (2) and `CC` (3) select `0xFFFE` for Day and `0xFFFF` for Night.
+    if stage_code.eq_ignore_ascii_case("CB") || stage_code.eq_ignore_ascii_case("CC") {
+        if !is_night {
+            if let Some(day) = table
+                .entries
+                .iter()
+                .find(|e| e.room_no == DRAW_ENV_ROOM_DAYTIME_WILDCARD)
+            {
+                return Some(day);
+            }
+        }
+        return table
+            .entries
+            .iter()
+            .find(|e| e.room_no == DRAW_ENV_ROOM_WILDCARD)
+            .or_else(|| table.entries.first());
+    }
+
+    // 1. Exact room_no match (excluding 0xFFFE / 0xFFFF wildcards)
+    if let Some(exact) = table.entries.iter().find(|e| {
+        e.room_no != DRAW_ENV_ROOM_DAYTIME_WILDCARD
+            && e.room_no != DRAW_ENV_ROOM_WILDCARD
+            && e.room_no == room_index
+    }) {
         return Some(exact);
     }
 
@@ -180,8 +218,15 @@ pub fn lookup_draw_env(stage_code: &str, room_index: u16) -> Option<&'static Dra
     table
         .entries
         .iter()
-        .find(|e| e.room_no == 0xFFFF)
+        .find(|e| e.room_no == DRAW_ENV_ROOM_WILDCARD)
         .or_else(|| table.entries.first())
+}
+
+/// Looks up the matching [`DrawEnvData`] entry for a 2-letter PS2 stage code and room index
+/// in daytime mode (`is_night = false`). See [`lookup_draw_env_for_time`] for nighttime town stages.
+#[must_use]
+pub fn lookup_draw_env(stage_code: &str, room_index: u16) -> Option<&'static DrawEnvData> {
+    lookup_draw_env_for_time(stage_code, room_index, false)
 }
 
 #[cfg(test)]
@@ -225,5 +270,32 @@ mod tests {
 
         let ap12 = lookup_draw_env("AP", 12).expect("AP_DrawEnvData fallback");
         assert_ne!(ap12.room_no, 18);
+
+        // `CA_DrawEnvData` (`0x00361b10` / `0x007f41d0`): ca14 exact vs wildcard ca11/ca20
+        let ca14 = lookup_draw_env("CA", 14).expect("CA_DrawEnvData room 14");
+        assert_eq!(ca14.room_no, 14);
+        assert!((ca14.ambient[0] - 0.9).abs() < 1e-4);
+        assert!((ca14.fog_near - 10_000.0).abs() < 1e-2);
+        assert!((ca14.fog_far - 17_635.0).abs() < 1e-2);
+
+        let ca11 = lookup_draw_env("CA", 11).expect("CA_DrawEnvData wildcard");
+        assert_eq!(ca11.room_no, DRAW_ENV_ROOM_WILDCARD);
+        assert!((ca11.ambient[0] - 0.65).abs() < 1e-4);
+        assert_eq!(ca11.shadow_darkness, 0);
+        assert_eq!(
+            ca11.effective_fog_bounds(false),
+            (5500.0, 3000.0, 20.0, 235.0)
+        );
+
+        // `CB_DrawEnvData` (`0x00361ef0` / `0x007f45b0`): Daytime `0xFFFE` vs Nighttime `0xFFFF`
+        let cb54_day = lookup_draw_env("CB", 54).expect("CB_DrawEnvData daytime");
+        assert_eq!(cb54_day.room_no, DRAW_ENV_ROOM_DAYTIME_WILDCARD);
+        assert!((cb54_day.ambient[0] - 0.65).abs() < 1e-4);
+        assert_eq!(cb54_day.shadow_darkness, 0);
+
+        let cb54_night = lookup_draw_env_for_time("CB", 54, true).expect("CB_DrawEnvData night");
+        assert_eq!(cb54_night.room_no, DRAW_ENV_ROOM_WILDCARD);
+        assert!((cb54_night.ambient[0] - 0.15).abs() < 1e-4);
+        assert_eq!(cb54_night.shadow_darkness, 1);
     }
 }

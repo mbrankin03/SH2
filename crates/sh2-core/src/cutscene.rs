@@ -324,4 +324,63 @@ mod tests {
         assert_eq!(agl_papa.anm_frame_offset, 507);
         assert_eq!(agl_papa.cls_frame_offset, 438);
     }
+
+    /// Verifies 1:1 `first_toilet` (`demo_no = 1`, `sh2pc.exe` `0x008e7ed0`) voice trigger timing
+    /// (`stream_no = 60117` -> `voice.afs[117]`, `stream_start = 246`), subtitle synchronization
+    /// (`adr_msg_time` `0x008e7ec8` = `579..786`), and `toilet.bik` -> `first_toilet` handoff (`SH2-188`).
+    #[test]
+    fn test_sh2_188_first_toilet_voice_trigger_and_subtitle_sync() {
+        let info = find_drama_demo_by_id("first_toilet").expect("first_toilet in catalog");
+        assert_eq!(info.demo_no, 1);
+        assert_eq!(info.stream_no, 60117);
+        assert_eq!(info.voice_afs_index(), Some(117));
+        assert_eq!(info.stream_start, 246);
+        assert_eq!(info.msg_start, 0);
+        assert_eq!(info.subtitle_windows, &[SubtitleWindow::new(0, 579, 786)]);
+
+        let fmv = crate::campaign::cutscene_handoff::evaluate_auto_stage_fmv(
+            2,
+            &crate::events::EventFlags::default(),
+            &std::collections::HashSet::new(),
+        )
+        .expect("Stage 2 must trigger toilet.bik -> first_toilet");
+        assert_eq!(fmv.movie_id, "toilet");
+        let post_demo = fmv.post_demo.expect("toilet.bik must chain first_toilet");
+        assert_eq!(post_demo.demo_no, 1);
+
+        let root = "../../Silent-Hill-2-Restless-Dreams_Win_EN_Full-Rip/Silent Hill 2";
+        let dds_path = format!("{root}/{}", info.dds_path);
+        if !std::path::Path::new(&dds_path).exists() {
+            return;
+        }
+        let dds_bytes = std::fs::read(&dds_path).expect("read first_toilet.dds");
+        let dds = parse_demo_dds(&dds_bytes).expect("parse first_toilet.dds");
+        assert_eq!(dds.header.total_frames, 788);
+
+        let mut player = DramaDemoPlayer::new(*info, dds, false);
+        // Tick 1 requests `_demo_status |= 0x80` preload; voice must not trigger before frame 246.
+        player.tick(1.0 / 30.0, true);
+        assert!(player.voice_preload_requested);
+        assert!(!player.voice_started);
+        assert!(!player.pending_voice_trigger);
+
+        for _ in 0..244 {
+            player.tick(1.0 / 30.0, true);
+            assert!(!player.voice_started);
+        }
+        // Frame 246 crosses `stream_start` -> triggers `voice.afs[117]` (`_demo_status |= 0x100`).
+        player.tick(1.0 / 30.0, true);
+        player.tick(1.0 / 30.0, true);
+        assert!(player.voice_started);
+        assert!(player.pending_voice_trigger);
+        player.pending_voice_trigger = false;
+
+        // Sync to `voice.afs[117]` speech window (`11.1s` into track -> frame `246 + 1 + 333 = 580`).
+        player.tick_with_voice_sync(1.0 / 30.0, true, Some(11.1));
+        assert_eq!(player.active_subtitle_msg_id, Some(0));
+
+        // After voice finishes (`14.92s` -> frame 694), advance past frame 788 to completion.
+        player.tick_with_voice_sync(220.0 / 30.0, true, None);
+        assert_eq!(player.step, DramaDemoStep::Finished);
+    }
 }

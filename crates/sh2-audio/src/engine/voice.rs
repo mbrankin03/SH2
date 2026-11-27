@@ -36,11 +36,11 @@ impl AudioEngine {
         let duration_secs = total_samples as f64 / voice_adx.header.sample_rate as f64;
         let total_duration = Duration::from_secs_f64(duration_secs);
 
+        // `voice_track` already applies `(self.voice_volume * self.master_volume)`; keep the
+        // per-sound gain at unity (`1.0`) so lowering sliders never double-attenuates dialogue (`SH2-188`).
         let settings = StaticSoundSettings::new()
             .output_destination(voice_track)
-            .volume(Volume::Amplitude(
-                (self.voice_volume * self.master_volume) as f64,
-            ));
+            .volume(Volume::Amplitude(1.0));
 
         let sound_data = StaticSoundData {
             sample_rate: play_rate,
@@ -70,10 +70,13 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Plays a decoded cutscene voice stream (`WavEntry` from `voice.afs` entry `stream_no - 60001`)
-    /// on the dedicated voice track (`SH2-63`, `SH2-167`).
+    /// Plays a decoded cutscene voice stream (`WavEntry` from `voice.afs` entry `stream_no - 60000`
+    /// per `sh2pc.exe` `FUN_00514b40` `0x00514b40` / `DramaDemoMain` `0x004a2110`, e.g. `60117 -> 117`
+    /// for `first_toilet` at `sh2pc.exe` `0x008e7ed0`) on the dedicated voice track (`SH2-63`, `SH2-167`, `SH2-188`).
     ///
-    /// BGM ducking during cutscenes is handled solely by [`crate::BgmManager`] (`0.7` `DramaDemo`).
+    /// BGM ducking during cutscenes is handled solely by [`crate::BgmManager`] (`0.7` `DramaDemo`,
+    /// with `first_toilet` `demo_no == 1` exempt at `1.0` per `SeBgmManager` `0x00194300` / `0x00516430`).
+    /// Output volume scaling (`voice_volume * master_volume`) is applied once on `voice_track`.
     pub fn play_cutscene_voice(&mut self, wav: &WavEntry) -> Result<(), AudioError> {
         self.stop_voice(Duration::from_millis(20));
 
@@ -83,11 +86,11 @@ impl AudioEngine {
             .ok_or_else(|| AudioError::InitError("No voice track".into()))?;
         let (play_rate, frames) = wav_entry_to_frames_48k(wav);
 
+        // `voice_track` already applies `(self.voice_volume * self.master_volume)`; keep the
+        // per-sound gain at unity (`1.0`) so lowering sliders never double-attenuates dialogue (`SH2-188`).
         let settings = StaticSoundSettings::new()
             .output_destination(voice_track)
-            .volume(Volume::Amplitude(
-                (self.voice_volume * self.master_volume) as f64,
-            ));
+            .volume(Volume::Amplitude(1.0));
 
         let sound_data = StaticSoundData {
             sample_rate: play_rate,

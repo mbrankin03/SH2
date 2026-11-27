@@ -370,8 +370,13 @@ fn load_test_room_into_state(state: &mut AppState, new_room: TestRoomKind) {
         && state.story_progression_room.checkpoint_3d_idx == 0
         && !state.story_progression_room.restroom_mirror_inspected
     {
-        state.drama_demo_session =
-            open_drama_demo_session(&state.render_ctx, 0, false, active_tex_quality);
+        state.drama_demo_session = open_drama_demo_session(
+            &state.render_ctx,
+            0,
+            false,
+            active_tex_quality,
+            state.bgm_manager.audio_pack_source,
+        );
     }
     if new_room == TestRoomKind::CombatArena {
         state.combat_arena = sh2_core::combat::CombatArena::new();

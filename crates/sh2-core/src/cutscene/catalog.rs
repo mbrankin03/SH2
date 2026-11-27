@@ -70,9 +70,11 @@ pub struct DramaDemoPlayInfo {
     pub msg_start: u16,
     /// Subtitle timing intervals (`adr_msg_time`).
     pub subtitle_windows: &'static [SubtitleWindow],
-    /// Voice stream number (`60001 + afs_index` in `voice.afs`, or `0` if silent).
+    /// Voice stream number (`60000 + afs_index` in `voice.afs` per `sh2pc.exe` `FUN_00514b40`
+    /// `0x00514b40` `param_1 - 60000` and `SLUS_202.28` `shSdCallCheck` `0x00290e60`, or `0` if silent).
     pub stream_no: i32,
-    /// 30 FPS scene frame at which the voice stream begins playing (`stream_start`).
+    /// 30 FPS scene frame at which the voice stream begins playing (`stream_start`, e.g. `246.0f`
+    /// at `sh2pc.exe` `0x008e7eec` for `first_toilet`, `570.0f` at `0x008e7b04` for `tenbou`).
     pub stream_start: i16,
     /// Starting 30 FPS frame offset inside shared multi-segment `.anm` and `.cls` files
     /// (e.g. `1546` for `mar_deai_e`, `438` for `papa_agl`, `292` for `hei_lau_b`, `1679` for `piano_lau_e`).

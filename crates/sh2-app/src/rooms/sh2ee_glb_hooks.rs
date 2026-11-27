@@ -72,6 +72,11 @@ pub(crate) fn render_room_glb_replacements(state: &mut AppState, dt_sec: f32) {
         .draft_config
         .game
         .enable_sh2ee_world_fixes;
+    if !enable_fixes {
+        state.sh2ee_ty3_glb = None;
+        state.sh2ee_mon_glb = None;
+        return;
+    }
 
     let room_id = state
         .campaign_loaded_room

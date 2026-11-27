@@ -41,11 +41,13 @@ pub(crate) struct AppState {
     pub boot_logo_bgs: [Option<Arc<wgpu::BindGroup>>; 4],
     pub menu_uniform_buffer: wgpu::Buffer,
     pub title_bg_uniform_buffer: wgpu::Buffer,
-    /// Dedicated uniform buffer for the 1x1 GPU dim scrim so writing scrim alpha never clobbers
-    /// `menu_uniform_buffer` within the same `CommandEncoder` (`SH2-175`).
-    pub dim_scrim_uniform_buffer: wgpu::Buffer,
-    /// Pre-bound 1x1 black GPU texture + `dim_scrim_uniform_buffer` for zero-CPU dim scrims (`SH2-175`).
-    pub dim_scrim_bind_group: wgpu::BindGroup,
+    /// Double-buffered uniform slots for the 1x1 GPU dim scrim so multiple scrims within the same
+    /// `CommandEncoder` (e.g. `ExitConfirm` backdrop + title fade) never clobber each other (`SH2-175`).
+    pub dim_scrim_uniform_buffers: [wgpu::Buffer; 2],
+    /// Pre-bound 1x1 black GPU texture + uniform buffer slots for zero-CPU dim scrims (`SH2-175`).
+    pub dim_scrim_bind_groups: [wgpu::BindGroup; 2],
+    /// Next dim scrim uniform slot (`0` or `1`) for [`Self::draw_fullscreen_dim_scrim`] (`SH2-175`).
+    pub dim_scrim_slot: usize,
     pub menu_text_texture: wgpu::Texture,
     pub menu_text_bind_group: wgpu::BindGroup,
     pub inventory_rasterizer: TextRasterizer,
@@ -455,14 +457,16 @@ impl AppState {
             1.0,
             1.0,
         ];
+        let slot = self.dim_scrim_slot;
+        self.dim_scrim_slot ^= 1;
         self.render_ctx.queue.write_buffer(
-            &self.dim_scrim_uniform_buffer,
+            &self.dim_scrim_uniform_buffers[slot],
             0,
             bytemuck::cast_slice(&uniforms),
         );
         self.blitter.render_with_bind_group_and_load_op(
             encoder,
-            &self.dim_scrim_bind_group,
+            &self.dim_scrim_bind_groups[slot],
             surface_view,
             wgpu::LoadOp::Load,
         );

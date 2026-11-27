@@ -354,10 +354,16 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         contents: bytemuck::cast_slice(&initial_uniforms),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
-    let dim_scrim_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Fullscreen Dim Scrim Uniform Buffer"),
-        contents: bytemuck::cast_slice(&initial_uniforms),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    let dim_scrim_uniform_buffers = std::array::from_fn(|i| {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(if i == 0 {
+                "Fullscreen Dim Scrim Uniform Buffer 0"
+            } else {
+                "Fullscreen Dim Scrim Uniform Buffer 1"
+            }),
+            contents: bytemuck::cast_slice(&initial_uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        })
     });
     let dim_scrim_texture = device.create_texture_with_data(
         &queue,
@@ -379,11 +385,13 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         &[0u8, 0, 0, 255],
     );
     let dim_scrim_view = dim_scrim_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let dim_scrim_bind_group = blitter.create_bind_group_with_uniform_buffer(
-        &device,
-        &dim_scrim_view,
-        &dim_scrim_uniform_buffer,
-    );
+    let dim_scrim_bind_groups = std::array::from_fn(|i| {
+        blitter.create_bind_group_with_uniform_buffer(
+            &device,
+            &dim_scrim_view,
+            &dim_scrim_uniform_buffers[i],
+        )
+    });
 
     let splash_konami_bg = tex_loader
         .load_texture_for_quality(
@@ -752,8 +760,9 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
         boot_logo_bgs,
         menu_uniform_buffer,
         title_bg_uniform_buffer,
-        dim_scrim_uniform_buffer,
-        dim_scrim_bind_group,
+        dim_scrim_uniform_buffers,
+        dim_scrim_bind_groups,
+        dim_scrim_slot: 0,
         menu_text_texture,
         menu_text_bind_group,
         inventory_rasterizer,

@@ -7,12 +7,11 @@
 //! using < 1 MiB resident memory and zero heap allocations on the audio callback thread.
 
 mod bgm;
+mod bgm_control;
 mod fmv;
 
-pub use bgm::{
-    StreamingBgmControl, StreamingBgmHandle, StreamingBgmSoundData, StreamingBgmSource,
-    BGM_STREAM_RINGBUFFER_FRAMES,
-};
+pub use bgm::{StreamingBgmSoundData, StreamingBgmSource, BGM_STREAM_RINGBUFFER_FRAMES};
+pub use bgm_control::{StreamingBgmControl, StreamingBgmHandle};
 pub use fmv::{
     StreamingFmvControl, StreamingFmvHandle, StreamingFmvSoundData, FMV_STREAM_RINGBUFFER_FRAMES,
 };
@@ -27,8 +26,19 @@ pub(super) fn store_f32(slot: &AtomicU32, val: f32) {
 }
 
 #[inline]
+pub(super) fn store_f32_release(slot: &AtomicU32, val: f32) {
+    let clean = if val.is_finite() { val } else { 0.0 };
+    slot.store(clean.to_bits(), Ordering::Release);
+}
+
+#[inline]
 pub(super) fn load_f32(slot: &AtomicU32) -> f32 {
     f32::from_bits(slot.load(Ordering::Relaxed))
+}
+
+#[inline]
+pub(super) fn load_f32_acquire(slot: &AtomicU32) -> f32 {
+    f32::from_bits(slot.load(Ordering::Acquire))
 }
 
 /// Stateful 2nd-order Butterworth stereo low-pass biquad filter for streaming PS2 SPU2 DAC

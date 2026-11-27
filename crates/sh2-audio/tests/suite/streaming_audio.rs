@@ -191,3 +191,229 @@ fn test_sh2_180_streaming_fmv_ringbuffer_eof_and_stop() {
         "Streaming FMV handle should finish cleanly after draining EOF"
     );
 }
+
+#[test]
+fn test_sh2_180_long_fade_out_exceeding_ringbuffer_does_not_starve() {
+    let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+        backend_settings: MockBackendSettings {
+            sample_rate: 48_000,
+        },
+        ..Default::default()
+    })
+    .expect("mock AudioManager");
+    let bgm_track = manager
+        .add_sub_track(TrackBuilder::default())
+        .expect("bgm sub-track");
+
+    let source = StreamingBgmSource::Custom {
+        sample_rate: 48_000,
+        layer_count: 1,
+        read_fn: Box::new(|out_layers, max_frames| {
+            out_layers[0].clear();
+            out_layers[0].resize(max_frames, (0.8, 0.8));
+            max_frames
+        }),
+    };
+
+    let sound_data = StreamingBgmSoundData {
+        source,
+        initial_gains: vec![1.0],
+        initial_master_gain: 1.0,
+        target_master_gain: 1.0,
+        fade_in: Duration::ZERO,
+        destination: bgm_track.id(),
+    };
+
+    let handle = manager.play(sound_data).expect("play streaming bgm");
+
+    // Request a 500 ms fade-out (24,000 samples > 16,384-frame ringbuffer = 341 ms) and drop
+    // the handle immediately, mirroring `AudioEngine::stop_bgm`.
+    handle.stop(Duration::from_millis(500));
+    drop(handle);
+
+    let backend = manager.backend_mut();
+    backend.on_start_processing();
+
+    let mut frame_at_400ms = Frame::ZERO;
+    for i in 0..24_600 {
+        if i % 2048 == 0 {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let f = backend.process();
+        if i == 19_200 {
+            frame_at_400ms = f;
+        }
+    }
+
+    // At 400 ms (80% through the 500 ms fade, well past the 341 ms ringbuffer), envelope is ~0.20,
+    // so amplitude must remain strictly non-zero (~0.8 * 0.20 = 0.16), proving no mid-fade starvation.
+    assert!(
+        frame_at_400ms.left > 0.10 && frame_at_400ms.left < 0.25,
+        "Expected smooth non-zero fade sample at 400 ms (~0.16), got {:?}",
+        frame_at_400ms
+    );
+
+    // After 500 ms, the fade completes and Kira reclaims the Sound slot cleanly.
+    backend.on_start_processing();
+    let _ = backend.process();
+    assert_eq!(
+        manager.num_sounds(),
+        0,
+        "Kira should reclaim the streaming BGM Sound slot once the long fade-out completes"
+    );
+}
+
+#[test]
+fn test_sh2_180_handle_drop_without_stop_finishes_sound_and_worker() {
+    let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+        backend_settings: MockBackendSettings {
+            sample_rate: 48_000,
+        },
+        ..Default::default()
+    })
+    .expect("mock AudioManager");
+    let track = manager
+        .add_sub_track(TrackBuilder::default())
+        .expect("sub-track");
+
+    let bgm_handle = manager
+        .play(StreamingBgmSoundData {
+            source: StreamingBgmSource::Custom {
+                sample_rate: 48_000,
+                layer_count: 1,
+                read_fn: Box::new(|out_layers, max_frames| {
+                    out_layers[0].clear();
+                    out_layers[0].resize(max_frames, (0.25, 0.25));
+                    max_frames
+                }),
+            },
+            initial_gains: vec![1.0],
+            initial_master_gain: 1.0,
+            target_master_gain: 1.0,
+            fade_in: Duration::ZERO,
+            destination: track.id(),
+        })
+        .expect("play bgm");
+
+    let fmv_handle = manager
+        .play(StreamingFmvSoundData::from_custom_producer(
+            48_000,
+            1.0,
+            track.id(),
+            |out| {
+                out.fill((0.25, 0.25));
+                out.len()
+            },
+        ))
+        .expect("play fmv");
+
+    assert_eq!(manager.num_sounds(), 2);
+
+    // Drop both handles WITHOUT calling `.stop()`.
+    drop(bgm_handle);
+    drop(fmv_handle);
+
+    let backend = manager.backend_mut();
+    for _ in 0..8 {
+        backend.on_start_processing();
+        let _ = backend.process();
+    }
+
+    assert_eq!(
+        manager.num_sounds(),
+        0,
+        "Dropping handles without .stop() must finish both Kira Sound slots without leaking"
+    );
+}
+
+#[test]
+fn test_sh2_180_non_looping_bgm_eof_finishes_and_clears_is_bgm_playing() {
+    // 1. Deterministic MockBackend verification that non-looping BGM EOF sets `is_finished() == true`
+    let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+        backend_settings: MockBackendSettings {
+            sample_rate: 48_000,
+        },
+        ..Default::default()
+    })
+    .expect("mock AudioManager");
+    let track = manager
+        .add_sub_track(TrackBuilder::default())
+        .expect("bgm track");
+
+    let remaining = Arc::new(AtomicUsize::new(512));
+    let rem_clone = Arc::clone(&remaining);
+    let handle = manager
+        .play(StreamingBgmSoundData {
+            source: StreamingBgmSource::Custom {
+                sample_rate: 48_000,
+                layer_count: 1,
+                read_fn: Box::new(move |out_layers, max_frames| {
+                    let left = rem_clone.load(Ordering::Relaxed);
+                    out_layers[0].clear();
+                    if left == 0 {
+                        return 0;
+                    }
+                    let n = left.min(max_frames);
+                    out_layers[0].resize(n, (0.3, 0.3));
+                    rem_clone.fetch_sub(n, Ordering::Relaxed);
+                    n
+                }),
+            },
+            initial_gains: vec![1.0],
+            initial_master_gain: 1.0,
+            target_master_gain: 1.0,
+            fade_in: Duration::ZERO,
+            destination: track.id(),
+        })
+        .expect("play short non-looping bgm");
+
+    assert!(!handle.is_finished());
+    std::thread::sleep(Duration::from_millis(15));
+
+    let backend = manager.backend_mut();
+    backend.on_start_processing();
+    for _ in 0..700 {
+        let _ = backend.process();
+        if handle.is_finished() {
+            break;
+        }
+    }
+    assert!(
+        handle.is_finished(),
+        "Non-looping streaming BGM handle must report finished after EOF"
+    );
+
+    // 2. Hardware AudioEngine check (skipped cleanly on headless runners without audio devices)
+    if let Ok(mut engine) = sh2_audio::AudioEngine::new() {
+        let rem_hw = Arc::new(AtomicUsize::new(256));
+        let rem_hw_clone = Arc::clone(&rem_hw);
+        let src = StreamingBgmSource::Custom {
+            sample_rate: 48_000,
+            layer_count: 1,
+            read_fn: Box::new(move |out_layers, max_frames| {
+                let left = rem_hw_clone.load(Ordering::Relaxed);
+                out_layers[0].clear();
+                if left == 0 {
+                    return 0;
+                }
+                let n = left.min(max_frames);
+                out_layers[0].resize(n, (0.1, 0.1));
+                rem_hw_clone.fetch_sub(n, Ordering::Relaxed);
+                n
+            }),
+        };
+        if engine.play_bgm_stream(src, &[1.0]).is_ok() {
+            // Wait up to 250 ms for the 5.3 ms stream to drain to EOF on the hardware callback.
+            for _ in 0..25 {
+                if !engine.is_bgm_playing() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                !engine.is_bgm_playing(),
+                "AudioEngine::is_bgm_playing() must return false after non-looping BGM EOF"
+            );
+        }
+    }
+}

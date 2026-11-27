@@ -9,9 +9,9 @@
 use std::convert::Infallible;
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::Duration;
 
 use kira::{
@@ -26,7 +26,8 @@ use sh2_assets::{AdxStreamDecoder, AixStreamDecoder};
 use crate::bgm_manager::BGM_MAX_TRACKS;
 use crate::ringbuffer::AudioRingBuffer;
 
-use super::{load_f32, store_f32, StreamingResampler48k};
+use super::bgm_control::{StreamingBgmControl, StreamingBgmHandle};
+use super::{load_f32, load_f32_acquire, StreamingResampler48k};
 
 /// Per-layer ringbuffer capacity in stereo frames (`16,384` frames ≈ `341 ms` at `48 kHz`).
 ///
@@ -105,145 +106,6 @@ impl StreamingBgmSource {
                 .unwrap_or(0),
             Self::Custom { read_fn, .. } => read_fn(out_layers, max_frames),
         }
-    }
-}
-
-/// Lock-free atomic control block shared between [`StreamingBgmHandle`], the background decoder
-/// thread, and the real-time Kira [`Sound`] callback (`SH2-180`).
-#[derive(Debug)]
-pub struct StreamingBgmControl {
-    layer_count: usize,
-    layer_target_gains: [AtomicU32; BGM_MAX_TRACKS],
-    layer_fade_secs: [AtomicU32; BGM_MAX_TRACKS],
-    master_target_gain: AtomicU32,
-    master_fade_secs: AtomicU32,
-    paused: AtomicBool,
-    stop_requested: AtomicBool,
-    stop_fade_secs: AtomicU32,
-    decoder_stop: AtomicBool,
-    eof_reached: AtomicBool,
-    finished: AtomicBool,
-}
-
-impl StreamingBgmControl {
-    fn new(layer_count: usize, initial_gains: &[f32], initial_master: f32) -> Arc<Self> {
-        let layer_target_gains = std::array::from_fn(|i| {
-            let g = initial_gains.get(i).copied().unwrap_or(0.0).max(0.0);
-            AtomicU32::new(g.to_bits())
-        });
-        let layer_fade_secs = std::array::from_fn(|_| AtomicU32::new(0.0f32.to_bits()));
-        Arc::new(Self {
-            layer_count: layer_count.clamp(1, BGM_MAX_TRACKS),
-            layer_target_gains,
-            layer_fade_secs,
-            master_target_gain: AtomicU32::new(initial_master.max(0.0).to_bits()),
-            master_fade_secs: AtomicU32::new(0.0f32.to_bits()),
-            paused: AtomicBool::new(false),
-            stop_requested: AtomicBool::new(false),
-            stop_fade_secs: AtomicU32::new(0.05f32.to_bits()),
-            decoder_stop: AtomicBool::new(false),
-            eof_reached: AtomicBool::new(false),
-            finished: AtomicBool::new(false),
-        })
-    }
-
-    /// Updates target linear amplitude gain for `layer_idx` with linear fade duration.
-    #[inline]
-    pub fn set_layer_gain(&self, layer_idx: usize, gain: f32, fade_duration: Duration) {
-        if layer_idx < BGM_MAX_TRACKS {
-            store_f32(&self.layer_target_gains[layer_idx], gain.max(0.0));
-            store_f32(
-                &self.layer_fade_secs[layer_idx],
-                fade_duration.as_secs_f32().max(0.0),
-            );
-        }
-    }
-
-    /// Updates master gain multiplier for the stream with linear fade duration.
-    #[inline]
-    pub fn set_master_gain(&self, gain: f32, fade_duration: Duration) {
-        store_f32(&self.master_target_gain, gain.max(0.0));
-        store_f32(&self.master_fade_secs, fade_duration.as_secs_f32().max(0.0));
-    }
-
-    /// Pauses or resumes playback atomically.
-    #[inline]
-    pub fn set_paused(&self, paused: bool) {
-        self.paused.store(paused, Ordering::Relaxed);
-    }
-
-    /// Requests a smooth linear fade-out and termination of both playback and the decoder thread.
-    #[inline]
-    pub fn request_stop(&self, fade_out: Duration) {
-        store_f32(&self.stop_fade_secs, fade_out.as_secs_f32().max(0.0));
-        self.stop_requested.store(true, Ordering::Release);
-        self.decoder_stop.store(true, Ordering::Release);
-    }
-
-    /// Returns the number of synchronized layers in this stream.
-    #[inline]
-    #[must_use]
-    pub fn layer_count(&self) -> usize {
-        self.layer_count
-    }
-
-    /// Returns `true` once the audio callback has finished playback or completed fade-out.
-    #[inline]
-    #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.finished.load(Ordering::Acquire)
-    }
-}
-
-/// Handle for controlling an active streaming ADX/AIX BGM playback session (`SH2-180`).
-pub struct StreamingBgmHandle {
-    control: Arc<StreamingBgmControl>,
-    _worker: Option<JoinHandle<()>>,
-}
-
-impl StreamingBgmHandle {
-    /// Updates the linear gain of a single BGM layer with smooth linear ramping.
-    #[inline]
-    pub fn set_layer_gain(&self, layer_idx: usize, gain: f32, fade_duration: Duration) {
-        self.control.set_layer_gain(layer_idx, gain, fade_duration);
-    }
-
-    /// Updates the overall stream master gain with smooth linear ramping.
-    #[inline]
-    pub fn set_master_gain(&self, gain: f32, fade_duration: Duration) {
-        self.control.set_master_gain(gain, fade_duration);
-    }
-
-    /// Pauses or resumes playback.
-    #[inline]
-    pub fn set_paused(&self, paused: bool) {
-        self.control.set_paused(paused);
-    }
-
-    /// Fades out and stops playback, terminating the background decoder thread.
-    #[inline]
-    pub fn stop(&self, fade_out: Duration) {
-        self.control.request_stop(fade_out);
-    }
-
-    /// Returns the number of active synchronized layers.
-    #[inline]
-    #[must_use]
-    pub fn layer_count(&self) -> usize {
-        self.control.layer_count()
-    }
-
-    /// Returns `true` if the stream has finished playing.
-    #[inline]
-    #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.control.is_finished()
-    }
-}
-
-impl Drop for StreamingBgmHandle {
-    fn drop(&mut self) {
-        self.control.decoder_stop.store(true, Ordering::Release);
     }
 }
 
@@ -374,7 +236,6 @@ fn bgm_decoder_loop(
 ) {
     let layer_count = buffers.len();
     while !control.decoder_stop.load(Ordering::Acquire) {
-        // Ensure every layer ringbuffer has headroom for a full resampled chunk.
         let min_free = buffers
             .iter()
             .map(|rb| rb.available_write())
@@ -400,7 +261,6 @@ fn bgm_decoder_loop(
             continue;
         }
 
-        // Push the exact same frame count to all layers so they remain sample-accurate in lockstep.
         let mut offset = 0usize;
         while offset < min_out && !control.decoder_stop.load(Ordering::Acquire) {
             let free = buffers
@@ -440,6 +300,12 @@ struct StreamingBgmSound {
     is_finished: bool,
 }
 
+impl Drop for StreamingBgmSound {
+    fn drop(&mut self) {
+        self.control.mark_finished();
+    }
+}
+
 impl StreamingBgmSound {
     /// Pops one synchronized frame across all layers (zero allocation).
     fn pop_next_synced_frame(&mut self) -> bool {
@@ -469,6 +335,12 @@ impl StreamingBgmSound {
         }
         true
     }
+
+    #[inline]
+    fn finish_now(&mut self) {
+        self.is_finished = true;
+        self.control.mark_finished();
+    }
 }
 
 impl Sound for StreamingBgmSound {
@@ -492,13 +364,12 @@ impl Sound for StreamingBgmSound {
             1.0 / 48_000.0
         };
 
-        if self.control.paused.load(Ordering::Relaxed)
-            && !self.control.stop_requested.load(Ordering::Acquire)
-        {
+        let stop_req = self.control.stop_requested.load(Ordering::Acquire);
+        if self.control.paused.load(Ordering::Relaxed) && !stop_req {
             return Frame::ZERO;
         }
 
-        if self.control.stop_requested.load(Ordering::Acquire) {
+        if stop_req {
             let fade_secs = load_f32(&self.control.stop_fade_secs);
             if fade_secs <= 1e-4 {
                 self.stop_envelope = 0.0;
@@ -506,8 +377,7 @@ impl Sound for StreamingBgmSound {
                 self.stop_envelope = (self.stop_envelope - dt_f32 / fade_secs).max(0.0);
             }
             if self.stop_envelope <= 0.0 {
-                self.is_finished = true;
-                self.control.finished.store(true, Ordering::Release);
+                self.finish_now();
                 return Frame::ZERO;
             }
         }
@@ -516,8 +386,7 @@ impl Sound for StreamingBgmSound {
         if !self.has_started {
             if !self.pop_next_synced_frame() {
                 if self.control.eof_reached.load(Ordering::Acquire) {
-                    self.is_finished = true;
-                    self.control.finished.store(true, Ordering::Release);
+                    self.finish_now();
                 }
                 return Frame::ZERO;
             }
@@ -532,16 +401,15 @@ impl Sound for StreamingBgmSound {
                 self.sample_phase -= 1.0;
             } else {
                 if self.control.eof_reached.load(Ordering::Acquire) {
-                    self.is_finished = true;
-                    self.control.finished.store(true, Ordering::Release);
+                    self.finish_now();
                 }
                 self.sample_phase = 0.0;
                 return Frame::ZERO;
             }
         }
 
-        // Smoothly slew master gain.
-        let target_master = load_f32(&self.control.master_target_gain);
+        // Acquire `target_gain` before loading `fade_secs` to match the `Release` store order.
+        let target_master = load_f32_acquire(&self.control.master_target_gain);
         let master_fade = load_f32(&self.control.master_fade_secs);
         self.current_master_gain =
             slew_gain(self.current_master_gain, target_master, master_fade, dt_f32);
@@ -551,7 +419,7 @@ impl Sound for StreamingBgmSound {
         let mut mix_r = 0.0f32;
 
         for k in 0..self.layer_count {
-            let target_g = load_f32(&self.control.layer_target_gains[k]);
+            let target_g = load_f32_acquire(&self.control.layer_target_gains[k]);
             let fade_s = load_f32(&self.control.layer_fade_secs[k]);
             let g = slew_gain(self.current_layer_gains[k], target_g, fade_s, dt_f32);
             self.current_layer_gains[k] = g;
@@ -578,10 +446,7 @@ impl Sound for StreamingBgmSound {
 #[inline]
 fn slew_gain(current: f32, target: f32, fade_secs: f32, dt: f32) -> f32 {
     let diff = target - current;
-    if diff.abs() <= 1e-6 {
-        return target;
-    }
-    if fade_secs <= 1e-4 {
+    if diff.abs() <= 1e-6 || fade_secs <= 1e-4 {
         return target;
     }
     let step = dt / fade_secs;

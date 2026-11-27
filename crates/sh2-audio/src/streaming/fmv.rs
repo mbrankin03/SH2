@@ -70,12 +70,12 @@ impl StreamingFmvControl {
         self.paused.store(paused, Ordering::Relaxed);
     }
 
-    /// Requests a smooth fade-out and immediately signals the background `ffmpeg` reader to exit.
+    /// Requests a smooth fade-out; the background `ffmpeg` reader remains alive until the audio
+    /// callback completes the fade-out and marks `finished` / `reader_stop`.
     #[inline]
     pub fn request_stop(&self, fade_out: Duration) {
         store_f32(&self.stop_fade_secs, fade_out.as_secs_f32().max(0.0));
         self.stop_requested.store(true, Ordering::Release);
-        self.reader_stop.store(true, Ordering::Release);
     }
 
     /// Returns `true` once FMV audio playback has finished or faded out.
@@ -83,6 +83,12 @@ impl StreamingFmvControl {
     #[must_use]
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    fn mark_finished(&self) {
+        self.finished.store(true, Ordering::Release);
+        self.reader_stop.store(true, Ordering::Release);
     }
 }
 
@@ -124,7 +130,9 @@ impl StreamingFmvHandle {
 
 impl Drop for StreamingFmvHandle {
     fn drop(&mut self) {
-        self.control.reader_stop.store(true, Ordering::Release);
+        if !self.control.stop_requested.load(Ordering::Acquire) {
+            self.control.request_stop(Duration::ZERO);
+        }
     }
 }
 
@@ -275,6 +283,12 @@ struct StreamingFmvSound {
     is_finished: bool,
 }
 
+impl Drop for StreamingFmvSound {
+    fn drop(&mut self) {
+        self.control.mark_finished();
+    }
+}
+
 impl StreamingFmvSound {
     fn pop_next_frame(&mut self) -> bool {
         if self.batch_cursor >= self.batch_len {
@@ -291,6 +305,12 @@ impl StreamingFmvSound {
         self.curr_frame = self.local_batch[self.batch_cursor];
         self.batch_cursor += 1;
         true
+    }
+
+    #[inline]
+    fn finish_now(&mut self) {
+        self.is_finished = true;
+        self.control.mark_finished();
     }
 }
 
@@ -315,13 +335,12 @@ impl Sound for StreamingFmvSound {
             1.0 / 48_000.0
         };
 
-        if self.control.paused.load(Ordering::Relaxed)
-            && !self.control.stop_requested.load(Ordering::Acquire)
-        {
+        let stop_req = self.control.stop_requested.load(Ordering::Acquire);
+        if self.control.paused.load(Ordering::Relaxed) && !stop_req {
             return Frame::ZERO;
         }
 
-        if self.control.stop_requested.load(Ordering::Acquire) {
+        if stop_req {
             let fade_secs = load_f32(&self.control.stop_fade_secs);
             if fade_secs <= 1e-4 {
                 self.stop_envelope = 0.0;
@@ -329,8 +348,7 @@ impl Sound for StreamingFmvSound {
                 self.stop_envelope = (self.stop_envelope - dt_f32 / fade_secs).max(0.0);
             }
             if self.stop_envelope <= 0.0 {
-                self.is_finished = true;
-                self.control.finished.store(true, Ordering::Release);
+                self.finish_now();
                 return Frame::ZERO;
             }
         }
@@ -338,8 +356,7 @@ impl Sound for StreamingFmvSound {
         if !self.has_started {
             if !self.pop_next_frame() {
                 if self.control.eof_reached.load(Ordering::Acquire) {
-                    self.is_finished = true;
-                    self.control.finished.store(true, Ordering::Release);
+                    self.finish_now();
                 }
                 return Frame::ZERO;
             }
@@ -353,8 +370,7 @@ impl Sound for StreamingFmvSound {
                 self.sample_phase -= 1.0;
             } else {
                 if self.control.eof_reached.load(Ordering::Acquire) {
-                    self.is_finished = true;
-                    self.control.finished.store(true, Ordering::Release);
+                    self.finish_now();
                 }
                 self.sample_phase = 0.0;
                 return Frame::ZERO;

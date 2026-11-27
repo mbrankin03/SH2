@@ -269,8 +269,11 @@ impl AudioEngine {
     /// Returns the number of currently active multi-layer BGM tracks.
     pub fn active_bgm_layer_count(&self) -> usize {
         if let Some(ref stream_handle) = self.active_bgm_stream {
-            stream_handle.layer_count()
-        } else if !self.active_bgm_layers.is_empty() {
+            if !stream_handle.is_finished() {
+                return stream_handle.layer_count();
+            }
+        }
+        if !self.active_bgm_layers.is_empty() {
             self.active_bgm_layers.len()
         } else if self.active_bgm_handle.is_some() {
             1
@@ -281,9 +284,19 @@ impl AudioEngine {
 
     /// Returns whether background music is currently actively playing.
     pub fn is_bgm_playing(&self) -> bool {
-        self.active_bgm_stream.is_some()
+        self.active_bgm_stream
+            .as_ref()
+            .is_some_and(|h| !h.is_finished())
             || self.active_bgm_handle.is_some()
             || !self.active_bgm_layers.is_empty()
+    }
+
+    /// Returns whether FMV cutscene audio is currently actively playing.
+    pub fn is_fmv_audio_playing(&self) -> bool {
+        self.active_fmv_stream
+            .as_ref()
+            .is_some_and(|h| !h.is_finished())
+            || self.active_fmv_handle.is_some()
     }
 
     /// Stops currently playing background music (streaming or static) with a fade out.

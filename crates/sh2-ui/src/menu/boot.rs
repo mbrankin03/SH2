@@ -26,13 +26,14 @@ pub const PC_LOGO_HOLD_SECS: f32 = 2.0;
 /// Retail PC `sh2pc.exe` (`0x00405e80`) fast fade-out duration when skipped during hold (`0.5f`).
 pub const PC_LOGO_SKIP_FADE_SECS: f32 = 0.5;
 
-/// Boot sequence profile selecting between PS2 original (`logo.c`) and Retail PC (`sh2pc.exe`).
+/// Boot sequence profile selecting between Retail PC (`sh2pc.exe`) and PS2 prototype (`logo.c`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BootProfile {
-    /// Strict 1:1 PS2 `logo.c` sequence: CESA -> SCE -> Konami (`3.0s` hold, `0.3s` fade).
-    #[default]
+    /// PS2 prototype `logo.c` (`SLUS_202.28`) sequence: CESA -> SCE -> Konami (`3.0s` hold, `0.3s` fade).
     Ps2Original,
-    /// Retail PC `sh2pc.exe` (`0x00405e80`) sequence: Konami -> Splash (`2.0s` hold, `1.0s` fade, skippable).
+    /// Retail PC `sh2pc.exe` (`0x00405e80`, `0x00406280`, `0x004062a0`) sequence:
+    /// Konami (`konami2048x2048.tex`) -> Splash (`splash_logo.tex`) (`2.0s` hold, `1.0s` fade, skippable).
+    #[default]
     RetailPc,
 }
 
@@ -103,7 +104,7 @@ pub struct BootSequenceState {
 
 impl Default for BootSequenceState {
     fn default() -> Self {
-        Self::new(BootProfile::Ps2Original)
+        Self::new(BootProfile::RetailPc)
     }
 }
 

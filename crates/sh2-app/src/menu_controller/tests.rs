@@ -15,9 +15,11 @@ fn test_menu_controller_lifecycle_and_persistence() {
     assert_eq!(controller.title_sm.phase, TitlePhase::SplashIntro);
     assert!(!controller.in_game_active);
 
-    // Skip to title logo via RetailPc boot skip (`sh2pc.exe` `0x00405e80`)
-    controller.title_sm.boot_sequence =
-        sh2_ui::menu::BootSequenceState::new(sh2_ui::menu::BootProfile::RetailPc);
+    // Default boot profile is RetailPc (`sh2pc.exe` `0x00405e80`) and is skippable out of the box
+    assert_eq!(
+        controller.title_sm.boot_sequence.profile,
+        sh2_ui::menu::BootProfile::RetailPc
+    );
     for _ in 0..6 {
         controller.handle_nav(MenuNavAction::Confirm);
     }

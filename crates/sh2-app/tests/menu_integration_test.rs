@@ -31,11 +31,14 @@ fn test_sh2_18_full_menu_and_options_flow() {
     controller.tick(1.0);
     assert!(controller.title_sm.splash_timer >= 1.0);
 
-    // Skip splash intro via RetailPc `BootSequenceState::handle_skip` (`sh2pc.exe` `0x00405e80`)
-    controller.title_sm.boot_sequence =
-        sh2_ui::menu::BootSequenceState::new(sh2_ui::menu::BootProfile::RetailPc);
+    // Default boot profile is RetailPc (`sh2pc.exe` `0x00405e80`); `tick(1.0)` finished logo 0
+    // FadeIn -> Hold, so 5 Confirm presses finish both logos and reach `TitleLogo`.
+    assert_eq!(
+        controller.title_sm.boot_sequence.profile,
+        sh2_ui::menu::BootProfile::RetailPc
+    );
     let mut cue = MenuSoundCue::None;
-    for _ in 0..6 {
+    for _ in 0..5 {
         cue = controller.handle_nav(MenuNavAction::Confirm);
     }
     assert_eq!(cue, MenuSoundCue::Confirm);

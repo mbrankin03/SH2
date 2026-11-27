@@ -101,7 +101,7 @@ impl Default for TitleStateMachine {
 }
 
 impl TitleStateMachine {
-    /// Initialize title screen matching PS2 `logo.c` + `titleInit` (`0x001c1260`).
+    /// Initialize title screen matching retail PC `sh2pc.exe` (`0x00405e80` boot logos) + `titleInit` (`0x001c1260`).
     pub fn new() -> Self {
         Self {
             phase: TitlePhase::SplashIntro,
@@ -117,7 +117,7 @@ impl TitleStateMachine {
             fade_speed: 1.0 / TITLE_FADE_DURATION_SECS,
             is_fading_in: true,
             is_fading_out: false,
-            boot_sequence: BootSequenceState::new(BootProfile::Ps2Original),
+            boot_sequence: BootSequenceState::new(BootProfile::RetailPc),
             allow_ps2_boot_skip: false,
             splash_timer: 0.0,
             elapsed_timer: 0.0,

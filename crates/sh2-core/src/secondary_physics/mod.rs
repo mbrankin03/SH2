@@ -292,8 +292,8 @@ impl SecondaryBonePhysics {
 
     /// Applies sub-frame Slerp-interpolated secondary deflection transforms **after**
     /// `evaluate_pose_into` on evaluated row-major model-space `pose_world` matrices,
-    /// propagating each bone's pivot rotation to its descendants in topological bone order
-    /// without corrupting translations or being overwritten by keyframed rotations.
+    /// propagating each bone's pivot rotation to its descendants regardless of bone index
+    /// ordering without corrupting translations or being overwritten by keyframed rotations.
     pub fn apply_to_pose_interpolated(
         &self,
         pose_world: &mut [[[f32; 4]; 4]],
@@ -333,8 +333,8 @@ impl SecondaryBonePhysics {
             let pivot_xform = mat4_mul(w_new, mat4_inverse(w_old));
             pose_world[bone] = w_new;
 
-            for (idx, slot) in pose_world.iter_mut().enumerate().skip(bone + 1) {
-                if is_descendant_of(idx, bone, parents) {
+            for (idx, slot) in pose_world.iter_mut().enumerate() {
+                if idx != bone && is_descendant_of(idx, bone, parents) {
                     *slot = mat4_mul(pivot_xform, *slot);
                 }
             }

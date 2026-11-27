@@ -16,6 +16,7 @@ pub mod io;
 pub mod orchestrator;
 pub mod retail_events;
 pub mod save;
+pub mod stage_hooks;
 pub mod stage_loader;
 pub mod state;
 

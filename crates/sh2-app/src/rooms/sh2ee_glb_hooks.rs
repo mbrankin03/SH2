@@ -73,13 +73,27 @@ pub(crate) fn render_room_glb_replacements(state: &mut AppState, dt_sec: f32) {
 
     let _jiggle = evaluate_roach_jiggle(enable_fixes, state.sh2ee_ty3_glb.is_some());
     state.cockroach_swarm.begin_frame();
-    let ty3_active = enable_fixes && room_id == R_BUG_RM_ID && state.sh2ee_ty3_glb.is_some();
-    if ty3_active {
-        let timer = state.cockroach_swarm.advance_timer(0, dt_sec);
-        if let Some(ref ty3) = state.sh2ee_ty3_glb {
-            ty3.update_skin_matrices(&state.render_ctx.queue, Mat4::IDENTITY, timer, true);
+    let roach_action = state.cockroach_swarm.classify_indexed_draw(
+        room_id,
+        true,
+        sh2_core::TY3_BODY_NUM_VERTICES,
+        sh2_core::TY3_BODY_PRIM_COUNT,
+        state.sh2ee_ty3_glb.is_some(),
+        enable_fixes,
+    );
+    let ty3_active = match roach_action {
+        sh2_core::CockroachDrawAction::ReplaceWithTy3Glb { timer_slot } => {
+            let timer = state.cockroach_swarm.advance_timer(timer_slot, dt_sec);
+            if let Some(ref ty3) = state.sh2ee_ty3_glb {
+                ty3.update_skin_matrices(&state.render_ctx.queue, Mat4::IDENTITY, timer, true);
+                true
+            } else {
+                false
+            }
         }
-    }
+        sh2_core::CockroachDrawAction::RenderVanilla
+        | sh2_core::CockroachDrawAction::SuppressVanillaLimbOrShadow => false,
+    };
 
     let cutscene_ticks = state
         .drama_demo_session

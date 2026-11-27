@@ -47,8 +47,8 @@ pub(crate) enum GameplayStepOutcome {
     TriggerEnding(u16),
 }
 
-/// Executes `PlayableMain` step `0` (`0x0020b414`: `FlagInit`, `ItemDataInit`,
-/// `ScreenEffectFadeStart(2)`) and returns the initial [`CampaignPhase::RoomLoading`] phase.
+/// Executes `PlayableMain` step `0` (`0x0020b414`: `FlagInit` `sh2pc.exe` `0x0048aa3e..0x0048af60`,
+/// `ItemDataInit`, `ScreenEffectFadeStart(2)`) and returns the initial [`CampaignPhase::RoomLoading`] phase.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_prologue(
     sim: &mut SimulationCore,
@@ -58,20 +58,34 @@ pub(crate) fn run_prologue(
     scenario: ScenarioKind,
     action_difficulty: ActionDifficulty,
     riddle_difficulty: RiddleDifficulty,
+    clear_data: ClearData,
+    rng_seed: u32,
 ) -> CampaignPhase {
     sim.select_scenario(scenario);
     sim.scenario.action_difficulty = action_difficulty;
     sim.scenario.riddle_difficulty = riddle_difficulty;
-    if scenario == ScenarioKind::LetterFromSilentHeaven {
-        let mut rng = Sh2Rng::new(0x1999_0901);
-        let _ = crate::events::init_new_game(
-            &mut sim.scenario.flags,
-            &mut sim.scenario.puzzle_state,
-            &mut rng,
-            riddle_difficulty,
-            action_difficulty,
-            ClearData::default(),
-        );
+    sim.scenario.ending_tracker = crate::endings::EndingPointTracker::default();
+    match scenario {
+        ScenarioKind::LetterFromSilentHeaven => {
+            let mut rng = Sh2Rng::new(rng_seed);
+            let effective_riddle = crate::events::init_new_game(
+                &mut sim.scenario.flags,
+                &mut sim.scenario.puzzle_state,
+                &mut rng,
+                riddle_difficulty,
+                action_difficulty,
+                clear_data,
+            );
+            // Propagate Extra Riddle unlock (`sh2pc.exe` `0x0048aa78`: `movb $0x3, 0x1dbbff5`).
+            sim.scenario.riddle_difficulty = effective_riddle;
+        }
+        ScenarioKind::BornFromAWish => {
+            // `sh2pc.exe` `FlagInit` (`0x0048aa3e`): `orl $0x1000020, 0x1f7a9e0` (flags 5 & 24).
+            crate::events::init_new_game_wish(
+                &mut sim.scenario.flags,
+                &mut sim.scenario.puzzle_state,
+            );
+        }
     }
 
     let start_stage = match scenario {
@@ -116,6 +130,40 @@ pub(crate) fn run_active_gameplay(
 ) -> GameplayStepOutcome {
     if dt_sec > 0.0 {
         *play_time_secs += f64::from(dt_sec);
+        // `sh2pc.exe` `0x0048eccb..0x0048ed1a`: accumulate low-HP urgency (`< 0.5` HP ratio).
+        sim.scenario.ending_tracker.tick_low_hp(
+            sim.scenario.health,
+            sim.scenario.max_health,
+            dt_sec,
+        );
+        // `sh2pc.exe` `0x0048ed1e..0x0048ed8c`: accumulate Maria escort proximity & bump count
+        // whenever Maria is accompanying (`flag 15` / `ACT1_FLAG_MARIA_ACCOMPANYING`).
+        if sim.scenario.flags.get(15) {
+            if let Some(dist_mm) = input.maria_distance_mm {
+                sim.scenario
+                    .ending_tracker
+                    .tick_maria_escort(dist_mm, input.maria_bumped, dt_sec);
+            }
+        }
+        // `sh2pc.exe` `0x005767e0` (`EvAllTimeFunc` Stage 44 Room `0xba`): Mary's hallway monologue.
+        let numeric_room = crate::fog::room_id_from_stage_code(&sim.scenario.current_room) as u16;
+        if sim
+            .scenario
+            .ending_tracker
+            .tick_mary_corridor_monologue(numeric_room, dt_sec)
+        {
+            sim.scenario
+                .flags
+                .set(crate::endings::FLAG_MARY_HALLWAY_MONOLOGUE_COMPLETE, true);
+        }
+        // `SLUS_202.28` `EventMain` (`0x001a785c`) / `sh2pc.exe` (`0x0048e81b`) + SH2:EE
+        // `Patches/FlashlightClockPush.cpp` Room 208 clock push `sys.flag` mask.
+        let cam_y = sim.active_camera_eye(1.0).y;
+        sim.scenario.event_main_sys_flags &= crate::world::event_main_sys_flag_mask(
+            numeric_room,
+            cam_y,
+            input.enable_sh2ee_world_fixes,
+        );
     }
 
     // 1. Check `PlayerEventJamesDeadly` (`0x001a78a8`) -> `GameoverMain` (`0x001c4c70`)
@@ -191,7 +239,7 @@ pub(crate) fn run_active_gameplay(
             .map(str::to_owned);
         let (still_running, walkback_delta, requested_demo, ending_bit) = {
             let scen = &mut sim.scenario;
-            let still_running = scen.prog_runner.tick(
+            let still_running = scen.prog_runner.tick_with_campaign(
                 down,
                 held,
                 dt_sec,
@@ -200,6 +248,9 @@ pub(crate) fn run_active_gameplay(
                 &mut scen.inventory_mgr,
                 &mut scen.cutaway_overlay,
                 riddle,
+                Some(&scen.playing_info),
+                Some(&scen.ending_tracker),
+                Some(&mut scen.active_elevator),
             );
             *player_locked = still_running && scen.prog_runner.is_player_locked();
             effects
@@ -272,8 +323,17 @@ pub(crate) fn run_active_gameplay(
         if !still_running {
             event_engine.finish_active_program();
         }
-        if let Some(_ending_bit) = ending_bit {
-            return GameplayStepOutcome::TriggerEnding(stage_id);
+        if let Some(ending_bit) = ending_bit {
+            let target_ending_stage = match ending_bit {
+                0x01 => 48,
+                0x02 => 49,
+                0x04 => 50,
+                0x08 => 51,
+                0x10 => 52,
+                0x40 => 54,
+                _ => stage_id,
+            };
+            return GameplayStepOutcome::TriggerEnding(target_ending_stage);
         }
     } else {
         let eval_input = EventEvalInput {

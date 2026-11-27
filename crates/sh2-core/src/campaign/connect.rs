@@ -6,11 +6,15 @@ use std::collections::HashSet;
 use glam::Vec3;
 
 use crate::events::engine::{EventEngine, StageTransitionCommand};
+use crate::events::horror_triggers::StageEventDispatcher;
+use crate::events::Sh2Rng;
+use crate::fog::room_id_from_stage_code;
 use crate::simulation::SimulationCore;
 
 use super::cutscene_handoff::{
     evaluate_auto_stage_demo, evaluate_auto_stage_fmv, DramaDemoTrigger, FmvTrigger,
 };
+use super::stage_hooks::{eval_room_init_hook, eval_stage_init_hook};
 use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
 };
@@ -53,6 +57,8 @@ pub(crate) enum ConnectStepOutcome {
 pub(crate) fn step_connect_pipeline(
     sim: &mut SimulationCore,
     event_engine: &mut EventEngine,
+    horror_triggers: &mut StageEventDispatcher,
+    rng: &mut Sh2Rng,
     fade: &mut ScreenFadeState,
     active_manifest: &mut Option<RoomLoadManifest>,
     triggered_demos: &HashSet<u32>,
@@ -95,6 +101,9 @@ pub(crate) fn step_connect_pipeline(
             if req.door_command.is_none() {
                 event_engine.reset();
             }
+            // `SLUS_202.28` `connectStageInit` (`0x0020bd60` line 28):
+            // `if (*(code **)(_stage + 0x18) != 0) (**(code **)(_stage + 0x18))();`
+            eval_stage_init_hook(req.target_stage, &mut sim.scenario.flags, horror_triggers);
             ConnectStepOutcome::Continue {
                 next_step: ConnectStep::WaitStageSync,
                 loading_screen_active,
@@ -138,6 +147,16 @@ pub(crate) fn step_connect_pipeline(
                     req.prefer_sh2ee,
                 );
             }
+            // `SLUS_202.28` `connectRoomInit` (`0x0020be10` line 71):
+            // `if (*(code **)(_stage + 0x1c) != 0) (**(code **)(_stage + 0x1c))();`
+            let numeric_room = room_id_from_stage_code(&manifest.room_id) as u16;
+            eval_room_init_hook(
+                manifest.stage_id,
+                numeric_room,
+                &mut sim.scenario.flags,
+                horror_triggers,
+                rng,
+            );
             effects.load_room = Some(manifest);
             ConnectStepOutcome::Continue {
                 next_step: ConnectStep::WaitRoomSync,

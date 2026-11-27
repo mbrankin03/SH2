@@ -210,6 +210,9 @@ pub enum InventoryAction {
     OpenOptions,
     /// Consume a healing item (`1` = Health Drink, `2` = First-Aid Kit, `3` = Ampoule).
     UseHealing(u8),
+    /// Examine an inventory item (`otn_itemmain` `0x00471ca6..0x0047219b`: Photo of Mary `20`,
+    /// Letter from Mary `21`, Angela's Knife `24` update `EndingPointTracker`).
+    ExamineItem(u8),
     /// Equip weapon by Director's Cut catalog ID (`4, 6, 8, 10, 12, 13, 14, 15, 16, 17`).
     EquipWeapon(u8),
     /// Unequip currently held weapon.

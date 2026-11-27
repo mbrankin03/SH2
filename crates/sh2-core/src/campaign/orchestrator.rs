@@ -11,8 +11,9 @@ use crate::config::{ActionDifficulty, OutdoorStreamingMode, RiddleDifficulty};
 use crate::cutscene::{find_drama_demo_by_no, CutsceneSequenceStep};
 use crate::event_camera::{EventCameraSystem, PostSequenceRestorePolicy};
 use crate::events::engine::{EventEngine, StageTransitionCommand};
-use crate::events::is_connected_stage_pair;
+use crate::events::horror_triggers::StageEventDispatcher;
 use crate::events::stages_act1::{act1_eval_bgm_control_with_demo, act1_stage_descriptor};
+use crate::events::{is_connected_stage_pair, ClearData, Sh2Rng};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
 use crate::world::OutdoorTileStreamer;
@@ -40,6 +41,10 @@ pub struct CampaignOrchestrator {
     pub phase: CampaignPhase,
     /// `EventMainStandard` (`0x001a7b50`) trigger & action executor.
     pub event_engine: EventEngine,
+    /// Ambient stage/room horror triggers (`Stage_Data::stage_init_fn` / `room_init_fn`).
+    pub horror_triggers: StageEventDispatcher,
+    /// Campaign RNG used by `connectRoomInit` hooks (`0x005859a0`, `0x005972d0`, `0x0057a240`).
+    pub rng: Sh2Rng,
     /// Cutscene & scripted event camera authority (`EventCameraSystem`).
     pub event_camera: EventCameraSystem,
     /// Outdoor `LoadBg` multi-tile streaming planner (`loadbg_all.c`).
@@ -71,13 +76,41 @@ impl CampaignOrchestrator {
         streaming_mode: OutdoorStreamingMode,
         delayed_fade_in_fix: bool,
     ) -> Self {
+        Self::new_game_with_clear_data(
+            scenario,
+            action_difficulty,
+            riddle_difficulty,
+            ClearData::default(),
+            0x2001_0924,
+            streaming_mode,
+            delayed_fade_in_fix,
+        )
+    }
+
+    /// Starts a fresh New Game campaign session with explicit persistent NG+ [`ClearData`]
+    /// (`0x01dbbf80..0x01dbbf85`) and a caller-supplied non-hardcoded `rng_seed` for `FlagInit`.
+    #[must_use]
+    pub fn new_game_with_clear_data(
+        scenario: ScenarioKind,
+        action_difficulty: ActionDifficulty,
+        riddle_difficulty: RiddleDifficulty,
+        clear_data: ClearData,
+        rng_seed: u32,
+        streaming_mode: OutdoorStreamingMode,
+        delayed_fade_in_fix: bool,
+    ) -> Self {
+        let seed = if rng_seed == 0 { 1 } else { rng_seed };
         Self {
             phase: CampaignPhase::Prologue {
                 scenario,
                 action_difficulty,
                 riddle_difficulty,
+                clear_data,
+                rng_seed: seed,
             },
             event_engine: EventEngine::new(),
+            horror_triggers: StageEventDispatcher::new(),
+            rng: Sh2Rng::new(seed),
             event_camera: EventCameraSystem::new(),
             outdoor_streamer: OutdoorTileStreamer::new(streaming_mode),
             fade: ScreenFadeState::new_black(),
@@ -115,6 +148,8 @@ impl CampaignOrchestrator {
                 assets_ready: false,
             },
             event_engine: EventEngine::new(),
+            horror_triggers: StageEventDispatcher::new(),
+            rng: Sh2Rng::new(0x2001_0924),
             event_camera: EventCameraSystem::new(),
             outdoor_streamer: OutdoorTileStreamer::new(streaming_mode),
             fade: ScreenFadeState::new_black(),
@@ -240,6 +275,8 @@ impl CampaignOrchestrator {
                 scenario,
                 action_difficulty,
                 riddle_difficulty,
+                clear_data,
+                rng_seed,
             } => {
                 self.phase = run_prologue(
                     sim,
@@ -249,6 +286,8 @@ impl CampaignOrchestrator {
                     scenario,
                     action_difficulty,
                     riddle_difficulty,
+                    clear_data,
+                    rng_seed,
                 );
             }
             CampaignPhase::RoomLoading {
@@ -269,6 +308,8 @@ impl CampaignOrchestrator {
                 let outcome = step_connect_pipeline(
                     sim,
                     &mut self.event_engine,
+                    &mut self.horror_triggers,
+                    &mut self.rng,
                     &mut self.fade,
                     &mut self.active_manifest,
                     &self.triggered_demos,
@@ -325,6 +366,8 @@ impl CampaignOrchestrator {
                 let outcome = step_connect_pipeline(
                     sim,
                     &mut self.event_engine,
+                    &mut self.horror_triggers,
+                    &mut self.rng,
                     &mut self.fade,
                     &mut self.active_manifest,
                     &self.triggered_demos,

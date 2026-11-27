@@ -12,6 +12,7 @@ pub mod horror_triggers;
 mod puzzles;
 mod runner;
 mod runner_stage3;
+pub mod stage_programs;
 pub mod stagemdl;
 pub mod stageparts;
 pub mod stages_act1;

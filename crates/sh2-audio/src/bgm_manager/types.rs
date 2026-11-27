@@ -140,6 +140,9 @@ pub struct BgmEventFlags {
     pub hotel_music_box_active: bool,
     /// Whether an active cutscene/event flag (`0x934D94 & 0x40`) is asserted.
     pub event_mode_active: bool,
+    /// Active `DramaDemo` number (`DramaDemoGetNo()` `0x004a02b0`, e.g. `Some(3)` for `haka_agl`
+    /// Angela Graveyard cutscene in Stage 4 `EvBgmControl` `0x005a0260`).
+    pub active_demo_no: Option<u32>,
     /// Optional explicit override for `EvBgmControl` return value.
     pub ev_bgm_override: Option<u32>,
     /// Whether SH2:EE restored cut/unused audio (`MusicBoxVolume.cpp` 7th-layer Hotel 1F/2F music box attenuation) is enabled (`SH2-62`).
@@ -202,6 +205,7 @@ impl BgmEventFlags {
             flag_62c: read_u32(0x4C),
             hotel_music_box_active,
             event_mode_active,
+            active_demo_no: None,
             ev_bgm_override: None,
             enable_restored_cut_audio,
             bowling_bgm_delay: false,

@@ -12,7 +12,7 @@ use crate::cutscene::{find_drama_demo_by_no, CutsceneSequenceStep};
 use crate::event_camera::{EventCameraSystem, PostSequenceRestorePolicy};
 use crate::events::engine::{EventEngine, StageTransitionCommand};
 use crate::events::horror_triggers::StageEventDispatcher;
-use crate::events::stages_act1::{act1_eval_bgm_control_with_demo, act1_stage_descriptor};
+use crate::events::stages_act1::{act1_eval_bgm_control_with_demo_no, act1_stage_descriptor};
 use crate::events::{is_connected_stage_pair, ClearData, Sh2Rng};
 use crate::scenario::ScenarioKind;
 use crate::simulation::SimulationCore;
@@ -21,7 +21,7 @@ use crate::world::{resolve_active_room_pickups_into, OutdoorTileStreamer};
 
 use super::connect::{step_connect_pipeline, ConnectRequest, ConnectStepOutcome};
 use super::cutscene_handoff::{
-    apply_post_cutscene_handoff, apply_post_demo_stage_flags, tick_demo_stage_hooks,
+    apply_post_cutscene_handoff, apply_post_demo_stage_flags_with_rng, tick_demo_stage_hooks,
     DramaDemoTrigger, FmvTrigger, AUTO_STAGE_DEMO_RULES,
 };
 use super::gameplay::{run_active_gameplay, run_prologue, GameplayStepOutcome};
@@ -295,6 +295,7 @@ impl CampaignOrchestrator {
         effects.hide_loading_screen = false;
         effects.fade_alpha = self.fade.black_alpha();
         effects.sound_effects.clear();
+        effects.stop_sound_effects.clear();
         effects.positional_sounds.clear();
         effects.bgm_stage_id = None;
         effects.bgm_control_mask = None;
@@ -354,7 +355,11 @@ impl CampaignOrchestrator {
                             sim.scenario.flags.set(rule.completion_flag, true);
                         }
                     }
-                    apply_post_demo_stage_flags(demo_no, &mut sim.scenario.flags);
+                    apply_post_demo_stage_flags_with_rng(
+                        demo_no,
+                        &mut sim.scenario.flags,
+                        &mut self.rng,
+                    );
                     if demo_no == 88 {
                         self.trigger_ending(48);
                     } else {
@@ -420,7 +425,11 @@ impl CampaignOrchestrator {
                                     sim.scenario.flags.set(rule.completion_flag, true);
                                 }
                             }
-                            apply_post_demo_stage_flags(demo_no, &mut sim.scenario.flags);
+                            apply_post_demo_stage_flags_with_rng(
+                                demo_no,
+                                &mut sim.scenario.flags,
+                                &mut self.rng,
+                            );
                             apply_post_cutscene_handoff(
                                 sim,
                                 &mut self.event_camera,
@@ -609,12 +618,16 @@ impl CampaignOrchestrator {
         }
 
         if let Some(desc) = act1_stage_descriptor(sim.scenario.current_stage as u8) {
-            let demo_active = matches!(self.phase, CampaignPhase::DramaDemo { .. });
-            effects.bgm_control_mask = Some(act1_eval_bgm_control_with_demo(
+            let (demo_active, active_demo_no) = match self.phase {
+                CampaignPhase::DramaDemo { demo_no, .. } => (true, Some(demo_no)),
+                _ => (false, None),
+            };
+            effects.bgm_control_mask = Some(act1_eval_bgm_control_with_demo_no(
                 desc.stage_id,
                 &sim.scenario.flags,
                 0,
                 demo_active,
+                active_demo_no,
             ));
         }
 

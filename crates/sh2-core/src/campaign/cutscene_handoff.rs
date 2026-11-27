@@ -122,12 +122,41 @@ pub fn tick_demo_stage_hooks(demo_no: u32, demo_frame: Option<f32>, flags: &mut 
 
 /// Applies stage-specific post-cutscene flag writes when a `DramaDemo` finishes or is skipped.
 ///
-/// For `tenbou` (`demo_no == 2`, `stg_ovservation.c` `0x005a08b7..0x005a08d8`), sets
-/// `flag(1504)` (`0x01f7aa9c |= 0x1`) and `flag(1553)` (`0x01f7aaa0 |= 0x20000`).
+/// - `tenbou` (`demo_no == 2`, `stg_ovservation.c` `0x005a08b7..0x005a08d8`): sets
+///   `flag(1504)` (`0x01f7aa9c |= 0x1`) and `flag(1553)` (`0x01f7aaa0 |= 0x20000`).
+/// - `haka_agl` (`demo_no == 3`, `stg_forest.c` `0x005a07a0..0x005a07b0`): sets `flag(36)`
+///   (`ACT1_FOREST_EVENT_LIST[12..=17]` completion flag).
 pub fn apply_post_demo_stage_flags(demo_no: u32, flags: &mut EventFlags) {
     if demo_no == CS_OB_VIEW_NEIGHBORHOOD_DEMO_NO as u32 {
         flags.set(TENBOU_POST_FLAG_A, true);
         flags.set(TENBOU_POST_FLAG_B, true);
+    } else if demo_no == crate::events::STG4_ANGELA_GRAVE_DEMO_NO {
+        flags.set(crate::events::STG4_FLAG_ANGELA_MET, true);
+    }
+}
+
+/// Applies stage-specific post-cutscene flag writes including RNG-driven flags:
+/// - All deterministic writes in [`apply_post_demo_stage_flags`], plus
+/// - `haka_agl` (`demo_no == 3`, `stg_forest.c` `0x005a07a0..0x005a07a9`): 50% RNG coin flip
+///   (`(rand() & 1) != 0`) setting `flag(37)` (`0x01f7a9e4 |= 0x20`) to pick Angela's next
+///   post-cutscene graveyard conversation branch (`ev_prog[3]` vs `ev_prog[4]`).
+/// - `haka_agl_h` / `haka_agl_i` (`demo_no == 4`, `stg_forest.c` `0x0059f52e..0x0059f553` &
+///   `0x0059f64e..0x0059f673`): re-rolls `flag(37)` (`(rand() & 1) != 0`, setting or clearing bit 5).
+pub fn apply_post_demo_stage_flags_with_rng(
+    demo_no: u32,
+    flags: &mut EventFlags,
+    rng: &mut crate::events::Sh2Rng,
+) {
+    apply_post_demo_stage_flags(demo_no, flags);
+    if demo_no == crate::events::STG4_ANGELA_GRAVE_DEMO_NO {
+        if (rng.next_i32() & 1) != 0 {
+            flags.set(crate::events::STG4_FLAG_ANGELA_TALK_VARIANT, true);
+        }
+    } else if demo_no == crate::events::STG4_ANGELA_TALK_DEMO_NO {
+        flags.set(
+            crate::events::STG4_FLAG_ANGELA_TALK_VARIANT,
+            (rng.next_i32() & 1) != 0,
+        );
     }
 }
 

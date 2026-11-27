@@ -182,6 +182,23 @@ pub(crate) fn step_connect_pipeline(
         }
         ConnectStep::PlayableInit => {
             effects.bgm_stage_id = Some(req.target_stage as u32);
+            if req.target_stage == 4 {
+                // `stg_forest.c` `EvSoundCallAfterLoad` (`sh2pc.exe` `0x0059fc70..0x0059fce3`):
+                // start forest wind loop `0x2742` and (in NG+ before pickup) chainsaw idle `0x4268`.
+                let (se_2d, se_pos) =
+                    crate::events::stage4_eval_sound_call_after_load(&sim.scenario.flags);
+                effects.sound_effects.extend(se_2d);
+                for (se_id, pos) in se_pos {
+                    effects
+                        .positional_sounds
+                        .push(crate::events::engine::EventPositionalSound {
+                            se_id: se_id as i16,
+                            pos,
+                            volume: 1.0,
+                            channel: 8,
+                        });
+                }
+            }
             ConnectStepOutcome::Continue {
                 next_step: ConnectStep::Complete,
                 loading_screen_active,

@@ -664,12 +664,25 @@ impl AppState {
                     .cutaway_overlay
                     .active_picture()
                     .is_some();
-            let flags = BgmEventFlags::from_event_flag_bytes(
+            let mut flags = BgmEventFlags::from_event_flag_bytes(
                 self.sim_core.scenario.flags.as_bytes(),
                 hotel_music_box_active,
                 event_mode_active,
                 enable_restored_cut_audio,
             );
+            flags.active_demo_no = self
+                .campaign_orchestrator
+                .as_ref()
+                .and_then(|o| match o.phase {
+                    sh2_core::campaign::CampaignPhase::DramaDemo { demo_no, .. } => Some(demo_no),
+                    _ => None,
+                })
+                .or_else(|| {
+                    self.drama_demo_session
+                        .as_ref()
+                        .filter(|s| s.player.step != sh2_core::cutscene::DramaDemoStep::Finished)
+                        .map(|s| u32::from(s.player.info.demo_no))
+                });
             return (stage_id, flags);
         }
 

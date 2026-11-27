@@ -60,8 +60,16 @@ pub struct StageProgramRunner {
     active_message_id: Option<i32>,
     /// Sound effects queued during the current frame (`p_se`).
     sound_effects: Vec<u32>,
+    /// Sound effects requested to stop during the current frame (`SeStop`, e.g. `0x4268`).
+    stop_sound_effects: Vec<u32>,
+    /// 3D positional sound effects queued during the current frame (`SeCallPos`, e.g. `0x426b`).
+    positional_sound_effects: Vec<(u32, [f32; 3])>,
     /// Cutscene demo ID requested by `p_demo`, if any.
     requested_demo: Option<u32>,
+    /// Optional post-cutscene `(pos_mm, yaw_rad)` paired with `requested_demo`.
+    requested_demo_post_pose: Option<([f32; 3], f32)>,
+    /// Save point ID requested to open the Save Menu (`SavePointSet` + `mode = 9`, e.g. Stage 4 Well `2`).
+    open_save_point_id: Option<u16>,
     /// Sub-scenario / main game ending bit triggered by `p_game_end`, if any.
     triggered_ending: Option<u8>,
     /// Main ending selected by `EvProgEndingJudge` (`Stage 44 #6`, `0x00576490`), if evaluated.
@@ -81,7 +89,11 @@ impl StageProgramRunner {
         self.active = Some(ProgContext::new(stage, prog_no, completion_flag));
         self.active_message_id = None;
         self.sound_effects.clear();
+        self.stop_sound_effects.clear();
+        self.positional_sound_effects.clear();
         self.requested_demo = None;
+        self.requested_demo_post_pose = None;
+        self.open_save_point_id = None;
         self.pending_walkback_delta = None;
     }
 
@@ -89,6 +101,9 @@ impl StageProgramRunner {
     pub fn abort(&mut self, overlay: &mut CutawayOverlayEngine, flags: &EventFlags) {
         self.active = None;
         self.active_message_id = None;
+        self.stop_sound_effects.clear();
+        self.positional_sound_effects.clear();
+        self.open_save_point_id = None;
         self.pending_walkback_delta = None;
         overlay.set_picture(None, flags);
     }
@@ -118,6 +133,21 @@ impl StageProgramRunner {
         &self.sound_effects
     }
 
+    /// Returns sound effect IDs requested to stop (`SeStop`) during the last `tick`.
+    pub fn stop_sound_effects(&self) -> &[u32] {
+        &self.stop_sound_effects
+    }
+
+    /// Returns 3D positional sound effects `(se_id, pos_mm)` triggered during the last `tick`.
+    pub fn positional_sound_effects(&self) -> &[(u32, [f32; 3])] {
+        &self.positional_sound_effects
+    }
+
+    /// Consumes and returns any save point ID requesting the Save Menu (`SavePointSet` + `mode = 9`).
+    pub fn take_open_save_point_id(&mut self) -> Option<u16> {
+        self.open_save_point_id.take()
+    }
+
     /// Returns any ending triggered by `p_game_end`.
     pub fn triggered_ending(&self) -> Option<u8> {
         self.triggered_ending
@@ -126,6 +156,11 @@ impl StageProgramRunner {
     /// Consumes and returns any cutscene demo ID requested by `p_demo`.
     pub fn take_requested_demo(&mut self) -> Option<u32> {
         self.requested_demo.take()
+    }
+
+    /// Consumes and returns any post-cutscene `(pos_mm, yaw_rad)` paired with `requested_demo`.
+    pub fn take_requested_demo_post_pose(&mut self) -> Option<([f32; 3], f32)> {
+        self.requested_demo_post_pose.take()
     }
 
     /// Consumes and returns any ending bit triggered by `p_game_end`.
@@ -206,6 +241,8 @@ impl StageProgramRunner {
         active_elevator: Option<&mut Option<MultiFloorElevatorPanel>>,
     ) -> bool {
         self.sound_effects.clear();
+        self.stop_sound_effects.clear();
+        self.positional_sound_effects.clear();
         let Some(mut p) = self.active.take() else {
             return false;
         };
@@ -227,8 +264,17 @@ impl StageProgramRunner {
         );
         self.active_message_id = out.active_message_id;
         self.sound_effects.extend(out.sound_effects);
+        self.stop_sound_effects.extend(out.stop_sound_effects);
+        self.positional_sound_effects
+            .extend(out.positional_sound_effects);
         if let Some(demo_no) = out.requested_demo {
             self.requested_demo = Some(demo_no);
+        }
+        if let Some(pose) = out.requested_demo_post_pose {
+            self.requested_demo_post_pose = Some(pose);
+        }
+        if let Some(save_id) = out.open_save_point_id {
+            self.open_save_point_id = Some(save_id);
         }
         if let Some(delta) = out.walkback_delta {
             self.pending_walkback_delta = Some(delta);

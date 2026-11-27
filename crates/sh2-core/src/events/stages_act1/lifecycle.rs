@@ -202,6 +202,23 @@ pub fn act1_eval_bgm_control_with_demo(
     active_bgm_id: u32,
     demo_active: bool,
 ) -> u32 {
+    act1_eval_bgm_control_with_demo_no(stage, flags, active_bgm_id, demo_active, None)
+}
+
+/// Evaluates `EvBgmControl` (`Stage_Data::bgm_control`) with both `demo_active`
+/// (`DAT_00932194 & 0x40`) and optional `active_demo_no` (`DramaDemoGetNo()` `0x004a02b0`).
+///
+/// For `Act1StageId::Forest` (`stg_forest.c` `sh2pc.exe` `0x005a0260..0x005a027d`):
+/// - When `active_demo_no == Some(3)` (`haka_agl` Angela Graveyard cutscene): returns `4`.
+/// - Otherwise: returns `1` if `flag(36)` (`(0x01f7a9e4 >> 4) & 1`) is set, else `0`.
+#[must_use]
+pub fn act1_eval_bgm_control_with_demo_no(
+    stage: Act1StageId,
+    flags: &EventFlags,
+    active_bgm_id: u32,
+    demo_active: bool,
+    active_demo_no: Option<u32>,
+) -> u32 {
     match stage {
         Act1StageId::Toilet => {
             // `0x005a1b30`: `0x1f7a9e4` bit 4 (`flag 36`) -> `1`, else `!bit 1` (`!flag 33`) -> `4`.
@@ -223,6 +240,14 @@ pub fn act1_eval_bgm_control_with_demo(
                 } else {
                     0x04
                 }
+            } else {
+                u32::from(flags.get(36))
+            }
+        }
+        Act1StageId::Forest => {
+            // `0x005a0260..0x005a027d`: `DramaDemoGetNo() == 3` -> `4`, else `(flag(36) ? 1 : 0)`.
+            if active_demo_no == Some(3) {
+                4
             } else {
                 u32::from(flags.get(36))
             }
@@ -324,6 +349,16 @@ pub fn act1_eval_alltime_and_room(
             // `0x005a1350`: door `0x03` state `-1` if `flag(24)` (`0x1f7a9e3 & 1`), else `0`.
             snap.door_overrides
                 .push((0x03, if flags.get(24) { -1 } else { 0 }));
+        }
+        Act1StageId::Forest => {
+            // `0x0059fc70` (`EvSoundCallAfterLoad`): forest wind loop `0x2742` when `!flag(618)`,
+            // plus NG+ chainsaw idle loop `0x4268` when `flag(12) && !flag(38) && !flag(618)`.
+            if !flags.get(618) {
+                snap.triggered_sound_effects.push(0x2742);
+                if flags.get(12) && !flags.get(38) {
+                    snap.triggered_sound_effects.push(0x4268);
+                }
+            }
         }
         Act1StageId::ApartE2f => {
             if room_id == ACT1_ROOM_APT_E_208 {

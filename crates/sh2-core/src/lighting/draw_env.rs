@@ -174,8 +174,20 @@ pub const DRAW_ENV_ROOM_WILDCARD: u16 = 0xFFFF;
 ///   - Daytime (`!is_night`, `(_DAT_0112644c >> 0x1b & 1) == 0` / `(DAT_01f7a9fc & 0x8000000) == 0`):
 ///     matches the first `room_no == 0xFFFE` (`0xFFFFFFFE`) entry (`ambient = 0.65`, `shadow_darkness = 0`).
 ///   - Nighttime (`is_night`): matches `room_no == 0xFFFF` (`0xFFFFFFFF`) (`ambient = 0.15`, `shadow_darkness = 1`).
-/// - For all other stages (including `"CA"` Forest Trail): matches exact `room_no == room_index`
-///   (excluding `0xFFFE`/`0xFFFF`), then falls back to `room_no == 0xFFFF` or entry `0`.
+///   - Retail PC drift (`sh2pc.exe` `0x0047c2d0:9271-9279`): Born From a Wish (`DAT_01dbc00c == 1`)
+///     also forces the Daytime `0xFFFFFFFE` entry.
+/// - For East Restroom / Outdoor Interior (`"ER"`, `uVar3 == 6`, `SLUS_202.28` `0x00251060:232-247`,
+///   `sh2pc.exe` `0x0047c2d0:9299-9316`):
+///   - Daytime (`!is_night`): matches the first entry where `room_no == room_index` AND
+///     `shadow_darkness` (`+0x09`) == `0`, falling back to `room_no == 0xFFFF` (`0xFFFFFFFF`).
+///   - Nighttime (`is_night`): matches the first entry where `room_no == room_index` AND
+///     `shadow_darkness` (`+0x09`) == `1`, falling back to `room_no == 0xFFFF` (`0xFFFFFFFF`).
+///   - Lookup logic is identical between `SLUS_202.28` and `sh2pc.exe`; note that `ER_DrawEnvData`
+///     table entries expanded from 4 entries in `SLUS_202.28` (`0x00363060`) to 5 entries in retail
+///     `sh2pc.exe` (`0x007f5720`).
+/// - For all other stages (including `"OB"` and `"CA"` Forest Trail): matches exact
+///   `room_no == room_index` (excluding `0xFFFE`/`0xFFFF`), then falls back to `room_no == 0xFFFF`
+///   or entry `0`.
 #[must_use]
 pub fn lookup_draw_env_for_time(
     stage_code: &str,
@@ -197,6 +209,26 @@ pub fn lookup_draw_env_for_time(
             {
                 return Some(day);
             }
+        }
+        return table
+            .entries
+            .iter()
+            .find(|e| e.room_no == DRAW_ENV_ROOM_WILDCARD)
+            .or_else(|| table.entries.first());
+    }
+
+    // `SLUS_202.28` `Set_DrawEnvData` (`0x00251060:232-247`) & `sh2pc.exe` `FUN_0047c2d0`
+    // (`0x0047c2d0:9299-9316`): `ER` (`uVar3 == 6`) requires `shadow_darkness` (`+0x09`) to match
+    // Day (`0`) or Night (`1`) alongside exact `room_no`, falling back to `0xFFFF` (`0xFFFFFFFF`).
+    if stage_code.eq_ignore_ascii_case("ER") {
+        let target_shadow_darkness = u8::from(is_night);
+        if let Some(exact) = table.entries.iter().find(|e| {
+            e.room_no != DRAW_ENV_ROOM_DAYTIME_WILDCARD
+                && e.room_no != DRAW_ENV_ROOM_WILDCARD
+                && e.room_no == room_index
+                && e.shadow_darkness == target_shadow_darkness
+        }) {
+            return Some(exact);
         }
         return table
             .entries
@@ -297,5 +329,58 @@ mod tests {
         assert_eq!(cb54_night.room_no, DRAW_ENV_ROOM_WILDCARD);
         assert!((cb54_night.ambient[0] - 0.15).abs() < 1e-4);
         assert_eq!(cb54_night.shadow_darkness, 1);
+    }
+
+    #[test]
+    fn lookup_draw_env_for_time_er_day_night_shadow_darkness_parity() {
+        // `Set_DrawEnvData` (`0x00251060:232-247`) & `FUN_0047c2d0` (`0x0047c2d0:9299-9316`):
+        // ER (`uVar3 == 6`) matches `room_no` AND `shadow_darkness` (`+0x09`) == 0 (Day) / 1 (Night).
+        let er9_day = lookup_draw_env_for_time("ER", 9, false).expect("ER room 9 day");
+        assert_eq!(er9_day.room_no, 9);
+        assert_eq!(er9_day.stage_id, 6);
+        assert_eq!(er9_day.shadow_darkness, 0);
+        assert!((er9_day.ambient[0] - 0.65).abs() < 1e-4);
+
+        let er9_night = lookup_draw_env_for_time("ER", 9, true).expect("ER room 9 night");
+        assert_eq!(er9_night.room_no, 9);
+        assert_eq!(er9_night.stage_id, 6);
+        assert_eq!(er9_night.shadow_darkness, 1);
+        assert!((er9_night.ambient[0] - 0.15).abs() < 1e-4);
+
+        // Room 1 has only a Daytime (`shadow_darkness == 0`) entry in `ER_DrawEnvData`; Nighttime
+        // scans to the `0xFFFF` wildcard sentinel (`0x00251060:242-245`, `0x0047c2d0:9311-9314`).
+        let er1_day = lookup_draw_env_for_time("ER", 1, false).expect("ER room 1 day");
+        assert_eq!(er1_day.room_no, 1);
+        assert_eq!(er1_day.shadow_darkness, 0);
+        assert!((er1_day.ambient[0] - 0.5).abs() < 1e-4);
+
+        let er1_night = lookup_draw_env_for_time("ER", 1, true).expect("ER room 1 night fallback");
+        assert_eq!(er1_night.room_no, DRAW_ENV_ROOM_WILDCARD);
+        assert_eq!(er1_night.shadow_darkness, 0);
+
+        // Verify OB, CA, CB, CC behavior remains unchanged across Day/Night.
+        let ob_day = lookup_draw_env_for_time("OB", 0, false).expect("OB day");
+        let ob_night = lookup_draw_env_for_time("OB", 0, true).expect("OB night");
+        assert_eq!(ob_day, ob_night);
+        assert!((ob_day.ambient[0] - 0.9).abs() < 1e-4);
+
+        let ca14_day = lookup_draw_env_for_time("CA", 14, false).expect("CA 14 day");
+        let ca14_night = lookup_draw_env_for_time("CA", 14, true).expect("CA 14 night");
+        assert_eq!(ca14_day, ca14_night);
+        assert_eq!(ca14_day.room_no, 14);
+
+        let cb_day = lookup_draw_env_for_time("CB", 54, false).expect("CB day");
+        let cb_night = lookup_draw_env_for_time("CB", 54, true).expect("CB night");
+        assert_eq!(cb_day.room_no, DRAW_ENV_ROOM_DAYTIME_WILDCARD);
+        assert_eq!(cb_day.shadow_darkness, 0);
+        assert_eq!(cb_night.room_no, DRAW_ENV_ROOM_WILDCARD);
+        assert_eq!(cb_night.shadow_darkness, 1);
+
+        let cc_day = lookup_draw_env_for_time("CC", 49, false).expect("CC day");
+        let cc_night = lookup_draw_env_for_time("CC", 49, true).expect("CC night");
+        assert_eq!(cc_day.room_no, DRAW_ENV_ROOM_DAYTIME_WILDCARD);
+        assert_eq!(cc_day.shadow_darkness, 0);
+        assert_eq!(cc_night.room_no, DRAW_ENV_ROOM_WILDCARD);
+        assert_eq!(cc_night.shadow_darkness, 1);
     }
 }

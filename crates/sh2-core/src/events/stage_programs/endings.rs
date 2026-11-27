@@ -132,7 +132,7 @@ pub const ENDINGS_SPECS: &[StaticProgSpec] = &[
         se_ids: &[0xeab2],
         flags_set: &[],
         flags_clr: &[],
-        ending_bit: None,
+        ending_bit: Some(0x04),
         clears_flag_set: false,
         locks_player: false,
     },
@@ -185,6 +185,11 @@ use super::ProgTickOut;
 pub const DOG_ENDING_DEMO_NO: u32 = 0x62;
 
 /// Bespoke handlers for Main Scenario Ending Stages (`Stages 48..=52`).
+///
+/// Stages `48..=51` (`Leave`, `Maria`, `In Water`, `Rebirth`) run directly through [`ENDINGS_SPECS`]
+/// so pre-boss and ending `DramaDemo` cutscenes (`87, 88, 89, 91, 94, 95, 96`) and SFX (`0xeab2`)
+/// are preserved 1:1; only terminal ending coroutines (`Stage 50 #4` `0x0043f244` -> `0x04` and
+/// `Stage 52 #1` `0x005745ba` -> `0x10`) emit `triggered_ending`.
 pub(super) fn tick_bespoke(
     p: &mut ProgContext,
     _down: u32,
@@ -192,30 +197,6 @@ pub(super) fn tick_bespoke(
     out: &mut ProgTickOut,
 ) -> bool {
     match (p.stage, p.prog_no) {
-        // Stage 48 (`stage_end_recovery` / Leave ending, `STAGE_END_RECOVERY_PROGS`)
-        (48, 1..=4) => {
-            out.triggered_ending = Some(0x01);
-            out.finished = true;
-            true
-        }
-        // Stage 49 (`stage_end_maria` / Maria ending, `STAGE_END_MARIA_PROGS`)
-        (49, 1..=2) => {
-            out.triggered_ending = Some(0x02);
-            out.finished = true;
-            true
-        }
-        // Stage 50 (`stage_end_suicide` / In Water ending, `STAGE_END_SUICIDE_PROGS`)
-        (50, 1..=4) => {
-            out.triggered_ending = Some(0x04);
-            out.finished = true;
-            true
-        }
-        // Stage 51 (`stage_end_rebirth` / Rebirth ending, `STAGE_END_REBIRTH_PROGS`)
-        (51, 1..=2) => {
-            out.triggered_ending = Some(0x08);
-            out.finished = true;
-            true
-        }
         // Stage 52 #1 (`stage_end_dog` / Dog Ending lever coroutine, `sh2pc.exe` `0x00574430..0x005745c9`):
         // Step 0 (`0x57447b`): lock player, request Dog Room cutscene `demo_no = 98` (`0x62`),
         // record `ClearData::ENDING_DOG` (`0x10`, `0x005745ba: push $0x10; call 0x48d330`).

@@ -647,7 +647,8 @@ pub const ACT2_HOTEL_SPECS: &[StaticProgSpec] = &[
 
 use crate::config::RiddleDifficulty;
 use crate::endings::{
-    EndingEvalFlags, EndingPointTracker, MainEndingKind, PlayingInfo, REBIRTH_RITUAL_ITEM_IDS,
+    EndingEvalFlags, EndingPointTracker, MainEndingKind, PlayingInfo, FLAG_ENDING_IN_WATER,
+    FLAG_ENDING_LEAVE, FLAG_ENDING_MARIA, FLAG_ENDING_REBIRTH, REBIRTH_RITUAL_ITEM_IDS,
 };
 use crate::inventory::InventoryManager;
 use crate::world::{ElevatorFloor, ElevatorKind, MultiFloorElevatorPanel};
@@ -657,7 +658,7 @@ use super::ProgTickOut;
 
 /// Bespoke interactive handlers for Act 2 Lakeview Hotel (`Stages 39..=47`), including
 /// `EvProgEndingJudge` (`Stage 44 #6`, `sh2pc.exe` `0x00576490..0x0057672a`) and the Hotel
-/// Employee Elevator panel (`Stage 40 #3`, `0x0057a671`).
+/// Employee Elevator panel (`Stage 41 #4`/`0x57a674`, `Stage 41 #10`/`0x57aefd`, `Stage 43 #1`/`0x5776d4`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn tick_bespoke(
     p: &mut ProgContext,
@@ -672,7 +673,9 @@ pub(super) fn tick_bespoke(
 ) -> bool {
     match (p.stage, p.prog_no) {
         // Stage 44 #6: `EvProgEndingJudge` (`sh2pc.exe` `0x00576490..0x0057672a`).
-        // Evaluates Leave / Maria / In Water / Rebirth using live `EndingPointTracker` + `PlayingInfo`.
+        // Evaluates Leave / Maria / In Water / Rebirth and sets the ending-selection flag
+        // (`618`=Leave, `619`=Maria, `620`=In Water, `621`=Rebirth in `0x1f7aa2c`) WITHOUT
+        // triggering the ending directly (the final boss & ending stage run after this).
         (44, 6) => {
             if let (Some(info), Some(tracker)) = (playing_info, ending_tracker) {
                 let rebirth_count = REBIRTH_RITUAL_ITEM_IDS
@@ -682,28 +685,34 @@ pub(super) fn tick_bespoke(
                 let eval_flags = EndingEvalFlags::from_event_flags(flags, rebirth_count);
                 let report = tracker.evaluate(info, eval_flags);
                 out.evaluated_main_ending = Some(report.selected_ending);
-                let ending_bit = match report.selected_ending {
-                    MainEndingKind::Leave => 0x01,
-                    MainEndingKind::Maria => 0x02,
-                    MainEndingKind::InWater => 0x04,
-                    MainEndingKind::Rebirth => 0x08,
+                let ending_flag = match report.selected_ending {
+                    MainEndingKind::Leave => FLAG_ENDING_LEAVE,
+                    MainEndingKind::Maria => FLAG_ENDING_MARIA,
+                    MainEndingKind::InWater => FLAG_ENDING_IN_WATER,
+                    MainEndingKind::Rebirth => FLAG_ENDING_REBIRTH,
                 };
-                out.triggered_ending = Some(ending_bit);
+                flags.set(ending_flag, true);
             }
             out.finished = true;
             true
         }
-        // Stage 40 #3: Lakeview Hotel Employee Elevator panel (`sh2pc.exe` `0x0057a671`)
-        (40, 3) => {
+        // Lakeview Hotel Employee Elevator panel (`sh2pc.exe` `FUN_004a2a50` callers:
+        // Stage 41 #4 `0x0057a674`, Stage 41 #10 `0x0057aefd`, Stage 43 #1 `0x005776d4`).
+        (41, 4 | 10) | (43, 1) => {
             let Some(slot) = active_elevator else {
                 return false;
+            };
+            let current_floor = if p.stage == 43 {
+                ElevatorFloor::Basement1
+            } else {
+                ElevatorFloor::Floor2
             };
             match p.step {
                 0 => {
                     p.locked = true;
                     *slot = Some(MultiFloorElevatorPanel::new(
                         ElevatorKind::HotelEmployee,
-                        ElevatorFloor::Floor2,
+                        current_floor,
                         false,
                     ));
                     p.step = 1;

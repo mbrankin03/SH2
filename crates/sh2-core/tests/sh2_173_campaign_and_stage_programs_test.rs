@@ -5,13 +5,14 @@
 //! - `MultiFloorElevatorPanel` & `PushableObjectKind` runtime wiring
 //! - Full 58-stage `ev_prog` VA parity & coroutine execution across all 8 modular act/region files.
 
+use sh2_core::campaign::room_name::{room_name, room_name_for_stage_pos};
 use sh2_core::campaign::stage_hooks::{eval_room_init_hook, eval_stage_init_hook};
 use sh2_core::campaign::{CampaignOrchestrator, CampaignPhase, CampaignTickInput};
 use sh2_core::config::{ActionDifficulty, OutdoorStreamingMode, RiddleDifficulty};
 use sh2_core::cutaway::CutawayOverlayEngine;
 use sh2_core::endings::{
-    EndingPointTracker, MainEndingKind, PlayingInfo, FLAG_MARY_HALLWAY_MONOLOGUE_COMPLETE,
-    REBIRTH_RITUAL_ITEM_IDS,
+    EndingPointTracker, MainEndingKind, PlayingInfo, FLAG_ENDING_REBIRTH,
+    FLAG_MARY_HALLWAY_MONOLOGUE_COMPLETE, REBIRTH_RITUAL_ITEM_IDS,
 };
 use sh2_core::events::horror_triggers::StageEventDispatcher;
 use sh2_core::events::stage_programs::endings::DOG_ENDING_DEMO_NO;
@@ -85,6 +86,24 @@ fn connect_stage_and_room_init_hooks_match_sh2pc_disassembly() {
     flags.set(711, true);
     eval_room_init_hook(56, 0xcd, &mut flags, &mut horror, &mut rng);
     assert!(!flags.get(710));
+
+    // Verify canonical `RoomName` (`Event/stg_name.c` `0x001af0f0`) resolves exact numeric room IDs
+    // from world coordinates across all key `connectRoomInit` stages:
+    // - Stage 2 Restroom (`glb_crd = 6`, cell `0x1d0` -> `x=-40000, z=0` -> `0x01`)
+    assert_eq!(room_name_for_stage_pos(2, [-40_000.0, 0.0, 0.0]), 0x01);
+    // - Stage 15 Bowling (`glb_crd = 7`, cell `0x20e` -> `0x09`, cell `0x210` -> `0x0b`)
+    assert_eq!(room_name_for_stage_pos(15, [0.0, 0.0, -40_000.0]), 0x09);
+    assert_eq!(room_name_for_stage_pos(15, [0.0, 0.0, 0.0]), 0x0b);
+    // - Stage 20 Hospital 3F (`glb_crd = 10`, cell `0x292` -> `0x41`)
+    assert_eq!(room_name(80_000.0, 40_000.0, 10), 0x41);
+    // - Stage 34 Labyrinth W (`glb_crd = 11`, cell `0x210` -> `0x89`)
+    assert_eq!(room_name_for_stage_pos(34, [0.0, 0.0, 0.0]), 0x89);
+    // - Stage 44 Hotel 1F B (`glb_crd = 13`, cell `0x250` -> `0xba`, `0x150` -> `0xae`, `0x190` -> `0xad`)
+    assert_eq!(room_name_for_stage_pos(44, [40_000.0, 0.0, 0.0]), 0xba);
+    assert_eq!(room_name_for_stage_pos(44, [-120_000.0, 0.0, 0.0]), 0xae);
+    assert_eq!(room_name_for_stage_pos(44, [-80_000.0, 0.0, 0.0]), 0xad);
+    // - Stage 56 Wish 2F (`glb_crd = 16`, cell `0x212` -> `0xcd`)
+    assert_eq!(room_name_for_stage_pos(56, [0.0, 0.0, 40_000.0]), 0xcd);
 }
 
 #[test]
@@ -158,6 +177,8 @@ fn ending_point_tracker_and_stage44_ending_judge_wired_end_to_end() {
     orch.phase = CampaignPhase::ActiveGameplay;
     sim.scenario.health = 20.0; // Low HP (< 50%)
     sim.scenario.flags.set(15, true); // Maria accompanying
+    sim.scenario.current_stage = 44; // Hotel 1F Otherworld (`glb_crd = 13`)
+    sim.scenario.player_position = glam::Vec3::new(40_000.0, 0.0, 0.0); // Room `0xba` (`RoomNameHotelBack`)
     sim.scenario.current_room = "ru69".to_string(); // Room 0xba corridor monologue (`R_HTL_ALT_LONG_HALLWAY`)
 
     let input = CampaignTickInput {
@@ -207,7 +228,10 @@ fn ending_point_tracker_and_stage44_ending_judge_wired_end_to_end() {
         runner.evaluated_main_ending(),
         Some(MainEndingKind::Rebirth)
     );
-    assert_eq!(runner.take_triggered_ending(), Some(0x08));
+    // `EvProgEndingJudge` (`0x00576660..0x0057672a`) sets `FLAG_ENDING_REBIRTH` (`621`)
+    // and does NOT immediately trigger the ending (final boss & ending stage follow).
+    assert!(flags.get(FLAG_ENDING_REBIRTH));
+    assert_eq!(runner.take_triggered_ending(), None);
 }
 
 #[test]
@@ -219,7 +243,7 @@ fn pushables_and_multi_floor_elevator_panel_work_through_stage_runner() {
     let mut overlay = CutawayOverlayEngine::new();
     let mut elevator = None;
 
-    // 1. Stage 7 #7 Grandfather Clock push requires flag 81 (`FLAG_APART_CLOCK_SOLVED`) -> sets flag 82
+    // 1. Stage 7 #7 Grandfather Clock push (`0x0059a840`) requires flag 81 -> sets flag 82 & SE `0x4a51`
     runner.start(7, 7, 0);
     runner.tick(
         0,
@@ -246,9 +270,10 @@ fn pushables_and_multi_floor_elevator_panel_work_through_stage_runner() {
         RiddleDifficulty::Normal,
     );
     assert!(flags.get(FLAG_APART_CLOCK_PUSHED));
+    assert_eq!(runner.sound_effects(), &[0x4a51]);
 
-    // 2. Stage 24 #2 Hospital B1 Storeroom Shelf push sets flag 223 (`FLAG_HOSPITAL_B1_SHELF_PUSHED`)
-    runner.start(24, 2, 0);
+    // 2. Stage 26 #2 Hospital B1 Storeroom Shelf push (`0x00588220` / `0x00588370`) sets flag 223
+    runner.start(26, 2, 0);
     runner.tick(
         0,
         0,
@@ -261,8 +286,8 @@ fn pushables_and_multi_floor_elevator_panel_work_through_stage_runner() {
     );
     assert!(flags.get(FLAG_HOSPITAL_B1_SHELF_PUSHED));
 
-    // 3. Stage 18 #2 Brookhaven Hospital Normal Elevator panel opens, moves cursor, and closes on Action
-    runner.start(18, 2, 0);
+    // 3. Stage 20 #9 Brookhaven Hospital Normal Elevator panel (`0x0058ea25` -> `FUN_004a2a50`)
+    runner.start(20, 9, 0);
     let running = runner.tick_with_campaign(
         0,
         0,
@@ -311,6 +336,27 @@ fn pushables_and_multi_floor_elevator_panel_work_through_stage_runner() {
     );
     assert!(!running);
     assert!(elevator.is_none());
+
+    // 4. Stage 41 #4 Hotel Employee Elevator panel (`0x0057a674` -> `FUN_004a2a50`)
+    runner.start(41, 4, 0);
+    let running = runner.tick_with_campaign(
+        0,
+        0,
+        0.016,
+        &mut flags,
+        &mut puzzle,
+        &mut inv,
+        &mut overlay,
+        RiddleDifficulty::Normal,
+        None,
+        None,
+        Some(&mut elevator),
+    );
+    assert!(running);
+    assert_eq!(
+        elevator.as_ref().map(|e| e.kind),
+        Some(ElevatorKind::HotelEmployee)
+    );
 }
 
 #[test]
@@ -341,12 +387,45 @@ fn all_58_stages_ev_prog_vas_have_1to1_ported_handlers_and_dog_ending_works() {
         "Expected all 347 unique non-null ev_prog VAs across 58 stages"
     );
 
-    // Verify Stage 52 #1 Dog Ending lever coroutine (`0x00574430`) emits demo 98 (`0x62`) + bit `0x10`
+    // Verify Stage 48 #1 plays pre-boss cutscene demo 88 WITHOUT prematurely triggering ending
     let mut runner = StageProgramRunner::new();
     let mut flags = EventFlags::new();
     let mut puzzle = PuzzleState::new();
     let mut inv = InventoryManager::new();
     let mut overlay = CutawayOverlayEngine::new();
+    runner.start(48, 1, 0);
+    let running = runner.tick(
+        0,
+        0,
+        0.016,
+        &mut flags,
+        &mut puzzle,
+        &mut inv,
+        &mut overlay,
+        RiddleDifficulty::Normal,
+    );
+    assert!(!running);
+    assert_eq!(runner.take_requested_demo(), Some(88));
+    assert_eq!(runner.take_triggered_ending(), None);
+
+    // Verify Stage 50 #4 (`0x0043ed20` / `0x0043f244`) emits demo 95, SE `0xeab2`, and bit `0x04`
+    runner.start(50, 4, 0);
+    let running = runner.tick(
+        0,
+        0,
+        0.016,
+        &mut flags,
+        &mut puzzle,
+        &mut inv,
+        &mut overlay,
+        RiddleDifficulty::Normal,
+    );
+    assert!(!running);
+    assert_eq!(runner.take_requested_demo(), Some(95));
+    assert_eq!(runner.sound_effects(), &[0xeab2]);
+    assert_eq!(runner.take_triggered_ending(), Some(0x04));
+
+    // Verify Stage 52 #1 Dog Ending lever coroutine (`0x00574430`) emits demo 98 (`0x62`) + bit `0x10`
     runner.start(52, 1, 0);
     let running = runner.tick(
         0,

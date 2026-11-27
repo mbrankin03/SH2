@@ -14,6 +14,7 @@ use crate::simulation::SimulationCore;
 use super::cutscene_handoff::{
     evaluate_auto_stage_demo, evaluate_auto_stage_fmv, DramaDemoTrigger, FmvTrigger,
 };
+use super::room_name::room_name_for_stage_pos;
 use super::stage_hooks::{eval_room_init_hook, eval_stage_init_hook};
 use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
@@ -147,9 +148,12 @@ pub(crate) fn step_connect_pipeline(
                     req.prefer_sh2ee,
                 );
             }
-            // `SLUS_202.28` `connectRoomInit` (`0x0020be10` line 71):
-            // `if (*(code **)(_stage + 0x1c) != 0) (**(code **)(_stage + 0x1c))();`
-            let numeric_room = room_id_from_stage_code(&manifest.room_id) as u16;
+            // `SLUS_202.28` `connectRoomInit` (`0x0020be10` line 47 & 71):
+            // `RoomName(_connect_pos_x, _connect_pos_z, _stage->glb_crd)` -> `room_init_fn()`.
+            let mut numeric_room = room_name_for_stage_pos(manifest.stage_id, req.spawn_pos);
+            if numeric_room == 0 {
+                numeric_room = room_id_from_stage_code(&manifest.room_id) as u16;
+            }
             eval_room_init_hook(
                 manifest.stage_id,
                 numeric_room,

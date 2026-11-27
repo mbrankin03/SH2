@@ -830,11 +830,11 @@ pub(super) fn tick_bespoke(
             }
             true
         }
-        // Stage 7 #7: Push Room 208 Grandfather Clock (`PushableObjectKind::Apart208GrandfatherClock`)
+        // Stage 7 #7: Push Room 208 Grandfather Clock (`sh2pc.exe` `0x0059a840`, SE `0x4a51` at `0x0059a849`)
         (7, 7) => {
             p.locked = true;
             if PushableObjectKind::Apart208GrandfatherClock.trigger_push(flags) {
-                out.sound_effects.push(0x2b1b);
+                out.sound_effects.push(0x4a51);
             } else {
                 p.flag_set = false;
             }

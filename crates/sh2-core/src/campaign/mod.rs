@@ -15,6 +15,7 @@ pub mod indoor_rooms;
 pub mod io;
 pub mod orchestrator;
 pub mod retail_events;
+pub mod room_name;
 pub mod save;
 pub mod stage_hooks;
 pub mod stage_loader;

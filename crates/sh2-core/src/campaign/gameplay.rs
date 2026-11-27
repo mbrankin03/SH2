@@ -146,7 +146,13 @@ pub(crate) fn run_active_gameplay(
             }
         }
         // `sh2pc.exe` `0x005767e0` (`EvAllTimeFunc` Stage 44 Room `0xba`): Mary's hallway monologue.
-        let numeric_room = crate::fog::room_id_from_stage_code(&sim.scenario.current_room) as u16;
+        let mut numeric_room = super::room_name::room_name_for_stage_pos(
+            sim.scenario.current_stage,
+            sim.scenario.player_position.to_array(),
+        );
+        if numeric_room == 0 {
+            numeric_room = crate::fog::room_id_from_stage_code(&sim.scenario.current_room) as u16;
+        }
         if sim
             .scenario
             .ending_tracker

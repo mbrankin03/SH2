@@ -1227,36 +1227,33 @@ pub(super) fn tick_bespoke(
             out.finished = true;
             true
         }
-        // Stage 24 #2: Brookhaven Otherworld B1 Storeroom shelf push (`sh2pc.exe` `0x00588370`, `flag 223`)
-        (24, 2) => {
+        // Stage 26 #2: Brookhaven Otherworld B1 Storeroom shelf push (`sh2pc.exe` `0x00588220` / `0x00588370`, `flag 223`)
+        (26, 2) => {
             p.locked = true;
-            if PushableObjectKind::HospitalB1StoreroomShelf.trigger_push(flags) {
-                out.sound_effects.push(0x2b1b);
-            } else {
+            if !PushableObjectKind::HospitalB1StoreroomShelf.trigger_push(flags) {
                 p.flag_set = false;
             }
             p.locked = false;
             out.finished = true;
             true
         }
-        // Stage 18 #2 / Stage 22 #2: Brookhaven Hospital Normal / Otherworld Elevator Panels
-        (18, 2) | (22, 2) => {
+        // Brookhaven Hospital Normal & Otherworld Elevator Panels (`sh2pc.exe` `FUN_004a2a50` callers:
+        // Stage 20 #9/`0x58ea25`, #10/`0x58f374`, #11/`0x58f9e0`, Stage 21 #1/`0x58d36f`,
+        // Stage 25 #3/`0x58a5da`, Stage 26 #5/`0x588d63`).
+        (20, 9 | 11) | (21, 1) | (25, 3) | (26, 5) => {
             let Some(slot) = active_elevator else {
                 return false;
             };
-            let kind = if p.stage == 18 {
-                ElevatorKind::HospitalNormal
-            } else {
-                ElevatorKind::HospitalOtherworld
+            let (kind, current_floor) = match p.stage {
+                20 => (ElevatorKind::HospitalNormal, ElevatorFloor::Floor3),
+                21 => (ElevatorKind::HospitalNormal, ElevatorFloor::Roof),
+                25 => (ElevatorKind::HospitalOtherworld, ElevatorFloor::Floor3),
+                _ => (ElevatorKind::HospitalOtherworld, ElevatorFloor::Basement1),
             };
             match p.step {
                 0 => {
                     p.locked = true;
-                    *slot = Some(MultiFloorElevatorPanel::new(
-                        kind,
-                        ElevatorFloor::Floor1,
-                        false,
-                    ));
+                    *slot = Some(MultiFloorElevatorPanel::new(kind, current_floor, false));
                     p.step = 1;
                     out.finished = false;
                 }

@@ -239,8 +239,13 @@ impl CampaignRoomController {
                     .draft_config
                     .video
                     .texture_quality;
-                state.drama_demo_session =
-                    open_drama_demo_session(&state.render_ctx, catalog_idx, false, tex_quality);
+                state.drama_demo_session = open_drama_demo_session(
+                    &state.render_ctx,
+                    catalog_idx,
+                    false,
+                    tex_quality,
+                    state.bgm_manager.audio_pack_source,
+                );
                 performed_sync_load = true;
             }
         }
@@ -249,7 +254,7 @@ impl CampaignRoomController {
             // Preload any chained `post_demo` (e.g. `first_toilet.dds` after `toilet.bik`)
             // BEFORE starting FMV playback while the screen is black, matching PS2 `connectMain`
             // RAM residency so FMV EOF transitions into frame 0 of the `.dds` cutscene with
-            // zero disk/GPU hitch (`SH2-150`).
+            // zero disk/GPU hitch (`SH2-150`, `SH2-188`).
             if let Some(ref post_demo) = fmv.post_demo {
                 let catalog_idx = DRAMA_DEMO_CATALOG
                     .iter()
@@ -267,8 +272,13 @@ impl CampaignRoomController {
                         .video
                         .texture_quality;
                     state.selected_drama_demo_idx = catalog_idx;
-                    state.drama_demo_session =
-                        open_drama_demo_session(&state.render_ctx, catalog_idx, false, tex_quality);
+                    state.drama_demo_session = open_drama_demo_session(
+                        &state.render_ctx,
+                        catalog_idx,
+                        false,
+                        tex_quality,
+                        state.bgm_manager.audio_pack_source,
+                    );
                     performed_sync_load = true;
                 }
             }
@@ -488,6 +498,14 @@ impl RoomController for CampaignRoomController {
                 .drama_demo_session
                 .as_ref()
                 .is_none_or(|s| s.player.step == DramaDemoStep::Finished);
+        tick_input.drama_demo_frame = in_drama_demo
+            .then(|| {
+                state
+                    .drama_demo_session
+                    .as_ref()
+                    .map(|s| s.player.msg_frame.max(s.player.scene_frame))
+            })
+            .flatten();
         let was_fmv = matches!(
             state.campaign_orchestrator.as_ref().map(|o| &o.phase),
             Some(CampaignPhase::FmvPlayback { .. })

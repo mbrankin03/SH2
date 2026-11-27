@@ -9,7 +9,7 @@ pub(crate) use character::{
     load_anm_file, load_character_asset, load_viewer_entry_asset, CharacterAsset,
 };
 pub(crate) use cutscene::{
-    load_cutscene_voice_wav, open_drama_demo_session, ActiveDramaDemoSession,
+    load_cutscene_voice_wav_for_source, open_drama_demo_session, ActiveDramaDemoSession,
 };
 pub(crate) use enemies::{EnemyAssetCache, EnemyAssetSlot};
 

@@ -436,8 +436,13 @@ fn open_current_drama_demo(state: &mut AppState) {
         .draft_config
         .video
         .texture_quality;
-    state.drama_demo_session =
-        open_drama_demo_session(&state.render_ctx, state.selected_drama_demo_idx, false, q);
+    state.drama_demo_session = open_drama_demo_session(
+        &state.render_ctx,
+        state.selected_drama_demo_idx,
+        false,
+        q,
+        state.bgm_manager.audio_pack_source,
+    );
 }
 
 fn step_selected_drama_demo(state: &mut AppState, forward: bool, reopen_now: bool) {

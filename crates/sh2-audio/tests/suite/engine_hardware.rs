@@ -116,3 +116,91 @@ fn test_dialogue_subtitles_and_ducking() {
         );
     }
 }
+
+/// Verifies 1:1 `first_toilet` (`demo_no = 1`, `sh2pc.exe` `0x008e7ed0`: `stream_no = 60117` ->
+/// `FUN_00514b40` `0x00514b40` `voice.afs[117]`, `stream_start = 246.0f`) decoding, non-silent PCM
+/// speech window (`11.02s..14.59s` = frames `576..684`, subtitle `579..786`), BGM ducking exemption
+/// (`SeBgmManager` `0x00194300` / `0x00516430`), and simultaneous playback alongside `forest/bgm_114_a.adx` (`SH2-188`).
+#[test]
+fn test_first_toilet_voice_afs_117_decode_and_playback() {
+    // `first_toilet` (`demo_no = 1`) is exempt from `0.7` cutscene BGM ducking in both
+    // `SLUS_202.28` (`0x00194300`) and retail `sh2pc.exe` (`0x00516430`).
+    assert!(is_bgm_demo_duck_exempt(1));
+    assert_eq!(
+        bgm_ducking_mode_from_game_state(4, 1),
+        BgmDuckingMode::Normal
+    );
+
+    let resolver = sh2_assets::AssetPathResolver::resolve();
+    let candidates = [
+        resolver.game_root.join("sh2e/sound/adx/voice/voice.afs"),
+        resolver.game_root.join("data/sound/adx/voice/voice.afs"),
+    ];
+    let bgm_path = resolver
+        .game_root
+        .join("sh2e/sound/adx/forest/bgm_114_a.adx");
+    let mut decoded_any = false;
+    for path in &candidates {
+        if !path.exists() {
+            continue;
+        }
+        let mut file = std::fs::File::open(path).expect("open voice.afs");
+        let wav = sh2_assets::decode_afs_entry_from_reader(&mut file, 117)
+            .unwrap_or_else(|e| panic!("decode voice.afs[117] from {}: {e}", path.display()));
+        assert_eq!(wav.sample_rate, 44_100, "voice.afs[117] must be 44.1 kHz");
+        assert_eq!(wav.channels, 2, "voice.afs[117] must be stereo");
+        assert_eq!(wav.bits_per_sample, 16, "voice.afs[117] must be 16-bit PCM");
+        let (play_rate, frames) = wav_entry_to_frames_48k(&wav);
+        assert_eq!(play_rate, 44_100);
+        assert!(
+            frames.len() > 600_000,
+            "voice.afs[117] must have ~658k frames (~14.92s), got {}",
+            frames.len()
+        );
+        // Verify non-silent speech window (`11.0s..14.6s` = frames `485_100..643_860`,
+        // corresponding to `first_toilet` frames `576..684` / subtitle `579..786`).
+        let speech_peak = frames[485_100..frames.len().min(643_860)]
+            .iter()
+            .map(|f| f.left.abs().max(f.right.abs()))
+            .fold(0.0f32, f32::max);
+        assert!(
+            speech_peak > 0.25,
+            "voice.afs[117] ({}) speech window must contain audible non-silent PCM (peak={speech_peak})",
+            path.display()
+        );
+        decoded_any = true;
+
+        if let Ok(mut engine) = AudioEngine::new() {
+            engine.set_master_volume(0.8);
+            engine.set_voice_volume(0.8);
+            if bgm_path.exists() {
+                engine
+                    .play_bgm_file_with_fade(&bgm_path, false, 0.40, Duration::ZERO)
+                    .expect("forest/bgm_114_a.adx must start alongside voice");
+            }
+            engine.play_cutscene_voice(&wav).unwrap_or_else(|e| {
+                panic!("play_cutscene_voice failed for {}: {e}", path.display())
+            });
+            assert!(
+                engine.is_voice_playing(),
+                "voice.afs[117] must enter Playing state alongside BGM"
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            let pos = engine
+                .voice_playback_position_secs()
+                .expect("voice playback position must be Some while playing");
+            assert!(
+                pos > 0.0,
+                "voice.afs[117] playback clock must advance alongside BGM (got {pos})"
+            );
+            engine.stop_voice(Duration::from_millis(20));
+            engine.stop_bgm(Duration::from_millis(20));
+        }
+    }
+    if resolver.data_dir.exists() {
+        assert!(
+            decoded_any,
+            "Expected at least one retail voice.afs on disk"
+        );
+    }
+}

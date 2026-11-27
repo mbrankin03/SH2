@@ -118,6 +118,41 @@ fn test_stage_observation_mes_clean_decoding_and_pagination_lifecycle() {
 }
 
 #[test]
+fn test_sh2_188_first_toilet_voice_afs_loader_respects_audio_pack_and_decodes_non_silent_pcm() {
+    let resolver = AssetPathResolver::resolve();
+    if !resolver.data_dir.exists() {
+        return;
+    }
+
+    for pack in [
+        sh2_core::AudioPackSource::EnhancedLossless,
+        sh2_core::AudioPackSource::Ps2Original,
+    ] {
+        let wav = crate::assets::load_cutscene_voice_wav_for_source(117, pack)
+            .unwrap_or_else(|| panic!("voice.afs[117] must decode for {pack:?}"));
+        assert_eq!(wav.sample_rate, 44_100);
+        assert_eq!(wav.channels, 2);
+        assert_eq!(wav.bits_per_sample, 16);
+
+        // Speech window (`11.0s..14.6s`, frames `576..684`) must contain non-silent 16-bit PCM.
+        let bytes_per_sec = 44_100 * 2 * 2;
+        let speech_end = wav.data.len().min(14 * bytes_per_sec + bytes_per_sec / 2);
+        let speech_slice = &wav.data[11 * bytes_per_sec..speech_end];
+        let peak = speech_slice
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| i16::from_le_bytes(*c).unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            peak > 8_000,
+            "voice.afs[117] ({pack:?}) speech window must have strong non-silent PCM (peak={peak})"
+        );
+    }
+}
+
+#[test]
 fn test_program_driven_message_and_clear_lifecycle() {
     let stage_tbl = MessageTable {
         messages: vec![

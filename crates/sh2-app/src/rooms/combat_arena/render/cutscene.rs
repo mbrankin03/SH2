@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::assets::{load_cutscene_voice_wav, open_drama_demo_session};
+use crate::assets::{load_cutscene_voice_wav_for_source, open_drama_demo_session};
 use crate::state::AppState;
 use sh2_core::{CutsceneCameraSnapshot, CutsceneSequenceStep, DRAMA_DEMO_CATALOG};
 
@@ -19,7 +19,7 @@ pub(super) fn step_cutscene_player(
             .audio_engine
             .as_ref()
             .and_then(|eng| eng.voice_playback_position_secs());
-        let mut voice_afs_to_play = None;
+        let mut voice_to_play: Option<(u16, usize, Option<sh2_assets::WavEntry>)> = None;
         let mut stop_voice_now = false;
         let mut finished_handoff = None;
 
@@ -44,7 +44,13 @@ pub(super) fn step_cutscene_player(
             );
             if session.player.pending_voice_trigger {
                 session.player.pending_voice_trigger = false;
-                voice_afs_to_play = session.player.info.voice_afs_index();
+                if let Some(afs_idx) = session.player.info.voice_afs_index() {
+                    voice_to_play = Some((
+                        session.player.info.demo_no,
+                        afs_idx,
+                        session.preloaded_voice_wav.take(),
+                    ));
+                }
             }
             if session.player.pending_voice_stop {
                 session.player.pending_voice_stop = false;
@@ -65,10 +71,40 @@ pub(super) fn step_cutscene_player(
             }
         }
 
-        if let Some(afs_idx) = voice_afs_to_play {
-            if let Some(wav) = load_cutscene_voice_wav(afs_idx) {
+        if let Some((demo_no, afs_idx, preloaded)) = voice_to_play {
+            let loaded_on_demand = preloaded.is_none();
+            let wav_opt = preloaded.or_else(|| {
+                load_cutscene_voice_wav_for_source(afs_idx, state.bgm_manager.audio_pack_source)
+            });
+            if let Some(wav) = wav_opt {
                 if let Some(ref mut eng) = state.audio_engine {
-                    let _ = eng.play_cutscene_voice(&wav);
+                    match eng.play_cutscene_voice(&wav) {
+                        Ok(()) => {
+                            tracing::info!(
+                                "[Cutscene Voice] Started DramaDemo #{} voice.afs[{}] ({} Hz, {} ch, {} bytes, preloaded={})",
+                                demo_no,
+                                afs_idx,
+                                wav.sample_rate,
+                                wav.channels,
+                                wav.data.len(),
+                                !loaded_on_demand,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[Cutscene Voice] Failed to play DramaDemo #{} voice.afs[{}]: {}",
+                                demo_no,
+                                afs_idx,
+                                e
+                            );
+                        }
+                    }
+                }
+                // `DramaDemoMain` (`SLUS_202.28` `0x001b0f00` line 108 / `sh2pc.exe` `0x004a2110`
+                // line 1418): reset delta-frame timer (`shResetDF`) after synchronous stream load
+                // so any disk-read latency never leaks into the next frame's `dt`.
+                if loaded_on_demand {
+                    state.last_frame = std::time::Instant::now();
                 }
             }
         }
@@ -104,6 +140,7 @@ pub(super) fn step_cutscene_player(
                     next_idx,
                     false,
                     state.loaded_texture_quality,
+                    state.bgm_manager.audio_pack_source,
                 );
                 if let Some(ref s) = state.drama_demo_session {
                     cutscene_camera_override = Some(s.player.camera);

@@ -175,8 +175,13 @@ impl AudioEngine {
             .add_sub_track(reverb_bus_builder)
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
+        // Initialize `voice_track` to `(DEFAULT_VOICE_VOL * DEFAULT_MASTER_VOL)` so cutscene/dialogue
+        // voice streams apply master/dialogue slider scaling exactly once via the Kira sub-track
+        // (matching `sfx_dry_track`, `SH2-188`).
         let voice_track = manager
-            .add_sub_track(TrackBuilder::default())
+            .add_sub_track(TrackBuilder::new().volume(Volume::Amplitude(
+                (DEFAULT_VOICE_VOL * DEFAULT_MASTER_VOL) as f64,
+            )))
             .map_err(|e| AudioError::ResourceLimit(e.to_string()))?;
 
         let mut spatial_scene = manager

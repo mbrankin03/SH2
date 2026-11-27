@@ -53,6 +53,8 @@ pub mod kinematics;
 pub mod locus_door;
 /// Authentic PS2 Mode 3 (`SELF_VIEW`) camera matrix breathing/handheld noise (`SH2-134`).
 pub mod noise;
+/// Multi-slot resident outdoor `.cam` road bank (`<area>GB.cam` + per-tile `.cam`, `SH2-184`).
+pub mod road_bank;
 /// Authentic PS2 road priority gates (`vcRetPrioStgEvnt`), nearest-item search, and hysteresis (`SH2-134`).
 pub mod road_priority;
 /// Authentic PS2 Mode 3 (`SELF_VIEW`) and `FarWatch` search-view algorithms (`SH2-134`).
@@ -65,6 +67,8 @@ mod tick;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_outdoor_cam;
 #[cfg(test)]
 mod tests_parity;
 

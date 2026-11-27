@@ -22,7 +22,6 @@ use sh2_assets::formats::map::MapFile;
 use sh2_assets::formats::texture::TextureLoader;
 use sh2_core::collision::CollisionWorld;
 use sh2_core::config::WorldTextureQuality;
-use sh2_core::events::stageparts::MapPartVisibilityFilter;
 use sh2_core::world::{OutdoorArea, TileStreamingPlan};
 
 use crate::context::{prepare_map_texture_cpu_owned, PreparedGpuTexture, RenderContext};
@@ -375,15 +374,6 @@ impl GpuOutdoorTilePool {
                 &tile.gpu_map,
                 Some(tile.texture_bind_groups.as_slice()),
             ));
-        }
-    }
-
-    /// Applies the active per-frame `stageparts` visibility filter across all resident outdoor tiles.
-    pub fn set_visibility_filter(&mut self, filter: Option<&MapPartVisibilityFilter>) {
-        for tile in self.resident.values_mut() {
-            if let Some(gpu_map) = Arc::get_mut(&mut tile.gpu_map) {
-                gpu_map.set_visibility_filter(filter.cloned());
-            }
         }
     }
 

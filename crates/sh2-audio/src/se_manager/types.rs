@@ -51,6 +51,10 @@ pub enum SeBackendAction {
         se_id: u32,
         direction_deg: i32,
         attenuation_byte: u8,
+        /// `true` when registered in `Se2dManager` (`(flags & SE_FLAG_MANAGED_2D) != 0 && (flags & 3) == 0`)
+        /// so managed 2D ambient loops without an embedded `smpl` chunk (`0x3E80`, `0x4268`,
+        /// `0x4269`, `0x465A`, `0x42CB`, `0x44C6`, `0x3CF0`) loop continuously until `Stop2d`.
+        looping: bool,
     },
     /// Update an active 2D voice (`shSdSeChange` `0x001926e0`).
     Update2d {

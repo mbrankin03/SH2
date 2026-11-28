@@ -132,7 +132,7 @@ impl StageAudioCoordinator {
                 for (se_id, pos) in se_pos {
                     effects.stage_positional_sounds.push(StagePositionalSound {
                         se_id,
-                        pos,
+                        pos: Some(pos),
                         volume: 1.0,
                         flags: SE_FLAG_MANAGED_2D,
                     });
@@ -150,7 +150,7 @@ impl StageAudioCoordinator {
             14 if !flags.get(FLAG_TOWN_WEST_AMBIENT_MUTE) => {
                 effects.stage_positional_sounds.push(StagePositionalSound {
                     se_id: SE_TOWN_WEST_AMBIENT,
-                    pos: TOWN_WEST_AMBIENT_POS_MM,
+                    pos: Some(TOWN_WEST_AMBIENT_POS_MM),
                     volume: 1.0,
                     flags: SE_FLAG_MANAGED_2D,
                 });
@@ -170,36 +170,44 @@ impl StageAudioCoordinator {
                 if room_id == 0x88 {
                     effects.stage_positional_sounds.push(StagePositionalSound {
                         se_id: SE_LAB_W_ROOM88_AMBIENT,
-                        pos: LAB_W_ROOM88_AMBIENT_POS_MM,
+                        pos: Some(LAB_W_ROOM88_AMBIENT_POS_MM),
                         volume: 1.0,
                         flags: SE_FLAG_MANAGED_2D,
                     });
                 } else if room_id == 0x87 && flags.get(FLAG_LAB_W_ROOM87_AMBIENT) {
                     effects.stage_positional_sounds.push(StagePositionalSound {
                         se_id: SE_LAB_W_ROOM87_AMBIENT,
-                        pos: LAB_W_ROOM87_AMBIENT_POS_MM,
+                        pos: Some(LAB_W_ROOM87_AMBIENT_POS_MM),
                         volume: 1.0,
                         flags: SE_FLAG_MANAGED_2D,
                     });
                 }
             }
-            // Stage 38 (`stg_boat.c` `0x0057e670`): Toluca Lake ambient loop `0x3cf0`.
+            // Stage 38 (`stg_boat.c` `0x0057e670`): Toluca Lake ambient loop `0x3cf0` routed
+            // through `SePoolManager::slots_2d` (`pos = None`, `flags = 0x0c`) so retail
+            // `Se2dManager` (`FUN_00516b90` `0x00516b90` lines 5066–5082) applies the
+            // `player_pos.z >= -10000.0` spatial override and pause/demo ducking.
             38 => {
-                effects.looping_se_starts.push((SE_BOAT_LAKE_AMBIENT, 1.0));
+                effects.stage_positional_sounds.push(StagePositionalSound {
+                    se_id: SE_BOAT_LAKE_AMBIENT,
+                    pos: None,
+                    volume: 1.0,
+                    flags: SE_FLAG_NO_DISTANCE_MANAGED_2D,
+                });
             }
             // Stage 39 (`stg_hotel_1f_f.c` `0x0057d8e0`): Room `0xa7` & `0xa9` ambient `0x44c6`.
             39 => {
                 if room_id == 0xa7 {
                     effects.stage_positional_sounds.push(StagePositionalSound {
                         se_id: SE_HOTEL_1F_AMBIENT,
-                        pos: HOTEL_1F_ROOM_A7_AMBIENT_POS_MM,
+                        pos: Some(HOTEL_1F_ROOM_A7_AMBIENT_POS_MM),
                         volume: 1.0,
                         flags: SE_FLAG_NO_DISTANCE_MANAGED_2D,
                     });
                 } else if room_id == 0xa9 {
                     effects.stage_positional_sounds.push(StagePositionalSound {
                         se_id: SE_HOTEL_1F_AMBIENT,
-                        pos: HOTEL_1F_ROOM_A9_AMBIENT_POS_MM,
+                        pos: Some(HOTEL_1F_ROOM_A9_AMBIENT_POS_MM),
                         volume: HOTEL_1F_ROOM_A9_AMBIENT_VOL,
                         flags: SE_FLAG_MANAGED_2D,
                     });
@@ -269,7 +277,7 @@ impl StageAudioCoordinator {
                 for (se_id, pos) in out.spawned_positional_se {
                     effects.stage_positional_sounds.push(StagePositionalSound {
                         se_id,
-                        pos,
+                        pos: Some(pos),
                         volume: 1.0,
                         flags: SE_FLAG_3D_ONESHOT,
                     });
@@ -279,7 +287,7 @@ impl StageAudioCoordinator {
                         .updated_positional_sounds
                         .push(StagePositionalSound {
                             se_id,
-                            pos,
+                            pos: Some(pos),
                             volume: 1.0,
                             flags: SE_FLAG_3D_ONESHOT,
                         });
@@ -325,7 +333,7 @@ fn emit_spatial_sound_commands(commands: &[SpatialSoundCommand], effects: &mut C
             } => {
                 effects.stage_positional_sounds.push(StagePositionalSound {
                     se_id,
-                    pos,
+                    pos: Some(pos),
                     volume,
                     flags: u32::from(channel),
                 });
@@ -335,7 +343,7 @@ fn emit_spatial_sound_commands(commands: &[SpatialSoundCommand], effects: &mut C
                     .updated_positional_sounds
                     .push(StagePositionalSound {
                         se_id,
-                        pos,
+                        pos: Some(pos),
                         volume,
                         flags: 0,
                     });
@@ -350,7 +358,7 @@ fn emit_spatial_sound_commands(commands: &[SpatialSoundCommand], effects: &mut C
                     .updated_positional_sounds
                     .push(StagePositionalSound {
                         se_id,
-                        pos,
+                        pos: Some(pos),
                         volume,
                         flags: u32::from(channel),
                     });
@@ -673,10 +681,11 @@ mod tests {
 
         let mut eff = CampaignEffects::default();
         coord.on_stage_or_room_enter(38, 0, &mut flags, &mut horror, &mut rng, &mut eff);
-        assert!(eff
-            .looping_se_starts
-            .iter()
-            .any(|&(id, _)| id == SE_BOAT_LAKE_AMBIENT));
+        assert!(eff.stage_positional_sounds.iter().any(|p| {
+            p.se_id == SE_BOAT_LAKE_AMBIENT
+                && p.pos.is_none()
+                && p.flags == SE_FLAG_NO_DISTANCE_MANAGED_2D
+        }));
 
         let mut eff = CampaignEffects::default();
         coord.on_stage_or_room_enter(39, 0xa7, &mut flags, &mut horror, &mut rng, &mut eff);

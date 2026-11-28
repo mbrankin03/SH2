@@ -59,6 +59,20 @@ impl MenuAudioBank {
         volume: f32,
         stereo_pan: f32,
     ) -> Result<bool, AudioError> {
+        self.play_se_id_panned_tracked_with_loop(engine, se_id, volume, stereo_pan, false)
+    }
+
+    /// Plays a 2D/panned sound effect by `se_id` with explicit `volume`, `stereo_pan`, and
+    /// `looping` (`SE_FLAG_MANAGED_2D` managed 2D loops), storing the handle in
+    /// `active_spatial_handles` so `Se2dManager` / `SeCallPosChange` can update it every frame.
+    pub fn play_se_id_panned_tracked_with_loop(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        volume: f32,
+        stereo_pan: f32,
+        looping: bool,
+    ) -> Result<bool, AudioError> {
         self.prune_stopped_spatial_handles();
         if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
             if !self.voice_afs_sfx.contains_key(&afs_idx) {
@@ -75,7 +89,8 @@ impl MenuAudioBank {
         let Some(prepared) = self.resolve_prepared_se_id(se_id) else {
             return Ok(false);
         };
-        let handle = engine.play_prepared_sfx_panned(&prepared, volume, stereo_pan)?;
+        let handle =
+            engine.play_prepared_sfx_panned_with_loop(&prepared, volume, stereo_pan, looping)?;
         self.active_spatial_handles.insert(se_id, handle);
         Ok(true)
     }
@@ -611,5 +626,120 @@ mod tests {
         assert!(enhanced.occluded);
         assert!(enhanced.dry_cutoff_hz < OcclusionDspParams::unoccluded().dry_cutoff_hz);
         assert!(enhanced.dry_gain_scale < 1.0);
+    }
+
+    #[test]
+    fn managed_2d_play2d_looping_keeps_non_smpl_clip_playing_past_buffer_end() {
+        use crate::se_manager::{
+            SeBackendAction, SeListenerContext, SePoolManager, SE_FLAG_MANAGED_2D,
+            SE_FLAG_NO_DISTANCE,
+        };
+
+        // 1. Verify `SePoolManager::call_pos` sets `looping: true` for managed 2D loops
+        //    (e.g. `0x3E80` TV static and `0x3CF0` Toluca Lake) and `looping: false` for one-shots.
+        let mut pool = SePoolManager::with_retail_change_list();
+        let listener = SeListenerContext {
+            camera_pos: Vec3::ZERO,
+            player_pos: Vec3::ZERO,
+            wvs_matrix: glam::Mat4::IDENTITY,
+            room_id: 0x18,
+        };
+        let mut actions = Vec::new();
+        let _ = pool.call_pos(
+            0.3,
+            0x3E80,
+            Some(Vec3::new(-58_082.375, -356.5, 19_011.39)),
+            SE_FLAG_NO_DISTANCE | SE_FLAG_MANAGED_2D,
+            &listener,
+            &mut actions,
+        );
+        assert!(matches!(
+            actions[0],
+            SeBackendAction::Play2d {
+                se_id: 0x3E80,
+                looping: true,
+                ..
+            }
+        ));
+
+        actions.clear();
+        let _ = pool.call_pos(
+            1.0,
+            0x3CF0,
+            None,
+            SE_FLAG_NO_DISTANCE | SE_FLAG_MANAGED_2D,
+            &listener,
+            &mut actions,
+        );
+        assert!(matches!(
+            actions[0],
+            SeBackendAction::Play2d {
+                se_id: 0x3CF0,
+                looping: true,
+                ..
+            }
+        ));
+
+        actions.clear();
+        let _ = pool.call_pos(1.0, 0x2716, None, 0, &listener, &mut actions);
+        assert!(matches!(
+            actions[0],
+            SeBackendAction::Play2d {
+                se_id: 0x2716,
+                looping: false,
+                ..
+            }
+        ));
+
+        // 2. Verify Kira `MockBackend` keeps a non-`smpl` (`loop_region: None`) 16-frame clip
+        //    in `PlaybackState::Playing` past its buffer end when `looping == true`, while a
+        //    non-looping clip stops.
+        let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+            backend_settings: MockBackendSettings { sample_rate: 48000 },
+            ..Default::default()
+        })
+        .expect("MockBackend audio manager");
+
+        let build_settings = |looping: bool| {
+            let mut s = StaticSoundSettings::new();
+            if looping {
+                s = s.loop_region(..);
+            }
+            s
+        };
+        let managed_clip = StaticSoundData {
+            sample_rate: 48000,
+            frames: Arc::from(vec![Frame::ZERO; 16]),
+            settings: build_settings(true),
+            slice: None,
+        };
+        let oneshot_clip = StaticSoundData {
+            sample_rate: 48000,
+            frames: Arc::from(vec![Frame::ZERO; 16]),
+            settings: build_settings(false),
+            slice: None,
+        };
+
+        let managed_handle = manager.play(managed_clip).expect("play managed 2D loop");
+        let oneshot_handle = manager.play(oneshot_clip).expect("play 2D oneshot");
+
+        let mut bank = empty_bank();
+        bank.active_spatial_handles.insert(0x3E80, managed_handle);
+        bank.active_spatial_handles.insert(0x2716, oneshot_handle);
+
+        let backend = manager.backend_mut();
+        backend.on_start_processing();
+        for _ in 0..256 {
+            let _ = backend.process();
+        }
+
+        assert!(
+            bank.is_2d_se_playing(0x3E80),
+            "Non-smpl managed 2D loop 0x3E80 must remain Playing past its buffer end"
+        );
+        assert!(
+            !bank.is_2d_se_playing(0x2716),
+            "Non-looping one-shot 0x2716 must stop after its 16-frame buffer ends"
+        );
     }
 }

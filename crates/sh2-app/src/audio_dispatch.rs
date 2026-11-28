@@ -42,10 +42,11 @@ pub(crate) fn dispatch_se_pool_actions(state: &mut AppState, actions: &[SeBacken
                 se_id,
                 direction_deg,
                 attenuation_byte,
+                looping,
             } => {
                 let vol = ((255.0 - f32::from(attenuation_byte)) / 255.0).clamp(0.0, 1.0);
                 let pan = (-(direction_deg as f32) / SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
-                let _ = bank.play_se_id_panned_tracked(eng, se_id, vol, pan);
+                let _ = bank.play_se_id_panned_tracked_with_loop(eng, se_id, vol, pan, looping);
             }
             SeBackendAction::Update2d {
                 se_id,
@@ -306,11 +307,11 @@ pub(crate) fn dispatch_campaign_stage_audio(
         }
         for ps in &effects.stage_positional_sounds {
             if ps.se_id != 0 {
-                let pos = glam::Vec3::from_array(ps.pos);
+                let pos = ps.pos.map(glam::Vec3::from_array);
                 state.se_pool.call_pos(
                     ps.volume,
                     ps.se_id,
-                    Some(pos),
+                    pos,
                     ps.flags,
                     &se_listener,
                     &mut pool_actions,
@@ -324,8 +325,13 @@ pub(crate) fn dispatch_campaign_stage_audio(
     if !effects.updated_positional_sounds.is_empty() {
         for ps in &effects.updated_positional_sounds {
             if ps.se_id != 0 {
-                let pos = glam::Vec3::from_array(ps.pos);
-                state.se_pool.update_positional(ps.volume, ps.se_id, pos);
+                if let Some(pos) = ps.pos {
+                    state.se_pool.update_positional(
+                        ps.volume,
+                        ps.se_id,
+                        glam::Vec3::from_array(pos),
+                    );
+                }
             }
         }
     }

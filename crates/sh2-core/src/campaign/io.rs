@@ -15,10 +15,12 @@ use super::state::OverlayMenuKind;
 /// `0x9c70`, `0x9c73`) never truncate or sign-extend through `i16`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StagePositionalSound {
-    /// Retail sound effect ID (`u32`, e.g., `0x9c88`, `0x4268`, `0x3e80`, `0x4682`).
+    /// Retail sound effect ID (`u32`, e.g., `0x9c88`, `0x4268`, `0x3e80`, `0x4682`, `0x3cf0`).
     pub se_id: u32,
-    /// World-space emitter position `[x, y, z]` in PS2 mm.
-    pub pos: [f32; 3],
+    /// Optional world-space emitter position `[x, y, z]` in PS2 mm (`None` for `pos = NULL`
+    /// `Se2dManager` slots such as Stage 38 Toluca Lake `0x3cf0`, which dynamically override
+    /// position in `FUN_00516b90`).
+    pub pos: Option<[f32; 3]>,
     /// Linear base volume in `[0.0, 1.0]`.
     pub volume: f32,
     /// PS2 `SeCallPos` flags (`1` = `SE_FLAG_PRIO_1`, `4` = `SE_FLAG_NO_DISTANCE`, `8` = `SE_FLAG_MANAGED_2D`).

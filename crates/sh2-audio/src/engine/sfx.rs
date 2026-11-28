@@ -205,6 +205,20 @@ impl AudioEngine {
         volume: f32,
         stereo_pan: f32,
     ) -> Result<StaticSoundHandle, AudioError> {
+        self.play_prepared_sfx_panned_with_loop(prepared, volume, stereo_pan, false)
+    }
+
+    /// Plays a pre-resampled sound effect on the SFX sub-track with explicit `volume`,
+    /// `stereo_pan`, and `looping` (`SE_FLAG_MANAGED_2D` managed 2D loops whose retail
+    /// `sddata.bin` entries lack an embedded `smpl` chunk, e.g., `0x3E80`, `0x4268`, `0x4269`,
+    /// `0x465A`, `0x42CB`, `0x44C6`, `0x3CF0`).
+    pub fn play_prepared_sfx_panned_with_loop(
+        &mut self,
+        prepared: &PreparedSfx,
+        volume: f32,
+        stereo_pan: f32,
+        looping: bool,
+    ) -> Result<StaticSoundHandle, AudioError> {
         let manager = self
             .manager
             .as_mut()
@@ -227,6 +241,8 @@ impl AudioEngine {
 
         if let Some(region) = prepared.loop_region {
             settings = settings.loop_region(region.to_kira_region());
+        } else if looping {
+            settings = settings.loop_region(..);
         }
 
         let sound_data = StaticSoundData {

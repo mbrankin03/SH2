@@ -70,6 +70,62 @@ impl AudioEngine {
         self.play_prepared_sfx_2d(&prepared, volume)
     }
 
+    /// Plays a pre-resampled 2D ambient sound effect in continuous loop mode (`loop_region(..)`,
+    /// or the waveform's embedded `smpl` loop points if present) for persistent stage ambience
+    /// (`SeCallPos` with `flags & 8 != 0`, e.g., Forest wind `0x2742`, Rain `0x4DB8`, Lake `0x3CF0`).
+    pub fn play_prepared_sfx_2d_looping(
+        &mut self,
+        prepared: &PreparedSfx,
+        volume: f32,
+    ) -> Result<StaticSoundHandle, AudioError> {
+        let manager = self
+            .manager
+            .as_mut()
+            .ok_or_else(|| AudioError::InitError("No manager".into()))?;
+        let sfx_track = self
+            .sfx_track
+            .as_ref()
+            .ok_or_else(|| AudioError::InitError("No sfx track".into()))?;
+
+        self.output_ringbuffer
+            .push_frames(&prepared.frames[..prepared.frames.len().min(512)]);
+
+        let mut settings = StaticSoundSettings::new()
+            .output_destination(sfx_track)
+            .volume(Volume::Amplitude(
+                (volume.max(0.0) * self.sfx_volume * self.master_volume) as f64,
+            ));
+
+        if let Some(region) = prepared.loop_region {
+            settings = settings.loop_region(region.to_kira_region());
+        } else {
+            settings = settings.loop_region(..);
+        }
+
+        let sound_data = StaticSoundData {
+            sample_rate: prepared.sample_rate,
+            frames: Arc::clone(&prepared.frames),
+            settings,
+            slice: None,
+        };
+
+        manager
+            .play(sound_data)
+            .map_err(|e| AudioError::PlaybackError(e.to_string()))
+    }
+
+    /// Smoothly updates the linear amplitude volume of an active 2D looping sound effect handle
+    /// (`SeVolume` `sh2pc.exe` `0x00516d50`, e.g. Forest wind gust oscillation `0x2742`).
+    pub fn set_sfx_2d_volume(&self, handle: &mut StaticSoundHandle, volume: f32) {
+        let tween = Tween {
+            duration: Duration::from_millis(16),
+            easing: Easing::Linear,
+            ..Default::default()
+        };
+        let target_vol = (volume.max(0.0) * self.sfx_volume * self.master_volume) as f64;
+        handle.set_volume(Volume::Amplitude(target_vol), tween);
+    }
+
     /// Plays a pre-resampled 3D spatialized sound effect via Kira's `SpatialScene` using zero-copy `Arc::clone` (`SH2-179`).
     pub fn play_prepared_sfx_3d(
         &mut self,
@@ -149,6 +205,20 @@ impl AudioEngine {
         volume: f32,
         stereo_pan: f32,
     ) -> Result<StaticSoundHandle, AudioError> {
+        self.play_prepared_sfx_panned_with_loop(prepared, volume, stereo_pan, false)
+    }
+
+    /// Plays a pre-resampled sound effect on the SFX sub-track with explicit `volume`,
+    /// `stereo_pan`, and `looping` (`SE_FLAG_MANAGED_2D` managed 2D loops whose retail
+    /// `sddata.bin` entries lack an embedded `smpl` chunk, e.g., `0x3E80`, `0x4268`, `0x4269`,
+    /// `0x465A`, `0x42CB`, `0x44C6`, `0x3CF0`).
+    pub fn play_prepared_sfx_panned_with_loop(
+        &mut self,
+        prepared: &PreparedSfx,
+        volume: f32,
+        stereo_pan: f32,
+        looping: bool,
+    ) -> Result<StaticSoundHandle, AudioError> {
         let manager = self
             .manager
             .as_mut()
@@ -171,6 +241,8 @@ impl AudioEngine {
 
         if let Some(region) = prepared.loop_region {
             settings = settings.loop_region(region.to_kira_region());
+        } else if looping {
+            settings = settings.loop_region(..);
         }
 
         let sound_data = StaticSoundData {

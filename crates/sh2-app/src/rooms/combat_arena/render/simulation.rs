@@ -38,6 +38,7 @@ pub(super) fn step_simulation_and_audio(
 pub(crate) fn step_audio_managers(state: &mut AppState, dt: Duration, is_paused: bool) {
     let ducking_mode = resolve_audio_ducking_mode(state, is_paused);
     step_bgm_manager(state, dt, ducking_mode);
+    crate::audio_dispatch::tick_standalone_stage_audio(state, dt.as_secs_f32(), is_paused);
     step_se_pool_manager(state, dt, ducking_mode);
     step_pocket_radio(state, dt, is_paused);
 }

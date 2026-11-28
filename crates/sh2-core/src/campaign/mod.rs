@@ -17,6 +17,7 @@ pub mod orchestrator;
 pub mod retail_events;
 pub mod room_name;
 pub mod save;
+pub mod stage_audio;
 pub mod stage_hooks;
 pub mod stage_loader;
 pub mod state;
@@ -26,7 +27,7 @@ pub use cutscene_handoff::{
     FmvTrigger, AUTO_STAGE_DEMO_RULES,
 };
 pub use indoor_rooms::resolve_indoor_room_id;
-pub use io::{CampaignEffects, CampaignTickInput};
+pub use io::{CampaignEffects, CampaignTickInput, StagePositionalSound};
 pub use orchestrator::CampaignOrchestrator;
 pub use save::{
     validate_save_data, CampaignSaveSnapshot, ClearDataProfile, SaveSlotEntry, SaveSlotKind,
@@ -35,6 +36,7 @@ pub use save::{
     MAX_RETAIL_STAGE_ID, PS2_MAX_FILES_PER_CARD, PS2_MEMORY_CARD_COUNT, QUICKSAVE_FILENAME,
     SAVE_FORMAT_VERSION,
 };
+pub use stage_audio::StageAudioCoordinator;
 pub use stage_loader::{
     resolve_outdoor_area_block, resolve_outdoor_room_id, resolve_room_id_for_stage_pos,
     resolve_stage_manifest, room_area_dir, room_id_matches_outdoor_block, CampaignEnemySpawn,

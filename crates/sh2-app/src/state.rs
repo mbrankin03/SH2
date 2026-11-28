@@ -76,6 +76,12 @@ pub(crate) struct AppState {
     pub audio_engine: Option<AudioEngine>,
     pub bgm_manager: BgmManager,
     pub se_pool: SePoolManager,
+    /// Stage ambient/horror SFX coordinator for non-campaign direct stage / checkpoint rooms (`ca11`).
+    pub standalone_stage_audio: sh2_core::campaign::StageAudioCoordinator,
+    /// Environmental horror trigger state for non-campaign direct stage / checkpoint rooms.
+    pub standalone_horror_triggers: sh2_core::events::horror_triggers::StageEventDispatcher,
+    /// Deterministic RNG for `standalone_stage_audio` / `standalone_horror_triggers`.
+    pub standalone_stage_rng: sh2_core::events::Sh2Rng,
     pub bgm_stage_override: Option<u32>,
     pub audio_debug: AudioDebugState,
     pub surface_sfx_room: SurfaceSfxRoomState,
@@ -388,7 +394,10 @@ impl AppState {
         self.campaign_messages.reset();
         self.enemy_assets.evict_all();
         self.bgm_manager.stop_all(self.audio_engine.as_mut());
+        self.se_pool.reset();
+        self.standalone_stage_audio.reset();
         if let Some(ref mut bank) = self.audio_bank {
+            bank.stop_all_looping_se();
             bank.stop_all_spatial_handles();
             bank.stop_active_cut_audio();
             bank.clear_non_core_voice_afs_cache();

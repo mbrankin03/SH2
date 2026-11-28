@@ -15,6 +15,7 @@ use super::cutscene_handoff::{
     evaluate_auto_stage_demo, evaluate_auto_stage_fmv, DramaDemoTrigger, FmvTrigger,
 };
 use super::room_name::room_name_for_stage_pos;
+use super::stage_audio::StageAudioCoordinator;
 use super::stage_hooks::{eval_room_init_hook, eval_stage_init_hook};
 use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
@@ -59,6 +60,7 @@ pub(crate) fn step_connect_pipeline(
     sim: &mut SimulationCore,
     event_engine: &mut EventEngine,
     horror_triggers: &mut StageEventDispatcher,
+    stage_audio: &mut StageAudioCoordinator,
     rng: &mut Sh2Rng,
     fade: &mut ScreenFadeState,
     active_manifest: &mut Option<RoomLoadManifest>,
@@ -182,23 +184,20 @@ pub(crate) fn step_connect_pipeline(
         }
         ConnectStep::PlayableInit => {
             effects.bgm_stage_id = Some(req.target_stage as u32);
-            if req.target_stage == 4 {
-                // `stg_forest.c` `EvSoundCallAfterLoad` (`sh2pc.exe` `0x0059fc70..0x0059fce3`):
-                // start forest wind loop `0x2742` and (in NG+ before pickup) chainsaw idle `0x4268`.
-                let (se_2d, se_pos) =
-                    crate::events::stage4_eval_sound_call_after_load(&sim.scenario.flags);
-                effects.sound_effects.extend(se_2d);
-                for (se_id, pos) in se_pos {
-                    effects
-                        .positional_sounds
-                        .push(crate::events::engine::EventPositionalSound {
-                            se_id: se_id as i16,
-                            pos,
-                            volume: 1.0,
-                            channel: 8,
-                        });
+            let mut numeric_room = room_name_for_stage_pos(req.target_stage, req.spawn_pos);
+            if numeric_room == 0 {
+                if let Some(ref manifest) = active_manifest {
+                    numeric_room = room_id_from_stage_code(&manifest.room_id) as u16;
                 }
             }
+            stage_audio.on_stage_or_room_enter(
+                req.target_stage,
+                numeric_room,
+                &mut sim.scenario.flags,
+                horror_triggers,
+                rng,
+                effects,
+            );
             ConnectStepOutcome::Continue {
                 next_step: ConnectStep::Complete,
                 loading_screen_active,

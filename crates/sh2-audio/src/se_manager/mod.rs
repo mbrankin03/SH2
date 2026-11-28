@@ -220,10 +220,12 @@ impl SePoolManager {
 
         // 4. Dispatch 2D (< 40000) vs 3D (>= 40000) (lines 261-293)
         if se_id < SE_3D_ID_THRESHOLD {
+            let looping = (flags & SE_FLAG_MANAGED_2D) != 0 && (flags & 3) == 0;
             actions.push(SeBackendAction::Play2d {
                 se_id,
                 direction_deg: dir_deg,
                 attenuation_byte: atten_byte,
+                looping,
             });
             return SeCallResult::Played2d { se_id };
         }

@@ -42,10 +42,11 @@ pub(crate) fn dispatch_se_pool_actions(state: &mut AppState, actions: &[SeBacken
                 se_id,
                 direction_deg,
                 attenuation_byte,
+                looping,
             } => {
                 let vol = ((255.0 - f32::from(attenuation_byte)) / 255.0).clamp(0.0, 1.0);
                 let pan = (-(direction_deg as f32) / SE_DIR_PAN_SCALE_DEG).clamp(-1.0, 1.0);
-                let _ = bank.play_se_id_panned_tracked(eng, se_id, vol, pan);
+                let _ = bank.play_se_id_panned_tracked_with_loop(eng, se_id, vol, pan, looping);
             }
             SeBackendAction::Update2d {
                 se_id,
@@ -203,4 +204,213 @@ pub(crate) fn dispatch_chainsaw_audio(
         let vol = spatial_vol(hit_vol);
         let _ = bank.play_se_id_panned_tracked(eng, SE_CHAINSAW_HIT, vol, stereo_pan);
     }
+}
+
+/// Collects all currently playing stage/ambient SE IDs across `se_pool` and `audio_bank` for
+/// `SeCheck` (`sh2pc.exe` `0x00515890`) queries inside `StageAudioCoordinator`.
+pub(crate) fn collect_active_stage_se_ids(state: &AppState) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for slot in state.se_pool.slots_2d.iter().flatten() {
+        if !ids.contains(&slot.se_id) {
+            ids.push(slot.se_id);
+        }
+    }
+    for ch in state.se_pool.channels_3d.iter().flatten() {
+        if !ids.contains(&ch.se_id) {
+            ids.push(ch.se_id);
+        }
+    }
+    if let Some(ref bank) = state.audio_bank {
+        bank.collect_active_se_ids(&mut ids);
+    }
+    ids
+}
+
+/// Dispatches all stage ambient, horror trigger, looping 2D, and 3D positional SE commands
+/// emitted by [`sh2_core::campaign::CampaignEffects`] to [`AppState::audio_engine`],
+/// [`AppState::audio_bank`], and [`AppState::se_pool`].
+pub(crate) fn dispatch_campaign_stage_audio(
+    state: &mut AppState,
+    effects: &sh2_core::campaign::CampaignEffects,
+) {
+    // 1. Clear all previous stage/room ambient SEs on transition (`EvStageInit` / `EvRoomInit`).
+    if effects.stop_all_stage_ambient_se {
+        state.se_pool.reset();
+        if let Some(ref mut bank) = state.audio_bank {
+            bank.stop_all_looping_se();
+            bank.stop_all_spatial_handles();
+        }
+    }
+
+    // 2. Stop specific 2D looping or 3D positional SEs (`SeStop` `0x00193a80` / `0x00515f10`).
+    if !effects.stop_sound_effects.is_empty() {
+        let mut stop_actions = Vec::new();
+        for &se_id in &effects.stop_sound_effects {
+            if let Some(ref mut bank) = state.audio_bank {
+                bank.stop_looping_se_id(se_id);
+                bank.stop_spatial_se(se_id);
+            }
+            state.se_pool.stop(se_id, &mut stop_actions);
+        }
+        dispatch_se_pool_actions(state, &stop_actions);
+    }
+
+    // 3. Start looping 2D ambient SEs via `SePoolManager::slots_2d` (`SeCallPos(..., NULL, 0x08)`,
+    //    `sh2pc.exe` `0x0059fc70` `0x2742` / `0x0058be20` `0x4db8`) so `Se2dManager` (`0x001932f0`)
+    //    handles looping, `0.5` Inventory/Map/Memo ducking, `0.7` cutscene ducking, and pause/stop.
+    if !effects.looping_se_starts.is_empty() {
+        sync_se_pool_3d_bank(state);
+        let se_listener = sh2_audio::SeListenerContext {
+            camera_pos: state.sim_core.active_camera_eye(1.0),
+            player_pos: state.sim_core.scenario.player_position,
+            wvs_matrix: state.sim_core.active_ps2_wvs_matrix(1.0),
+            room_id: state.bgm_manager.room_id as u16,
+        };
+        let mut pool_actions = Vec::new();
+        for &(se_id, volume) in &effects.looping_se_starts {
+            if se_id != 0 {
+                state.se_pool.call_pos(
+                    volume,
+                    se_id,
+                    None,
+                    sh2_audio::SE_FLAG_MANAGED_2D,
+                    &se_listener,
+                    &mut pool_actions,
+                );
+            }
+        }
+        dispatch_se_pool_actions(state, &pool_actions);
+    }
+
+    // 4. Live volume modulation for active managed looping 2D ambient SEs
+    //    (`Se2dManageDataVolumeChange` `0x00193630` / `SeVolume` `0x00516d50`), preserving
+    //    `Se2dManager` overlay/cutscene ducking multiplier on `slot.duck_fade`.
+    if !effects.looping_se_volumes.is_empty() {
+        let mut vol_actions = Vec::new();
+        for &(se_id, volume) in &effects.looping_se_volumes {
+            if state
+                .se_pool
+                .slots_2d
+                .iter()
+                .any(|s| s.is_some_and(|sl| sl.se_id == se_id))
+            {
+                state.se_pool.set_2d_volume(se_id, volume, &mut vol_actions);
+            } else if let (Some(eng), Some(bank)) =
+                (state.audio_engine.as_ref(), state.audio_bank.as_mut())
+            {
+                let _ = bank.set_looping_se_volume(eng, se_id, volume);
+            }
+        }
+        dispatch_se_pool_actions(state, &vol_actions);
+    }
+
+    // 5. One-shot 2D SFX (`shSdCall` / `SeCall`).
+    if !effects.sound_effects.is_empty() {
+        if let (Some(eng), Some(bank)) = (state.audio_engine.as_mut(), state.audio_bank.as_ref()) {
+            for &se_id in &effects.sound_effects {
+                let _ = bank.play_se_id(eng, se_id, 1.0);
+            }
+        }
+    }
+
+    // 6. 3D / managed positional SFX spawns (`EventEngine` + `StageAudioCoordinator`).
+    if !effects.positional_sounds.is_empty() || !effects.stage_positional_sounds.is_empty() {
+        sync_se_pool_3d_bank(state);
+        let se_listener = sh2_audio::SeListenerContext {
+            camera_pos: state.sim_core.active_camera_eye(1.0),
+            player_pos: state.sim_core.scenario.player_position,
+            wvs_matrix: state.sim_core.active_ps2_wvs_matrix(1.0),
+            room_id: state.bgm_manager.room_id as u16,
+        };
+        let mut pool_actions = Vec::new();
+        for ps in &effects.positional_sounds {
+            if ps.se_id != 0 {
+                let pos = glam::Vec3::from_array(ps.pos);
+                state.se_pool.call_pos(
+                    ps.volume,
+                    u32::from(ps.se_id as u16),
+                    Some(pos),
+                    sh2_audio::SE_FLAG_PRIO_1,
+                    &se_listener,
+                    &mut pool_actions,
+                );
+            }
+        }
+        for ps in &effects.stage_positional_sounds {
+            if ps.se_id != 0 {
+                let pos = ps.pos.map(glam::Vec3::from_array);
+                state.se_pool.call_pos(
+                    ps.volume,
+                    ps.se_id,
+                    pos,
+                    ps.flags,
+                    &se_listener,
+                    &mut pool_actions,
+                );
+            }
+        }
+        dispatch_se_pool_actions(state, &pool_actions);
+    }
+
+    // 7. Live 3D / managed positional SE updates (`SePosMove` / `SePosSet`).
+    if !effects.updated_positional_sounds.is_empty() {
+        for ps in &effects.updated_positional_sounds {
+            if ps.se_id != 0 {
+                if let Some(pos) = ps.pos {
+                    state.se_pool.update_positional(
+                        ps.volume,
+                        ps.se_id,
+                        glam::Vec3::from_array(pos),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Evaluates [`sh2_core::campaign::StageAudioCoordinator`] for non-campaign direct stage / test
+/// room entry (e.g., Story Checkpoint Stage 4 Forest Trail `ca11`), without interfering with
+/// dedicated audio test rooms (`HorrorTriggersRoom`, `AudioRoom`, `SurfaceSfxRoom`).
+pub(crate) fn tick_standalone_stage_audio(state: &mut AppState, dt_sec: f32, is_paused: bool) {
+    if state.campaign_orchestrator.is_some() || is_paused {
+        return;
+    }
+    if matches!(
+        state.active_test_room,
+        sh2_ui::menu::TestRoomKind::HorrorTriggersRoom
+            | sh2_ui::menu::TestRoomKind::AudioDebugRoom
+            | sh2_ui::menu::TestRoomKind::SurfaceSfxTestRoom
+    ) {
+        return;
+    }
+    let (stage_id_u32, _) = state.active_bgm_stage_and_flags();
+    let stage_id = stage_id_u32 as u16;
+    let player_pos = state.sim_core.scenario.player_position.to_array();
+    let mut numeric_room =
+        sh2_core::campaign::room_name::room_name_for_stage_pos(stage_id, player_pos);
+    if numeric_room == 0 {
+        numeric_room =
+            sh2_core::fog::room_id_from_stage_code(&state.sim_core.scenario.current_room) as u16;
+    }
+    let active_se_ids = collect_active_stage_se_ids(state);
+    let demo_active = state
+        .drama_demo_session
+        .as_ref()
+        .is_some_and(|s| s.player.step != sh2_core::cutscene::DramaDemoStep::Finished);
+    let mut effects = sh2_core::campaign::CampaignEffects::default();
+    state.standalone_stage_audio.tick_all_time(
+        stage_id,
+        numeric_room,
+        player_pos,
+        state.sim_core.scenario.player_yaw,
+        state.sim_core.locomotion.speed_mps,
+        dt_sec,
+        demo_active,
+        &active_se_ids,
+        &mut state.sim_core.scenario.flags,
+        &mut state.standalone_horror_triggers,
+        &mut state.standalone_stage_rng,
+        &mut effects,
+    );
+    dispatch_campaign_stage_audio(state, &effects);
 }

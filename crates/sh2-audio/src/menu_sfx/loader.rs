@@ -55,6 +55,7 @@ impl MenuAudioBank {
             step_parity: false,
             last_footstep_handle: None,
             active_cut_audio_handle: None,
+            active_looping_2d_handles: HashMap::new(),
             active_spatial_handles: HashMap::new(),
             active_spatial_voices: HashMap::new(),
         };
@@ -550,6 +551,7 @@ mod tests {
             step_parity: false,
             last_footstep_handle: None,
             active_cut_audio_handle: None,
+            active_looping_2d_handles: HashMap::new(),
             active_spatial_handles: HashMap::new(),
             active_spatial_voices: HashMap::new(),
         }

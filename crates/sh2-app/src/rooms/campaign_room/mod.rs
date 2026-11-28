@@ -55,6 +55,11 @@ impl CampaignRoomController {
         state.bgm_stage_override = None;
         state.bgm_manager.stop_all(state.audio_engine.as_mut());
         state.se_pool.reset();
+        state.standalone_stage_audio.reset();
+        if let Some(ref mut bank) = state.audio_bank {
+            bank.stop_all_looping_se();
+            bank.stop_all_spatial_handles();
+        }
         crate::audio_dispatch::sync_se_pool_3d_bank(state);
 
         let orchestrator = if is_continue {
@@ -107,7 +112,7 @@ impl CampaignRoomController {
 
     fn apply_effects(state: &mut AppState, effects: CampaignEffects) -> bool {
         let mut performed_sync_load = false;
-        if let Some(label) = effects.show_loading_screen {
+        if let Some(ref label) = effects.show_loading_screen {
             let min_dur = state
                 .menu_ctrl
                 .options_menu
@@ -127,7 +132,7 @@ impl CampaignRoomController {
                 .debug
                 .instant_room_transitions
             {
-                state.loading_screen = Some(LoadingScreen::new(&label, min_dur, require_press));
+                state.loading_screen = Some(LoadingScreen::new(label, min_dur, require_press));
             }
         }
 
@@ -139,11 +144,11 @@ impl CampaignRoomController {
             .texture_quality
             != sh2_core::config::WorldTextureQuality::OriginalPs2;
 
-        if let Some(manifest) = effects.load_room {
+        if let Some(ref manifest) = effects.load_room {
             if u32::from(manifest.stage_id) != state.bgm_manager.stage_id {
                 state.se_pool.reset();
             }
-            let seeded_block = loader::load_manifest_into_app_state(state, &manifest);
+            let seeded_block = loader::load_manifest_into_app_state(state, manifest);
             state.campaign_messages.clear_active();
             state
                 .campaign_messages
@@ -161,8 +166,8 @@ impl CampaignRoomController {
             performed_sync_load = true;
         }
 
-        if let Some(plan) = effects.outdoor_plan {
-            let _ = state.outdoor_tile_pool.apply_plan(&plan);
+        if let Some(ref plan) = effects.outdoor_plan {
+            let _ = state.outdoor_tile_pool.apply_plan(plan);
             if let Some(ref mut orch) = state.campaign_orchestrator {
                 for &evicted in &plan.evict_blocks {
                     orch.outdoor_streamer.mark_evicted(evicted);
@@ -187,40 +192,8 @@ impl CampaignRoomController {
 
         let _ = effects.bgm_stage_id;
 
-        // Dispatch 2D non-positional SFX (`shSdCall` / `SeCall`) and 3D positional SFX (`SeCallPos`).
-        if !effects.sound_effects.is_empty() {
-            if let (Some(eng), Some(bank)) =
-                (state.audio_engine.as_mut(), state.audio_bank.as_ref())
-            {
-                for se_id in &effects.sound_effects {
-                    let _ = bank.play_se_id(eng, *se_id, 1.0);
-                }
-            }
-        }
-        if !effects.positional_sounds.is_empty() {
-            crate::audio_dispatch::sync_se_pool_3d_bank(state);
-            let se_listener = sh2_audio::SeListenerContext {
-                camera_pos: state.sim_core.active_camera_eye(1.0),
-                player_pos: state.sim_core.scenario.player_position,
-                wvs_matrix: state.sim_core.active_ps2_wvs_matrix(1.0),
-                room_id: state.bgm_manager.room_id as u16,
-            };
-            let mut pool_actions = Vec::new();
-            for ps in &effects.positional_sounds {
-                if ps.se_id > 0 {
-                    let pos = glam::Vec3::from_array(ps.pos);
-                    state.se_pool.call_pos(
-                        ps.volume,
-                        ps.se_id as u32,
-                        Some(pos),
-                        sh2_audio::SE_FLAG_PRIO_1,
-                        &se_listener,
-                        &mut pool_actions,
-                    );
-                }
-            }
-            crate::audio_dispatch::dispatch_se_pool_actions(state, &pool_actions);
-        }
+        // Dispatch 2D looping ambient SEs, live volume updates, stops, 2D one-shots, and 3D positional SFX.
+        crate::audio_dispatch::dispatch_campaign_stage_audio(state, &effects);
 
         if let Some(demo) = effects.start_drama_demo {
             let catalog_idx = demo
@@ -537,6 +510,7 @@ impl RoomController for CampaignRoomController {
             })
         );
         tick_input.fmv_finished = state.fmv_session.is_none() && was_fmv_playing;
+        tick_input.active_stage_se_ids = crate::audio_dispatch::collect_active_stage_se_ids(state);
 
         if let Some(ref mut ls) = state.loading_screen {
             ls.tick(dt_sec);

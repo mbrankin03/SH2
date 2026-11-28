@@ -285,6 +285,27 @@ impl ForestAmbientState {
         }
     }
 
+    /// Synchronizes `crow_playing`, `rustle_playing`, and `passer_playing` with the live audio
+    /// pool (`SeCheck` `sh2pc.exe` `0x00515890`, called at `0x0059ff06` for `0x9c87`, `0x005a00b3`
+    /// for `0x9c86`, `0x005a0168` for `0x9c88`, and `0x005a021d` for `0x9c87`) so finished 3D
+    /// voices clear their busy flags and can re-trigger over time.
+    pub fn sync_active_sounds(
+        &mut self,
+        crow_active: bool,
+        rustle_active: bool,
+        passer_active: bool,
+    ) {
+        if !crow_active {
+            self.crow_playing = false;
+        }
+        if !rustle_active {
+            self.rustle_playing = false;
+        }
+        if !passer_active {
+            self.passer_playing = false;
+        }
+    }
+
     /// Evaluates one frame of `stg_forest.c` `EvAllTime` (`sh2pc.exe` `0x0059fcf0..0x005a025a`).
     #[allow(clippy::too_many_arguments)]
     pub fn tick_all_time(

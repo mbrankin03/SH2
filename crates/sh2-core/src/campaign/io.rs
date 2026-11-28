@@ -8,6 +8,23 @@ use super::cutscene_handoff::{DramaDemoTrigger, FmvTrigger};
 use super::stage_loader::RoomLoadManifest;
 use super::state::OverlayMenuKind;
 
+/// 3D / managed positional stage ambient or horror sound effect (`SeCallPos` `0x00192270` /
+/// `sh2pc.exe` `0x00516e90`, `SePosMove` `0x00515910`, `SePosSet` `0x00515740`).
+///
+/// Uses full `u32` `se_id` so 3D stage cues `>= 0x8000` (e.g., `0x9c86`, `0x9c87`, `0x9c88`,
+/// `0x9c70`, `0x9c73`) never truncate or sign-extend through `i16`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StagePositionalSound {
+    /// Retail sound effect ID (`u32`, e.g., `0x9c88`, `0x4268`, `0x3e80`, `0x4682`).
+    pub se_id: u32,
+    /// World-space emitter position `[x, y, z]` in PS2 mm.
+    pub pos: [f32; 3],
+    /// Linear base volume in `[0.0, 1.0]`.
+    pub volume: f32,
+    /// PS2 `SeCallPos` flags (`1` = `SE_FLAG_PRIO_1`, `4` = `SE_FLAG_NO_DISTANCE`, `8` = `SE_FLAG_MANAGED_2D`).
+    pub flags: u32,
+}
+
 /// Per-frame gameplay & UI inputs supplied by the thin `sh2-app` shell to
 /// [`CampaignOrchestrator::step`](super::CampaignOrchestrator::step).
 #[derive(Debug, Clone, Default)]
@@ -47,6 +64,9 @@ pub struct CampaignTickInput {
     pub maria_distance_mm: Option<f32>,
     /// `true` when James bumped/shoved Maria on this tick (`0x0048ed72`).
     pub maria_bumped: bool,
+    /// Currently playing stage ambient / horror SE IDs reported by `sh2-app` for `SeCheck`
+    /// (`sh2pc.exe` `0x00515890`) queries in `ForestAmbientState` and `StageEventDispatcher`.
+    pub active_stage_se_ids: Vec<u32>,
 }
 
 /// Pure side-effect commands emitted by [`CampaignOrchestrator::step`](super::CampaignOrchestrator::step)
@@ -68,10 +88,21 @@ pub struct CampaignEffects {
     pub fade_alpha: f32,
     /// Non-positional 2D sound effects to trigger (`shSdCall` / `SeCall`).
     pub sound_effects: Vec<u32>,
-    /// Sound effect IDs to stop (`SeStop`, e.g. NG+ chainsaw idle loop `0x4268`).
+    /// Looping 2D ambient sound effects to start idempotently `(se_id, initial_volume)`
+    /// (`EvSoundCallAfterLoad` `SeCallPos` with `pos = NULL`, `flags & 8 != 0`).
+    pub looping_se_starts: Vec<(u32, f32)>,
+    /// Live volume modulations `(se_id, volume)` for active looping 2D ambient SEs (`SeVolume` `0x00516d50`).
+    pub looping_se_volumes: Vec<(u32, f32)>,
+    /// Sound effect IDs to stop (`SeStop` `0x00193a80` / `0x00515f10`, e.g. `0x4268`, `0x9c86`).
     pub stop_sound_effects: Vec<u32>,
-    /// 3D positional sound effects to trigger (`SeCallPos`).
+    /// 3D positional sound effects emitted by `EventEngine` (`SeCallPos`).
     pub positional_sounds: Vec<EventPositionalSound>,
+    /// 3D / managed positional stage ambient & horror SE spawns (`u32` `se_id`).
+    pub stage_positional_sounds: Vec<StagePositionalSound>,
+    /// Live 3D / managed positional SE world-space position & volume updates (`SePosMove` / `SePosSet`).
+    pub updated_positional_sounds: Vec<StagePositionalSound>,
+    /// When `true`, fade out all active stage looping 2D and 3D ambient SEs (e.g. stage/room exit).
+    pub stop_all_stage_ambient_se: bool,
     /// Stage ID for BGM manager synchronization whenever a stage load completes.
     pub bgm_stage_id: Option<u32>,
     /// Active `EvBgmControl` (`Stage_Data::bgm_control`) channel bitmask for the current stage

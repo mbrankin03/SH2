@@ -129,6 +129,9 @@ pub struct MenuAudioBank {
     pub last_footstep_handle: Option<StaticSoundHandle>,
     /// Active voiceover/cut-audio audition handle so starting a new slice cleanly fades out the previous slice (`SH2-62`).
     pub active_cut_audio_handle: Option<StaticSoundHandle>,
+    /// Active 2D looping ambient sound handles keyed by `se_id` (`0x2742` Forest wind, `0x4DB8`
+    /// Rain, `0x3CF0` Toluca Lake, etc.) for live `SeVolume` modulation and clean stage-exit fadeout.
+    pub active_looping_2d_handles: HashMap<u32, StaticSoundHandle>,
     /// Active 3D spatial sound handles keyed by `se_id` (`0x515910` `SePosMove` / `0x515740` `SePosSet`).
     pub active_spatial_handles: HashMap<u32, StaticSoundHandle>,
     /// Active 3D `.cld`-occluded & HRTF/PS2 spatial voice handles keyed by `se_id` (`SH2-84`).
@@ -137,8 +140,9 @@ pub struct MenuAudioBank {
 
 impl Drop for MenuAudioBank {
     fn drop(&mut self) {
-        // Ensure any looped 3D voices (`SpatialVoiceControl`) or cut-audio previews stop cleanly
+        // Ensure any looped 2D/3D voices (`SpatialVoiceControl`) or cut-audio previews stop cleanly
         // when `MenuAudioBank` is replaced during live audio-pack hot-swapping (`SH2-84`).
+        self.stop_all_looping_se();
         self.stop_all_spatial_handles();
         self.stop_active_cut_audio();
     }

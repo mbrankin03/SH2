@@ -9,7 +9,7 @@ use super::{synthesize_fallback_cue, MenuAudioBank, SoundCueKind};
 use crate::beta_audio_catalog::{
     CutSfxCatalogEntry, LAURA_LETTER_VOICEOVER_SLICES, VOICE_AFS_LAURA_LETTER_INDEX,
 };
-use crate::sfx_bank::footstep_sddata_indices;
+use crate::sfx_bank::{footstep_sddata_indices, resolve_se_id_to_voice_afs_index};
 use crate::{AudioEngine, AudioError};
 
 impl MenuAudioBank {
@@ -40,6 +40,116 @@ impl MenuAudioBank {
             Ok(Some(handle))
         } else {
             synthesize_fallback_cue(engine, SoundCueKind::Confirm)
+        }
+    }
+
+    /// Starts a looping 2D ambient sound effect keyed by `se_id` (`SeCallPos` with `flags & 8 != 0`
+    /// and `pos = NULL`, e.g. Forest wind `0x2742`, Rain `0x4DB8`, Toluca Lake `0x3CF0`).
+    ///
+    /// Idempotent: if `se_id` is already playing in `active_looping_2d_handles`, updates its live
+    /// volume instead of stacking a duplicate voice. Lazily loads `voice.afs` streams on demand.
+    pub fn play_looping_se_id(
+        &mut self,
+        engine: &mut AudioEngine,
+        se_id: u32,
+        volume: f32,
+    ) -> Result<bool, AudioError> {
+        self.active_looping_2d_handles
+            .retain(|_, h| h.state() != kira::sound::PlaybackState::Stopped);
+        if let Some(handle) = self.active_looping_2d_handles.get_mut(&se_id) {
+            engine.set_sfx_2d_volume(handle, volume);
+            return Ok(true);
+        }
+        if let Some(afs_idx) = resolve_se_id_to_voice_afs_index(se_id) {
+            if !self.voice_afs_sfx.contains_key(&afs_idx) {
+                let _ = self.load_voice_afs_entry(afs_idx);
+            }
+        }
+        let Some(prepared) = self.resolve_prepared_se_id(se_id) else {
+            return Ok(false);
+        };
+        let handle = engine.play_prepared_sfx_2d_looping(&prepared, volume)?;
+        self.active_looping_2d_handles.insert(se_id, handle);
+        Ok(true)
+    }
+
+    /// Smoothly modulates the linear volume of an active looping 2D ambient SE (`SeVolume`
+    /// `sh2pc.exe` `0x00516d50`). Returns `true` if `se_id` was active.
+    pub fn set_looping_se_volume(&mut self, engine: &AudioEngine, se_id: u32, volume: f32) -> bool {
+        if let Some(handle) = self.active_looping_2d_handles.get_mut(&se_id) {
+            if handle.state() == kira::sound::PlaybackState::Stopped {
+                self.active_looping_2d_handles.remove(&se_id);
+                return false;
+            }
+            engine.set_sfx_2d_volume(handle, volume);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Smoothly fades out and stops a single looping 2D ambient SE by `se_id` (`SeStop`
+    /// `0x00193a80` / `0x00515f10`). Returns `true` if `se_id` was active.
+    pub fn stop_looping_se_id(&mut self, se_id: u32) -> bool {
+        if let Some(mut handle) = self.active_looping_2d_handles.remove(&se_id) {
+            handle.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(40),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Smoothly fades out and stops all active looping 2D ambient SE handles (e.g. on stage or
+    /// room transition or returning to the Title Screen).
+    pub fn stop_all_looping_se(&mut self) {
+        for (_, mut handle) in self.active_looping_2d_handles.drain() {
+            handle.stop(kira::tween::Tween {
+                duration: std::time::Duration::from_millis(40),
+                easing: kira::tween::Easing::Linear,
+                ..Default::default()
+            });
+        }
+    }
+
+    /// Returns `true` if `se_id` is currently playing as a tracked looping 2D ambient SE.
+    pub fn is_looping_2d_se_playing(&self, se_id: u32) -> bool {
+        self.active_looping_2d_handles
+            .get(&se_id)
+            .is_some_and(|h| h.state() != kira::sound::PlaybackState::Stopped)
+    }
+
+    /// Returns `true` if `se_id` is currently playing in any tracked 2D looping, 2D panned, or 3D
+    /// spatial handle (`SeCheck` `sh2pc.exe` `0x00515890`).
+    pub fn is_any_se_playing(&self, se_id: u32) -> bool {
+        self.is_looping_2d_se_playing(se_id)
+            || self.is_2d_se_playing(se_id)
+            || self
+                .active_spatial_voices
+                .get(&se_id)
+                .is_some_and(|v| !v.is_finished())
+    }
+
+    /// Appends all currently playing tracked `se_id`s (2D looping, 2D panned, and 3D spatial)
+    /// into `out` without duplicates (`SeCheck` `sh2pc.exe` `0x00515890`).
+    pub fn collect_active_se_ids(&self, out: &mut Vec<u32>) {
+        for (&se_id, handle) in &self.active_looping_2d_handles {
+            if handle.state() != kira::sound::PlaybackState::Stopped && !out.contains(&se_id) {
+                out.push(se_id);
+            }
+        }
+        for (&se_id, handle) in &self.active_spatial_handles {
+            if handle.state() != kira::sound::PlaybackState::Stopped && !out.contains(&se_id) {
+                out.push(se_id);
+            }
+        }
+        for (&se_id, voice) in &self.active_spatial_voices {
+            if !voice.is_finished() && !out.contains(&se_id) {
+                out.push(se_id);
+            }
         }
     }
 
@@ -232,5 +342,99 @@ impl MenuAudioBank {
         let handle = synthesize_fallback_cue(engine, SoundCueKind::Confirm)?;
         self.active_cut_audio_handle = handle;
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kira::manager::backend::mock::{MockBackend, MockBackendSettings};
+    use kira::manager::{AudioManager, AudioManagerSettings};
+    use kira::sound::static_sound::{StaticSoundData, StaticSoundSettings};
+    use kira::Frame;
+    use sh2_core::AudioPackPreference;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::Arc;
+
+    fn empty_bank() -> MenuAudioBank {
+        MenuAudioBank {
+            loaded_source: AudioPackPreference::Auto,
+            sddata_path: None,
+            voice_afs_path: None,
+            voice_afs_index: None,
+            data_root: None,
+            ee_root: None,
+            entries: Vec::new(),
+            prepared_sddata: Vec::new(),
+            voice_afs_sfx: HashMap::new(),
+            voice_afs_lru: VecDeque::new(),
+            cursor_move: None,
+            confirm: None,
+            cancel: None,
+            game_start: None,
+            save_sound: None,
+            flashlight_on: None,
+            flashlight_off: None,
+            closet_bonus_audio: None,
+            machi_steps_audio: None,
+            footstep: None,
+            step_parity: false,
+            last_footstep_handle: None,
+            active_cut_audio_handle: None,
+            active_looping_2d_handles: HashMap::new(),
+            active_spatial_handles: HashMap::new(),
+            active_spatial_voices: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn looping_2d_se_stays_playing_past_buffer_end_and_stops_cleanly() {
+        let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+            backend_settings: MockBackendSettings { sample_rate: 48000 },
+            ..Default::default()
+        })
+        .expect("MockBackend audio manager");
+
+        // 16-frame looping clip (`0x2742` Forest wind stand-in) and second looping clip (`0x4DB8` Rain)
+        let loop_wind = StaticSoundData {
+            sample_rate: 48000,
+            frames: Arc::from(vec![Frame::ZERO; 16]),
+            settings: StaticSoundSettings::new().loop_region(..),
+            slice: None,
+        };
+        let loop_rain = StaticSoundData {
+            sample_rate: 48000,
+            frames: Arc::from(vec![Frame::ZERO; 16]),
+            settings: StaticSoundSettings::new().loop_region(..),
+            slice: None,
+        };
+
+        let wind_handle = manager.play(loop_wind).expect("play looping wind");
+        let rain_handle = manager.play(loop_rain).expect("play looping rain");
+
+        let mut bank = empty_bank();
+        bank.active_looping_2d_handles.insert(0x2742, wind_handle);
+        bank.active_looping_2d_handles.insert(0x4DB8, rain_handle);
+
+        // Advance well past the 16-frame clip length: looping handles MUST stay Playing.
+        let backend = manager.backend_mut();
+        backend.on_start_processing();
+        for _ in 0..256 {
+            let _ = backend.process();
+        }
+        assert!(bank.is_looping_2d_se_playing(0x2742));
+        assert!(bank.is_looping_2d_se_playing(0x4DB8));
+        assert!(bank.is_any_se_playing(0x2742));
+
+        // Stop single looping SE (`0x2742`) while keeping `0x4DB8` active.
+        assert!(bank.stop_looping_se_id(0x2742));
+        assert!(!bank.stop_looping_se_id(0x2742));
+        assert!(!bank.is_looping_2d_se_playing(0x2742));
+        assert!(bank.is_looping_2d_se_playing(0x4DB8));
+
+        // Stop all remaining looping SEs cleanly (e.g. stage transition).
+        bank.stop_all_looping_se();
+        assert!(!bank.is_looping_2d_se_playing(0x4DB8));
+        assert!(bank.active_looping_2d_handles.is_empty());
     }
 }

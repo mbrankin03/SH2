@@ -628,7 +628,11 @@ fn test_stage4_retail_end_to_end_progression_and_assets() {
             orch.notify_room_assets_loaded();
         }
         let eff = orch.step(&mut sim, &idle, 1.0 / 60.0);
-        if eff.sound_effects.contains(&STG4_SE_FOREST_WIND) {
+        if eff
+            .looping_se_starts
+            .iter()
+            .any(|&(id, _)| id == STG4_SE_FOREST_WIND)
+        {
             saw_wind_se = true;
         }
         if matches!(orch.phase, CampaignPhase::ActiveGameplay) {

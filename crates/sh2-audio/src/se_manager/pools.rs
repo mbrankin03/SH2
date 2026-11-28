@@ -236,6 +236,28 @@ impl SePoolManager {
         }
     }
 
+    /// Updates the world position and base volume of an active positional SE across either the
+    /// 8-channel 3D pool (`Se3dControl` `0x00193980`) or the 4-slot managed 2D pool (`SePosMove`
+    /// `0x00515910` / `SePosSet` `0x00515740`). Returns `true` if a matching active voice was updated.
+    pub fn update_positional(&mut self, base_volume: f32, se_id: u32, position: Vec3) -> bool {
+        if se_id == 0 {
+            return false;
+        }
+        if self.control_3d(base_volume, se_id, position) {
+            return true;
+        }
+        if let Some(Some(slot)) = self
+            .slots_2d
+            .iter_mut()
+            .find(|s| s.is_some_and(|sl| sl.se_id == se_id))
+        {
+            slot.position = Some(position);
+            slot.base_volume = base_volume.clamp(0.0, 1.0);
+            return true;
+        }
+        false
+    }
+
     /// Stops `se_id` across both 2D slots and paired 3D channels (`SeStop` `0x00193a80`).
     pub fn stop(&mut self, mut se_id: u32, actions: &mut Vec<SeBackendAction>) {
         if se_id == 0 {

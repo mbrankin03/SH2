@@ -462,6 +462,13 @@ impl MenuAudioBank {
             easing: kira::tween::Easing::Linear,
             ..Default::default()
         };
+        for handle in self.active_looping_2d_handles.values_mut() {
+            if paused {
+                handle.pause(tween);
+            } else {
+                handle.resume(tween);
+            }
+        }
         for handle in self.active_spatial_handles.values_mut() {
             if paused {
                 handle.pause(tween);
@@ -540,6 +547,7 @@ mod tests {
             step_parity: false,
             last_footstep_handle: None,
             active_cut_audio_handle: None,
+            active_looping_2d_handles: HashMap::new(),
             active_spatial_handles: HashMap::new(),
             active_spatial_voices: HashMap::new(),
         }

@@ -26,6 +26,8 @@ use super::cutscene_handoff::{
 };
 use super::gameplay::{run_active_gameplay, run_prologue, GameplayStepOutcome};
 use super::io::{CampaignEffects, CampaignTickInput};
+use super::room_name::room_name_for_stage_pos;
+use super::stage_audio::StageAudioCoordinator;
 use super::stage_loader::{
     resolve_room_id_for_stage_pos, resolve_stage_manifest, RoomLoadManifest,
 };
@@ -44,6 +46,8 @@ pub struct CampaignOrchestrator {
     pub event_engine: EventEngine,
     /// Ambient stage/room horror triggers (`Stage_Data::stage_init_fn` / `room_init_fn`).
     pub horror_triggers: StageEventDispatcher,
+    /// Unified runtime stage ambient & horror SFX coordinator (`EvSoundCallAfterLoad` / `EvAllTime`).
+    pub stage_audio: StageAudioCoordinator,
     /// Campaign RNG used by `connectRoomInit` hooks (`0x005859a0`, `0x005972d0`, `0x0057a240`).
     pub rng: Sh2Rng,
     /// Cutscene & scripted event camera authority (`EventCameraSystem`).
@@ -115,6 +119,7 @@ impl CampaignOrchestrator {
             },
             event_engine: EventEngine::new(),
             horror_triggers: StageEventDispatcher::new(),
+            stage_audio: StageAudioCoordinator::new(),
             rng: Sh2Rng::new(seed),
             event_camera: EventCameraSystem::new(),
             outdoor_streamer: OutdoorTileStreamer::new(streaming_mode),
@@ -156,6 +161,7 @@ impl CampaignOrchestrator {
             },
             event_engine: EventEngine::new(),
             horror_triggers: StageEventDispatcher::new(),
+            stage_audio: StageAudioCoordinator::new(),
             rng: Sh2Rng::new(0x2001_0924),
             event_camera: EventCameraSystem::new(),
             outdoor_streamer: OutdoorTileStreamer::new(streaming_mode),
@@ -295,8 +301,13 @@ impl CampaignOrchestrator {
         effects.hide_loading_screen = false;
         effects.fade_alpha = self.fade.black_alpha();
         effects.sound_effects.clear();
+        effects.looping_se_starts.clear();
+        effects.looping_se_volumes.clear();
         effects.stop_sound_effects.clear();
         effects.positional_sounds.clear();
+        effects.stage_positional_sounds.clear();
+        effects.updated_positional_sounds.clear();
+        effects.stop_all_stage_ambient_se = false;
         effects.bgm_stage_id = None;
         effects.bgm_control_mask = None;
         effects.outdoor_plan = None;
@@ -532,6 +543,7 @@ impl CampaignOrchestrator {
                         sim,
                         &mut self.event_engine,
                         &mut self.horror_triggers,
+                        &mut self.stage_audio,
                         &mut self.rng,
                         &mut self.fade,
                         &mut self.active_manifest,
@@ -592,6 +604,7 @@ impl CampaignOrchestrator {
                         sim,
                         &mut self.event_engine,
                         &mut self.horror_triggers,
+                        &mut self.stage_audio,
                         &mut self.rng,
                         &mut self.fade,
                         &mut self.active_manifest,
@@ -665,6 +678,30 @@ impl CampaignOrchestrator {
             dt_sec,
             effects,
         );
+        if matches!(outcome, GameplayStepOutcome::Continue) {
+            let mut numeric_room = room_name_for_stage_pos(
+                sim.scenario.current_stage,
+                sim.scenario.player_position.to_array(),
+            );
+            if numeric_room == 0 {
+                numeric_room =
+                    crate::fog::room_id_from_stage_code(&sim.scenario.current_room) as u16;
+            }
+            self.stage_audio.tick_all_time(
+                sim.scenario.current_stage,
+                numeric_room,
+                sim.scenario.player_position.to_array(),
+                sim.scenario.player_yaw,
+                sim.locomotion.speed_mps,
+                dt_sec,
+                false,
+                &input.active_stage_se_ids,
+                &mut sim.scenario.flags,
+                &mut self.horror_triggers,
+                &mut self.rng,
+                effects,
+            );
+        }
         effects.fade_alpha = self.fade.black_alpha();
         match outcome {
             GameplayStepOutcome::Continue => {}

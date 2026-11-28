@@ -40,7 +40,7 @@ use sh2_core::fog::{Ps2FogLayerParams, RoomFogEvaluation};
 
 /// Uniform buffer for the multi-layered & volumetric fog compute shader.
 ///
-/// Layout is strictly 16-byte aligned for WGSL uniform compliance (total size: 192 bytes).
+/// Layout is strictly 16-byte aligned for WGSL uniform compliance (total size: 208 bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct FogUniforms {
@@ -58,7 +58,7 @@ pub struct FogUniforms {
     pub step_count: u32,
     /// Density curve falloff type: `0` = PS2 Hyperbolic `FA/z + FB` (`0x00175df0`), `1` = Exponential, `2` = Exponential Squared (`dbg_fogparm_ctl`). (Offset 36, size 4)
     pub curve_type: u32,
-    /// Drift speed multiplier matching SH2:EE `FogSpeedFix` (`FogAdjustments.cpp:272-306`). (Offset 40, size 4)
+    /// SH2:EE `FogSpeedFix` grid-repulsion metadata (`FogAdjustments.cpp:272-306`; does NOT scale drift time). (Offset 40, size 4)
     pub speed_mult: f32,
     /// Ambient-to-fog tint coupling factor (`dbg_ambifog_ctl`, `0.0..=1.0`). (Offset 44, size 4)
     pub ambient_fog_coupling: f32,
@@ -74,6 +74,10 @@ pub struct FogUniforms {
     pub depth_fog_params: [f32; 4],
     /// `fog_view_screen_fog` (`0x0016c1c0`) UV window `[u_center, v_center, half_span (0.125), gs_alpha_norm]`. (Offset 176, size 16)
     pub screen_fog_uv: [f32; 4],
+    /// Live PS2 wind / integrated volumetric drift (`fogChangeWind` `0x00169380`, unscaled by `FogSpeedFix`):
+    /// - When `w > 0.5`: `[drift_u, drift_v, 0.0, 1.0]` smoothly integrated per frame (zero UV snap on wind turns).
+    /// - When `w <= 0.5`: `[wind_x, wind_y, wind_z, 0.0]` multiplied by `fog.time * 60.0 * 0.005 * 0.25`. (Offset 192, size 16)
+    pub wind_vec: [f32; 4],
 }
 
 impl Default for FogUniforms {
@@ -116,6 +120,7 @@ impl Default for FogUniforms {
             shadow_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             depth_fog_params: depth_coeffs.to_gpu_vec4(),
             screen_fog_uv: [0.5, 0.5, SCREEN_FOG_UV_HALF_SPAN, 0.0],
+            wind_vec: [PS2_FOG_WIND_DEFAULT_SPEED, 0.0, 0.0, 0.0],
         }
     }
 }
@@ -403,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_fog_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<FogUniforms>(), 192);
+        assert_eq!(std::mem::size_of::<FogUniforms>(), 208);
         assert_eq!(std::mem::align_of::<FogUniforms>(), 4);
         let d = FogUniforms::default();
         assert_eq!(d.fog_near, PS2_DEFAULT_FOG_NEAR_MM);

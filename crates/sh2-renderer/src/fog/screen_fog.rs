@@ -136,4 +136,28 @@ mod tests {
         // (128 * 128) >> 9 = 16384 >> 9 = 32
         assert_eq!(eval.gs_alpha_u8, 32);
     }
+
+    #[test]
+    fn test_screen_fog_drifts_continuously_when_camera_stationary() {
+        let mut st = ScreenFogState { u: 0.5, v: 0.5 };
+        // Stationary camera (`cam_delta = 0`), wind_type = 0 (`wind_vec = [0.4, 0, 0]`), unscaled 60 Hz (`dt_scale = 1.0`)
+        for _ in 0..60 {
+            st.step(&ScreenFogStepInput {
+                cam_delta: Vec3::ZERO,
+                area_size: 2000.0,
+                wind_vec: Vec3::new(0.4, 0.0, 0.0),
+                dt_scale: 1.0,
+                world_view_rot: Mat3::IDENTITY,
+                fog_color_a: 0x80,
+                fog_alpha_param: 0x10,
+            });
+        }
+        // Expected UV drift after 60 frames: 60 * 0.4 * 0.005 * 0.25 = 0.03 -> u = 0.5 - 0.03 = 0.47
+        assert!(
+            (st.u - 0.47).abs() < 1e-5,
+            "expected u=0.47 after 1 s of stationary 0.4 wind, got {}",
+            st.u
+        );
+        assert!((st.v - 0.5).abs() < 1e-6);
+    }
 }

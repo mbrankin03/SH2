@@ -26,11 +26,17 @@ mod constants;
 mod eval;
 pub mod particles;
 mod types;
+pub mod wind;
 
 #[cfg(test)]
 mod tests;
 
 pub use constants::*;
 pub use eval::*;
-pub use particles::{FogParticle, FogParticleVolume};
+pub use particles::{FogEnvParams, FogParticle, FogParticleVolume};
 pub use types::*;
+pub use wind::{
+    angle_regulate, FogWindState, Ps2FogRng, FOG_PARTICLE_VELOCITY_DAMPING, FOG_WIND_DEFAULT_ACCEL,
+    FOG_WIND_DEFAULT_JITTER, FOG_WIND_MAX_TURN_RAD, FOG_WIND_TIMER_FALLBACK_FRAMES,
+    FOG_WIND_TIMER_MAX_FRAMES, FOG_WIND_TIMER_MIN_FRAMES,
+};

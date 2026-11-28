@@ -59,7 +59,7 @@ pub fn evaluate_room_fog_with_fixes(
         Ps2FogLayerParams::classic_ps2()
     };
 
-    let speed_mult = if enable_sh2ee_world_fixes {
+    let grid_repulsion_override = if enable_sh2ee_world_fixes {
         match ctx.room_id {
             R_FOREST_CEMETERY_ID
             | R_TOWN_EAST_ID
@@ -73,15 +73,16 @@ pub fn evaluate_room_fog_with_fixes(
             | R_MAN_LONG_HALLWAY_ID
             | R_MAN_SERV_RM_ID
             | R_MAN_OUTSIDE_ENTRANCE_ID
-            | R_MAN_BLUE_CREEK_ENTRANCE_ID => FOG_SPEED_OUTDOOR_SLOW,
+            | R_MAN_BLUE_CREEK_ENTRANCE_ID => Some(FOG_SPEED_OUTDOOR_SLOW),
             R_APT_E_COURTYARD_ID | R_EDI_BOSS_RM_1_ID | R_EDI_BOSS_RM_2_ID => {
-                FOG_SPEED_COURTYARD_MEDIUM
+                Some(FOG_SPEED_COURTYARD_MEDIUM)
             }
-            _ => 1.0,
+            _ => None,
         }
     } else {
-        1.0
+        None
     };
+    let speed_mult = grid_repulsion_override.unwrap_or(1.0);
 
     let james_fog_influence_mm = if ctx.room_id == R_FOREST_CEMETERY_ID
         && ctx.james_pos_y_mm >= FOREST_TRAIL_MIN_Y_MM
@@ -127,6 +128,7 @@ pub fn evaluate_room_fog_with_fixes(
                 curve: FogFalloffCurve::Linear,
                 // `FogAdjustments.cpp:272-306`: `R_OBSV_DECK` is not in the `0.25f` FogSpeedFix list (`1.0`).
                 speed_mult,
+                grid_repulsion_override,
                 layers: base_layers,
                 particle_count: count,
                 particle_range_x_mm: range_x,
@@ -196,6 +198,7 @@ pub fn evaluate_room_fog_with_fixes(
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
+                grid_repulsion_override,
                 layers: base_layers,
                 particle_count,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
@@ -223,6 +226,7 @@ pub fn evaluate_room_fog_with_fixes(
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
+                grid_repulsion_override,
                 layers: base_layers,
                 particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
@@ -255,6 +259,7 @@ pub fn evaluate_room_fog_with_fixes(
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
+                grid_repulsion_override,
                 layers: base_layers,
                 particle_count: 0,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
@@ -312,6 +317,7 @@ pub fn evaluate_room_fog_with_fixes(
                 density: if sh2ee_upper_override { 0.0 } else { 1.0 },
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
+                grid_repulsion_override,
                 layers: base_layers,
                 particle_count: PS2_DEFAULT_FOG_PARTICLE_COUNT,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
@@ -344,6 +350,7 @@ pub fn evaluate_room_fog_with_fixes(
                 density: 0.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult: 1.0,
+                grid_repulsion_override: None,
                 layers: base_layers,
                 particle_count: 0,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
@@ -371,6 +378,7 @@ pub fn evaluate_room_fog_with_fixes(
                 density: 1.0,
                 curve: FogFalloffCurve::Linear,
                 speed_mult,
+                grid_repulsion_override,
                 layers: base_layers,
                 particle_count: 0,
                 particle_range_x_mm: PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,

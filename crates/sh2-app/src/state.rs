@@ -115,6 +115,8 @@ pub(crate) struct AppState {
     pub campaign_messages: crate::rooms::campaign_room::messages::CampaignMessageState,
     pub fog_uniforms: sh2_renderer::fog::FogUniforms,
     pub fog_particles: sh2_core::fog::FogParticleVolume,
+    /// Cached active stage `.fcl` fog collision & area environment file (`fogSetAreaEnvironment` `0x0016e4a0`).
+    pub cached_stage_fcl: Option<(String, Option<sh2_assets::FclFile>)>,
     pub fog_particle_scratch: Vec<sh2_renderer::fog::GpuFogParticle>,
     pub screen_fog_state: sh2_renderer::fog::ScreenFogState,
     pub last_screen_fog_cam: glam::Vec3,

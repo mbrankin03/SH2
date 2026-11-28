@@ -252,10 +252,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // World-space UV frequency derived from `fog_layer2_complexity` (`0.055`, `FogFix.cpp:89`)
         // and `PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM` (`2000.0` mm, `fog_defset_data +0x02`).
-        // Wind drift uses unscaled `fog.time` and live PS2 `wind_vec.xz` (`fog_view_screen_fog`
-        // `0x0016c1c0`: `wind * (dt_60hz * 0.005) * 0.25`, never scaled by `FogSpeedFix`).
+        // When `fog.wind_vec.w > 0.5`, use smoothly integrated `fog.wind_vec.xy` (zero UV snap on
+        // `fogChangeWind` rotations); otherwise fall back to `fog.wind_vec.xz * (fog.time * 60.0 * 0.005 * 0.25)`.
         let noise_freq = max(0.005, fog.layer2_params.x) / 2000.0;
-        let wind_drift = fog.wind_vec.xz * (fog.time * 60.0 * 0.005 * 0.25);
+        let wind_drift = select(
+            fog.wind_vec.xz * (fog.time * 60.0 * 0.005 * 0.25),
+            fog.wind_vec.xy,
+            fog.wind_vec.w > 0.5,
+        );
 
         for (var i: u32 = 0u; i < steps; i = i + 1u) {
             let z0 = z_start + f32(i) * dz;

@@ -342,7 +342,8 @@ pub(crate) fn update_atmosphere_fog_uniforms(state: &mut AppState, alpha: f32) {
     }
 
     let live_wind = state.fog_particles.wind_vec();
-    effective_fog.wind_vec = [live_wind[0], live_wind[1], live_wind[2], 0.0];
+    let vol_drift = state.fog_particles.volumetric_wind_drift();
+    effective_fog.wind_vec = [vol_drift[0], vol_drift[1], 0.0, 1.0];
 
     let cam_delta = cam_eye - state.last_screen_fog_cam;
     state.last_screen_fog_cam = cam_eye;

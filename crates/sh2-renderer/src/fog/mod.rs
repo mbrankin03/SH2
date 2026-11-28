@@ -74,7 +74,9 @@ pub struct FogUniforms {
     pub depth_fog_params: [f32; 4],
     /// `fog_view_screen_fog` (`0x0016c1c0`) UV window `[u_center, v_center, half_span (0.125), gs_alpha_norm]`. (Offset 176, size 16)
     pub screen_fog_uv: [f32; 4],
-    /// Live PS2 wind vector `[wx, wy, wz, 0.0]` (`_DAT_005814b0` in `fogChangeWind` `0x00169380`, unscaled by `FogSpeedFix`). (Offset 192, size 16)
+    /// Live PS2 wind / integrated volumetric drift (`fogChangeWind` `0x00169380`, unscaled by `FogSpeedFix`):
+    /// - When `w > 0.5`: `[drift_u, drift_v, 0.0, 1.0]` smoothly integrated per frame (zero UV snap on wind turns).
+    /// - When `w <= 0.5`: `[wind_x, wind_y, wind_z, 0.0]` multiplied by `fog.time * 60.0 * 0.005 * 0.25`. (Offset 192, size 16)
     pub wind_vec: [f32; 4],
 }
 

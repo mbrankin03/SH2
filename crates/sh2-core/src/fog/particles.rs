@@ -191,6 +191,10 @@ pub struct FogParticleVolume {
     grid_prev: [f32; FOG_GRID_CELLS],
     /// Current frame 8×8×8 density grid (`DAT_01f61720` / `0x70000800`).
     grid_curr: [f32; FOG_GRID_CELLS],
+    /// Smoothly integrated world-space UV drift `[drift_u, drift_v]` in `[0.0, 1.0)` for
+    /// `ModernVolumetric` fog, accumulated per frame at `wind.xz * (dt_scale * 0.005 * 0.25)`
+    /// (`fog_view_screen_fog` `0x0016c1c0`) so `fogChangeWind` rotations never snap UVs.
+    volumetric_wind_drift: [f32; 2],
 }
 
 impl FogParticleVolume {
@@ -222,6 +226,7 @@ impl FogParticleVolume {
             rng,
             grid_prev: [1.0; FOG_GRID_CELLS],
             grid_curr: [0.0; FOG_GRID_CELLS],
+            volumetric_wind_drift: [0.0, 0.0],
         };
         vol.init_particles();
         vol
@@ -335,6 +340,13 @@ impl FogParticleVolume {
     #[must_use]
     pub const fn wind_vec(&self) -> [f32; 3] {
         self.wind.wind_vec
+    }
+
+    /// Returns the smoothly integrated `[drift_u, drift_v]` UV offset in `[0.0, 1.0)` for
+    /// `ModernVolumetric` fog, accumulated per frame from the live unscaled wind vector.
+    #[must_use]
+    pub const fn volumetric_wind_drift(&self) -> [f32; 2] {
+        self.volumetric_wind_drift
     }
 
     /// Returns the live [`FogWindState`] (for inspection and deterministic unit testing).
@@ -454,6 +466,13 @@ impl FogParticleVolume {
         let effective_grid_repulsion = grid_repulsion_override.unwrap_or(self.env.grid_repulsion);
         let repulsion_scale = effective_grid_repulsion / part_num;
         let wind_vec = self.wind.wind_vec;
+        // Smoothly integrate `ModernVolumetric` UV drift (`fog_view_screen_fog` `0x0016c1c0`
+        // `wind * (dt_scale * 0.005) * 0.25`) so `fogChangeWind` rotations curve smoothly without snap.
+        let drift_scale = dt_scale * 0.005 * 0.25;
+        self.volumetric_wind_drift[0] =
+            (self.volumetric_wind_drift[0] + wind_vec[0] * drift_scale).rem_euclid(1.0);
+        self.volumetric_wind_drift[1] =
+            (self.volumetric_wind_drift[1] + wind_vec[2] * drift_scale).rem_euclid(1.0);
         let base_alpha = f32::from(self.env.alpha_u8);
         let alt_fade_enabled =
             (self.env.flags & 0x01) != 0 && self.env.alt_fade_span_mm.abs() > 1e-4;
@@ -926,5 +945,43 @@ mod tests {
             assert!(p.local_pos[0].abs() <= 2000.0 + 1e-3);
             assert!(p.local_pos[2].abs() <= 2000.0 + 1e-3);
         }
+    }
+
+    #[test]
+    fn volumetric_wind_drift_curves_smoothly_without_snap_when_wind_rotates() {
+        let mut vol = FogParticleVolume::new(16, 2000.0, 2000.0);
+        vol.wind.timer_frames = 10_000.0;
+        vol.set_wind_accel_per_frame([0.4, 0.0, 0.0]);
+
+        // Advance 600 frames (10 s) in +X
+        for _ in 0..600 {
+            vol.step_ps2(1.0 / 60.0, None, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 200.0);
+        }
+        let drift_before = vol.volumetric_wind_drift();
+
+        // Rotate wind direction by 60° (simulating `fogChangeWind`) and step 1 frame
+        let ang = super::super::wind::FOG_WIND_MAX_TURN_RAD;
+        vol.set_wind_accel_per_frame([0.4 * ang.cos(), 0.0, 0.4 * ang.sin()]);
+        vol.step_ps2(1.0 / 60.0, None, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], 200.0);
+        let drift_after = vol.volumetric_wind_drift();
+
+        // Per-frame delta must be tiny (`<= 0.4 * 0.005 * 0.25 = 0.0005`), never snapping!
+        let mut du = (drift_after[0] - drift_before[0]).abs();
+        if du > 0.5 {
+            du = 1.0 - du;
+        }
+        let mut dv = (drift_after[1] - drift_before[1]).abs();
+        if dv > 0.5 {
+            dv = 1.0 - dv;
+        }
+        let step_dist = (du * du + dv * dv).sqrt();
+        assert!(
+            step_dist <= 0.0005 + 1e-6,
+            "volumetric wind drift snapped on wind rotation: step_dist={step_dist:.6}"
+        );
+        assert!(
+            step_dist > 0.0004,
+            "volumetric wind drift should continue advancing smoothly: step_dist={step_dist:.6}"
+        );
     }
 }

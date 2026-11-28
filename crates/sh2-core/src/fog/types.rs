@@ -157,8 +157,14 @@ pub struct RoomFogEvaluation {
     pub density: f32,
     /// Falloff curve type (`dbg_fogparm_ctl`).
     pub curve: FogFalloffCurve,
-    /// `FogSpeedFix` drift speed multiplier (`FogAdjustments.cpp:272-306`).
+    /// `FogSpeedFix` value (`0.25` / `0.50` / `1.0`, `FogAdjustments.cpp:272-306`).
+    /// Note: in `sh2pc.exe` (`0x0048683D`), `FogSpeedFix` replaces ONLY `FogEnv +0x14`
+    /// (`grid_repulsion_f14`) inside `fog_part_grid` — see [`Self::grid_repulsion_override`].
     pub speed_mult: f32,
+    /// Optional SH2:EE `FogSpeedFix` override for `FogEnv +0x14` (`_DAT_01f7a68c`, `0x0048683D`)
+    /// inside `fog_part_grid`. `Some(0.25)` or `Some(0.50)` when `enable_sh2ee_world_fixes == true`
+    /// for rooms listed in `FogAdjustments.cpp:272-306`; `None` in strict 1:1 Vanilla PS2 mode.
+    pub grid_repulsion_override: Option<f32>,
     /// Dual-layer noise plane parameters (`FogFix.cpp`).
     pub layers: Ps2FogLayerParams,
     /// Number of active localized 3D proximity fog particles (`0` for indoor rooms).

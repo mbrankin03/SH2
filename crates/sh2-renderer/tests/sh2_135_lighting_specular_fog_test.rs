@@ -243,7 +243,7 @@ fn golden_64x64_specular_sphere_map_and_gs_blend() {
 #[test]
 fn golden_ps2_depth_screen_and_blow_fog() {
     let fog = FogUniforms::default();
-    assert_eq!(std::mem::size_of::<FogUniforms>(), 192);
+    assert_eq!(std::mem::size_of::<FogUniforms>(), 208);
     assert_eq!(fog.fog_near, PS2_DEFAULT_FOG_NEAR_MM);
     assert_eq!(fog.fog_far, PS2_DEFAULT_FOG_FAR_MM);
 

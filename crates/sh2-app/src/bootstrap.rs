@@ -736,6 +736,7 @@ pub(crate) fn bootstrap_app_state(event_loop: &ActiveEventLoop, cli: &CliArgs) -
             sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
             sh2_core::fog::PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM,
         ),
+        cached_stage_fcl: None,
         fog_particle_scratch: Vec::with_capacity(sh2_renderer::fog::MAX_GPU_FOG_PARTICLES),
         screen_fog_state: sh2_renderer::fog::ScreenFogState::default(),
         last_screen_fog_cam: glam::Vec3::ZERO,

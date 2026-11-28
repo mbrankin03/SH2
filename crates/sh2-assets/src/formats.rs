@@ -11,6 +11,7 @@ pub mod cls;
 pub mod demo;
 pub mod dxt;
 pub mod enemy_rig;
+pub mod fcl;
 pub mod glb;
 pub mod kg;
 pub mod map;
@@ -60,6 +61,10 @@ pub use demo::{
     DEMO_SCREEN_SY, DEMO_SCR_Z_SCALE,
 };
 pub use dxt::{decode_dds_file, decode_dxt, encode_dds_rgba, encode_dxt_rgba};
+pub use fcl::{
+    fcl_rel_path_for_stage, parse_fcl, FclAreaZone, FclFile, FclFogEnv, FclHeader,
+    FCL_AREA_RECORD_BYTES, FCL_COORD_SCALE_MM, FCL_ENV_RECORD_BYTES, FCL_HEADER_BYTES,
+};
 pub use glb::{
     parse_glb, GlbAnimTrack, GlbInterpolation, GlbMesh, GlbModel, GlbNode, GlbNodeLocalTransform,
     GlbPrimitive, GlbSkin, GlbTexture, GlbVertex, GLB_CHUNK_BIN, GLB_CHUNK_JSON, GLB_MAGIC,

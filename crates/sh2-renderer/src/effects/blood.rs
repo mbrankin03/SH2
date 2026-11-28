@@ -86,6 +86,7 @@ struct FogUniforms {
     shadow_view_proj: mat4x4<f32>,
     depth_fog_params: vec4<f32>,
     screen_fog_uv: vec4<f32>,
+    wind_vec: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraUniforms;

@@ -197,9 +197,10 @@ pub use events::{
     SE_SOCIETY_STAIRCASE_AMBIENT, SYS_FLAG_DEMO_ACTIVE_BIT,
 };
 pub use fog::{
-    dynamic_draw_distance_scale, evaluate_room_fog, evaluate_room_fog_with_fixes,
-    ps2_depth_fog_linear_coeffs, room_draw_distance_mm, room_id_from_stage_code, FogFalloffCurve,
-    FogParticle, FogParticleVolume, Ps2FogLayerParams, RoomFogContext, RoomFogEvaluation,
+    dynamic_draw_distance_scale, evaluate_ps2_particle_floor_alpha, evaluate_room_fog,
+    evaluate_room_fog_with_fixes, ps2_depth_fog_linear_coeffs, room_draw_distance_mm,
+    room_id_from_stage_code, FogEnvParams, FogFalloffCurve, FogParticle, FogParticleVolume,
+    FogWindState, Ps2FogLayerParams, RoomFogContext, RoomFogEvaluation,
     BLUE_CREEK_FLASHLIGHT_FOG_NEAR_MM, BLUE_CREEK_ORIGINAL_FOG_NEAR_MM, DEFAULT_DRAW_DISTANCE_MM,
     FINAL_BOSS_CAMERA_Y_THRESHOLD_MM, FOG_SPEED_COURTYARD_MEDIUM, FOG_SPEED_OUTDOOR_SLOW,
     FOREST_TRAIL_MAX_Y_MM, FOREST_TRAIL_MIN_Y_MM, PS2_DEFAULT_FOG_HEIGHT_BAND_MM,

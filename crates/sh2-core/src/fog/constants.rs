@@ -285,6 +285,36 @@ pub fn evaluate_ps2_particle_y_and_alpha(
     )
 }
 
+/// Evaluates the final normalized D3D8 `SRCALPHA` sprite alpha (`0.0..=1.0`) for a 1:1
+/// [`super::FogParticleVolume`] particle whose `world_y_mm` and `base_alpha` already include
+/// `fog_part_alp` (`0x0016b9a0`) and `fog_part_clamp` (`0x0016ba50`) vertical/horizontal fades.
+///
+/// Applies the exact `fogMakePacket` (`0x0016bb70`, `Fog/fog.c:2338-2339`) / `FUN_004896e0`
+/// (`sh2pc_00480000.c:5678, 5684, 5701-5720`) floor-proximity fade and `fog_alpha_u8 / 255.0` scale.
+#[must_use]
+#[inline]
+pub fn evaluate_ps2_particle_floor_alpha(
+    world_y_mm: f32,
+    base_alpha: f32,
+    fog_alpha_u8: u8,
+    floor_y_mm: Option<f32>,
+    particle_size_mm: f32,
+) -> f32 {
+    let floor_fade = if let Some(floor_y) = floor_y_mm {
+        let height_above_floor = floor_y - world_y_mm;
+        if height_above_floor <= 0.0 {
+            0.0
+        } else if particle_size_mm > 1e-4 && height_above_floor < particle_size_mm {
+            (height_above_floor / particle_size_mm).clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+    base_alpha * floor_fade * (f32::from(fog_alpha_u8) / 255.0)
+}
+
 /// Evaluates the exact `ob01` (`R_OBSV_DECK`) valley-mist particle world-space Y (PS2 mm) and
 /// effective alpha (`0.0..=1.0`) from a particle's symmetric `[-100, +100]` local Y and base
 /// border/sway alpha.

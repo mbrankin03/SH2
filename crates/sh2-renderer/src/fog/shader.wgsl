@@ -27,6 +27,8 @@ struct FogUniforms {
     depth_fog_params: vec4<f32>,
     // `fog_view_screen_fog` (0x0016c1c0) UV window [u_center, v_center, half_span (0.125), gs_alpha_norm]
     screen_fog_uv: vec4<f32>,
+    // Live PS2 wind vector [wx, wy, wz, 0.0] (`_DAT_005814b0` in `fogChangeWind` 0x00169380, unscaled)
+    wind_vec: vec4<f32>,
 };
 
 struct CameraUniforms {
@@ -191,7 +193,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let world_dist = length(cam_to_world);
     let ray_dir = cam_to_world / max(1e-4, world_dist);
 
-    let drift_t = fog.time * fog.speed_mult;
     let outdoor_enabled = fog.layer2_params.w > 0.5;
     let volumetric_mode = fog.layer_transparencies.z > 0.5;
     let volumetric_light_enabled = fog.layer_transparencies.w > 0.5;
@@ -251,8 +252,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // World-space UV frequency derived from `fog_layer2_complexity` (`0.055`, `FogFix.cpp:89`)
         // and `PS2_DEFAULT_FOG_VOLUME_HALF_EXTENT_MM` (`2000.0` mm, `fog_defset_data +0x02`).
+        // Wind drift uses unscaled `fog.time` and live PS2 `wind_vec.xz` (`fog_view_screen_fog`
+        // `0x0016c1c0`: `wind * (dt_60hz * 0.005) * 0.25`, never scaled by `FogSpeedFix`).
         let noise_freq = max(0.005, fog.layer2_params.x) / 2000.0;
-        let wind_drift = vec2<f32>(drift_t * 0.005, -drift_t * 0.005);
+        let wind_drift = fog.wind_vec.xz * (fog.time * 60.0 * 0.005 * 0.25);
 
         for (var i: u32 = 0u; i < steps; i = i + 1u) {
             let z0 = z_start + f32(i) * dz;

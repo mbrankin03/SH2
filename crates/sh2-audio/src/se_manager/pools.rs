@@ -298,3 +298,76 @@ impl SePoolManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::se_manager::SE_FLAG_MANAGED_2D;
+
+    #[test]
+    fn non_positional_managed_2d_ambient_loops_and_ducks_on_overlay() {
+        let mut pool = SePoolManager::new(Vec::new());
+        let listener = SeListenerContext {
+            camera_pos: Vec3::ZERO,
+            player_pos: Vec3::ZERO,
+            wvs_matrix: glam::Mat4::IDENTITY,
+            room_id: 0x03,
+        };
+        let mut actions = Vec::new();
+        // Start Forest wind `0x2742` non-positionally (`pos = None`, `flags = 0x08`).
+        pool.call_pos(
+            0.0,
+            0x2742,
+            None,
+            SE_FLAG_MANAGED_2D,
+            &listener,
+            &mut actions,
+        );
+        assert!(matches!(
+            actions.as_slice(),
+            [SeBackendAction::Play2d {
+                se_id: 0x2742,
+                direction_deg: 0,
+                attenuation_byte: 255,
+                looping: true
+            }]
+        ));
+
+        // Modulate base volume via `Se2dManageDataVolumeChange` (`0x00193630`) to 0.8 and ramp to Normal (1.0).
+        actions.clear();
+        pool.set_2d_volume(0x2742, 0.8, &mut actions);
+        pool.tick_2d(&listener, BgmDuckingMode::Normal, 4.0, &mut actions);
+        let normal_atten = actions
+            .iter()
+            .rev()
+            .find_map(|a| match *a {
+                SeBackendAction::Update2d {
+                    se_id: 0x2742,
+                    attenuation_byte,
+                    ..
+                } => Some(attenuation_byte),
+                _ => None,
+            })
+            .expect("Normal tick should emit Update2d");
+        // Effective volume = 0.8 * 1.0 = 0.8 -> atten ≈ (1.0 - 0.8) * 255 = 51
+        assert!((i32::from(normal_atten) - 51).abs() <= 1);
+
+        // Open Inventory/Map/Memo overlay (`BgmDuckingMode::PausedOrMenu` -> target 0.5).
+        actions.clear();
+        pool.tick_2d(&listener, BgmDuckingMode::PausedOrMenu, 4.0, &mut actions);
+        let ducked_atten = actions
+            .iter()
+            .rev()
+            .find_map(|a| match *a {
+                SeBackendAction::Update2d {
+                    se_id: 0x2742,
+                    attenuation_byte,
+                    ..
+                } => Some(attenuation_byte),
+                _ => None,
+            })
+            .expect("Overlay ducking tick should emit Update2d");
+        // Effective volume = 0.8 * 0.5 = 0.4 -> atten ≈ (1.0 - 0.4) * 255 = 153
+        assert!((i32::from(ducked_atten) - 153).abs() <= 1);
+    }
+}

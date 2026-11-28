@@ -255,22 +255,53 @@ pub(crate) fn dispatch_campaign_stage_audio(
         dispatch_se_pool_actions(state, &stop_actions);
     }
 
-    // 3. Start looping 2D ambient SEs idempotently (`EvSoundCallAfterLoad` `flags & 8`, `pos = NULL`).
+    // 3. Start looping 2D ambient SEs via `SePoolManager::slots_2d` (`SeCallPos(..., NULL, 0x08)`,
+    //    `sh2pc.exe` `0x0059fc70` `0x2742` / `0x0058be20` `0x4db8`) so `Se2dManager` (`0x001932f0`)
+    //    handles looping, `0.5` Inventory/Map/Memo ducking, `0.7` cutscene ducking, and pause/stop.
     if !effects.looping_se_starts.is_empty() {
-        if let (Some(eng), Some(bank)) = (state.audio_engine.as_mut(), state.audio_bank.as_mut()) {
-            for &(se_id, volume) in &effects.looping_se_starts {
-                let _ = bank.play_looping_se_id(eng, se_id, volume);
+        sync_se_pool_3d_bank(state);
+        let se_listener = sh2_audio::SeListenerContext {
+            camera_pos: state.sim_core.active_camera_eye(1.0),
+            player_pos: state.sim_core.scenario.player_position,
+            wvs_matrix: state.sim_core.active_ps2_wvs_matrix(1.0),
+            room_id: state.bgm_manager.room_id as u16,
+        };
+        let mut pool_actions = Vec::new();
+        for &(se_id, volume) in &effects.looping_se_starts {
+            if se_id != 0 {
+                state.se_pool.call_pos(
+                    volume,
+                    se_id,
+                    None,
+                    sh2_audio::SE_FLAG_MANAGED_2D,
+                    &se_listener,
+                    &mut pool_actions,
+                );
             }
         }
+        dispatch_se_pool_actions(state, &pool_actions);
     }
 
-    // 4. Live volume modulation for active looping 2D ambient SEs (`SeVolume` `0x00516d50`).
+    // 4. Live volume modulation for active managed looping 2D ambient SEs
+    //    (`Se2dManageDataVolumeChange` `0x00193630` / `SeVolume` `0x00516d50`), preserving
+    //    `Se2dManager` overlay/cutscene ducking multiplier on `slot.duck_fade`.
     if !effects.looping_se_volumes.is_empty() {
-        if let (Some(eng), Some(bank)) = (state.audio_engine.as_ref(), state.audio_bank.as_mut()) {
-            for &(se_id, volume) in &effects.looping_se_volumes {
+        let mut vol_actions = Vec::new();
+        for &(se_id, volume) in &effects.looping_se_volumes {
+            if state
+                .se_pool
+                .slots_2d
+                .iter()
+                .any(|s| s.is_some_and(|sl| sl.se_id == se_id))
+            {
+                state.se_pool.set_2d_volume(se_id, volume, &mut vol_actions);
+            } else if let (Some(eng), Some(bank)) =
+                (state.audio_engine.as_ref(), state.audio_bank.as_mut())
+            {
                 let _ = bank.set_looping_se_volume(eng, se_id, volume);
             }
         }
+        dispatch_se_pool_actions(state, &vol_actions);
     }
 
     // 5. One-shot 2D SFX (`shSdCall` / `SeCall`).
